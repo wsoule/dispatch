@@ -72,6 +72,7 @@ packages:
 node_modules/
 dist/
 *.tsbuildinfo
+.superpowers/
 ```
 
 - [ ] **Step 2: Fetch the Apache-2.0 license text**
