@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { TaskStore, DISPATCH_DIR } from '@dispatch/core';
 import type { CliContext } from './context.js';
+import { registerTaskCommands } from './commands/task.js';
 
 export function makeProgram(ctx: CliContext): Command {
   const program = new Command('dispatch')
@@ -20,6 +21,8 @@ export function makeProgram(ctx: CliContext): Command {
       TaskStore.init(ctx.cwd);
       ctx.log(`Initialized ${DISPATCH_DIR}/ — create your first task with: dispatch task create "<title>"`);
     });
+
+  registerTaskCommands(program, ctx);
 
   return program;
 }
