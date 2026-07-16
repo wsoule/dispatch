@@ -84,7 +84,7 @@ export function serializeTaskFile(doc: TaskDoc): string {
  */
 export function appendActivity(body: string, line: string): string {
   const entry = `- ${line}`;
-  if (!body.includes('## Activity')) {
+  if (!/^## Activity\s*$/m.test(body)) {
     return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
   }
   return `${body.trimEnd()}\n${entry}\n`;
