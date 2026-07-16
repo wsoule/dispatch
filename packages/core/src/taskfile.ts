@@ -77,3 +77,15 @@ export function serializeTaskFile(doc: TaskDoc): string {
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }
+
+/**
+ * Appends an activity bullet. Assumes `## Activity` is the LAST section of the
+ * body (the store's create template guarantees this).
+ */
+export function appendActivity(body: string, line: string): string {
+  const entry = `- ${line}`;
+  if (!body.includes('## Activity')) {
+    return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
+  }
+  return `${body.trimEnd()}\n${entry}\n`;
+}
