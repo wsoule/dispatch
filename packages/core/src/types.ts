@@ -25,3 +25,5 @@ export interface TaskDoc {
 
 export const STATUSES: readonly TaskStatus[] = ['backlog', 'todo', 'in-progress', 'in-review', 'done', 'cancelled'];
 export const PRIORITIES: readonly Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
+export const KINDS: readonly TaskKind[] = ['task', 'epic'];
+export const ASSIGNEES: readonly Assignee[] = ['agent', 'human', 'none'];

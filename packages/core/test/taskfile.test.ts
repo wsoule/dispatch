@@ -42,3 +42,33 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(() => parseTaskFile('---\ntitle: X\n---\n')).toThrow(/missing frontmatter field: id/);
   });
 });
+
+describe('parseTaskFile frontmatter shape validation', () => {
+  const base = (overrides: string[]) => [
+    '---',
+    'id: t-aaaaaa', 'title: Minimal', 'status: todo', 'kind: task',
+    'created: 2026-07-13T00:00:00Z', 'updated: 2026-07-13T00:00:00Z',
+    ...overrides,
+    '---', 'body',
+  ].join('\n');
+
+  it('throws on invalid kind', () => {
+    const text = base([]).replace('kind: task', 'kind: nonsense');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(/invalid kind: nonsense/);
+  });
+  it('throws on bare-scalar blocked-by', () => {
+    const text = base(['blocked-by: t-1']);
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(/invalid blocked-by: expected a list of strings/);
+  });
+  it('throws on non-array labels', () => {
+    const text = base(['labels: bug']);
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(/invalid labels: expected a list of strings/);
+  });
+  it('parses unknown status fine (tolerant for custom config statuses)', () => {
+    const text = base([]).replace('status: todo', 'status: someday');
+    expect(parseTaskFile(text).meta.status).toBe('someday');
+  });
+});

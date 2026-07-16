@@ -1,5 +1,6 @@
 import YAML from 'yaml';
 import type { Assignee, Priority, TaskDoc, TaskKind, TaskMeta, TaskStatus } from './types.js';
+import { ASSIGNEES, KINDS, PRIORITIES } from './types.js';
 
 export class TaskParseError extends Error {
   constructor(message: string, readonly file?: string) {
@@ -22,6 +23,23 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   for (const key of REQUIRED) {
     if (raw[key] === undefined || raw[key] === null) {
       throw new TaskParseError(`missing frontmatter field: ${key}`, file);
+    }
+  }
+  // NOTE: status is deliberately NOT validated against the built-in list —
+  // .dispatch/config.yml can define custom statuses; the doctor command validates status against config.
+  if (!KINDS.includes(raw.kind as TaskKind)) {
+    throw new TaskParseError(`invalid kind: ${raw.kind}`, file);
+  }
+  if (raw.priority != null && !PRIORITIES.includes(raw.priority as Priority)) {
+    throw new TaskParseError(`invalid priority: ${raw.priority}`, file);
+  }
+  if (raw.assignee != null && !ASSIGNEES.includes(raw.assignee as Assignee)) {
+    throw new TaskParseError(`invalid assignee: ${raw.assignee}`, file);
+  }
+  for (const key of ['blocked-by', 'labels'] as const) {
+    const value = raw[key];
+    if (value != null && !(Array.isArray(value) && value.every((v) => typeof v === 'string'))) {
+      throw new TaskParseError(`invalid ${key}: expected a list of strings`, file);
     }
   }
   const meta: TaskMeta = {
