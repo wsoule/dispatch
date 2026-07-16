@@ -3,6 +3,7 @@ import { TaskStore, PRIORITIES, STATUSES } from '@dispatch/core';
 import type { Priority, TaskDoc, TaskKind, TaskStatus } from '@dispatch/core';
 import { CliError, type CliContext } from '../context.js';
 import { formatTable } from '../output.js';
+import { readFileSync } from 'node:fs';
 
 export function requireStore(ctx: CliContext): TaskStore {
   const store = new TaskStore(ctx.cwd);
@@ -71,5 +72,59 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
         return;
       }
       ctx.log(formatTable([TABLE_HEADER, ...docs.map(taskRow)]));
+    });
+
+  task
+    .command('show')
+    .argument('<id>')
+    .option('--json')
+    .action((id: string, opts: { json?: boolean }) => {
+      const store = requireStore(ctx);
+      const doc = store.get(id);
+      if (!doc) throw new CliError(`task not found: ${id}`);
+      if (opts.json) {
+        ctx.log(JSON.stringify(doc, null, 2));
+        return;
+      }
+      ctx.log(readFileSync(store.taskFilePath(id)!, 'utf8'));
+    });
+
+  task
+    .command('status')
+    .argument('<id>')
+    .argument('<status>')
+    .action((id: string, status: string) => {
+      const store = requireStore(ctx);
+      const valid = validate(status, STATUSES, 'status') as TaskStatus;
+      if (!store.get(id)) throw new CliError(`task not found: ${id}`);
+      store.update(id, {
+        status: valid,
+        appendActivity: `${new Date().toISOString()} status → ${valid}`,
+      });
+      ctx.log(`${id} → ${valid}`);
+    });
+
+  task
+    .command('edit')
+    .argument('<id>')
+    .option('--title <title>')
+    .option('--priority <priority>')
+    .option('--assignee <assignee>', 'agent|human|none')
+    .option('--parent <id>')
+    .option('--add-label <label...>')
+    .option('--add-blocked-by <id...>')
+    .action((id: string, opts: Record<string, string | string[] | undefined>) => {
+      const store = requireStore(ctx);
+      const doc = store.get(id);
+      if (!doc) throw new CliError(`task not found: ${id}`);
+      store.update(id, {
+        title: opts.title as string | undefined,
+        priority: validate(opts.priority as string | undefined, PRIORITIES, 'priority') as Priority | undefined,
+        assignee: validate(opts.assignee as string | undefined, ['agent', 'human', 'none'] as const, 'assignee'),
+        parent: (opts.parent as string | undefined) ?? doc.meta.parent,
+        labels: opts.addLabel ? [...doc.meta.labels, ...(opts.addLabel as string[])] : undefined,
+        blockedBy: opts.addBlockedBy ? [...doc.meta.blockedBy, ...(opts.addBlockedBy as string[])] : undefined,
+      });
+      ctx.log(`updated ${id}`);
     });
 }
