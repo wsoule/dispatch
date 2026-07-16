@@ -21,4 +21,25 @@ describe('loadConfig', () => {
     expect(cfg.autoCommit).toBe(true);
     expect(cfg.statuses).toHaveLength(6);
   });
+  it('mutating a returned config does not poison later loads', () => {
+    loadConfig(root).statuses.push('x');
+    expect(loadConfig(root).statuses).toEqual([
+      'backlog', 'todo', 'in-progress', 'in-review', 'done', 'cancelled',
+    ]);
+  });
+  it('throws on malformed YAML', () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: true\n  bad: x');
+    expect(() => loadConfig(root)).toThrow(/invalid \.dispatch\/config\.yml/);
+  });
+  it('throws when statuses is not an array of strings', () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: not-an-array\n');
+    expect(() => loadConfig(root)).toThrow(/statuses must be/);
+  });
+  it('throws when autoCommit is not a boolean', () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: "yes"\n');
+    expect(() => loadConfig(root)).toThrow(/autoCommit must be/);
+  });
 });

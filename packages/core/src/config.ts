@@ -16,10 +16,27 @@ const DEFAULTS: DispatchConfig = {
 
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
-  if (!existsSync(path)) return { ...DEFAULTS };
-  const raw = (YAML.parse(readFileSync(path, 'utf8')) ?? {}) as Partial<DispatchConfig>;
+  if (!existsSync(path)) {
+    return { statuses: [...DEFAULTS.statuses], autoCommit: DEFAULTS.autoCommit };
+  }
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new Error(`invalid .dispatch/config.yml: ${(err as Error).message}`);
+  }
+  const raw = (parsed ?? {}) as Partial<DispatchConfig>;
+  if (
+    raw.statuses !== undefined &&
+    (!Array.isArray(raw.statuses) || raw.statuses.some(s => typeof s !== 'string'))
+  ) {
+    throw new Error('invalid .dispatch/config.yml: statuses must be an array of strings');
+  }
+  if (raw.autoCommit !== undefined && typeof raw.autoCommit !== 'boolean') {
+    throw new Error('invalid .dispatch/config.yml: autoCommit must be a boolean');
+  }
   return {
-    statuses: raw.statuses ?? DEFAULTS.statuses,
+    statuses: [...(raw.statuses ?? DEFAULTS.statuses)],
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
   };
 }
