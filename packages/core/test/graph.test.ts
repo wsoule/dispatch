@@ -39,6 +39,22 @@ describe('readyTasks', () => {
     const urgent = make({ id: 't-500000', priority: 'urgent', created: '2026-01-02T00:00:00Z' });
     expect(readyTasks([low, urgent])[0].meta.id).toBe('t-500000');
   });
+  it('breaks priority ties by created ascending', () => {
+    const newer = make({ id: 't-600000', priority: 'high', created: '2026-01-02T00:00:00Z' });
+    const older = make({ id: 't-700000', priority: 'high', created: '2026-01-01T00:00:00Z' });
+    expect(readyTasks([newer, older]).map(t => t.meta.id)).toEqual(['t-700000', 't-600000']);
+  });
+  it('requires every blocker done', () => {
+    const done = make({ id: 't-d10000', status: 'done' });
+    const inProgress = make({ id: 't-p10000', status: 'in-progress' });
+    const cancelled = make({ id: 't-c10000', status: 'cancelled' });
+
+    const notReady = make({ id: 't-n10000', blockedBy: ['t-d10000', 't-p10000'] });
+    expect(readyTasks([done, inProgress, notReady]).map(t => t.meta.id)).not.toContain('t-n10000');
+
+    const ready = make({ id: 't-y10000', blockedBy: ['t-d10000', 't-c10000'] });
+    expect(readyTasks([done, cancelled, ready]).map(t => t.meta.id)).toContain('t-y10000');
+  });
 });
 
 describe('isDone', () => {
