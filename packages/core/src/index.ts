@@ -6,3 +6,5 @@ export { parseTaskFile, serializeTaskFile, TaskParseError, appendActivity } from
 export { TaskStore, DISPATCH_DIR } from './store.js';
 export type { CreateInput, UpdatePatch, ListFilter } from './store.js';
 export { readyTasks, isDone, PRIORITY_ORDER } from './graph.js';
+export { loadConfig } from './config.js';
+export type { DispatchConfig } from './config.js';
