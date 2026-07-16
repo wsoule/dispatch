@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { TaskStore, PRIORITIES, STATUSES } from '@dispatch/core';
+import { TaskStore, PRIORITIES, STATUSES, readyTasks } from '@dispatch/core';
 import type { Priority, TaskDoc, TaskKind, TaskStatus } from '@dispatch/core';
 import { CliError, type CliContext } from '../context.js';
 import { formatTable } from '../output.js';
@@ -126,5 +126,19 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
         blockedBy: opts.addBlockedBy ? [...doc.meta.blockedBy, ...(opts.addBlockedBy as string[])] : undefined,
       });
       ctx.log(`updated ${id}`);
+    });
+
+  task
+    .command('next')
+    .description('Tasks ready to start: todo with all blockers done')
+    .option('--json')
+    .action((opts: { json?: boolean }) => {
+      const store = requireStore(ctx);
+      const ready = readyTasks(store.list());
+      if (opts.json) {
+        ctx.log(JSON.stringify(ready, null, 2));
+        return;
+      }
+      ctx.log(formatTable([TABLE_HEADER, ...ready.map(taskRow)]));
     });
 }
