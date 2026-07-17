@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { generateTaskId } from './ids.js';
 import { slugify } from './slug.js';
 import { appendActivity, parseTaskFile, serializeTaskFile } from './taskfile.js';
-import type { Assignee, Priority, TaskDoc, TaskKind, TaskMeta, TaskStatus } from './types.js';
+import type { Assignee, Priority, TaskDoc, TaskKind, TaskMeta } from './types.js';
 
 export const DISPATCH_DIR = '.dispatch';
 
@@ -14,7 +14,7 @@ autoCommit: false
 export interface CreateInput {
   title: string;
   kind?: TaskKind;
-  status?: TaskStatus;
+  status?: string;
   description?: string;
   parent?: string | null;
   blockedBy?: string[];
@@ -25,7 +25,7 @@ export interface CreateInput {
 
 export interface UpdatePatch {
   title?: string;
-  status?: TaskStatus;
+  status?: string;
   parent?: string | null;
   blockedBy?: string[];
   labels?: string[];
@@ -35,7 +35,7 @@ export interface UpdatePatch {
 }
 
 export interface ListFilter {
-  status?: TaskStatus;
+  status?: string;
   kind?: TaskKind;
   parent?: string;
 }

@@ -6,7 +6,9 @@ export type Assignee = 'agent' | 'human' | 'none';
 export interface TaskMeta {
   id: string;
   title: string;
-  status: TaskStatus;
+  // Built-ins (TaskStatus/STATUSES below) are just the defaults — .dispatch/config.yml
+  // `statuses` is the source of truth for what's valid in a given tracker.
+  status: string;
   kind: TaskKind;
   parent: string | null;
   blockedBy: string[];

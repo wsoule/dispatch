@@ -1,5 +1,5 @@
 import YAML from 'yaml';
-import type { Assignee, Priority, TaskDoc, TaskKind, TaskMeta, TaskStatus } from './types.js';
+import type { Assignee, Priority, TaskDoc, TaskKind, TaskMeta } from './types.js';
 import { ASSIGNEES, KINDS, PRIORITIES } from './types.js';
 
 export class TaskParseError extends Error {
@@ -45,7 +45,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   const meta: TaskMeta = {
     id: String(raw.id),
     title: String(raw.title),
-    status: raw.status as TaskStatus,
+    status: String(raw.status),
     kind: raw.kind as TaskKind,
     parent: (raw.parent as string | null) ?? null,
     blockedBy: (raw['blocked-by'] as string[]) ?? [],

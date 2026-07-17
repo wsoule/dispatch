@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
-import { TaskStore, PRIORITIES, STATUSES, readyTasks } from '@dispatch/core';
-import type { Priority, TaskDoc, TaskKind, TaskStatus } from '@dispatch/core';
+import { TaskStore, PRIORITIES, KINDS, ASSIGNEES, readyTasks, loadConfig } from '@dispatch/core';
+import type { Priority, TaskDoc, TaskKind } from '@dispatch/core';
 import { CliError, type CliContext } from '../context.js';
 import { formatTable } from '../output.js';
 import { readFileSync } from 'node:fs';
@@ -40,11 +40,13 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--blocked-by <id...>')
     .option('--json', 'print the created task as JSON')
     .action((title: string, opts: Record<string, string | string[] | boolean | undefined>) => {
+      if (!title.trim()) throw new CliError('title must not be empty');
       const store = requireStore(ctx);
+      const config = loadConfig(ctx.cwd);
       const doc = store.create({
         title,
-        kind: validate(opts.kind as string, ['task', 'epic'] as const, 'kind') as TaskKind,
-        status: validate(opts.status as string | undefined, STATUSES, 'status') as TaskStatus | undefined,
+        kind: validate(opts.kind as string, KINDS, 'kind') as TaskKind,
+        status: validate(opts.status as string | undefined, config.statuses, 'status'),
         description: opts.description as string | undefined,
         parent: (opts.parent as string | undefined) ?? null,
         priority: validate(opts.priority as string, PRIORITIES, 'priority') as Priority,
@@ -62,9 +64,10 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--json')
     .action((opts: Record<string, string | boolean | undefined>) => {
       const store = requireStore(ctx);
+      const config = loadConfig(ctx.cwd);
       const docs = store.list({
-        status: validate(opts.status as string | undefined, STATUSES, 'status') as TaskStatus | undefined,
-        kind: validate(opts.kind as string | undefined, ['task', 'epic'] as const, 'kind') as TaskKind | undefined,
+        status: validate(opts.status as string | undefined, config.statuses, 'status'),
+        kind: validate(opts.kind as string | undefined, KINDS, 'kind') as TaskKind | undefined,
         parent: opts.parent as string | undefined,
       });
       if (opts.json) {
@@ -95,7 +98,8 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .argument('<status>')
     .action((id: string, status: string) => {
       const store = requireStore(ctx);
-      const valid = validate(status, STATUSES, 'status') as TaskStatus;
+      const config = loadConfig(ctx.cwd);
+      const valid = validate(status, config.statuses, 'status')!;
       if (!store.get(id)) throw new CliError(`task not found: ${id}`);
       store.update(id, {
         status: valid,
@@ -120,7 +124,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       store.update(id, {
         title: opts.title as string | undefined,
         priority: validate(opts.priority as string | undefined, PRIORITIES, 'priority') as Priority | undefined,
-        assignee: validate(opts.assignee as string | undefined, ['agent', 'human', 'none'] as const, 'assignee'),
+        assignee: validate(opts.assignee as string | undefined, ASSIGNEES, 'assignee'),
         parent: (opts.parent as string | undefined) ?? doc.meta.parent,
         labels: opts.addLabel ? [...doc.meta.labels, ...(opts.addLabel as string[])] : undefined,
         blockedBy: opts.addBlockedBy ? [...doc.meta.blockedBy, ...(opts.addBlockedBy as string[])] : undefined,

@@ -35,6 +35,12 @@ describe('task create', () => {
   it('rejects invalid priority', async () => {
     await expect(run('task', 'create', 'X', '--priority', 'huge')).rejects.toThrow(/invalid priority/);
   });
+  it('rejects an empty title', async () => {
+    await expect(run('task', 'create', '')).rejects.toThrow(/title must not be empty/);
+  });
+  it('rejects a whitespace-only title', async () => {
+    await expect(run('task', 'create', '   ')).rejects.toThrow(/title must not be empty/);
+  });
 });
 
 describe('task list', () => {
