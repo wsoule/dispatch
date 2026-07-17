@@ -38,6 +38,15 @@ describe('create/get', () => {
   });
 });
 
+describe('taskFilePath id-prefix guard', () => {
+  it('rejects degenerate ids that would prefix-match arbitrary tasks', () => {
+    const store = TaskStore.init(root);
+    store.create({ title: 'Innocent bystander' }, '2026-07-13T18:00:00Z');
+    expect(store.get('t')).toBeNull();
+    expect(store.get('t-9f6')).toBeNull();
+  });
+});
+
 describe('list', () => {
   it('filters by status, kind, parent and sorts by created', () => {
     const store = TaskStore.init(root);

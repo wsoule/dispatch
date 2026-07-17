@@ -122,6 +122,7 @@ export class TaskStore {
   }
 
   taskFilePath(id: string): string | null {
+    if (!/^[te]-[0-9a-f]{6}$/.test(id)) return null;
     if (!this.isInitialized()) return null;
     const hit = readdirSync(this.tasksDir).find(f => f === `${id}.md` || f.startsWith(`${id}-`));
     return hit ? join(this.tasksDir, hit) : null;

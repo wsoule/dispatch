@@ -55,6 +55,13 @@ describe('task status', () => {
   });
 });
 
+describe('task status id-prefix guard', () => {
+  it('rejects a degenerate id instead of matching an arbitrary task file', async () => {
+    await createTask('Innocent bystander');
+    await expect(run('task', 'status', 't', 'done')).rejects.toThrow(/task not found: t/);
+  });
+});
+
 describe('task edit', () => {
   it('patches fields additively', async () => {
     const id = await createTask('Edit me');
