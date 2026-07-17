@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeProgram } from '../src/program.js';
-import type { CliContext } from '../src/context.js';
+import { CliError, type CliContext } from '../src/context.js';
 
 let root: string;
 let lines: string[];
@@ -38,5 +38,22 @@ describe('doctor', () => {
     expect(report.issues).toHaveLength(2);
     expect(report.issues.map((i: { problem: string }) => i.problem).join(' ')).toMatch(/missing frontmatter/);
     expect(report.issues.map((i: { problem: string }) => i.problem).join(' ')).toMatch(/dangling blocked-by/);
+  });
+  it('reports malformed config as a clean CliError', async () => {
+    await run('task', 'create', 'Fine');
+    writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');
+    await expect(run('doctor')).rejects.toThrow(CliError);
+    await expect(run('doctor')).rejects.toThrow(/invalid \.dispatch\/config\.yml/);
+  });
+  it('attributes issues to the on-disk filename', async () => {
+    await run('task', 'create', 'Refs ghost', '--blocked-by', 't-ghost0');
+    const files = readdirSync(join(root, '.dispatch/tasks')).filter(f => f.endsWith('.md'));
+    expect(files).toHaveLength(1);
+    lines = [];
+    await expect(run('doctor', '--json')).rejects.toThrow();
+    const report = JSON.parse(lines.join('\n'));
+    expect(report.issues).toHaveLength(1);
+    expect(report.issues[0].file).toMatch(/\.md$/);
+    expect(report.issues[0].file).toBe(files[0]);
   });
 });
