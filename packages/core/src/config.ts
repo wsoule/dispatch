@@ -4,6 +4,13 @@ import YAML from 'yaml';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
 
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
 export interface DispatchConfig {
   statuses: string[];
   autoCommit: boolean;
@@ -23,17 +30,17 @@ export function loadConfig(rootDir: string): DispatchConfig {
   try {
     parsed = YAML.parse(readFileSync(path, 'utf8'));
   } catch (err) {
-    throw new Error(`invalid .dispatch/config.yml: ${(err as Error).message}`);
+    throw new ConfigError(`invalid .dispatch/config.yml: ${(err as Error).message}`);
   }
   const raw = (parsed ?? {}) as Partial<DispatchConfig>;
   if (
     raw.statuses !== undefined &&
     (!Array.isArray(raw.statuses) || raw.statuses.some(s => typeof s !== 'string'))
   ) {
-    throw new Error('invalid .dispatch/config.yml: statuses must be an array of strings');
+    throw new ConfigError('invalid .dispatch/config.yml: statuses must be an array of strings');
   }
   if (raw.autoCommit !== undefined && typeof raw.autoCommit !== 'boolean') {
-    throw new Error('invalid .dispatch/config.yml: autoCommit must be a boolean');
+    throw new ConfigError('invalid .dispatch/config.yml: autoCommit must be a boolean');
   }
   return {
     statuses: [...(raw.statuses ?? DEFAULTS.statuses)],

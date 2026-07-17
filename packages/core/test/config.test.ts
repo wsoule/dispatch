@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, ConfigError } from '../src/config.js';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'dispatch-')); });
@@ -27,10 +27,17 @@ describe('loadConfig', () => {
       'backlog', 'todo', 'in-progress', 'in-review', 'done', 'cancelled',
     ]);
   });
-  it('throws on malformed YAML', () => {
+  it('throws a ConfigError on malformed YAML', () => {
     mkdirSync(join(root, '.dispatch'), { recursive: true });
     writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: true\n  bad: x');
     expect(() => loadConfig(root)).toThrow(/invalid \.dispatch\/config\.yml/);
+    let caught: unknown;
+    try {
+      loadConfig(root);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ConfigError);
   });
   it('throws when statuses is not an array of strings', () => {
     mkdirSync(join(root, '.dispatch'), { recursive: true });

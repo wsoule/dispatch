@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadConfig, parseTaskFile } from '@dispatch/core';
+import { loadConfig, parseTaskFile, ConfigError } from '@dispatch/core';
 import type { DispatchConfig, TaskDoc } from '@dispatch/core';
 import { CliError, type CliContext } from '../context.js';
 import { requireStore } from './task.js';
@@ -19,7 +19,7 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
       try {
         config = loadConfig(ctx.cwd);
       } catch (err) {
-        throw new CliError((err as Error).message);
+        throw new CliError((err as ConfigError).message);
       }
       const issues: Issue[] = [];
       const parsed: { file: string; doc: TaskDoc }[] = [];
