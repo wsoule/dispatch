@@ -33,6 +33,19 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
       }
 
       const ids = new Set(parsed.map(p => p.doc.meta.id));
+
+      const filesById = new Map<string, string[]>();
+      for (const { file, doc } of parsed) {
+        const files = filesById.get(doc.meta.id) ?? [];
+        files.push(file);
+        filesById.set(doc.meta.id, files);
+      }
+      for (const [id, files] of filesById) {
+        if (files.length > 1) {
+          issues.push({ file: files[0], problem: `duplicate id: ${id} (${files.join(', ')})` });
+        }
+      }
+
       for (const { file, doc } of parsed) {
         if (doc.meta.parent && !ids.has(doc.meta.parent)) {
           issues.push({ file, problem: `dangling parent: ${doc.meta.parent}` });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeProgram } from '../src/program.js';
@@ -45,6 +45,21 @@ describe('doctor', () => {
     await expect(run('doctor')).rejects.toThrow(CliError);
     await expect(run('doctor')).rejects.toThrow(/invalid \.dispatch\/config\.yml/);
   });
+  it('flags duplicate ids across files', async () => {
+    await run('task', 'create', 'Only one id');
+    const tasksDir = join(root, '.dispatch/tasks');
+    const [original] = readdirSync(tasksDir).filter(f => f.endsWith('.md'));
+    const id = original.split('-').slice(0, 2).join('-');
+    const contents = readFileSync(join(tasksDir, original), 'utf8');
+    writeFileSync(join(tasksDir, `${id}-copy.md`), contents);
+    lines = [];
+    await expect(run('doctor')).rejects.toThrow(/1 issue/);
+    lines = [];
+    await expect(run('doctor', '--json')).rejects.toThrow();
+    const report = JSON.parse(lines.join('\n'));
+    expect(report.issues.map((i: { problem: string }) => i.problem).join(' ')).toMatch(/duplicate id/);
+  });
+
   it('attributes issues to the on-disk filename', async () => {
     await run('task', 'create', 'Refs ghost', '--blocked-by', 't-ghost0');
     const files = readdirSync(join(root, '.dispatch/tasks')).filter(f => f.endsWith('.md'));
