@@ -148,6 +148,7 @@ Rules:
 - All mutations (UI, CLI, MCP) go through the store API, which writes the file, bumps `updated`, then updates the cache. Concurrent external edits (user in $EDITOR, git pull) are picked up by the watcher; last-writer-wins by `updated` on frontmatter, append-union on Activity.
 - Epics are tasks with `kind: epic`; children point at them via `parent`. Progress = derived rollup of children.
 - **Ready-work query** (the agent-facing killer feature, per Beads): `status in (todo)` AND no incomplete `blocked-by` — exposed as `dispatch task next`, MCP `task_next`, and a UI lane.
+- **Status decision (Phase 1 final review, 2026-07-17):** `config.yml`'s `statuses` list is the source of truth for valid statuses; the six built-ins are defaults, not a closed set. `TaskMeta.status` is typed `string`; CLI create/status/list validate against config; `parseTaskFile` stays status-tolerant; `doctor` flags statuses not in config. `todo`/`done`/`cancelled` carry the ready/done semantics regardless of custom additions. Phase 2+ consumers (daemon, MCP) must validate against config, not the built-in union.
 - `autoCommit: false` by default: `.dispatch/` changes ride the user's normal commits. `autoCommit: true` makes the daemon commit task-file changes with `chore(dispatch): ...` messages **[assumed default: off]**.
 
 ### Runs — machine-local, never in git
