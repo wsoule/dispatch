@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { TaskStore, DISPATCH_DIR } from '@dispatch/core';
 import type { CliContext } from './context.js';
 import { registerTaskCommands } from './commands/task.js';
+import { registerDoctorCommand } from './commands/doctor.js';
 
 export function makeProgram(ctx: CliContext): Command {
   const program = new Command('dispatch')
@@ -23,6 +24,7 @@ export function makeProgram(ctx: CliContext): Command {
     });
 
   registerTaskCommands(program, ctx);
+  registerDoctorCommand(program, ctx);
 
   return program;
 }
