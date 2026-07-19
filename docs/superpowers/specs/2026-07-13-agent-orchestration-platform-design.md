@@ -70,11 +70,18 @@ other agent CLIs slot in later.
 
 ### Form factor
 
-**Chosen: localhost daemon + browser UI, distributed via `npx` [assumed — user
-was asked, AFK]**. Field consensus for OSS infra tools; zero packaging; the
-daemon doubles as API/MCP/WebSocket host; a Tauri shell or TUI can attach to the
-same API later. CLI works without the daemon for core task ops (direct file
-access), so the tracker is usable even when nothing is running.
+**Chosen: localhost daemon + browser UI first [user-confirmed 2026-07-19], with
+a Tauri 2 desktop shell as the planned follow-on once the UI is fleshed out.**
+Field consensus for OSS infra tools; zero packaging; the daemon doubles as
+API/MCP/WebSocket host. CLI works without the daemon for core task ops (direct
+file access), so the tracker is usable even when nothing is running.
+
+The web UI must stay Tauri-ready: all UI↔daemon communication goes through the
+HTTP/WS API (no server-rendered pages, no reliance on being served from the
+daemon's origin beyond a configurable base URL), so the later desktop shell is
+packaging — the same React app in an OS webview, with the daemon bundled as a
+`bun build --compile` sidecar binary (opcode / Vibe Kanban precedent). Dock
+badge, tray status, and native notifications arrive with that shell.
 
 ## 3. Architecture
 
@@ -302,21 +309,21 @@ Design (daemon as the hub — no direct agent-to-agent transport):
      blackboard. An agent blocked on a neighbor's work comments on that
      neighbor's task; the daemon notifies the addressee's live session.
   2. **Direct (ephemeral):** `agent_message(run_id, text)` — daemon-routed
-     mailboxes, delivered by injecting a user-turn message into the target
-     run's streaming-input session (the Agent SDK supports mid-run message
-     injection). Undelivered messages queue until the run's next turn;
-     messages to finished runs bounce with a pointer to the task's Activity.
+     mailboxes, delivered by injecting a user-turn message into the target run's
+     streaming-input session (the Agent SDK supports mid-run message injection).
+     Undelivered messages queue until the run's next turn; messages to finished
+     runs bounce with a pointer to the task's Activity.
 - **Conflict avoidance.** Worktree isolation already prevents file-level
   collisions; awareness + messaging handle the semantic ones (interface
   contracts, shared task files, sequencing). The ready-queue remains the only
   scheduler — agents coordinate, they do not dispatch each other (MCP
   `run_dispatch` stays deferred).
 
-Precedent: Claude Code's experimental agent teams use exactly this shape
-(shared task list + mailbox messaging). Phasing: awareness (`run_list`,
-prompt note) lands in Phase 4 with the orchestrator; messaging
-(`agent_message`, comment notifications) lands in Phase 5 alongside parallel
-epic dispatch, where it first becomes load-bearing.
+Precedent: Claude Code's experimental agent teams use exactly this shape (shared
+task list + mailbox messaging). Phasing: awareness (`run_list`, prompt note)
+lands in Phase 4 with the orchestrator; messaging (`agent_message`, comment
+notifications) lands in Phase 5 alongside parallel epic dispatch, where it first
+becomes load-bearing.
 
 ## 6. Interfaces
 
@@ -396,10 +403,11 @@ interfaces named above.
 ## 10. Open questions for the user
 
 1. Name. "Dispatch" is a placeholder.
-2. Form factor confirm: localhost web app (assumed) vs Tauri-first.
+2. ~~Form factor~~ — settled 2026-07-19: web first, Tauri 2 desktop shell after
+   the UI is fleshed out (see §2 Form factor).
 3. Default permission mode for runs: `acceptEdits` (assumed) vs
    `bypassPermissions` (VK's default posture) vs always-ask.
 4. `autoCommit` for task-file changes: off (assumed) vs on.
 5. Apache-2.0 (assumed) vs MIT.
-6. Runtime: Node+pnpm (assumed) vs Bun (backlog.md precedent; single-binary
-   compile appeal).
+6. ~~Runtime~~ — settled 2026-07-19: Bun (bun-typescript-monorepo template
+   adopted at repo root).
