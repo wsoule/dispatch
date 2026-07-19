@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeProgram } from '../src/program.js';
+
 import type { CliContext } from '../src/context.js';
+import { makeProgram } from '../src/program.js';
 
 let root: string;
 let lines: string[];
@@ -22,7 +23,7 @@ async function createTask(title: string): Promise<string> {
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
   lines = [];
-  ctx = { cwd: root, log: l => lines.push(l) };
+  ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
 });
 
@@ -35,7 +36,9 @@ describe('task show', () => {
     expect(lines.join('\n')).toContain('## Description');
   });
   it('errors on unknown id', async () => {
-    await expect(run('task', 'show', 't-nope00')).rejects.toThrow(/task not found/);
+    await expect(run('task', 'show', 't-nope00')).rejects.toThrow(
+      /task not found/
+    );
   });
 });
 
@@ -51,21 +54,33 @@ describe('task status', () => {
   });
   it('rejects unknown status', async () => {
     const id = await createTask('X');
-    await expect(run('task', 'status', id, 'shipped')).rejects.toThrow(/invalid status/);
+    await expect(run('task', 'status', id, 'shipped')).rejects.toThrow(
+      /invalid status/
+    );
   });
 });
 
 describe('task status id-prefix guard', () => {
   it('rejects a degenerate id instead of matching an arbitrary task file', async () => {
     await createTask('Innocent bystander');
-    await expect(run('task', 'status', 't', 'done')).rejects.toThrow(/task not found: t/);
+    await expect(run('task', 'status', 't', 'done')).rejects.toThrow(
+      /task not found: t/
+    );
   });
 });
 
 describe('task edit', () => {
   it('patches fields additively', async () => {
     const id = await createTask('Edit me');
-    await run('task', 'edit', id, '--priority', 'urgent', '--add-label', 'infra');
+    await run(
+      'task',
+      'edit',
+      id,
+      '--priority',
+      'urgent',
+      '--add-label',
+      'infra'
+    );
     lines = [];
     await run('task', 'show', id, '--json');
     const doc = JSON.parse(lines.join('\n'));

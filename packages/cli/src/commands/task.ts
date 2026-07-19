@@ -1,20 +1,35 @@
-import type { Command } from 'commander';
-import { TaskStore, PRIORITIES, KINDS, ASSIGNEES, readyTasks, loadConfig } from '@dispatch/core';
+import {
+  ASSIGNEES,
+  KINDS,
+  loadConfig,
+  PRIORITIES,
+  readyTasks,
+  TaskStore,
+} from '@dispatch/core';
 import type { Priority, TaskDoc, TaskKind } from '@dispatch/core';
-import { CliError, type CliContext } from '../context.js';
-import { formatTable } from '../output.js';
+import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
+
+import { type CliContext, CliError } from '../context.js';
+import { formatTable } from '../output.js';
 
 export function requireStore(ctx: CliContext): TaskStore {
   const store = new TaskStore(ctx.cwd);
-  if (!store.isInitialized()) throw new CliError('not initialized — run: dispatch init');
+  if (!store.isInitialized())
+    throw new CliError('not initialized — run: dispatch init');
   return store;
 }
 
-function validate<T extends string>(value: string | undefined, allowed: readonly T[], label: string): T | undefined {
+function validate<T extends string>(
+  value: string | undefined,
+  allowed: readonly T[],
+  label: string
+): T | undefined {
   if (value === undefined) return undefined;
   if (!(allowed as readonly string[]).includes(value)) {
-    throw new CliError(`invalid ${label}: ${value} (expected ${allowed.join('|')})`);
+    throw new CliError(
+      `invalid ${label}: ${value} (expected ${allowed.join('|')})`
+    );
   }
   return value as T;
 }
@@ -39,22 +54,39 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--label <label...>')
     .option('--blocked-by <id...>')
     .option('--json', 'print the created task as JSON')
-    .action((title: string, opts: Record<string, string | string[] | boolean | undefined>) => {
-      if (!title.trim()) throw new CliError('title must not be empty');
-      const store = requireStore(ctx);
-      const config = loadConfig(ctx.cwd);
-      const doc = store.create({
-        title,
-        kind: validate(opts.kind as string, KINDS, 'kind') as TaskKind,
-        status: validate(opts.status as string | undefined, config.statuses, 'status'),
-        description: opts.description as string | undefined,
-        parent: (opts.parent as string | undefined) ?? null,
-        priority: validate(opts.priority as string, PRIORITIES, 'priority') as Priority,
-        labels: (opts.label as string[] | undefined) ?? [],
-        blockedBy: (opts.blockedBy as string[] | undefined) ?? [],
-      });
-      ctx.log(opts.json ? JSON.stringify(doc, null, 2) : `created ${doc.meta.id}  ${doc.meta.title}`);
-    });
+    .action(
+      (
+        title: string,
+        opts: Record<string, string | string[] | boolean | undefined>
+      ) => {
+        if (title.trim() === '') throw new CliError('title must not be empty');
+        const store = requireStore(ctx);
+        const config = loadConfig(ctx.cwd);
+        const doc = store.create({
+          title,
+          kind: validate(opts.kind as string, KINDS, 'kind') as TaskKind,
+          status: validate(
+            opts.status as string | undefined,
+            config.statuses,
+            'status'
+          ),
+          description: opts.description as string | undefined,
+          parent: (opts.parent as string | undefined) ?? null,
+          priority: validate(
+            opts.priority as string,
+            PRIORITIES,
+            'priority'
+          ) as Priority,
+          labels: (opts.label as string[] | undefined) ?? [],
+          blockedBy: (opts.blockedBy as string[] | undefined) ?? [],
+        });
+        ctx.log(
+          opts.json === true
+            ? JSON.stringify(doc, null, 2)
+            : `created ${doc.meta.id}  ${doc.meta.title}`
+        );
+      }
+    );
 
   task
     .command('list')
@@ -66,11 +98,15 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       const store = requireStore(ctx);
       const config = loadConfig(ctx.cwd);
       const docs = store.list({
-        status: validate(opts.status as string | undefined, config.statuses, 'status'),
-        kind: validate(opts.kind as string | undefined, KINDS, 'kind') as TaskKind | undefined,
+        status: validate(
+          opts.status as string | undefined,
+          config.statuses,
+          'status'
+        ),
+        kind: validate(opts.kind as string | undefined, KINDS, 'kind'),
         parent: opts.parent as string | undefined,
       });
-      if (opts.json) {
+      if (opts.json === true) {
         ctx.log(JSON.stringify(docs, null, 2));
         return;
       }
@@ -84,8 +120,8 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .action((id: string, opts: { json?: boolean }) => {
       const store = requireStore(ctx);
       const doc = store.get(id);
-      if (!doc) throw new CliError(`task not found: ${id}`);
-      if (opts.json) {
+      if (doc === null) throw new CliError(`task not found: ${id}`);
+      if (opts.json === true) {
         ctx.log(JSON.stringify(doc, null, 2));
         return;
       }
@@ -100,7 +136,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       const store = requireStore(ctx);
       const config = loadConfig(ctx.cwd);
       const valid = validate(status, config.statuses, 'status')!;
-      if (!store.get(id)) throw new CliError(`task not found: ${id}`);
+      if (store.get(id) === null) throw new CliError(`task not found: ${id}`);
       store.update(id, {
         status: valid,
         appendActivity: `${new Date().toISOString()} status → ${valid}`,
@@ -117,20 +153,36 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--parent <id>')
     .option('--add-label <label...>')
     .option('--add-blocked-by <id...>')
-    .action((id: string, opts: Record<string, string | string[] | undefined>) => {
-      const store = requireStore(ctx);
-      const doc = store.get(id);
-      if (!doc) throw new CliError(`task not found: ${id}`);
-      store.update(id, {
-        title: opts.title as string | undefined,
-        priority: validate(opts.priority as string | undefined, PRIORITIES, 'priority') as Priority | undefined,
-        assignee: validate(opts.assignee as string | undefined, ASSIGNEES, 'assignee'),
-        parent: (opts.parent as string | undefined) ?? doc.meta.parent,
-        labels: opts.addLabel ? [...doc.meta.labels, ...(opts.addLabel as string[])] : undefined,
-        blockedBy: opts.addBlockedBy ? [...doc.meta.blockedBy, ...(opts.addBlockedBy as string[])] : undefined,
-      });
-      ctx.log(`updated ${id}`);
-    });
+    .action(
+      (id: string, opts: Record<string, string | string[] | undefined>) => {
+        const store = requireStore(ctx);
+        const doc = store.get(id);
+        if (doc === null) throw new CliError(`task not found: ${id}`);
+        store.update(id, {
+          title: opts.title as string | undefined,
+          priority: validate(
+            opts.priority as string | undefined,
+            PRIORITIES,
+            'priority'
+          ),
+          assignee: validate(
+            opts.assignee as string | undefined,
+            ASSIGNEES,
+            'assignee'
+          ),
+          parent: (opts.parent as string | undefined) ?? doc.meta.parent,
+          labels:
+            opts.addLabel !== undefined
+              ? [...doc.meta.labels, ...(opts.addLabel as string[])]
+              : undefined,
+          blockedBy:
+            opts.addBlockedBy !== undefined
+              ? [...doc.meta.blockedBy, ...(opts.addBlockedBy as string[])]
+              : undefined,
+        });
+        ctx.log(`updated ${id}`);
+      }
+    );
 
   task
     .command('next')
@@ -139,7 +191,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .action((opts: { json?: boolean }) => {
       const store = requireStore(ctx);
       const ready = readyTasks(store.list());
-      if (opts.json) {
+      if (opts.json === true) {
         ctx.log(JSON.stringify(ready, null, 2));
         return;
       }

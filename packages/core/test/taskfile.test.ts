@@ -1,13 +1,26 @@
-import { describe, it, expect } from 'vitest';
-import { parseTaskFile, serializeTaskFile, TaskParseError } from '../src/taskfile.js';
+import { describe, expect, it } from 'bun:test';
+
+import {
+  parseTaskFile,
+  serializeTaskFile,
+  TaskParseError,
+} from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
 
 const doc: TaskDoc = {
   meta: {
-    id: 't-3fa9c2', title: 'Fix login redirect loop', status: 'todo', kind: 'task',
-    parent: 'e-8b21d0', blockedBy: ['t-91c4aa'], labels: ['bug', 'auth'],
-    priority: 'high', assignee: 'agent',
-    created: '2026-07-13T18:04:00Z', updated: '2026-07-13T18:04:00Z', external: null,
+    id: 't-3fa9c2',
+    title: 'Fix login redirect loop',
+    status: 'todo',
+    kind: 'task',
+    parent: 'e-8b21d0',
+    blockedBy: ['t-91c4aa'],
+    labels: ['bug', 'auth'],
+    priority: 'high',
+    assignee: 'agent',
+    created: '2026-07-13T18:04:00Z',
+    updated: '2026-07-13T18:04:00Z',
+    external: null,
   },
   body: '\n## Description\n\nStuff.\n\n## Acceptance Criteria\n\n## Activity\n',
 };
@@ -24,9 +37,14 @@ describe('serializeTaskFile / parseTaskFile', () => {
   it('applies defaults for optional fields', () => {
     const text = [
       '---',
-      'id: t-aaaaaa', 'title: Minimal', 'status: todo', 'kind: task',
-      'created: 2026-07-13T00:00:00Z', 'updated: 2026-07-13T00:00:00Z',
-      '---', 'body',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      '---',
+      'body',
     ].join('\n');
     const parsed = parseTaskFile(text);
     expect(parsed.meta.blockedBy).toEqual([]);
@@ -39,18 +57,26 @@ describe('serializeTaskFile / parseTaskFile', () => {
   });
   it('throws TaskParseError on missing frontmatter or required field', () => {
     expect(() => parseTaskFile('no frontmatter')).toThrow(TaskParseError);
-    expect(() => parseTaskFile('---\ntitle: X\n---\n')).toThrow(/missing frontmatter field: id/);
+    expect(() => parseTaskFile('---\ntitle: X\n---\n')).toThrow(
+      /missing frontmatter field: id/
+    );
   });
 });
 
 describe('parseTaskFile frontmatter shape validation', () => {
-  const base = (overrides: string[]) => [
-    '---',
-    'id: t-aaaaaa', 'title: Minimal', 'status: todo', 'kind: task',
-    'created: 2026-07-13T00:00:00Z', 'updated: 2026-07-13T00:00:00Z',
-    ...overrides,
-    '---', 'body',
-  ].join('\n');
+  const base = (overrides: string[]) =>
+    [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      ...overrides,
+      '---',
+      'body',
+    ].join('\n');
 
   it('throws on invalid kind', () => {
     const text = base([]).replace('kind: task', 'kind: nonsense');
@@ -60,12 +86,16 @@ describe('parseTaskFile frontmatter shape validation', () => {
   it('throws on bare-scalar blocked-by', () => {
     const text = base(['blocked-by: t-1']);
     expect(() => parseTaskFile(text)).toThrow(TaskParseError);
-    expect(() => parseTaskFile(text)).toThrow(/invalid blocked-by: expected a list of strings/);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid blocked-by: expected a list of strings/
+    );
   });
   it('throws on non-array labels', () => {
     const text = base(['labels: bug']);
     expect(() => parseTaskFile(text)).toThrow(TaskParseError);
-    expect(() => parseTaskFile(text)).toThrow(/invalid labels: expected a list of strings/);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid labels: expected a list of strings/
+    );
   });
   it('parses unknown status fine (tolerant for custom config statuses)', () => {
     const text = base([]).replace('status: todo', 'status: someday');

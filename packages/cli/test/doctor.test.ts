@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { type CliContext, CliError } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
-import { CliError, type CliContext } from '../src/context.js';
 
 let root: string;
 let lines: string[];
@@ -16,7 +17,7 @@ async function run(...argv: string[]) {
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
   lines = [];
-  ctx = { cwd: root, log: l => lines.push(l) };
+  ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
 });
 
@@ -36,19 +37,25 @@ describe('doctor', () => {
     const report = JSON.parse(lines.join('\n'));
     expect(report.ok).toBe(false);
     expect(report.issues).toHaveLength(2);
-    expect(report.issues.map((i: { problem: string }) => i.problem).join(' ')).toMatch(/missing frontmatter/);
-    expect(report.issues.map((i: { problem: string }) => i.problem).join(' ')).toMatch(/dangling blocked-by/);
+    expect(
+      report.issues.map((i: { problem: string }) => i.problem).join(' ')
+    ).toMatch(/missing frontmatter/);
+    expect(
+      report.issues.map((i: { problem: string }) => i.problem).join(' ')
+    ).toMatch(/dangling blocked-by/);
   });
   it('reports malformed config as a clean CliError', async () => {
     await run('task', 'create', 'Fine');
     writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');
     await expect(run('doctor')).rejects.toThrow(CliError);
-    await expect(run('doctor')).rejects.toThrow(/invalid \.dispatch\/config\.yml/);
+    await expect(run('doctor')).rejects.toThrow(
+      /invalid \.dispatch\/config\.yml/
+    );
   });
   it('flags duplicate ids across files', async () => {
     await run('task', 'create', 'Only one id');
     const tasksDir = join(root, '.dispatch/tasks');
-    const [original] = readdirSync(tasksDir).filter(f => f.endsWith('.md'));
+    const [original] = readdirSync(tasksDir).filter((f) => f.endsWith('.md'));
     const id = original.split('-').slice(0, 2).join('-');
     const contents = readFileSync(join(tasksDir, original), 'utf8');
     writeFileSync(join(tasksDir, `${id}-copy.md`), contents);
@@ -57,12 +64,16 @@ describe('doctor', () => {
     lines = [];
     await expect(run('doctor', '--json')).rejects.toThrow();
     const report = JSON.parse(lines.join('\n'));
-    expect(report.issues.map((i: { problem: string }) => i.problem).join(' ')).toMatch(/duplicate id/);
+    expect(
+      report.issues.map((i: { problem: string }) => i.problem).join(' ')
+    ).toMatch(/duplicate id/);
   });
 
   it('attributes issues to the on-disk filename', async () => {
     await run('task', 'create', 'Refs ghost', '--blocked-by', 't-ghost0');
-    const files = readdirSync(join(root, '.dispatch/tasks')).filter(f => f.endsWith('.md'));
+    const files = readdirSync(join(root, '.dispatch/tasks')).filter((f) =>
+      f.endsWith('.md')
+    );
     expect(files).toHaveLength(1);
     lines = [];
     await expect(run('doctor', '--json')).rejects.toThrow();

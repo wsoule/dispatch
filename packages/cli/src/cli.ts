@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-import { TaskParseError, ConfigError } from '@dispatch/core';
-import { makeProgram } from './program.js';
-import { CliError } from './context.js';
+import { ConfigError, TaskParseError } from '@dispatch/core';
 
-const program = makeProgram({ cwd: process.cwd(), log: line => console.log(line) });
+import { CliError } from './context.js';
+import { makeProgram } from './program.js';
+
+const program = makeProgram({
+  cwd: process.cwd(),
+  log: (line) => console.log(line),
+});
 
 try {
   await program.parseAsync(process.argv.slice(2), { from: 'user' });
@@ -20,7 +24,9 @@ try {
   } else if (err instanceof ConfigError) {
     console.error(`error: ${err.message}`);
     process.exitCode = 1;
-  } else if ((err as { code?: string }).code?.startsWith('commander.')) {
+  } else if (
+    (err as { code?: string }).code?.startsWith('commander.') === true
+  ) {
     // commander already printed help/version; exitOverride throws instead of exiting
     process.exitCode = (err as { exitCode?: number }).exitCode ?? 1;
   } else {

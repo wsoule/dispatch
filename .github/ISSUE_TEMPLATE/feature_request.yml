@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a new or updated feature.
+title: 'Feature: '
+labels: [enhancement]
+body:
+  - type: checkboxes
+    attributes:
+      label: Prerequisites
+      description: Please confirm the following before submitting.
+      options:
+        - label: I have searched for duplicate or closed feature requests
+          required: true
+        - label: I have read the contributing guidelines
+          required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description:
+        Describe the feature you'd like to see, including relevant use cases,
+        screenshots, or examples.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation and context
+      description:
+        Tell us why this change is needed or helpful, and what problems it may
+        help solve.
+    validations:
+      required: true

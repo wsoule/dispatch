@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeProgram } from '../src/program.js';
+
 import type { CliContext } from '../src/context.js';
+import { makeProgram } from '../src/program.js';
 
 let root: string;
 let lines: string[];
@@ -12,7 +13,7 @@ let ctx: CliContext;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
   lines = [];
-  ctx = { cwd: root, log: l => lines.push(l) };
+  ctx = { cwd: root, log: (l) => lines.push(l) };
 });
 
 describe('dispatch init', () => {
