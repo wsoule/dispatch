@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeProgram } from '../src/program.js';
+
 import type { CliContext } from '../src/context.js';
+import { makeProgram } from '../src/program.js';
 
 let root: string;
 let lines: string[];
@@ -22,7 +23,7 @@ async function createTask(...args: string[]): Promise<string> {
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
   lines = [];
-  ctx = { cwd: root, log: l => lines.push(l) };
+  ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
 });
 
@@ -45,7 +46,9 @@ describe('task next', () => {
     await run('task', 'status', blocker, 'done');
     lines = [];
     await run('task', 'next', '--json');
-    const titles = JSON.parse(lines.join('\n')).map((d: { meta: { title: string } }) => d.meta.title);
+    const titles = JSON.parse(lines.join('\n')).map(
+      (d: { meta: { title: string } }) => d.meta.title
+    );
     expect(titles).toContain('Blocked');
   });
 });

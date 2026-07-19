@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeProgram } from '../src/program.js';
+
 import type { CliContext } from '../src/context.js';
+import { makeProgram } from '../src/program.js';
 
 let root: string;
 let lines: string[];
@@ -16,7 +17,7 @@ async function run(...argv: string[]) {
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
   lines = [];
-  ctx = { cwd: root, log: l => lines.push(l) };
+  ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
   lines = [];
 });
@@ -29,17 +30,26 @@ describe('task create', () => {
     expect(doc.meta.priority).toBe('high');
   });
   it('fails outside an initialized repo', async () => {
-    ctx = { cwd: mkdtempSync(join(tmpdir(), 'other-')), log: l => lines.push(l) };
+    ctx = {
+      cwd: mkdtempSync(join(tmpdir(), 'other-')),
+      log: (l) => lines.push(l),
+    };
     await expect(run('task', 'create', 'X')).rejects.toThrow(/not initialized/);
   });
   it('rejects invalid priority', async () => {
-    await expect(run('task', 'create', 'X', '--priority', 'huge')).rejects.toThrow(/invalid priority/);
+    await expect(
+      run('task', 'create', 'X', '--priority', 'huge')
+    ).rejects.toThrow(/invalid priority/);
   });
   it('rejects an empty title', async () => {
-    await expect(run('task', 'create', '')).rejects.toThrow(/title must not be empty/);
+    await expect(run('task', 'create', '')).rejects.toThrow(
+      /title must not be empty/
+    );
   });
   it('rejects a whitespace-only title', async () => {
-    await expect(run('task', 'create', '   ')).rejects.toThrow(/title must not be empty/);
+    await expect(run('task', 'create', '   ')).rejects.toThrow(
+      /title must not be empty/
+    );
   });
 });
 

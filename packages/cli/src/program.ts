@@ -1,10 +1,11 @@
+import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { TaskStore, DISPATCH_DIR } from '@dispatch/core';
-import type { CliContext } from './context.js';
-import { registerTaskCommands } from './commands/task.js';
+
 import { registerDoctorCommand } from './commands/doctor.js';
+import { registerTaskCommands } from './commands/task.js';
+import type { CliContext } from './context.js';
 
 export function makeProgram(ctx: CliContext): Command {
   const program = new Command('dispatch')
@@ -20,7 +21,9 @@ export function makeProgram(ctx: CliContext): Command {
         return;
       }
       TaskStore.init(ctx.cwd);
-      ctx.log(`Initialized ${DISPATCH_DIR}/ — create your first task with: dispatch task create "<title>"`);
+      ctx.log(
+        `Initialized ${DISPATCH_DIR}/ — create your first task with: dispatch task create "<title>"`
+      );
     });
 
   registerTaskCommands(program, ctx);

@@ -1,13 +1,23 @@
-import { describe, it, expect } from 'vitest';
-import { readyTasks, isDone } from '../src/graph.js';
+import { describe, expect, it } from 'bun:test';
+
+import { isDone, readyTasks } from '../src/graph.js';
 import type { TaskDoc, TaskMeta } from '../src/types.js';
 
 function make(partial: Partial<TaskMeta>): TaskDoc {
   return {
     meta: {
-      id: 't-000000', title: 'x', status: 'todo', kind: 'task', parent: null,
-      blockedBy: [], labels: [], priority: 'none', assignee: 'none',
-      created: '2026-01-01T00:00:00Z', updated: '2026-01-01T00:00:00Z', external: null,
+      id: 't-000000',
+      title: 'x',
+      status: 'todo',
+      kind: 'task',
+      parent: null,
+      blockedBy: [],
+      labels: [],
+      priority: 'none',
+      assignee: 'none',
+      created: '2026-01-01T00:00:00Z',
+      updated: '2026-01-01T00:00:00Z',
+      external: null,
       ...partial,
     },
     body: '',
@@ -20,7 +30,7 @@ describe('readyTasks', () => {
     const open = make({ id: 't-o00000', status: 'in-progress' });
     const ready = make({ id: 't-r00000', blockedBy: ['t-d00000'] });
     const blocked = make({ id: 't-b00000', blockedBy: ['t-o00000'] });
-    const ids = readyTasks([done, open, ready, blocked]).map(t => t.meta.id);
+    const ids = readyTasks([done, open, ready, blocked]).map((t) => t.meta.id);
     expect(ids).toContain('t-r00000');
     expect(ids).not.toContain('t-b00000');
     expect(ids).not.toContain('t-o00000'); // not todo
@@ -35,25 +45,51 @@ describe('readyTasks', () => {
     expect(readyTasks([t])).toHaveLength(1);
   });
   it('sorts by priority then created', () => {
-    const low = make({ id: 't-400000', priority: 'low', created: '2026-01-01T00:00:00Z' });
-    const urgent = make({ id: 't-500000', priority: 'urgent', created: '2026-01-02T00:00:00Z' });
+    const low = make({
+      id: 't-400000',
+      priority: 'low',
+      created: '2026-01-01T00:00:00Z',
+    });
+    const urgent = make({
+      id: 't-500000',
+      priority: 'urgent',
+      created: '2026-01-02T00:00:00Z',
+    });
     expect(readyTasks([low, urgent])[0].meta.id).toBe('t-500000');
   });
   it('breaks priority ties by created ascending', () => {
-    const newer = make({ id: 't-600000', priority: 'high', created: '2026-01-02T00:00:00Z' });
-    const older = make({ id: 't-700000', priority: 'high', created: '2026-01-01T00:00:00Z' });
-    expect(readyTasks([newer, older]).map(t => t.meta.id)).toEqual(['t-700000', 't-600000']);
+    const newer = make({
+      id: 't-600000',
+      priority: 'high',
+      created: '2026-01-02T00:00:00Z',
+    });
+    const older = make({
+      id: 't-700000',
+      priority: 'high',
+      created: '2026-01-01T00:00:00Z',
+    });
+    expect(readyTasks([newer, older]).map((t) => t.meta.id)).toEqual([
+      't-700000',
+      't-600000',
+    ]);
   });
   it('requires every blocker done', () => {
     const done = make({ id: 't-d10000', status: 'done' });
     const inProgress = make({ id: 't-p10000', status: 'in-progress' });
     const cancelled = make({ id: 't-c10000', status: 'cancelled' });
 
-    const notReady = make({ id: 't-n10000', blockedBy: ['t-d10000', 't-p10000'] });
-    expect(readyTasks([done, inProgress, notReady]).map(t => t.meta.id)).not.toContain('t-n10000');
+    const notReady = make({
+      id: 't-n10000',
+      blockedBy: ['t-d10000', 't-p10000'],
+    });
+    expect(
+      readyTasks([done, inProgress, notReady]).map((t) => t.meta.id)
+    ).not.toContain('t-n10000');
 
     const ready = make({ id: 't-y10000', blockedBy: ['t-d10000', 't-c10000'] });
-    expect(readyTasks([done, cancelled, ready]).map(t => t.meta.id)).toContain('t-y10000');
+    expect(
+      readyTasks([done, cancelled, ready]).map((t) => t.meta.id)
+    ).toContain('t-y10000');
   });
 });
 

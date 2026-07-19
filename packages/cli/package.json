@@ -1,21 +1,24 @@
 {
   "name": "@dispatch/cli",
   "version": "0.0.1",
-  "type": "module",
+  "private": true,
   "license": "Apache-2.0",
-  "bin": { "dispatch": "./dist/cli.js" },
+  "bin": {
+    "dispatch": "./dist/cli.js"
+  },
+  "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
-    "test": "vitest run"
+    "build": "tsdown --clean",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
     "@dispatch/core": "workspace:*",
-    "commander": "^13.0.0"
+    "commander": "catalog:"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "vitest": "^3.0.0",
-    "@types/node": "^22.0.0",
-    "execa": "^9.0.0"
+    "@types/bun": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
   }
 }

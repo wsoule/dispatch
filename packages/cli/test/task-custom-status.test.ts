@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeProgram } from '../src/program.js';
+
 import type { CliContext } from '../src/context.js';
+import { makeProgram } from '../src/program.js';
 
 let root: string;
 let lines: string[];
@@ -16,11 +17,11 @@ async function run(...argv: string[]) {
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
   lines = [];
-  ctx = { cwd: root, log: l => lines.push(l) };
+  ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
   writeFileSync(
     join(root, '.dispatch/config.yml'),
-    'statuses: [backlog, todo, in-progress, in-review, done, cancelled, deployed]\nautoCommit: false\n',
+    'statuses: [backlog, todo, in-progress, in-review, done, cancelled, deployed]\nautoCommit: false\n'
   );
   lines = [];
 });
@@ -55,6 +56,8 @@ describe('config-driven statuses', () => {
     lines = [];
     await run('task', 'create', 'Ship it', '--json');
     const id = JSON.parse(lines.join('\n')).meta.id as string;
-    await expect(run('task', 'status', id, 'shipped')).rejects.toThrow(/invalid status/);
+    await expect(run('task', 'status', id, 'shipped')).rejects.toThrow(
+      /invalid status/
+    );
   });
 });
