@@ -46,6 +46,20 @@
         "typescript": "catalog:",
       },
     },
+    "packages/server": {
+      "name": "@dispatch/server",
+      "version": "0.0.1",
+      "bin": {
+        "dispatchd": "./src/bin.ts",
+      },
+      "dependencies": {
+        "@dispatch/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
   },
   "overrides": {
     "typescript": "catalog:",
@@ -94,6 +108,8 @@
     "@dispatch/cli": ["@dispatch/cli@workspace:packages/cli"],
 
     "@dispatch/core": ["@dispatch/core@workspace:packages/core"],
+
+    "@dispatch/server": ["@dispatch/server@workspace:packages/server"],
 
     "@dual-bundle/import-meta-resolve": ["@dual-bundle/import-meta-resolve@4.2.1", "", {}, "sha512-id+7YRUgoUX6CgV0DtuhirQWodeeA7Lf4i2x71JS/vtA5pRb/hIGWlw+G6MeXvsM+MXrz0VAydTGElX1rAfgPg=="],
 
