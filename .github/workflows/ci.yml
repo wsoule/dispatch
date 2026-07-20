@@ -26,14 +26,19 @@ jobs:
       - name: Stylelint
         run: bun run lint:css
 
+      # `tsc` (tsgo) resolves workspace packages through each package.json's
+      # `exports` field, which points at `dist/*`. That output only exists
+      # after a build, so Build must run before TypeScript here or every
+      # cross-package import (e.g. @dispatch/cli importing @dispatch/core)
+      # fails with "Cannot find module".
+      - name: Build
+        run: bun run build
+
       - name: TypeScript
         run: bun run tsc
 
       - name: Tests
         run: bun run test
-
-      - name: Build
-        run: bun run build
 
   actions-pinned:
     name: Actions pinned to SHA
