@@ -1,12 +1,18 @@
 {
-  "name": "@dispatch/cli",
+  "name": "@dispatch/mcp",
   "version": "0.0.1",
   "private": true,
   "license": "Apache-2.0",
   "bin": {
-    "dispatch": "./dist/cli.js"
+    "dispatch-mcp": "./dist/bin.js"
   },
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsdown --clean",
     "test": "bun test",
@@ -14,9 +20,8 @@
   },
   "dependencies": {
     "@dispatch/core": "workspace:*",
-    "@dispatch/mcp": "workspace:*",
-    "@dispatch/server": "workspace:*",
-    "commander": "catalog:"
+    "@modelcontextprotocol/sdk": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

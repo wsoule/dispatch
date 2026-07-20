@@ -9,6 +9,9 @@
       "path": "packages/cli/tsconfig.json"
     },
     {
+      "path": "packages/mcp/tsconfig.json"
+    },
+    {
       "path": "packages/server/tsconfig.json"
     },
     {
