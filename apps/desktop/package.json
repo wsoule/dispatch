@@ -13,6 +13,7 @@
     "tsc": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@dispatch/client": "workspace:*",
     "@fontsource/ibm-plex-mono": "catalog:",
     "@fontsource/inter": "catalog:",
     "@tanstack/react-query": "catalog:",
@@ -21,6 +22,7 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@dispatch/core": "workspace:*",
     "@tauri-apps/cli": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",

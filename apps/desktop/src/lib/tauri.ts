@@ -144,3 +144,19 @@ export function renameColumn(columnId: string, name: string): Promise<void> {
 export function launchOrAttachSession(cardId: string): Promise<string> {
   return invoke('launch_or_attach_session', { cardId });
 }
+
+/** True if `root` (a project's absolute path) has a `.dispatch/` directory — gates whether
+ * `ProjectDetail` offers a Tasks tab at all. Pure filesystem check on the backend, no daemon
+ * involved. */
+export function hasDispatch(root: string): Promise<boolean> {
+  return invoke('has_dispatch', { root });
+}
+
+/** Ensures a `dispatchd` sidecar is running for `root` and resolves to its port — reuses an
+ * already-healthy daemon if one exists, otherwise spawns one (`bun packages/server/src/bin.ts
+ * --root <root>`, dev-only wiring) and waits up to 5s for it to come up. See
+ * `sidecar::ensure_dispatchd` on the backend. Rejects if `bun` isn't on `PATH` or the daemon
+ * never becomes healthy in time. */
+export function ensureDispatchd(root: string): Promise<number> {
+  return invoke('ensure_dispatchd', { root });
+}

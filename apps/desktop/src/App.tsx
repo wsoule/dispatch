@@ -7,6 +7,7 @@ import { DashboardView } from './views/DashboardView';
 import { ProjectsView } from './views/ProjectsView';
 import { ReportView } from './views/ReportView';
 import { SessionsView } from './views/SessionsView';
+import { TasksView } from './views/TasksView';
 import { TimelineView } from './views/TimelineView';
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
       <main className="app-main">
         {activeView === 'dashboard' && <DashboardView />}
         {activeView === 'projects' && <ProjectsView />}
+        {activeView === 'tasks' && <TasksView />}
         {activeView === 'sessions' && <SessionsView />}
         {activeView === 'timeline' && <TimelineView />}
         {activeView === 'report' && <ReportView />}

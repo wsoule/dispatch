@@ -1,0 +1,19 @@
+.tasks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.tasks-panel-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tasks-panel-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--text-muted);
+}

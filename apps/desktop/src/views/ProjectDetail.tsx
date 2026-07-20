@@ -2,10 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 
 import { ProjectBoard } from '../components/board/ProjectBoard';
+import { TasksPanel } from '../components/tasks/TasksPanel';
 import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { StatTile } from '../components/ui/StatTile';
 import { formatRelativeTime } from '../lib/format';
-import { getProjectGitInsights, listSessions } from '../lib/tauri';
+import { getProjectGitInsights, hasDispatch, listSessions } from '../lib/tauri';
 import type { ProjectSummary } from '../lib/types';
 import { SessionDetailModal } from './SessionDetailModal';
 import { SessionRow } from './SessionRow';
@@ -13,28 +14,49 @@ import './ProjectDetail.css';
 
 interface ProjectDetailProps {
   project: ProjectSummary;
+  /** Which tab opens first — defaults to 'overview'. TasksView jumps straight to 'tasks'
+   * when it opens a dispatch-enabled project from the global Tasks nav item. */
+  initialTab?: ProjectTab;
 }
 
-type ProjectTab = 'overview' | 'board' | 'sessions';
+type ProjectTab = 'overview' | 'board' | 'sessions' | 'tasks';
 
-const TABS: { id: ProjectTab; label: string }[] = [
+const BASE_TABS: { id: ProjectTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'board', label: 'Board' },
   { id: 'sessions', label: 'Sessions' },
 ];
 
 /**
- * Full-page detail shown in `ProjectsView` once a project card is clicked. Three tabs
- * (Overview / Board / Sessions) behind a top tab bar rather than one long scrolling
- * column — the Kanban board in particular wants its own uncluttered page. Reuses
- * `SessionRow` (shared with `SessionsView`) rather than re-implementing row rendering
- * here, and `ProjectBoard` (shared with the old standalone Board page) for the Kanban tab.
+ * Full-page detail shown in `ProjectsView` once a project card is clicked. Tabs (Overview /
+ * Board / Sessions, plus Tasks when the project has a `.dispatch/` tracker) behind a top tab
+ * bar rather than one long scrolling column — the Kanban board in particular wants its own
+ * uncluttered page. Reuses `SessionRow` (shared with `SessionsView`) rather than
+ * re-implementing row rendering here, `ProjectBoard` (shared with the old standalone Board
+ * page) for the Kanban tab, and `TasksPanel` (Phase 2R Slice R2) for the dispatchd-backed
+ * Tasks tab.
  */
-export function ProjectDetail({ project }: ProjectDetailProps) {
-  const [activeTab, setActiveTab] = useState<ProjectTab>('overview');
+export function ProjectDetail({
+  project,
+  initialTab = 'overview',
+}: ProjectDetailProps) {
+  const [activeTab, setActiveTab] = useState<ProjectTab>(initialTab);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
+
+  // Gates the Tasks tab: only dispatch-enabled projects (those with a `.dispatch/`
+  // directory) get one. `retry: false` — a failure here (e.g. the path no longer exists)
+  // should just leave the tab hidden, not retry noisily.
+  const { data: dispatchEnabled } = useQuery({
+    queryKey: ['has-dispatch', project.path],
+    queryFn: () => hasDispatch(project.path),
+    retry: false,
+  });
+
+  const tabs = dispatchEnabled
+    ? [...BASE_TABS, { id: 'tasks' as const, label: 'Tasks' }]
+    : BASE_TABS;
 
   const {
     data: sessions,
@@ -62,7 +84,7 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
       </div>
 
       <div className="project-detail-tabs">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             className={`project-detail-tab${activeTab === tab.id ? ' project-detail-tab-active' : ''}`}
@@ -122,6 +144,12 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
       {activeTab === 'board' && (
         <div className="project-detail-board">
           <ProjectBoard projectId={project.id} />
+        </div>
+      )}
+
+      {activeTab === 'tasks' && dispatchEnabled && (
+        <div className="project-detail-tasks">
+          <TasksPanel projectPath={project.path} />
         </div>
       )}
 

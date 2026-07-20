@@ -3,6 +3,7 @@ import './Sidebar.css';
 export type View =
   | 'dashboard'
   | 'projects'
+  | 'tasks'
   | 'sessions'
   | 'timeline'
   | 'report'
@@ -17,6 +18,10 @@ const NAV_ITEMS: {
 }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
   { id: 'projects', label: 'Projects', icon: '⊞' },
+  // Only lists projects with a .dispatch/ tracker (see TasksView) — the
+  // work plane's global entry point, alongside Relay's own observability
+  // views above.
+  { id: 'tasks', label: 'Tasks', icon: '☑' },
   { id: 'sessions', label: 'Sessions', icon: '◷' },
   { id: 'timeline', label: 'Timeline', icon: '⋮' },
   { id: 'report', label: 'Reports', icon: '▥' },
