@@ -19,9 +19,10 @@ import { requireStore } from './task.js';
 // Bun.serve), so the CLI can't import it directly — this is a small
 // standalone copy of just the pieces `dispatch ui` needs to find a daemon
 // someone else already started. Keep this block in sync with daemonfile.ts
-// (and apps/desktop/src-tauri/src/sidecar.rs's `daemon_home`, a third copy
-// of the same scheme) if it ever changes; test/daemon-cmd.test.ts
-// cross-checks the hash against a fixture so drift fails loudly.
+// (and apps/desktop/src-tauri/src/sidecar.rs's `daemon_home` and
+// packages/mcp/src/daemon.ts's reader — a third and fourth copy of the same
+// scheme) if it ever changes; test/daemon-cmd.test.ts cross-checks the hash
+// against a fixture so drift fails loudly.
 // ---------------------------------------------------------------------------
 
 interface DaemonFileInfo {

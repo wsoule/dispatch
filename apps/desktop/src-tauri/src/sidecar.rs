@@ -74,9 +74,10 @@ fn daemon_file_path_under(home: &Path, root_dir: &str) -> PathBuf {
 /// from the real home directory — same override `daemonfile.ts` honors, so
 /// setting it affects both the Bun daemon and this Rust client looking for
 /// it. An empty string is treated the same as unset (falls back to the real
-/// home directory) — kept in sync with `packages/server/src/daemonfile.ts`
-/// and `packages/cli/src/commands/daemon.ts`'s identical `daemonHome()`;
-/// update all three together if this scheme ever changes.
+/// home directory) — kept in sync with `packages/server/src/daemonfile.ts`,
+/// `packages/cli/src/commands/daemon.ts`, and `packages/mcp/src/daemon.ts`'s
+/// identical `daemonHome()`; update all four together if this scheme ever
+/// changes.
 fn daemon_home() -> PathBuf {
     match std::env::var("DISPATCH_HOME") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
