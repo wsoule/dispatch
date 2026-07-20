@@ -1,9 +1,11 @@
 use crate::activity;
 use crate::db::{queries, Db};
 use crate::parser;
+use crate::sidecar;
 use crate::terminal;
 use chrono::{Duration, NaiveDate, Utc};
 use serde::Serialize;
+use std::path::Path;
 use std::process::Command;
 use tauri::{Emitter, State};
 
@@ -651,6 +653,36 @@ pub fn launch_or_attach_session(db: State<'_, Db>, card_id: String) -> Result<St
 
     terminal::attach_or_launch(&context.project_path, resume_id.as_deref(), &prompt)
         .map_err(|e| e.to_string())
+}
+
+// --- Dispatch task sidecar (Phase 2R, Slice R2) ---
+
+/// Ensures a `dispatchd` daemon is running for `root` (a project's absolute
+/// path) and returns its port, spawning one if needed — see `sidecar`'s
+/// module doc comment for the fast-path/spawn/poll behavior this delegates
+/// to. `root` here is a project path, not the monorepo root; `manifest_dir`
+/// (this crate's own `CARGO_MANIFEST_DIR`, baked in at compile time) is what
+/// dev-only bin resolution walks up from to find `packages/server/src/bin.ts`.
+#[tauri::command]
+pub async fn ensure_dispatchd(
+    children: State<'_, sidecar::DispatchdChildren>,
+    root: String,
+) -> Result<u16, String> {
+    sidecar::ensure_dispatchd(
+        &sidecar::BunSpawner,
+        &children.0,
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        &root,
+    )
+    .await
+}
+
+/// True if `root` has a `.dispatch/` directory — gates whether
+/// `ProjectDetail` offers a Tasks tab at all, before ever calling
+/// `ensure_dispatchd`.
+#[tauri::command]
+pub fn has_dispatch(root: String) -> bool {
+    sidecar::has_dispatch(&root)
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@ mod commands;
 mod cost;
 mod db;
 mod parser;
+mod sidecar;
 mod summarize;
 mod tags;
 mod terminal;
@@ -50,6 +51,7 @@ pub fn run() {
       app.manage(summarize::InFlight(Mutex::new(std::collections::HashSet::new())));
       app.manage(summarize::HttpClient(reqwest::Client::new()));
       app.manage(activity::ActivityCache::new());
+      app.manage(sidecar::DispatchdChildren::new());
 
       watcher::start(app.handle().clone());
       spawn_idle_sweep(app.handle().clone());
@@ -79,9 +81,22 @@ pub fn run() {
       commands::rename_column,
       commands::launch_or_attach_session,
       commands::open_url,
+      commands::ensure_dispatchd,
+      commands::has_dispatch,
     ])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    .run(|app_handle, event| {
+      // A spawned dispatchd has no parent-death signal of its own — without this it
+      // would keep running as an orphan after the app window closes. `kill_all` is
+      // idempotent (it drains its list), so handling both events here is harmless.
+      if matches!(
+        event,
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+      ) {
+        app_handle.state::<sidecar::DispatchdChildren>().kill_all();
+      }
+    });
 }
 
 /// Recomputes cost_usd for every session from its currently-stored token totals against the

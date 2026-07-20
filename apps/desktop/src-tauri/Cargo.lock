@@ -749,6 +749,7 @@ dependencies = [
  "rusqlite_migration",
  "serde",
  "serde_json",
+ "sha2",
  "similar",
  "tauri",
  "tauri-build",
