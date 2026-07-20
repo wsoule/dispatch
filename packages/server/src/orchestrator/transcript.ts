@@ -77,7 +77,15 @@ export class Transcript {
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
-    appendFileSync(this.path, `${JSON.stringify(line)}\n`);
+    // A crash mid-append can leave the file without a trailing newline;
+    // appending straight after would fuse this state line onto the truncated
+    // one, making BOTH unparsable. Start on a fresh line if needed.
+    let prefix = '';
+    if (existsSync(this.path)) {
+      const current = readFileSync(this.path, 'utf8');
+      if (current.length > 0 && !current.endsWith('\n')) prefix = '\n';
+    }
+    appendFileSync(this.path, `${prefix}${JSON.stringify(line)}\n`);
   }
 
   // Tolerant read: a transcript can be left with a truncated final line by a

@@ -98,6 +98,29 @@ describe('Transcript', () => {
       entry: { ts: 't1', kind: 'assistant', text: 'hi' },
     });
   });
+
+  // New-3: a truncated final line has no trailing newline; appendState must
+  // start on a fresh line so the state marker itself stays parsable instead
+  // of fusing onto the fragment (which made boot re-mark the run every time).
+  it('appends a state line cleanly after a truncated line with no trailing newline', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000005.jsonl');
+    const transcript = new Transcript(path);
+    transcript.writeHeader(makeMeta({ id: 'r-000005' }));
+    // Crash artifact: truncated fragment WITHOUT a trailing newline.
+    appendFileSync(path, '{"type":"entry","entry":{"ts":"t2","kind":');
+
+    transcript.appendState('failed', 't3', { error: 'interrupted' });
+
+    const lines = transcript.read();
+    const last = lines[lines.length - 1];
+    expect(last).toEqual({
+      type: 'state',
+      state: 'failed',
+      ts: 't3',
+      error: 'interrupted',
+    });
+  });
 });
 
 describe('replayTranscript', () => {

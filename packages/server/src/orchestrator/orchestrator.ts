@@ -364,6 +364,15 @@ export class Orchestrator {
         'main checkout has uncommitted changes'
       );
     }
+    // Staged changes anywhere — including `.dispatch/` paths the gate above
+    // deliberately admits — would be swept into the squash commit, because
+    // `git commit` commits the whole index. Refuse instead of committing
+    // work the user staged for something else.
+    if (this.worktrees.hasStagedChanges()) {
+      throw new OrchestratorConflictError(
+        'main checkout index has staged changes — commit or unstage them first'
+      );
+    }
     // C4: refuse outright if the main checkout isn't actually sitting on
     // the branch this run was based on — merging here would land the run's
     // changes on whatever branch the user happens to have checked out,

@@ -271,6 +271,34 @@ describe('Orchestrator.review merge', () => {
     );
     expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
   });
+
+  // Residual of Important #5 (fix-wave verification New-1): `git commit`
+  // inside mergeSquash commits the whole index, so anything the user STAGED
+  // before merging — including `.dispatch/` paths the dirty gate admits —
+  // would silently ride into the squash commit. The merge must refuse.
+  it('refuses when the main checkout index has staged changes, even under .dispatch/', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Staged index' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    writeFileSync(join(repo, '.dispatch', 'config.yml'), 'autoCommit: true\n');
+    runGitSync(repo, ['add', '.dispatch/config.yml']);
+
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
+      /staged changes/
+    );
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    // The staged edit is still staged, untouched by the refused merge.
+    const staged = runGitSync(repo, ['diff', '--cached', '--name-only']);
+    expect(staged.trim()).toBe('.dispatch/config.yml');
+  });
 });
 
 // C1/C4: the merge path's new ordering — verify the checkout is actually on
@@ -359,9 +387,9 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     runGitSync(repo, ['add', '-A']);
     runGitSync(repo, ['commit', '-m', 'human edits shared.txt']);
 
-    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
-      OrchestratorConflictError
-    );
+    // New-2: git reports content conflicts on stdout, so the 409's message
+    // must actually name the conflicting file, not trail off empty.
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(/shared\.txt/);
 
     // Task status must not have moved to done for a merge that never
     // actually happened.

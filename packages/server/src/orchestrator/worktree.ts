@@ -152,10 +152,28 @@ export class WorktreeManager {
   // commits the result with `message` — runs entirely in the main checkout,
   // never the worktree. Callers must have already checked `isMainDirty()`
   // is false; this method does not re-check it.
+  // True when the main checkout's index has staged changes. `git commit`
+  // inside mergeSquash commits the whole index, so anything the user staged
+  // before a merge would silently ride into the squash commit — the merge
+  // action refuses instead.
+  hasStagedChanges(): boolean {
+    const staged = runGit(this.mainRepoDir, [
+      'diff',
+      '--cached',
+      '--name-only',
+    ]);
+    return staged.stdout.trim().length > 0;
+  }
+
   mergeSquash(branch: string, message: string): void {
     const merge = runGit(this.mainRepoDir, ['merge', '--squash', branch]);
     if (!merge.ok) {
-      throw new Error(`git merge --squash failed: ${merge.stderr.trim()}`);
+      // git reports content conflicts on stdout, not stderr — include both
+      // so the 409 names the conflicting files.
+      const reason = [merge.stdout.trim(), merge.stderr.trim()]
+        .filter((s) => s.length > 0)
+        .join(' | ');
+      throw new Error(`git merge --squash failed: ${reason}`);
     }
     const commit = runGit(this.mainRepoDir, ['commit', '-m', message]);
     if (!commit.ok) {
