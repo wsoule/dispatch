@@ -9,7 +9,13 @@ export {
   appendActivity,
 } from './taskfile.js';
 export { TaskStore, DISPATCH_DIR } from './store.js';
-export type { CreateInput, UpdatePatch, ListFilter } from './store.js';
+export type {
+  CreateInput,
+  UpdatePatch,
+  ListFilter,
+  ListSafeError,
+  ListSafeResult,
+} from './store.js';
 export { readyTasks, isDone, PRIORITY_ORDER } from './graph.js';
 export { loadConfig, ConfigError } from './config.js';
 export type { DispatchConfig } from './config.js';

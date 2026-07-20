@@ -42,6 +42,11 @@ describe('GET /api/health', () => {
     expect(body.ok).toBe(true);
     expect(typeof body.version).toBe('string');
   });
+
+  it('reports an empty problems list when every task file is clean', async () => {
+    const body = await json(await fetch(`${baseUrl}/api/health`));
+    expect(body.problems).toEqual([]);
+  });
 });
 
 describe('GET /api/config', () => {

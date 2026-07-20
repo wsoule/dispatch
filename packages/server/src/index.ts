@@ -40,6 +40,30 @@ const packageJson = JSON.parse(
 
 const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
 
+// Rebuilds `cache` from `store`, and never lets a rebuild kill the daemon:
+// per-file parse failures are logged once each (they're also surfaced via
+// `cache.problems()` at `GET /api/health`), and if the rebuild throws outright
+// — e.g. the tasks directory itself is unreadable for a moment — that's
+// logged too and the previous (last-good) cache contents are simply left in
+// place, since `TaskCache.rebuild` only mutates its table after a successful
+// scan. This runs both at boot and on every watcher-triggered change, which
+// is exactly where the reviewer reproduced a crash: a bad file must degrade
+// service, not end the process.
+function safeRebuild(store: TaskStore, cache: TaskCache): void {
+  try {
+    const errors = cache.rebuild(store);
+    for (const err of errors) {
+      console.error(
+        `dispatchd: skipping unparsable task file ${err.file}: ${err.message}`
+      );
+    }
+  } catch (err) {
+    console.error(
+      `dispatchd: cache rebuild failed, keeping last-good cache: ${(err as Error).message}`
+    );
+  }
+}
+
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -91,7 +115,7 @@ export async function startServer(
 
   const store = new TaskStore(rootDir);
   const cache = new TaskCache();
-  cache.rebuild(store);
+  safeRebuild(store, cache);
   const events = new EventBus();
 
   // Rebuild + broadcast on any on-disk change, regardless of who made it.
@@ -102,7 +126,7 @@ export async function startServer(
   // `task.changed` as "go refetch" with no payload, so a duplicate refetch is
   // harmless, and the plan calls this out as the deliberately simple option.
   const watcher = watchTasks(store.tasksDir, () => {
-    cache.rebuild(store);
+    safeRebuild(store, cache);
     events.broadcast({ type: 'task.changed' });
   });
 

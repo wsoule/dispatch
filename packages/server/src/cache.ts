@@ -1,5 +1,5 @@
 import { readyTasks } from '@dispatch/core';
-import type { TaskDoc, TaskStore } from '@dispatch/core';
+import type { ListSafeError, TaskDoc, TaskStore } from '@dispatch/core';
 import { Database } from 'bun:sqlite';
 
 // Loose query shape (plain strings, not core's TaskKind/Priority unions) since
@@ -26,6 +26,11 @@ interface TaskRow {
  */
 export class TaskCache {
   private readonly db: Database;
+  // Parse failures from the most recent rebuild (empty when every task file
+  // parsed cleanly). Kept around so `problems()` can surface them at
+  // `GET /api/health` without the caller having to thread the result of
+  // `rebuild()` through separately.
+  private lastErrors: ListSafeError[] = [];
 
   constructor() {
     this.db = new Database(':memory:');
@@ -49,13 +54,22 @@ export class TaskCache {
   // full rescan on every change is O(task count); acceptable at v1 scale — an
   // on-disk cache with incremental updates is a later optimization (see the
   // phase-2 plan's "Deviations from spec" note).
-  rebuild(store: TaskStore): void {
+  //
+  // Uses `listSafe()` rather than `list()` so one corrupt task file never
+  // takes down the whole rebuild: the good docs still populate the cache and
+  // the bad ones come back as `errors` for the caller to log/surface (see
+  // `problems()`). The scan happens before the `DELETE FROM tasks` below, so
+  // if something more fundamental blows up (e.g. the tasks directory itself
+  // vanishes mid-scan), the previous cache contents are left untouched
+  // instead of being wiped and left empty.
+  rebuild(store: TaskStore): ListSafeError[] {
+    const { docs, errors } = store.listSafe();
     this.db.run('DELETE FROM tasks');
     const insert = this.db.prepare(
       `INSERT INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, json)
        VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $json)`
     );
-    for (const doc of store.list()) {
+    for (const doc of docs) {
       insert.run({
         $id: doc.meta.id,
         $title: doc.meta.title,
@@ -69,6 +83,14 @@ export class TaskCache {
         $json: JSON.stringify(doc),
       });
     }
+    this.lastErrors = errors;
+    return errors;
+  }
+
+  // Human-readable form of the most recent rebuild's parse failures, for
+  // `GET /api/health`'s `problems` field — empty when the task set is clean.
+  problems(): string[] {
+    return this.lastErrors.map((e) => `${e.file}: ${e.message}`);
   }
 
   // Matches TaskStore.list()'s filter semantics and sort order (created, then

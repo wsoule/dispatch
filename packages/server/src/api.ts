@@ -125,6 +125,11 @@ export async function handleApi(
         ok: true,
         version: ctx.version,
         rootDir: ctx.rootDir,
+        // Files the most recent cache rebuild couldn't parse (e.g. missing
+        // frontmatter, invalid kind) — empty when the task set is clean. The
+        // daemon keeps serving the last-good cache regardless; this is
+        // visibility, not a fatal signal (`ok` stays true).
+        problems: ctx.cache.problems(),
       });
     }
 
