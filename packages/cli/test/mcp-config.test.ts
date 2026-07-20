@@ -62,4 +62,25 @@ describe('mergeMcpConfig', () => {
       mergeMcpConfig(JSON.stringify({ mcpServers: 'nope' }))
     ).toThrow(CliError);
   });
+
+  it('throws CliError instead of crashing when the document is JSON null', () => {
+    expect(() => mergeMcpConfig('null')).toThrow(CliError);
+    expect(() => mergeMcpConfig('null')).toThrow(
+      /invalid \.mcp\.json: not a JSON object/
+    );
+  });
+
+  it('throws CliError instead of silently corrupting a JSON array document', () => {
+    expect(() => mergeMcpConfig('[1,2,3]')).toThrow(CliError);
+    expect(() => mergeMcpConfig('[1,2,3]')).toThrow(
+      /invalid \.mcp\.json: not a JSON object/
+    );
+  });
+
+  it('throws CliError when the document is a bare JSON string', () => {
+    expect(() => mergeMcpConfig('"hello"')).toThrow(CliError);
+    expect(() => mergeMcpConfig('"hello"')).toThrow(
+      /invalid \.mcp\.json: not a JSON object/
+    );
+  });
 });

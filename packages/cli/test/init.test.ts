@@ -71,6 +71,22 @@ describe('dispatch init — .mcp.json registration', () => {
     expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe('{ not json');
   });
 
+  it('surfaces a CliError instead of crashing on a valid-JSON-but-non-object .mcp.json (null)', async () => {
+    writeFileSync(join(root, '.mcp.json'), 'null');
+    await expect(
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    ).rejects.toThrow(/invalid \.mcp\.json: not a JSON object/);
+    expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe('null');
+  });
+
+  it('surfaces a CliError instead of corrupting a valid-JSON-but-non-object .mcp.json (array)', async () => {
+    writeFileSync(join(root, '.mcp.json'), '[1,2,3]');
+    await expect(
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    ).rejects.toThrow(/invalid \.mcp\.json: not a JSON object/);
+    expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe('[1,2,3]');
+  });
+
   it('--no-mcp skips .mcp.json registration entirely', async () => {
     await makeProgram(ctx).parseAsync(['init', '--no-mcp'], { from: 'user' });
     expect(existsSync(join(root, '.mcp.json'))).toBe(false);

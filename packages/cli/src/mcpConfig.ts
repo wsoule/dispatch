@@ -23,11 +23,25 @@ interface McpConfigDoc {
 export function mergeMcpConfig(existingRaw: string | undefined): string {
   let doc: McpConfigDoc = {};
   if (existingRaw !== undefined) {
+    let parsed: unknown;
     try {
-      doc = JSON.parse(existingRaw) as McpConfigDoc;
+      parsed = JSON.parse(existingRaw);
     } catch (err) {
       throw new CliError(`invalid .mcp.json: ${(err as Error).message}`);
     }
+    // JSON.parse succeeds on any JSON value, not just objects — `null`,
+    // arrays, numbers, and strings are all valid JSON. Without this guard,
+    // `null` crashes below (`doc.mcpServers` on null) and an array silently
+    // "merges" into `{"0":1,"1":2,...,mcpServers:{...}}`, corrupting the
+    // file instead of reporting a clean error.
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      throw new CliError('invalid .mcp.json: not a JSON object');
+    }
+    doc = parsed as McpConfigDoc;
   }
   const rawServers = doc.mcpServers;
   if (
