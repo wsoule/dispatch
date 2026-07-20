@@ -6,6 +6,8 @@ import { TasksPanel } from '../components/tasks/TasksPanel';
 import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { StatTile } from '../components/ui/StatTile';
 import { formatRelativeTime } from '../lib/format';
+import type { ProjectTab } from '../lib/projectTabs';
+import { resolveActiveTab } from '../lib/projectTabs';
 import { getProjectGitInsights, hasDispatch, listSessions } from '../lib/tauri';
 import type { ProjectSummary } from '../lib/types';
 import { SessionDetailModal } from './SessionDetailModal';
@@ -18,8 +20,6 @@ interface ProjectDetailProps {
    * when it opens a dispatch-enabled project from the global Tasks nav item. */
   initialTab?: ProjectTab;
 }
-
-type ProjectTab = 'overview' | 'board' | 'sessions' | 'tasks';
 
 const BASE_TABS: { id: ProjectTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -58,6 +58,12 @@ export function ProjectDetail({
     ? [...BASE_TABS, { id: 'tasks' as const, label: 'Tasks' }]
     : BASE_TABS;
 
+  // `activeTab` reflects what was requested (the initial prop, or the user clicking a tab
+  // button); `effectiveTab` is what's actually safe to render right now — see
+  // resolveActiveTab's doc comment for why these can differ (a `tasks` request against a
+  // project that turned out not to be dispatch-enabled).
+  const effectiveTab = resolveActiveTab(activeTab, dispatchEnabled);
+
   const {
     data: sessions,
     isLoading,
@@ -87,7 +93,7 @@ export function ProjectDetail({
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            className={`project-detail-tab${activeTab === tab.id ? ' project-detail-tab-active' : ''}`}
+            className={`project-detail-tab${effectiveTab === tab.id ? ' project-detail-tab-active' : ''}`}
             onClick={() => setActiveTab(tab.id)}
           >
             {tab.label}
@@ -95,7 +101,7 @@ export function ProjectDetail({
         ))}
       </div>
 
-      {activeTab === 'overview' && (
+      {effectiveTab === 'overview' && (
         <div className="project-detail-overview">
           <div className="project-detail-stats">
             <StatTile value={project.session_count} label="Sessions" />
@@ -141,19 +147,23 @@ export function ProjectDetail({
         </div>
       )}
 
-      {activeTab === 'board' && (
+      {effectiveTab === 'board' && (
         <div className="project-detail-board">
           <ProjectBoard projectId={project.id} />
         </div>
       )}
 
-      {activeTab === 'tasks' && dispatchEnabled && (
+      {effectiveTab === 'tasks' && dispatchEnabled === undefined && (
+        <p className="project-detail-status">Checking task tracker…</p>
+      )}
+
+      {effectiveTab === 'tasks' && dispatchEnabled === true && (
         <div className="project-detail-tasks">
           <TasksPanel projectPath={project.path} />
         </div>
       )}
 
-      {activeTab === 'sessions' && (
+      {effectiveTab === 'sessions' && (
         <div className="project-detail-sessions">
           {isLoading && (
             <p className="project-detail-status">Loading sessions…</p>

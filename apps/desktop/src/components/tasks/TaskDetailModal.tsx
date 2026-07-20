@@ -18,7 +18,7 @@ interface TaskDetailModalProps {
   doc: TaskDoc;
   statuses: string[];
   onClose: () => void;
-  onUpdate: (id: string, patch: UpdatePatch) => void;
+  onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
 }
 
 /** Task detail: frontmatter, the two fields that change through direct controls (status,
@@ -34,23 +34,39 @@ export function TaskDetailModal({
 }: TaskDetailModalProps) {
   const [title, setTitle] = useState(doc.meta.title);
   const [activityDraft, setActivityDraft] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   // A newly selected task (different id) resets the editable fields to its own values —
   // otherwise switching cards mid-edit would carry over the previous task's draft title.
   useEffect(() => {
     setTitle(doc.meta.title);
     setActivityDraft('');
+    setError(null);
   }, [doc.meta.id, doc.meta.title]);
+
+  // Every control below (status/priority selects, title blur, activity submit) routes
+  // through this instead of calling `onUpdate` directly, so a PATCH rejection surfaces
+  // inline the same way CreateTaskModal's `submit()` does, rather than silently vanishing
+  // — the WS-driven refetch that follows a failed PATCH would otherwise be the only
+  // visible effect, quietly reverting whatever the control optimistically showed.
+  async function runUpdate(patch: UpdatePatch) {
+    try {
+      setError(null);
+      await onUpdate(doc.meta.id, patch);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   function saveTitleIfChanged() {
     if (title.trim() !== '' && title !== doc.meta.title) {
-      onUpdate(doc.meta.id, { title });
+      void runUpdate({ title });
     }
   }
 
   function submitActivity() {
     if (activityDraft.trim() !== '') {
-      onUpdate(doc.meta.id, { appendActivity: activityDraft.trim() });
+      void runUpdate({ appendActivity: activityDraft.trim() });
       setActivityDraft('');
     }
   }
@@ -60,6 +76,10 @@ export function TaskDetailModal({
   return (
     <Modal isOpen onClose={onClose} title={doc.meta.id}>
       <div className="task-detail-modal">
+        {error !== null && (
+          <div className="task-detail-modal-error">{error}</div>
+        )}
+
         <TextInput
           className="task-detail-modal-title"
           value={title}
@@ -73,9 +93,7 @@ export function TaskDetailModal({
             <span className="task-detail-modal-field-label">Status</span>
             <Select
               value={doc.meta.status}
-              onChange={(e) =>
-                onUpdate(doc.meta.id, { status: e.target.value })
-              }
+              onChange={(e) => void runUpdate({ status: e.target.value })}
             >
               {statuses.map((s) => (
                 <option key={s} value={s}>
@@ -89,9 +107,7 @@ export function TaskDetailModal({
             <Select
               value={doc.meta.priority}
               onChange={(e) =>
-                onUpdate(doc.meta.id, {
-                  priority: e.target.value as Priority,
-                })
+                void runUpdate({ priority: e.target.value as Priority })
               }
             >
               {PRIORITIES.map((p) => (

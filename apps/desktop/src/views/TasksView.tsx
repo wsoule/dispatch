@@ -25,7 +25,11 @@ export function TasksView() {
   // gated on that query having resolved. Keyed by the actual path list rather than just
   // `['has-dispatch-map']` so a change in which projects exist re-runs this.
   const projectPaths = projects?.map((p) => p.path) ?? [];
-  const { data: hasDispatchByPath, isLoading: flagsLoading } = useQuery({
+  const {
+    data: hasDispatchByPath,
+    isLoading: flagsLoading,
+    isError: flagsError,
+  } = useQuery({
     queryKey: ['has-dispatch-map', projectPaths],
     queryFn: async () => {
       const entries = await Promise.all(
@@ -46,6 +50,20 @@ export function TasksView() {
     return (
       <p className="tasks-view-status">
         Couldn't load projects. Is the backend running?
+      </p>
+    );
+  }
+
+  // A distinct error state from the "no dispatch-enabled projects" empty state below —
+  // without this, a failed has-dispatch batch (`hasDispatchByPath` stays `undefined`) falls
+  // through `filterDispatchEnabledProjects`'s default-to-empty-Map behavior and renders the
+  // same "run dispatch init" message a genuinely empty project list would, hiding a real
+  // fetch failure behind what looks like guidance for a first-time setup.
+  if (flagsError) {
+    return (
+      <p className="tasks-view-status">
+        Couldn't check which projects have a task tracker. Is the backend
+        running?
       </p>
     );
   }

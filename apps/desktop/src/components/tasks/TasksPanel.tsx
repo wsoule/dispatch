@@ -114,6 +114,11 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
     [tasks, selectedId]
   );
 
+  // Awaited (not fire-and-forget) so TaskDetailModal can catch a PATCH
+  // rejection and show it inline instead of the update silently vanishing —
+  // without a thrown/rejected promise reaching the modal, the only visible
+  // effect of a failed update used to be the WS-driven refetch quietly
+  // reverting the optimistic-looking UI change.
   async function handleUpdate(id: string, patch: UpdatePatch): Promise<void> {
     if (client === null) return;
     await client.updateTask(id, patch);
@@ -177,7 +182,7 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
           doc={selectedDoc}
           statuses={config.statuses}
           onClose={() => setSelectedId(null)}
-          onUpdate={(id, patch) => void handleUpdate(id, patch)}
+          onUpdate={handleUpdate}
         />
       )}
 

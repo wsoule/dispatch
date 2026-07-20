@@ -9,6 +9,14 @@
   font-weight: 600;
 }
 
+.task-detail-modal-error {
+  background: var(--red-bg);
+  color: var(--red);
+  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+
 .task-detail-modal-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
