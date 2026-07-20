@@ -60,13 +60,13 @@ watcher like any other edit.
 
 Tools (server name `dispatch`):
 
-| Tool           | Input                                                                                               | Output                     |
-| -------------- | --------------------------------------------------------------------------------------------------- | -------------------------- |
-| `task_list`    | `{ status?, kind?, parent? }`                                                                       | `{ tasks: TaskSummary[] }` |
-| `task_get`     | `{ id }`                                                                                            | `{ meta, body }`           |
-| `task_save`    | `{ id?, title?, status?, kind?, parent?, blockedBy?, labels?, priority?, assignee?, description? }` | `{ meta, body }`           |
-| `task_comment` | `{ id, text }`                                                                                      | `{ meta }`                 |
-| `task_next`    | `{}`                                                                                                | `{ tasks: TaskSummary[] }` |
+| Tool           | Input                                                                                               | Output                                         |
+| -------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `task_list`    | `{ status?, kind?, parent? }`                                                                       | `{ tasks: TaskSummary[], problems: string[] }` |
+| `task_get`     | `{ id }`                                                                                            | `{ meta, body }`                               |
+| `task_save`    | `{ id?, title?, status?, kind?, parent?, blockedBy?, labels?, priority?, assignee?, description? }` | `{ meta, body }`                               |
+| `task_comment` | `{ id, text }`                                                                                      | `{ meta }`                                     |
+| `task_next`    | `{}`                                                                                                | `{ tasks: TaskSummary[], problems: string[] }` |
 
 `task_save` creates when `id` is omitted (title required) and updates only the
 given fields otherwise; `kind` and `description` take effect on create only. A

@@ -10,6 +10,7 @@ import {
 } from '@dispatch/core';
 import type { ListSafeError, TaskDoc } from '@dispatch/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { basename } from 'node:path';
 import { z } from 'zod';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
@@ -210,8 +211,11 @@ export function registerDispatchTools(
           doc = store.get(id);
         } catch (err) {
           if (err instanceof TaskParseError) {
+            // basename only — task_list's problems[] and the CLI never expose
+            // absolute paths, and neither should a remote MCP client see them.
+            const file = err.file === undefined ? id : basename(err.file);
             throw new ToolError(
-              `${err.file ?? id}: ${err.message} — run 'dispatch doctor'`
+              `${file}: ${err.message} — run 'dispatch doctor'`
             );
           }
           throw err;
