@@ -58,8 +58,11 @@ export class WorktreeManager {
     ]);
     if (originHead.ok) {
       const ref = originHead.stdout.trim();
-      const branch = ref.split('/').pop();
-      if (branch) return branch;
+      // M3: strip only the fixed `refs/remotes/origin/` prefix — a
+      // `.split('/').pop()` here would truncate any default branch name
+      // that itself contains a `/` (e.g. `release/v2`) down to just `v2`.
+      const prefix = 'refs/remotes/origin/';
+      if (ref.startsWith(prefix)) return ref.slice(prefix.length);
     }
     const current = runGit(this.mainRepoDir, [
       'rev-parse',

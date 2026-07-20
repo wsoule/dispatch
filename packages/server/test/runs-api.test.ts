@@ -128,6 +128,44 @@ describe('POST /api/tasks/:id/runs', () => {
     );
   });
 
+  // M1: dispatching a task that's already closed out (done/cancelled) is
+  // almost certainly a stale UI action, not a real intent to redo the work
+  // — refuse it outright with a clear 409 rather than quietly starting a
+  // new run against a task nobody expects to still be moving.
+  it('409s dispatching a task whose status is done', async () => {
+    const task = await createTask('Already done');
+    await fetch(`${baseUrl}/api/tasks/${task.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'done' }),
+    });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'fake' }),
+    });
+    expect(res.status).toBe(409);
+    expect((await json(res)).error).toBe('cannot dispatch a done task');
+  });
+
+  it('409s dispatching a task whose status is cancelled', async () => {
+    const task = await createTask('Already cancelled');
+    await fetch(`${baseUrl}/api/tasks/${task.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' }),
+    });
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'fake' }),
+    });
+    expect(res.status).toBe(409);
+    expect((await json(res)).error).toBe('cannot dispatch a cancelled task');
+  });
+
   it('dispatches with the default executor when the field is omitted', async () => {
     const task = await createTask('Default executor');
     // No `executor` field at all -> defaults to 'claude' (see
@@ -190,6 +228,54 @@ describe('POST /api/tasks/:id/runs', () => {
     const second = await json(secondRes);
     expect(second.id).not.toBe(first.id);
     expect(second.branch).not.toBe(first.branch);
+  });
+});
+
+// M6: the "is this executor name even valid" 400 message must reflect
+// whatever is actually registered on this Orchestrator instance, not a
+// separately hardcoded list that can drift from it — this server only ever
+// registers 'fake', so the message must say just that, not "fake|claude".
+describe('POST /api/tasks/:id/runs — known executor names track the registry', () => {
+  let soloHandle: ServerHandle;
+  let soloBaseUrl: string;
+  let soloRoot: string;
+
+  beforeEach(async () => {
+    soloRoot = initDispatchGitRepo();
+    TaskStore.init(soloRoot);
+    soloHandle = await startServer({
+      rootDir: soloRoot,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('fake', defaultFakeScript());
+      },
+    });
+    soloBaseUrl = `http://127.0.0.1:${soloHandle.port}`;
+  });
+
+  afterEach(async () => {
+    await soloHandle.stop();
+    rmSync(soloRoot, { recursive: true, force: true });
+  });
+
+  it('lists only the registered executor in the invalid-executor message', async () => {
+    const taskRes = await fetch(`${soloBaseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Solo executor registry' }),
+    });
+    const task = await json(taskRes);
+
+    const res = await fetch(`${soloBaseUrl}/api/tasks/${task.meta.id}/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'wombat' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe(
+      'invalid executor: wombat (expected fake)'
+    );
   });
 });
 

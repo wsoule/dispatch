@@ -176,7 +176,13 @@ describe('Orchestrator.cancel', () => {
     await orchestrator.cancel(meta.id);
 
     expect(orchestrator.getRun(meta.id)?.meta.state).toBe('cancelled');
+    // M2: task status is deliberately left alone (a cancelled run says
+    // nothing about whether the task itself should move), but the
+    // cancellation is still recorded as a durable Activity line.
     expect(store.get(task.meta.id)!.meta.status).toBe('in-progress');
+    expect(store.get(task.meta.id)!.body).toContain(
+      `[run ${meta.id}] cancelled`
+    );
   });
 });
 

@@ -37,6 +37,29 @@ describe('WorktreeManager.defaultBaseBranch', () => {
     const worktrees = new WorktreeManager(repo);
     expect(worktrees.defaultBaseBranch()).toBe('main');
   });
+
+  // M3: a default branch containing its own `/` (e.g. `release/v2`) must
+  // come back intact — only the `refs/remotes/origin/` prefix should be
+  // stripped, not every path segment up to the last one.
+  it('does not truncate a default branch name that itself contains a slash', () => {
+    const upstream = initGitRepo();
+    runGitSync(upstream, ['checkout', '-b', 'release/v2']);
+    runGitSync(upstream, ['checkout', 'main']);
+    runGitSync(upstream, ['branch', '-D', 'release/v2']);
+    runGitSync(upstream, ['checkout', '-b', 'release/v2']);
+    runGitSync(upstream, ['checkout', 'main']);
+
+    const repo = initGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', upstream]);
+    runGitSync(repo, ['fetch', 'origin']);
+    runGitSync(repo, [
+      'symbolic-ref',
+      'refs/remotes/origin/HEAD',
+      'refs/remotes/origin/release/v2',
+    ]);
+    const worktrees = new WorktreeManager(repo);
+    expect(worktrees.defaultBaseBranch()).toBe('release/v2');
+  });
 });
 
 describe('WorktreeManager.add / remove', () => {

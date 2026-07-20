@@ -30,14 +30,6 @@ export interface ApiContext {
   version: string;
 }
 
-// Executor names known to be valid in principle, independent of which ones
-// are actually registered on a given Orchestrator instance — this lets a
-// request for an unrecognized name (e.g. "wombat") get a clear 400 instead
-// of being conflated with "that executor isn't registered on this
-// instance", which is a 400 too but a different message (thrown by the
-// orchestrator itself).
-const KNOWN_EXECUTOR_NAMES = ['fake', 'claude'];
-
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -214,11 +206,10 @@ async function updateTask(
 }
 
 // POST /api/tasks/:id/runs — dispatches a new orchestrator run for the task.
-// `executor` is optional (defaults to 'claude'); a name outside
-// KNOWN_EXECUTOR_NAMES is a 400 here, while a *known but unregistered* name
-// on a given Orchestrator instance (e.g. a test server that never
-// registered 'fake') is a 400 raised by the orchestrator itself and caught
-// below in handleApi's OrchestratorClientError mapping.
+// `executor` is optional (defaults to 'claude'); a name outside what's
+// actually registered on this Orchestrator instance (M6: derived live via
+// `registeredExecutorNames()`, not a separately hardcoded list) is a 400
+// here.
 async function createRun(
   req: Request,
   ctx: ApiContext,
@@ -227,16 +218,31 @@ async function createRun(
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;
   const executorField = parsed.value.executor;
+  const knownExecutorNames = ctx.orchestrator.registeredExecutorNames();
   if (
     executorField !== undefined &&
     (typeof executorField !== 'string' ||
-      !KNOWN_EXECUTOR_NAMES.includes(executorField))
+      !knownExecutorNames.includes(executorField))
   ) {
     return errorResponse(
       400,
-      `invalid executor: ${String(executorField)} (expected ${KNOWN_EXECUTOR_NAMES.join('|')})`
+      `invalid executor: ${String(executorField)} (expected ${knownExecutorNames.join('|')})`
     );
   }
+
+  // M1: a task that's already closed out (done/cancelled) is almost
+  // certainly a stale UI action, not a genuine request to redo the work —
+  // refuse it outright rather than quietly starting a new run against a
+  // task nobody expects to still be moving. `null` (task not found) falls
+  // through to orchestrator.dispatch()'s own 404 below.
+  const task = ctx.store.get(taskId);
+  if (
+    task !== null &&
+    (task.meta.status === 'done' || task.meta.status === 'cancelled')
+  ) {
+    return errorResponse(409, `cannot dispatch a ${task.meta.status} task`);
+  }
+
   const executorName =
     typeof executorField === 'string' ? executorField : 'claude';
   const meta = ctx.orchestrator.dispatch(taskId, executorName);

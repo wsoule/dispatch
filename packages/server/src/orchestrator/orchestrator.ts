@@ -68,6 +68,13 @@ export class Orchestrator {
     this.executors.set(name, executor);
   }
 
+  // M6: api.ts derives its own "is this executor name even valid" 400
+  // message from exactly what's registered here, instead of maintaining a
+  // separately hardcoded list that can silently drift from it.
+  registeredExecutorNames(): string[] {
+    return [...this.executors.keys()];
+  }
+
   list(): RunMeta[] {
     return this.registry.list();
   }
