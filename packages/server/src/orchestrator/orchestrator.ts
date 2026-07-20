@@ -610,18 +610,34 @@ export class Orchestrator {
   ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
-    // Stop-hook safety net: an executor (any executor — this runs
-    // regardless of which one finished) can stop with uncommitted changes
-    // sitting in its worktree, and the review surface's diff only ever
-    // shows committed history (`git diff <mergeBase>...HEAD`, run below).
-    // Sweeping those changes into one auto-commit here is what makes them
-    // reviewable/mergeable at all, instead of silently vanishing when the
-    // worktree is eventually removed.
-    this.autoCommitIfDirty(meta.worktreePath, runId);
-    this.transition(runId, finish.state, finish);
+    // I6: this whole block runs from inside an executor's fire-and-forget
+    // event plumbing (see makeEvents/onFinish) — there is no caller left to
+    // catch an escaped throw, so one would either crash the process or (with
+    // Bun's fire-and-forget async chains) silently vanish, leaving the run
+    // stuck non-terminal forever: a zombie run that looks "running" with
+    // nothing left driving it. Any failure in this run's own git bookkeeping
+    // (most commonly: its worktree was deleted out from under it before it
+    // finished) must downgrade the finish to `failed` instead.
+    let effectiveFinish = finish;
+    try {
+      // Stop-hook safety net: an executor (any executor — this runs
+      // regardless of which one finished) can stop with uncommitted changes
+      // sitting in its worktree, and the review surface's diff only ever
+      // shows committed history (`git diff <mergeBase>...HEAD`, run below).
+      // Sweeping those changes into one auto-commit here is what makes them
+      // reviewable/mergeable at all, instead of silently vanishing when the
+      // worktree is eventually removed.
+      this.autoCommitIfDirty(meta.worktreePath, runId);
+    } catch (err) {
+      effectiveFinish = {
+        state: 'failed',
+        error: `finish failed: ${(err as Error).message}`,
+      };
+    }
+    this.transition(runId, effectiveFinish.state, effectiveFinish);
 
     let filesChanged = 0;
-    if (finish.state === 'finished') {
+    if (effectiveFinish.state === 'finished') {
       try {
         filesChanged = this.worktrees.diff(meta.worktreePath, meta.baseBranch)
           .files.length;
@@ -629,12 +645,12 @@ export class Orchestrator {
         filesChanged = 0;
       }
     }
-    const cost = (finish.costUsd ?? 0).toFixed(2);
+    const cost = (effectiveFinish.costUsd ?? 0).toFixed(2);
     const now = new Date().toISOString();
     const task = this.ctx.store.get(meta.taskId);
     if (task === null) return;
     const patch: UpdatePatch = {
-      appendActivity: `${now} [run ${runId}] finished: ${finish.state} — ${filesChanged} files, $${cost}`,
+      appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
     };
     if (task.meta.status === 'in-progress') patch.status = 'in-review';
     this.ctx.store.update(meta.taskId, patch, now);

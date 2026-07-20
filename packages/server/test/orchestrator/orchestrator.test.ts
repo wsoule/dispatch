@@ -966,6 +966,36 @@ describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
     const log = runGitSync(meta.worktreePath, ['log', '-1', '--pretty=%s']);
     expect(log.trim()).toBe('agent: add committed.txt');
   });
+
+  // I6: handleFinish's own git work (autoCommitIfDirty) must never let an
+  // escaped throw reach the caller — an executor's onFinish is invoked from
+  // deep inside its own event plumbing, and an uncaught exception there has
+  // nowhere useful to go, leaving the run stuck in whatever state it was in
+  // (a zombie: neither cleanly finished nor visibly failed). A worktree that
+  // has been deleted out from under a run before it finishes (e.g. an
+  // operator cleanup, a crash-adjacent race) must instead surface as a
+  // normal `failed` run.
+  it('marks a run failed instead of throwing when its worktree is gone by the time it finishes', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [{ approval: { requestId: 'hold', toolName: 't', input: {} } }],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Worktree deleted mid-run' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
+    );
+
+    rmSync(meta.worktreePath, { recursive: true, force: true });
+
+    expect(() => orchestrator.approve(meta.id, 'hold', true)).not.toThrow();
+    await waitFor(() => orchestrator.getRun(meta.id)?.meta.state === 'failed');
+    expect(orchestrator.getRun(meta.id)?.meta.error).toBeDefined();
+  });
 });
 
 describe('Orchestrator per-run caps and prompt assembly', () => {

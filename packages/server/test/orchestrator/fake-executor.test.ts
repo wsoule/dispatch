@@ -175,4 +175,31 @@ describe('FakeExecutor', () => {
     expect(entries).toEqual([]);
     expect(finishes).toEqual([]);
   });
+
+  // I6: a scripted step throwing (e.g. `write` pointed at a path that
+  // doesn't exist) must never leave the run silently stuck mid-script —
+  // that's a zombie run, "running" forever with nothing actually running it.
+  // playScript's own try/catch must convert any thrown error into a normal
+  // `onFinish({ state: 'failed' })` call.
+  it('finishes as failed instead of hanging when a scripted step throws', async () => {
+    const repo = initGitRepo();
+    const executor = new FakeExecutor({
+      steps: [
+        {
+          write: () => {
+            throw new Error('boom: step exploded');
+          },
+        },
+      ],
+      finish: { state: 'finished' },
+    });
+    const { events, finishes } = collectEvents();
+
+    executor.start({ ...baseOpts, cwd: repo }, events);
+    await Bun.sleep(10);
+
+    expect(finishes).toEqual([
+      { state: 'failed', error: 'boom: step exploded' },
+    ]);
+  });
 });

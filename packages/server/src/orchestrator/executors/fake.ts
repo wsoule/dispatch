@@ -60,34 +60,49 @@ export class FakeExecutor implements Executor {
     let cancelled = false;
     const pendingApprovals = new Map<string, (allow: boolean) => void>();
 
+    // I6: a scripted step throwing (a bad `write` callback, a commit that
+    // fails, etc.) must never leave this run silently hung mid-script — a
+    // zombie run stuck "running" forever with nothing left driving it
+    // forward. The whole loop runs inside one try/catch specifically so any
+    // such failure still reaches `onFinish`, exactly like a real executor
+    // crashing partway through would.
     const playScript = async (): Promise<void> => {
-      for (const step of this.script.steps ?? []) {
-        if (cancelled) return;
+      try {
+        for (const step of this.script.steps ?? []) {
+          if (cancelled) return;
 
-        if (step.entry !== undefined) events.onEntry(step.entry);
+          if (step.entry !== undefined) events.onEntry(step.entry);
 
-        if (step.write !== undefined) {
-          step.write(opts.cwd);
-          if (step.commit ?? true) {
-            commitAll(opts.cwd, step.commitMessage ?? 'fake executor commit');
+          if (step.write !== undefined) {
+            step.write(opts.cwd);
+            if (step.commit ?? true) {
+              commitAll(opts.cwd, step.commitMessage ?? 'fake executor commit');
+            }
+          }
+
+          if (step.approval !== undefined) {
+            const approval = step.approval;
+            events.onApprovalRequest(approval);
+            const allow = await new Promise<boolean>((resolve) => {
+              pendingApprovals.set(approval.requestId, resolve);
+            });
+            if (cancelled) return;
+            if (!allow) {
+              events.onFinish({ state: 'failed', error: 'approval denied' });
+              return;
+            }
           }
         }
-
-        if (step.approval !== undefined) {
-          const approval = step.approval;
-          events.onApprovalRequest(approval);
-          const allow = await new Promise<boolean>((resolve) => {
-            pendingApprovals.set(approval.requestId, resolve);
+        if (cancelled) return;
+        events.onFinish(this.script.finish);
+      } catch (err) {
+        if (!cancelled) {
+          events.onFinish({
+            state: 'failed',
+            error: (err as Error).message,
           });
-          if (cancelled) return;
-          if (!allow) {
-            events.onFinish({ state: 'failed', error: 'approval denied' });
-            return;
-          }
         }
       }
-      if (cancelled) return;
-      events.onFinish(this.script.finish);
     };
 
     // Fire-and-forget: `start()` must return the ExecutorRun handle
