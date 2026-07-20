@@ -1,10 +1,12 @@
 import {
   DISPATCH_DIR,
   generateRunId,
+  loadConfig,
   slugify,
+  TaskParseError,
   TaskStore,
 } from '@dispatch/core';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core';
+import type { OrchestratorConfig, TaskDoc, UpdatePatch } from '@dispatch/core';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -16,6 +18,7 @@ import {
   worktreePath,
   worktreesDir,
 } from './paths.js';
+import { buildTaskPrompt } from './prompt.js';
 import { RunRegistry } from './registry.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
@@ -40,13 +43,6 @@ export interface OrchestratorContext {
   cache: TaskCache;
   events: EventBus;
 }
-
-// Per-run caps for O1's hardcoded executor invocation. The plan's
-// `.dispatch/config.yml` `orchestrator:` block (configurable maxTurns/
-// maxBudgetUsd/permissionMode) arrives in Slice O2 alongside the real Claude
-// executor — until then every run uses these same defaults.
-const DEFAULT_PERMISSION_MODE = 'acceptEdits';
-const DEFAULT_MAX_TURNS = 100;
 
 /**
  * Coordinates the full lifecycle of orchestrator runs for one dispatch
@@ -153,12 +149,14 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'task.changed' });
 
     this.transition(runId, 'running');
+    const caps = this.orchestratorCaps();
     const executorRun = executor.start(
       {
         cwd: wtPath,
-        prompt: this.buildPrompt(task),
-        permissionMode: DEFAULT_PERMISSION_MODE,
-        maxTurns: DEFAULT_MAX_TURNS,
+        prompt: this.promptForTask(task),
+        permissionMode: caps.permissionMode,
+        maxTurns: caps.maxTurns,
+        maxBudgetUsd: caps.maxBudgetUsd,
       },
       this.makeEvents(runId)
     );
@@ -363,14 +361,6 @@ export class Orchestrator {
     Bun.spawnSync(['git', 'add', DISPATCH_DIR], { cwd: this.ctx.rootDir });
   }
 
-  // Prompt handed to the executor. O1's FakeExecutor ignores this entirely
-  // (it's driven by its script), but the real Claude executor in O2 needs
-  // the task's full content, so the shape is settled here rather than
-  // deferred.
-  private buildPrompt(task: TaskDoc): string {
-    return `Task ${task.meta.id}: ${task.meta.title}\n\n${task.body}`;
-  }
-
   // Moves a run to `state`, updating the registry, appending a transcript
   // state line, and broadcasting `run.changed` — the one place all three of
   // those always happen together, so no caller can update one without the
@@ -496,17 +486,44 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'task.changed' });
 
     this.transition(runId, 'running');
+    const caps = this.orchestratorCaps();
     const executorRun = executor.start(
       {
         cwd: meta.worktreePath,
         prompt: text,
         resumeSessionId: oldMeta.sessionId,
-        permissionMode: DEFAULT_PERMISSION_MODE,
-        maxTurns: DEFAULT_MAX_TURNS,
+        permissionMode: caps.permissionMode,
+        maxTurns: caps.maxTurns,
+        maxBudgetUsd: caps.maxBudgetUsd,
       },
       this.makeEvents(runId)
     );
     this.registry.setExecutorRun(runId, executorRun);
     return this.registry.get(runId)!;
+  }
+
+  // Reads the project's `.dispatch/config.yml` `orchestrator:` block fresh on
+  // every dispatch/resume — same rationale as the MCP tools re-resolving
+  // config on every call: a config edit takes effect on the next dispatch
+  // without a dispatchd restart.
+  private orchestratorCaps(): OrchestratorConfig {
+    return loadConfig(this.ctx.rootDir).orchestrator;
+  }
+
+  // Prompt handed to the executor: the task's own content plus its parent
+  // epic's, assembled by the pure buildTaskPrompt() (see prompt.ts) so the
+  // exact text is unit-testable independent of the orchestrator. A corrupt
+  // parent epic file degrades to "no epic context" rather than failing the
+  // whole dispatch — the task being dispatched is still perfectly valid.
+  private promptForTask(task: TaskDoc): string {
+    let parentEpic: TaskDoc | null = null;
+    if (task.meta.parent !== null) {
+      try {
+        parentEpic = this.ctx.store.get(task.meta.parent);
+      } catch (err) {
+        if (!(err instanceof TaskParseError)) throw err;
+      }
+    }
+    return buildTaskPrompt(task, parentEpic);
   }
 }

@@ -15,6 +15,12 @@ import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { worktreesDir } from '../../src/orchestrator/paths.js';
+import type {
+  Executor,
+  ExecutorEvents,
+  ExecutorRun,
+  ExecutorStartOptions,
+} from '../../src/orchestrator/types.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -428,5 +434,86 @@ describe('Orchestrator.reconcileOnBoot', () => {
     expect(second.getRun(meta.id)?.meta.state).toBe('failed');
     expect(existsSync(meta.worktreePath)).toBe(true);
     expect(existsSync(orphanPath)).toBe(false);
+  });
+});
+
+describe('Orchestrator per-run caps and prompt assembly', () => {
+  // A minimal Executor that just records the options it was started with
+  // and finishes immediately — used to assert on exactly what the
+  // orchestrator hands an executor, independent of FakeExecutor's own
+  // scripting concerns.
+  class CapturingExecutor implements Executor {
+    lastOpts?: ExecutorStartOptions;
+
+    start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+      this.lastOpts = opts;
+      events.onFinish({ state: 'finished' });
+      return {
+        interrupt: () => Promise.resolve(),
+        send: () => {},
+        approve: () => {},
+      };
+    }
+  }
+
+  it('passes the configured orchestrator caps through to the executor', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    mkdirSync(join(repo, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(repo, '.dispatch/config.yml'),
+      'orchestrator:\n  maxTurns: 7\n  maxBudgetUsd: 2.5\n  permissionMode: plan\n'
+    );
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    const task = store.create({ title: 'Respect config caps' });
+
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(executor.lastOpts?.maxTurns).toBe(7);
+    expect(executor.lastOpts?.maxBudgetUsd).toBe(2.5);
+    expect(executor.lastOpts?.permissionMode).toBe('plan');
+  });
+
+  it('falls back to 100 turns / acceptEdits with no config file', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    const task = store.create({ title: 'Default caps' });
+
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(executor.lastOpts?.maxTurns).toBe(100);
+    expect(executor.lastOpts?.maxBudgetUsd).toBeUndefined();
+    expect(executor.lastOpts?.permissionMode).toBe('acceptEdits');
+  });
+
+  it('builds a prompt that includes the parent epic when the task has one', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    const epic = store.create({
+      title: 'Harden auth',
+      kind: 'epic',
+      description: 'Make the auth system resistant to abuse.',
+    });
+    const task = store.create({
+      title: 'Add login rate limiting',
+      parent: epic.meta.id,
+    });
+
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(executor.lastOpts?.prompt).toContain('Add login rate limiting');
+    expect(executor.lastOpts?.prompt).toContain('Harden auth');
+    expect(executor.lastOpts?.prompt).toContain('resistant to abuse');
   });
 });

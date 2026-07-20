@@ -8,6 +8,7 @@ import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
+import { ClaudeExecutor } from './orchestrator/executors/claude.js';
 import { FakeExecutor } from './orchestrator/executors/fake.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
 import { watchTasks } from './watcher.js';
@@ -33,6 +34,14 @@ export interface StartServerOptions {
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
+  // Overrides which executors get registered on the orchestrator, in place
+  // of the production default (ClaudeExecutor as 'claude', FakeExecutor as
+  // 'fake'). Tests that dispatch through the real HTTP surface without
+  // exercising the real Agent SDK (e.g. a request that omits `executor` and
+  // so defaults to 'claude') use this to register a FakeExecutor under
+  // 'claude' too — the point being that no test outside the explicitly-
+  // gated DISPATCH_CLAUDE_SMOKE one ever invokes a real Claude session.
+  registerExecutors?: (orchestrator: Orchestrator) => void;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -132,28 +141,33 @@ export async function startServer(
     events.broadcast({ type: 'task.changed' });
   });
 
-  // The orchestrator's own executor registry: 'fake' is the only executor
-  // this slice ships (a scripted stand-in that emits one log entry and
-  // finishes immediately — enough for the Slice O3 dev toggle to exercise
-  // the full run lifecycle through the real HTTP/WS surface). 'claude'
-  // arrives in Slice O2; dispatching to it until then is a clean 400 from
-  // the orchestrator itself, not a crash.
+  // The orchestrator's own executor registry: 'claude' (Slice O2's real
+  // Agent SDK executor) is the default per api.ts's createRun; 'fake' stays
+  // registered alongside it as a scripted stand-in (a hidden dev toggle,
+  // per the plan) so the full run lifecycle can be exercised through the
+  // real HTTP/WS surface without spending real Claude budget. Tests
+  // override this via `registerExecutors` (see its doc comment).
   const orchestrator = new Orchestrator({ rootDir, store, cache, events });
-  orchestrator.registerExecutor(
-    'fake',
-    new FakeExecutor({
-      steps: [
-        {
-          entry: {
-            ts: new Date().toISOString(),
-            kind: 'assistant',
-            text: 'FakeExecutor: simulating a dispatch run.',
+  if (opts.registerExecutors !== undefined) {
+    opts.registerExecutors(orchestrator);
+  } else {
+    orchestrator.registerExecutor('claude', new ClaudeExecutor());
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            entry: {
+              ts: new Date().toISOString(),
+              kind: 'assistant',
+              text: 'FakeExecutor: simulating a dispatch run.',
+            },
           },
-        },
-      ],
-      finish: { state: 'finished', costUsd: 0, turns: 1 },
-    })
-  );
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+  }
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
@@ -247,3 +261,4 @@ export async function startServer(
 }
 
 export type { ApiContext } from './api.js';
+export { Orchestrator } from './orchestrator/orchestrator.js';

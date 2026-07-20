@@ -6,7 +6,30 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import { runGitSync } from './orchestrator/helpers.js';
+
+// The exact script index.ts's production registration uses for 'fake' — one
+// assistant entry, then an immediate finish. Registered under both 'fake'
+// and 'claude' here (see `registerExecutors` below) so every test in this
+// file, including ones that omit `executor` from the request body, exercises
+// the real HTTP/WS dispatch path without ever constructing a real
+// ClaudeExecutor / Agent SDK session — that stays scoped to the
+// DISPATCH_CLAUDE_SMOKE-gated test in claude-executor.test.ts.
+function defaultFakeScript(): FakeExecutor {
+  return new FakeExecutor({
+    steps: [
+      {
+        entry: {
+          ts: new Date().toISOString(),
+          kind: 'assistant',
+          text: 'FakeExecutor: simulating a dispatch run.',
+        },
+      },
+    ],
+    finish: { state: 'finished', costUsd: 0, turns: 1 },
+  });
+}
 
 // Same escape hatch as api.test.ts/resilience.test.ts: `Response.json()`
 // types as `Promise<unknown>` under this repo's strict, DOM-less tsconfig.
@@ -56,6 +79,10 @@ beforeEach(async () => {
     rootDir: root,
     port: 0,
     writeDaemonFile: false,
+    registerExecutors: (orchestrator) => {
+      orchestrator.registerExecutor('fake', defaultFakeScript());
+      orchestrator.registerExecutor('claude', defaultFakeScript());
+    },
   });
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
@@ -101,16 +128,17 @@ describe('POST /api/tasks/:id/runs', () => {
     );
   });
 
-  it('400s an unregistered but validly-shaped executor (claude, O1 has none)', async () => {
+  it('dispatches with the default executor when the field is omitted', async () => {
     const task = await createTask('Default executor');
-    // No `executor` field at all -> defaults to 'claude', which O1 never
-    // registers (only 'fake' exists until Slice O2).
+    // No `executor` field at all -> defaults to 'claude' (see
+    // registerExecutors in beforeEach: a FakeExecutor stands in for it here
+    // so this stays a routing/default-value test, not a real Agent SDK one).
     const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
     });
-    expect(res.status).toBe(400);
-    expect((await json(res)).error).toBe('unknown executor: claude');
+    expect(res.status).toBe(201);
+    expect((await json(res)).executor).toBe('claude');
   });
 
   it('dispatches with the fake executor, returns 201 with run meta, and writes task Activity', async () => {

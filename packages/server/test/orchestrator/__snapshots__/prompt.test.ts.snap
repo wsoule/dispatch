@@ -1,0 +1,29 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`buildTaskPrompt matches the exact prompt text for a fixture task with a parent epic 1`] = `
+"# Task t-abc123: Add login rate limiting
+
+## Description
+
+Add a rate limiter to the login endpoint.
+
+## Acceptance Criteria
+
+- 5 attempts per minute per IP
+
+## Activity
+
+## Parent epic: e-def456 — Harden auth
+
+## Description
+
+Make the auth system resistant to abuse.
+
+## Activity
+
+Follow this repository's own contribution conventions (AGENTS.md / CLAUDE.md at the repo root, and any .agents/skills or .claude/skills entries relevant to the change) exactly as a human contributor would.
+
+Other agents may be dispatched on other tasks in this tracker at the same time: check \`run_list\` via the dispatch MCP server before assuming you have exclusive access to the repo, and log meaningful progress with \`task_comment\` — this task's Activity log is the shared record other agents and humans will read.
+
+Commit your work (git add / git commit) before finishing — an uncommitted worktree cannot be reviewed or merged."
+`;

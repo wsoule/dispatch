@@ -30,12 +30,12 @@ export interface ApiContext {
   version: string;
 }
 
-// Executor names O1 knows how to validate against, independent of which ones
-// are actually registered on a given Orchestrator (only 'fake' is registered
-// until Slice O2 adds the real Claude executor) — this lets a request for an
-// unrecognized name (e.g. "wombat") get a clear 400 instead of being
-// conflated with "claude isn't wired up yet", which is a 400 too but a
-// different message (thrown by the orchestrator itself).
+// Executor names known to be valid in principle, independent of which ones
+// are actually registered on a given Orchestrator instance — this lets a
+// request for an unrecognized name (e.g. "wombat") get a clear 400 instead
+// of being conflated with "that executor isn't registered on this
+// instance", which is a 400 too but a different message (thrown by the
+// orchestrator itself).
 const KNOWN_EXECUTOR_NAMES = ['fake', 'claude'];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -216,8 +216,9 @@ async function updateTask(
 // POST /api/tasks/:id/runs — dispatches a new orchestrator run for the task.
 // `executor` is optional (defaults to 'claude'); a name outside
 // KNOWN_EXECUTOR_NAMES is a 400 here, while a *known but unregistered* name
-// (claude, until Slice O2) is a 400 raised by the orchestrator itself and
-// caught below in handleApi's OrchestratorClientError mapping.
+// on a given Orchestrator instance (e.g. a test server that never
+// registered 'fake') is a 400 raised by the orchestrator itself and caught
+// below in handleApi's OrchestratorClientError mapping.
 async function createRun(
   req: Request,
   ctx: ApiContext,
