@@ -1,27 +1,28 @@
 {
-  "name": "@dispatch/web",
+  "name": "@dispatch/client",
   "version": "0.0.1",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "build": "vite build",
-    "dev": "vite",
+    "build": "tsdown --clean",
     "test": "bun test",
     "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
-    "@dispatch/client": "workspace:*",
-    "react": "catalog:",
-    "react-dom": "catalog:"
+    "react": "catalog:"
   },
   "devDependencies": {
     "@dispatch/core": "workspace:*",
     "@types/bun": "catalog:",
     "@types/react": "catalog:",
-    "@types/react-dom": "catalog:",
-    "@vitejs/plugin-react": "catalog:",
-    "typescript": "catalog:",
-    "vite": "catalog:"
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
   }
 }

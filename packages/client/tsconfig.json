@@ -4,16 +4,12 @@
     "rootDir": ".",
     "outDir": "dist",
     "types": [],
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx"
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts"],
   "references": [
     {
       "path": "../core/tsconfig.json"
-    },
-    {
-      "path": "../client/tsconfig.json"
     }
   ]
 }

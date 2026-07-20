@@ -22,6 +22,7 @@
       "name": "@dispatch/desktop",
       "version": "0.0.1",
       "dependencies": {
+        "@dispatch/client": "workspace:*",
         "@fontsource/ibm-plex-mono": "catalog:",
         "@fontsource/inter": "catalog:",
         "@tanstack/react-query": "catalog:",
@@ -30,6 +31,7 @@
         "react-dom": "catalog:",
       },
       "devDependencies": {
+        "@dispatch/core": "workspace:*",
         "@tauri-apps/cli": "catalog:",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
@@ -53,6 +55,20 @@
       },
       "devDependencies": {
         "@types/bun": "catalog:",
+        "tsdown": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/client": {
+      "name": "@dispatch/client",
+      "version": "0.0.1",
+      "dependencies": {
+        "react": "catalog:",
+      },
+      "devDependencies": {
+        "@dispatch/core": "workspace:*",
+        "@types/bun": "catalog:",
+        "@types/react": "catalog:",
         "tsdown": "catalog:",
         "typescript": "catalog:",
       },
@@ -87,6 +103,7 @@
       "name": "@dispatch/web",
       "version": "0.0.1",
       "dependencies": {
+        "@dispatch/client": "workspace:*",
         "react": "catalog:",
         "react-dom": "catalog:",
       },
@@ -158,6 +175,8 @@
     "@csstools/selector-specificity": ["@csstools/selector-specificity@5.0.0", "", { "peerDependencies": { "postcss-selector-parser": "^7.0.0" } }, "sha512-PCqQV3c4CoVm3kdPhyeZ07VmBRdH2EpMFA/pd9OASpOEC3aXNGoqPDAZ80D0cLpMBxnmk0+yNhGsEx31hq7Gtw=="],
 
     "@dispatch/cli": ["@dispatch/cli@workspace:packages/cli"],
+
+    "@dispatch/client": ["@dispatch/client@workspace:packages/client"],
 
     "@dispatch/core": ["@dispatch/core@workspace:packages/core"],
 

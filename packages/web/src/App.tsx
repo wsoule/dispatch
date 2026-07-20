@@ -1,8 +1,9 @@
+import type { HealthPayload } from '@dispatch/client';
+import { createApiClient, useTasks } from '@dispatch/client';
 import type { CreateInput, UpdatePatch } from '@dispatch/core';
 import { useEffect, useMemo, useState } from 'react';
 
-import { createTask, fetchHealth, updateTask } from './api';
-import type { HealthPayload } from './api';
+import { basename } from './basename';
 import { Board } from './components/Board';
 import { CreateTask } from './components/CreateTask';
 import { ListView } from './components/ListView';
@@ -10,24 +11,24 @@ import { TaskDetail } from './components/TaskDetail';
 import type { ViewMode } from './components/TopBar';
 import { TopBar } from './components/TopBar';
 import { computeBlockedIds } from './taskGraph';
-import { useTasks } from './useTasks';
 
-// Basename of a filesystem path, without pulling in node:path (this runs in
-// the browser) — good enough for the project name shown in the top bar.
-function basename(path: string): string {
-  const trimmed = path.replace(/\/+$/, '');
-  const lastSlash = trimmed.lastIndexOf('/');
-  return lastSlash === -1 ? trimmed : trimmed.slice(lastSlash + 1);
-}
+// Empty string means "same origin" — dispatchd serves this app's own static
+// files in production, so the common case needs no base URL at all. A
+// non-empty value is the seam a Tauri desktop shell uses to point this same
+// UI at a daemon running on some other port (see spec §2).
+const baseUrl = import.meta.env.VITE_DISPATCH_URL ?? '';
 
 export function App() {
+  const client = useMemo(() => createApiClient(baseUrl), []);
+
   const [health, setHealth] = useState<HealthPayload | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [healthAttempt, setHealthAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetchHealth()
+    client
+      .fetchHealth()
       .then((payload) => {
         if (!cancelled) {
           setHealth(payload);
@@ -42,9 +43,9 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [healthAttempt]);
+  }, [client, healthAttempt]);
 
-  const { tasks, config, readyIds, error, refresh } = useTasks();
+  const { tasks, config, readyIds, error, refresh } = useTasks(baseUrl);
 
   const [view, setView] = useState<ViewMode>('board');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -74,12 +75,12 @@ export function App() {
   }, [showCreate, selectedId]);
 
   async function handleUpdate(id: string, patch: UpdatePatch): Promise<void> {
-    await updateTask(id, patch);
+    await client.updateTask(id, patch);
     refresh();
   }
 
   async function handleCreate(input: CreateInput): Promise<void> {
-    await createTask(input);
+    await client.createTask(input);
     refresh();
   }
 
