@@ -98,6 +98,50 @@ describe('connectEvents', () => {
     dispose();
   });
 
+  it('calls onEvent for every parsed frame, including run.* events onChange ignores', () => {
+    const created: FakeSocket[] = [];
+    const seen: string[] = [];
+    const dispose = connectEvents(BASE_URL, () => {}, {
+      createSocket: () => {
+        const socket = new FakeSocket();
+        created.push(socket);
+        return socket;
+      },
+      onEvent: (event) => seen.push(event.type),
+    });
+
+    created[0].emitMessage('not json');
+    created[0].emitMessage(JSON.stringify({ type: 'hello', version: '0.0.1' }));
+    created[0].emitMessage(JSON.stringify({ type: 'task.changed' }));
+    created[0].emitMessage(JSON.stringify({ type: 'run.changed' }));
+    created[0].emitMessage(
+      JSON.stringify({
+        runId: 'r-abc123',
+        entry: { ts: '2026-01-01T00:00:00.000Z', kind: 'assistant' },
+        type: 'run.log',
+      })
+    );
+    created[0].emitMessage(
+      JSON.stringify({
+        runId: 'r-abc123',
+        requestId: 'req-1',
+        toolName: 'Bash',
+        type: 'approval.requested',
+      })
+    );
+
+    // The malformed frame never reaches onEvent, matching onChange's own
+    // silent-drop behavior for bad JSON.
+    expect(seen).toEqual([
+      'hello',
+      'task.changed',
+      'run.changed',
+      'run.log',
+      'approval.requested',
+    ]);
+    dispose();
+  });
+
   it('reconnects with a fresh socket after the current one closes', async () => {
     const created: FakeSocket[] = [];
     const dispose = connectEvents(BASE_URL, () => {}, {

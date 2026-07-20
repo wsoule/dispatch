@@ -25,9 +25,75 @@ export interface TaskFilter {
   parent?: string;
 }
 
+// Mirrors packages/server/src/orchestrator/types.ts's RunState exactly —
+// dispatchd is the source of truth for these strings, this is just the
+// client-side copy of the same contract (the client package can't import
+// server internals across the package boundary).
+export type RunState =
+  | 'provisioning'
+  | 'running'
+  | 'awaiting-approval'
+  | 'finished'
+  | 'failed'
+  | 'cancelled';
+
+// Mirrors RunMeta in packages/server/src/orchestrator/types.ts.
+export interface RunMeta {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  executor: string;
+  state: RunState;
+  branch: string;
+  baseBranch: string;
+  worktreePath: string;
+  createdAt: string;
+  updatedAt: string;
+  costUsd?: number;
+  turns?: number;
+  sessionId?: string;
+  error?: string;
+}
+
+// Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the
+// one log-entry shape every executor streams, real or fake.
+export interface NormalizedEntry {
+  ts: string;
+  kind: 'assistant' | 'tool' | 'thinking' | 'system' | 'usage';
+  text?: string;
+  toolName?: string;
+  toolInput?: unknown;
+  status?: 'running' | 'done' | 'error';
+}
+
+// The body of `GET /api/runs/:id`.
+export interface RunDetail {
+  meta: RunMeta;
+  entries: NormalizedEntry[];
+}
+
+export interface DiffFile {
+  path: string;
+  status: string;
+}
+
+// The body of `GET /api/runs/:id/diff`.
+export interface DiffResult {
+  patch: string;
+  files: DiffFile[];
+}
+
 export type ServerEvent =
   | { type: 'task.changed' }
-  | { type: 'hello'; version: string };
+  | { type: 'hello'; version: string }
+  | { type: 'run.changed' }
+  | { type: 'run.log'; runId: string; entry: NormalizedEntry }
+  | {
+      type: 'approval.requested';
+      runId: string;
+      requestId: string;
+      toolName: string;
+    };
 
 // Shared fetch wrapper: resolves against `baseUrl`, throws with the server's
 // `{ error }` message (falling back to the status code) on any non-2xx
@@ -96,6 +162,13 @@ export interface ConnectEventsOptions {
   // Defaults to 1000ms. Overridden in tests so reconnect assertions don't
   // have to wait a full second.
   reconnectDelayMs?: number;
+  // Called for every successfully parsed ServerEvent, including
+  // `task.changed` and `hello` — the orchestrator UI (Phase 4 Slice O3) needs
+  // `run.changed`/`run.log`/`approval.requested` too, which `onChange` alone
+  // can't carry (it fires only for `task.changed`, unchanged from Phase 2R,
+  // so existing callers keep their exact behavior). A malformed frame never
+  // reaches this callback — see the `try/catch` around `JSON.parse` below.
+  onEvent?: (event: ServerEvent) => void;
 }
 
 // Opens a WS connection to dispatchd and calls `onChange` for every
@@ -143,6 +216,7 @@ export function connectEvents(
         return;
       }
       if (data.type === 'task.changed') onChange();
+      options.onEvent?.(data);
     });
     socket.addEventListener('close', scheduleReconnect);
     socket.addEventListener('error', scheduleReconnect);
@@ -166,6 +240,23 @@ export interface ApiClient {
   fetchTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  // Orchestrator run endpoints (Phase 4 Slice O1/O2 API, Slice O3 client) —
+  // see packages/server/src/api.ts for the exact request/response shapes
+  // these mirror. `executor` defaults to 'claude' server-side when omitted;
+  // 'fake' stays reachable for the dev-only manual-smoke toggle the desktop
+  // UI gates behind a localStorage flag (see apps/desktop/src/lib/devTools.ts).
+  createRun(taskId: string, executor?: 'fake' | 'claude'): Promise<RunMeta>;
+  fetchRuns(): Promise<RunMeta[]>;
+  fetchRun(id: string): Promise<RunDetail>;
+  approveRun(runId: string, requestId: string, allow: boolean): Promise<void>;
+  sendRunMessage(
+    runId: string,
+    text: string,
+    opts?: { resume?: boolean }
+  ): Promise<RunMeta>;
+  cancelRun(runId: string): Promise<void>;
+  fetchRunDiff(runId: string): Promise<DiffResult>;
+  reviewRun(runId: string, action: 'merge' | 'discard'): Promise<RunMeta>;
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -192,6 +283,33 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/tasks/${id}`, {
         method: 'PATCH',
         ...jsonBody(patch),
+      }),
+    createRun: (taskId, executor) =>
+      request(baseUrl, `/api/tasks/${taskId}/runs`, {
+        method: 'POST',
+        ...jsonBody(executor !== undefined ? { executor } : {}),
+      }),
+    fetchRuns: () => request(baseUrl, '/api/runs'),
+    fetchRun: (id) => request(baseUrl, `/api/runs/${id}`),
+    approveRun: async (runId, requestId, allow) => {
+      await request(baseUrl, `/api/runs/${runId}/approval`, {
+        method: 'POST',
+        ...jsonBody({ requestId, allow }),
+      });
+    },
+    sendRunMessage: (runId, text, opts = {}) =>
+      request(baseUrl, `/api/runs/${runId}/message`, {
+        method: 'POST',
+        ...jsonBody({ text, ...opts }),
+      }),
+    cancelRun: async (runId) => {
+      await request(baseUrl, `/api/runs/${runId}/cancel`, { method: 'POST' });
+    },
+    fetchRunDiff: (runId) => request(baseUrl, `/api/runs/${runId}/diff`),
+    reviewRun: (runId, action) =>
+      request(baseUrl, `/api/runs/${runId}/review`, {
+        method: 'POST',
+        ...jsonBody({ action }),
       }),
     wsUrl: () => wsUrl(baseUrl),
     connectEvents: (onChange, options) =>
