@@ -10,6 +10,9 @@
     },
     {
       "path": "packages/server/tsconfig.json"
+    },
+    {
+      "path": "packages/web/tsconfig.json"
     }
   ]
 }
