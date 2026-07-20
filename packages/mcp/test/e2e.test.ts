@@ -116,3 +116,29 @@ describe('dispatch-mcp stdio e2e', () => {
     });
   }, 15_000);
 });
+
+describe('dispatch-mcp --root argument errors', () => {
+  it('exits 1 with a clear stderr message when --root has no value', () => {
+    const proc = Bun.spawnSync({
+      cmd: ['node', BIN, '--root'],
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString()).toContain(
+      '--root requires a directory argument'
+    );
+  });
+
+  it('exits 1 with a clear stderr message when --root is followed by another flag', () => {
+    const proc = Bun.spawnSync({
+      cmd: ['node', BIN, '--root', '--verbose'],
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString()).toContain(
+      '--root requires a directory argument'
+    );
+  });
+});
