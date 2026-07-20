@@ -3,10 +3,15 @@ name = "dispatch-desktop"
 version = "0.1.0"
 description = "Dispatch desktop shell (Tauri observability plane, vendored from Relay)"
 authors = ["Dispatch"]
-license = "Apache-2.0"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
+# Vendored from upstream Relay, which carries no license of its own — see
+# apps/desktop/README.md's "Licensing gate" section. We hold no grant to
+# license this crate under anything, so no `license`/`license-file` key is
+# set here, and `publish = false` keeps it from ever reaching crates.io by
+# accident.
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
