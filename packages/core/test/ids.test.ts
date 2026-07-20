@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { generateTaskId } from '../src/ids.js';
+import { generateRunId, generateTaskId } from '../src/ids.js';
 import { slugify } from '../src/slug.js';
 
 describe('generateTaskId', () => {
@@ -22,6 +22,24 @@ describe('generateTaskId', () => {
   it('generates a random nonce when omitted', () => {
     const a = generateTaskId('task', 'X', '2026-01-01T00:00:00Z');
     const b = generateTaskId('task', 'X', '2026-01-01T00:00:00Z');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('generateRunId', () => {
+  it('prefixes with r-, 6 hex chars', () => {
+    expect(generateRunId('2026-07-13T00:00:00Z', 'n1')).toMatch(
+      /^r-[0-9a-f]{6}$/
+    );
+  });
+  it('is deterministic for identical inputs, differs across nonces', () => {
+    const a = generateRunId('2026-01-01T00:00:00Z', 'n1');
+    expect(generateRunId('2026-01-01T00:00:00Z', 'n1')).toBe(a);
+    expect(generateRunId('2026-01-01T00:00:00Z', 'n2')).not.toBe(a);
+  });
+  it('generates a random nonce when omitted', () => {
+    const a = generateRunId('2026-01-01T00:00:00Z');
+    const b = generateRunId('2026-01-01T00:00:00Z');
     expect(a).not.toBe(b);
   });
 });
