@@ -4,29 +4,37 @@ Spec: `docs/superpowers/specs/2026-07-13-agent-orchestration-platform-design.md`
 Research: `docs/research/2026-07-13-landscape-research.md`
 
 Each phase ships working, independently useful software and gets its own
-detailed implementation plan, authored when the phase starts (so it plans
-against real interfaces, not guesses). Phase order matches spec §9.
+detailed implementation plan, authored when the phase starts. **2026-07-20
+direction change:** Dispatch is desktop-first — the vendored Relay app
+(`apps/desktop`, Tauri + Rust + React) is the product shell; the Rust side is
+the global observability plane over `~/.claude/projects/**/*.jsonl` (Claude
+Code + Codex session logs), and the Bun `dispatchd` daemon is the per-project
+work plane (tasks now, orchestration next), spawned as a sidecar.
 
-| Phase                    | Plan file                                                | Delivers                                                                                                                                                                                                                                                                       | Status                                                                                         |
-| ------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| 1. Core + CLI tracker    | `2026-07-13-phase-1-core-cli-tracker.md`                 | `@dispatch/core` (task files, IDs, graph, store) + `dispatch` CLI (init/create/list/show/edit/status/next/doctor). A usable git-native tracker.                                                                                                                                | **✅ Complete** (merged 2026-07-17, 66 tests; statuses are config-driven per spec §4 addendum) |
-| 2. Daemon + Web UI       | `phase-2-daemon-web-ui.md` (author at phase start)       | `dispatchd` (Hono REST + WS on loopback, SQLite cache derived one-way from files, watcher), React board/list/detail, `dispatch ui`.                                                                                                                                            | Pending                                                                                        |
-| 3. MCP server            | `phase-3-mcp-server.md` (author at phase start)          | stdio MCP server (`task_list/get/save/comment/next`), `workflow://onboarding` resource, `.mcp.json` registration in `dispatch init`.                                                                                                                                           | Pending                                                                                        |
-| 4. Orchestrator MVP      | `phase-4-orchestrator-mvp.md` (author at phase start)    | Worktree manager, Executor interface + Claude Agent SDK executor, run lifecycle + normalized log streaming, approvals, review view (diff, merge/discard/request-changes). Agent awareness: `run_list` MCP tool + dispatched-agent prompt note (spec §5 "Agent collaboration"). | Pending                                                                                        |
-| 5. Planner + parallelism | `phase-5-planner-parallelism.md` (author at phase start) | Plan-confirm flow (prompt → structured epic/tasks proposal), epic ready-queue dispatch with concurrency limit, PR flow + polling. Agent messaging: `agent_message` + task-comment notifications (spec §5 "Agent collaboration").                                               | Pending                                                                                        |
-| 6. Hardening + release   | `phase-6-hardening-release.md` (author at phase start)   | Boot reconciliation edge cases, doctor completeness, docs site/README, npm packaging (`npx dispatch`), CI, versioning.                                                                                                                                                         | Pending                                                                                        |
+**RELEASE BLOCKER — licensing:** `apps/desktop` is vendored from the unlicensed
+github.com/TanmayDabhade/Relay (@ 399d6d4) on the user's assertion of
+permission. A written grant or relicense must be recorded before any public
+release, publish, or repo publication.
 
-Post-v1 (behind interfaces already in the spec): **Tauri 2 desktop shell**
-(user-preferred end state, 2026-07-19 — same React app in an OS webview, daemon
-as `bun build --compile` sidecar; web UI must stay Tauri-ready per spec §2),
-Linear/GitHub adapters, other executors, TUI client, multi-dev sync UX, MCP
-`run_dispatch`.
+| Phase                    | Plan file                                | Delivers                                                                                                                                                                                                                               | Status                                                                                                             |
+| ------------------------ | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1. Core + CLI tracker    | `2026-07-13-phase-1-core-cli-tracker.md` | `@dispatch/core` + `dispatch` CLI. Usable git-native tracker.                                                                                                                                                                          | ✅ Complete (merged 2026-07-17, config-driven statuses per spec §4 addendum)                                       |
+| 2. Daemon + Web UI       | `2026-07-19-phase-2-daemon-web-ui.md`    | `dispatchd` (`@dispatch/server`), `@dispatch/web`, `dispatch serve`/`ui`.                                                                                                                                                              | ✅ Complete (merged 2026-07-20). Deviations: Bun.serve instead of Hono; in-memory bun:sqlite cache instead of disk |
+| 2R. Relay port + desktop | `2026-07-20-phase-2r-relay-port.md`      | Relay vendored as `apps/desktop` (Tauri shell, JSONL observability, design system); `@dispatch/client` extraction; `ensure_dispatchd` sidecar; Tasks tab + Tasks nav in the desktop app.                                               | In review                                                                                                          |
+| 3. MCP server            | author at phase start                    | stdio MCP server (`task_list/get/save/comment/next`), `workflow://onboarding` resource, `.mcp.json` registration in `dispatch init`.                                                                                                   | Pending                                                                                                            |
+| 4. Orchestrator MVP      | author at phase start                    | Worktree manager, Executor + Agent SDK executor in dispatchd, run lifecycle + log streaming, approvals, review surface **in the desktop app using Pierre's diff/tree components**; `run_list` awareness (spec §5 Agent collaboration). | Pending                                                                                                            |
+| 5. Planner + parallelism | author at phase start                    | Plan-confirm flow, epic ready-queue dispatch with concurrency, PR flow + polling; `agent_message` + task-comment notifications (spec §5).                                                                                              | Pending                                                                                                            |
+| 6. Hardening + release   | author at phase start                    | Reconciliation edge cases, doctor completeness, docs, **Tauri bundling + `bun build --compile` dispatchd sidecar binary**, Rust CI, versioning, **licensing gate resolution**.                                                         | Pending                                                                                                            |
 
-Known deviations from spec, decided during Phase 1 planning:
+Post-v1 (behind interfaces already in the spec): Linear/GitHub adapters, other
+executors, TUI client, multi-dev sync UX, MCP `run_dispatch`, Windows/Linux
+desktop builds.
 
-- SQLite cache + file watcher move from Phase 1 to Phase 2 (spec §9 listed them
-  in Phase 1). Rationale: the CLI does fast directory scans at v1 scale
-  (backlog.md precedent); the daemon is the cache's first real consumer. The
-  files→cache one-way rule in spec §4 is unchanged.
-- `.mcp.json` registration in `dispatch init` lands in Phase 3 with the MCP
-  server itself.
+Standing decisions:
+
+- Diff views and file trees use Pierre's open-source components (spec §5 Review;
+  first consumer Phase 4).
+- `packages/web` is frozen as a browser fallback; new UI work happens in
+  `apps/desktop`.
+- SQLite cache + watcher shipped in Phase 2 (in-memory, one-way per spec §4);
+  `.mcp.json` registration lands in Phase 3 with the MCP server.
