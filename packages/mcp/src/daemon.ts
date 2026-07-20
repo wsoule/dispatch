@@ -32,7 +32,10 @@ function daemonHome(): string {
   return home !== undefined && home !== '' ? home : homedir();
 }
 
-function daemonFilePath(rootDir: string): string {
+// Exported purely so this module's own tests can point a corrupt fixture at
+// exactly the path `readDaemonFile` will look for, without duplicating the
+// hash scheme a third time.
+export function daemonFilePath(rootDir: string): string {
   const key = createHash('sha256').update(rootDir).digest('hex').slice(0, 12);
   return join(daemonHome(), '.dispatch', 'daemons', `${key}.json`);
 }
@@ -40,11 +43,19 @@ function daemonFilePath(rootDir: string): string {
 // Reads the daemon file for `rootDir`, or `null` if none exists — a missing
 // file means no daemon has ever been started for this project (or it was
 // cleanly stopped), not necessarily that one isn't running; `isDaemonHealthy`
-// is what actually confirms liveness.
+// is what actually confirms liveness. M5: a *corrupt* file (a crash mid-write
+// left truncated/invalid JSON behind) is treated exactly the same as a
+// missing one — `run_list`'s caller already has a clean "no daemon" fallback
+// for `null`, so there's no reason to let a JSON.parse throw escape and turn
+// a stale file into a hard tool error instead of that same graceful path.
 export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
   const path = daemonFilePath(rootDir);
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  } catch {
+    return null;
+  }
 }
 
 // A daemon file can outlive the process it describes (a crash skips the
