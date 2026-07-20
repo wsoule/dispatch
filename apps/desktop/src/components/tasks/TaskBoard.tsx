@@ -1,3 +1,4 @@
+import type { RunState } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
 
 import { statusTone } from '../../lib/taskDisplay';
@@ -10,6 +11,8 @@ interface TaskBoardProps {
   statuses: string[];
   readyIds: Set<string>;
   blockedIds: Set<string>;
+  /** Live (non-terminal) run state per task id — see TasksPanel's `liveRunStateByTaskId`. */
+  liveRunStateByTaskId: Map<string, RunState>;
   onSelect: (id: string) => void;
 }
 
@@ -22,6 +25,7 @@ export function TaskBoard({
   statuses,
   readyIds,
   blockedIds,
+  liveRunStateByTaskId,
   onSelect,
 }: TaskBoardProps) {
   return (
@@ -48,6 +52,7 @@ export function TaskBoard({
                   doc={doc}
                   ready={readyIds.has(doc.meta.id)}
                   blocked={blockedIds.has(doc.meta.id)}
+                  liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
                   onClick={() => onSelect(doc.meta.id)}
                 />
               ))}

@@ -9,6 +9,7 @@ import '@fontsource/inter/600.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import './styles/tokens.css';
+import './styles/pierreTheme.css';
 import './styles/global.css';
 import App from './App.tsx';
 

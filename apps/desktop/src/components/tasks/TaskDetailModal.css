@@ -9,6 +9,11 @@
   font-weight: 600;
 }
 
+.task-detail-modal-run-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .task-detail-modal-error {
   background: var(--red-bg);
   color: var(--red);
