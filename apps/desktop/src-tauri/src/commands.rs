@@ -670,7 +670,7 @@ pub async fn ensure_dispatchd(
 ) -> Result<u16, String> {
     sidecar::ensure_dispatchd(
         &sidecar::BunSpawner,
-        &children.0,
+        &children,
         Path::new(env!("CARGO_MANIFEST_DIR")),
         &root,
     )

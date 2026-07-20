@@ -73,7 +73,10 @@ fn daemon_file_path_under(home: &Path, root_dir: &str) -> PathBuf {
 /// `DISPATCH_HOME` lets tests (and anything else) redirect daemon files away
 /// from the real home directory — same override `daemonfile.ts` honors, so
 /// setting it affects both the Bun daemon and this Rust client looking for
-/// it.
+/// it. An empty string is treated the same as unset (falls back to the real
+/// home directory) — kept in sync with `packages/server/src/daemonfile.ts`
+/// and `packages/cli/src/commands/daemon.ts`'s identical `daemonHome()`;
+/// update all three together if this scheme ever changes.
 fn daemon_home() -> PathBuf {
     match std::env::var("DISPATCH_HOME") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
@@ -211,11 +214,45 @@ impl DispatchdChildren {
         Self(Mutex::new(Vec::new()))
     }
 
+    /// Reaps (via `try_wait`, which both polls exit status and collects the
+    /// exit code) any children that have already exited on their own, then
+    /// drops them from the vector. A dispatchd that self-exits — e.g. it
+    /// crashed, or `ensure_dispatchd` replaced it with a fresh spawn after
+    /// its daemon file went unhealthy — otherwise sits in this vector,
+    /// unreaped, for the rest of the app's session: an OS-level zombie
+    /// process until `kill_all` finally runs at exit.
+    fn prune_exited(children: &mut Vec<Child>) {
+        children.retain_mut(|child| match child.try_wait() {
+            // Exited; try_wait() already reaped it, so just drop it here.
+            Ok(Some(_status)) => false,
+            // Still running: keep tracking it.
+            Ok(None) => true,
+            // Couldn't determine status; err on the side of still tracking it
+            // rather than leaking a possibly-live child out of the vector.
+            Err(_) => true,
+        });
+    }
+
+    /// Tracks a freshly spawned dispatchd child, first pruning any children
+    /// that have already exited so the vector doesn't grow unbounded across
+    /// a long desktop-app session that ends up spawning several dispatchd
+    /// sidecars (one per project root touched, plus any replaced after going
+    /// unhealthy).
+    pub fn push(&self, child: Child) {
+        let mut children = self.0.lock().unwrap();
+        Self::prune_exited(&mut children);
+        children.push(child);
+    }
+
     /// Kills and reaps every tracked child. Best-effort: a child that
     /// already exited on its own just fails `kill`/`wait` here, which is
     /// fine to ignore — the goal ("nothing left running") already holds.
+    /// Prunes first purely so already-exited children are reaped through the
+    /// same `try_wait` path as `push` rather than the `kill`+`wait` fallback,
+    /// which is harmless either way but keeps the two code paths consistent.
     pub fn kill_all(&self) {
         let mut children = self.0.lock().unwrap();
+        Self::prune_exited(&mut children);
         for child in children.iter_mut() {
             let _ = child.kill();
             let _ = child.wait();
@@ -263,10 +300,12 @@ async fn poll_for_healthy_daemon(
 /// this call spawns, for the caller to track for kill-on-exit.
 pub async fn ensure_dispatchd(
     spawner: &dyn DaemonSpawner,
-    children: &Mutex<Vec<Child>>,
+    children: &DispatchdChildren,
     manifest_dir: &Path,
     root: &str,
 ) -> Result<u16, String> {
+    let root = normalize_root(root)?;
+    let root = root.as_str();
     let client = reqwest::Client::new();
 
     if let Some(info) = read_daemon_file(root) {
@@ -278,7 +317,7 @@ pub async fn ensure_dispatchd(
     let bin_path = dispatchd_bin_path(manifest_dir);
     let mut child = spawner.spawn(&bin_path, root)?;
     forward_child_output(&mut child);
-    children.lock().unwrap().push(child);
+    children.push(child);
 
     poll_for_healthy_daemon(&client, root, POLL_TIMEOUT)
         .await
@@ -294,6 +333,30 @@ pub async fn ensure_dispatchd(
 /// `ensure_dispatchd`.
 pub fn has_dispatch(root: &str) -> bool {
     Path::new(root).join(".dispatch").is_dir()
+}
+
+/// Normalizes `root` before it's hashed into a daemon-file key or handed to
+/// the spawner. `packages/server/src/bin.ts` resolves `--root` with Node's
+/// `path.resolve` before this same rootDir is hashed on the TS side
+/// (`daemonfile.ts`'s `daemonFileKey`) — that resolution both requires an
+/// absolute path and strips trailing slashes. Without the same normalization
+/// here, a caller passing `/project/` and one passing `/project` hash to two
+/// different daemon files and each ends up polling (and potentially
+/// spawning) its own dispatchd for what is really one project root — e.g.
+/// `9006acb0ea0b` vs `7236b3b9dccb` for the same directory. Bare `/` is left
+/// as `/` rather than becoming empty.
+fn normalize_root(root: &str) -> Result<String, String> {
+    if !Path::new(root).is_absolute() {
+        return Err(format!(
+            "dispatchd root must be an absolute path, got: {root:?}"
+        ));
+    }
+    let trimmed = root.trim_end_matches('/');
+    Ok(if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    })
 }
 
 #[cfg(test)]
@@ -390,6 +453,43 @@ mod tests {
     }
 
     #[test]
+    fn normalize_root_strips_a_trailing_slash() {
+        assert_eq!(normalize_root("/tmp/dispatch-fixture-root/"), Ok("/tmp/dispatch-fixture-root".to_string()));
+    }
+
+    #[test]
+    fn normalize_root_strips_multiple_trailing_slashes() {
+        assert_eq!(normalize_root("/tmp/dispatch-fixture-root///"), Ok("/tmp/dispatch-fixture-root".to_string()));
+    }
+
+    #[test]
+    fn normalize_root_is_a_no_op_without_a_trailing_slash() {
+        assert_eq!(normalize_root("/tmp/dispatch-fixture-root"), Ok("/tmp/dispatch-fixture-root".to_string()));
+    }
+
+    #[test]
+    fn normalize_root_keeps_bare_root_slash_intact() {
+        assert_eq!(normalize_root("/"), Ok("/".to_string()));
+        assert_eq!(normalize_root("///"), Ok("/".to_string()));
+    }
+
+    #[test]
+    fn normalize_root_rejects_a_relative_path() {
+        assert!(normalize_root("relative/path").is_err());
+        assert!(normalize_root("./foo").is_err());
+    }
+
+    #[test]
+    fn normalize_root_makes_a_trailing_slash_root_hash_identically_to_without_one() {
+        // This is the exact regression the reviewer demonstrated: a trailing-slash root
+        // used to hash to a different daemon file (e.g. 9006acb0ea0b vs 7236b3b9dccb for
+        // the same directory), so it polled the wrong daemon file forever.
+        let with_slash = normalize_root("/tmp/dispatch-fixture-root/").unwrap();
+        let without_slash = normalize_root("/tmp/dispatch-fixture-root").unwrap();
+        assert_eq!(daemon_file_key(&with_slash), daemon_file_key(&without_slash));
+    }
+
+    #[test]
     fn has_dispatch_true_only_when_dot_dispatch_dir_exists() {
         let dir = std::env::temp_dir().join(format!(
             "dispatch-sidecar-has-dispatch-{}",
@@ -421,13 +521,53 @@ mod tests {
         // spawning — and FailingSpawner's error should come straight back out, not get
         // swallowed into the generic "did not become healthy" timeout message.
         let root = "/tmp/dispatch-fixture-root-never-has-a-daemon-file";
-        let children = Mutex::new(Vec::new());
+        let children = DispatchdChildren::new();
         let manifest_dir = Path::new("/repo/apps/desktop/src-tauri");
 
         let result =
             ensure_dispatchd(&FailingSpawner, &children, manifest_dir, root).await;
 
         assert_eq!(result, Err("bun: command not found".to_string()));
-        assert!(children.lock().unwrap().is_empty());
+        assert!(children.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn push_prunes_already_exited_children_before_appending() {
+        let children = DispatchdChildren::new();
+
+        // A child that exits (almost) immediately.
+        let short_lived = Command::new("true").spawn().expect("spawn `true`");
+        children.push(short_lived);
+
+        // Give it a moment to actually finish exiting so try_wait can observe it —
+        // spawn() returning doesn't guarantee the process has exited yet.
+        std::thread::sleep(Duration::from_millis(100));
+
+        let second = Command::new("true").spawn().expect("spawn `true`");
+        children.push(second);
+
+        // The first child should have been pruned when the second was pushed, so
+        // exactly one entry remains tracked (the second — whether or not it has
+        // exited yet itself).
+        assert_eq!(children.0.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn kill_all_clears_a_mix_of_exited_and_still_running_children() {
+        let children = DispatchdChildren::new();
+
+        let short_lived = Command::new("true").spawn().expect("spawn `true`");
+        children.push(short_lived);
+        std::thread::sleep(Duration::from_millis(100));
+
+        // A long-running child kill_all has to actually terminate.
+        let long_lived = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn `sleep`");
+        children.push(long_lived);
+
+        children.kill_all();
+        assert!(children.0.lock().unwrap().is_empty());
     }
 }
