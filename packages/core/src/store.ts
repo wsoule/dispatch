@@ -57,6 +57,18 @@ export interface ListFilter {
   parent?: string;
 }
 
+// One skipped file from a listSafe() scan: which file failed and why (a
+// TaskParseError's message, e.g. "missing frontmatter field: id").
+export interface ListSafeError {
+  file: string;
+  message: string;
+}
+
+export interface ListSafeResult {
+  docs: TaskDoc[];
+  errors: ListSafeError[];
+}
+
 export class TaskStore {
   readonly tasksDir: string;
 
@@ -119,6 +131,36 @@ export class TaskStore {
       .map((f) =>
         parseTaskFile(readFileSync(join(this.tasksDir, f), 'utf8'), f)
       );
+    return this.filterAndSort(docs, filter);
+  }
+
+  // Same scan as list(), but a file that fails to parse (corrupt frontmatter,
+  // missing required field, etc.) is collected as an error instead of
+  // throwing and aborting the whole scan — callers that must keep serving the
+  // rest of the task set even when one file is bad (the daemon's cache
+  // rebuild) use this instead of list().
+  listSafe(filter: ListFilter = {}): ListSafeResult {
+    if (!this.isInitialized()) return { docs: [], errors: [] };
+    const docs: TaskDoc[] = [];
+    const errors: ListSafeError[] = [];
+    for (const f of readdirSync(this.tasksDir).filter((f) =>
+      f.endsWith('.md')
+    )) {
+      try {
+        docs.push(
+          parseTaskFile(readFileSync(join(this.tasksDir, f), 'utf8'), f)
+        );
+      } catch (err) {
+        errors.push({ file: f, message: (err as Error).message });
+      }
+    }
+    return { docs: this.filterAndSort(docs, filter), errors };
+  }
+
+  // Shared filter + sort semantics for list() and listSafe(): filter by
+  // status/kind/parent, then sort by created timestamp (ties broken by id) so
+  // both methods return tasks in the same stable order.
+  private filterAndSort(docs: TaskDoc[], filter: ListFilter): TaskDoc[] {
     return docs
       .filter((d) =>
         filter.status !== undefined ? d.meta.status === filter.status : true

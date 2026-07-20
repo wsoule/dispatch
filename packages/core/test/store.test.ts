@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -70,6 +76,47 @@ describe('list', () => {
     expect(store.list({ status: 'backlog' })[0].meta.id).toBe(b.meta.id);
     expect(store.list({ kind: 'epic' })).toHaveLength(1);
     expect(store.list({ parent: epic.meta.id })[0].meta.title).toBe('A');
+  });
+});
+
+describe('listSafe', () => {
+  it('collects parse failures instead of throwing, and still returns the good docs', () => {
+    const store = TaskStore.init(root);
+    const good = store.create({ title: 'Good' }, '2026-07-13T01:00:00Z');
+    writeFileSync(join(store.tasksDir, 'corrupt.md'), 'no frontmatter here');
+
+    expect(() => store.list()).toThrow(/missing frontmatter/);
+
+    const { docs, errors } = store.listSafe();
+    expect(docs.map((d) => d.meta.id)).toEqual([good.meta.id]);
+    expect(errors).toEqual([
+      { file: 'corrupt.md', message: 'missing frontmatter' },
+    ]);
+  });
+
+  it('applies the same status/kind/parent filter and sort as list()', () => {
+    const store = TaskStore.init(root);
+    const epic = store.create(
+      { title: 'Epic', kind: 'epic' },
+      '2026-07-13T01:00:00Z'
+    );
+    store.create({ title: 'A', parent: epic.meta.id }, '2026-07-13T02:00:00Z');
+    store.create({ title: 'B', status: 'backlog' }, '2026-07-13T03:00:00Z');
+
+    expect(store.listSafe().docs.map((t) => t.meta.title)).toEqual([
+      'Epic',
+      'A',
+      'B',
+    ]);
+    expect(
+      store.listSafe({ status: 'backlog' }).docs.map((t) => t.meta.title)
+    ).toEqual(['B']);
+    expect(store.listSafe({ kind: 'epic' }).docs).toHaveLength(1);
+  });
+
+  it('returns an empty result for an uninitialized store', () => {
+    const store = new TaskStore(root);
+    expect(store.listSafe()).toEqual({ docs: [], errors: [] });
   });
 });
 
