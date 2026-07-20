@@ -13,12 +13,14 @@ import { requireStore } from './task.js';
 // Daemon-file discovery
 //
 // This mirrors the read side of packages/server/src/daemonfile.ts exactly:
-// same hash scheme, same `$DISPATCH_HOME`/homedir fallback, same on-disk
-// layout. `@dispatch/cli` must stay Node-runnable, but `@dispatch/server` is
-// Bun-only (bun:sqlite, Bun.serve), so the CLI can't import it directly —
-// this is a small standalone copy of just the pieces `dispatch ui` needs to
-// find a daemon someone else already started. Keep this block in sync with
-// daemonfile.ts if that scheme ever changes; test/daemon-cmd.test.ts
+// same hash scheme, same `$DISPATCH_HOME`/homedir fallback (including
+// treating an empty string as unset), same on-disk layout. `@dispatch/cli`
+// must stay Node-runnable, but `@dispatch/server` is Bun-only (bun:sqlite,
+// Bun.serve), so the CLI can't import it directly — this is a small
+// standalone copy of just the pieces `dispatch ui` needs to find a daemon
+// someone else already started. Keep this block in sync with daemonfile.ts
+// (and apps/desktop/src-tauri/src/sidecar.rs's `daemon_home`, a third copy
+// of the same scheme) if it ever changes; test/daemon-cmd.test.ts
 // cross-checks the hash against a fixture so drift fails loudly.
 // ---------------------------------------------------------------------------
 
@@ -30,7 +32,8 @@ interface DaemonFileInfo {
 }
 
 function daemonHome(): string {
-  return process.env.DISPATCH_HOME ?? homedir();
+  const home = process.env.DISPATCH_HOME;
+  return home !== undefined && home !== '' ? home : homedir();
 }
 
 export function daemonFileKey(rootDir: string): string {

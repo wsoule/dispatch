@@ -67,6 +67,20 @@
       "rules": {
         "typescript/await-thenable": "off"
       }
+    },
+    {
+      // apps/desktop is vendored from Relay (github.com/TanmayDabhade/Relay @ 399d6d4,
+      // see apps/desktop/README.md). Its own tsconfigs don't set strictNullChecks the way
+      // our tsconfig.options.json does, so most conditionals were written against looser
+      // truthiness assumptions than these two rules expect. Rewriting every branch to
+      // satisfy them risks changing vendored behavior we don't yet own; deferred to a
+      // dedicated cleanup pass rather than blocking the R1 vendor slice. Other
+      // typescript-eslint rules (floating promises, no-explicit-any, etc.) still apply.
+      "files": ["apps/desktop/**"],
+      "rules": {
+        "typescript/strict-boolean-expressions": "off",
+        "typescript/prefer-nullish-coalescing": "off"
+      }
     }
   ],
   "settings": {

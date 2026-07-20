@@ -11,6 +11,7 @@
     "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
+    "@dispatch/client": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

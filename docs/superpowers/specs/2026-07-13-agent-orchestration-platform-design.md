@@ -83,6 +83,27 @@ packaging — the same React app in an OS webview, with the daemon bundled as a
 `bun build --compile` sidecar binary (opcode / Vibe Kanban precedent). Dock
 badge, tray status, and native notifications arrive with that shell.
 
+**Superseded 2026-07-20 — desktop-now via the Relay port.** The user vendored
+Relay (Tauri + Rust + React, watches `~/.claude/projects/**/*.jsonl` for Claude
+Code and Codex session logs) into `apps/desktop` as the product shell, reversing
+the ship-web-first sequencing. The resulting architecture is **two planes, one
+app**:
+
+- _Observability plane (Rust, from Relay):_ global, read-only view over every
+  agent session on the machine — projects, sessions, live token/cost, tags,
+  summaries — via incremental JSONL tailing into SQLite, exposed to the frontend
+  over Tauri IPC. This is how "see what agents are doing" extends beyond runs
+  Dispatch itself spawns.
+- _Work plane (Bun, `dispatchd`):_ per-project sidecar (spawned by the shell via
+  `ensure_dispatchd`, discovered via `~/.dispatch/daemons/`) serving git-native
+  tasks over HTTP/WS today and the orchestrator (Agent SDK is TS-only) in Phases
+  4–5.
+
+`@dispatch/web` remains as a frozen browser fallback served by dispatchd; the
+Tauri-ready seam above is what made the pivot cheap. Licensing: Relay is
+upstream-unlicensed; vendoring rests on the user's permission assertion, and a
+written grant is a release blocker (see roadmap).
+
 ## 3. Architecture
 
 ```

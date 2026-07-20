@@ -1,0 +1,35 @@
+{
+  "name": "@dispatch/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "license": "SEE LICENSE IN README.md",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "bun test",
+    "tsc": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@dispatch/client": "workspace:*",
+    "@fontsource/ibm-plex-mono": "catalog:",
+    "@fontsource/inter": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "@tauri-apps/api": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@dispatch/core": "workspace:*",
+    "@tauri-apps/cli": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

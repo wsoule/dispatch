@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { daemonFileKey, daemonFilePath } from '../src/commands/daemon.js';
@@ -53,6 +53,13 @@ describe('daemon-file discovery (mirrors packages/server/src/daemonfile.ts)', ()
     const path = daemonFilePath(root);
     expect(path).toBe(
       join(fakeHome, '.dispatch', 'daemons', `${daemonFileKey(root)}.json`)
+    );
+  });
+
+  it('treats an empty DISPATCH_HOME the same as unset (falls back to homedir())', () => {
+    process.env.DISPATCH_HOME = '';
+    expect(daemonFilePath(root)).toBe(
+      join(homedir(), '.dispatch', 'daemons', `${daemonFileKey(root)}.json`)
     );
   });
 });

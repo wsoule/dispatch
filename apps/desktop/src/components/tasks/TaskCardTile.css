@@ -1,0 +1,51 @@
+.task-card-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-left: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--surface-card);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
+.task-card-tile:hover {
+  border-color: var(--border-strong);
+}
+
+/* The one place besides a primary button the accent color shows up — marks a task the graph
+   considers safe to start right now (no unresolved blockers). */
+.task-card-tile[data-ready='true'] {
+  border-left-color: var(--accent);
+}
+
+.task-card-tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.task-card-tile-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.task-card-tile-title {
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.task-card-tile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}

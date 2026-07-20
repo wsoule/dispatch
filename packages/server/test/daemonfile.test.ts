@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  daemonFileKey,
   daemonFilePath,
   readDaemonFile,
   removeDaemonFile,
@@ -54,6 +55,13 @@ describe('writeDaemonFile / readDaemonFile', () => {
     writeDaemonFile({ rootDir: otherRoot, port: 2, pid: 2, startedAt: 't' });
     expect(daemonFilePath(rootDir)).not.toBe(daemonFilePath(otherRoot));
     rmSync(otherRoot, { recursive: true, force: true });
+  });
+
+  it('treats an empty DISPATCH_HOME the same as unset (falls back to homedir())', () => {
+    process.env.DISPATCH_HOME = '';
+    expect(daemonFilePath(rootDir)).toBe(
+      join(homedir(), '.dispatch', 'daemons', `${daemonFileKey(rootDir)}.json`)
+    );
   });
 });
 
