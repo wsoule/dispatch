@@ -11,6 +11,12 @@ import type { CreateInput, DispatchConfig, UpdatePatch } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import type { Orchestrator } from './orchestrator/orchestrator.js';
+import {
+  OrchestratorClientError,
+  OrchestratorConflictError,
+  OrchestratorNotFoundError,
+} from './orchestrator/types.js';
 
 // Everything a request handler needs, bundled so `handleApi` stays a pure
 // function of (request, context) instead of reaching for module-level state —
@@ -20,8 +26,17 @@ export interface ApiContext {
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
+  orchestrator: Orchestrator;
   version: string;
 }
+
+// Executor names O1 knows how to validate against, independent of which ones
+// are actually registered on a given Orchestrator (only 'fake' is registered
+// until Slice O2 adds the real Claude executor) — this lets a request for an
+// unrecognized name (e.g. "wombat") get a clear 400 instead of being
+// conflated with "claude isn't wired up yet", which is a 400 too but a
+// different message (thrown by the orchestrator itself).
+const KNOWN_EXECUTOR_NAMES = ['fake', 'claude'];
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -125,6 +140,32 @@ async function readJsonBody(
   }
 }
 
+// Same contract as readJsonBody, but an empty request body is treated as `{}`
+// rather than a 400 — used for endpoints where every field is optional (only
+// POST /api/tasks/:id/runs today: `executor` defaults when omitted), so a
+// client that sends no body at all isn't penalized for it.
+async function readJsonBodyOptional(
+  req: Request
+): Promise<
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; response: Response }
+> {
+  const text = await req.text();
+  if (text.trim() === '') return { ok: true, value: {} };
+  try {
+    const value = JSON.parse(text);
+    if (typeof value !== 'object' || value === null) {
+      return {
+        ok: false,
+        response: errorResponse(400, 'invalid body: expected a JSON object'),
+      };
+    }
+    return { ok: true, value: value as Record<string, unknown> };
+  } catch {
+    return { ok: false, response: errorResponse(400, 'invalid JSON body') };
+  }
+}
+
 async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -170,6 +211,94 @@ async function updateTask(
   ctx.cache.rebuild(ctx.store);
   ctx.events.broadcast({ type: 'task.changed' });
   return jsonResponse(doc);
+}
+
+// POST /api/tasks/:id/runs — dispatches a new orchestrator run for the task.
+// `executor` is optional (defaults to 'claude'); a name outside
+// KNOWN_EXECUTOR_NAMES is a 400 here, while a *known but unregistered* name
+// (claude, until Slice O2) is a 400 raised by the orchestrator itself and
+// caught below in handleApi's OrchestratorClientError mapping.
+async function createRun(
+  req: Request,
+  ctx: ApiContext,
+  taskId: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const executorField = parsed.value.executor;
+  if (
+    executorField !== undefined &&
+    (typeof executorField !== 'string' ||
+      !KNOWN_EXECUTOR_NAMES.includes(executorField))
+  ) {
+    return errorResponse(
+      400,
+      `invalid executor: ${String(executorField)} (expected ${KNOWN_EXECUTOR_NAMES.join('|')})`
+    );
+  }
+  const executorName =
+    typeof executorField === 'string' ? executorField : 'claude';
+  const meta = ctx.orchestrator.dispatch(taskId, executorName);
+  return jsonResponse(meta, 201);
+}
+
+async function approveRun(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { requestId?: unknown; allow?: unknown };
+  if (typeof body.requestId !== 'string' || body.requestId.trim() === '') {
+    return errorResponse(400, 'invalid requestId: requestId is required');
+  }
+  if (typeof body.allow !== 'boolean') {
+    return errorResponse(400, 'invalid allow: expected a boolean');
+  }
+  ctx.orchestrator.approve(runId, body.requestId, body.allow);
+  return jsonResponse({ ok: true });
+}
+
+async function sendRunMessage(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown; resume?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  if (body.resume !== undefined && typeof body.resume !== 'boolean') {
+    return errorResponse(400, 'invalid resume: expected a boolean');
+  }
+  const meta = ctx.orchestrator.sendMessage(runId, body.text, {
+    resume: body.resume === true,
+  });
+  return jsonResponse(meta);
+}
+
+async function reviewRun(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { action?: unknown };
+  if (
+    typeof body.action !== 'string' ||
+    (body.action !== 'merge' && body.action !== 'discard')
+  ) {
+    return errorResponse(
+      400,
+      `invalid action: ${String(body.action)} (expected merge|discard)`
+    );
+  }
+  const meta = ctx.orchestrator.review(runId, body.action);
+  return jsonResponse(meta);
 }
 
 // Routes every `/api/*` request. Called only for paths under `/api` — the
@@ -235,15 +364,77 @@ export async function handleApi(
       if (segments.length === 2 && method === 'PATCH') {
         return await updateTask(req, ctx, segments[1]);
       }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'runs' &&
+        method === 'POST'
+      ) {
+        return await createRun(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'runs') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.orchestrator.list());
+      }
+      if (segments.length === 2 && method === 'GET') {
+        const result = ctx.orchestrator.getRun(segments[1]);
+        return result !== null
+          ? jsonResponse(result)
+          : errorResponse(404, `run not found: ${segments[1]}`);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'approval' &&
+        method === 'POST'
+      ) {
+        return await approveRun(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'message' &&
+        method === 'POST'
+      ) {
+        return await sendRunMessage(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'cancel' &&
+        method === 'POST'
+      ) {
+        await ctx.orchestrator.cancel(segments[1]);
+        return jsonResponse({ ok: true });
+      }
+      if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
+        return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review' &&
+        method === 'POST'
+      ) {
+        return await reviewRun(req, ctx, segments[1]);
+      }
     }
 
     return errorResponse(404, `not found: ${url.pathname}`);
   } catch (err) {
     // TaskParseError (a corrupt task file) and ConfigError (corrupt
     // config.yml) are the only errors expected to reach here from core; both
-    // map to 422 with just their message — never a stack trace.
+    // map to 422 with just their message — never a stack trace. The
+    // Orchestrator* errors mirror that same typed-error-to-status-code
+    // pattern for the run endpoints.
     if (err instanceof TaskParseError || err instanceof ConfigError) {
       return errorResponse(422, err.message);
+    }
+    if (err instanceof OrchestratorNotFoundError) {
+      return errorResponse(404, err.message);
+    }
+    if (err instanceof OrchestratorConflictError) {
+      return errorResponse(409, err.message);
+    }
+    if (err instanceof OrchestratorClientError) {
+      return errorResponse(400, err.message);
     }
     throw err;
   }

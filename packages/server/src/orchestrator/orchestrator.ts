@@ -115,7 +115,13 @@ export class Orchestrator {
     const baseBranch = this.worktrees.defaultBaseBranch();
     const now = new Date().toISOString();
     const runId = generateRunId(now);
-    const branch = `dispatch/${taskId}-${slugify(task.meta.title)}`;
+    // Suffixed with the run's own hex tag (stripping its `r-` prefix) so two
+    // runs against the same task never collide on branch name — a task can
+    // have several finished-but-unreviewed runs sitting in parallel until
+    // each is merged/discarded, each keeping its own worktree/branch until
+    // then. `sendMessage(..., { resume: true })` intentionally reuses the
+    // *same* branch/worktree instead of generating a new one here.
+    const branch = `dispatch/${taskId}-${slugify(task.meta.title)}-${runId.slice(2)}`;
     const wtPath = worktreePath(this.ctx.rootDir, runId);
 
     this.worktrees.add(wtPath, branch, baseBranch);

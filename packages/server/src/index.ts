@@ -8,6 +8,8 @@ import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
+import { FakeExecutor } from './orchestrator/executors/fake.js';
+import { Orchestrator } from './orchestrator/orchestrator.js';
 import { watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -130,11 +132,39 @@ export async function startServer(
     events.broadcast({ type: 'task.changed' });
   });
 
+  // The orchestrator's own executor registry: 'fake' is the only executor
+  // this slice ships (a scripted stand-in that emits one log entry and
+  // finishes immediately — enough for the Slice O3 dev toggle to exercise
+  // the full run lifecycle through the real HTTP/WS surface). 'claude'
+  // arrives in Slice O2; dispatching to it until then is a clean 400 from
+  // the orchestrator itself, not a crash.
+  const orchestrator = new Orchestrator({ rootDir, store, cache, events });
+  orchestrator.registerExecutor(
+    'fake',
+    new FakeExecutor({
+      steps: [
+        {
+          entry: {
+            ts: new Date().toISOString(),
+            kind: 'assistant',
+            text: 'FakeExecutor: simulating a dispatch run.',
+          },
+        },
+      ],
+      finish: { state: 'finished', costUsd: 0, turns: 1 },
+    })
+  );
+  // Boot-time hygiene (spec §4): any run left non-terminal by a previous
+  // crash is marked failed, and worktree directories with no matching
+  // transcript at all are pruned.
+  orchestrator.reconcileOnBoot();
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
     cache,
     events,
+    orchestrator,
     version: packageJson.version,
   };
 
