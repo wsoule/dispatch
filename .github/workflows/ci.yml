@@ -26,14 +26,67 @@ jobs:
       - name: Stylelint
         run: bun run lint:css
 
+      # `tsc` (tsgo) resolves workspace packages through each package.json's
+      # `exports` field, which points at `dist/*`. That output only exists
+      # after a build, so Build must run before TypeScript here or every
+      # cross-package import (e.g. @dispatch/cli importing @dispatch/core)
+      # fails with "Cannot find module".
+      - name: Build
+        run: bun run build
+
       - name: TypeScript
         run: bun run tsc
 
       - name: Tests
         run: bun run test
 
-      - name: Build
-        run: bun run build
+  desktop:
+    name: Desktop (JS)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Bun and install dependencies
+        uses: ./.github/actions/setup
+
+      # The root `build`/`test` scripts only run across `packages/*` (see
+      # package.json), so apps/desktop's frontend needs its own build/test
+      # invocation here rather than riding along with the `verify` job.
+      - name: Build desktop frontend
+        run: bun ws desktop build
+
+      - name: Test desktop frontend
+        run: bun ws desktop test
+
+  rust:
+    name: Rust (apps/desktop/src-tauri)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable (2026-07-16)
+        with:
+          toolchain: stable
+
+      - name: Cache cargo build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # `apps/desktop/src-tauri` was vendored from Relay (see apps/desktop/README.md)
+      # and is not fmt-clean or clippy-clean as-is: `cargo fmt --check` reformats
+      # dozens of pre-existing lines, and `cargo clippy -- -D warnings` fails on
+      # pre-existing findings (an unused import, a manual range-contains, two
+      # too-many-arguments functions, a `.nth(0)` call). Both were verified
+      # locally before writing this job. Re-run them by hand after a
+      # re-vendoring pass and gate on them once the vendored code is clean;
+      # for now only `cargo test`, which is green, is enforced.
+      - name: Test
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
 
   actions-pinned:
     name: Actions pinned to SHA
