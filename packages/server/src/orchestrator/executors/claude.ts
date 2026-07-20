@@ -129,6 +129,18 @@ function entriesForAssistantContent(
     } else if (block.type === 'thinking' && block.thinking !== undefined) {
       entries.push({ ts, kind: 'thinking', text: block.thinking });
     } else if (block.type === 'tool_use' && block.name !== undefined) {
+      // TODO(M7): every tool entry is logged as `status: 'running'` and
+      // never resolved to 'done'/'error'. Doing that cheaply would need (a)
+      // a stable id to update — NormalizedEntry/the transcript's append-only
+      // JSONL have neither; the transcript would need a new line kind that
+      // *patches* a prior entry by tool_use_id rather than only ever
+      // appending, and every reader (getRun's replay, the web UI's log view)
+      // would need to apply that patch when folding entries — and (b)
+      // reading the SDK's own tool_result content blocks, which arrive on a
+      // *user*-typed message this loop currently ignores entirely (only
+      // 'assistant'/'system'/'result' are handled above). Neither half is
+      // cheap, so this stays 'running' until that transcript-patching seam
+      // exists.
       entries.push({
         ts,
         kind: 'tool',
@@ -183,6 +195,14 @@ function finishFromResult(message: SDKResultMessage): {
  * mode, raises the orchestrator's approval flow and waits for `approve()`.
  */
 export class ClaudeExecutor implements Executor {
+  // Defaults to the real SDK's `query()`; tests inject a stub that yields a
+  // scripted `SDKMessage` stream instead of spinning up a real Agent SDK
+  // session (which claude-executor.test.ts's DISPATCH_CLAUDE_SMOKE-gated
+  // test is what actually exercises) — this is the seam that makes
+  // consume()'s own message-handling logic (e.g. M7's session-id capture)
+  // unit-testable.
+  constructor(private readonly queryFn: typeof query = query) {}
+
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     const pendingApprovals = new Map<string, ApprovalResolver>();
     let interrupted = false;
@@ -215,12 +235,23 @@ export class ClaudeExecutor implements Executor {
       resume: opts.resumeSessionId,
       canUseTool,
     };
-    const sdkQuery: Query = query({ prompt: queue, options: sdkOptions });
+    const sdkQuery: Query = this.queryFn({
+      prompt: queue,
+      options: sdkOptions,
+    });
 
     // Fire-and-forget: `start()` must return the ExecutorRun handle
     // synchronously (same contract as FakeExecutor), before any onEntry/
     // onFinish call can land.
     const consume = async (): Promise<void> => {
+      // M7: captured as soon as it's known (the 'system' init message,
+      // always the first message of a session) rather than only off the
+      // terminal 'result' message — a run that fails mid-stream, before any
+      // 'result' ever arrives, still has a real session underneath it, and
+      // without this its `catch` block below would report a failure with no
+      // sessionId, making it impossible to resume via sendMessage's
+      // `resume: true` path.
+      let sessionId: string | undefined;
       try {
         for await (const message of sdkQuery) {
           if (interrupted) break;
@@ -232,6 +263,8 @@ export class ClaudeExecutor implements Executor {
             )) {
               events.onEntry(entry);
             }
+          } else if (message.type === 'system') {
+            sessionId = message.session_id;
           } else if (message.type === 'result') {
             if (!interrupted) events.onFinish(finishFromResult(message));
             break;
@@ -239,7 +272,11 @@ export class ClaudeExecutor implements Executor {
         }
       } catch (err) {
         if (!interrupted) {
-          events.onFinish({ state: 'failed', error: (err as Error).message });
+          events.onFinish({
+            state: 'failed',
+            error: (err as Error).message,
+            sessionId,
+          });
         }
       } finally {
         queue.close();

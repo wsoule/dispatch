@@ -1,3 +1,4 @@
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 
@@ -20,6 +21,64 @@ describe('ClaudeExecutor Bun compatibility', () => {
     const executor = new ClaudeExecutor();
     expect(executor).toBeInstanceOf(ClaudeExecutor);
     expect(typeof executor.start).toBe('function');
+  });
+});
+
+// M7: a run that fails mid-stream — after the SDK's very first message (the
+// 'system'/'init' message that always carries the session id) but before
+// any terminal 'result' message ever arrives — must still report the
+// session id on its failed finish, or there is nothing for sendMessage's
+// `resume: true` path to resume. `queryFn` is the constructor seam that
+// makes this testable without a real Agent SDK session (the smoke test
+// above/below is what exercises the real thing).
+describe('ClaudeExecutor session-id capture on a mid-stream failure', () => {
+  it('reports the sessionId captured from the system/init message even when the run fails before any result message', async () => {
+    const repo = initGitRepo('dispatch-claude-sessionid-');
+    try {
+      // A plain (sync) generator works fine here — `for...of await` awaits
+      // each yielded value regardless, and this fake has nothing to
+      // actually await.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      function* fakeMessages(): Generator<any> {
+        yield {
+          type: 'system',
+          subtype: 'init',
+          session_id: 'sess-mid-stream-fail',
+        };
+        throw new Error('stream exploded before a result message');
+      }
+      // Cast: only the async-iteration protocol fakeMessages() already
+      // provides is actually exercised by consume() in this scenario.
+      const fakeQueryFn = () => fakeMessages() as unknown as Query;
+      const executor = new ClaudeExecutor(fakeQueryFn);
+
+      const finish = await new Promise<{
+        state: string;
+        error?: string;
+        sessionId?: string;
+      }>((resolve) => {
+        const events: ExecutorEvents = {
+          onEntry: () => {},
+          onApprovalRequest: () => {},
+          onFinish: (result) => resolve(result),
+        };
+        executor.start(
+          {
+            cwd: repo,
+            prompt: 'do the thing',
+            permissionMode: 'acceptEdits',
+            maxTurns: 5,
+          },
+          events
+        );
+      });
+
+      expect(finish.state).toBe('failed');
+      expect(finish.error).toBe('stream exploded before a result message');
+      expect(finish.sessionId).toBe('sess-mid-stream-fail');
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 
