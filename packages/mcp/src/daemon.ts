@@ -12,12 +12,14 @@ import { join } from 'node:path';
 // `@dispatch/server` directly — same reason `@dispatch/cli` can't (server is
 // Bun-only: bun:sqlite, Bun.serve) — so this is a small standalone reader
 // with just what `run_list` needs: is a daemon running for this rootDir, and
-// if so, on what port. The other three copies are packages/server/src/
+// if so, on what port. The other four copies are packages/server/src/
 // daemonfile.ts (the writer/source of truth), packages/cli/src/commands/
-// daemon.ts, and apps/desktop/src-tauri/src/sidecar.rs's `daemon_home` — keep
-// all four in sync if this scheme ever changes. Unlike the CLI's copy, there
-// is no fixture-based cross-check test here; a scheme change must be applied
-// to this file by hand.
+// daemon.ts, apps/desktop/src-tauri/src/sidecar.rs's `daemon_home`, and
+// packages/server/src/orchestrator/paths.ts's `dispatchHome()` (that last
+// one keys run/worktree state, not daemon files, but reads the identical env
+// var) — keep all five in sync if this scheme ever changes. Unlike the CLI's
+// copy, there is no fixture-based cross-check test here; a scheme change
+// must be applied to this file by hand.
 // ---------------------------------------------------------------------------
 
 interface DaemonFileInfo {
