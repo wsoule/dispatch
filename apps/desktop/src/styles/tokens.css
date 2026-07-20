@@ -1,0 +1,147 @@
+:root {
+  /* Surfaces */
+  --surface-page: #f5f5f2;
+  --surface-card: #fefefe;
+  --surface-raised: #fafaf8;
+  --surface-muted: #f6f6f4;
+
+  /* Text */
+  --text-primary: #2a2a28;
+  --text-secondary: #5a5a58;
+  --text-muted: #9a9a92;
+  --text-ghost: #b8b8b0;
+
+  /* Borders */
+  --border-default: #e8e7e2;
+  --border-strong: #d0cfc9;
+  --border-selected: #3a3d42;
+
+  /* Brand — a restrained graphite/slate accent (not a hue), used for selection, primary
+     actions, and focus rings. Deliberately near-neutral so it reads as a management tool,
+     not a chat product. Inverts lightness in dark mode (near-black -> near-white), so
+     `--accent-contrast` (the text/icon color painted on top of a solid `--accent` fill,
+     e.g. a primary button's label) inverts alongside it rather than needing its own
+     per-theme call site logic. */
+  --accent: #2f3237;
+  --accent-contrast: #ffffff;
+  --accent-muted: #eceeef;
+  --accent-subtle: #f5f6f7;
+  --accent-border: #c4c8cd;
+
+  /* Per-project categorical palette — deterministically assigned (see src/lib/projectColor.ts)
+     so every session/card/row belonging to the same project always shows the same color,
+     letting you visually group by project across Sessions/Dashboard/Timeline. Muted,
+     desaturated hues chosen to read clearly as small dots/accents on both the light and dark
+     surface colors below, without competing with the monochrome chrome above. */
+  --project-color-1: #4f7cac; /* slate blue */
+  --project-color-2: #3f9178; /* teal */
+  --project-color-3: #a06bb0; /* plum */
+  --project-color-4: #b5843a; /* ochre */
+  --project-color-5: #5c6bc0; /* indigo */
+  --project-color-6: #7a9a4a; /* olive */
+  --project-color-7: #c05f7a; /* rose */
+  --project-color-8: #4a9aa8; /* cyan */
+
+  /* Semantic */
+  --green: #2d7d5a;
+  --green-bg: #eef8f4;
+  --green-border: #b0deca;
+
+  --blue: #4a5fc4;
+  --blue-bg: #eef0fc;
+  --blue-border: #b8c1ee;
+
+  --red: #c04040;
+  --red-bg: #fdeeee;
+
+  --amber: #a06020;
+  --amber-bg: #fdf6ee;
+
+  --gray: #7a7a72;
+  --gray-bg: #f3f3f1;
+  --gray-border: #d8d8d2;
+
+  /* Modal backdrop — a translucent scrim, tuned per-theme since a fixed light-mode value
+     barely dims a dark page (see the dark-mode override below). */
+  --overlay: rgba(42, 42, 40, 0.3);
+
+  /* Typography */
+  --font-mono: 'IBM Plex Mono', 'Fira Code', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Sizing tokens are rem, not px, and deliberately match the old hardcoded px values at
+     the browser default 16px root (e.g. --text-base: 13px === 0.8125rem). global.css sets
+     the root font-size with a `clamp()` tied to viewport width, so every spacing/type token
+     — and everything built from them — scales together as the window grows on a large
+     display, instead of staying pinned at a fixed pixel size while only the layout stretches. */
+  --text-xs: 0.625rem; /* 10px */
+  --text-sm: 0.6875rem; /* 11px */
+  --text-base: 0.8125rem; /* 13px */
+  --text-md: 0.9375rem; /* 15px */
+  --text-lg: 1.0625rem; /* 17px */
+  --text-xl: 1.25rem; /* 20px */
+
+  /* Spacing */
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+}
+
+/* Follows the OS light/dark setting automatically — no in-app toggle, no persisted
+   preference. Only color tokens are overridden; the sizing tokens above are shared. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-page: #1c1c1a;
+    --surface-card: #242422;
+    --surface-raised: #2a2a27;
+    --surface-muted: #232320;
+
+    --text-primary: #f0efe9;
+    --text-secondary: #b8b6ae;
+    --text-muted: #8a887f;
+    --text-ghost: #5c5a54;
+
+    --border-default: #38372f;
+    --border-strong: #4a4842;
+    --border-selected: #d4d6d9;
+
+    --accent: #e8e9eb;
+    --accent-contrast: #1c1c1a;
+    --accent-muted: #34363a;
+    --accent-subtle: #2a2c2f;
+    --accent-border: #4a4d52;
+
+    --project-color-1: #7ca3d4;
+    --project-color-2: #5fbb9c;
+    --project-color-3: #c090d0;
+    --project-color-4: #d4a55e;
+    --project-color-5: #8b96e0;
+    --project-color-6: #a0c072;
+    --project-color-7: #dc85a0;
+    --project-color-8: #6fc0cc;
+
+    --green: #5ec293;
+    --green-bg: #16261f;
+    --green-border: #2d5442;
+
+    --blue: #8b9aec;
+    --blue-bg: #1c2036;
+    --blue-border: #3a4270;
+
+    --red: #e07575;
+    --red-bg: #331c1c;
+
+    --amber: #d9a352;
+    --amber-bg: #2e2415;
+
+    --gray: #9a988f;
+    --gray-bg: #2a2a27;
+    --gray-border: #403f3a;
+
+    --overlay: rgba(0, 0, 0, 0.55);
+  }
+}

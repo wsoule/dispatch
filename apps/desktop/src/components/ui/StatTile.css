@@ -1,0 +1,19 @@
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  background: var(--surface-muted);
+  border-radius: 8px;
+  padding: var(--space-3);
+}
+
+.stat-tile-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+}
+
+.stat-tile-label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
