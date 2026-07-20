@@ -137,6 +137,32 @@ describe('connectEvents', () => {
     dispose();
   });
 
+  it('schedules only one reconnect when a socket fires error then close (reconnect storm regression)', async () => {
+    // A failed browser WebSocket fires 'error' then 'close' for the same
+    // socket. Both listeners used to call scheduleReconnect independently,
+    // so a single failed connection queued two reconnect timers — each of
+    // which opens its own socket that can fail the same way, doubling again
+    // on every generation (measured: 16,383 sockets in 100ms with a 5ms
+    // backoff). Exactly one new socket must appear after the backoff.
+    const created: FakeSocket[] = [];
+    const dispose = connectEvents(BASE_URL, () => {}, {
+      createSocket: () => {
+        const socket = new FakeSocket();
+        created.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 5,
+    });
+
+    created[0].emitError();
+    created[0].emitClose();
+
+    await sleep(30);
+    expect(created.length).toBe(2);
+
+    dispose();
+  });
+
   it('dispose closes the current socket and stops further reconnects', async () => {
     const created: FakeSocket[] = [];
     const dispose = connectEvents(BASE_URL, () => {}, {

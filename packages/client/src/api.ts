@@ -113,14 +113,23 @@ export function connectEvents(
 
   let closed = false;
   let socket: SocketLike | null = null;
+  // A failed browser WebSocket fires 'error' then 'close' on the same
+  // socket, and both listeners below call scheduleReconnect — without this
+  // guard that queues two reconnect timers per failure, each of which can
+  // fail the same way and double again next generation. `scheduled` caps it
+  // at one pending reconnect per socket generation; connect() resets it for
+  // the next one.
+  let scheduled = false;
 
   function scheduleReconnect() {
-    if (closed) return;
+    if (closed || scheduled) return;
+    scheduled = true;
     setTimeout(connect, reconnectDelayMs);
   }
 
   function connect() {
     if (closed) return;
+    scheduled = false;
     socket = createSocket(wsUrl(baseUrl));
     socket.addEventListener('message', (event) => {
       // A malformed frame (bad JSON, or JSON that isn't a ServerEvent) should
