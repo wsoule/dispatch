@@ -117,7 +117,16 @@ export function connectEvents(onChange: () => void): () => void {
     if (closed) return;
     socket = new WebSocket(wsUrl());
     socket.addEventListener('message', (event) => {
-      const data = JSON.parse(event.data as string) as ServerEvent;
+      // A malformed frame (bad JSON, or JSON that isn't a ServerEvent) should
+      // never take down the UI's reconnect loop — ignore it and wait for the
+      // next message rather than letting JSON.parse throw out of this
+      // handler.
+      let data: ServerEvent;
+      try {
+        data = JSON.parse(event.data as string) as ServerEvent;
+      } catch {
+        return;
+      }
       if (data.type === 'task.changed') onChange();
     });
     socket.addEventListener('close', scheduleReconnect);

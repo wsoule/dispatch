@@ -54,6 +54,13 @@ describe('GET /api/health', () => {
     const body = await json(await fetch(`${baseUrl}/api/health`));
     expect(body.problems).toEqual([]);
   });
+
+  it('serves JSON responses with an explicit utf-8 charset', async () => {
+    const res = await fetch(`${baseUrl}/api/health`);
+    expect(res.headers.get('content-type')).toBe(
+      'application/json; charset=utf-8'
+    );
+  });
 });
 
 describe('GET /api/config', () => {
