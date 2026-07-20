@@ -1,6 +1,6 @@
 export const CORE_VERSION = '0.0.1';
 export * from './types.js';
-export { generateTaskId } from './ids.js';
+export { generateRunId, generateTaskId } from './ids.js';
 export { slugify } from './slug.js';
 export {
   parseTaskFile,
@@ -18,4 +18,4 @@ export type {
 } from './store.js';
 export { readyTasks, isDone, PRIORITY_ORDER } from './graph.js';
 export { loadConfig, ConfigError } from './config.js';
-export type { DispatchConfig } from './config.js';
+export type { DispatchConfig, OrchestratorConfig } from './config.js';

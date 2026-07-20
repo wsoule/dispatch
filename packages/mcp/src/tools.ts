@@ -13,6 +13,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { basename } from 'node:path';
 import { z } from 'zod';
 
+import { isDaemonHealthy, readDaemonFile } from './daemon.js';
+
 // Thrown by validation/lookup helpers below. Every tool handler catches this
 // (and core's ConfigError) via wrap() and turns it into an MCP tool-error
 // result (isError: true, plain-text message) instead of letting it become a
@@ -149,10 +151,46 @@ function wrap(fn: () => ToolOutcome): ToolOutcome {
   }
 }
 
-// Registers the five task_* tools against a fixed root directory. Each tool
-// re-resolves the TaskStore/config on every call (rather than caching it at
-// registration time) so a `dispatch init` that happens after the server
-// started is picked up without a restart.
+// The clean "no daemon" shape `run_list` returns whenever there is nothing
+// live to report — no daemon file for this rootDir, a stale file left by a
+// crash (health check fails), or the health check itself throwing (daemon
+// mid-restart, port unreachable, etc.). Every one of those is the same
+// answer from a calling agent's point of view: no run awareness available
+// right now, not an error.
+function noDaemonResult(): ToolOutcome {
+  return toolResult({ runs: [], note: 'dispatchd not running' });
+}
+
+// Proxies `GET /api/runs` from this project's dispatchd, if one is running
+// and healthy. Unlike every other tool in this file, `run_list` never
+// touches the filesystem directly — awareness of *other* agents' live runs
+// only exists in dispatchd's in-memory registry, so a daemon proxy is the
+// only way to answer this at all (see the Phase 4 plan's collaboration
+// half). The response shape is passed through as-is (RunMeta objects,
+// typed loosely here since @dispatch/mcp intentionally has no dependency on
+// @dispatch/server, which is Bun-only).
+async function runList(rootDir: string): Promise<ToolOutcome> {
+  const daemon = readDaemonFile(rootDir);
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return noDaemonResult();
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`);
+    if (!res.ok) return noDaemonResult();
+    const runs = await res.json();
+    if (!Array.isArray(runs)) return noDaemonResult();
+    return toolResult({ runs });
+  } catch {
+    return noDaemonResult();
+  }
+}
+
+// Registers the five task_* tools plus run_list against a fixed root
+// directory. Each task_* tool re-resolves the TaskStore/config on every call
+// (rather than caching it at registration time) so a `dispatch init` that
+// happens after the server started is picked up without a restart; run_list
+// re-resolves the daemon file for the same reason (a `dispatch serve`/`ui`
+// that starts or stops after this MCP server started is picked up too).
 export function registerDispatchTools(
   server: McpServer,
   rootDir: string
@@ -351,5 +389,24 @@ export function registerDispatchTools(
         const tasks = readyTasks(docs).map(toSummary);
         return toolResult({ tasks, problems: formatProblems(errors) });
       })
+  );
+
+  server.registerTool(
+    'run_list',
+    {
+      title: 'List orchestrator runs',
+      description:
+        "List this project's dispatchd orchestrator runs (live + recent) " +
+        'so an agent can see whether other agents already have runs in ' +
+        'flight before assuming exclusive access to the repo. Returns an ' +
+        "empty list with a note when dispatchd isn't running — that's a " +
+        'normal, not-an-error response, not every project runs the daemon.',
+      outputSchema: {
+        runs: z.array(z.record(z.string(), z.unknown())),
+        note: z.string().optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    () => runList(rootDir)
   );
 }

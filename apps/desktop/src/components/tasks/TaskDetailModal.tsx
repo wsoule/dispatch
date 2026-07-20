@@ -1,6 +1,8 @@
+import type { RunMeta } from '@dispatch/client';
 import type { Priority, TaskDoc, UpdatePatch } from '@dispatch/core';
 import { useEffect, useState } from 'react';
 
+import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { parseTaskSections, sectionOrDash } from '../../lib/taskDisplay';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -17,8 +19,18 @@ const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 interface TaskDetailModalProps {
   doc: TaskDoc;
   statuses: string[];
+  /** Whether the task graph considers this task safe to start right now — gates the
+   * Dispatch button independently of any past run (a task can cycle back to `ready` after a
+   * discarded run). */
+  ready: boolean;
+  /** The most recent orchestrator run for this task, if any — used only to open its RunModal;
+   * see TasksPanel's `latestRunByTaskId` for why "most recent" is safe here (task.status
+   * gates whether that run is still relevant, not the run's own state). */
+  run: RunMeta | undefined;
   onClose: () => void;
   onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
+  onDispatch: (id: string, executor?: 'fake' | 'claude') => Promise<void>;
+  onOpenRun: (runId: string) => void;
 }
 
 /** Task detail: frontmatter, the two fields that change through direct controls (status,
@@ -29,12 +41,33 @@ interface TaskDetailModalProps {
 export function TaskDetailModal({
   doc,
   statuses,
+  ready,
+  run,
   onClose,
   onUpdate,
+  onDispatch,
+  onOpenRun,
 }: TaskDetailModalProps) {
   const [title, setTitle] = useState(doc.meta.title);
   const [activityDraft, setActivityDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [dispatching, setDispatching] = useState(false);
+
+  const hasOpenRun =
+    run !== undefined &&
+    (doc.meta.status === 'in-progress' || doc.meta.status === 'in-review');
+
+  async function dispatch(executor?: 'fake' | 'claude') {
+    setDispatching(true);
+    setError(null);
+    try {
+      await onDispatch(doc.meta.id, executor);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(false);
+    }
+  }
 
   // A newly selected task (different id) resets the editable fields to its own values —
   // otherwise switching cards mid-edit would carry over the previous task's draft title.
@@ -87,6 +120,30 @@ export function TaskDetailModal({
           onBlur={saveTitleIfChanged}
           aria-label="Task title"
         />
+
+        {(ready || hasOpenRun) && (
+          <div className="task-detail-modal-run-row">
+            {ready && (
+              <Button disabled={dispatching} onClick={() => void dispatch()}>
+                Dispatch
+              </Button>
+            )}
+            {ready && isFakeExecutorDevToolEnabled() && (
+              <Button
+                variant="secondary"
+                disabled={dispatching}
+                onClick={() => void dispatch('fake')}
+              >
+                Dispatch (fake)
+              </Button>
+            )}
+            {hasOpenRun && run !== undefined && (
+              <Button variant="secondary" onClick={() => onOpenRun(run.id)}>
+                {doc.meta.status === 'in-review' ? 'Review run' : 'View run'}
+              </Button>
+            )}
+          </div>
+        )}
 
         <div className="task-detail-modal-fields">
           <label className="task-detail-modal-field">

@@ -1,6 +1,8 @@
+import type { RunState } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
 
 import { priorityTone } from '../../lib/taskDisplay';
+import { RunStatePill } from '../runs/RunStatePill';
 import { Pill } from '../ui/Pill';
 import './TaskCardTile.css';
 
@@ -8,6 +10,9 @@ interface TaskCardTileProps {
   doc: TaskDoc;
   ready: boolean;
   blocked: boolean;
+  /** State of this task's live (non-terminal) run, if it has one — the "live-run indicator on
+   * cards" the plan asks for. `undefined` when there's no live run. */
+  liveRunState: RunState | undefined;
   onClick: () => void;
 }
 
@@ -20,6 +25,7 @@ export function TaskCardTile({
   doc,
   ready,
   blocked,
+  liveRunState,
   onClick,
 }: TaskCardTileProps) {
   const tone = priorityTone(doc.meta.priority);
@@ -33,6 +39,7 @@ export function TaskCardTile({
     >
       <div className="task-card-tile-top">
         <span className="task-card-tile-id">{doc.meta.id}</span>
+        {liveRunState !== undefined && <RunStatePill state={liveRunState} />}
         {tone !== null && (
           <Pill variant="tag" tone={tone}>
             {doc.meta.priority}

@@ -22,6 +22,7 @@ describe('loadConfig', () => {
         'cancelled',
       ],
       autoCommit: false,
+      orchestrator: { maxTurns: 100, permissionMode: 'acceptEdits' },
     });
   });
   it('merges file values over defaults', () => {
@@ -69,5 +70,78 @@ describe('loadConfig', () => {
     mkdirSync(join(root, '.dispatch'), { recursive: true });
     writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: "yes"\n');
     expect(() => loadConfig(root)).toThrow(/autoCommit must be/);
+  });
+
+  describe('orchestrator block', () => {
+    it('defaults to 100 turns, no budget cap, acceptEdits', () => {
+      expect(loadConfig(root).orchestrator).toEqual({
+        maxTurns: 100,
+        permissionMode: 'acceptEdits',
+      });
+    });
+
+    it('merges provided fields over defaults', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  maxTurns: 25\n  maxBudgetUsd: 5\n  permissionMode: plan\n'
+      );
+      expect(loadConfig(root).orchestrator).toEqual({
+        maxTurns: 25,
+        maxBudgetUsd: 5,
+        permissionMode: 'plan',
+      });
+    });
+
+    it('leaves maxBudgetUsd undefined (no cap) when omitted', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  maxTurns: 25\n'
+      );
+      expect(loadConfig(root).orchestrator.maxBudgetUsd).toBeUndefined();
+    });
+
+    it('throws when orchestrator is not an object', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator: not-an-object\n'
+      );
+      expect(() => loadConfig(root)).toThrow(/orchestrator must be an object/);
+    });
+
+    it('throws when maxTurns is not a positive number', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  maxTurns: 0\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.maxTurns must be a positive number/
+      );
+    });
+
+    it('throws when maxBudgetUsd is not a positive number', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  maxBudgetUsd: -1\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.maxBudgetUsd must be a positive number/
+      );
+    });
+
+    it('throws when permissionMode is not a known SDK permission mode', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  permissionMode: yolo\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.permissionMode must be one of/
+      );
+    });
   });
 });

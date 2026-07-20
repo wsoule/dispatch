@@ -8,7 +8,13 @@ export {
 export type {
   ApiClient,
   ConnectEventsOptions,
+  DiffFile,
+  DiffResult,
   HealthPayload,
+  NormalizedEntry,
+  RunDetail,
+  RunMeta,
+  RunState,
   ServerEvent,
   SocketLike,
   TaskFilter,

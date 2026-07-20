@@ -1,0 +1,103 @@
+.run-review-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.run-review-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.run-review-header-cost {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.run-review-header-error-note {
+  font-size: var(--text-sm);
+  color: var(--red);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-review-error {
+  background: var(--red-bg);
+  color: var(--red);
+  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.run-review-status {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.run-review-body {
+  display: grid;
+  grid-template-columns: 14rem 1fr; /* 224px tree rail + flexible diff pane */
+  gap: var(--space-3);
+  min-height: 20rem; /* 320px */
+  max-height: 32rem; /* 512px */
+}
+
+.run-review-tree-pane {
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.run-review-tree-header {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--space-2) var(--space-3);
+  display: block;
+}
+
+.run-review-tree {
+  width: 100%;
+  height: 100%;
+}
+
+.run-review-diff-pane {
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+}
+
+.run-review-request-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.run-review-request-changes-input {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  padding: var(--space-2);
+  resize: vertical;
+}
+
+.run-review-request-changes-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.run-review-request-changes-actions,
+.run-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

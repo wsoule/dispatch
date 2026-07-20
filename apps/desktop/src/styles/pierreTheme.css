@@ -1,0 +1,47 @@
+/* Maps Relay's design tokens (tokens.css) onto the CSS custom properties
+   @pierre/diffs and @pierre/trees read from *inside* their Shadow DOM trees
+   (see RunReviewView.tsx). Shadow DOM isolates style *rules*, not inherited
+   custom-property *values* — a var() declared here on `:root` is visible
+   inside both packages' shadow roots exactly like `color` or any other
+   inherited property would be, which is the documented way to theme them
+   without forking their internal stylesheets.
+
+   Both packages compute their real chrome color from a CSS `light-dark()`
+   pair (see their own `--diffs-bg: light-dark(var(--diffs-light-bg), ...)`
+   defaults) or, for @pierre/trees, a single `-override` slot. Rather than
+   duplicate tokens.css's literal hex values here (which would drift the
+   moment tokens.css's own light/dark values change), every mapping below
+   just points at the *same* self-flipping Relay token on both sides of the
+   pair — tokens.css's own `@media (prefers-color-scheme: dark)` block
+   already swaps `--surface-card` etc. in lockstep with the OS scheme
+   `light-dark()` reads, so aliasing both slots to one token always resolves
+   to the token's current value regardless of which slot `light-dark()`
+   ends up picking. */
+:root {
+  /* @pierre/diffs (PatchDiff) — background, foreground, fonts, and the
+     addition/deletion/modified accent colors used for line highlights and
+     the changed-file header. */
+  --diffs-light-bg: var(--surface-card);
+  --diffs-dark-bg: var(--surface-card);
+  --diffs-light: var(--text-primary);
+  --diffs-dark: var(--text-primary);
+  --diffs-font-family: var(--font-mono);
+  --diffs-header-font-family: var(--font-sans);
+  --diffs-font-size: var(--text-sm);
+  --diffs-light-addition-color: var(--green);
+  --diffs-dark-addition-color: var(--green);
+  --diffs-light-deletion-color: var(--red);
+  --diffs-dark-deletion-color: var(--red);
+  --diffs-light-modified-color: var(--blue);
+  --diffs-dark-modified-color: var(--blue);
+
+  /* @pierre/trees (FileTree) — these are single override slots rather than
+     light/dark pairs, so each one aliases to a Relay token that already
+     resolves to the right value for the current scheme. */
+  --trees-bg-override: var(--surface-raised);
+  --trees-fg-override: var(--text-primary);
+  --trees-fg-muted-override: var(--text-muted);
+  --trees-bg-muted-override: var(--surface-muted);
+  --trees-border-color-override: var(--border-default);
+  --trees-accent-override: var(--accent);
+}

@@ -16,6 +16,8 @@
     "@dispatch/client": "workspace:*",
     "@fontsource/ibm-plex-mono": "catalog:",
     "@fontsource/inter": "catalog:",
+    "@pierre/diffs": "catalog:",
+    "@pierre/trees": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tauri-apps/api": "catalog:",
     "react": "catalog:",

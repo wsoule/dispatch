@@ -1,11 +1,28 @@
+import type { NormalizedEntry } from './orchestrator/types.js';
+
 // Single WS message shape the server ever sends. `hello` greets a freshly
 // opened socket; `task.changed` tells every connected client "something
 // changed, go refetch" — clients never receive a diff, so a duplicate event
 // is harmless (see EventBus.broadcast callers in index.ts/api.ts for why
 // duplicates can happen).
+//
+// The `run.*` variants are the orchestrator's equivalents: `run.changed` is
+// "some run's lifecycle/registry state changed, go refetch" (same
+// refetch-not-diff contract as task.changed); `run.log` streams one
+// NormalizedEntry as it's produced, keyed by runId so a client can append it
+// to the right run's log without a refetch; `approval.requested` tells
+// clients a run is now waiting on a human decision.
 export type ServerEvent =
   | { type: 'task.changed' }
-  | { type: 'hello'; version: string };
+  | { type: 'hello'; version: string }
+  | { type: 'run.changed' }
+  | { type: 'run.log'; runId: string; entry: NormalizedEntry }
+  | {
+      type: 'approval.requested';
+      runId: string;
+      requestId: string;
+      toolName: string;
+    };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

@@ -49,9 +49,10 @@ describe('server identity', () => {
     expect(server.server.constructor.name).toBe('Server');
   });
 
-  it('lists all five task tools', async () => {
+  it('lists all five task tools plus run_list', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'run_list',
       'task_comment',
       'task_get',
       'task_list',
