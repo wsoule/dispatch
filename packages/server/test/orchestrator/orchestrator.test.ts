@@ -437,6 +437,70 @@ describe('Orchestrator.reconcileOnBoot', () => {
   });
 });
 
+describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
+  it('auto-commits a dirty worktree left uncommitted by the executor', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'forgot-to-commit.txt'), 'oops\n');
+            },
+            // Leaves the write uncommitted, simulating an executor that
+            // "forgets" to commit before finishing — exactly what the
+            // orchestrator's onFinish safety net exists to catch.
+            commit: false,
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Executor forgets to commit' });
+
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(
+      runGitSync(meta.worktreePath, ['status', '--porcelain']).trim()
+    ).toBe('');
+    const log = runGitSync(meta.worktreePath, ['log', '-1', '--pretty=%s']);
+    expect(log.trim()).toBe(
+      `wip(dispatch): uncommitted changes from run ${meta.id}`
+    );
+  });
+
+  it('is a no-op when the worktree is already clean', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'committed.txt'), 'fine\n');
+            },
+            commitMessage: 'agent: add committed.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Executor commits its own work' });
+
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const log = runGitSync(meta.worktreePath, ['log', '-1', '--pretty=%s']);
+    expect(log.trim()).toBe('agent: add committed.txt');
+  });
+});
+
 describe('Orchestrator per-run caps and prompt assembly', () => {
   // A minimal Executor that just records the options it was started with
   // and finishes immediately — used to assert on exactly what the

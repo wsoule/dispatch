@@ -361,6 +361,30 @@ export class Orchestrator {
     Bun.spawnSync(['git', 'add', DISPATCH_DIR], { cwd: this.ctx.rootDir });
   }
 
+  // The onFinish safety net (see its call site's comment): commits whatever
+  // is sitting uncommitted in a run's worktree under a clearly-marked `wip`
+  // message. A no-op when the worktree is already clean — the common case,
+  // since every executor is expected to commit its own work per the prompt's
+  // explicit instruction.
+  private autoCommitIfDirty(worktreePath: string, runId: string): void {
+    const status = Bun.spawnSync(['git', 'status', '--porcelain'], {
+      cwd: worktreePath,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    if (status.stdout.toString('utf8').trim() === '') return;
+    Bun.spawnSync(['git', 'add', '-A'], { cwd: worktreePath });
+    Bun.spawnSync(
+      [
+        'git',
+        'commit',
+        '-m',
+        `wip(dispatch): uncommitted changes from run ${runId}`,
+      ],
+      { cwd: worktreePath }
+    );
+  }
+
   // Moves a run to `state`, updating the registry, appending a transcript
   // state line, and broadcasting `run.changed` — the one place all three of
   // those always happen together, so no caller can update one without the
@@ -423,6 +447,14 @@ export class Orchestrator {
   ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
+    // Stop-hook safety net: an executor (any executor — this runs
+    // regardless of which one finished) can stop with uncommitted changes
+    // sitting in its worktree, and the review surface's diff only ever
+    // shows committed history (`git diff <mergeBase>...HEAD`, run below).
+    // Sweeping those changes into one auto-commit here is what makes them
+    // reviewable/mergeable at all, instead of silently vanishing when the
+    // worktree is eventually removed.
+    this.autoCommitIfDirty(meta.worktreePath, runId);
     this.transition(runId, finish.state, finish);
 
     let filesChanged = 0;

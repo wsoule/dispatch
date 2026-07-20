@@ -15,6 +15,12 @@ export interface FakeStep {
   entry?: NormalizedEntry;
   write?: (cwd: string) => void;
   commitMessage?: string;
+  // When false, `write`'s changes are left uncommitted in the worktree
+  // instead of the usual auto-commit — lets a test script an executor that
+  // "forgets" to commit, to exercise the orchestrator's own onFinish
+  // safety net (see orchestrator.ts's autoCommitIfDirty). Defaults to true,
+  // matching every existing script's assumption that a write step commits.
+  commit?: boolean;
   approval?: { requestId: string; toolName: string; input: unknown };
 }
 
@@ -62,7 +68,9 @@ export class FakeExecutor implements Executor {
 
         if (step.write !== undefined) {
           step.write(opts.cwd);
-          commitAll(opts.cwd, step.commitMessage ?? 'fake executor commit');
+          if (step.commit ?? true) {
+            commitAll(opts.cwd, step.commitMessage ?? 'fake executor commit');
+          }
         }
 
         if (step.approval !== undefined) {
