@@ -160,6 +160,17 @@ export async function startServer(
 
       return new Response('not found', { status: 404 });
     },
+    // Without this, an error escaping `fetch` falls to Bun's development
+    // error page, which embeds the stack trace, absolute paths, and source
+    // snippets in the response body. Loopback-only or not, responses must
+    // never carry stack traces — log server-side, return opaque JSON.
+    error(err) {
+      console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
+      return new Response(JSON.stringify({ error: 'internal error' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      });
+    },
     websocket: {
       open(ws) {
         events.add(ws);

@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -128,5 +128,37 @@ describe('a task file going bad while the daemon is running', () => {
     expect(
       tasksAfterFix.map((t: { meta: { title: string } }) => t.meta.title).sort()
     ).toEqual(['Fixed', 'Good task']);
+  });
+});
+
+describe('unexpected internal errors', () => {
+  it('returns opaque 500 JSON, never a stack trace or filesystem path', async () => {
+    const store = TaskStore.init(root);
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      webDistDir: null,
+    });
+    const baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    // Remove the tasks directory out from under the store so the next create
+    // throws ENOENT — an error class handleApi does not map, exercising the
+    // Bun.serve error handler instead of the framework's dev error page.
+    rmSync(store.tasksDir, { recursive: true, force: true });
+
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Doomed' }),
+    });
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toBe(
+      'application/json; charset=utf-8'
+    );
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: 'internal error' });
+    expect(text).not.toContain(root);
+    expect(text).not.toContain('at ');
   });
 });
