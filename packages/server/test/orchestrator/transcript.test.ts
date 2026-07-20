@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -74,6 +74,30 @@ describe('Transcript', () => {
     const transcript = new Transcript(join(dir, 'missing.jsonl'));
     expect(transcript.read()).toEqual([]);
   });
+
+  // C3: a transcript can be left with a truncated final line by a crash
+  // mid-write (the process dies between `write()` and the trailing
+  // newline). `read()` must skip exactly that line rather than throwing —
+  // mirrors index.ts's "skipping unparsable task file" tolerance for core's
+  // TaskStore, applied to transcripts.
+  it('skips an unparsable line instead of throwing, keeping every valid line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000004.jsonl');
+    const transcript = new Transcript(path);
+    const meta = makeMeta({ id: 'r-000004' });
+    transcript.writeHeader(meta);
+    transcript.appendEntry({ ts: 't1', kind: 'assistant', text: 'hi' });
+    // Simulate a crash mid-write: a truncated, unparsable JSON fragment.
+    appendFileSync(path, '{"type":"entry","entry":{"ts":"t2","kind":\n');
+
+    const lines = transcript.read();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toEqual({ type: 'header', meta });
+    expect(lines[1]).toEqual({
+      type: 'entry',
+      entry: { ts: 't1', kind: 'assistant', text: 'hi' },
+    });
+  });
 });
 
 describe('replayTranscript', () => {
@@ -99,5 +123,21 @@ describe('replayTranscript', () => {
 
   it('returns null when the transcript file does not exist', () => {
     expect(replayTranscript('/nonexistent/path/r-000003.jsonl')).toBeNull();
+  });
+
+  // C3: a header followed by a truncated/corrupt line must still replay to
+  // a valid RunMeta (from the header alone) rather than throwing — this is
+  // exactly the shape boot reconciliation hits after a crash mid-write, and
+  // it must be able to mark the run failed, not abort startup.
+  it('replays from just the header when a later line is unparsable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000005.jsonl');
+    const meta = makeMeta({ id: 'r-000005', state: 'running' });
+    writeFileSync(path, `${JSON.stringify({ type: 'header', meta })}\n`);
+    appendFileSync(path, '{"type":"state","state":"fini\n');
+
+    const replay = replayTranscript(path);
+    expect(replay).not.toBeNull();
+    expect(replay?.meta.state).toBe('running');
   });
 });

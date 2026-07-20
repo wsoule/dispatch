@@ -1,6 +1,7 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,12 +15,18 @@ import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
-import { worktreesDir } from '../../src/orchestrator/paths.js';
+import {
+  runsDir,
+  transcriptPath,
+  worktreesDir,
+} from '../../src/orchestrator/paths.js';
+import { Transcript } from '../../src/orchestrator/transcript.js';
 import type {
   Executor,
   ExecutorEvents,
   ExecutorRun,
   ExecutorStartOptions,
+  RunMeta,
 } from '../../src/orchestrator/types.js';
 import {
   OrchestratorClientError,
@@ -260,6 +267,277 @@ describe('Orchestrator.review merge', () => {
   });
 });
 
+// C1/C4: the merge path's new ordering — verify the checkout is actually on
+// `baseBranch` first, run the squash-merge before any task bookkeeping (so a
+// failed merge never leaves a task marked done for work that never landed),
+// recover the main checkout on a git failure instead of leaving it mid-merge,
+// and stage only the run's own task file rather than the whole `.dispatch/`
+// directory when folding bookkeeping into the squash commit.
+describe('Orchestrator.review merge ordering and failure handling', () => {
+  it('C4: refuses with a conflict error when main is checked out on a different branch, leaving everything untouched', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'feature.txt'), 'hi\n');
+            },
+            commitMessage: 'agent: add feature.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Wrong branch checked out' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    expect(meta.baseBranch).toBe('main');
+
+    runGitSync(repo, ['checkout', '-b', 'some-other-branch']);
+
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
+      OrchestratorConflictError
+    );
+    try {
+      orchestrator.review(meta.id, 'merge');
+    } catch (err) {
+      expect((err as Error).message).toBe(
+        'merge target is some-other-branch, expected main'
+      );
+    }
+
+    // Nothing about the run or the task moved: the branch/worktree are
+    // still there to retry against once the user checks main back out.
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(existsSync(meta.worktreePath)).toBe(true);
+    expect(runGitSync(repo, ['branch', '--list', meta.branch])).toContain(
+      meta.branch
+    );
+  });
+
+  it('B: recovers from a real squash-merge conflict with a 409, leaving the task status untouched and main clean for a retry', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'shared.txt'), 'agent version\n');
+            },
+            commitMessage: 'agent: edit shared.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Conflicting merge' });
+    // Both main and the run's branch will edit the same file, from the same
+    // starting point, guaranteeing a real content conflict on squash-merge.
+    writeFileSync(join(repo, 'shared.txt'), 'original\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'add shared.txt']);
+
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    // Main moves on with an incompatible edit to the same file after the
+    // run's branch diverged.
+    writeFileSync(join(repo, 'shared.txt'), 'human version\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'human edits shared.txt']);
+
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
+      OrchestratorConflictError
+    );
+
+    // Task status must not have moved to done for a merge that never
+    // actually happened.
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    // Main must be back to a clean, mergeable state (git reset --merge),
+    // not stuck mid-conflict — a retry after manual resolution must be
+    // possible.
+    expect(runGitSync(repo, ['status', '--porcelain']).trim()).toBe('');
+    expect(existsSync(join(repo, 'shared.txt'))).toBe(true);
+
+    // Retry after resolving manually: bring the run's own change in by
+    // hand, then merge/discard cleanly resolves the run.
+    orchestrator.review(meta.id, 'discard');
+    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+  });
+
+  it("C: keeps a user's own unrelated .dispatch/config.yml edit out of the squash commit", async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'feature.txt'), 'hi\n');
+            },
+            commitMessage: 'agent: add feature.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Unrelated config edit' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    // The user's own pending edit, unrelated to this run. isMainDirtyOutsideDispatch
+    // deliberately excludes `.dispatch/` so this never blocks the merge —
+    // but it must also never get swept into the squash commit.
+    mkdirSync(join(repo, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'statuses: [todo, done]\nautoCommit: false\n# user was mid-edit\n'
+    );
+
+    orchestrator.review(meta.id, 'merge');
+
+    const committedFiles = runGitSync(repo, [
+      'show',
+      '--name-only',
+      '--pretty=format:',
+      'HEAD',
+    ])
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+    expect(committedFiles).not.toContain('.dispatch/config.yml');
+    // Still sitting there uncommitted, exactly as the user left it.
+    expect(
+      runGitSync(repo, [
+        'status',
+        '--porcelain',
+        '--',
+        '.dispatch/config.yml',
+      ]).trim()
+    ).not.toBe('');
+  });
+
+  it('H: back-to-back merges of two different runs both succeed', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'first.txt'), 'first\n');
+            },
+            commitMessage: 'agent: add first.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    orchestrator.registerExecutor(
+      'fake2',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'second.txt'), 'second\n');
+            },
+            commitMessage: 'agent: add second.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const taskA = store.create({ title: 'First run to merge' });
+    const taskB = store.create({ title: 'Second run to merge' });
+    const metaA = orchestrator.dispatch(taskA.meta.id, 'fake');
+    const metaB = orchestrator.dispatch(taskB.meta.id, 'fake2');
+    await waitFor(
+      () =>
+        orchestrator.getRun(metaA.id)?.meta.state === 'finished' &&
+        orchestrator.getRun(metaB.id)?.meta.state === 'finished'
+    );
+
+    expect(() => orchestrator.review(metaA.id, 'merge')).not.toThrow();
+    expect(() => orchestrator.review(metaB.id, 'merge')).not.toThrow();
+
+    expect(existsSync(join(repo, 'first.txt'))).toBe(true);
+    expect(existsSync(join(repo, 'second.txt'))).toBe(true);
+    expect(store.get(taskA.meta.id)!.meta.status).toBe('done');
+    expect(store.get(taskB.meta.id)!.meta.status).toBe('done');
+  });
+
+  it('I: merges successfully with tracked task files and a mainline commit landed since the branch point', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'feature.txt'), 'hi\n');
+            },
+            commitMessage: 'agent: add feature.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Tracked task file' });
+    // Commit the task file (and its own dispatched-Activity edit) so it's
+    // tracked in git, matching real project usage where `.dispatch/tasks`
+    // is committed alongside code.
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'track dispatched task']);
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    // The base branch moves on with an unrelated mainline commit after the
+    // run's branch diverged.
+    writeFileSync(join(repo, 'unrelated.txt'), 'unrelated change\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'unrelated mainline commit']);
+
+    expect(() => orchestrator.review(meta.id, 'merge')).not.toThrow();
+    expect(existsSync(join(repo, 'feature.txt'))).toBe(true);
+    expect(existsSync(join(repo, 'unrelated.txt'))).toBe(true);
+    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+  });
+
+  // Regression guard for the "squash first" reordering: a run that made no
+  // file changes at all (a chatty run — nothing for `git merge --squash` to
+  // squash) must still merge successfully. The task-file bookkeeping commit
+  // is the only commit in that case, since there's no squash commit to fold
+  // it into.
+  it('merges successfully even when the run made no file changes to squash', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'No-op run' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(() => orchestrator.review(meta.id, 'merge')).not.toThrow();
+    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    const log = runGitSync(repo, ['log', '-1', '--pretty=%s']).trim();
+    expect(log).toBe(`dispatch: No-op run (run ${meta.id})`);
+  });
+});
+
 describe('Orchestrator.review discard', () => {
   it('removes the worktree/branch and restores the task to todo', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
@@ -277,6 +555,127 @@ describe('Orchestrator.review discard', () => {
 
     expect(existsSync(meta.worktreePath)).toBe(false);
     expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+  });
+});
+
+// C2: review() must require a terminal state (a run still awaiting
+// approval/running has nothing to review yet) and must refuse a run that has
+// already been reviewed once — merge/discard is a one-way door per run.
+describe('Orchestrator review-state guard', () => {
+  it('A: refuses to discard a run that is still awaiting approval', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [{ approval: { requestId: 'hold', toolName: 't', input: {} } }],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Not terminal yet' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
+    );
+
+    expect(() => orchestrator.review(meta.id, 'discard')).toThrow(
+      OrchestratorConflictError
+    );
+    // Nothing was torn down — the run is still there, still awaiting its
+    // approval.
+    expect(orchestrator.getRun(meta.id)?.meta.state).toBe('awaiting-approval');
+    expect(existsSync(meta.worktreePath)).toBe(true);
+  });
+
+  it('E: refuses a second review call on an already-reviewed run (double merge)', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'double.txt'), 'once\n');
+            },
+            commitMessage: 'agent: add double.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Double merge' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    orchestrator.review(meta.id, 'merge');
+
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
+      OrchestratorConflictError
+    );
+    expect(() => orchestrator.review(meta.id, 'discard')).toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  it('E: refuses request-changes/resume on an already-reviewed run', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 's-1' } })
+    );
+    const task = store.create({ title: 'Resume after review' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    orchestrator.review(meta.id, 'discard');
+
+    expect(() =>
+      orchestrator.sendMessage(meta.id, 'please fix x', { resume: true })
+    ).toThrow(OrchestratorConflictError);
+  });
+
+  it('records reviewedAt/reviewAction on the run meta once reviewed', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Records review marker' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    orchestrator.review(meta.id, 'discard');
+
+    const reviewed = orchestrator.getRun(meta.id)!.meta;
+    expect(reviewed.reviewAction).toBe('discard');
+    expect(typeof reviewed.reviewedAt).toBe('string');
+  });
+});
+
+// Important #7: a reviewed run has no worktree left to diff at all — the
+// endpoint must answer with a clean 409, not let a git command run against a
+// removed cwd and blow up as an internal error.
+describe('Orchestrator.diff on a reviewed run', () => {
+  it('409s instead of erroring once the run has been reviewed and its worktree removed', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Diff after review' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    orchestrator.review(meta.id, 'discard');
+
+    expect(() => orchestrator.diff(meta.id)).toThrow(OrchestratorConflictError);
   });
 });
 
@@ -434,6 +833,74 @@ describe('Orchestrator.reconcileOnBoot', () => {
     expect(second.getRun(meta.id)?.meta.state).toBe('failed');
     expect(existsSync(meta.worktreePath)).toBe(true);
     expect(existsSync(orphanPath)).toBe(false);
+  });
+
+  // C3: a transcript truncated by a crash mid-write (header parses, but the
+  // line after it is corrupt JSON) must not abort reconciliation for every
+  // other run — the corrupt line is skipped (transcript.ts's tolerant
+  // read()) and the run still gets marked failed off of its header state.
+  it('boots and marks a run failed even when its transcript has a truncated line', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const task = store.create({ title: 'Truncated transcript' });
+    const runId = 'r-abcdef';
+    const meta: RunMeta = {
+      id: runId,
+      taskId: task.meta.id,
+      taskTitle: task.meta.title,
+      executor: 'fake',
+      state: 'running',
+      branch: 'dispatch/truncated',
+      baseBranch: 'main',
+      worktreePath: join(worktreesDir(repo), runId),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mkdirSync(meta.worktreePath, { recursive: true });
+    const path = transcriptPath(repo, runId);
+    new Transcript(path).writeHeader(meta);
+    // A crash mid-write: a truncated, unparsable JSON fragment appended
+    // straight to the file (bypassing Transcript's own append methods,
+    // which always write a complete line).
+    appendFileSync(path, '{"type":"state","state":"fini\n');
+
+    expect(() => orchestrator.reconcileOnBoot()).not.toThrow();
+
+    expect(orchestrator.getRun(runId)?.meta.state).toBe('failed');
+  });
+
+  // C3 (broader case): a transcript "file" that fails outright to read
+  // (not just to JSON-parse — e.g. a directory sitting where a `.jsonl` file
+  // is expected, which throws EISDIR on readFileSync) must not abort
+  // reconciliation for every *other* run's transcript. One bad entry is
+  // skipped; the rest of the runs directory still gets processed.
+  it('skips a transcript entry that fails to read entirely, without losing other runs', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const task = store.create({ title: 'Reconciled alongside a bad entry' });
+    const runId = 'r-fedcba';
+    const meta: RunMeta = {
+      id: runId,
+      taskId: task.meta.id,
+      taskTitle: task.meta.title,
+      executor: 'fake',
+      state: 'running',
+      branch: 'dispatch/reconciled',
+      baseBranch: 'main',
+      worktreePath: join(worktreesDir(repo), runId),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mkdirSync(meta.worktreePath, { recursive: true });
+    new Transcript(transcriptPath(repo, runId)).writeHeader(meta);
+
+    // A directory where a transcript file is expected: existsSync() is
+    // true, but readFileSync() throws EISDIR rather than returning text —
+    // a failure mode the JSON.parse try/catch inside Transcript.read()
+    // can't reach at all.
+    mkdirSync(join(runsDir(repo), 'r-000bad.jsonl'), { recursive: true });
+
+    expect(() => orchestrator.reconcileOnBoot()).not.toThrow();
+
+    expect(orchestrator.getRun(runId)?.meta.state).toBe('failed');
   });
 });
 

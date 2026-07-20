@@ -30,6 +30,12 @@ export interface TranscriptStateLine {
   turns?: number;
   sessionId?: string;
   error?: string;
+  // C2's review marker (see RunMeta) rides along on a state line exactly
+  // like the other finish fields, even though reviewing a run never changes
+  // `state` itself — the append is still the same "one more fact about this
+  // run just became true" event the rest of appendState() exists for.
+  reviewedAt?: string;
+  reviewAction?: 'merge' | 'discard';
 }
 
 export type TranscriptLine =
@@ -66,18 +72,34 @@ export class Transcript {
       turns?: number;
       sessionId?: string;
       error?: string;
+      reviewedAt?: string;
+      reviewAction?: 'merge' | 'discard';
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
     appendFileSync(this.path, `${JSON.stringify(line)}\n`);
   }
 
+  // Tolerant read: a transcript can be left with a truncated final line by a
+  // crash mid-write (the process dies between `write()` and its trailing
+  // newline), and every line before that one is still a valid, durable
+  // record that boot reconciliation and GET /api/runs/:id need. Mirrors
+  // index.ts's "skipping unparsable task file" tolerance — one bad line is
+  // logged and skipped rather than throwing and losing the whole transcript.
   read(): TranscriptLine[] {
     if (!existsSync(this.path)) return [];
-    return readFileSync(this.path, 'utf8')
-      .split('\n')
-      .filter((raw) => raw.trim() !== '')
-      .map((raw) => JSON.parse(raw) as TranscriptLine);
+    const lines: TranscriptLine[] = [];
+    for (const raw of readFileSync(this.path, 'utf8').split('\n')) {
+      if (raw.trim() === '') continue;
+      try {
+        lines.push(JSON.parse(raw) as TranscriptLine);
+      } catch (err) {
+        console.error(
+          `dispatchd: skipping unparsable transcript line in ${this.path}: ${(err as Error).message}`
+        );
+      }
+    }
+    return lines;
   }
 }
 
@@ -109,6 +131,8 @@ export function replayTranscript(
         turns: line.turns ?? meta.turns,
         sessionId: line.sessionId ?? meta.sessionId,
         error: line.error ?? meta.error,
+        reviewedAt: line.reviewedAt ?? meta.reviewedAt,
+        reviewAction: line.reviewAction ?? meta.reviewAction,
       };
     }
   }

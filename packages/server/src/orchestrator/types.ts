@@ -91,6 +91,13 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
+  // C2: once a run has been merged or discarded, review() must refuse any
+  // further review/resume calls on it — this pair of fields, once set, is
+  // that one-way marker. `state` itself stays whatever terminal value it
+  // already had (finished/failed/cancelled); reviewing a run never changes
+  // its RunState, it only records that the review happened.
+  reviewedAt?: string;
+  reviewAction?: 'merge' | 'discard';
 }
 
 // Typed errors the orchestrator throws for the API layer to map to HTTP
