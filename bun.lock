@@ -26,6 +26,7 @@
       },
       "dependencies": {
         "@dispatch/core": "workspace:*",
+        "@dispatch/server": "workspace:*",
         "commander": "catalog:",
       },
       "devDependencies": {

@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { registerDaemonCommands } from './commands/daemon.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerTaskCommands } from './commands/task.js';
 import type { CliContext } from './context.js';
@@ -28,6 +29,7 @@ export function makeProgram(ctx: CliContext): Command {
 
   registerTaskCommands(program, ctx);
   registerDoctorCommand(program, ctx);
+  registerDaemonCommands(program, ctx);
 
   return program;
 }
