@@ -3,7 +3,6 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { CliError } from '../src/context.js';
 import type { CliContext } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
 
@@ -16,15 +15,21 @@ beforeEach(() => {
 });
 
 describe('dispatch mcp', () => {
-  // requireStore() runs before the dynamic import of @dispatch/mcp (see
-  // program.ts), so an uninitialized repo fails fast with the same message
-  // every other command uses, without ever touching the MCP SDK.
-  it('fails fast with the standard not-initialized error', async () => {
-    await expect(
-      makeProgram(ctx).parseAsync(['mcp'], { from: 'user' })
-    ).rejects.toThrow(CliError);
-    await expect(
-      makeProgram(ctx).parseAsync(['mcp'], { from: 'user' })
-    ).rejects.toThrow(/not initialized — run: dispatch init/);
+  // `mcp`'s action hands off to a real StdioServerTransport attached to
+  // process stdio (via a dynamic import of @dispatch/mcp) and never
+  // resolves on its own, so it can't be exercised through parseAsync() in
+  // this process the way other commands are — doing so would hang the test
+  // run. There is deliberately no requireStore() gate here either: per the
+  // Phase 3 plan, the server's own tools re-resolve the store per call and
+  // return a clean "not initialized" MCP tool error, so an uninitialized
+  // repo is a valid state for this command to start in. Both the
+  // not-initialized and success paths are proven end-to-end by spawning the
+  // built binary in test/mcp-stdio-e2e.test.ts; this file only checks that
+  // the command is wired up.
+  it('is registered on the program without requiring .dispatch to exist', () => {
+    const program = makeProgram(ctx);
+    const cmd = program.commands.find((c) => c.name() === 'mcp');
+    expect(cmd).toBeDefined();
+    expect(cmd?.description()).toContain('MCP server');
   });
 });

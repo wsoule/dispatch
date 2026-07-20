@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { registerDaemonCommands } from './commands/daemon.js';
 import { registerDoctorCommand } from './commands/doctor.js';
-import { registerTaskCommands, requireStore } from './commands/task.js';
+import { registerTaskCommands } from './commands/task.js';
 import type { CliContext } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
 
@@ -37,7 +37,12 @@ export function makeProgram(ctx: CliContext): Command {
     .command('mcp')
     .description('Run the dispatch MCP server over stdio')
     .action(async () => {
-      requireStore(ctx);
+      // Deliberately no requireStore() gate here: the server's own tools
+      // re-resolve the TaskStore on every call and return a clean MCP tool
+      // error (isError: true, "not initialized — run: dispatch init") when
+      // `.dispatch` doesn't exist yet — see packages/mcp/src/tools.ts. That
+      // means `dispatch mcp` can start before `dispatch init` runs, and an
+      // init that happens later is picked up without restarting the server.
       // Dynamic import keeps `@modelcontextprotocol/sdk` and its transitive
       // deps out of the CLI's startup path — every other command pays
       // nothing for this one existing.
