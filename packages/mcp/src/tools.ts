@@ -5,9 +5,10 @@ import {
   loadConfig,
   PRIORITIES,
   readyTasks,
+  TaskParseError,
   TaskStore,
 } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import type { ListSafeError, TaskDoc } from '@dispatch/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -118,11 +119,24 @@ function toolError(message: string): ToolOutcome {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
+// Turns listSafe()'s per-file parse failures into the same doctor-pointing
+// text task_get uses for a single corrupt file, so an agent sees one
+// consistent hint no matter which tool surfaced the problem.
+function formatProblems(errors: ListSafeError[]): string[] {
+  return errors.map((e) => `${e.file}: ${e.message} — run 'dispatch doctor'`);
+}
+
 // Runs a tool body, turning a ToolError/ConfigError into a clean MCP tool
-// error instead of letting it surface as a protocol-level failure. Anything
-// else (a bug, a corrupt task file) is rethrown and becomes a protocol-level
-// error, per the MCP spec: only *expected* operational failures belong in
-// the result body.
+// error with our own message text. Anything else thrown here (a bug, a
+// TaskParseError we didn't handle explicitly) is rethrown — but that does
+// NOT become a protocol-level JSON-RPC error: the SDK's own tool-call
+// handling catches exceptions thrown from a registered callback and turns
+// them into a `{ isError: true }` CallToolResult itself (verified against
+// the installed SDK — an uncaught throw in a tool handler surfaces to the
+// client as a normal tool result, not a `client.callTool()` rejection). We
+// still catch ToolError/ConfigError explicitly so the message text matches
+// the CLI exactly, rather than relying on the SDK's default `String(err)`
+// rendering of whatever a rethrow produces.
 function wrap(fn: () => ToolOutcome): ToolOutcome {
   try {
     return fn();
@@ -153,21 +167,28 @@ export function registerDispatchTools(
         kind: z.string().optional(),
         parent: z.string().optional(),
       },
-      outputSchema: { tasks: z.array(z.object(taskSummaryShape)) },
+      outputSchema: {
+        tasks: z.array(z.object(taskSummaryShape)),
+        problems: z.array(z.string()),
+      },
       annotations: { readOnlyHint: true },
     },
     ({ status, kind, parent }) =>
       wrap(() => {
         const store = requireStore(rootDir);
         const config = loadConfig(rootDir);
-        const tasks = store
-          .list({
-            status: validate(status, config.statuses, 'status'),
-            kind: validate(kind, KINDS, 'kind'),
-            parent,
-          })
-          .map(toSummary);
-        return toolResult({ tasks });
+        // listSafe() (not list()) so one unparsable task file surfaces as a
+        // `problems` entry instead of failing the whole call — the daemon's
+        // cache rebuild uses the same method for the same reason.
+        const { docs, errors } = store.listSafe({
+          status: validate(status, config.statuses, 'status'),
+          kind: validate(kind, KINDS, 'kind'),
+          parent,
+        });
+        return toolResult({
+          tasks: docs.map(toSummary),
+          problems: formatProblems(errors),
+        });
       })
   );
 
@@ -184,7 +205,17 @@ export function registerDispatchTools(
     ({ id }) =>
       wrap(() => {
         const store = requireStore(rootDir);
-        const doc = store.get(id);
+        let doc: TaskDoc | null;
+        try {
+          doc = store.get(id);
+        } catch (err) {
+          if (err instanceof TaskParseError) {
+            throw new ToolError(
+              `${err.file ?? id}: ${err.message} — run 'dispatch doctor'`
+            );
+          }
+          throw err;
+        }
         if (doc === null) throw new ToolError(`task not found: ${id}`);
         return toolResult({ meta: doc.meta, body: doc.body });
       })
@@ -195,11 +226,12 @@ export function registerDispatchTools(
     {
       title: 'Create or update a task',
       description:
-        'Upsert a task. Omit id to create (title required). With id, only the ' +
-        'provided fields change — omitted fields are untouched, blockedBy/labels ' +
-        'are full replacements. kind and description apply on create only; there ' +
-        'is no supported way to change kind or rewrite the description section ' +
-        'after creation.',
+        'Upsert a task. Omit id to create (title required) — creating is NOT ' +
+        'idempotent; calling this twice without an id makes two tasks. With id, ' +
+        'only the provided fields change — omitted fields are untouched, ' +
+        'blockedBy/labels are full replacements. kind and description apply on ' +
+        'create only; there is no supported way to change kind or rewrite the ' +
+        'description section after creation.',
       // Enum-shaped fields (kind, priority, assignee) are typed as plain
       // strings here — deliberately not z.enum — so an invalid value reaches
       // our own validate() below and produces the same CLI-style error
@@ -217,7 +249,9 @@ export function registerDispatchTools(
         description: z.string().optional(),
       },
       outputSchema: { meta: z.object(taskMetaShape), body: z.string() },
-      annotations: { idempotentHint: true },
+      // No idempotentHint: creating (no id) makes a new task every call, so
+      // that hint would be false advertising for half of what this tool
+      // does. Honest annotations over the plan's original text.
     },
     (input) =>
       wrap(() => {
@@ -246,10 +280,11 @@ export function registerDispatchTools(
           return toolResult({ meta: doc.meta, body: doc.body });
         }
 
-        if (store.get(input.id) === null) {
+        const existing = store.get(input.id);
+        if (existing === null) {
           throw new ToolError(`task not found: ${input.id}`);
         }
-        const doc = store.update(input.id, {
+        const patch = {
           title: input.title,
           status,
           parent: input.parent,
@@ -257,7 +292,18 @@ export function registerDispatchTools(
           labels: input.labels,
           priority,
           assignee,
-        });
+        };
+        // `kind` and `description` are the only fields a caller could have
+        // sent that don't end up in `patch` (both are create-only — see
+        // above). If every other field is undefined too, there is nothing
+        // to write: skip store.update() entirely rather than rewriting the
+        // file with an identical body and a bumped `updated` timestamp for
+        // no real change.
+        const hasChange = Object.values(patch).some((v) => v !== undefined);
+        if (!hasChange) {
+          return toolResult({ meta: existing.meta, body: existing.body });
+        }
+        const doc = store.update(input.id, patch);
         return toolResult({ meta: doc.meta, body: doc.body });
       })
   );
@@ -288,14 +334,18 @@ export function registerDispatchTools(
       title: 'Ready work',
       description:
         'List tasks ready to start now: kind task, status todo, all blockers done. Priority-ordered.',
-      outputSchema: { tasks: z.array(z.object(taskSummaryShape)) },
+      outputSchema: {
+        tasks: z.array(z.object(taskSummaryShape)),
+        problems: z.array(z.string()),
+      },
       annotations: { readOnlyHint: true },
     },
     () =>
       wrap(() => {
         const store = requireStore(rootDir);
-        const tasks = readyTasks(store.list()).map(toSummary);
-        return toolResult({ tasks });
+        const { docs, errors } = store.listSafe();
+        const tasks = readyTasks(docs).map(toSummary);
+        return toolResult({ tasks, problems: formatProblems(errors) });
       })
   );
 }

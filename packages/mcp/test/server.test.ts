@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +58,12 @@ describe('server identity', () => {
       'task_next',
       'task_save',
     ]);
+  });
+
+  it('does not claim task_save is idempotent (create makes a new task every call)', async () => {
+    const { tools } = await client.listTools();
+    const taskSave = tools.find((t) => t.name === 'task_save');
+    expect(taskSave?.annotations?.idempotentHint).not.toBe(true);
   });
 });
 
@@ -171,6 +177,27 @@ describe('task_save', () => {
     expect(result.isError).toBe(true);
     expect(callToolText(result)).toBe('task not found: t-ffffff');
   });
+
+  it('does not write when the effective update patch is empty (kind/description only)', async () => {
+    const store = new TaskStore(root);
+    const created = store.create({ title: 'Untouched', description: 'first' });
+    const filePath = store.taskFilePath(created.meta.id)!;
+    const mtimeBefore = statSync(filePath).mtimeMs;
+
+    const result = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: created.meta.id, kind: 'epic', description: 'second' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    const meta = result.structuredContent?.meta as {
+      updated: string;
+      kind: string;
+    };
+    expect(meta.updated).toBe(created.meta.updated);
+    expect(meta.kind).toBe('task');
+    expect(result.structuredContent?.body).toBe(created.body);
+    expect(statSync(filePath).mtimeMs).toBe(mtimeBefore);
+  });
 });
 
 describe('task_get', () => {
@@ -200,6 +227,22 @@ describe('task_get', () => {
     })) as ToolCallResult;
     expect(result.isError).toBe(true);
     expect(callToolText(result)).toBe('task not found: t-abcdef');
+  });
+
+  it('returns a clean doctor-pointing error for a corrupt task file', async () => {
+    const store = new TaskStore(root);
+    writeFileSync(
+      join(store.tasksDir, 't-c0ffee-corrupt.md'),
+      'no frontmatter here'
+    );
+
+    const result = (await client.callTool({
+      name: 'task_get',
+      arguments: { id: 't-c0ffee' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(callToolText(result)).toContain('missing frontmatter');
+    expect(callToolText(result)).toContain("run 'dispatch doctor'");
   });
 });
 
@@ -248,6 +291,35 @@ describe('task_list', () => {
     expect(callToolText(result)).toBe(
       'invalid kind: story (expected task|epic)'
     );
+  });
+
+  it('reports an empty problems array when every file parses cleanly', async () => {
+    const store = new TaskStore(root);
+    store.create({ title: 'A' });
+
+    const result = (await client.callTool({
+      name: 'task_list',
+      arguments: {},
+    })) as ToolCallResult;
+    expect(result.structuredContent?.problems).toEqual([]);
+  });
+
+  it('surfaces an unparsable file as a problem instead of failing the whole call', async () => {
+    const store = new TaskStore(root);
+    const good = store.create({ title: 'Good task' });
+    writeFileSync(join(store.tasksDir, 'corrupt.md'), 'no frontmatter here');
+
+    const result = (await client.callTool({
+      name: 'task_list',
+      arguments: {},
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    const tasks = result.structuredContent?.tasks as { id: string }[];
+    expect(tasks.map((t) => t.id)).toEqual([good.meta.id]);
+    const problems = result.structuredContent?.problems as string[];
+    expect(problems).toEqual([
+      "corrupt.md: missing frontmatter — run 'dispatch doctor'",
+    ]);
   });
 });
 
@@ -313,6 +385,24 @@ describe('task_next', () => {
     })) as ToolCallResult;
     tasks = result.structuredContent?.tasks as { id: string }[];
     expect(tasks.map((t) => t.id)).toEqual([blocked.meta.id, readyNow.meta.id]);
+  });
+
+  it('surfaces an unparsable file as a problem instead of failing the whole call', async () => {
+    const store = new TaskStore(root);
+    const ready = store.create({ title: 'Ready' });
+    writeFileSync(join(store.tasksDir, 'corrupt.md'), 'no frontmatter here');
+
+    const result = (await client.callTool({
+      name: 'task_next',
+      arguments: {},
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    const tasks = result.structuredContent?.tasks as { id: string }[];
+    expect(tasks.map((t) => t.id)).toEqual([ready.meta.id]);
+    const problems = result.structuredContent?.problems as string[];
+    expect(problems).toEqual([
+      "corrupt.md: missing frontmatter — run 'dispatch doctor'",
+    ]);
   });
 });
 
