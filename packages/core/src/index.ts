@@ -18,4 +18,4 @@ export type {
 } from './store.js';
 export { readyTasks, isDone, PRIORITY_ORDER } from './graph.js';
 export { loadConfig, ConfigError } from './config.js';
-export type { DispatchConfig } from './config.js';
+export type { DispatchConfig, OrchestratorConfig } from './config.js';
