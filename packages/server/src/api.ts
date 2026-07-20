@@ -118,7 +118,14 @@ export async function handleApi(
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
-      return jsonResponse({ ok: true, version: ctx.version });
+      // `rootDir` lets the web UI show a project name (its basename) in the
+      // top bar without a separate endpoint — see the phase-2 plan's Slice
+      // S3 TopBar requirement.
+      return jsonResponse({
+        ok: true,
+        version: ctx.version,
+        rootDir: ctx.rootDir,
+      });
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {
