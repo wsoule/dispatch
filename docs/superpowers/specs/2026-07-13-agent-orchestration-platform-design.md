@@ -272,8 +272,12 @@ agent involved.
 
 ### Review: one place to close the loop
 
-Per finished run: diff view (`git diff <base>...<branch>`, Monaco-style
-side-by-side), agent conversation replay, cost/turns. Actions:
+Per finished run: diff view (`git diff <base>...<branch>`), agent conversation
+replay, cost/turns. **Diff rendering and file trees use Pierre's open-source
+components** (user requirement, 2026-07-20 — pierre.co's diff/tree renderers;
+verify exact package names and license when planning the review UI, with
+Monaco/react-diff-viewer as fallback only if Pierre's components prove
+unusable). Actions:
 
 - **Request changes** — free-text feedback resumes the same session (`resume` +
   session id) in the same worktree.
