@@ -39,6 +39,41 @@ UI into `packages/web/dist`, then dispatchd serves it directly — no separate
 frontend server needed. `dispatch serve` / `dispatch ui` (from `@dispatch/cli`)
 wrap this daemon for end users.
 
+### MCP server (Phase 3)
+
+`dispatch init` registers a stdio MCP server in the project's `.mcp.json`
+(created or merged — existing servers and keys are preserved):
+
+    {
+      "mcpServers": {
+        "dispatch": { "command": "dispatch", "args": ["mcp"] }
+      }
+    }
+
+Pass `--no-mcp` to `dispatch init` to skip this. The registration assumes
+`dispatch` is on `PATH`; a packaged installer lands in a later phase. Start the
+server directly with `dispatch mcp` (reads the current directory) or the
+standalone `dispatch-mcp --root <dir>` binary from `@dispatch/mcp`. Both talk
+stdio MCP and operate directly on `.dispatch/tasks/*.md` — no daemon required,
+though a running `dispatchd` picks up the resulting file changes through its
+watcher like any other edit.
+
+Tools (server name `dispatch`):
+
+| Tool           | Input                                                                                               | Output                                         |
+| -------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `task_list`    | `{ status?, kind?, parent? }`                                                                       | `{ tasks: TaskSummary[], problems: string[] }` |
+| `task_get`     | `{ id }`                                                                                            | `{ meta, body }`                               |
+| `task_save`    | `{ id?, title?, status?, kind?, parent?, blockedBy?, labels?, priority?, assignee?, description? }` | `{ meta, body }`                               |
+| `task_comment` | `{ id, text }`                                                                                      | `{ meta }`                                     |
+| `task_next`    | `{}`                                                                                                | `{ tasks: TaskSummary[], problems: string[] }` |
+
+`task_save` creates when `id` is omitted (title required) and updates only the
+given fields otherwise; `kind` and `description` take effect on create only. A
+`workflow://onboarding` resource briefs a connecting agent on the same
+conventions. See `docs/superpowers/plans/2026-07-20-phase-3-mcp-server.md` for
+the full design.
+
 ## Design docs
 
 - Spec:
