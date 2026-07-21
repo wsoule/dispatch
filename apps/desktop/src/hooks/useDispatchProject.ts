@@ -16,6 +16,7 @@ import type {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { readDefaultModel } from '../lib/models';
 import { isTerminalRunState } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd } from '../lib/tauri';
@@ -79,7 +80,8 @@ export interface DispatchProjectData {
   handleCreate: (input: CreateInput) => Promise<void>;
   handleDispatch: (
     taskId: string,
-    executor?: 'fake' | 'claude'
+    executor?: 'fake' | 'claude',
+    model?: string
   ) => Promise<void>;
   handleApprove: (
     runId: string,
@@ -475,9 +477,18 @@ export function useDispatchProject(
   );
 
   const handleDispatch = useCallback(
-    async (taskId: string, executor?: 'fake' | 'claude'): Promise<void> => {
+    async (
+      taskId: string,
+      executor?: 'fake' | 'claude',
+      model?: string
+    ): Promise<void> => {
       if (client === null) return;
-      const meta = await client.createRun(taskId, executor);
+      // A real ('claude') dispatch always carries a model — the per-dispatch override if given,
+      // otherwise the user's saved default. The fake executor ignores it.
+      const meta = await client.createRun(taskId, {
+        executor,
+        model: model ?? readDefaultModel(),
+      });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });

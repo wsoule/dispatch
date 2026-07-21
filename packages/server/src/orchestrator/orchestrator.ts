@@ -138,7 +138,11 @@ export class Orchestrator {
   // Starts a new run for `taskId` on `executorName`. Refuses (409) if the
   // task already has a live run, and (400) if the executor name isn't
   // registered — O1 only ever registers 'fake'; 'claude' arrives in O2.
-  dispatch(taskId: string, executorName: string): RunMeta {
+  dispatch(
+    taskId: string,
+    executorName: string,
+    opts: { model?: string } = {}
+  ): RunMeta {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
@@ -179,6 +183,7 @@ export class Orchestrator {
       worktreePath: wtPath,
       createdAt: now,
       updatedAt: now,
+      model: opts.model,
     };
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
@@ -205,6 +210,7 @@ export class Orchestrator {
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
+        model: opts.model,
       },
       this.makeEvents(runId)
     );

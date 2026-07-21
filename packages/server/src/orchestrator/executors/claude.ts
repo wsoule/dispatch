@@ -298,6 +298,7 @@ export class ClaudeExecutor implements Executor {
       permissionMode: opts.permissionMode as PermissionMode,
       maxTurns: opts.maxTurns,
       maxBudgetUsd: opts.maxBudgetUsd,
+      model: opts.model,
       resume: opts.resumeSessionId,
       canUseTool,
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
