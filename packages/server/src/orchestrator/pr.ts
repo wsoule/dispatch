@@ -20,7 +20,17 @@ export interface CommandResult {
 // exposed and injectable here): every `gh`/`git push` call PrManager makes
 // goes through this, so tests can stub `gh`/network entirely instead of
 // requiring a real GitHub remote and an authenticated `gh` CLI.
-export type CommandRunner = (cwd: string, cmd: string[]) => CommandResult;
+//
+// Minor fix: async (Bun.spawn + await under defaultCommandRunner, never
+// Bun.spawnSync) — a real `gh pr create`/`git push`/`gh pr view` call can
+// take a real amount of wall-clock time (network round trips to GitHub),
+// and dispatchd is a single process serving every other HTTP request and
+// live run on the same event loop; a synchronous shell-out here would stall
+// all of that for as long as the git/gh call takes.
+export type CommandRunner = (
+  cwd: string,
+  cmd: string[]
+) => Promise<CommandResult>;
 
 // Picks whichever of a failed command's stderr/stdout actually has content,
 // preferring stderr — used instead of `stderr.trim() || stdout.trim()` so
@@ -31,16 +41,17 @@ function commandErrorText(result: CommandResult): string {
   return stderr.length > 0 ? stderr : result.stdout.trim();
 }
 
-export function defaultCommandRunner(
+export async function defaultCommandRunner(
   cwd: string,
   cmd: string[]
-): CommandResult {
-  const result = Bun.spawnSync(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' });
-  return {
-    ok: result.exitCode === 0,
-    stdout: result.stdout.toString('utf8'),
-    stderr: result.stderr.toString('utf8'),
-  };
+): Promise<CommandResult> {
+  const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { ok: exitCode === 0, stdout, stderr };
 }
 
 // Whether this project can use the PR review action: `gh` must be reachable
@@ -48,13 +59,13 @@ export function defaultCommandRunner(
 // Called once at boot (see index.ts) and cached for the process lifetime —
 // `GET /api/health` exposes the result as `pr` so a client can hide/disable
 // the PR action without probing per-run.
-export function detectPrCapability(
+export async function detectPrCapability(
   rootDir: string,
   run: CommandRunner = defaultCommandRunner
-): boolean {
-  const gh = run(rootDir, ['gh', '--version']);
+): Promise<boolean> {
+  const gh = await run(rootDir, ['gh', '--version']);
   if (!gh.ok) return false;
-  const remote = run(rootDir, ['git', 'remote', 'get-url', 'origin']);
+  const remote = await run(rootDir, ['git', 'remote', 'get-url', 'origin']);
   return remote.ok;
 }
 
@@ -70,8 +81,8 @@ export interface PrManagerContext {
  * opens a GitHub PR via `gh pr create`, then polls that PR's merge state on
  * an interval, flipping the run to reviewed + the task to `done` the moment
  * GitHub reports it merged. Every `gh`/`git` invocation goes through the
- * injected CommandRunner seam so tests never need a real remote or a
- * logged-in `gh` CLI.
+ * injected (async) CommandRunner seam so tests never need a real remote or
+ * a logged-in `gh` CLI, and so a slow real call never blocks the process.
  */
 export class PrManager {
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -87,7 +98,7 @@ export class PrManager {
   // pollOnce() below sees it merged. 409s outright when this project lacks
   // the `pr` capability, matching the plan's "no remote/gh -> 409 with clear
   // message".
-  openPr(runId: string): RunMeta {
+  async openPr(runId: string): Promise<RunMeta> {
     if (!this.capability) {
       throw new OrchestratorConflictError(
         'PR review requires the gh CLI and a configured git remote'
@@ -114,7 +125,7 @@ export class PrManager {
       );
     }
 
-    const push = this.run(meta.worktreePath, [
+    const push = await this.run(meta.worktreePath, [
       'git',
       'push',
       '-u',
@@ -127,7 +138,7 @@ export class PrManager {
       );
     }
     const body = `Automated PR opened by dispatch for task ${meta.taskId} (run ${meta.id}).`;
-    const create = this.run(meta.worktreePath, [
+    const create = await this.run(meta.worktreePath, [
       'gh',
       'pr',
       'create',
@@ -171,7 +182,18 @@ export class PrManager {
   // nothing was ever opened, so nothing needs polling.
   startPolling(intervalMs = 60000): void {
     if (!this.capability) return;
-    this.pollTimer = setInterval(() => this.pollOnce(), intervalMs);
+    // setInterval's callback can't be awaited directly; pollOnce() is async
+    // now (minor fix), so each tick is fired-and-forgotten with its own
+    // rejection handler — a single poll pass failing outright (as opposed
+    // to one run's check failing, which pollOnce already isolates) must
+    // never crash the timer or the process.
+    this.pollTimer = setInterval(() => {
+      void this.pollOnce().catch((err: unknown) => {
+        console.error(
+          `dispatchd: PR poll pass failed: ${(err as Error).message}`
+        );
+      });
+    }, intervalMs);
   }
 
   stopPolling(): void {
@@ -183,11 +205,14 @@ export class PrManager {
   // `gh pr view --json state`, and flips it to reviewed+done the moment
   // GitHub reports it merged. A single run's check failing (bad JSON, `gh`
   // erroring for that one call) is skipped rather than aborting the whole
-  // pass — one flaky call must never block every other run's poll.
-  pollOnce(): void {
+  // pass — one flaky call must never block every other run's poll. Runs
+  // are checked sequentially (not Promise.all) — polling is already on a
+  // long interval, and sequential checks keep at most one `gh` subprocess
+  // in flight at a time.
+  async pollOnce(): Promise<void> {
     for (const meta of this.ctx.orchestrator.list()) {
       if (meta.prUrl === undefined || meta.reviewedAt !== undefined) continue;
-      const view = this.run(meta.worktreePath, [
+      const view = await this.run(meta.worktreePath, [
         'gh',
         'pr',
         'view',

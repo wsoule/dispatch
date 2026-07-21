@@ -42,9 +42,16 @@ async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
   throw new Error('waitFor timed out');
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Records every command it was asked to run and answers with fixed,
 // scriptable results — the PrManager test double for gh/git, so no test
-// here needs a real GitHub remote or a logged-in gh CLI.
+// here needs a real GitHub remote or a logged-in gh CLI. Async (minor fix:
+// PrManager's CommandRunner seam is async so a real `gh`/`git push` can
+// never stall the event loop) — an optional per-call `delayMs` lets a test
+// prove that.
 class StubRunner {
   readonly calls: { cwd: string; cmd: string[] }[] = [];
   pushResult: CommandResult = { ok: true, stdout: '', stderr: '' };
@@ -58,9 +65,11 @@ class StubRunner {
     stdout: JSON.stringify({ state: 'OPEN' }),
     stderr: '',
   };
+  delayMs = 0;
 
-  run = (cwd: string, cmd: string[]): CommandResult => {
+  run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
     this.calls.push({ cwd, cmd });
+    if (this.delayMs > 0) await sleep(this.delayMs);
     if (cmd[0] === 'git' && cmd[1] === 'push') return this.pushResult;
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'create') {
       return this.createResult;
@@ -88,27 +97,27 @@ class StubRunner {
 }
 
 describe('detectPrCapability', () => {
-  it('is true when both gh and a configured origin remote are available', () => {
+  it('is true when both gh and a configured origin remote are available', async () => {
     const stub = new StubRunner();
-    expect(detectPrCapability(repo, stub.run)).toBe(true);
+    expect(await detectPrCapability(repo, stub.run)).toBe(true);
   });
 
-  it('is false when gh is not on PATH', () => {
-    const run = (_cwd: string, cmd: string[]): CommandResult => {
+  it('is false when gh is not on PATH', async () => {
+    const run = async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
       if (cmd[0] === 'gh')
         return { ok: false, stdout: '', stderr: 'not found' };
       return { ok: true, stdout: 'origin-url', stderr: '' };
     };
-    expect(detectPrCapability(repo, run)).toBe(false);
+    expect(await detectPrCapability(repo, run)).toBe(false);
   });
 
-  it('is false when there is no configured origin remote', () => {
-    const run = (_cwd: string, cmd: string[]): CommandResult => {
+  it('is false when there is no configured origin remote', async () => {
+    const run = async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
       if (cmd[0] === 'gh')
         return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
       return { ok: false, stdout: '', stderr: 'no such remote' };
     };
-    expect(detectPrCapability(repo, run)).toBe(false);
+    expect(await detectPrCapability(repo, run)).toBe(false);
   });
 });
 
@@ -155,18 +164,20 @@ describe('PrManager.openPr', () => {
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     const pr = new PrManager(harness, false, stub.run);
-    expect(() => pr.openPr(runId)).toThrow(OrchestratorConflictError);
+    await expect(pr.openPr(runId)).rejects.toThrow(OrchestratorConflictError);
     expect(stub.calls).toHaveLength(0);
   });
 
-  it('404s an unknown run id', () => {
+  it('404s an unknown run id', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
-    expect(() => pr.openPr('r-000000')).toThrow(OrchestratorNotFoundError);
+    await expect(pr.openPr('r-000000')).rejects.toThrow(
+      OrchestratorNotFoundError
+    );
   });
 
-  it('409s a run that is not in a terminal state', () => {
+  it('409s a run that is not in a terminal state', async () => {
     const harness = makeHarness();
     harness.orchestrator.registerExecutor(
       'stuck',
@@ -179,7 +190,7 @@ describe('PrManager.openPr', () => {
     const meta = harness.orchestrator.dispatch(task.meta.id, 'stuck');
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
-    expect(() => pr.openPr(meta.id)).toThrow(OrchestratorConflictError);
+    await expect(pr.openPr(meta.id)).rejects.toThrow(OrchestratorConflictError);
   });
 
   it('pushes the branch, creates the PR, and records the url on task Activity + run meta', async () => {
@@ -188,7 +199,7 @@ describe('PrManager.openPr', () => {
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
 
-    const updated = pr.openPr(runId);
+    const updated = await pr.openPr(runId);
     expect(updated.prUrl).toBe('https://github.com/example/repo/pull/1');
 
     const pushCall = stub.calls.find(
@@ -211,17 +222,21 @@ describe('PrManager.openPr', () => {
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
-    pr.openPr(runId);
-    expect(() => pr.openPr(runId)).toThrow(OrchestratorConflictError);
+    await pr.openPr(runId);
+    await expect(pr.openPr(runId)).rejects.toThrow(OrchestratorConflictError);
   });
 
   it('409s when git push fails', async () => {
     const harness = makeHarness();
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    stub.pushResult = { ok: false, stdout: '', stderr: 'no remote configured' };
+    stub.pushResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'no remote configured',
+    };
     const pr = new PrManager(harness, true, stub.run);
-    expect(() => pr.openPr(runId)).toThrow(/git push failed/);
+    await expect(pr.openPr(runId)).rejects.toThrow(/git push failed/);
   });
 
   it('409s when gh pr create fails', async () => {
@@ -234,7 +249,30 @@ describe('PrManager.openPr', () => {
       stderr: 'gh: not authenticated',
     };
     const pr = new PrManager(harness, true, stub.run);
-    expect(() => pr.openPr(runId)).toThrow(/gh pr create failed/);
+    await expect(pr.openPr(runId)).rejects.toThrow(/gh pr create failed/);
+  });
+
+  // Minor fix: every gh/git call goes through an async CommandRunner (real
+  // production one uses Bun.spawn + await, never Bun.spawnSync) so a slow
+  // push/create can never block the whole process. Proven here by racing a
+  // 0ms timer against openPr()'s in-flight (artificially slow) call — a
+  // synchronous implementation would starve the timer until openPr finished.
+  it('does not block the event loop while a command is in flight', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    stub.delayMs = 40;
+    const pr = new PrManager(harness, true, stub.run);
+
+    let timerFired = false;
+    setTimeout(() => {
+      timerFired = true;
+    }, 0);
+
+    const openPromise = pr.openPr(runId);
+    await sleep(5);
+    expect(timerFired).toBe(true);
+    await openPromise;
   });
 });
 
@@ -244,14 +282,14 @@ describe('PrManager polling', () => {
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
-    pr.openPr(runId);
+    await pr.openPr(runId);
 
     stub.viewResult = {
       ok: true,
       stdout: JSON.stringify({ state: 'OPEN' }),
       stderr: '',
     };
-    pr.pollOnce();
+    await pr.pollOnce();
     expect(harness.store.get(taskId)?.meta.status).toBe('in-review');
 
     stub.viewResult = {
@@ -259,7 +297,7 @@ describe('PrManager polling', () => {
       stdout: JSON.stringify({ state: 'MERGED' }),
       stderr: '',
     };
-    pr.pollOnce();
+    await pr.pollOnce();
 
     const task = harness.store.get(taskId);
     expect(task?.meta.status).toBe('done');
@@ -273,10 +311,10 @@ describe('PrManager polling', () => {
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
-    pr.openPr(runId);
+    await pr.openPr(runId);
 
     stub.viewResult = { ok: false, stdout: '', stderr: 'rate limited' };
-    expect(() => pr.pollOnce()).not.toThrow();
+    await expect(pr.pollOnce()).resolves.toBeUndefined();
     expect(harness.store.get(taskId)?.meta.status).toBe('in-review');
   });
 
@@ -287,5 +325,24 @@ describe('PrManager polling', () => {
     pr.startPolling(10);
     pr.stopPolling();
     expect(stub.calls).toHaveLength(0);
+  });
+
+  it('does not block the event loop during a slow poll pass', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    await pr.openPr(runId);
+    stub.delayMs = 40;
+
+    let timerFired = false;
+    setTimeout(() => {
+      timerFired = true;
+    }, 0);
+
+    const pollPromise = pr.pollOnce();
+    await sleep(5);
+    expect(timerFired).toBe(true);
+    await pollPromise;
   });
 });

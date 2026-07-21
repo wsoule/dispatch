@@ -499,7 +499,10 @@ describe('GET /api/health pr capability', () => {
   });
 
   it('reports pr: true when the injected command runner reports both capabilities', async () => {
-    const stubRunner = (_cwd: string, cmd: string[]): CommandResult => ({
+    const stubRunner = async (
+      _cwd: string,
+      cmd: string[]
+    ): Promise<CommandResult> => ({
       ok: true,
       stdout: cmd[0] === 'gh' ? 'gh version 2.0.0' : 'origin-url',
       stderr: '',

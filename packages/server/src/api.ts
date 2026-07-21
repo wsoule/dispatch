@@ -324,7 +324,7 @@ async function reviewRun(
     );
   }
   if (body.action === 'pr') {
-    const meta = ctx.prManager.openPr(runId);
+    const meta = await ctx.prManager.openPr(runId);
     return jsonResponse(meta);
   }
   const meta = ctx.orchestrator.review(runId, body.action);

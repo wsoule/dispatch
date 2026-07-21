@@ -208,7 +208,7 @@ export async function startServer(
   // request — a project's gh/remote setup essentially never changes while
   // dispatchd is running, and re-shelling-out to `gh --version` on every
   // health check or review action would be wasted work.
-  const prCapability = detectPrCapability(rootDir, opts.prCommandRunner);
+  const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
   const prManager = new PrManager(
     { store, cache, events, orchestrator },
     prCapability,
