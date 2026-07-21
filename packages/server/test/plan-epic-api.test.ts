@@ -494,6 +494,197 @@ describe('POST /api/runs/:id/inject', () => {
       '[message from another agent] hello from another agent'
     );
   });
+
+  // agent-comms: `fromRunId` is how the MCP `agent_message` tool identifies
+  // its own run as the sender (via DISPATCH_RUN_ID — see packages/mcp/src/
+  // tools.ts) — resolving it against a real second run proves the API route
+  // actually threads the value through to Orchestrator.inject rather than
+  // dropping it, landing a real task-title label in both the delivered
+  // prefix and the recorded message entry instead of the generic fallback.
+  it("resolves fromRunId to the sender run's task title + id label", async () => {
+    const sent: string[] = [];
+    const controllable: Executor = {
+      start(_opts, _events) {
+        return {
+          interrupt: async () => {},
+          send: (message: string) => sent.push(message),
+          approve: () => {},
+        } satisfies ExecutorRun;
+      },
+    };
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('claude', controllable);
+      },
+    });
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const senderTask = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Sender task' }),
+      })
+    );
+    const senderMeta = await json(
+      await fetch(`${baseUrl}/api/tasks/${senderTask.meta.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'claude' }),
+      })
+    );
+
+    const targetTask = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Target task' }),
+      })
+    );
+    const targetMeta = await json(
+      await fetch(`${baseUrl}/api/tasks/${targetTask.meta.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'claude' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(await fetch(`${baseUrl}/api/runs/${targetMeta.id}`));
+      return r.meta.state === 'running';
+    });
+
+    const res = await fetch(`${baseUrl}/api/runs/${targetMeta.id}/inject`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'need a hand',
+        fromRunId: senderMeta.id,
+      }),
+    });
+    expect(res.status).toBe(200);
+    await waitFor(() => Promise.resolve(sent.length === 1));
+    expect(sent[0]).toBe(
+      `[message from Sender task (${senderMeta.id})] need a hand`
+    );
+
+    const detail = await json(
+      await fetch(`${baseUrl}/api/runs/${targetMeta.id}`)
+    );
+    const messageEntry = detail.entries.find(
+      (e: { kind: string }) => e.kind === 'message'
+    );
+    expect(messageEntry).toMatchObject({
+      kind: 'message',
+      from: 'agent',
+      fromLabel: `Sender task (${senderMeta.id})`,
+      text: 'need a hand',
+    });
+  });
+});
+
+describe('POST /api/runs/:id/message-user', () => {
+  it('400s a missing text field', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const task = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Message user body validation' }),
+      })
+    );
+    const meta = await json(
+      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'fake' }),
+      })
+    );
+    const res = await fetch(`${baseUrl}/api/runs/${meta.id}/message-user`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('404s an unknown run id', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const res = await fetch(`${baseUrl}/api/runs/r-000000/message-user`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hi' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  // Records a `from: 'agent'` entry on the CALLING run's own transcript,
+  // labeled with that run's own task title + id — the agent->human channel
+  // (spec's `message_user`) — and broadcasts it exactly like `inject` does,
+  // so a connected Session tab sees it without a manual refetch.
+  it("200s and records a from:agent entry labeled with the run's own task", async () => {
+    const controllable: Executor = {
+      start(_opts, _events) {
+        return {
+          interrupt: async () => {},
+          send: () => {},
+          approve: () => {},
+        } satisfies ExecutorRun;
+      },
+    };
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('claude', controllable);
+      },
+    });
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const task = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Flag something' }),
+      })
+    );
+    const meta = await json(
+      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'claude' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(await fetch(`${baseUrl}/api/runs/${meta.id}`));
+      return r.meta.state === 'running';
+    });
+
+    const res = await fetch(`${baseUrl}/api/runs/${meta.id}/message-user`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'need clarification on X' }),
+    });
+    expect(res.status).toBe(200);
+
+    const detail = await json(await fetch(`${baseUrl}/api/runs/${meta.id}`));
+    const messageEntry = detail.entries.find(
+      (e: { kind: string }) => e.kind === 'message'
+    );
+    expect(messageEntry).toMatchObject({
+      kind: 'message',
+      from: 'agent',
+      fromLabel: `Flag something (${meta.id})`,
+      text: 'need clarification on X',
+    });
+  });
 });
 
 describe('GET /api/health pr capability', () => {

@@ -200,6 +200,7 @@ export class Orchestrator {
       {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
+        runId,
         prompt: this.promptForTask(task),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
@@ -273,25 +274,54 @@ export class Orchestrator {
     if (executorRun === undefined) {
       throw new OrchestratorClientError(`run has no live executor: ${runId}`);
     }
-    this.transcriptFor(runId).appendEntry({
+    const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
-      kind: 'system',
-      text: `user: ${text}`,
-    });
+      kind: 'message',
+      from: 'user',
+      text,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
     executorRun.send(text);
     return meta;
+  }
+
+  // Resolves the label a `from: 'agent'` message entry should carry —
+  // the sender run's task title + id when `from.runId` names a run this
+  // orchestrator still knows about (live or terminal-but-registered), or
+  // an explicit `from.label` override, or the generic fallback that keeps
+  // `agent_message`'s pre-identity behavior (and its existing API test's
+  // exact prefix text) unchanged when the sender can't be resolved at all.
+  private resolveSenderLabel(from?: { runId?: string; label?: string }): {
+    fromLabel: string;
+  } {
+    if (from?.runId !== undefined) {
+      const senderMeta = this.registry.get(from.runId);
+      if (senderMeta !== undefined) {
+        return { fromLabel: `${senderMeta.taskTitle} (${senderMeta.id})` };
+      }
+    }
+    if (from?.label !== undefined && from.label.trim() !== '') {
+      return { fromLabel: from.label };
+    }
+    return { fromLabel: 'another agent' };
   }
 
   // The messaging half of agent collaboration (spec's `agent_message`):
   // injects a message from *another* agent into a live run's executor.
   // Distinct from sendMessage's human-authored channel — this one always
-  // prefixes the text so the receiving agent can tell the difference, and
+  // prefixes the text with the resolved SENDER's identity (see
+  // resolveSenderLabel) so the receiving agent can tell who's talking, and
   // deliberately only accepts a run that's actively `running` (not
   // provisioning, not awaiting-approval, not terminal): every other state
   // 409s, since "another agent has something to say right now" is only
   // unambiguous while the run is actually running. `resume`-style
   // reactivation is sendMessage's job, not this one's.
-  inject(runId: string, text: string): RunMeta {
+  inject(
+    runId: string,
+    text: string,
+    from?: { runId?: string; label?: string }
+  ): RunMeta {
     const meta = this.requireRun(runId);
     if (meta.state !== 'running') {
       throw new OrchestratorConflictError(`run is not running: ${runId}`);
@@ -300,13 +330,45 @@ export class Orchestrator {
     if (executorRun === undefined) {
       throw new OrchestratorClientError(`run has no live executor: ${runId}`);
     }
-    const prefixed = `[message from another agent] ${text}`;
-    this.transcriptFor(runId).appendEntry({
+    const { fromLabel } = this.resolveSenderLabel(from);
+    const prefixed = `[message from ${fromLabel}] ${text}`;
+    const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
-      kind: 'system',
-      text: prefixed,
-    });
+      kind: 'message',
+      from: 'agent',
+      fromLabel,
+      text,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
     executorRun.send(prefixed);
+    return meta;
+  }
+
+  // The agent->human channel (spec's `message_user`): records a
+  // `from: 'agent'` message entry on the CALLING run's own transcript —
+  // labeled with that same run's task title + id — so an agent can flag a
+  // question or update to the human without waiting for its own assistant
+  // output to be read. Unlike `inject`, there is no separate recipient run
+  // to deliver text into; this only ever writes to `runId`'s own transcript
+  // and broadcasts it, so a connected Session tab badges it immediately.
+  // Same `running`-only liveness gate as `inject` — a run that isn't
+  // actively running has no reason to be raising anything to the user right
+  // now.
+  messageUser(runId: string, text: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (meta.state !== 'running') {
+      throw new OrchestratorConflictError(`run is not running: ${runId}`);
+    }
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: 'agent',
+      fromLabel: `${meta.taskTitle} (${meta.id})`,
+      text,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
     return meta;
   }
 
@@ -920,6 +982,7 @@ export class Orchestrator {
       {
         cwd: meta.worktreePath,
         projectRoot: this.ctx.rootDir,
+        runId,
         prompt: text,
         resumeSessionId: oldMeta.sessionId,
         permissionMode: caps.permissionMode,
