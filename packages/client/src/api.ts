@@ -108,6 +108,47 @@ export interface DiffResult {
   files: DiffFile[];
 }
 
+// GitHub PR status + conversation for a run's PR — mirrors PrStatus /
+// PrConversationItem / PrDetail in packages/server/src/orchestrator/pr.ts. The
+// body of `GET /api/runs/:id/pr` (and what the review/comment POSTs return).
+export interface PrCheckSummary {
+  passed: number;
+  failed: number;
+  pending: number;
+  total: number;
+}
+
+export interface PrStatus {
+  number: number;
+  url: string;
+  title: string;
+  state: 'OPEN' | 'MERGED' | 'CLOSED';
+  isDraft: boolean;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
+  checks: PrCheckSummary;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}
+
+export interface PrConversationItem {
+  kind: 'review' | 'comment' | 'line-comment';
+  author: string;
+  body: string;
+  createdAt: string;
+  state?: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED';
+  path?: string;
+  line?: number;
+}
+
+export interface PrDetail {
+  status: PrStatus;
+  conversation: PrConversationItem[];
+}
+
+export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
+
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
@@ -351,6 +392,17 @@ export interface ApiClient {
     runId: string,
     action: 'merge' | 'discard' | 'pr'
   ): Promise<RunMeta>;
+  // GitHub PR review surface (items 3+4): read a run's PR status + conversation,
+  // submit a review verdict (approve/request-changes/comment), or add a
+  // PR-level comment — each POST returns the refreshed PrDetail. All 409 a run
+  // with no open PR.
+  fetchPrDetail(runId: string): Promise<PrDetail>;
+  reviewPr(
+    runId: string,
+    event: PrReviewEvent,
+    body?: string
+  ): Promise<PrDetail>;
+  commentPr(runId: string, body: string): Promise<PrDetail>;
   // Phase 5 P2: the messaging half (`agent_message`'s daemon-side landing
   // spot) — injects a message into a *running* run, prefixed
   // `[message from <sender>]` server-side (a generic "another agent" label
@@ -431,6 +483,17 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/runs/${runId}/review`, {
         method: 'POST',
         ...jsonBody({ action }),
+      }),
+    fetchPrDetail: (runId) => request(baseUrl, `/api/runs/${runId}/pr`),
+    reviewPr: (runId, event, body) =>
+      request(baseUrl, `/api/runs/${runId}/pr/review`, {
+        method: 'POST',
+        ...jsonBody({ event, body: body ?? '' }),
+      }),
+    commentPr: (runId, body) =>
+      request(baseUrl, `/api/runs/${runId}/pr/comment`, {
+        method: 'POST',
+        ...jsonBody({ body }),
       }),
     injectRun: (runId, text, fromRunId) =>
       request(baseUrl, `/api/runs/${runId}/inject`, {

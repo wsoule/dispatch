@@ -65,6 +65,55 @@ class StubRunner {
     stdout: JSON.stringify({ state: 'OPEN' }),
     stderr: '',
   };
+  // The full `gh pr view --json number,…,reviews,comments` payload getPrDetail
+  // reads (distinct from `viewResult`, the poller's `--json state` call).
+  viewDetailResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({
+      number: 1,
+      url: 'https://github.com/example/repo/pull/1',
+      title: 'PR me',
+      state: 'OPEN',
+      isDraft: false,
+      reviewDecision: 'REVIEW_REQUIRED',
+      mergeable: 'MERGEABLE',
+      statusCheckRollup: [{ conclusion: 'SUCCESS' }, { status: 'IN_PROGRESS' }],
+      additions: 5,
+      deletions: 1,
+      changedFiles: 1,
+      reviews: [
+        {
+          author: { login: 'teammate' },
+          body: 'Looks good overall.',
+          state: 'COMMENTED',
+          submittedAt: '2026-07-21T00:00:00Z',
+        },
+      ],
+      comments: [
+        {
+          author: { login: 'teammate' },
+          body: 'One question below.',
+          createdAt: '2026-07-21T00:01:00Z',
+        },
+      ],
+    }),
+    stderr: '',
+  };
+  apiResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify([
+      {
+        user: { login: 'teammate' },
+        body: 'Rename this?',
+        created_at: '2026-07-21T00:02:00Z',
+        path: 'FAKE_OUTPUT.txt',
+        line: 1,
+      },
+    ]),
+    stderr: '',
+  };
+  reviewResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  commentResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   delayMs = 0;
 
   run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
@@ -74,8 +123,19 @@ class StubRunner {
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'create') {
       return this.createResult;
     }
+    if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'review') {
+      return this.reviewResult;
+    }
+    if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'comment') {
+      return this.commentResult;
+    }
+    if (cmd[0] === 'gh' && cmd[1] === 'api') {
+      return this.apiResult;
+    }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
-      return this.viewResult;
+      // The poller reads only `--json state`; getPrDetail reads the full set.
+      const jsonArg = cmd[cmd.indexOf('--json') + 1];
+      return jsonArg === 'state' ? this.viewResult : this.viewDetailResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === '--version') {
       return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
@@ -122,6 +182,7 @@ describe('detectPrCapability', () => {
 });
 
 interface Harness {
+  rootDir: string;
   orchestrator: Orchestrator;
   store: TaskStore;
   cache: TaskCache;
@@ -143,7 +204,7 @@ function makeHarness(): Harness {
     'fake',
     new FakeExecutor({ finish: { state: 'finished', costUsd: 0, turns: 1 } })
   );
-  return { orchestrator, store, cache, events };
+  return { rootDir: repo, orchestrator, store, cache, events };
 }
 
 async function dispatchAndFinish(harness: Harness): Promise<{
@@ -344,5 +405,118 @@ describe('PrManager polling', () => {
     await sleep(5);
     expect(timerFired).toBe(true);
     await pollPromise;
+  });
+});
+
+// Opens a PR on a finished run so the review-surface reads/writes below have
+// a `prUrl` to act on.
+async function openPrFor(
+  harness: Harness,
+  stub: StubRunner
+): Promise<{ pr: PrManager; runId: string }> {
+  const { runId } = await dispatchAndFinish(harness);
+  const pr = new PrManager(harness, true, stub.run);
+  await pr.openPr(runId);
+  return { pr, runId };
+}
+
+describe('PrManager.getPrDetail', () => {
+  it('folds status, reviews, PR comments, and line comments into one detail', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const { pr, runId } = await openPrFor(harness, stub);
+
+    const detail = await pr.getPrDetail(runId);
+
+    expect(detail.status.state).toBe('OPEN');
+    expect(detail.status.reviewDecision).toBe('REVIEW_REQUIRED');
+    // One SUCCESS + one in-progress check => 1 passed, 1 pending.
+    expect(detail.status.checks).toMatchObject({
+      passed: 1,
+      pending: 1,
+      total: 2,
+    });
+    expect(detail.status.additions).toBe(5);
+
+    const kinds = detail.conversation.map((c) => c.kind);
+    expect(kinds).toContain('review');
+    expect(kinds).toContain('comment');
+    expect(kinds).toContain('line-comment');
+    const line = detail.conversation.find((c) => c.kind === 'line-comment');
+    expect(line).toMatchObject({ path: 'FAKE_OUTPUT.txt', line: 1 });
+    // Sorted oldest-first by createdAt.
+    const times = detail.conversation.map((c) => c.createdAt);
+    expect([...times].sort()).toEqual(times);
+  });
+
+  it('409s a run with no open PR', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    await expect(pr.getPrDetail(runId)).rejects.toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  it('survives a line-comment API failure by dropping just the line comments', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.apiResult = { ok: false, stdout: '', stderr: 'forbidden' };
+    const { pr, runId } = await openPrFor(harness, stub);
+
+    const detail = await pr.getPrDetail(runId);
+    expect(detail.conversation.some((c) => c.kind === 'line-comment')).toBe(
+      false
+    );
+    // The review + PR comment still come through.
+    expect(detail.conversation.some((c) => c.kind === 'review')).toBe(true);
+  });
+});
+
+describe('PrManager.reviewPr', () => {
+  it('submits an approve with the right gh flag and returns refreshed detail', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const { pr, runId } = await openPrFor(harness, stub);
+
+    const detail = await pr.reviewPr(runId, 'approve', '');
+    const reviewCall = stub.calls.find((c) => c.cmd[2] === 'review')?.cmd;
+    expect(reviewCall).toContain('--approve');
+    expect(detail.status).toBeDefined();
+  });
+
+  it('passes the body through for request-changes', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const { pr, runId } = await openPrFor(harness, stub);
+
+    await pr.reviewPr(runId, 'request-changes', 'please fix the naming');
+    const reviewCall = stub.calls.find((c) => c.cmd[2] === 'review')?.cmd;
+    expect(reviewCall).toContain('--request-changes');
+    expect(reviewCall).toContain('please fix the naming');
+  });
+
+  it('throws when gh pr review fails', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.reviewResult = { ok: false, stdout: '', stderr: 'gh boom' };
+    const { pr, runId } = await openPrFor(harness, stub);
+    await expect(pr.reviewPr(runId, 'approve', '')).rejects.toThrow(
+      OrchestratorConflictError
+    );
+  });
+});
+
+describe('PrManager.commentPr', () => {
+  it('adds a PR-level comment via gh pr comment', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const { pr, runId } = await openPrFor(harness, stub);
+
+    await pr.commentPr(runId, 'a general note');
+    const commentCall = stub.calls.find((c) => c.cmd[2] === 'comment')?.cmd;
+    expect(commentCall).toContain('--body');
+    expect(commentCall).toContain('a general note');
   });
 });
