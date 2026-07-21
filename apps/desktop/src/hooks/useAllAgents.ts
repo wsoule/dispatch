@@ -38,11 +38,24 @@ export function useAllAgents(
     })),
   });
 
+  // Deliberately its own `all-agents-runs` key rather than reusing `useDispatchProject`'s
+  // `['dispatch-runs', port]` — for whichever project happens to be active, both hooks would
+  // otherwise register an observer against the *same* query key with conflicting options
+  // (this one polls every 4s; the per-project hook relies on WS invalidation and never
+  // polls), which reliably triggers react-query's "Duplicate Queries found" dev warning.
+  //
+  // Keyed on `project.path` *and* `port`, not `port` alone: before any sidecar's port has
+  // resolved, `portQueries[i]?.data` is `undefined` for every project simultaneously, so a
+  // `port`-only key would compute to the identical `['all-agents-runs', undefined]` for
+  // every entry in this very array during that render — a same-array duplicate the moment
+  // there are 2+ dispatch-enabled projects, independent of anything about the projects
+  // themselves being distinct. `project.path` is unique per entry regardless of load state,
+  // so this always hashes uniquely even while every port is still pending.
   const runsQueries = useQueries({
-    queries: dispatchProjects.map((_project, i) => {
+    queries: dispatchProjects.map((project, i) => {
       const port = portQueries[i]?.data;
       return {
-        queryKey: ['dispatch-runs', port],
+        queryKey: ['all-agents-runs', project.path, port],
         queryFn: () => {
           if (port === undefined) throw new Error('dispatchd port not ready');
           return createApiClient(`http://127.0.0.1:${port}`).fetchRuns();
