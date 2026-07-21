@@ -1,4 +1,9 @@
-import { ConfigError, loadConfig, parseTaskFile } from '@dispatch/core';
+import {
+  ConfigError,
+  findDependencyCycles,
+  loadConfig,
+  parseTaskFile,
+} from '@dispatch/core';
 import type { DispatchConfig, TaskDoc } from '@dispatch/core';
 import type { Command } from 'commander';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -10,6 +15,17 @@ import { requireStore } from './task.js';
 interface Issue {
   file: string;
   problem: string;
+}
+
+// Matches the ISO-8601 subset `created`/`updated` are actually written in
+// (Date#toISOString, or a hand-edited offset/no-ms variant) — deliberately
+// stricter than `new Date(value)`, which also accepts non-ISO formats like
+// "2026/01/01" or "Jan 1 2026" that would defeat the point of this check.
+const ISO_8601_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:?\d{2})$/;
+
+function isIsoTimestamp(value: string): boolean {
+  return ISO_8601_RE.test(value) && !Number.isNaN(Date.parse(value));
 }
 
 export function registerDoctorCommand(program: Command, ctx: CliContext): void {
@@ -61,13 +77,29 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         }
       }
 
+      const docsById = new Map(parsed.map((p) => [p.doc.meta.id, p.doc]));
+
       for (const { file, doc } of parsed) {
         if (doc.meta.parent && !ids.has(doc.meta.parent)) {
           issues.push({ file, problem: `dangling parent: ${doc.meta.parent}` });
+        } else if (
+          doc.meta.parent &&
+          docsById.get(doc.meta.parent)?.meta.kind !== 'epic'
+        ) {
+          issues.push({
+            file,
+            problem: `parent is not an epic: ${doc.meta.parent}`,
+          });
         }
         for (const dep of doc.meta.blockedBy) {
-          if (!ids.has(dep))
+          if (dep === doc.meta.id) {
+            issues.push({
+              file,
+              problem: `blocked-by self-reference: ${dep}`,
+            });
+          } else if (!ids.has(dep)) {
             issues.push({ file, problem: `dangling blocked-by: ${dep}` });
+          }
         }
         if (!config.statuses.includes(doc.meta.status)) {
           issues.push({
@@ -75,6 +107,22 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
             problem: `status not in config: ${doc.meta.status}`,
           });
         }
+        for (const field of ['created', 'updated'] as const) {
+          if (!isIsoTimestamp(doc.meta[field])) {
+            issues.push({
+              file,
+              problem: `invalid ${field} timestamp: ${doc.meta[field]}`,
+            });
+          }
+        }
+      }
+
+      for (const cycle of findDependencyCycles(parsed.map((p) => p.doc))) {
+        const file = filesById.get(cycle[0])?.[0] ?? '';
+        issues.push({
+          file,
+          problem: `dependency cycle: ${cycle.join(' → ')}`,
+        });
       }
 
       if (opts.json === true) {

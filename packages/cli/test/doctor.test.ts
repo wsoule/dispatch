@@ -69,6 +69,83 @@ describe('doctor', () => {
     ).toMatch(/duplicate id/);
   });
 
+  it('flags an unparsable created/updated timestamp', async () => {
+    await run('task', 'create', 'Bad stamp');
+    const tasksDir = join(root, '.dispatch/tasks');
+    const [file] = readdirSync(tasksDir).filter((f) => f.endsWith('.md'));
+    const contents = readFileSync(join(tasksDir, file), 'utf8');
+    writeFileSync(
+      join(tasksDir, file),
+      contents.replace(/^created:.*$/m, 'created: not-a-date')
+    );
+    lines = [];
+    await expect(run('doctor', '--json')).rejects.toThrow(/1 issue/);
+    const report = JSON.parse(lines.join('\n'));
+    expect(report.issues).toHaveLength(1);
+    expect(report.issues[0].problem).toBe(
+      'invalid created timestamp: not-a-date'
+    );
+  });
+
+  it('flags a parent that is not an epic', async () => {
+    await run('task', 'create', 'Sibling');
+    const tasksDir = join(root, '.dispatch/tasks');
+    const [sibling] = readdirSync(tasksDir).filter((f) => f.endsWith('.md'));
+    const siblingId = sibling.split('-').slice(0, 2).join('-');
+    await run('task', 'create', 'Child', '--parent', siblingId);
+    lines = [];
+    await expect(run('doctor', '--json')).rejects.toThrow(/1 issue/);
+    const report = JSON.parse(lines.join('\n'));
+    expect(report.issues).toHaveLength(1);
+    expect(report.issues[0].problem).toBe(
+      `parent is not an epic: ${siblingId}`
+    );
+  });
+
+  it('does not flag a parent that is an epic', async () => {
+    const epicOut: string[] = [];
+    ctx.log = (l) => epicOut.push(l);
+    await run('task', 'create', 'The epic', '--kind', 'epic', '--json');
+    const epicId = JSON.parse(epicOut.join('\n')).meta.id;
+    ctx.log = (l) => lines.push(l);
+    await run('task', 'create', 'Child', '--parent', epicId);
+    lines = [];
+    await run('doctor');
+    expect(lines.join('\n')).toMatch(/ok — 2 tasks/);
+  });
+
+  it('flags a blockedBy self-reference', async () => {
+    await run('task', 'create', 'Self blocker');
+    const tasksDir = join(root, '.dispatch/tasks');
+    const [file] = readdirSync(tasksDir).filter((f) => f.endsWith('.md'));
+    const id = file.split('-').slice(0, 2).join('-');
+    await run('task', 'edit', id, '--add-blocked-by', id);
+    lines = [];
+    await expect(run('doctor', '--json')).rejects.toThrow(/1 issue/);
+    const report = JSON.parse(lines.join('\n'));
+    expect(report.issues).toHaveLength(1);
+    expect(report.issues[0].problem).toBe(`blocked-by self-reference: ${id}`);
+  });
+
+  it('flags a dependency cycle across tasks', async () => {
+    const out: string[] = [];
+    ctx.log = (l) => out.push(l);
+    await run('task', 'create', 'A', '--json');
+    const idA = JSON.parse(out.pop() as string).meta.id;
+    await run('task', 'create', 'B', '--json');
+    const idB = JSON.parse(out.pop() as string).meta.id;
+    ctx.log = (l) => lines.push(l);
+    await run('task', 'edit', idA, '--add-blocked-by', idB);
+    await run('task', 'edit', idB, '--add-blocked-by', idA);
+    lines = [];
+    await expect(run('doctor', '--json')).rejects.toThrow(/1 issue/);
+    const report = JSON.parse(lines.join('\n'));
+    expect(report.issues).toHaveLength(1);
+    expect(report.issues[0].problem).toMatch(/^dependency cycle: /);
+    expect(report.issues[0].problem).toContain(idA);
+    expect(report.issues[0].problem).toContain(idB);
+  });
+
   it('attributes issues to the on-disk filename', async () => {
     await run('task', 'create', 'Refs ghost', '--blocked-by', 't-ghost0');
     const files = readdirSync(join(root, '.dispatch/tasks')).filter((f) =>

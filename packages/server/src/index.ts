@@ -1,8 +1,8 @@
 import { TaskStore } from '@dispatch/core';
-import { readFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import packageJson from '../package.json';
 import { handleApi } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
@@ -63,9 +63,6 @@ export interface StartServerOptions {
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const packageJson = JSON.parse(
-  readFileSync(join(moduleDir, '..', 'package.json'), 'utf8')
-) as { version: string };
 
 const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
 
