@@ -12,3 +12,25 @@ export function filterDispatchEnabledProjects(
 ): ProjectSummary[] {
   return projects.filter((p) => hasDispatchByPath.get(p.path) === true);
 }
+
+/** Collapses `projects` down to one row per distinct filesystem path, keeping whichever row
+ * appeared first. Relay's own project list can contain more than one row for the same path
+ * (one per originating agent-log source it was detected from — Claude Code, Codex, etc.), but
+ * a dispatchd sidecar is 1:1 with a *path*, never with Relay's row id: `ensure_dispatchd` and
+ * `has_dispatch` both take a path, not a project id. Every dispatch-facing consumer (the
+ * sidebar's project switcher, the command palette's project-switch entries, the "All Agents"
+ * cross-project fan-out) should see the deduped list — querying/spawning the same sidecar
+ * once per *row* instead of once per *path* wastes a request at best, and at worst two rows
+ * sharing an in-flight "port not resolved yet" placeholder collide on the same query key. */
+export function dedupeProjectsByPath(
+  projects: ProjectSummary[]
+): ProjectSummary[] {
+  const seenPaths = new Set<string>();
+  const deduped: ProjectSummary[] = [];
+  for (const project of projects) {
+    if (seenPaths.has(project.path)) continue;
+    seenPaths.add(project.path);
+    deduped.push(project);
+  }
+  return deduped;
+}

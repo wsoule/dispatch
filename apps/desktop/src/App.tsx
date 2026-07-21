@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 
 import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
@@ -10,8 +10,12 @@ import { useAllAgents } from './hooks/useAllAgents';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
+import type { GlobalView, ProjectView } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
-import { filterDispatchEnabledProjects } from './lib/dispatchProjects';
+import {
+  dedupeProjectsByPath,
+  filterDispatchEnabledProjects,
+} from './lib/dispatchProjects';
 import { hasDispatch, listProjects } from './lib/tauri';
 import type { ProjectSummary } from './lib/types';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -42,9 +46,18 @@ function App() {
     queryKey: ['projects'],
     queryFn: listProjects,
   });
-  const projectPaths = useMemo(
-    () => projects?.map((p) => p.path) ?? [],
+  // Relay's project list can carry more than one row for the same path (see
+  // `dedupeProjectsByPath`'s doc comment) — collapsed to one row per path *before* anything
+  // dispatch-facing (the sidebar switcher, the palette's project entries, the cross-project
+  // "All Agents" fan-out) reads it, since a dispatchd sidecar is 1:1 with a path, never with
+  // Relay's row id.
+  const dedupedProjects = useMemo(
+    () => dedupeProjectsByPath(projects ?? []),
     [projects]
+  );
+  const projectPaths = useMemo(
+    () => dedupedProjects.map((p) => p.path),
+    [dedupedProjects]
   );
   const { data: hasDispatchByPath } = useQuery({
     queryKey: ['has-dispatch-map', projectPaths],
@@ -62,18 +75,18 @@ function App() {
   const dispatchProjects = useMemo(
     () =>
       filterDispatchEnabledProjects(
-        projects ?? [],
+        dedupedProjects,
         hasDispatchByPath ?? new Map()
       ),
-    [projects, hasDispatchByPath]
+    [dedupedProjects, hasDispatchByPath]
   );
   const dispatchProjectIds = useMemo(
     () => new Set(dispatchProjects.map((p) => p.id)),
     [dispatchProjects]
   );
   const otherProjects = useMemo(
-    () => (projects ?? []).filter((p) => !dispatchProjectIds.has(p.id)),
-    [projects, dispatchProjectIds]
+    () => dedupedProjects.filter((p) => !dispatchProjectIds.has(p.id)),
+    [dedupedProjects, dispatchProjectIds]
   );
 
   // Restores the last project this window had active (per the redesign brief's "default
@@ -107,12 +120,60 @@ function App() {
     }
   }, [activeProject]);
 
-  const data = useDispatchProject(activeProject?.path ?? null);
+  // Stabilized (useCallback) so `paletteEntries` below can list every handler it actually
+  // calls in its dependency array and mean it, rather than reaching for an
+  // `eslint-disable-next-line react-hooks/exhaustive-deps` to hide the fact that a plain
+  // function declared in the component body has a new identity every render.
+  const selectProject = useCallback((projectId: string) => {
+    setGetStartedFocus(null);
+    dispatchNav({ type: 'selectProject', projectId });
+  }, []);
+
+  const selectUninitialized = useCallback((project: ProjectSummary) => {
+    setGetStartedFocus(project);
+  }, []);
+
+  const setProjectView = useCallback((view: ProjectView) => {
+    setGetStartedFocus(null);
+    dispatchNav({ type: 'setProjectView', view });
+  }, []);
+
+  const setGlobalView = useCallback((view: GlobalView) => {
+    setGetStartedFocus(null);
+    dispatchNav({ type: 'setGlobalView', view });
+  }, []);
+
+  const jumpToRun = useCallback((projectId: string, runId: string) => {
+    setGetStartedFocus(null);
+    dispatchNav({ type: 'selectProject', projectId });
+    dispatchNav({ type: 'setProjectView', view: 'runs' });
+    dispatchNav({ type: 'openRun', runId });
+  }, []);
+
+  // Moves nav state to the newly (re-)dispatched run — replaces the old
+  // `useDispatchProject`-internal `setSelectedRunId(meta.id)` side effect now that
+  // `navReducer`'s `activeRunId` is the single source of truth for "which run is open" (C1
+  // in the phase-8 fix report).
+  const onRunDispatched = useCallback(
+    (runId: string) => {
+      setProjectView('runs');
+      dispatchNav({ type: 'openRun', runId });
+    },
+    [setProjectView]
+  );
+
+  const data = useDispatchProject(activeProject?.path ?? null, {
+    selectedRunId: navState.activeRunId,
+    onRunDispatched,
+  });
   const allAgents = useAllAgents(dispatchProjects);
 
   useGlobalKeyboard({
-    paletteOpen: navState.paletteOpen,
-    peekOpen: navState.peekTaskId !== null,
+    // The only app-root `Modal` today — CreateTaskModal. Suppresses the global `escape`
+    // command entirely while it's open (I3), so a single Escape press closes *only* the
+    // modal (via its own listener) instead of also firing `navReducer`'s `escape` and
+    // closing the task peek panel stacked behind it in the same keystroke.
+    modalOpen: showCreate,
     onCommand: (command) => {
       if (command === 'open-palette') dispatchNav({ type: 'togglePalette' });
       else if (command === 'escape') dispatchNav({ type: 'escape' });
@@ -123,41 +184,26 @@ function App() {
       ) {
         setShowCreate(true);
       }
-      // list-up/list-down/list-confirm are handled locally by whichever list view has focus
-      // (see TasksListView) — nothing to do with them at the app root.
     },
   });
-
-  function selectProject(projectId: string) {
-    setGetStartedFocus(null);
-    dispatchNav({ type: 'selectProject', projectId });
-  }
-
-  function selectUninitialized(project: ProjectSummary) {
-    setGetStartedFocus(project);
-  }
-
-  function setProjectView(view: (typeof navState)['projectView']) {
-    setGetStartedFocus(null);
-    dispatchNav({ type: 'setProjectView', view });
-  }
-
-  function setGlobalView(view: (typeof navState)['globalView']) {
-    setGetStartedFocus(null);
-    dispatchNav({ type: 'setGlobalView', view });
-  }
-
-  function jumpToRun(projectId: string, runId: string) {
-    setGetStartedFocus(null);
-    dispatchNav({ type: 'selectProject', projectId });
-    dispatchNav({ type: 'setProjectView', view: 'runs' });
-    dispatchNav({ type: 'openRun', runId });
-  }
 
   const selectedDoc =
     navState.peekTaskId !== null
       ? (data.tasks.find((t) => t.meta.id === navState.peekTaskId) ?? null)
       : null;
+
+  // Destructured to bare locals rather than referenced as `data.tasks`/`data.readyIds`/
+  // `data.handleDispatch` inside the memo below: `data` itself is a brand-new object literal
+  // every render (it's returned fresh from `useDispatchProject` each time), so
+  // `react-hooks/exhaustive-deps` correctly refuses to accept a `data.X` member expression in
+  // the dependency array in place of the whole (unstable) `data` — these three fields/
+  // handlers are independently stable (state values, or `useCallback`-memoized), so binding
+  // them to their own names lets the array list exactly what changes.
+  const {
+    tasks: paletteTasks,
+    readyIds: paletteReadyIds,
+    handleDispatch,
+  } = data;
 
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
     const entries: PaletteEntry[] = [];
@@ -201,7 +247,7 @@ function App() {
           run: () => setProjectView('plans'),
         }
       );
-      for (const doc of data.tasks) {
+      for (const doc of paletteTasks) {
         entries.push({
           id: `task-${doc.meta.id}`,
           label: doc.meta.title,
@@ -212,13 +258,13 @@ function App() {
             dispatchNav({ type: 'openPeek', taskId: doc.meta.id });
           },
         });
-        if (data.readyIds.has(doc.meta.id)) {
+        if (paletteReadyIds.has(doc.meta.id)) {
           entries.push({
             id: `dispatch-${doc.meta.id}`,
             label: `Dispatch ${doc.meta.title}`,
             sublabel: doc.meta.id,
             kind: 'action',
-            run: () => void data.handleDispatch(doc.meta.id),
+            run: () => void handleDispatch(doc.meta.id),
           });
         }
       }
@@ -254,8 +300,16 @@ function App() {
       });
     }
     return entries;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProject, data.tasks, data.readyIds, dispatchProjects]);
+  }, [
+    activeProject,
+    paletteTasks,
+    paletteReadyIds,
+    handleDispatch,
+    dispatchProjects,
+    setProjectView,
+    setGlobalView,
+    selectProject,
+  ]);
 
   const showGetStarted =
     getStartedFocus !== null ||
@@ -279,7 +333,7 @@ function App() {
       <main className="app-main">
         {showGetStarted ? (
           <GetStartedView
-            projects={projects ?? []}
+            projects={dedupedProjects}
             dispatchEnabledIds={dispatchProjectIds}
             focusProjectId={getStartedFocus?.id ?? null}
           />
@@ -316,7 +370,13 @@ function App() {
                 onNewTask={() => setShowCreate(true)}
               />
             )}
-            {navState.projectView === 'runs' && <RunsView data={data} />}
+            {navState.projectView === 'runs' && (
+              <RunsView
+                data={data}
+                selectedRunId={navState.activeRunId}
+                onSelectRun={(runId) => dispatchNav({ type: 'openRun', runId })}
+              />
+            )}
             {navState.projectView === 'plans' && (
               <PlansView data={data} projectPath={activeProject.path} />
             )}
