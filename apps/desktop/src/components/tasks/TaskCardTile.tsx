@@ -1,6 +1,6 @@
 import type { RunState } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { priorityTone } from '../../lib/taskDisplay';
 import { RunStatePill } from '../runs/RunStatePill';
@@ -18,6 +18,10 @@ interface TaskCardTileProps {
    * redesign brief's "ready-lane... inline Dispatch action". Omitted (no button rendered)
    * for cards that aren't ready to start. */
   onDispatch?: () => Promise<void>;
+  /** True when the Board's own j/k roving-focus cursor (see `BoardView`) is on this card —
+   * moves real DOM focus onto the card so `:focus-visible` and screen readers agree with
+   * what j/k just did, rather than a CSS-only highlight that looks focused but isn't. */
+  focused?: boolean;
 }
 
 /** A single Board card: id (mono), a live-run pulse when an agent is actively on it,
@@ -31,9 +35,15 @@ export function TaskCardTile({
   liveRunState,
   onClick,
   onDispatch,
+  focused = false,
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const tone = priorityTone(doc.meta.priority);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (focused) cardRef.current?.focus();
+  }, [focused]);
 
   async function dispatchNow(e: React.MouseEvent) {
     e.stopPropagation();
@@ -48,13 +58,20 @@ export function TaskCardTile({
 
   return (
     <div
+      ref={cardRef}
       role="button"
       tabIndex={0}
       className="task-card-tile"
       data-ready={ready}
       onClick={onClick}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') onClick();
+        if (e.key === 'Enter') onClick();
+        else if (e.key === ' ') {
+          // Space's native behavior on a focusable div is to scroll the page — this is a
+          // button-role element, so Space should activate it, not scroll past it.
+          e.preventDefault();
+          onClick();
+        }
       }}
     >
       <div className="task-card-tile-top">

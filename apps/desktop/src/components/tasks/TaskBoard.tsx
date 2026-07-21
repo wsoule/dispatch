@@ -27,6 +27,9 @@ interface TaskBoardProps {
   onDispatch?: (taskId: string) => Promise<void>;
   onWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   onStopEpic: (epicId: string) => Promise<void>;
+  /** Id of the card the Board's j/k roving-focus cursor is currently on, if any — see
+   * `BoardView`'s column-major traversal. `undefined`/no match renders every card unfocused. */
+  focusedTaskId?: string | null;
 }
 
 /** One column per tracker status, in the order the project's `.dispatch/config.yml` lists
@@ -48,6 +51,7 @@ export function TaskBoard({
   onDispatch,
   onWorkEpic,
   onStopEpic,
+  focusedTaskId = null,
 }: TaskBoardProps) {
   const columns = groupTasksByStatus(tasks, statuses);
 
@@ -77,6 +81,7 @@ export function TaskBoard({
                   onSelect={() => onSelect(doc.meta.id)}
                   onWork={onWorkEpic}
                   onStop={onStopEpic}
+                  focused={doc.meta.id === focusedTaskId}
                 />
               ) : (
                 <TaskCardTile
@@ -91,6 +96,7 @@ export function TaskBoard({
                       ? () => onDispatch(doc.meta.id)
                       : undefined
                   }
+                  focused={doc.meta.id === focusedTaskId}
                 />
               )
             )}

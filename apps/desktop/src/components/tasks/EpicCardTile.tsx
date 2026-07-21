@@ -1,6 +1,6 @@
 import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { clampConcurrencyInput } from '../../lib/epicConcurrency';
 import { priorityTone } from '../../lib/taskDisplay';
@@ -19,6 +19,8 @@ interface EpicCardTileProps {
   onSelect: () => void;
   onWork: (epicId: string, concurrency: number) => Promise<void>;
   onStop: (epicId: string) => Promise<void>;
+  /** Same meaning as `TaskCardTile`'s `focused` — the Board's j/k roving-focus cursor. */
+  focused?: boolean;
 }
 
 /** Board card for a `kind: 'epic'` task: the same id/priority/title header as a plain
@@ -35,12 +37,18 @@ export function EpicCardTile({
   onSelect,
   onWork,
   onStop,
+  focused = false,
 }: EpicCardTileProps) {
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tone = priorityTone(doc.meta.priority);
   const active = progress?.active ?? false;
+  const headerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (focused) headerRef.current?.focus();
+  }, [focused]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -64,12 +72,17 @@ export function EpicCardTile({
   return (
     <div className="epic-card-tile">
       <div
+        ref={headerRef}
         className="epic-card-tile-header"
         role="button"
         tabIndex={0}
         onClick={onSelect}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') onSelect();
+          if (e.key === 'Enter') onSelect();
+          else if (e.key === ' ') {
+            e.preventDefault();
+            onSelect();
+          }
         }}
       >
         <div className="epic-card-tile-top">
