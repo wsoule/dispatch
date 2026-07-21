@@ -387,6 +387,48 @@ async function messageUser(
   }
 }
 
+// Proxies `POST /api/notes` — the agent side of the notes/triage hub. Lets an
+// agent capture triage it finds mid-run ("this file is huge, refactor it"), a
+// follow-up to do after merge, or a plain note, without derailing to file a
+// full task. Records the calling run id (if any) so the app can show "an agent
+// flagged this". Works whenever dispatchd is running — unlike message_user it
+// doesn't require a live run context, so a manually-started server can still
+// jot a note.
+async function dispatchNote(
+  rootDir: string,
+  args: { kind: string; title: string; body?: string }
+): Promise<ToolOutcome> {
+  if (args.title.trim() === '') {
+    return toolError('title must not be empty');
+  }
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — cannot add a note');
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/notes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: args.kind,
+        title: args.title,
+        body: args.body,
+        createdByRunId: callingRunId(),
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `dispatch_note failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    const note = (await res.json()) as { id: string };
+    return toolResult({ ok: true, id: note.id });
+  } catch (err) {
+    return toolError(`dispatch_note failed: ${(err as Error).message}`);
+  }
+}
+
 // Registers the five task_* tools plus run_list against a fixed root
 // directory. Each task_* tool re-resolves the TaskStore/config on every call
 // (rather than caching it at registration time) so a `dispatch init` that
@@ -664,5 +706,27 @@ export function registerDispatchTools(
       annotations: { readOnlyHint: false },
     },
     ({ text }) => messageUser(rootDir, { text })
+  );
+
+  server.registerTool(
+    'dispatch_note',
+    {
+      title: 'Add a note or triage item',
+      description:
+        'Capture something in the project’s notes/triage hub without ' +
+        'stopping to file a full task. Use `triage` for work you spot that ' +
+        'should be scheduled later ("this file is huge, refactor it"), ' +
+        '`followup` for something to do after this change merges, `todo` for ' +
+        'a checklist item, or `note` for a plain observation. The human sees ' +
+        'it in the Notes tab and can promote it into a real task in one click.',
+      inputSchema: {
+        kind: z.enum(['note', 'triage', 'followup', 'todo']),
+        title: z.string(),
+        body: z.string().optional(),
+      },
+      outputSchema: { ok: z.boolean(), id: z.string() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ kind, title, body }) => dispatchNote(rootDir, { kind, title, body })
   );
 }

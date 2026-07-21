@@ -26,7 +26,11 @@ export type ServerEvent =
   // Phase 5 P1: a plan's state (running -> ready|failed) changed, or it was
   // just confirmed — same "go refetch, no payload beyond the id" contract as
   // run.changed.
-  | { type: 'plan.changed'; planId: string };
+  | { type: 'plan.changed'; planId: string }
+  // A note/triage/follow-up was created, edited, promoted, or deleted — same
+  // "go refetch" contract as task.changed. Lets an agent-created triage (via
+  // the MCP `dispatch_note` tool) show up live in an open Notes tab.
+  | { type: 'note.changed' };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

@@ -15,6 +15,9 @@ export type {
   EpicProgressChild,
   EpicSession,
   HealthPayload,
+  CreateNoteInput,
+  Note,
+  NoteKind,
   NormalizedEntry,
   PlannedTask,
   PlanProposal,
@@ -31,6 +34,7 @@ export type {
   ServerEvent,
   SocketLike,
   TaskFilter,
+  UpdateNotePatch,
 } from './api';
 export { reduceProposal } from './proposalReducer';
 export type { ProposalAction } from './proposalReducer';

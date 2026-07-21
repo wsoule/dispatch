@@ -69,6 +69,16 @@ export interface DispatchProjectData {
   prDetail: import('@dispatch/client').PrDetail | undefined;
   prDetailLoading: boolean;
   prDetailError: string | null;
+  notes: import('@dispatch/client').Note[];
+  handleCreateNote: (
+    input: import('@dispatch/client').CreateNoteInput
+  ) => Promise<void>;
+  handleUpdateNote: (
+    id: string,
+    patch: import('@dispatch/client').UpdateNotePatch
+  ) => Promise<void>;
+  handleDeleteNote: (id: string) => Promise<void>;
+  handlePromoteNote: (id: string) => Promise<void>;
   pendingApprovals: Map<string, PendingApproval>;
 
   planId: string | null;
@@ -177,6 +187,7 @@ export function useDispatchProject(
     [port, selectedRunId]
   );
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
+  const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const epicProgressKeyPrefix = useMemo(
     () => ['dispatch-epic-progress', port],
     [port]
@@ -257,6 +268,15 @@ export function useDispatchProject(
   });
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
+
+  const { data: notes } = useQuery({
+    queryKey: notesQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchNotes();
+    },
+    enabled: client !== null,
+  });
 
   // The GitHub PR status + conversation for the selected run, once it has an
   // open PR (`prUrl` set). Separate from the diff query — the Pierre diff shows
@@ -376,6 +396,8 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
             });
+          } else if (event.type === 'note.changed') {
+            void queryClient.invalidateQueries({ queryKey: notesQueryKey });
           }
         },
       }
@@ -387,6 +409,7 @@ export function useDispatchProject(
     configQueryKey,
     readyQueryKey,
     runsQueryKey,
+    notesQueryKey,
     epicProgressKeyPrefix,
     port,
   ]);
@@ -474,6 +497,51 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
     [client, queryClient, tasksQueryKey, readyQueryKey]
+  );
+
+  const handleCreateNote = useCallback(
+    async (
+      input: import('@dispatch/client').CreateNoteInput
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.createNote(input);
+      void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+    },
+    [client, queryClient, notesQueryKey]
+  );
+
+  const handleUpdateNote = useCallback(
+    async (
+      id: string,
+      patch: import('@dispatch/client').UpdateNotePatch
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.updateNote(id, patch);
+      void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+    },
+    [client, queryClient, notesQueryKey]
+  );
+
+  const handleDeleteNote = useCallback(
+    async (id: string): Promise<void> => {
+      if (client === null) return;
+      await client.deleteNote(id);
+      void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+    },
+    [client, queryClient, notesQueryKey]
+  );
+
+  // Promoting a note into a task refetches both — the note gains its linked-task
+  // marker and the new task shows up on the board.
+  const handlePromoteNote = useCallback(
+    async (id: string): Promise<void> => {
+      if (client === null) return;
+      await client.promoteNote(id);
+      void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    },
+    [client, queryClient, notesQueryKey, tasksQueryKey, readyQueryKey]
   );
 
   const handleDispatch = useCallback(
@@ -672,6 +740,11 @@ export function useDispatchProject(
     prDetail,
     prDetailLoading,
     prDetailError,
+    notes: notes ?? [],
+    handleCreateNote,
+    handleUpdateNote,
+    handleDeleteNote,
+    handlePromoteNote,
     pendingApprovals,
 
     planId,

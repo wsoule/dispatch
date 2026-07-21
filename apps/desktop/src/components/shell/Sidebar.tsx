@@ -8,6 +8,7 @@ import {
   NotebookPen,
   Play,
   Radar,
+  StickyNote,
 } from 'lucide-react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
@@ -32,6 +33,7 @@ const PROJECT_VIEWS: {
   { id: 'board', label: 'Tasks', icon: ListChecks },
   { id: 'runs', label: 'Runs', icon: Play },
   { id: 'pull-requests', label: 'Pull requests', icon: GitPullRequest },
+  { id: 'notes', label: 'Notes & triage', icon: StickyNote },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
 ];
 
