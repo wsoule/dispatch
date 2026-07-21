@@ -5,10 +5,14 @@
 // component below it receives plain props derived from this state plus dispatch callbacks,
 // the same "dumb view, smart root" split TasksPanel used for the old dispatch-only pane.
 
-/** The four primary views for whichever project is active — Board is the default/heart of
- * the app per the redesign brief; Tasks is the flat list, Runs is the split log/review
- * layout, Plans is the composer + proposal review. */
-export type ProjectView = 'board' | 'tasks' | 'runs' | 'plans';
+/** The three primary views for whichever project is active. `board` is the single "Tasks"
+ * destination — a Kanban/list toggle lives inside `BoardView` itself now rather than the old
+ * separate `tasks` nav item (Linear doesn't split "board" and "issue list" into two places in
+ * its own nav either); Runs is the split log/review layout, Plans is the composer + proposal
+ * review. The `board` id is kept (rather than renamed to e.g. `tasks`) so this type, the
+ * reducer below, and every test against it stay untouched by the nav collapse — only
+ * `Sidebar`'s single nav row and its label changed. */
+export type ProjectView = 'board' | 'runs' | 'plans';
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar. */
 export type GlobalView = 'all-agents' | 'sessions' | 'settings';

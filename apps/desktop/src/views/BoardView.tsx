@@ -1,5 +1,5 @@
-import { LayoutGrid, Plus, Sparkles } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { LayoutGrid, Plus, Rows3, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { TaskBoard } from '../components/tasks/TaskBoard';
@@ -7,14 +7,34 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { groupTasksByStatus } from '../lib/boardGrouping';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { TasksListView } from './TasksListView';
+import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 
 interface BoardViewProps {
   data: DispatchProjectData;
   onSelectTask: (taskId: string) => void;
-  onNewTask: () => void;
+  /** Opens `CreateTaskModal`, optionally pre-set to a given status — the column/group
+   * header's hover "+" button passes its own status through; the header's plain "New task"
+   * button omits it and lets the modal default to the first configured status. */
+  onNewTask: (status?: string) => void;
   onPlanWork: () => void;
+}
+
+type TasksViewMode = 'board' | 'list';
+
+// Persists the List/Board choice across restarts — Linear's own display toggle remembers
+// itself the same way. Guarded for `window` even though this is a Tauri/browser-only app
+// (never SSR'd) so a stray server-side render of this module (e.g. a future test harness)
+// can't throw on a missing `localStorage`.
+const VIEW_MODE_STORAGE_KEY = 'dispatch:tasks-view-mode';
+
+function readStoredViewMode(): TasksViewMode {
+  if (typeof window === 'undefined') return 'board';
+  return window.localStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'list'
+    ? 'list'
+    : 'board';
 }
 
 /** Skeleton placeholder for the board while tasks/config are loading — one column's worth of
@@ -47,19 +67,19 @@ function BoardSkeleton() {
 }
 
 /**
- * The heart of the app: a Linear-density Kanban of the active project's tasks, one column
- * per configured tracker status. Cards are draggable between columns (see `TaskBoard`'s
- * `@dnd-kit` wiring) — dropping onto a different column calls `moveTaskStatus`, which is
- * already optimistic. Loading/error/empty states mirror the old `TasksPanel`'s (starting the
- * daemon, daemon failed to start, no tasks yet).
+ * The heart of the app: the project's tasks as either a Linear-density Kanban (one column per
+ * configured tracker status, drag-and-drop to change status) or a dense grouped list — a
+ * segmented List/Board toggle in the header switches between them and remembers the choice
+ * (localStorage), defaulting to Board. This is the single "Tasks" nav destination (the
+ * redesign brief's option (b): Board and the old flat Tasks list are no longer two separate
+ * nav items, since Linear itself doesn't split them — they're one destination with a display
+ * toggle). Loading/error/empty states mirror the old `TasksPanel`'s (starting the daemon,
+ * daemon failed to start, no tasks yet).
  *
- * j/k/Enter roving focus (I6): traversal order is *column-major* — down through a column's
- * cards top to bottom, then wrap to the top of the next column — rather than row-major
- * (across cards that happen to share a visual row). Columns rarely have aligned rows once
- * card heights differ (a card with labels/a blocked badge is taller than one without), so
- * row-major would jump unpredictably between unrelated cards; column-major matches how
- * someone actually scans a kanban board — finish scanning this column's queue, then move to
- * the next one.
+ * j/k/Enter roving focus (I6): the Board's own traversal is *column-major* (down through a
+ * column's cards top to bottom, then wrap to the next column) — see `handleBoardKeyDown`
+ * below; the List's is row-major across its grouped rows (see `TasksListView`). Both live
+ * independently since only one is ever mounted at a time.
  */
 export function BoardView({
   data,
@@ -67,7 +87,12 @@ export function BoardView({
   onNewTask,
   onPlanWork,
 }: BoardViewProps) {
+  const [mode, setMode] = useState<TasksViewMode>(readStoredViewMode);
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+  }, [mode]);
 
   // Hooks run unconditionally on every render (before any of the early returns below) — both
   // are cheap no-ops (empty array in, empty array out) while the daemon/board data isn't
@@ -128,7 +153,7 @@ export function BoardView({
   if (data.tasksLoading || data.config === null) {
     return (
       <div className="flex h-full min-h-0 flex-col gap-4">
-        <h1 className="text-foreground text-[13px] font-semibold">Board</h1>
+        <h1 className="text-foreground text-[13px] font-semibold">Tasks</h1>
         <BoardSkeleton />
       </div>
     );
@@ -137,13 +162,47 @@ export function BoardView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-foreground text-[13px] font-semibold">Board</h1>
+        <h1 className="text-foreground text-[13px] font-semibold">Tasks</h1>
         <div className="flex items-center gap-2">
+          <div
+            role="group"
+            aria-label="View"
+            className="border-border flex items-center rounded-md border p-0.5"
+          >
+            <button
+              type="button"
+              title="List view"
+              aria-pressed={mode === 'list'}
+              onClick={() => setMode('list')}
+              className={cn(
+                'rounded-[5px] p-1 transition-colors duration-150',
+                mode === 'list'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <Rows3 className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              title="Board view"
+              aria-pressed={mode === 'board'}
+              onClick={() => setMode('board')}
+              className={cn(
+                'rounded-[5px] p-1 transition-colors duration-150',
+                mode === 'board'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <LayoutGrid className="size-3.5" />
+            </button>
+          </div>
           <Button variant="secondary" size="sm" onClick={onPlanWork}>
             <Sparkles className="size-3.5" />
             Plan work…
           </Button>
-          <Button size="sm" onClick={onNewTask}>
+          <Button size="sm" onClick={() => onNewTask()}>
             <Plus className="size-3.5" />
             New task
           </Button>
@@ -157,16 +216,15 @@ export function BoardView({
             No tasks yet — create the first one, or describe the work with
             &ldquo;Plan work…&rdquo; and let the planner draft it.
           </p>
-          <Button size="sm" onClick={onNewTask}>
+          <Button size="sm" onClick={() => onNewTask()}>
             <Plus className="size-3.5" />
             New task
           </Button>
         </div>
-      ) : (
+      ) : mode === 'board' ? (
         // `tabIndex={0}` puts the track itself in the natural tab order (so someone can
-        // Tab/click into the board and start using j/k immediately, matching
-        // TasksListView's own focusable list container) — the individual cards remain the
-        // real roving-focus targets once `focusedTaskId` moves onto one of them.
+        // Tab/click into the board and start using j/k immediately) — the individual cards
+        // remain the real roving-focus targets once `focusedTaskId` moves onto one of them.
         <div
           className="min-h-0 flex-1"
           tabIndex={0}
@@ -191,6 +249,12 @@ export function BoardView({
             onCardFocus={setFocusedTaskId}
           />
         </div>
+      ) : (
+        <TasksListView
+          data={data}
+          onSelectTask={onSelectTask}
+          onAddTask={onNewTask}
+        />
       )}
     </div>
   );
