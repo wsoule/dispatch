@@ -88,6 +88,17 @@ function validateStringArrayField(
   return null;
 }
 
+// Validates that an optional field, if present, is a string — used for the
+// free-text body sections (description, acceptanceCriteria) that flow through
+// to the markdown body rather than the frontmatter.
+function validateStringField(value: unknown, label: string): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string') {
+    return `invalid ${label}: expected a string`;
+  }
+  return null;
+}
+
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
@@ -123,6 +134,18 @@ function validateTaskFields(
   if (labelsError) return labelsError;
   const blockedByError = validateStringArrayField(value.blockedBy, 'blockedBy');
   if (blockedByError) return blockedByError;
+  // Free-text body sections — validated as optional strings before they reach
+  // setSection, which would otherwise `.trim()` a non-string and throw.
+  const descriptionError = validateStringField(
+    value.description,
+    'description'
+  );
+  if (descriptionError) return descriptionError;
+  const acceptanceError = validateStringField(
+    value.acceptanceCriteria,
+    'acceptanceCriteria'
+  );
+  if (acceptanceError) return acceptanceError;
   return null;
 }
 

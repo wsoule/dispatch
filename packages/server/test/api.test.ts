@@ -171,6 +171,37 @@ describe('task CRUD round-trip', () => {
     );
     expect(afterPatch.meta.status).toBe('in-progress');
   });
+
+  it('edits the Description and Acceptance Criteria body sections via PATCH', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Doc task' }),
+      })
+    );
+
+    const patchRes = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        description: 'edited body',
+        acceptanceCriteria: '- ships',
+      }),
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = await json(patchRes);
+    expect(patched.body).toContain('## Description\n\nedited body\n');
+    expect(patched.body).toContain('## Acceptance Criteria\n\n- ships\n');
+
+    // A non-string body field is a 400, not a 500 from setSection.
+    const badRes = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ description: 42 }),
+    });
+    expect(badRes.status).toBe(400);
+  });
 });
 
 describe('filter + ready queries', () => {
