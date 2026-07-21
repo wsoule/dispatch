@@ -13,7 +13,6 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { PierreWorkerPool } from './PierreWorkerPool';
-import { RunStatePill } from './RunStatePill';
 import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 import { Textarea } from '@/ui/textarea';
@@ -138,31 +137,6 @@ export function RunReviewView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="border-border flex items-center gap-3 border-b pb-3">
-        <RunStatePill state={meta.state} />
-        {meta.costUsd !== undefined && (
-          <span className="text-muted-foreground font-mono text-[12px]">
-            ${meta.costUsd.toFixed(2)}
-          </span>
-        )}
-        {meta.error !== undefined && (
-          <span className="text-destructive truncate text-[12px]">
-            {meta.error}
-          </span>
-        )}
-        {hasOpenPr && (
-          <a
-            className="inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[11px] text-blue-600 transition-colors duration-150 hover:bg-blue-500/20 dark:text-blue-400"
-            href={meta.prUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            PR opened
-            <ExternalLink className="size-3" />
-          </a>
-        )}
-      </div>
-
       {error !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
           {error}
