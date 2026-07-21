@@ -199,6 +199,7 @@ export class Orchestrator {
     const executorRun = executor.start(
       {
         cwd: wtPath,
+        projectRoot: this.ctx.rootDir,
         prompt: this.promptForTask(task),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
@@ -918,6 +919,7 @@ export class Orchestrator {
     const executorRun = executor.start(
       {
         cwd: meta.worktreePath,
+        projectRoot: this.ctx.rootDir,
         prompt: text,
         resumeSessionId: oldMeta.sessionId,
         permissionMode: caps.permissionMode,

@@ -115,6 +115,7 @@
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "catalog:",
         "@dispatch/core": "workspace:*",
+        "@dispatch/mcp": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
