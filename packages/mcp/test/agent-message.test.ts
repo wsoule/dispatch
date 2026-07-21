@@ -42,6 +42,10 @@ class FakeDaemon {
     body: { id: 'unused', state: 'running' },
   };
   injectedTexts: string[] = [];
+  // Full request bodies for every /inject call — agent-message.test.ts's
+  // own fromRunId tests need to see whether `fromRunId` rode along, not
+  // just the text `injectedTexts` already tracks.
+  injectedBodies: { text: string; fromRunId?: string }[] = [];
   private server: ReturnType<typeof Bun.serve> | undefined;
 
   start(): number {
@@ -58,8 +62,12 @@ class FakeDaemon {
         }
         const injectMatch = /^\/api\/runs\/([^/]+)\/inject$/.exec(url.pathname);
         if (injectMatch !== null && req.method === 'POST') {
-          const body = (await req.json()) as { text: string };
+          const body = (await req.json()) as {
+            text: string;
+            fromRunId?: string;
+          };
           this.injectedTexts.push(body.text);
+          this.injectedBodies.push(body);
           return Response.json(this.injectResult.body, {
             status: this.injectResult.status,
           });
@@ -79,6 +87,7 @@ let fakeHome: string;
 let root: string;
 let daemon: FakeDaemon | undefined;
 const originalDispatchHome = process.env.DISPATCH_HOME;
+const originalRunId = process.env.DISPATCH_RUN_ID;
 
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-mcp-home-'));
@@ -92,6 +101,8 @@ afterEach(() => {
   daemon = undefined;
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
+  if (originalRunId === undefined) delete process.env.DISPATCH_RUN_ID;
+  else process.env.DISPATCH_RUN_ID = originalRunId;
   rmSync(fakeHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
 });
@@ -290,5 +301,57 @@ describe('agent_message (fake live daemon)', () => {
     })) as ToolCallResult;
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/run is not running: r-live1/);
+  });
+
+  // agent-comms: ClaudeExecutor sets DISPATCH_RUN_ID to the calling agent's
+  // own run id in this MCP server's env (see packages/server/src/
+  // orchestrator/executors/claude.ts) — agent_message reads it back out and
+  // passes it through as `fromRunId` on the /inject request so dispatchd
+  // can resolve a real sender label instead of falling back to a generic
+  // one.
+  it('passes DISPATCH_RUN_ID through as fromRunId when set', async () => {
+    process.env.DISPATCH_RUN_ID = 'r-caller1';
+    daemon = new FakeDaemon();
+    daemon.runs = [
+      {
+        id: 'r-live1',
+        taskId: 't-aaa',
+        taskTitle: 'Alpha task',
+        state: 'running',
+      },
+    ];
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'agent_message',
+      arguments: { runId: 'r-live1', text: 'hello' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(daemon.injectedBodies).toEqual([
+      { text: 'hello', fromRunId: 'r-caller1' },
+    ]);
+  });
+
+  it('omits fromRunId when DISPATCH_RUN_ID is unset', async () => {
+    delete process.env.DISPATCH_RUN_ID;
+    daemon = new FakeDaemon();
+    daemon.runs = [
+      {
+        id: 'r-live1',
+        taskId: 't-aaa',
+        taskTitle: 'Alpha task',
+        state: 'running',
+      },
+    ];
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'agent_message',
+      arguments: { runId: 'r-live1', text: 'hello' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(daemon.injectedBodies).toEqual([{ text: 'hello' }]);
   });
 });
