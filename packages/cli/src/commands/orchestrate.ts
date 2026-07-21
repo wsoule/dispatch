@@ -10,6 +10,8 @@ import {
   formatEntry,
   formatRunsTable,
 } from '../orchestrateFormat.js';
+import { singleFlight } from '../singleFlight.js';
+import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
 import { ensureDaemon } from './daemon.js';
 import { requireStore } from './task.js';
@@ -46,11 +48,27 @@ function validateReviewAction(value: string): ReviewAction {
 // no early log entries are missed) and only learns the run's id once that
 // call returns — every event that arrives before `setRunId` is buffered and
 // replayed the moment it's called, so nothing in that window is dropped.
-function createRunWatcher(
+//
+// I2: `waitForExit()` can also REJECT, with a CliError('lost connection to
+// dispatchd'), once the underlying connectEvents gives up reconnecting (see
+// watch.ts's `onGiveUp`) — every caller MUST wrap its use of this watcher in
+// try/finally and call `dispose()` unconditionally (C1: a run that never
+// gets watched to a terminal state — a 4xx dispatch failure, a lost
+// connection — must not leave an open WS socket/reconnect timer keeping the
+// process alive forever).
+//
+// `connectOptions` is exposed only for tests (packages/cli/test/
+// run-watcher.test.ts) to inject a fake socket and fast timings; production
+// callers never pass it.
+export function createRunWatcher(
   ctx: CliContext,
   client: ApiClient,
   baseUrl: string,
-  opts: { verbose?: boolean }
+  opts: { verbose?: boolean },
+  connectOptions: Pick<
+    ConnectEventsOptions,
+    'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures'
+  > = {}
 ): {
   setRunId: (id: string) => void;
   waitForExit: () => Promise<number>;
@@ -59,9 +77,17 @@ function createRunWatcher(
   let runId: string | undefined;
   let settled = false;
   let resolveExit!: (code: number) => void;
-  const exitPromise = new Promise<number>((resolve) => {
+  let rejectExit!: (err: Error) => void;
+  const exitPromise = new Promise<number>((resolve, reject) => {
     resolveExit = resolve;
+    rejectExit = reject;
   });
+  // A rejection can happen (onGiveUp) before the caller has gotten around
+  // to `await`ing `waitForExit()` — every call site does so promptly, but
+  // this side-channel `.catch` guarantees the rejection is never reported
+  // as "unhandled" regardless of timing; it doesn't consume the rejection
+  // for `waitForExit()`'s own caller, who still observes it normally.
+  exitPromise.catch(() => {});
   const pending: ServerEvent[] = [];
 
   function finish(code: number): void {
@@ -70,11 +96,35 @@ function createRunWatcher(
     resolveExit(code);
   }
 
+  function fail(err: Error): void {
+    if (settled) return;
+    settled = true;
+    rejectExit(err);
+  }
+
+  // I2(a): the id-known refetch-and-check is exactly what runs on every
+  // reconnect (see `onOpen` below) AND on `run.changed`, both of which can
+  // fire close together — singleFlight collapses that into one HTTP call
+  // in flight at a time instead of racing several.
+  const refetchAndCheck = singleFlight(async () => {
+    if (runId === undefined) return;
+    const detail = await client.getRun(runId);
+    const code = exitCodeForRunState(detail.meta.state);
+    if (code !== null) finish(code);
+  });
+
+  function triggerRefetch(): void {
+    void refetchAndCheck().catch((err: unknown) => {
+      fail(err instanceof Error ? err : new Error(String(err)));
+    });
+  }
+
   function handle(event: ServerEvent): void {
     if (runId === undefined) {
       pending.push(event);
       return;
     }
+    if (settled) return;
     if (event.type === 'run.log' && event.runId === runId) {
       const line = formatEntry(event.entry, opts);
       if (line !== null) ctx.log(line);
@@ -87,17 +137,22 @@ function createRunWatcher(
       // correct response is to refetch this one and check whether it just
       // became terminal, exactly the "go refetch" contract every consumer
       // of this event already follows.
-      void client
-        .getRun(runId)
-        .then((detail) => {
-          const code = exitCodeForRunState(detail.meta.state);
-          if (code !== null) finish(code);
-        })
-        .catch(() => {});
+      triggerRefetch();
     }
   }
 
-  const dispose = connectEvents(baseUrl, handle);
+  const dispose = connectEvents(baseUrl, handle, {
+    ...connectOptions,
+    // I2(a): refetch on every successful (re)connect, not just on
+    // run.changed — this is what recovers a run that finished/failed
+    // during a disconnected gap, when no event for it was ever delivered.
+    onOpen: triggerRefetch,
+    // I2(b)/C1: give up reconnecting forever — surfaced as a rejection so
+    // every caller's try/finally still runs (see this function's doc
+    // comment) instead of hanging on an open socket nobody will ever hear
+    // from again.
+    onGiveUp: () => fail(new CliError('lost connection to dispatchd')),
+  });
 
   return {
     setRunId(id: string) {
@@ -108,14 +163,8 @@ function createRunWatcher(
       // before this watcher even finished connecting (a very fast
       // FakeExecutor script, or `run watch` attaching to something that
       // just finished) — check once explicitly rather than relying solely
-      // on a future `run.changed` broadcast that may never arrive.
-      void client
-        .getRun(id)
-        .then((detail) => {
-          const code = exitCodeForRunState(detail.meta.state);
-          if (code !== null) finish(code);
-        })
-        .catch(() => {});
+      // on a future event or reconnect.
+      triggerRefetch();
     },
     waitForExit: () => exitPromise,
     dispose,
@@ -169,12 +218,20 @@ export function registerOrchestrateCommands(
         const watcher = createRunWatcher(ctx, client, baseUrl, {
           verbose: opts.verbose,
         });
-        const meta = await client.createRun(taskId, opts.executor);
-        ctx.log(`dispatched ${meta.id} (${meta.executor}) for ${taskId}`);
-        watcher.setRunId(meta.id);
-        const code = await watcher.waitForExit();
-        watcher.dispose();
-        process.exitCode = code;
+        // C1: `dispose()` must run even if `createRun` itself rejects (a
+        // 4xx for a bad task id, an already-live-run 409, ...) — the
+        // watcher already opened a WS connection above, and an undisposed
+        // one keeps a reconnect timer alive forever, which keeps the CLI
+        // process itself alive right along with it (verified: a typo'd
+        // task id used to hang instead of exiting 1).
+        try {
+          const meta = await client.createRun(taskId, opts.executor);
+          ctx.log(`dispatched ${meta.id} (${meta.executor}) for ${taskId}`);
+          watcher.setRunId(meta.id);
+          process.exitCode = await watcher.waitForExit();
+        } finally {
+          watcher.dispose();
+        }
       }
     );
 
@@ -217,10 +274,12 @@ export function registerOrchestrateCommands(
         return;
       }
       const watcher = createRunWatcher(ctx, client, baseUrl, opts);
-      watcher.setRunId(runId);
-      const code = await watcher.waitForExit();
-      watcher.dispose();
-      process.exitCode = code;
+      try {
+        watcher.setRunId(runId);
+        process.exitCode = await watcher.waitForExit();
+      } finally {
+        watcher.dispose();
+      }
     });
 
   program
