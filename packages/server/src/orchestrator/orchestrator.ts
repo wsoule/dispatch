@@ -261,6 +261,7 @@ export class Orchestrator {
           `run has already been reviewed: ${runId}`
         );
       }
+      this.requireNoOpenPr(meta);
       return this.requestChanges(meta, text);
     }
 
@@ -381,6 +382,7 @@ export class Orchestrator {
         `run has already been reviewed: ${runId}`
       );
     }
+    this.requireNoOpenPr(meta);
     const now = new Date().toISOString();
 
     if (action === 'merge') {
@@ -408,7 +410,7 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'task.changed' });
     this.ctx.events.broadcast({ type: 'run.changed' });
     const reviewed = this.registry.get(runId)!;
-    for (const hook of this.reviewedHooks) hook(reviewed);
+    this.invokeHooksSafely(this.reviewedHooks, reviewed);
     return reviewed;
   }
 
@@ -461,7 +463,7 @@ export class Orchestrator {
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
     const reviewedViaPr = this.registry.get(runId)!;
-    for (const hook of this.reviewedHooks) hook(reviewedViaPr);
+    this.invokeHooksSafely(this.reviewedHooks, reviewedViaPr);
     return reviewedViaPr;
   }
 
@@ -603,6 +605,22 @@ export class Orchestrator {
     return meta;
   }
 
+  // I4: once PrManager.openPr has pushed a run's branch and opened a PR
+  // (recorded as meta.prUrl), every *local* review/resume action must
+  // refuse rather than race the remote review — a local merge/discard
+  // would tear down the very worktree/branch the open PR points at, and
+  // resuming would keep pushing commits to a branch someone may already be
+  // reviewing on GitHub. The poller (PrManager.pollOnce) already skips any
+  // run that's been reviewed, so this is the complementary guard on the
+  // still-open side.
+  private requireNoOpenPr(meta: RunMeta): void {
+    if (meta.prUrl !== undefined) {
+      throw new OrchestratorConflictError(
+        'run has an open PR — close or merge it on GitHub instead'
+      );
+    }
+  }
+
   private transcriptFor(runId: string): Transcript {
     return new Transcript(transcriptPath(this.ctx.rootDir, runId));
   }
@@ -727,7 +745,43 @@ export class Orchestrator {
   private fireTerminalHooks(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
-    for (const hook of this.terminalHooks) hook(meta);
+    this.invokeHooksSafely(this.terminalHooks, meta);
+  }
+
+  // C2(b): runs every hook in `hooks` against `meta`, isolating each call —
+  // a subscriber's own bug must never change the outcome of the operation
+  // that fired it (a merge/discard/finish/cancel has already fully
+  // committed its own effects by the time hooks run) and must never stop a
+  // *different* subscriber from still getting its turn. A throwing hook is
+  // logged server-side and recorded as an Activity line on the run's own
+  // task, purely for visibility — never re-thrown.
+  private invokeHooksSafely(
+    hooks: ReadonlyArray<(meta: RunMeta) => void>,
+    meta: RunMeta
+  ): void {
+    for (const hook of hooks) {
+      try {
+        hook(meta);
+      } catch (err) {
+        const message = (err as Error).message;
+        console.error(
+          `dispatchd: run lifecycle hook failed for run ${meta.id}: ${message}`
+        );
+        try {
+          const now = new Date().toISOString();
+          this.ctx.store.update(
+            meta.taskId,
+            { appendActivity: `${now} [hook error] ${message}` },
+            now
+          );
+          this.ctx.cache.rebuild(this.ctx.store);
+          this.ctx.events.broadcast({ type: 'task.changed' });
+        } catch {
+          // Even the Activity append failing must not propagate — the
+          // triggering operation's own result already stands regardless.
+        }
+      }
+    }
   }
 
   // Builds the ExecutorEvents callbacks for one run, closing over its runId

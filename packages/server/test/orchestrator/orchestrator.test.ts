@@ -691,6 +691,112 @@ describe('Orchestrator review-state guard', () => {
   });
 });
 
+// I4: once a run has an open PR (PrManager.openPr has pushed the branch and
+// created it — recorded here via setRunPrUrl, the same call it makes), the
+// *local* review/resume actions must refuse rather than race the PR: a local
+// merge/discard would tear down the worktree/branch out from under an
+// in-flight remote review, and resuming would keep writing to a branch
+// someone else may already be reviewing on GitHub.
+describe('Orchestrator PR guards', () => {
+  async function dispatchToFinished(
+    orchestrator: ReturnType<typeof makeOrchestrator>['orchestrator'],
+    store: ReturnType<typeof makeOrchestrator>['store']
+  ): Promise<RunMeta> {
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 's-1' } })
+    );
+    const task = store.create({ title: 'Has an open PR' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    return meta;
+  }
+
+  it('409s review(merge) once a run has an open PR', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const meta = await dispatchToFinished(orchestrator, store);
+    orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
+
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
+      OrchestratorConflictError
+    );
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(/open PR/);
+  });
+
+  it('409s review(discard) once a run has an open PR', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const meta = await dispatchToFinished(orchestrator, store);
+    orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
+
+    expect(() => orchestrator.review(meta.id, 'discard')).toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  it('409s sendMessage(resume: true) once a run has an open PR', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const meta = await dispatchToFinished(orchestrator, store);
+    orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
+
+    expect(() =>
+      orchestrator.sendMessage(meta.id, 'please fix x', { resume: true })
+    ).toThrow(OrchestratorConflictError);
+  });
+});
+
+// C2(b): a subscriber's own bug must never change the outcome of the
+// operation that triggered it — handleFinish/cancel/review/
+// markRunMergedViaPr all fire hooks as their very last step specifically so
+// a poisoned hook can't have altered anything about the run/task by then,
+// but the hook-invocation loop itself must also isolate a throwing
+// subscriber from every other subscriber and from the caller.
+describe('Orchestrator hook isolation', () => {
+  it('a poisoned onRunTerminal subscriber does not affect handleFinish', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    orchestrator.onRunTerminal(() => {
+      throw new Error('boom terminal hook');
+    });
+    const task = store.create({ title: 'Poisoned terminal hook' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    // handleFinish's own outcome (task -> in-review) must have landed
+    // despite the subscriber throwing, and the failure gets logged rather
+    // than silently swallowed.
+    expect(store.get(task.meta.id)?.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)?.body).toContain('[hook error]');
+  });
+
+  it('a poisoned onRunReviewed subscriber does not affect review(merge)', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    orchestrator.onRunReviewed(() => {
+      throw new Error('boom reviewed hook');
+    });
+    const task = store.create({ title: 'Poisoned reviewed hook' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const reviewed = orchestrator.review(meta.id, 'merge');
+
+    expect(reviewed.reviewedAt).toBeDefined();
+    expect(store.get(task.meta.id)?.meta.status).toBe('done');
+    expect(store.get(task.meta.id)?.body).toContain('[hook error]');
+  });
+});
+
 // Important #7: a reviewed run has no worktree left to diff at all — the
 // endpoint must answer with a clean 409, not let a git command run against a
 // removed cwd and blow up as an internal error.
