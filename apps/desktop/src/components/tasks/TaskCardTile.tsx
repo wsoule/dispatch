@@ -1,5 +1,5 @@
 import type { RunState } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
@@ -9,9 +9,11 @@ import { useEffect, useRef, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { resolveCardKeyAction } from '../../lib/keyboard';
-import { AssigneeAvatar } from './AssigneeAvatar';
-import { PriorityIcon } from './PriorityIcon';
-import { StatusIcon } from './StatusIcon';
+import {
+  AssigneeControl,
+  PriorityControl,
+  StatusControl,
+} from './PropertyControls';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 
@@ -37,6 +39,12 @@ interface TaskCardTileProps {
    * build an id->title map from the project's epic list) — lets the card render Linear's
    * `t-id › Epic title` breadcrumb without needing its own epic lookup. */
   epicTitle?: string;
+  /** The project's configured status list, for the card's inline status picker. */
+  statuses: string[];
+  /** Changes this task's status inline from the card (optimistic, same path as drag-and-drop). */
+  onStatusChange: (status: string) => void;
+  /** Edits this task's priority/assignee inline from the card. */
+  onEditTask: (patch: UpdatePatch) => void;
   onClick: () => void;
   /** Dispatches this task directly from the card without opening the peek panel first.
    * Omitted (no action rendered) for cards that aren't ready to start. */
@@ -79,6 +87,9 @@ export function TaskCardTile({
   blocked,
   liveRunState,
   epicTitle,
+  statuses,
+  onStatusChange,
+  onEditTask,
   onClick,
   onDispatch,
   focused = false,
@@ -105,8 +116,6 @@ export function TaskCardTile({
 
   const visibleLabels = doc.meta.labels.slice(0, MAX_VISIBLE_LABELS);
   const hiddenLabelCount = doc.meta.labels.length - visibleLabels.length;
-  const hasMetaRow =
-    blocked || visibleLabels.length > 0 || liveRunState !== undefined;
 
   return (
     <div
@@ -170,54 +179,60 @@ export function TaskCardTile({
             </>
           )}
         </div>
-        {doc.meta.assignee !== 'none' && (
-          <AssigneeAvatar assignee={doc.meta.assignee} />
-        )}
+        <AssigneeControl
+          value={doc.meta.assignee}
+          onChange={(a) => onEditTask({ assignee: a })}
+        />
       </div>
 
-      <div className="flex items-start gap-2">
-        <span className="mt-px shrink-0">
-          <StatusIcon status={doc.meta.status} />
+      <div className="flex items-start gap-1.5">
+        <span className="mt-px -ml-0.5 shrink-0">
+          <StatusControl
+            value={doc.meta.status}
+            statuses={statuses}
+            onChange={onStatusChange}
+          />
         </span>
         <span className="text-foreground line-clamp-2 text-[13.5px] leading-[1.35] font-medium">
           {doc.meta.title}
         </span>
       </div>
 
-      {hasMetaRow && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <PriorityIcon priority={doc.meta.priority} />
-          {blocked && (
-            <span className="text-destructive inline-flex items-center gap-0.5 text-[11px]">
-              <ShieldAlert className="size-3" />
-              Blocked
-            </span>
-          )}
-          {visibleLabels.map((label) => (
-            <Badge
-              key={label}
-              variant="outline"
-              className="text-muted-foreground h-4 rounded px-1.5 py-0 text-[10px] font-normal"
-            >
-              {label}
-            </Badge>
-          ))}
-          {hiddenLabelCount > 0 && (
-            <span className="text-muted-foreground/70 text-[10px]">
-              +{hiddenLabelCount}
-            </span>
-          )}
-          {liveRunState !== undefined && (
-            <span
-              className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-[11px]"
-              title={RUN_STATE_LABEL[liveRunState]}
-            >
-              <span className="bg-primary size-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
-              {RUN_STATE_LABEL[liveRunState]}
-            </span>
-          )}
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <PriorityControl
+          value={doc.meta.priority}
+          onChange={(p) => onEditTask({ priority: p })}
+        />
+        {blocked && (
+          <span className="text-destructive inline-flex items-center gap-0.5 text-[11px]">
+            <ShieldAlert className="size-3" />
+            Blocked
+          </span>
+        )}
+        {visibleLabels.map((label) => (
+          <Badge
+            key={label}
+            variant="outline"
+            className="text-muted-foreground h-4 rounded px-1.5 py-0 text-[10px] font-normal"
+          >
+            {label}
+          </Badge>
+        ))}
+        {hiddenLabelCount > 0 && (
+          <span className="text-muted-foreground/70 text-[10px]">
+            +{hiddenLabelCount}
+          </span>
+        )}
+        {liveRunState !== undefined && (
+          <span
+            className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-[11px]"
+            title={RUN_STATE_LABEL[liveRunState]}
+          >
+            <span className="bg-primary size-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
+            {RUN_STATE_LABEL[liveRunState]}
+          </span>
+        )}
+      </div>
 
       <div className="flex items-center justify-between gap-2">
         <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">

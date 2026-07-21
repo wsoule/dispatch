@@ -244,6 +244,7 @@ export function BoardView({
             onWorkEpic={data.handleWorkEpic}
             onStopEpic={data.handleStopEpic}
             onMoveStatus={data.moveTaskStatus}
+            onEditTask={data.handleUpdate}
             onAddTask={onNewTask}
             focusedTaskId={focusedTaskId}
             onCardFocus={setFocusedTaskId}

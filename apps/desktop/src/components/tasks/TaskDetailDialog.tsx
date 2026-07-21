@@ -1,14 +1,6 @@
 import type { RunMeta } from '@dispatch/client';
-import type { Assignee, Priority, TaskDoc, UpdatePatch } from '@dispatch/core';
-import {
-  ArrowUpRight,
-  Ban,
-  Layers,
-  Milestone,
-  Plus,
-  Tag,
-  X,
-} from 'lucide-react';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core';
+import { ArrowUpRight, Ban, Layers, Plus, Tag, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -17,45 +9,19 @@ import { formatRelativeTimeFromIso } from '../../lib/format';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections } from '../../lib/taskDisplay';
 import { RunStatePill } from '../runs/RunStatePill';
-import { AssigneeAvatar } from './AssigneeAvatar';
-import { PriorityIcon } from './PriorityIcon';
+import {
+  AssigneeControl,
+  EpicControl,
+  PriorityControl,
+  StatusControl,
+} from './PropertyControls';
 import { StatusIcon } from './StatusIcon';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
 import { Input } from '@/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/ui/select';
 import { Textarea } from '@/ui/textarea';
-
-const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
-const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
-
-// Radix `SelectItem` can't take an empty-string value (it's reserved for "no
-// selection"), so this sentinel stands in for the "No epic" option and is
-// translated back to `null` at the update boundary.
-const NO_EPIC = '__none__';
-
-// A ghost SelectTrigger that reads like one of Linear's inline property rows
-// rather than a bordered form control: no border/shadow/background at rest, a
-// subtle hover fill, full-width and left-aligned, and the trailing chevron
-// hidden (`[&>svg]:hidden` targets only the trigger's own direct chevron — the
-// leading status/priority/assignee glyph lives nested inside the SelectValue
-// span, so it stays).
-const RAIL_SELECT_TRIGGER =
-  'h-7 w-full justify-start gap-2 rounded-md border-transparent bg-transparent px-2 text-[13px] shadow-none hover:bg-muted/60 focus-visible:ring-1 data-[size=sm]:h-7 dark:bg-transparent dark:hover:bg-muted/60 [&>svg]:hidden';
-
-// `Assignee` is a fixed three-value enum ('agent'/'human'/'none') — a plain capitalize reads
-// fine for all three ("Agent"/"Human"/"None") without needing a dedicated label map here on
-// top of `AssigneeAvatar`'s own internal one.
-function capitalize(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1);
-}
 
 // A titled group of rows in the rail (Properties, Labels, Blocked by) — the
 // small muted header that lets Linear stack several property groups down the
@@ -587,84 +553,28 @@ export function TaskDetailDialog({
           <aside className="border-border bg-muted/20 w-[248px] shrink-0 overflow-y-auto border-l px-4 py-6">
             <div className="flex flex-col gap-5">
               <RailSection title="Properties">
-                <Select
+                <StatusControl
                   value={doc.meta.status}
-                  onValueChange={(value) => void changeStatus(value)}
-                >
-                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statuses.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        <StatusIcon status={s} />
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select
+                  statuses={statuses}
+                  onChange={(s) => void changeStatus(s)}
+                  variant="row"
+                />
+                <PriorityControl
                   value={doc.meta.priority}
-                  onValueChange={(value) =>
-                    void runUpdate({ priority: value as Priority })
-                  }
-                >
-                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PRIORITIES.map((p) => (
-                      <SelectItem key={p} value={p}>
-                        <PriorityIcon priority={p} />
-                        {p}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select
+                  onChange={(p) => void runUpdate({ priority: p })}
+                  variant="row"
+                />
+                <AssigneeControl
                   value={doc.meta.assignee}
-                  onValueChange={(value) =>
-                    void runUpdate({ assignee: value as Assignee })
-                  }
-                >
-                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ASSIGNEES.map((a) => (
-                      <SelectItem key={a} value={a}>
-                        <AssigneeAvatar assignee={a} />
-                        {capitalize(a)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={doc.meta.parent ?? NO_EPIC}
-                  onValueChange={(value) =>
-                    void runUpdate({
-                      parent: value === NO_EPIC ? null : value,
-                    })
-                  }
-                >
-                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
-                    <span className="flex items-center gap-2">
-                      <Milestone className="text-muted-foreground size-3.5" />
-                      <SelectValue />
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_EPIC}>No epic</SelectItem>
-                    {epics.map((epic) => (
-                      <SelectItem key={epic.meta.id} value={epic.meta.id}>
-                        {epic.meta.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onChange={(a) => void runUpdate({ assignee: a })}
+                  variant="row"
+                />
+                <EpicControl
+                  value={doc.meta.parent}
+                  epics={epics}
+                  onChange={(parent) => void runUpdate({ parent })}
+                  variant="row"
+                />
 
                 {/* Kind is fixed at creation (task vs epic) — the one property that stays
                     read-only, shown for context alongside the editable rows. */}

@@ -1,5 +1,5 @@
 import type { EpicProgress, RunState } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import {
   closestCenter,
   DndContext,
@@ -49,6 +49,10 @@ interface TaskBoardProps {
    * nowhere else); optional purely so a board rendered without a live project (there isn't
    * one today) doesn't need to supply a no-op. */
   onMoveStatus?: (taskId: string, status: string) => Promise<void>;
+  /** Edits a task's priority/assignee inline from its card (the same handleUpdate the detail
+   * modal uses). Optional for the same reason as `onMoveStatus` — a board with no live
+   * project renders static cards. */
+  onEditTask?: (taskId: string, patch: UpdatePatch) => Promise<void>;
   /** Opens `CreateTaskModal` pre-set to a given status — wired to each column header's
    * hover-revealed "+" button. */
   onAddTask?: (status: string) => void;
@@ -141,6 +145,7 @@ export function TaskBoard({
   onWorkEpic,
   onStopEpic,
   onMoveStatus,
+  onEditTask,
   onAddTask,
   focusedTaskId = null,
   onCardFocus,
@@ -244,6 +249,13 @@ export function TaskBoard({
                             ? epicTitleById.get(doc.meta.parent)
                             : undefined
                         }
+                        statuses={statuses}
+                        onStatusChange={(status) =>
+                          void onMoveStatus?.(doc.meta.id, status)
+                        }
+                        onEditTask={(patch) =>
+                          void onEditTask?.(doc.meta.id, patch)
+                        }
                         onClick={() => onSelect(doc.meta.id)}
                         onDispatch={
                           readyIds.has(doc.meta.id) && onDispatch !== undefined
@@ -287,6 +299,9 @@ export function TaskBoard({
                     ? epicTitleById.get(activeDoc.meta.parent)
                     : undefined
                 }
+                statuses={statuses}
+                onStatusChange={() => {}}
+                onEditTask={() => {}}
                 onClick={() => {}}
               />
             </div>
