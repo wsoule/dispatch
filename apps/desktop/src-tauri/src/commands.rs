@@ -693,17 +693,30 @@ pub fn has_dispatch(root: String) -> bool {
 /// "Loading" state) to a single-project workspace: whichever project the
 /// app was launched from.
 ///
-/// For `tauri dev` this resolves to the crate's own working directory,
-/// which is the monorepo/project root the dev server was started in.
+/// Deliberately *not* `std::env::current_dir()`: the Tauri CLI's `cargo run`
+/// runs with its cwd set to this crate's own directory
+/// (`apps/desktop/src-tauri`), not the monorepo root — verified live by
+/// checking a running `tauri dev` process's cwd (`lsof -p <pid> -d cwd`)
+/// during this feature's own testing. Using cwd here would resolve to
+/// `apps/desktop/src-tauri` itself, which has no `.dispatch/` directory,
+/// silently sending every launch to the get-started screen instead of the
+/// project's Board. Walking up from `CARGO_MANIFEST_DIR` (baked in at
+/// compile time to this crate's absolute path in whichever checkout/
+/// worktree built it) is the same trick `sidecar::dispatchd_bin_path`
+/// already uses for the identical reason, so this stays correct across
+/// worktrees without depending on the launcher's invocation cwd.
 ///
-/// TODO(packaged app): a double-clicked app bundle's cwd is not a project
-/// directory at all (typically `/` or the bundle's own path) — before
-/// shipping a packaged build, this needs to read a folder the user
-/// explicitly opened (persisted app state, likely via a "Open folder…"
-/// picker) instead of `current_dir()`.
+/// TODO(packaged app): a packaged binary has no monorepo checkout above it
+/// to walk up to at all — before shipping a packaged build, this needs to
+/// read a folder the user explicitly opened (persisted app state, likely
+/// via a "Open folder…" picker) instead.
 #[tauri::command]
 pub fn current_project_root() -> Result<String, String> {
-    std::env::current_dir()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+        .canonicalize()
         .map_err(|e| e.to_string())?
         .to_str()
         .map(str::to_string)
@@ -715,13 +728,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_project_root_matches_the_process_working_directory() {
-        let expected = std::env::current_dir()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        assert_eq!(current_project_root(), Ok(expected));
+    fn current_project_root_walks_up_three_levels_to_the_monorepo_root() {
+        // Mirrors `sidecar`'s own `dispatchd_bin_path_resolves_to_a_real_file_in_this_checkout`
+        // test: three levels up from this crate (`apps/desktop/src-tauri`) should land on the
+        // checkout root, identifiable here by its root `package.json` (every workspace app/
+        // package has its own, but only the root one sits at this exact level).
+        let result = current_project_root().unwrap();
+        assert!(
+            Path::new(&result).join("package.json").is_file(),
+            "expected {result} to be the monorepo root (no package.json found there)"
+        );
+    }
+
+    #[test]
+    fn current_project_root_does_not_resolve_to_the_process_working_directory() {
+        // Regression guard for the bug this function exists to avoid: the Tauri CLI's `cargo
+        // run` sets its cwd to this crate's own directory, not the monorepo root, so
+        // `current_project_root` must never be implemented in terms of
+        // `std::env::current_dir()` again.
+        let result = current_project_root().unwrap();
+        let cwd = std::env::current_dir().unwrap().to_str().unwrap().to_string();
+        assert_ne!(result, cwd);
     }
 
     #[test]
