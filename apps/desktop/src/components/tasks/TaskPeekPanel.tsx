@@ -1,8 +1,10 @@
 import type { RunMeta } from '@dispatch/client';
 import type { Priority, TaskDoc, UpdatePatch } from '@dispatch/core';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
+import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections, sectionOrDash } from '../../lib/taskDisplay';
 import { Button } from '../ui/Button';
 import { Pill } from '../ui/Pill';
@@ -47,10 +49,16 @@ export function TaskPeekPanel({
   const [activityDraft, setActivityDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  const panelRef = useRef<HTMLElement>(null);
 
-  const hasOpenRun =
-    run !== undefined &&
-    (doc.meta.status === 'in-progress' || doc.meta.status === 'in-review');
+  useFocusTrap(panelRef, true);
+
+  // Derived from the run's own state, not the task's status string: the old check compared
+  // `doc.meta.status` against the literal built-in strings `'in-progress'`/`'in-review'`,
+  // which silently stopped working for any project whose `.dispatch/config.yml` names its
+  // in-flight statuses something else. A run that isn't in a terminal state *is* an "open
+  // run" regardless of what the task's own status happens to be called.
+  const hasOpenRun = run !== undefined && !isTerminalRunState(run.state);
 
   async function dispatch(executor?: 'fake' | 'claude') {
     setDispatching(true);
@@ -70,20 +78,39 @@ export function TaskPeekPanel({
     setError(null);
   }, [doc.meta.id, doc.meta.title]);
 
-  async function runUpdate(patch: UpdatePatch) {
-    try {
-      setError(null);
-      await onUpdate(doc.meta.id, patch);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
+  const runUpdate = useCallback(
+    async (patch: UpdatePatch) => {
+      try {
+        setError(null);
+        await onUpdate(doc.meta.id, patch);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [doc.meta.id, onUpdate]
+  );
 
-  function saveTitleIfChanged() {
+  const saveTitleIfChanged = useCallback(() => {
     if (title.trim() !== '' && title !== doc.meta.title) {
       void runUpdate({ title });
     }
-  }
+  }, [title, doc.meta.title, runUpdate]);
+
+  // Escape closes the peek via the app-root `navReducer` (a global `window` listener, not
+  // this component) — which unmounts this panel entirely. A plain `onBlur` on the title
+  // input can't be relied on to fire before that unmount (removing a focused node's blur
+  // behavior is inconsistent enough across browsers/webviews to not build a save on), so
+  // this listens for Escape itself and commits the in-progress title edit explicitly. The
+  // choice here is to commit, not discard, on Escape-while-editing — matching every other
+  // control on this panel (status/priority selects, activity notes), which all save
+  // immediately rather than needing a separate "save" step.
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') saveTitleIfChanged();
+    }
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [saveTitleIfChanged]);
 
   function submitActivity() {
     if (activityDraft.trim() !== '') {
@@ -105,6 +132,7 @@ export function TaskPeekPanel({
   return (
     <div className="task-peek-backdrop" onClick={onClose}>
       <aside
+        ref={panelRef}
         className="task-peek-panel"
         onClick={(e) => e.stopPropagation()}
         aria-label={`Task ${doc.meta.id} detail`}

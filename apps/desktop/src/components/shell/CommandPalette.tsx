@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { PaletteItem } from '../../lib/paletteMatch';
 import { rankPaletteItems } from '../../lib/paletteMatch';
 import './CommandPalette.css';
@@ -21,8 +22,10 @@ interface CommandPaletteProps {
  * The Linear-signature ⌘K palette: fuzzy-matches task ids/titles and app actions ("Dispatch
  * <task>", "New task", every view switch) against a single query. Arrow keys (not j/k — the
  * input itself is a text field, and "j"/"k" are real letters someone might type into a
- * search box) move the highlighted row; Enter runs it; Escape closes via the caller's
- * `onClose` (also wired through the app-level `navReducer`'s `escape` action).
+ * search box) move the highlighted row and keep it scrolled into view; Enter runs it;
+ * Escape closes via the caller's `onClose` (also wired through the app-level `navReducer`'s
+ * `escape` action). `useFocusTrap` handles focusing the input on open, trapping Tab inside
+ * the panel, and restoring whatever had focus before the palette opened once it closes (I7).
  */
 export function CommandPalette({
   isOpen,
@@ -31,26 +34,36 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [highlighted, setHighlighted] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(panelRef, isOpen);
 
   const ranked = useMemo(
     () => rankPaletteItems(entries, query),
     [entries, query]
   );
 
-  // Reset to a clean search every time the palette opens, and focus the input immediately —
-  // a command palette that doesn't grab focus on open isn't usable from the keyboard at all.
+  // Reset to a clean search every time the palette opens — focusing the input itself is
+  // `useFocusTrap`'s job now (the input is the panel's first focusable element).
   useEffect(() => {
     if (isOpen) {
       setQuery('');
       setHighlighted(0);
-      inputRef.current?.focus();
     }
   }, [isOpen]);
 
   useEffect(() => {
     setHighlighted(0);
   }, [query]);
+
+  // Keeps the highlighted row visible as ArrowUp/ArrowDown moves it, same treatment as
+  // TasksListView's row list.
+  useEffect(() => {
+    resultsRef.current?.children[highlighted]?.scrollIntoView({
+      block: 'nearest',
+    });
+  }, [highlighted]);
 
   if (!isOpen) return null;
 
@@ -65,13 +78,13 @@ export function CommandPalette({
   return (
     <div className="command-palette-backdrop" onClick={onClose}>
       <div
+        ref={panelRef}
         className="command-palette-panel"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Command palette"
       >
         <input
-          ref={inputRef}
           className="command-palette-input"
           placeholder="Jump to a task, dispatch work, or switch views…"
           value={query}
@@ -89,7 +102,7 @@ export function CommandPalette({
             }
           }}
         />
-        <div className="command-palette-results">
+        <div className="command-palette-results" ref={resultsRef}>
           {ranked.length === 0 && (
             <div className="command-palette-empty">No matches.</div>
           )}
