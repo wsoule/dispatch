@@ -6,6 +6,7 @@ import {
   CircleX,
   Info,
   Loader2,
+  Megaphone,
   MessageSquare,
   MessageSquarePlus,
   Send,
@@ -73,13 +74,35 @@ function MessageBubble({ entry }: { entry: NormalizedEntry }) {
 // A `kind: 'message'` entry — the agent-comms identified chat channel,
 // deliberately NOT styled like MessageBubble's muted system/assistant rows:
 // this is an actual conversation turn with a named sender, so it earns a
-// side and a tint. `from: 'user'` (the run's own human, via the Session
-// composer) leans right as "You" in the accent color; `from: 'agent'` leans
-// left as "↳ <fromLabel>" in a distinct (non-accent) tint — covers both the
-// agent->agent channel (fromLabel names the sending run) and the agent->user
-// channel (an agent's own `message_user` call, fromLabel names itself).
+// side and a tint. The three channels each read distinctly:
+//   - `from: 'user'` (the run's own human, via the Session composer) —
+//     leans RIGHT as "You" in the accent color.
+//   - `from: 'agent'` + `toUser` (this run's own `message_user`, flagging
+//     something up to the human) — full-width attention row with a Megaphone
+//     and a "To you" badge, so it never reads like a peer message.
+//   - `from: 'agent'` without `toUser` (an inbound `agent_message` from a
+//     DIFFERENT run) — leans LEFT as "↳ <fromLabel>" in an amber tint.
 function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
   const fromUser = entry.from === 'user';
+  const toUser = entry.from === 'agent' && entry.toUser === true;
+
+  if (toUser) {
+    return (
+      <div className="border-primary/40 bg-primary/10 flex w-full flex-col gap-0.5 rounded-md border px-3 py-2">
+        <div className="text-primary flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
+          <Megaphone className="size-3" />
+          To you
+          <span className="text-muted-foreground/70 normal-case">
+            from {entry.fromLabel ?? 'an agent'}
+          </span>
+        </div>
+        <div className="text-[13px] break-words whitespace-pre-wrap">
+          {entry.text ?? ''}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(

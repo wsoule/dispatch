@@ -22,6 +22,13 @@ export interface NormalizedEntry {
   // sender's identity couldn't be resolved. Never set for `from: 'user'`
   // (the app renders that as "You" unconditionally).
   fromLabel?: string;
+  // Distinguishes the two `from: 'agent'` directions, which are otherwise
+  // shaped identically. `true` marks this run's own `message_user` call —
+  // the agent flagging something UP to the human — so the app can badge it
+  // as "To you" rather than rendering it like an inbound message from
+  // another agent (`inject`, where `toUser` is absent and `fromLabel` names
+  // a *different* run).
+  toUser?: boolean;
 }
 
 // A live handle to a running executor invocation — the orchestrator holds

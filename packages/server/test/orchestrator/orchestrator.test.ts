@@ -251,6 +251,10 @@ describe('Orchestrator.inject sender identity', () => {
       fromLabel: `Sender task (${senderMeta.id})`,
       text: 'need a hand',
     });
+    // An inbound agent->agent message is NOT a user-flag — the app relies on
+    // `toUser` being absent here to render it as "↳ <sender>" rather than a
+    // "To you" attention row.
+    expect(messageEntry?.toUser).toBeUndefined();
     expect(sent).toEqual([
       `[message from Sender task (${senderMeta.id})] need a hand`,
     ]);
@@ -307,6 +311,9 @@ describe('Orchestrator.messageUser', () => {
       kind: 'message',
       from: 'agent',
       fromLabel: `Flag something (${meta.id})`,
+      // The discriminator that lets the app badge this agent->user flag
+      // apart from an inbound agent->agent message (which never sets it).
+      toUser: true,
       text: 'need clarification on X',
     });
     // messageUser never delivers into the executor — there is no recipient

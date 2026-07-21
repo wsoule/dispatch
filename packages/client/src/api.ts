@@ -84,6 +84,11 @@ export interface NormalizedEntry {
   status?: 'running' | 'done' | 'error';
   from?: 'user' | 'agent';
   fromLabel?: string;
+  // Set on this run's own `message_user` call — the agent flagging something
+  // UP to the human — so the app can badge it distinctly from an inbound
+  // `agent_message` (which has no `toUser` and whose `fromLabel` names a
+  // different run). See the server-side NormalizedEntry for the full note.
+  toUser?: boolean;
 }
 
 // The body of `GET /api/runs/:id`.
