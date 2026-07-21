@@ -1,9 +1,10 @@
+import { Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { PaletteItem } from '../../lib/paletteMatch';
 import { rankPaletteItems } from '../../lib/paletteMatch';
-import './CommandPalette.css';
+import { cn } from '@/lib/utils';
 
 export interface PaletteEntry extends PaletteItem {
   /** A short tag shown at the entry's right edge — "task", "go to", "action" — so the fuzzy
@@ -26,6 +27,10 @@ interface CommandPaletteProps {
  * Escape closes via the caller's `onClose` (also wired through the app-level `navReducer`'s
  * `escape` action). `useFocusTrap` handles focusing the input on open, trapping Tab inside
  * the panel, and restoring whatever had focus before the palette opened once it closes (I7).
+ *
+ * Styling is hand-rolled Tailwind (not shadcn's `cmdk`-based `command` primitive) so this
+ * keeps its existing fuzzy-match/keyboard-nav logic byte-for-byte — only the presentation
+ * layer changed.
  */
 export function CommandPalette({
   isOpen,
@@ -76,56 +81,67 @@ export function CommandPalette({
   }
 
   return (
-    <div className="command-palette-backdrop" onClick={onClose}>
+    <div
+      className="animate-in fade-in-0 fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[12vh] duration-150"
+      onClick={onClose}
+    >
       <div
         ref={panelRef}
-        className="command-palette-panel"
+        className="border-border bg-popover animate-in fade-in-0 zoom-in-95 flex max-h-[60vh] w-[min(34rem,90vw)] flex-col overflow-hidden rounded-lg border shadow-lg duration-150"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Command palette"
       >
-        <input
-          className="command-palette-input"
-          placeholder="Jump to a task, dispatch work, or switch views…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              setHighlighted((h) => Math.min(h + 1, ranked.length - 1));
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              setHighlighted((h) => Math.max(h - 1, 0));
-            } else if (e.key === 'Enter') {
-              e.preventDefault();
-              runHighlighted();
-            }
-          }}
-        />
-        <div className="command-palette-results" ref={resultsRef}>
+        <div className="border-border flex items-center gap-2 border-b px-3">
+          <Search className="text-muted-foreground size-4 shrink-0" />
+          <input
+            className="text-foreground placeholder:text-muted-foreground w-full bg-transparent py-3 text-[13px] outline-none"
+            placeholder="Jump to a task, dispatch work, or switch views…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setHighlighted((h) => Math.min(h + 1, ranked.length - 1));
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setHighlighted((h) => Math.max(h - 1, 0));
+              } else if (e.key === 'Enter') {
+                e.preventDefault();
+                runHighlighted();
+              }
+            }}
+          />
+        </div>
+        <div className="overflow-y-auto p-1.5" ref={resultsRef}>
           {ranked.length === 0 && (
-            <div className="command-palette-empty">No matches.</div>
+            <div className="text-muted-foreground px-3 py-6 text-center text-[13px]">
+              No matches.
+            </div>
           )}
           {ranked.map((entry, i) => (
             <button
               key={entry.id}
               type="button"
-              className={`command-palette-item${
-                i === highlighted ? ' active' : ''
-              }`}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-foreground',
+                i === highlighted && 'bg-accent text-accent-foreground'
+              )}
               onMouseEnter={() => setHighlighted(i)}
               onClick={() => {
                 entry.run();
                 onClose();
               }}
             >
-              <span className="command-palette-item-label">{entry.label}</span>
+              <span className="truncate">{entry.label}</span>
               {entry.sublabel !== undefined && (
-                <span className="command-palette-item-sublabel">
+                <span className="text-muted-foreground min-w-0 flex-1 truncate font-mono text-[11px]">
                   {entry.sublabel}
                 </span>
               )}
-              <span className="command-palette-item-kind">{entry.kind}</span>
+              <span className="text-muted-foreground shrink-0 text-[11px]">
+                {entry.kind}
+              </span>
             </button>
           ))}
         </div>

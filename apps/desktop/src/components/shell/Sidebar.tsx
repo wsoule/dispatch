@@ -1,18 +1,39 @@
+import {
+  Check,
+  ChevronsUpDown,
+  Cog,
+  KanbanSquare,
+  ListChecks,
+  NotebookPen,
+  Play,
+  Radar,
+} from 'lucide-react';
+
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
-import './Sidebar.css';
+import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/ui/dropdown-menu';
 
-const PROJECT_VIEWS: { id: ProjectView; label: string; icon: string }[] = [
-  { id: 'board', label: 'Board', icon: '▦' },
-  { id: 'tasks', label: 'Tasks', icon: '☑' },
-  { id: 'runs', label: 'Runs', icon: '▶' },
-  { id: 'plans', label: 'Plans', icon: '✎' },
+const PROJECT_VIEWS: {
+  id: ProjectView;
+  label: string;
+  icon: typeof KanbanSquare;
+}[] = [
+  { id: 'board', label: 'Board', icon: KanbanSquare },
+  { id: 'tasks', label: 'Tasks', icon: ListChecks },
+  { id: 'runs', label: 'Runs', icon: Play },
+  { id: 'plans', label: 'Plans', icon: NotebookPen },
 ];
 
-const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: string }[] = [
-  { id: 'all-agents', label: 'All Agents', icon: '◉' },
-  { id: 'sessions', label: 'Sessions', icon: '◷' },
-  { id: 'settings', label: 'Settings', icon: '⚙' },
+const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
+  { id: 'all-agents', label: 'All Agents', icon: Radar },
+  { id: 'sessions', label: 'Sessions', icon: Play },
+  { id: 'settings', label: 'Settings', icon: Cog },
 ];
 
 export interface SwitchProject {
@@ -50,7 +71,9 @@ interface SidebarProps {
  * Persistent, Linear-style left rail: wordmark, the one active project's name (not a
  * switcher — this app pivoted from a multi-project switcher to a single-project workspace),
  * that project's primary nav (Board/Tasks/Runs/Plans), and the global section (All Agents/
- * Sessions/Settings) below a divider.
+ * Sessions/Settings) below a divider. Restyled onto shadcn's `DropdownMenu` for the project
+ * switcher (same open/select props/behavior as the hand-rolled version it replaces) and
+ * lucide icons for every nav row.
  */
 export function Sidebar({
   projectName,
@@ -72,117 +95,138 @@ export function Sidebar({
   const otherProjects = switchProjects.filter((p) => p.path !== projectPath);
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-brand">
-        <span className="sidebar-brand-mark">D</span>
+    <aside className="border-border bg-background flex w-60 shrink-0 flex-col overflow-y-auto border-r px-3 py-4">
+      <div className="text-foreground mb-4 flex items-center gap-2 px-2 font-mono text-[13px] font-semibold">
+        <span className="bg-primary text-primary-foreground inline-flex size-5 items-center justify-center rounded-md text-[11px]">
+          D
+        </span>
         Dispatch
       </div>
 
-      <div className="sidebar-section-label">Project</div>
+      <div className="text-muted-foreground px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-wide uppercase">
+        Project
+      </div>
       {projectName !== null ? (
-        <div className="sidebar-project-switcher">
-          <button
-            type="button"
-            className="sidebar-project-current"
-            title={projectPath ?? undefined}
-            aria-haspopup="listbox"
-            aria-expanded={switcherOpen}
-            onClick={onToggleSwitcher}
-          >
-            <span
-              className="sidebar-project-dot"
-              style={{ background: colorForProject(projectName) }}
-            />
-            <span className="sidebar-project-name">{projectName}</span>
-            <span className="sidebar-project-caret">
-              {switcherOpen ? '▴' : '▾'}
-            </span>
-          </button>
-          {switcherOpen && (
-            <div className="sidebar-project-menu" role="listbox">
-              <div
-                className="sidebar-project-menu-active"
-                role="option"
-                aria-selected="true"
-              >
-                <span
-                  className="sidebar-project-dot"
-                  style={{ background: colorForProject(projectName) }}
-                />
+        <DropdownMenu
+          open={switcherOpen}
+          onOpenChange={() => onToggleSwitcher()}
+        >
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              title={projectPath ?? undefined}
+              className="text-foreground hover:bg-accent flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium transition-colors duration-150"
+            >
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: colorForProject(projectName) }}
+              />
+              <span className="min-w-0 flex-1 truncate">{projectName}</span>
+              <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuItem disabled className="text-muted-foreground">
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: colorForProject(projectName) }}
+              />
+              <span className="text-foreground min-w-0 flex-1 truncate">
                 {projectName}
-                <span className="sidebar-project-menu-check">✓</span>
+              </span>
+              <Check className="text-primary size-3.5" />
+            </DropdownMenuItem>
+            {otherProjects.length === 0 ? (
+              <div className="text-muted-foreground px-2 py-1.5 text-[12px]">
+                No other dispatch projects
               </div>
-              {otherProjects.length === 0 ? (
-                <div className="sidebar-project-menu-empty">
-                  No other dispatch projects
-                </div>
-              ) : (
-                otherProjects.map((p) => (
-                  <button
-                    key={p.path}
-                    type="button"
-                    className="sidebar-project-menu-item"
-                    role="option"
-                    aria-selected="false"
-                    title={p.path}
-                    onClick={() => onSelectProject(p.path)}
-                  >
-                    <span
-                      className="sidebar-project-dot"
-                      style={{ background: colorForProject(p.name) }}
-                    />
-                    {p.name}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </div>
+            ) : (
+              otherProjects.map((p) => (
+                <DropdownMenuItem
+                  key={p.path}
+                  title={p.path}
+                  onSelect={() => onSelectProject(p.path)}
+                >
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ background: colorForProject(p.name) }}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                </DropdownMenuItem>
+              ))
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : (
-        <p className="sidebar-project-empty">Resolving project…</p>
+        <p className="text-muted-foreground px-2 text-[13px]">
+          Resolving project…
+        </p>
       )}
 
-      <div className="sidebar-section-label">Workspace</div>
-      <nav>
-        {PROJECT_VIEWS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`sidebar-nav-item${
-              section === 'project' && projectView === item.id ? ' active' : ''
-            }${!hasActiveProject ? ' disabled' : ''}`}
-            disabled={!hasActiveProject}
-            onClick={() => onSetProjectView(item.id)}
-          >
-            <span className="sidebar-nav-icon">{item.icon}</span>
-            {item.label}
-          </button>
-        ))}
+      <div className="text-muted-foreground px-2 pt-3 pb-1.5 text-[11px] font-medium tracking-wide uppercase">
+        Workspace
+      </div>
+      <nav className="flex flex-col gap-0.5">
+        {PROJECT_VIEWS.map((item) => {
+          const Icon = item.icon;
+          const active = section === 'project' && projectView === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              disabled={!hasActiveProject}
+              onClick={() => onSetProjectView(item.id)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-150',
+                active
+                  ? 'bg-accent font-medium text-accent-foreground'
+                  : 'text-foreground/80 hover:bg-accent/60',
+                !hasActiveProject &&
+                  'pointer-events-none text-muted-foreground/50'
+              )}
+            >
+              <Icon className="size-4 shrink-0" strokeWidth={2} />
+              {item.label}
+            </button>
+          );
+        })}
       </nav>
 
-      <div className="sidebar-divider" />
+      <div className="bg-border my-3 h-px" />
 
-      <nav>
-        {GLOBAL_VIEWS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`sidebar-nav-item${
-              section === 'global' && globalView === item.id ? ' active' : ''
-            }`}
-            onClick={() => onSetGlobalView(item.id)}
-          >
-            <span className="sidebar-nav-icon">{item.icon}</span>
-            {item.label}
-            {item.id === 'all-agents' && liveAgentCount > 0 && (
-              <span className="sidebar-nav-badge">{liveAgentCount}</span>
-            )}
-          </button>
-        ))}
+      <nav className="flex flex-col gap-0.5">
+        {GLOBAL_VIEWS.map((item) => {
+          const Icon = item.icon;
+          const active = section === 'global' && globalView === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onSetGlobalView(item.id)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-150',
+                active
+                  ? 'bg-accent font-medium text-accent-foreground'
+                  : 'text-foreground/80 hover:bg-accent/60'
+              )}
+            >
+              <Icon className="size-4 shrink-0" strokeWidth={2} />
+              <span className="flex-1">{item.label}</span>
+              {item.id === 'all-agents' && liveAgentCount > 0 && (
+                <span className="bg-primary text-primary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
+                  {liveAgentCount}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
-      <div className="sidebar-footer">
-        <kbd className="sidebar-footer-kbd">⌘K</kbd> to jump anywhere
+      <div className="text-muted-foreground mt-auto px-2 pt-3 text-[11px]">
+        <kbd className="border-border bg-secondary rounded border px-1 py-0.5 font-mono text-[10px]">
+          ⌘K
+        </kbd>{' '}
+        to jump anywhere
       </div>
     </aside>
   );
