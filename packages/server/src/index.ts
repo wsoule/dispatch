@@ -93,14 +93,47 @@ function safeRebuild(store: TaskStore, cache: TaskCache): void {
   }
 }
 
-// Adds permissive CORS headers to a response so the desktop webview / browser
-// dev harness (a different origin than `http://127.0.0.1:<port>`) can read it.
-// Loopback-only daemon, no credentials, so `*` is safe. Mutating the existing
+// Returns the origin to echo back in `Access-Control-Allow-Origin`, or null if
+// the origin is not trusted (so no CORS header is sent and the browser blocks
+// it). A wildcard `*` would be dangerous here: this daemon dispatches coding
+// agents, so any web page you visit could otherwise fetch `127.0.0.1:<port>`
+// and read your tasks or trigger a run (the loopback DNS-rebinding class). We
+// trust only the app's own webview origins and loopback dev origins; a real
+// site like `https://evil.com` matches none of these, so its reads are blocked
+// and its JSON mutations never pass preflight.
+export function resolveCorsOrigin(origin: string | null): string | null {
+  if (origin === null) return null;
+  // Packaged Tauri webview (scheme varies by platform).
+  if (
+    origin === 'tauri://localhost' ||
+    origin === 'https://tauri.localhost' ||
+    origin === 'http://tauri.localhost'
+  ) {
+    return origin;
+  }
+  // Loopback dev origins (vite dev server / browser dev harness), any port.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    return origin;
+  }
+  return null;
+}
+
+// Adds CORS headers so the desktop webview / browser dev harness (a different
+// origin than `http://127.0.0.1:<port>`) can read this daemon's responses,
+// but ONLY for trusted origins (see resolveCorsOrigin). Mutating the existing
 // response's headers keeps streamed bodies (Bun.file static responses) intact.
-function withCors(res: Response): Response {
-  res.headers.set('access-control-allow-origin', '*');
-  res.headers.set('access-control-allow-methods', 'GET, POST, PATCH, OPTIONS');
-  res.headers.set('access-control-allow-headers', 'content-type');
+function withCors(res: Response, origin: string | null): Response {
+  const allowed = resolveCorsOrigin(origin);
+  if (allowed !== null) {
+    res.headers.set('access-control-allow-origin', allowed);
+    res.headers.set(
+      'access-control-allow-methods',
+      'GET, POST, PATCH, OPTIONS'
+    );
+    res.headers.set('access-control-allow-headers', 'content-type');
+    // The allowed origin is request-dependent, so caches must key on it.
+    res.headers.set('vary', 'origin');
+  }
   return res;
 }
 
@@ -237,34 +270,37 @@ export async function startServer(
     hostname: '127.0.0.1',
     async fetch(req, srv) {
       const url = new URL(req.url);
+      const origin = req.headers.get('origin');
 
       if (url.pathname === '/ws') {
         if (srv.upgrade(req)) return undefined;
         return withCors(
-          new Response('expected websocket upgrade', { status: 400 })
+          new Response('expected websocket upgrade', { status: 400 }),
+          origin
         );
       }
 
       // The desktop webview and the browser dev harness both fetch this daemon
-      // cross-origin (webview origin vs `http://127.0.0.1:<port>`), so every
-      // response needs CORS headers or the browser blocks the JS from reading
-      // it ("TypeError: Failed to fetch") — which manifested as the UI hanging
-      // forever on "Loading board…". The daemon is loopback-only, so a wildcard
-      // origin is safe. A JSON PATCH/POST triggers a preflight; answer it here.
+      // cross-origin (webview origin vs `http://127.0.0.1:<port>`), so trusted
+      // origins need CORS headers or the browser blocks the JS from reading the
+      // response ("TypeError: Failed to fetch") — which manifested as the UI
+      // hanging forever on "Loading board…". A JSON PATCH/POST triggers a
+      // preflight; answer it here (untrusted origins get no CORS header and are
+      // thus blocked).
       if (req.method === 'OPTIONS') {
-        return withCors(new Response(null, { status: 204 }));
+        return withCors(new Response(null, { status: 204 }), origin);
       }
 
       if (url.pathname.startsWith('/api/')) {
-        return withCors(await handleApi(req, apiCtx));
+        return withCors(await handleApi(req, apiCtx), origin);
       }
 
       if (webDistDir !== null) {
         const staticResponse = await serveStatic(url.pathname, webDistDir);
-        if (staticResponse !== null) return withCors(staticResponse);
+        if (staticResponse !== null) return withCors(staticResponse, origin);
       }
 
-      return withCors(new Response('not found', { status: 404 }));
+      return withCors(new Response('not found', { status: 404 }), origin);
     },
     // Without this, an error escaping `fetch` falls to Bun's development
     // error page, which embeds the stack trace, absolute paths, and source
@@ -272,12 +308,17 @@ export async function startServer(
     // never carry stack traces — log server-side, return opaque JSON.
     error(err) {
       console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
-      return withCors(
-        new Response(JSON.stringify({ error: 'internal error' }), {
-          status: 500,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        })
-      );
+      return new Response(JSON.stringify({ error: 'internal error' }), {
+        status: 500,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          // Bun's error handler has no access to the request; a 500 body is
+          // opaque anyway, so echo a wildcard-free permissive header only for
+          // the app's own dev/webview origins is not possible here — omit CORS.
+          // The browser will surface it as a network error, which is correct
+          // for an unexpected server fault.
+        },
+      });
     },
     websocket: {
       open(ws) {

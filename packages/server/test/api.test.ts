@@ -66,21 +66,47 @@ describe('GET /api/health', () => {
   // cross-origin; without CORS headers the browser blocks the JS from reading
   // the response ("TypeError: Failed to fetch") and the UI hangs forever on
   // "Loading board…". curl never enforces CORS, so this must be asserted here.
-  it('sends a permissive CORS origin header on API responses', async () => {
-    const res = await fetch(`${baseUrl}/api/health`);
-    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+  it('echoes a trusted origin in the CORS header', async () => {
+    const res = await fetch(`${baseUrl}/api/health`, {
+      headers: { origin: 'http://localhost:5173' },
+    });
+    expect(res.headers.get('access-control-allow-origin')).toBe(
+      'http://localhost:5173'
+    );
+  });
+
+  // Security: a wildcard would let any web page you visit read this
+  // agent-dispatching daemon. Untrusted origins must get no CORS header.
+  it('sends no CORS header for an untrusted origin', async () => {
+    const res = await fetch(`${baseUrl}/api/health`, {
+      headers: { origin: 'https://evil.com' },
+    });
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
   });
 });
 
 describe('CORS preflight', () => {
-  it('answers an OPTIONS preflight with 204 and the allow headers', async () => {
-    const res = await fetch(`${baseUrl}/api/tasks`, { method: 'OPTIONS' });
+  it('answers a trusted OPTIONS preflight with 204 and the allow headers', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'OPTIONS',
+      headers: { origin: 'http://localhost:5173' },
+    });
     expect(res.status).toBe(204);
-    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-origin')).toBe(
+      'http://localhost:5173'
+    );
     expect(res.headers.get('access-control-allow-methods')).toContain('PATCH');
     expect(res.headers.get('access-control-allow-headers')).toContain(
       'content-type'
     );
+  });
+
+  it('gives an untrusted preflight no CORS header (browser will block it)', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'OPTIONS',
+      headers: { origin: 'https://evil.com' },
+    });
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
   });
 });
 
