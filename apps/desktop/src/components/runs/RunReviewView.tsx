@@ -68,8 +68,9 @@ interface RunReviewViewProps {
  * Review surface for a terminal run (finished/failed/cancelled): the unified diff (@pierre/diffs
  * PatchDiff) alongside a git-status-decorated changed-files tree (@pierre/trees FileTree), with
  * merge / discard / request-changes actions. `diff`/`diffLoading`/`diffError` are owned by the
- * caller (TasksPanel, via `GET /api/runs/:id/diff`) rather than fetched here, matching this
- * codebase's presentational-component convention for the Tasks tab.
+ * caller (RunsView, via `useDispatchProject`'s `GET /api/runs/:id/diff` query) rather than
+ * fetched here, matching this codebase's presentational-component convention for the primary
+ * dispatch views.
  */
 export function RunReviewView({
   meta,

@@ -64,6 +64,11 @@
   /* Modal backdrop — a translucent scrim, tuned per-theme since a fixed light-mode value
      barely dims a dark page (see the dark-mode override below). */
   --overlay: rgba(42, 42, 40, 0.3);
+  /* A lighter scrim for the task peek panel — the peek deliberately keeps the board legible
+     behind it (unlike a full Modal, which wants the page beneath it to read as "blocked"),
+     but a fully transparent backdrop gave no visible signal that a click there does anything
+     — this dims just enough to read as "click away to close". */
+  --overlay-light: rgba(42, 42, 40, 0.08);
 
   /* Typography */
   --font-mono: 'IBM Plex Mono', 'Fira Code', monospace;
@@ -143,5 +148,6 @@
     --gray-border: #403f3a;
 
     --overlay: rgba(0, 0, 0, 0.55);
+    --overlay-light: rgba(0, 0, 0, 0.25);
   }
 }

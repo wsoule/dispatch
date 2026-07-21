@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
-import { filterDispatchEnabledProjects } from './dispatchProjects';
+import {
+  dedupeProjectsByPath,
+  filterDispatchEnabledProjects,
+} from './dispatchProjects';
 import type { ProjectSummary } from './types';
 
 function makeProject(id: string, path: string): ProjectSummary {
@@ -44,5 +47,35 @@ describe('filterDispatchEnabledProjects', () => {
     const projects = [makeProject('a', '/repo/a')];
     const flags = new Map([['/repo/a', false]]);
     expect(filterDispatchEnabledProjects(projects, flags)).toEqual([]);
+  });
+});
+
+describe('dedupeProjectsByPath', () => {
+  // Relay's own project list can carry more than one row for the same filesystem path —
+  // e.g. a repo worked in with both Claude Code and Codex gets one project row per
+  // originating agent-log source, same `path`, different `id`. A dispatchd sidecar is 1:1
+  // with a *path* (ensure_dispatchd/has_dispatch both key off it, never off Relay's row
+  // id), so fanning out a sidecar-per-project-row query (the sidebar's switcher, the
+  // command palette's project-switch entries, `useAllAgents`' cross-project fan-out) over
+  // the un-deduped list double-queries the same daemon and — since two entries can share an
+  // in-flight `port: undefined` placeholder before either resolves — trips react-query's
+  // "Duplicate Queries found" dev warning. Discovered live during phase-8 fix verification,
+  // not from the original review list.
+  test('keeps only the first project row for each distinct path', () => {
+    const projects = [
+      makeProject('claude-row', '/repo/a'),
+      makeProject('codex-row', '/repo/a'),
+      makeProject('b', '/repo/b'),
+    ];
+    expect(dedupeProjectsByPath(projects)).toEqual([projects[0], projects[2]]);
+  });
+
+  test('is a no-op when every path is already distinct', () => {
+    const projects = [makeProject('a', '/repo/a'), makeProject('b', '/repo/b')];
+    expect(dedupeProjectsByPath(projects)).toEqual(projects);
+  });
+
+  test('handles an empty list', () => {
+    expect(dedupeProjectsByPath([])).toEqual([]);
   });
 });
