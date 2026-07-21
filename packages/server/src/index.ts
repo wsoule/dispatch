@@ -10,10 +10,8 @@ import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
-import { FakeExecutor } from './orchestrator/executors/fake.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
 import { PlanManager } from './orchestrator/plan.js';
-import type { Planner } from './orchestrator/planner.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
@@ -41,18 +39,23 @@ export interface StartServerOptions {
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
   // Overrides which executors get registered on the orchestrator, in place
-  // of the production default (ClaudeExecutor as 'claude', FakeExecutor as
-  // 'fake'). Tests that dispatch through the real HTTP surface without
-  // exercising the real Agent SDK (e.g. a request that omits `executor` and
-  // so defaults to 'claude') use this to register a FakeExecutor under
-  // 'claude' too — the point being that no test outside the explicitly-
-  // gated DISPATCH_CLAUDE_SMOKE one ever invokes a real Claude session.
+  // of the production default (ClaudeExecutor as 'claude' only — Phase 7
+  // moved FakeExecutor's registration behind bin.ts's DISPATCH_ENABLE_FAKES
+  // gate rather than always registering it here). Tests that dispatch
+  // through the real HTTP surface without exercising the real Agent SDK
+  // (e.g. a request that omits `executor` and so defaults to 'claude') use
+  // this to register a FakeExecutor under 'claude' too — the point being
+  // that no test outside the explicitly-gated DISPATCH_CLAUDE_SMOKE one ever
+  // invokes a real Claude session.
   registerExecutors?: (orchestrator: Orchestrator) => void;
-  // Phase 5 P1. Defaults to a real ClaudePlanner rooted at `rootDir`; tests
-  // override with a FakePlanner (see orchestrator/planners/fake.ts) so
-  // nothing outside a DISPATCH_CLAUDE_SMOKE-style gate ever calls the real
-  // Agent SDK's plan mode.
-  planner?: Planner;
+  // Phase 5 P1, revised Phase 7: overrides which planners get registered on
+  // the PlanManager, in place of the production default (ClaudePlanner as
+  // 'claude' only). Tests override with a FakePlanner (see
+  // orchestrator/planners/fake.ts) registered under 'claude' so nothing
+  // outside a DISPATCH_CLAUDE_SMOKE-style gate ever calls the real Agent
+  // SDK's plan mode; bin.ts's DISPATCH_ENABLE_FAKES gate additionally
+  // registers a 'fake' planner alongside the real one for CLI e2e testing.
+  registerPlanners?: (planManager: PlanManager) => void;
   // Overrides PrManager's gh/git seam and its capability-detection seam
   // (both take the same CommandRunner shape) so tests can exercise the PR
   // review path without a real GitHub remote or a logged-in gh CLI.
@@ -157,42 +160,34 @@ export async function startServer(
   });
 
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
-  // Agent SDK executor) is the default per api.ts's createRun; 'fake' stays
-  // registered alongside it as a scripted stand-in (a hidden dev toggle,
-  // per the plan) so the full run lifecycle can be exercised through the
-  // real HTTP/WS surface without spending real Claude budget. Tests
-  // override this via `registerExecutors` (see its doc comment).
+  // Agent SDK executor) is the production default per api.ts's createRun.
+  // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
+  // it under 'fake' only when DISPATCH_ENABLE_FAKES=1, a test/e2e-only hook.
+  // Tests override this default entirely via `registerExecutors` (see its
+  // doc comment) to register a FakeExecutor without going through bin.ts at
+  // all.
   const orchestrator = new Orchestrator({ rootDir, store, cache, events });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
-    orchestrator.registerExecutor(
-      'fake',
-      new FakeExecutor({
-        steps: [
-          {
-            entry: {
-              ts: new Date().toISOString(),
-              kind: 'assistant',
-              text: 'FakeExecutor: simulating a dispatch run.',
-            },
-          },
-        ],
-        finish: { state: 'finished', costUsd: 0, turns: 1 },
-      })
-    );
   }
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
   orchestrator.reconcileOnBoot();
 
-  // Phase 5 P1: the planner (real ClaudePlanner by default; tests inject a
-  // FakePlanner) and the epic dispatch engine, both wired against the same
-  // store/cache/events/orchestrator every other request handler shares.
-  const planner = opts.planner ?? new ClaudePlanner(rootDir);
-  const planManager = new PlanManager({ store, cache, events }, planner);
+  // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
+  // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
+  // via `registerPlanners`) and the epic dispatch engine, both wired against
+  // the same store/cache/events/orchestrator every other request handler
+  // shares.
+  const planManager = new PlanManager({ store, cache, events });
+  if (opts.registerPlanners !== undefined) {
+    opts.registerPlanners(planManager);
+  } else {
+    planManager.registerPlanner('claude', new ClaudePlanner(rootDir));
+  }
   const epicEngine = new EpicEngine({
     rootDir,
     store,
