@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { isDone, readyTasks } from '../src/graph.js';
+import { findDependencyCycles, isDone, readyTasks } from '../src/graph.js';
 import type { TaskDoc, TaskMeta } from '../src/types.js';
 
 function make(partial: Partial<TaskMeta>): TaskDoc {
@@ -98,5 +98,47 @@ describe('isDone', () => {
     expect(isDone(make({ status: 'done' }))).toBe(true);
     expect(isDone(make({ status: 'cancelled' }))).toBe(true);
     expect(isDone(make({ status: 'in-review' }))).toBe(false);
+  });
+});
+
+describe('findDependencyCycles', () => {
+  it('returns no cycles for an acyclic graph', () => {
+    const a = make({ id: 't-a00000', blockedBy: [] });
+    const b = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
+    const c = make({ id: 't-c00000', blockedBy: ['t-b00000'] });
+    expect(findDependencyCycles([a, b, c])).toEqual([]);
+  });
+
+  it('finds a direct two-task cycle', () => {
+    const a = make({ id: 't-a00000', blockedBy: ['t-b00000'] });
+    const b = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
+    const cycles = findDependencyCycles([a, b]);
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0][0]).toBe(cycles[0][cycles[0].length - 1]);
+    expect(new Set(cycles[0])).toEqual(new Set(['t-a00000', 't-b00000']));
+  });
+
+  it('finds a longer cycle through an intermediate task', () => {
+    const a = make({ id: 't-a00000', blockedBy: ['t-b00000'] });
+    const b = make({ id: 't-b00000', blockedBy: ['t-c00000'] });
+    const c = make({ id: 't-c00000', blockedBy: ['t-a00000'] });
+    const cycles = findDependencyCycles([a, b, c]);
+    expect(cycles).toHaveLength(1);
+    expect(new Set(cycles[0])).toEqual(
+      new Set(['t-a00000', 't-b00000', 't-c00000'])
+    );
+  });
+
+  it('ignores self-references and dangling ids (reported separately by doctor)', () => {
+    const a = make({ id: 't-a00000', blockedBy: ['t-a00000', 't-ghost0'] });
+    expect(findDependencyCycles([a])).toEqual([]);
+  });
+
+  it('does not block on an acyclic diamond of shared dependencies', () => {
+    const a = make({ id: 't-a00000', blockedBy: [] });
+    const b = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
+    const c = make({ id: 't-c00000', blockedBy: ['t-a00000'] });
+    const d = make({ id: 't-d00000', blockedBy: ['t-b00000', 't-c00000'] });
+    expect(findDependencyCycles([a, b, c, d])).toEqual([]);
   });
 });
