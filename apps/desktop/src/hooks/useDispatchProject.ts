@@ -14,7 +14,7 @@ import type {
   UpdatePatch,
 } from '@dispatch/core';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { isTerminalRunState } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
@@ -24,6 +24,20 @@ import { ensureDispatchd } from '../lib/tauri';
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
 // only the live event carries it (see the WS effect below).
 type PendingApproval = { requestId: string; toolName: string };
+
+export interface UseDispatchProjectOptions {
+  /** Which run's detail/diff to fetch, if any — the *single* source of truth for "which run
+   * is selected" lives in the app-root `navReducer`'s `activeRunId` (see the phase-8 fix
+   * report's C1: this hook used to keep its own duplicate `selectedRunId` state that nothing
+   * outside `RunsView`'s row-click ever wrote to, so opening a run from the task peek panel
+   * updated nav state but left this hook still pointed at whatever run — or none — it saw
+   * last). Pass `null` when nothing is selected. */
+  selectedRunId: string | null;
+  /** Called once a run is created or re-dispatched (request-changes), so the caller can move
+   * `navReducer`'s `activeRunId`/`projectView` to point at it. Replaces the old internal
+   * `setSelectedRunId(meta.id)` side effect. */
+  onRunDispatched?: (runId: string) => void;
+}
 
 export interface DispatchProjectData {
   /** `null` until the dispatchd sidecar's port resolves; every field below stays in its own
@@ -47,8 +61,6 @@ export interface DispatchProjectData {
   liveRunStateByTaskId: Map<string, RunState>;
   latestRunByTaskId: Map<string, RunMeta>;
 
-  selectedRunId: string | null;
-  setSelectedRunId: (runId: string | null) => void;
   runDetail: RunDetail | undefined;
   diff: import('@dispatch/client').DiffResult | undefined;
   diffLoading: boolean;
@@ -89,16 +101,29 @@ export interface DispatchProjectData {
  * duplicating it four times. Pass `null` for `projectPath` when no project is active yet (the
  * get-started state) — every query below stays disabled and every field reads as empty/loading
  * rather than throwing.
+ *
+ * Every handler below is wrapped in `useCallback` with a complete, accurate dependency list —
+ * not because any of them are passed to `useEffect`, but so callers (like `App.tsx`'s
+ * `paletteEntries` memo) that *do* depend on them can list them honestly instead of reaching
+ * for an `eslint-disable` to hide a dependency that changes identity every render.
  */
 export function useDispatchProject(
-  projectPath: string | null
+  projectPath: string | null,
+  { selectedRunId, onRunDispatched }: UseDispatchProjectOptions
 ): DispatchProjectData {
   const queryClient = useQueryClient();
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<
     Map<string, PendingApproval>
   >(new Map());
   const [planId, setPlanId] = useState<string | null>(null);
+
+  // A plan started against one project's dispatchd must never leak into another project's
+  // Plans view — without this, switching projects while a plan was mid-flight (or just left
+  // `ready`) would carry the old `planId` over and immediately try to `fetchPlan` it against
+  // the *new* project's port, 404ing (see I5 in the phase-8 fix report).
+  useEffect(() => {
+    setPlanId(null);
+  }, [projectPath]);
 
   const {
     data: port,
@@ -177,6 +202,12 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
+  // `retry: false` on both the run detail and diff queries below: `selectedRunId` comes from
+  // nav state and can — for one render, e.g. mid project-switch — point at an id that belongs
+  // to a different project's daemon (a stale `activeRunId` briefly surviving until
+  // `navReducer`'s `selectProject` clears it). A 404 in that window should surface (or just
+  // quietly go stale once the id changes again) rather than retry against a daemon that will
+  // never have that run.
   const { data: runDetail } = useQuery({
     queryKey: runDetailQueryKey,
     queryFn: () => {
@@ -186,6 +217,7 @@ export function useDispatchProject(
       return client.fetchRun(selectedRunId);
     },
     enabled: client !== null && selectedRunId !== null,
+    retry: false,
   });
   const diffEnabled =
     client !== null &&
@@ -205,6 +237,7 @@ export function useDispatchProject(
       return client.fetchRunDiff(selectedRunId);
     },
     enabled: diffEnabled,
+    retry: false,
   });
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
@@ -218,6 +251,8 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // `retry: false`: a stale `planId` mid project-switch (cleared by the effect above, but not
+  // instantly re-rendered) should never retry against the wrong daemon — see I5.
   const { data: planRecord } = useQuery({
     queryKey: planQueryKey,
     queryFn: () => {
@@ -227,6 +262,7 @@ export function useDispatchProject(
       return client.fetchPlan(planId);
     },
     enabled: client !== null && planId !== null,
+    retry: false,
     // A running plan is worth polling — nothing on the WS event stream tells us when the
     // planner call itself finishes (only `plan.changed`, which fires once it's already
     // done), so a short poll while `state === 'running'` is the simplest way to notice.
@@ -351,122 +387,161 @@ export function useDispatchProject(
     return map;
   }, [runs]);
 
-  async function handleUpdate(id: string, patch: UpdatePatch): Promise<void> {
-    if (client === null) return;
-    await client.updateTask(id, patch);
-    void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-    void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-  }
+  const handleUpdate = useCallback(
+    async (id: string, patch: UpdatePatch): Promise<void> => {
+      if (client === null) return;
+      await client.updateTask(id, patch);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    },
+    [client, queryClient, tasksQueryKey, readyQueryKey]
+  );
 
-  async function handleCreate(input: CreateInput): Promise<void> {
-    if (client === null) return;
-    await client.createTask(input);
-    void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-    void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-  }
+  const handleCreate = useCallback(
+    async (input: CreateInput): Promise<void> => {
+      if (client === null) return;
+      await client.createTask(input);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    },
+    [client, queryClient, tasksQueryKey, readyQueryKey]
+  );
 
-  async function handleDispatch(
-    taskId: string,
-    executor?: 'fake' | 'claude'
-  ): Promise<void> {
-    if (client === null) return;
-    const meta = await client.createRun(taskId, executor);
-    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-    void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-    void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-    setSelectedRunId(meta.id);
-  }
+  const handleDispatch = useCallback(
+    async (taskId: string, executor?: 'fake' | 'claude'): Promise<void> => {
+      if (client === null) return;
+      const meta = await client.createRun(taskId, executor);
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+      onRunDispatched?.(meta.id);
+    },
+    [
+      client,
+      queryClient,
+      runsQueryKey,
+      tasksQueryKey,
+      readyQueryKey,
+      onRunDispatched,
+    ]
+  );
 
-  async function handleApprove(
-    runId: string,
-    requestId: string,
-    allow: boolean
-  ): Promise<void> {
-    if (client === null) return;
-    await client.approveRun(runId, requestId, allow);
-    setPendingApprovals((prev) => {
-      const next = new Map(prev);
-      next.delete(runId);
-      return next;
-    });
-    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-    void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
-  }
+  const handleApprove = useCallback(
+    async (runId: string, requestId: string, allow: boolean): Promise<void> => {
+      if (client === null) return;
+      await client.approveRun(runId, requestId, allow);
+      setPendingApprovals((prev) => {
+        const next = new Map(prev);
+        next.delete(runId);
+        return next;
+      });
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, runsQueryKey, port]
+  );
 
-  async function handleSendMessage(runId: string, text: string): Promise<void> {
-    if (client === null) return;
-    await client.sendRunMessage(runId, text);
-    void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
-  }
+  const handleSendMessage = useCallback(
+    async (runId: string, text: string): Promise<void> => {
+      if (client === null) return;
+      await client.sendRunMessage(runId, text);
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, port]
+  );
 
-  async function handleCancelRun(runId: string): Promise<void> {
-    if (client === null) return;
-    await client.cancelRun(runId);
-    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-    void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
-  }
+  const handleCancelRun = useCallback(
+    async (runId: string): Promise<void> => {
+      if (client === null) return;
+      await client.cancelRun(runId);
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, runsQueryKey, port]
+  );
 
-  async function handleReview(
-    runId: string,
-    action: 'merge' | 'discard'
-  ): Promise<void> {
-    if (client === null) return;
-    await client.reviewRun(runId, action);
-    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-    void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-    void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-  }
+  const handleReview = useCallback(
+    async (runId: string, action: 'merge' | 'discard'): Promise<void> => {
+      if (client === null) return;
+      await client.reviewRun(runId, action);
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    },
+    [client, queryClient, runsQueryKey, tasksQueryKey, readyQueryKey]
+  );
 
-  async function handleRequestChanges(
-    runId: string,
-    text: string
-  ): Promise<void> {
-    if (client === null) return;
-    const meta = await client.sendRunMessage(runId, text, { resume: true });
-    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-    void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-    void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-    setSelectedRunId(meta.id);
-  }
+  const handleRequestChanges = useCallback(
+    async (runId: string, text: string): Promise<void> => {
+      if (client === null) return;
+      const meta = await client.sendRunMessage(runId, text, { resume: true });
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+      // request-changes re-dispatches under a fresh run id — follow it so the caller keeps
+      // showing the run that's now actually live.
+      onRunDispatched?.(meta.id);
+    },
+    [
+      client,
+      queryClient,
+      runsQueryKey,
+      tasksQueryKey,
+      readyQueryKey,
+      onRunDispatched,
+    ]
+  );
 
-  async function handleOpenPr(runId: string): Promise<void> {
-    if (client === null) return;
-    await client.reviewRun(runId, 'pr');
-    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-    void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
-  }
+  const handleOpenPr = useCallback(
+    async (runId: string): Promise<void> => {
+      if (client === null) return;
+      await client.reviewRun(runId, 'pr');
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, runsQueryKey, port]
+  );
 
-  async function handleWorkEpic(
-    epicId: string,
-    concurrency: number
-  ): Promise<void> {
-    if (client === null) return;
-    await client.startEpic(epicId, { concurrency });
-    void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
-    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-  }
+  const handleWorkEpic = useCallback(
+    async (epicId: string, concurrency: number): Promise<void> => {
+      if (client === null) return;
+      await client.startEpic(epicId, { concurrency });
+      void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    },
+    [client, queryClient, epicProgressKeyPrefix, runsQueryKey]
+  );
 
-  async function handleStopEpic(epicId: string): Promise<void> {
-    if (client === null) return;
-    await client.stopEpic(epicId);
-    void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
-  }
+  const handleStopEpic = useCallback(
+    async (epicId: string): Promise<void> => {
+      if (client === null) return;
+      await client.stopEpic(epicId);
+      void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+    },
+    [client, queryClient, epicProgressKeyPrefix]
+  );
 
   // Returns the new plan's id so PlansView can add it to its local session history
   // immediately, without waiting on a refetch.
-  async function handleSubmitPrompt(prompt: string): Promise<string> {
-    if (client === null) throw new Error('dispatchd client not ready');
-    const { planId: newPlanId } = await client.startPlan(prompt);
-    setPlanId(newPlanId);
-    return newPlanId;
-  }
+  const handleSubmitPrompt = useCallback(
+    async (prompt: string): Promise<string> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const { planId: newPlanId } = await client.startPlan(prompt);
+      setPlanId(newPlanId);
+      return newPlanId;
+    },
+    [client]
+  );
 
-  async function handleConfirmPlan(proposal: PlanProposal): Promise<void> {
-    if (client === null || planId === null) return;
-    await client.confirmPlan(planId, proposal);
-    void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
-    void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-  }
+  const handleConfirmPlan = useCallback(
+    async (proposal: PlanProposal): Promise<void> => {
+      if (client === null || planId === null) return;
+      await client.confirmPlan(planId, proposal);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    },
+    [client, planId, queryClient, tasksQueryKey, readyQueryKey]
+  );
 
   return {
     client,
@@ -487,8 +562,6 @@ export function useDispatchProject(
     liveRunStateByTaskId,
     latestRunByTaskId,
 
-    selectedRunId,
-    setSelectedRunId,
     runDetail,
     diff,
     diffLoading,
