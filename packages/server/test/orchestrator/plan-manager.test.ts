@@ -33,7 +33,9 @@ afterEach(() => {
 });
 
 function makeManager(planner: FakePlanner): PlanManager {
-  return new PlanManager({ store, cache, events }, planner);
+  const manager = new PlanManager({ store, cache, events });
+  manager.registerPlanner('claude', planner);
+  return manager;
 }
 
 async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -452,5 +454,57 @@ describe('PlanManager.confirm', () => {
 
     const [aId, bId, cId] = result.taskIds;
     expect(store.get(cId)?.meta.blockedBy).toEqual([aId, bId]);
+  });
+});
+
+// Phase 7: PlanManager's own executor-style registry — registerPlanner/
+// registeredPlannerNames — is what lets `POST /api/plan` accept a `planner`
+// field with the same "unknown name is a 400 naming every valid option"
+// contract createRun's `executor` field already has. These tests exercise
+// the registry directly, independent of api.ts's HTTP-layer validation.
+describe('PlanManager planner registry', () => {
+  it('starts with no planners registered', () => {
+    const manager = new PlanManager({ store, cache, events });
+    expect(manager.registeredPlannerNames()).toEqual([]);
+  });
+
+  it('lists every registered planner name', () => {
+    const manager = new PlanManager({ store, cache, events });
+    manager.registerPlanner(
+      'claude',
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    manager.registerPlanner(
+      'fake',
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    expect(manager.registeredPlannerNames().sort()).toEqual(['claude', 'fake']);
+  });
+
+  it('throws OrchestratorClientError for an unregistered planner name', () => {
+    const manager = new PlanManager({ store, cache, events });
+    manager.registerPlanner(
+      'claude',
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    expect(() => manager.startPlan('do something', 'fake')).toThrow(
+      OrchestratorClientError
+    );
+  });
+
+  it('runs the named planner, not just whichever was registered first', async () => {
+    const claudeProposal: PlanProposal = { tasks: [] };
+    const manager = new PlanManager({ store, cache, events });
+    manager.registerPlanner(
+      'claude',
+      new FakePlanner({ ok: true, proposal: claudeProposal })
+    );
+    manager.registerPlanner(
+      'fake',
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const started = manager.startPlan('build 5 things', 'fake');
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    expect(manager.get(started.id).proposal).toEqual(SAMPLE_PROPOSAL);
   });
 });

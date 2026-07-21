@@ -129,8 +129,17 @@ describe('run_list (no daemon running)', () => {
 describe('run_list (live daemon)', () => {
   it('proxies GET /api/runs from a real dispatchd', async () => {
     const binPath = resolveDaemonBin();
+    // Phase 7: production dispatchd only ever registers the real 'claude'
+    // executor by default — `DISPATCH_ENABLE_FAKES=1` is what additionally
+    // registers a scripted 'fake' one (see bin.ts's own doc comment), which
+    // this test needs so it can dispatch a real run without constructing a
+    // real Agent SDK session.
     const child = Bun.spawn(['bun', binPath, '--root', root, '--port', '0'], {
-      env: { ...process.env, DISPATCH_HOME: fakeHome },
+      env: {
+        ...process.env,
+        DISPATCH_HOME: fakeHome,
+        DISPATCH_ENABLE_FAKES: '1',
+      },
       stdout: 'ignore',
       stderr: 'ignore',
     });
@@ -146,11 +155,11 @@ describe('run_list (live daemon)', () => {
       expect(empty.structuredContent?.runs).toEqual([]);
       expect(empty.structuredContent?.note).toBeUndefined();
 
-      // Dispatch a real run against the live daemon using dispatchd's
-      // production 'fake' executor (a scripted stand-in registered
-      // alongside the real 'claude' one — see index.ts) so this proves the
-      // run_list proxy round-trip against a real /api/runs response without
-      // ever constructing a real Agent SDK session.
+      // Dispatch a real run against the live daemon using the 'fake'
+      // executor DISPATCH_ENABLE_FAKES=1 registered above — a scripted
+      // stand-in alongside the real 'claude' one (see bin.ts) — so this
+      // proves the run_list proxy round-trip against a real /api/runs
+      // response without ever constructing a real Agent SDK session.
       const baseUrl = `http://127.0.0.1:${port}`;
       const taskRes = await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',

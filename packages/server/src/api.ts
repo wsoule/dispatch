@@ -346,14 +346,32 @@ async function injectRunMessage(
   return jsonResponse(meta);
 }
 
+// POST /api/plan. `planner` is optional (defaults to 'claude'), same
+// contract as createRun's `executor` field above: a name outside what's
+// actually registered on this PlanManager instance (Phase 7's
+// registerPlanner/registeredPlannerNames, mirroring the orchestrator's own
+// executor registry) is a 400 naming every valid option.
 async function startPlan(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { prompt?: unknown };
+  const body = parsed.value as { prompt?: unknown; planner?: unknown };
   if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
     return errorResponse(400, 'invalid prompt: prompt is required');
   }
-  const record = ctx.planManager.startPlan(body.prompt);
+  const knownPlannerNames = ctx.planManager.registeredPlannerNames();
+  if (
+    body.planner !== undefined &&
+    (typeof body.planner !== 'string' ||
+      !knownPlannerNames.includes(body.planner))
+  ) {
+    return errorResponse(
+      400,
+      `invalid planner: ${String(body.planner)} (expected ${knownPlannerNames.join('|')})`
+    );
+  }
+  const plannerName =
+    typeof body.planner === 'string' ? body.planner : 'claude';
+  const record = ctx.planManager.startPlan(body.prompt, plannerName);
   return jsonResponse({ planId: record.id }, 202);
 }
 
