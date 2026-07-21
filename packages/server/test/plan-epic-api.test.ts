@@ -94,7 +94,9 @@ async function startWithPlanner(planner: FakePlanner): Promise<void> {
     rootDir: root,
     port: 0,
     writeDaemonFile: false,
-    planner,
+    registerPlanners: (planManager) => {
+      planManager.registerPlanner('claude', planner);
+    },
     registerExecutors: (orchestrator) => {
       orchestrator.registerExecutor('fake', fakeApprovalExecutor());
       orchestrator.registerExecutor('claude', fakeApprovalExecutor());
@@ -450,7 +452,12 @@ describe('POST /api/runs/:id/inject', () => {
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
-      planner: new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL }),
+      registerPlanners: (planManager) => {
+        planManager.registerPlanner(
+          'claude',
+          new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+        );
+      },
       registerExecutors: (orchestrator) => {
         orchestrator.registerExecutor('claude', controllable);
       },
@@ -511,7 +518,12 @@ describe('GET /api/health pr capability', () => {
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
-      planner: new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL }),
+      registerPlanners: (planManager) => {
+        planManager.registerPlanner(
+          'claude',
+          new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+        );
+      },
       prCommandRunner: stubRunner,
       registerExecutors: (orchestrator) => {
         orchestrator.registerExecutor('fake', fakeApprovalExecutor());
