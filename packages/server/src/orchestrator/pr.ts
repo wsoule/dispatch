@@ -70,10 +70,115 @@ export async function detectPrCapability(
 }
 
 export interface PrManagerContext {
+  rootDir: string;
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
+}
+
+// A CI check rollup summarized to counts the UI can render as a compact
+// pass/fail/pending line, instead of the raw per-check array GitHub returns.
+export interface PrCheckSummary {
+  passed: number;
+  failed: number;
+  pending: number;
+  total: number;
+}
+
+// The reviewable state of a run's GitHub PR, from `gh pr view --json …`.
+// Every field is what the review UI needs to show status at a glance without
+// the person leaving the app for GitHub.
+export interface PrStatus {
+  number: number;
+  url: string;
+  title: string;
+  state: 'OPEN' | 'MERGED' | 'CLOSED';
+  isDraft: boolean;
+  // GitHub's own aggregate review verdict — null when no review rule applies.
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
+  checks: PrCheckSummary;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}
+
+// One item in a PR's conversation — a submitted review (with its verdict), a
+// PR-level comment, or a code-line comment (carrying its file + line). Unified
+// into one shape so the UI renders them as a single time-ordered thread.
+export interface PrConversationItem {
+  kind: 'review' | 'comment' | 'line-comment';
+  author: string;
+  body: string;
+  createdAt: string;
+  /** For `kind: 'review'` — the review's verdict. */
+  state?: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED';
+  /** For `kind: 'line-comment'` — where in the diff it's anchored. */
+  path?: string;
+  line?: number;
+}
+
+export interface PrDetail {
+  status: PrStatus;
+  conversation: PrConversationItem[];
+}
+
+// The three review verdicts `gh pr review` can submit — approve needs no body,
+// the other two require one (enforced at the API layer, mirroring gh itself).
+export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
+
+// Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
+// parts, so the line-comment REST call (which gh's `pr view --json` can't
+// return) can address the right repo/PR. Returns null for anything that isn't
+// a recognizable PR URL, so a caller degrades to "no line comments" rather
+// than throwing on a malformed stored URL.
+export function parsePrUrl(
+  url: string
+): { owner: string; repo: string; number: number } | null {
+  const match = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
+  if (match === null) return null;
+  return { owner: match[1], repo: match[2], number: Number(match[3]) };
+}
+
+// Collapses GitHub's per-check rollup (a mix of CheckRun and StatusContext
+// nodes, each reporting completion differently) into pass/fail/pending counts.
+// A CheckRun reports `status` (COMPLETED/IN_PROGRESS/QUEUED) + `conclusion`
+// (SUCCESS/FAILURE/…); a legacy StatusContext reports `state`
+// (SUCCESS/FAILURE/PENDING/ERROR). Anything not clearly success or failure
+// counts as pending, so an in-flight run reads as pending rather than passed.
+function summarizeChecks(rollup: unknown): PrCheckSummary {
+  const summary: PrCheckSummary = {
+    passed: 0,
+    failed: 0,
+    pending: 0,
+    total: 0,
+  };
+  if (!Array.isArray(rollup)) return summary;
+  for (const raw of rollup) {
+    if (raw === null || typeof raw !== 'object') continue;
+    const check = raw as { conclusion?: unknown; state?: unknown };
+    const verdict = String(check.conclusion ?? check.state ?? '').toUpperCase();
+    summary.total += 1;
+    if (
+      verdict === 'SUCCESS' ||
+      verdict === 'NEUTRAL' ||
+      verdict === 'SKIPPED'
+    ) {
+      summary.passed += 1;
+    } else if (
+      verdict === 'FAILURE' ||
+      verdict === 'ERROR' ||
+      verdict === 'CANCELLED' ||
+      verdict === 'TIMED_OUT' ||
+      verdict === 'ACTION_REQUIRED'
+    ) {
+      summary.failed += 1;
+    } else {
+      summary.pending += 1;
+    }
+  }
+  return summary;
 }
 
 /**
@@ -232,4 +337,187 @@ export class PrManager {
       }
     }
   }
+
+  // Resolves a run that must have an open PR, for the in-app review calls
+  // below — 404 for an unknown run, 409 for one that has no PR to act on.
+  // gh calls run in the main checkout (`rootDir`, always present) rather than
+  // the run's worktree, which merge/discard removes: a merged PR can still be
+  // read here, and gh addresses the PR by its full URL regardless of cwd.
+  private requireRunWithPr(runId: string): RunMeta {
+    const result = this.ctx.orchestrator.getRun(runId);
+    if (result === null) {
+      throw new OrchestratorNotFoundError(`run not found: ${runId}`);
+    }
+    if (result.meta.prUrl === undefined) {
+      throw new OrchestratorConflictError(`run has no open PR: ${runId}`);
+    }
+    return result.meta;
+  }
+
+  // GET /api/runs/:id/pr. The PR's current status plus its full conversation,
+  // read live from GitHub via gh. The status (state, checks, review verdict,
+  // diffstat) comes from one `gh pr view --json` call; the conversation folds
+  // together submitted reviews, PR-level comments, and — via a REST call gh's
+  // `pr view` can't cover — code-line comments, all sorted oldest-first.
+  async getPrDetail(runId: string): Promise<PrDetail> {
+    const meta = this.requireRunWithPr(runId);
+    const url = meta.prUrl!;
+    const view = await this.run(this.ctx.rootDir, [
+      'gh',
+      'pr',
+      'view',
+      url,
+      '--json',
+      'number,url,title,state,isDraft,reviewDecision,mergeable,statusCheckRollup,additions,deletions,changedFiles,reviews,comments',
+    ]);
+    if (!view.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr view failed: ${commandErrorText(view)}`
+      );
+    }
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(view.stdout) as Record<string, unknown>;
+    } catch {
+      throw new OrchestratorConflictError('gh pr view returned invalid JSON');
+    }
+
+    const status: PrStatus = {
+      number: Number(raw.number ?? 0),
+      url: String(raw.url ?? url),
+      title: String(raw.title ?? meta.taskTitle),
+      state: (raw.state as PrStatus['state']) ?? 'OPEN',
+      isDraft: raw.isDraft === true,
+      reviewDecision:
+        (raw.reviewDecision as PrStatus['reviewDecision']) ?? null,
+      mergeable: (raw.mergeable as PrStatus['mergeable']) ?? null,
+      checks: summarizeChecks(raw.statusCheckRollup),
+      additions: Number(raw.additions ?? 0),
+      deletions: Number(raw.deletions ?? 0),
+      changedFiles: Number(raw.changedFiles ?? 0),
+    };
+
+    const conversation: PrConversationItem[] = [];
+    // Submitted reviews (approve / request-changes / comment), keeping only
+    // those that actually carry a verdict or a body — gh includes a bare
+    // "PENDING"/empty review row for a self-review-in-progress otherwise.
+    if (Array.isArray(raw.reviews)) {
+      for (const r of raw.reviews as Array<Record<string, unknown>>) {
+        const state = String(r.state ?? '').toUpperCase();
+        const body = String(r.body ?? '');
+        if (state === 'PENDING' || (state === '' && body === '')) continue;
+        conversation.push({
+          kind: 'review',
+          author: authorLogin(r.author),
+          body,
+          createdAt: String(r.submittedAt ?? r.createdAt ?? ''),
+          state: state as PrConversationItem['state'],
+        });
+      }
+    }
+    // PR-level (issue) comments.
+    if (Array.isArray(raw.comments)) {
+      for (const c of raw.comments as Array<Record<string, unknown>>) {
+        conversation.push({
+          kind: 'comment',
+          author: authorLogin(c.author),
+          body: String(c.body ?? ''),
+          createdAt: String(c.createdAt ?? ''),
+        });
+      }
+    }
+    // Code-line comments come from the REST API, not `pr view` — best-effort,
+    // so a permissions/parse hiccup just drops the line comments rather than
+    // failing the whole status read.
+    const location = parsePrUrl(url);
+    if (location !== null) {
+      const rest = await this.run(this.ctx.rootDir, [
+        'gh',
+        'api',
+        `repos/${location.owner}/${location.repo}/pulls/${location.number}/comments`,
+      ]);
+      if (rest.ok) {
+        try {
+          const items = JSON.parse(rest.stdout) as Array<
+            Record<string, unknown>
+          >;
+          for (const c of items) {
+            conversation.push({
+              kind: 'line-comment',
+              author: authorLogin(c.user),
+              body: String(c.body ?? ''),
+              createdAt: String(c.created_at ?? ''),
+              path: c.path !== undefined ? String(c.path) : undefined,
+              line:
+                c.line !== undefined && c.line !== null
+                  ? Number(c.line)
+                  : undefined,
+            });
+          }
+        } catch {
+          // Leave line comments out on malformed JSON.
+        }
+      }
+    }
+    conversation.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return { status, conversation };
+  }
+
+  // POST /api/runs/:id/pr/review. Submits a GitHub review on the run's PR —
+  // approve (body optional), request-changes, or comment (both require a
+  // body, enforced by the API layer). Returns the refreshed PrDetail so the
+  // client re-renders with the new verdict/conversation in one round trip.
+  async reviewPr(
+    runId: string,
+    event: PrReviewEvent,
+    body: string
+  ): Promise<PrDetail> {
+    const meta = this.requireRunWithPr(runId);
+    const flag =
+      event === 'approve'
+        ? '--approve'
+        : event === 'request-changes'
+          ? '--request-changes'
+          : '--comment';
+    const cmd = ['gh', 'pr', 'review', meta.prUrl!, flag];
+    if (body.trim() !== '') cmd.push('--body', body);
+    const result = await this.run(this.ctx.rootDir, cmd);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr review failed: ${commandErrorText(result)}`
+      );
+    }
+    return this.getPrDetail(runId);
+  }
+
+  // POST /api/runs/:id/pr/comment. Adds a PR-level comment (not a review) via
+  // `gh pr comment`, then returns the refreshed detail.
+  async commentPr(runId: string, body: string): Promise<PrDetail> {
+    const meta = this.requireRunWithPr(runId);
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'pr',
+      'comment',
+      meta.prUrl!,
+      '--body',
+      body,
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr comment failed: ${commandErrorText(result)}`
+      );
+    }
+    return this.getPrDetail(runId);
+  }
+}
+
+// Pulls a `login` off gh's author/user object shape (either `{login}` from the
+// GraphQL `pr view` payload or `{login}` from the REST payload), falling back
+// to a generic label so a comment from an unresolvable author still renders.
+function authorLogin(author: unknown): string {
+  if (author !== null && typeof author === 'object' && 'login' in author) {
+    const login = (author as { login?: unknown }).login;
+    if (typeof login === 'string' && login !== '') return login;
+  }
+  return 'someone';
 }

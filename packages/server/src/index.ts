@@ -246,7 +246,7 @@ export async function startServer(
   // health check or review action would be wasted work.
   const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
   const prManager = new PrManager(
-    { store, cache, events, orchestrator },
+    { rootDir, store, cache, events, orchestrator },
     prCapability,
     opts.prCommandRunner
   );

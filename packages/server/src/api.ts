@@ -354,6 +354,62 @@ async function reviewRun(
   return jsonResponse(meta);
 }
 
+// GET /api/runs/:id/pr — the run's GitHub PR status + conversation, read live
+// via gh (see PrManager.getPrDetail). 409s a run with no open PR.
+async function getPr(
+  _req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const detail = await ctx.prManager.getPrDetail(runId);
+  return jsonResponse(detail);
+}
+
+// POST /api/runs/:id/pr/review — submit a GitHub review on the run's PR.
+// `approve` may omit a body; `request-changes` and `comment` require one, the
+// same rule gh itself enforces.
+async function reviewPr(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { event?: unknown; body?: unknown };
+  if (
+    body.event !== 'approve' &&
+    body.event !== 'request-changes' &&
+    body.event !== 'comment'
+  ) {
+    return errorResponse(
+      400,
+      `invalid event: ${String(body.event)} (expected approve|request-changes|comment)`
+    );
+  }
+  const text = typeof body.body === 'string' ? body.body : '';
+  if (body.event !== 'approve' && text.trim() === '') {
+    return errorResponse(400, `a ${body.event} review requires a body`);
+  }
+  const detail = await ctx.prManager.reviewPr(runId, body.event, text);
+  return jsonResponse(detail);
+}
+
+// POST /api/runs/:id/pr/comment — add a PR-level comment (not a review).
+async function commentPr(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { body?: unknown };
+  if (typeof body.body !== 'string' || body.body.trim() === '') {
+    return errorResponse(400, 'invalid body: body is required');
+  }
+  const detail = await ctx.prManager.commentPr(runId, body.body);
+  return jsonResponse(detail);
+}
+
 // `fromRunId` is optional and identifies the SENDER (a different run than
 // `runId`, the recipient) — the MCP `agent_message` tool passes its own
 // `DISPATCH_RUN_ID` here so Orchestrator.inject can resolve a real sender
@@ -586,6 +642,25 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await reviewRun(req, ctx, segments[1]);
+      }
+      if (segments.length === 3 && segments[2] === 'pr' && method === 'GET') {
+        return await getPr(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'pr' &&
+        segments[3] === 'review' &&
+        method === 'POST'
+      ) {
+        return await reviewPr(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'pr' &&
+        segments[3] === 'comment' &&
+        method === 'POST'
+      ) {
+        return await commentPr(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&
