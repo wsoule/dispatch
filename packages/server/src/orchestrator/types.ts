@@ -48,6 +48,16 @@ export interface ExecutorStartOptions {
   permissionMode: string;
   maxTurns: number;
   maxBudgetUsd?: number;
+  // The dispatch PROJECT's root directory — distinct from `cwd`, which for a
+  // real run is the run's own git worktree (a different directory than the
+  // project it was cut from). ClaudeExecutor needs both: `cwd` to root the
+  // agent session itself, `projectRoot` to tell the dispatch MCP server it
+  // wires in where the project's real daemon file and `.dispatch/tasks`
+  // live (see claude.ts's DISPATCH_PROJECT_ROOT wiring). Optional — and
+  // falls back to `cwd` in claude.ts — only so FakeExecutor call sites and
+  // fixtures that never touch this don't all need updating; every real
+  // Orchestrator call site always passes it.
+  projectRoot?: string;
 }
 
 // The load-bearing seam (spec §2): every agent backend — FakeExecutor here in

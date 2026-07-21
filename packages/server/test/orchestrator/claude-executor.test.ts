@@ -1,4 +1,8 @@
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  McpStdioServerConfig,
+  Options,
+  Query,
+} from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 
@@ -8,6 +12,21 @@ import type {
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
 import { initGitRepo } from './helpers.js';
+
+// A no-op ExecutorEvents sink for tests below that only care about what
+// gets *sent* to the SDK's query() (the mcpServers wiring), not about any
+// resulting entry/approval/finish events.
+const noopEvents: ExecutorEvents = {
+  onEntry: () => {},
+  onApprovalRequest: () => {},
+  onFinish: () => {},
+};
+
+// An empty async generator — completes immediately with no messages, which
+// is fine for the mcpServers-wiring tests below: they only need `start()`'s
+// synchronous `queryFn(...)` call to have happened, not any particular
+// message stream afterward.
+async function* emptyMessages(): AsyncGenerator<never> {}
 
 // Bun-compat gate (see the phase-4 plan's Global Constraints): dispatchd
 // runs entirely under Bun, so importing this module and constructing a
@@ -21,6 +40,83 @@ describe('ClaudeExecutor Bun compatibility', () => {
     const executor = new ClaudeExecutor();
     expect(executor).toBeInstanceOf(ClaudeExecutor);
     expect(typeof executor.start).toBe('function');
+  });
+});
+
+// Bug 1 (fix/executor-mcp-wiring): a dispatched agent previously had no way
+// to reach the dispatch MCP tools (run_list/task_comment) at all — the Agent
+// SDK's `query()`, unlike the interactive `claude` CLI, does NOT auto-load a
+// project's committed `.mcp.json`. These tests prove the fix at the
+// `queryFn` seam: the exact `Options` this executor hands to `query()` must
+// carry an explicit `mcpServers.dispatch` stdio entry, since a real Claude
+// session (needed to prove the tools are actually callable end-to-end)
+// cannot be assumed to have credentials in this environment.
+describe('ClaudeExecutor dispatch MCP server wiring', () => {
+  it('wires an mcpServers.dispatch stdio entry rooted at the worktree cwd, with DISPATCH_PROJECT_ROOT set to the project root', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        projectRoot: '/tmp/dispatch-project-y',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      noopEvents
+    );
+
+    const dispatch = captured?.mcpServers?.dispatch as
+      | McpStdioServerConfig
+      | undefined;
+    expect(dispatch).toBeDefined();
+    expect(dispatch?.command).toBe('bun');
+    // args: [<mcp bin path>, '--root', <worktree cwd>] — rooted at the
+    // WORKTREE, not the project, so task_list/task_get/task_save/task_next
+    // see the run's own repo checkout.
+    expect(dispatch?.args?.[0]).toMatch(/[/\\]mcp[/\\]src[/\\]bin\.ts$/);
+    expect(dispatch?.args?.[1]).toBe('--root');
+    expect(dispatch?.args?.[2]).toBe('/tmp/dispatch-worktree-x');
+    // The daemon-discovery/task_comment override: the PROJECT root, not the
+    // worktree — see packages/mcp/src/tools.ts's projectRoot() helper.
+    expect(dispatch?.env?.DISPATCH_PROJECT_ROOT).toBe(
+      '/tmp/dispatch-project-y'
+    );
+    // The spawned server still needs the rest of this process's environment
+    // (PATH, for `bun` itself to be found) — an explicit `env` on a stdio
+    // MCP server config replaces rather than extends the inherited one.
+    expect(dispatch?.env?.PATH).toBe(process.env.PATH);
+  });
+
+  it('falls back to cwd for DISPATCH_PROJECT_ROOT when no projectRoot is given', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-only',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      noopEvents
+    );
+
+    const dispatch = captured?.mcpServers?.dispatch as
+      | McpStdioServerConfig
+      | undefined;
+    expect(dispatch?.env?.DISPATCH_PROJECT_ROOT).toBe(
+      '/tmp/dispatch-worktree-only'
+    );
   });
 });
 

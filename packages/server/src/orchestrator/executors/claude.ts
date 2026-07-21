@@ -1,12 +1,15 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   CanUseTool,
+  McpServerConfig,
   Options,
   PermissionMode,
   Query,
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 
 import type {
   Executor,
@@ -15,6 +18,64 @@ import type {
   ExecutorStartOptions,
   NormalizedEntry,
 } from '../types.js';
+
+// Locates the dispatch MCP server's stdio entry point via Node's own module
+// resolution rather than a hardcoded relative path — the exact pattern
+// packages/cli/src/commands/daemon.ts's `resolveDaemonBin` already uses for
+// @dispatch/server's bin. `@dispatch/mcp`'s `exports` map only exposes
+// `./package.json` for this purpose (see its package.json — mirroring
+// @dispatch/server's own minimal export), so this resolve() call has
+// something to anchor on regardless of whether the CLI is run from source or
+// from a built `dist/`; the bin script itself sits alongside it at
+// `src/bin.ts`, run directly by Bun (which executes TypeScript natively, no
+// build step required).
+//
+// TODO(Phase 6 packaging): once dispatchd ships as a packaged binary rather
+// than running from source under `bun`, this should resolve the *built*
+// `dist/bin.js` (or shell out to the `dispatch-mcp` bin on PATH once one is
+// installed alongside the packaged server) instead of `src/bin.ts` — mirror
+// whatever bin-resolution story the packaged @dispatch/server ends up using.
+function resolveMcpBin(): string {
+  const pkgJsonPath = createRequire(import.meta.url).resolve(
+    '@dispatch/mcp/package.json'
+  );
+  return join(dirname(pkgJsonPath), 'src', 'bin.ts');
+}
+
+// Builds the `mcpServers` entry the SDK's `query()` needs to actually load
+// the dispatch MCP server for a run — see the module-level comment on why
+// this is required at all. Rooted at the run's own git WORKTREE (`cwd`) via
+// `--root` so task_list/task_get/task_save/task_next read and write the
+// exact task files the run's own repo checkout sees; `DISPATCH_PROJECT_ROOT`
+// is set to the dispatch PROJECT's root (a different directory than the
+// worktree) so run_list/agent_message's daemon discovery and task_comment's
+// write both target the project's real daemon file and `.dispatch/tasks`
+// instead of the worktree's copy — see packages/mcp/src/tools.ts's
+// `projectRoot()` helper for why those two specifically cannot use the
+// worktree.
+function buildDispatchMcpServerConfig(
+  cwd: string,
+  projectRoot: string
+): McpServerConfig {
+  // `McpStdioServerConfig.env` is `Record<string, string>`, but
+  // `process.env` is `Record<string, string | undefined>` (any key can be
+  // unset) — drop the unset ones rather than passing `undefined` through.
+  // An explicit `env` on the spawned child replaces its inherited
+  // environment entirely (unlike omitting `env`, which inherits as-is), so
+  // this has to carry everything the child needs — PATH for `bun` to find
+  // itself included — not just the one new variable.
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  env.DISPATCH_PROJECT_ROOT = projectRoot;
+  return {
+    type: 'stdio',
+    command: 'bun',
+    args: [resolveMcpBin(), '--root', cwd],
+    env,
+  };
+}
 
 // A resolver for one canUseTool call this run is currently blocked on,
 // waiting for the orchestrator's approve() to answer it — the same
@@ -234,6 +295,19 @@ export class ClaudeExecutor implements Executor {
       maxBudgetUsd: opts.maxBudgetUsd,
       resume: opts.resumeSessionId,
       canUseTool,
+      // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
+      // project's committed `.mcp.json` the way the interactive `claude` CLI
+      // does — without this, a dispatched run has no dispatch MCP tools at
+      // all (run_list/task_comment), despite the prompt telling it to use
+      // them. `opts.projectRoot` falls back to `opts.cwd` for callers that
+      // never pass it (FakeExecutor fixtures; a real run always passes it —
+      // see orchestrator.ts).
+      mcpServers: {
+        dispatch: buildDispatchMcpServerConfig(
+          opts.cwd,
+          opts.projectRoot ?? opts.cwd
+        ),
+      },
     };
     const sdkQuery: Query = this.queryFn({
       prompt: queue,
