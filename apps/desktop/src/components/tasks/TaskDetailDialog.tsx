@@ -1,96 +1,76 @@
 import type { RunMeta } from '@dispatch/client';
 import type { Priority, TaskDoc, UpdatePatch } from '@dispatch/core';
-import {
-  ArrowUpRight,
-  ChevronsUp,
-  Minus,
-  SignalHigh,
-  SignalLow,
-  SignalMedium,
-  X,
-} from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowUpRight } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections, sectionOrDash } from '../../lib/taskDisplay';
-import { Badge } from '../../ui/badge';
-import { Button } from '../../ui/button';
-import { Input } from '../../ui/input';
+import { AssigneeAvatar } from './AssigneeAvatar';
+import { PriorityIcon } from './PriorityIcon';
+import { StatusIcon } from './StatusIcon';
+import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
+import { Input } from '@/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../../ui/select';
+} from '@/ui/select';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
-// Per-priority icon + color, matching the redesign brief's "priority is a small lucide icon,
-// color-coded" direction. Unlike `priorityTone` (lib/taskDisplay.ts), which only colors
-// urgent/high for the list/board's low-noise chip, the peek panel's own priority *control*
-// shows every value distinctly (a select needs to represent whatever is currently chosen).
-const PRIORITY_ICON: Record<Priority, typeof ChevronsUp> = {
-  urgent: ChevronsUp,
-  high: SignalHigh,
-  medium: SignalMedium,
-  low: SignalLow,
-  none: Minus,
-};
-
-const PRIORITY_COLOR: Record<Priority, string> = {
-  urgent: 'text-destructive',
-  high: 'text-amber-500',
-  medium: 'text-muted-foreground',
-  low: 'text-muted-foreground',
-  none: 'text-muted-foreground',
-};
-
-function PriorityGlyph({ priority }: { priority: Priority }) {
-  const Icon = PRIORITY_ICON[priority];
-  return <Icon className={`size-3.5 shrink-0 ${PRIORITY_COLOR[priority]}`} />;
+// `Assignee` is a fixed three-value enum ('agent'/'human'/'none') — a plain capitalize reads
+// fine for all three ("Agent"/"Human"/"None") without needing a dedicated label map here on
+// top of `AssigneeAvatar`'s own internal one.
+function capitalize(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
-interface TaskPeekPanelProps {
+interface TaskDetailDialogProps {
   doc: TaskDoc;
   statuses: string[];
   ready: boolean;
   run: RunMeta | undefined;
   onClose: () => void;
   onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
+  /** Optimistic status change (see `useDispatchProject.moveTaskStatus`) — the same one the
+   * board's drag-and-drop uses, so moving a task's status from this dialog's select feels as
+   * immediate as dragging its card, rather than waiting on a round-trip like every other field
+   * here (`onUpdate`) does. */
+  onMoveStatus: (id: string, status: string) => Promise<void>;
   onDispatch: (id: string, executor?: 'fake' | 'claude') => Promise<void>;
   onOpenRun: (runId: string) => void;
 }
 
 /**
- * Task detail as a Linear-style side peek: an overlay panel from the right rather than a
- * centered modal, so the board stays visible (and legible as "still the same screen, just
- * with detail open") behind it. Replaces the old `TaskDetailModal` — same fields/behavior
- * (editable title, status/priority selects, read-only frontmatter, body sections, an
- * activity feed + composer, and the dispatch/view-run row), just restyled as a peek and with
- * the Activity section reframed as a feed rather than a plain text block. Closing happens
- * via the caller's `onClose` — wired through the app-level `navReducer`'s `escape` action, a
- * click on the panel's own close button, or a click on the dimmed backdrop to its left.
+ * Task detail as a centered shadcn `Dialog` — Linear itself opens task detail as a modal, not
+ * a side panel, so this replaces the old `TaskPeekPanel` overlay with the same treatment
+ * `CreateTaskModal` already uses. Same fields/behavior as the panel it replaces (editable
+ * title, status/priority selects, read-only frontmatter, body sections, an activity feed +
+ * composer, and the dispatch/view-run row), plus an assignee field the panel never surfaced.
+ * Dialog owns its own focus trap and Escape handling (Radix), so the panel's hand-rolled
+ * `useFocusTrap` + backdrop-click-to-close are gone; closing routes through `onClose` the same
+ * way either way — the caller (`App.tsx`) unmounts this on close, same as `CreateTaskModal`.
  */
-export function TaskPeekPanel({
+export function TaskDetailDialog({
   doc,
   statuses,
   ready,
   run,
   onClose,
   onUpdate,
+  onMoveStatus,
   onDispatch,
   onOpenRun,
-}: TaskPeekPanelProps) {
+}: TaskDetailDialogProps) {
   const [title, setTitle] = useState(doc.meta.title);
   const [activityDraft, setActivityDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
-  const panelRef = useRef<HTMLElement>(null);
-
-  useFocusTrap(panelRef, true);
 
   // Derived from the run's own state, not the task's status string: the old check compared
   // `doc.meta.status` against the literal built-in strings `'in-progress'`/`'in-review'`,
@@ -129,20 +109,32 @@ export function TaskPeekPanel({
     [doc.meta.id, onUpdate]
   );
 
+  const changeStatus = useCallback(
+    async (status: string) => {
+      try {
+        setError(null);
+        await onMoveStatus(doc.meta.id, status);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [doc.meta.id, onMoveStatus]
+  );
+
   const saveTitleIfChanged = useCallback(() => {
     if (title.trim() !== '' && title !== doc.meta.title) {
       void runUpdate({ title });
     }
   }, [title, doc.meta.title, runUpdate]);
 
-  // Escape closes the peek via the app-root `navReducer` (a global `window` listener, not
-  // this component) — which unmounts this panel entirely. A plain `onBlur` on the title
-  // input can't be relied on to fire before that unmount (removing a focused node's blur
-  // behavior is inconsistent enough across browsers/webviews to not build a save on), so
-  // this listens for Escape itself and commits the in-progress title edit explicitly. The
-  // choice here is to commit, not discard, on Escape-while-editing — matching every other
-  // control on this panel (status/priority selects, activity notes), which all save
-  // immediately rather than needing a separate "save" step.
+  // Escape closes the dialog via Radix's own handling (which unmounts this component through
+  // `onClose`/`onOpenChange`) — a plain `onBlur` on the title input can't be relied on to fire
+  // before that unmount (removing a focused node's blur behavior is inconsistent enough across
+  // browsers/webviews to not build a save on), so this listens for Escape itself and commits
+  // the in-progress title edit explicitly. The choice here is to commit, not discard, on
+  // Escape-while-editing — matching every other control on this dialog (status/priority
+  // selects, activity notes), which all save immediately rather than needing a separate "save"
+  // step.
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') saveTitleIfChanged();
@@ -169,31 +161,44 @@ export function TaskPeekPanel({
       : activityFeed.split('\n').filter((line) => line.trim() !== '');
 
   return (
-    <div
-      className="animate-in fade-in-0 fixed inset-0 z-40 bg-black/40 duration-150"
-      onClick={onClose}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <aside
-        ref={panelRef}
-        className="border-border bg-card animate-in slide-in-from-right-4 fade-in-0 fixed top-0 right-0 bottom-0 z-50 flex w-[min(28rem,92vw)] flex-col border-l shadow-2xl duration-150"
-        onClick={(e) => e.stopPropagation()}
-        aria-label={`Task ${doc.meta.id} detail`}
+      <DialogContent
+        className="flex max-h-[85vh] w-[min(640px,90vw)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[640px]"
+        aria-describedby={undefined}
+        // Radix's default open-autofocus lands on the first tabbable descendant — which is
+        // the (pre-filled) title field — and browsers select a text input's full value when
+        // it's focused this way, not just place a caret. Left alone, opening this dialog and
+        // pressing any key (even Space) would silently wipe the task's title. Focus the
+        // content root itself instead (Radix gives it `tabIndex={-1}` for exactly this) —
+        // Tab still reaches the title field normally, just without the drive-by select-all.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          (event.currentTarget as HTMLElement).focus();
+        }}
       >
-        <div className="border-border flex shrink-0 items-center justify-between border-b px-4 py-3">
+        <div className="border-border flex shrink-0 items-center gap-2 border-b px-5 py-3.5">
           <span className="text-muted-foreground font-mono text-[11px]">
             {doc.meta.id}
           </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X className="size-4" />
-          </Button>
+          <span className="text-muted-foreground/50">·</span>
+          <StatusIcon status={doc.meta.status} />
+          <span className="text-muted-foreground text-[12px]">
+            {doc.meta.status}
+          </span>
+          {/* Visually hidden — Radix requires an accessible dialog title; the visible header
+              above (id + status) is the actual title bar people see, so this only exists for
+              screen readers. */}
+          <DialogTitle className="sr-only">
+            {doc.meta.title || 'Task detail'}
+          </DialogTitle>
         </div>
 
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
           {error !== null && (
             <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
               {error}
@@ -201,7 +206,7 @@ export function TaskPeekPanel({
           )}
 
           <Input
-            className="text-foreground hover:border-border -mx-1 h-auto w-[calc(100%+0.5rem)] border-transparent px-1 py-1 text-[15px] font-medium shadow-none transition-colors duration-150"
+            className="text-foreground hover:border-border -mx-1 h-auto w-[calc(100%+0.5rem)] border-transparent px-1 py-1 text-[17px] font-medium shadow-none transition-colors duration-150"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={saveTitleIfChanged}
@@ -257,7 +262,7 @@ export function TaskPeekPanel({
               <span className="text-muted-foreground text-[11px]">Status</span>
               <Select
                 value={doc.meta.status}
-                onValueChange={(value) => void runUpdate({ status: value })}
+                onValueChange={(value) => void changeStatus(value)}
               >
                 <SelectTrigger size="sm" className="w-full">
                   <SelectValue />
@@ -265,6 +270,7 @@ export function TaskPeekPanel({
                 <SelectContent>
                   {statuses.map((s) => (
                     <SelectItem key={s} value={s}>
+                      <StatusIcon status={s} />
                       {s}
                     </SelectItem>
                   ))}
@@ -287,7 +293,7 @@ export function TaskPeekPanel({
                 <SelectContent>
                   {PRIORITIES.map((p) => (
                     <SelectItem key={p} value={p}>
-                      <PriorityGlyph priority={p} />
+                      <PriorityIcon priority={p} />
                       {p}
                     </SelectItem>
                   ))}
@@ -314,6 +320,15 @@ export function TaskPeekPanel({
                 {doc.meta.blockedBy.length > 0
                   ? doc.meta.blockedBy.join(', ')
                   : '—'}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1 text-[13px]">
+              <span className="text-muted-foreground text-[11px]">
+                Assignee
+              </span>
+              <span className="text-foreground flex items-center gap-1.5 text-[13px]">
+                <AssigneeAvatar assignee={doc.meta.assignee} />
+                {capitalize(doc.meta.assignee)}
               </span>
             </div>
             {doc.meta.labels.length > 0 && (
@@ -388,7 +403,7 @@ export function TaskPeekPanel({
             </div>
           </div>
         </div>
-      </aside>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
