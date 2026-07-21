@@ -17,6 +17,12 @@
   gap: var(--space-2);
 }
 
+.board-view-track {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 .board-view-status {
   color: var(--text-muted);
   font-size: var(--text-base);
