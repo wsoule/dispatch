@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Loader2, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -22,6 +23,7 @@ import { RunsView } from './views/RunsView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TasksListView } from './views/TasksListView';
+import { TooltipProvider } from '@/ui/tooltip';
 
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
@@ -314,116 +316,135 @@ function App() {
     (root === undefined || rootHasDispatch === undefined);
 
   return (
-    <div className="app-shell">
-      <Sidebar
-        projectName={activeProject?.name ?? null}
-        projectPath={activeProject?.path ?? null}
-        hasActiveProject={activeProject !== null}
-        section={navState.section}
-        projectView={navState.projectView}
-        globalView={navState.globalView}
-        liveAgentCount={liveRuns.length}
-        onSetProjectView={selectProjectView}
-        onSetGlobalView={setGlobalView}
-        switcherOpen={switcherOpen}
-        onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
-        switchProjects={switchProjects ?? []}
-        onSelectProject={selectSwitchProject}
-      />
-      <main className="app-main">
-        {resolutionError !== null ? (
-          <p className="board-view-status">{resolutionError}</p>
-        ) : stillResolving ? (
-          <p className="board-view-status">Loading project…</p>
-        ) : showGetStarted ? (
-          <GetStartedView projectPath={root} />
-        ) : navState.section === 'global' ? (
-          <>
-            {navState.globalView === 'all-agents' && (
-              <AllAgentsView
-                liveRuns={liveRuns}
-                portLoading={data.portLoading}
-                portError={data.portError}
-                portErrorDetail={data.portErrorDetail}
-                client={data.client}
-                onRetry={data.retryEnsureDispatchd}
-                onJumpToRun={jumpToRun}
-              />
-            )}
-            {navState.globalView === 'sessions' && <SessionsHubView />}
-            {navState.globalView === 'settings' && (
-              <SettingsView activeProject={activeProject} data={data} />
-            )}
-          </>
-        ) : activeProject === null ? (
-          <p className="board-view-status">Loading project…</p>
-        ) : (
-          <>
-            {navState.projectView === 'board' && (
-              <BoardView
-                data={data}
-                onSelectTask={(taskId) =>
-                  dispatchNav({ type: 'openPeek', taskId })
-                }
-                onNewTask={() => setShowCreate(true)}
-                onPlanWork={() => selectProjectView('plans')}
-              />
-            )}
-            {navState.projectView === 'tasks' && (
-              <TasksListView
-                data={data}
-                onSelectTask={(taskId) =>
-                  dispatchNav({ type: 'openPeek', taskId })
-                }
-                onNewTask={() => setShowCreate(true)}
-              />
-            )}
-            {navState.projectView === 'runs' && (
-              <RunsView
-                data={data}
-                selectedRunId={navState.activeRunId}
-                onSelectRun={(runId) => dispatchNav({ type: 'openRun', runId })}
-              />
-            )}
-            {navState.projectView === 'plans' && (
-              <PlansView data={data} projectPath={activeProject.path} />
-            )}
-          </>
+    <TooltipProvider>
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar
+          projectName={activeProject?.name ?? null}
+          projectPath={activeProject?.path ?? null}
+          hasActiveProject={activeProject !== null}
+          section={navState.section}
+          projectView={navState.projectView}
+          globalView={navState.globalView}
+          liveAgentCount={liveRuns.length}
+          onSetProjectView={selectProjectView}
+          onSetGlobalView={setGlobalView}
+          switcherOpen={switcherOpen}
+          onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
+          switchProjects={switchProjects ?? []}
+          onSelectProject={selectSwitchProject}
+        />
+        <main className="min-w-0 flex-1 overflow-auto p-6">
+          {resolutionError !== null ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <TriangleAlert className="text-destructive size-5" />
+              <p className="text-muted-foreground max-w-sm text-[13px]">
+                {resolutionError}
+              </p>
+            </div>
+          ) : stillResolving ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <Loader2 className="text-muted-foreground size-5 animate-spin" />
+              <p className="text-muted-foreground text-[13px]">
+                Loading project…
+              </p>
+            </div>
+          ) : showGetStarted ? (
+            <GetStartedView projectPath={root} />
+          ) : navState.section === 'global' ? (
+            <>
+              {navState.globalView === 'all-agents' && (
+                <AllAgentsView
+                  liveRuns={liveRuns}
+                  portLoading={data.portLoading}
+                  portError={data.portError}
+                  portErrorDetail={data.portErrorDetail}
+                  client={data.client}
+                  onRetry={data.retryEnsureDispatchd}
+                  onJumpToRun={jumpToRun}
+                />
+              )}
+              {navState.globalView === 'sessions' && <SessionsHubView />}
+              {navState.globalView === 'settings' && (
+                <SettingsView activeProject={activeProject} data={data} />
+              )}
+            </>
+          ) : activeProject === null ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <Loader2 className="text-muted-foreground size-5 animate-spin" />
+              <p className="text-muted-foreground text-[13px]">
+                Loading project…
+              </p>
+            </div>
+          ) : (
+            <>
+              {navState.projectView === 'board' && (
+                <BoardView
+                  data={data}
+                  onSelectTask={(taskId) =>
+                    dispatchNav({ type: 'openPeek', taskId })
+                  }
+                  onNewTask={() => setShowCreate(true)}
+                  onPlanWork={() => selectProjectView('plans')}
+                />
+              )}
+              {navState.projectView === 'tasks' && (
+                <TasksListView
+                  data={data}
+                  onSelectTask={(taskId) =>
+                    dispatchNav({ type: 'openPeek', taskId })
+                  }
+                  onNewTask={() => setShowCreate(true)}
+                />
+              )}
+              {navState.projectView === 'runs' && (
+                <RunsView
+                  data={data}
+                  selectedRunId={navState.activeRunId}
+                  onSelectRun={(runId) =>
+                    dispatchNav({ type: 'openRun', runId })
+                  }
+                />
+              )}
+              {navState.projectView === 'plans' && (
+                <PlansView data={data} projectPath={activeProject.path} />
+              )}
+            </>
+          )}
+        </main>
+
+        {selectedDoc !== null && data.config !== null && (
+          <TaskPeekPanel
+            doc={selectedDoc}
+            statuses={data.config.statuses}
+            ready={data.readyIds.has(selectedDoc.meta.id)}
+            run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
+            onClose={() => dispatchNav({ type: 'closePeek' })}
+            onUpdate={data.handleUpdate}
+            onDispatch={data.handleDispatch}
+            onOpenRun={(runId) => {
+              dispatchNav({ type: 'closePeek' });
+              selectProjectView('runs');
+              dispatchNav({ type: 'openRun', runId });
+            }}
+          />
         )}
-      </main>
 
-      {selectedDoc !== null && data.config !== null && (
-        <TaskPeekPanel
-          doc={selectedDoc}
-          statuses={data.config.statuses}
-          ready={data.readyIds.has(selectedDoc.meta.id)}
-          run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
-          onClose={() => dispatchNav({ type: 'closePeek' })}
-          onUpdate={data.handleUpdate}
-          onDispatch={data.handleDispatch}
-          onOpenRun={(runId) => {
-            dispatchNav({ type: 'closePeek' });
-            selectProjectView('runs');
-            dispatchNav({ type: 'openRun', runId });
-          }}
+        {showCreate && data.config !== null && (
+          <CreateTaskModal
+            statuses={data.config.statuses}
+            epics={data.epics}
+            onCreate={data.handleCreate}
+            onClose={() => setShowCreate(false)}
+          />
+        )}
+
+        <CommandPalette
+          isOpen={navState.paletteOpen}
+          entries={paletteEntries}
+          onClose={() => dispatchNav({ type: 'closePalette' })}
         />
-      )}
-
-      {showCreate && data.config !== null && (
-        <CreateTaskModal
-          statuses={data.config.statuses}
-          epics={data.epics}
-          onCreate={data.handleCreate}
-          onClose={() => setShowCreate(false)}
-        />
-      )}
-
-      <CommandPalette
-        isOpen={navState.paletteOpen}
-        entries={paletteEntries}
-        onClose={() => dispatchNav({ type: 'closePalette' })}
-      />
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }
 
