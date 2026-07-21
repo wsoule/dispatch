@@ -99,8 +99,9 @@ interface RunLogViewProps {
 }
 
 /** Live run view: chat-style normalized log, the approval gate when one is pending, a
- * follow-up message box while the run is actively working, and cancel. Shown inside RunModal
- * for any non-terminal run; RunReviewView takes over once a run reaches finished/failed/cancelled. */
+ * follow-up message box while the run is actively working, and cancel. Shown inside RunsView's
+ * right pane for any non-terminal run; RunReviewView takes over once a run reaches
+ * finished/failed/cancelled. */
 export function RunLogView({
   meta,
   entries,
