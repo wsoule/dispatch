@@ -34,7 +34,14 @@ export function Modal({ isOpen, onClose, title, wide, children }: ModalProps) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    // `data-modal="true"` marks every open `Modal` instance (CreateTaskModal,
+    // SessionDetailModal, DiffModal, …) so `useGlobalKeyboard` can ask "is *any* modal open
+    // right now" with a plain DOM query instead of every caller threading its own modal's
+    // open state up to the app root. Deliberately not `role="dialog"` for this — the command
+    // palette also uses that role (it genuinely is one), but the palette's own Escape closes
+    // it *through* `navReducer`'s escape action rather than needing to be excluded from it,
+    // so a selector that also matched the palette would wrongly suppress that.
+    <div className="modal-backdrop" data-modal="true" onClick={onClose}>
       <div
         className={`modal-panel${wide ? ' modal-panel-wide' : ''}`}
         onClick={(event) => event.stopPropagation()}
