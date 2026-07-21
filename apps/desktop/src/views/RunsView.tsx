@@ -1,13 +1,31 @@
-import { GitBranch, MousePointerClick } from 'lucide-react';
+import { FileX, GitBranch, MousePointerClick } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
+import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
+
+type RunTab = 'session' | 'diff';
+
+// A muted centered placeholder for the Diff tab when there's nothing to review yet — a run
+// that's still going (no worktree diff exposed until it's terminal) or a terminal run whose
+// worktree/diff is gone (already reviewed, or genuinely nothing changed).
+function DiffEmptyState({ message }: { message: string }) {
+  return (
+    <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
+      <FileX className="size-5" />
+      <p className="text-[13px]">{message}</p>
+    </div>
+  );
+}
 
 interface RunsViewProps {
   data: DispatchProjectData;
@@ -21,14 +39,50 @@ interface RunsViewProps {
 }
 
 /**
- * Split layout per the redesign brief: every run for this project down the left (newest
- * first, state dot + task + ticking cost), the selected run's full surface on the right —
- * `RunLogView`'s chat-style log/approval-banner/follow-up-composer while live, or
- * `RunReviewView`'s Pierre diff + file tree + merge/discard/request-changes/PR once it's
- * finished — swapped in place on `meta.state`, exactly like the old `RunModal` did, just
- * inline in a page instead of inside a dialog.
+ * Split layout: every run for this project down the left (newest first, state dot + task +
+ * ticking cost), the selected run's full surface on the right — a shared header (state, cost,
+ * cancel) above a `Tabs` with a **Session** tab (the transcript, always available, with a
+ * composer that talks to a live agent or requests changes on a terminal one) and a **Diff**
+ * tab (the Pierre diff/file-tree + merge/discard/PR, once the run actually has changes to
+ * review). Per the "see the session and talk to it" brief, a finished run no longer jumps
+ * straight to the diff — Session stays reachable (and is the default) for any run that hasn't
+ * produced changes worth reviewing.
  */
 export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
+  const [tab, setTab] = useState<RunTab>('session');
+  // Which run id the tab above was last defaulted for — a default is only applied once per
+  // run (on first seeing it, or once its diff resolves), so switching tabs manually never
+  // gets clobbered by a later poll of the same run's data.
+  const defaultedRunIdRef = useRef<string | null>(null);
+
+  const selected = data.runs.find((r) => r.id === selectedRunId);
+  const selectedId = selected?.id;
+  const selectedState = selected?.state;
+  const runDetail = data.runDetail;
+  const diffLoading = data.diffLoading;
+  const diff = data.diff;
+
+  useEffect(() => {
+    if (selectedId === undefined || selectedState === undefined) return;
+    if (defaultedRunIdRef.current === selectedId) return;
+    if (!isTerminalRunState(selectedState)) {
+      setTab('session');
+      defaultedRunIdRef.current = selectedId;
+      return;
+    }
+    // Terminal: the diff query only *enables* once `runDetail` itself has resolved as
+    // terminal (see useDispatchProject's `diffEnabled`) — waiting on `diffLoading` alone
+    // races that gate, since a disabled query reports `isLoading: false` the same as a
+    // settled one. Wait for this run's own detail first, then for the (now-enabled) diff
+    // query to settle, so a run with real changes doesn't flash Session before flipping to
+    // Diff.
+    if (runDetail === undefined || runDetail.meta.id !== selectedId) return;
+    if (diffLoading) return;
+    const hasChanges = diff !== undefined && diff.files.length > 0;
+    setTab(hasChanges ? 'diff' : 'session');
+    defaultedRunIdRef.current = selectedId;
+  }, [selectedId, selectedState, runDetail, diffLoading, diff]);
+
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <DaemonUnavailable
@@ -38,8 +92,6 @@ export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
       />
     );
   }
-
-  const selected = data.runs.find((r) => r.id === selectedRunId);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -86,7 +138,7 @@ export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
           )}
         </div>
 
-        <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="flex min-w-0 flex-1 flex-col">
           {selected === undefined ? (
             <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
               <MousePointerClick className="size-5" />
@@ -100,33 +152,69 @@ export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
               <Skeleton className="h-32 rounded-md" />
               <Skeleton className="h-32 rounded-md" />
             </div>
-          ) : isTerminalRunState(selected.state) ? (
-            <RunReviewView
-              meta={data.runDetail.meta}
-              diff={data.diff}
-              diffLoading={data.diffLoading}
-              diffError={data.diffError}
-              prCapability={data.health?.pr ?? false}
-              onMerge={() => data.handleReview(selected.id, 'merge')}
-              onDiscard={() => data.handleReview(selected.id, 'discard')}
-              onRequestChanges={(text) =>
-                data.handleRequestChanges(selected.id, text)
-              }
-              onOpenPr={() => data.handleOpenPr(selected.id)}
-            />
           ) : (
-            <RunLogView
-              meta={data.runDetail.meta}
-              entries={data.runDetail.entries}
-              pendingApproval={data.pendingApprovals.get(selected.id) ?? null}
-              onApprove={(requestId, allow) =>
-                data.handleApprove(selected.id, requestId, allow)
-              }
-              onSendMessage={(text) =>
-                data.handleSendMessage(selected.id, text)
-              }
-              onCancel={() => data.handleCancelRun(selected.id)}
-            />
+            <div className="flex h-full min-h-0 flex-col gap-3">
+              <RunDetailHeader
+                meta={data.runDetail.meta}
+                cost={liveCostUsd(data.runDetail.meta, data.runDetail.entries)}
+                live={!isTerminalRunState(selected.state)}
+                onCancel={() => data.handleCancelRun(selected.id)}
+              />
+
+              <Tabs
+                value={tab}
+                onValueChange={(value) => setTab(value as RunTab)}
+                className="flex min-h-0 flex-1 flex-col gap-3"
+              >
+                <TabsList className="self-start">
+                  <TabsTrigger value="session">Session</TabsTrigger>
+                  <TabsTrigger value="diff">Diff</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="session" className="min-h-0">
+                  <RunLogView
+                    meta={data.runDetail.meta}
+                    entries={data.runDetail.entries}
+                    pendingApproval={
+                      data.pendingApprovals.get(selected.id) ?? null
+                    }
+                    onApprove={(requestId, allow) =>
+                      data.handleApprove(selected.id, requestId, allow)
+                    }
+                    onSendMessage={(text) =>
+                      data.handleSendMessage(selected.id, text)
+                    }
+                    onRequestChanges={(text) =>
+                      data.handleRequestChanges(selected.id, text)
+                    }
+                  />
+                </TabsContent>
+
+                <TabsContent value="diff" className="min-h-0">
+                  {!isTerminalRunState(selected.state) ? (
+                    <DiffEmptyState message="No diff to review yet — check back once the run finishes." />
+                  ) : data.diffError !== null ? (
+                    <DiffEmptyState message="This run has no changes to review." />
+                  ) : (
+                    <RunReviewView
+                      meta={data.runDetail.meta}
+                      diff={data.diff}
+                      diffLoading={data.diffLoading}
+                      diffError={data.diffError}
+                      prCapability={data.health?.pr ?? false}
+                      onMerge={() => data.handleReview(selected.id, 'merge')}
+                      onDiscard={() =>
+                        data.handleReview(selected.id, 'discard')
+                      }
+                      onRequestChanges={(text) =>
+                        data.handleRequestChanges(selected.id, text)
+                      }
+                      onOpenPr={() => data.handleOpenPr(selected.id)}
+                    />
+                  )}
+                </TabsContent>
+              </Tabs>
+            </div>
           )}
         </div>
       </div>
