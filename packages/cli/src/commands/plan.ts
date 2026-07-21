@@ -1,10 +1,17 @@
 import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 
-import type { PlanProposal, PlanRecord } from '../apiClient.js';
+import type {
+  ApiClient,
+  EpicProgress,
+  PlanProposal,
+  PlanRecord,
+} from '../apiClient.js';
 import { createApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatEpicProgress, formatProposal } from '../orchestrateFormat.js';
+import { singleFlight } from '../singleFlight.js';
+import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
 import { ensureDaemon } from './daemon.js';
 import { requireStore } from './task.js';
@@ -24,7 +31,7 @@ function sleep(ms: number): Promise<void> {
 // allows either WS or poll for this — polling keeps `dispatch plan` simple
 // and avoids opening a socket for what's usually a few-second wait.
 async function pollUntilSettled(
-  client: ReturnType<typeof createApiClient>,
+  client: ApiClient,
   planId: string,
   timeoutMs = 60_000
 ): Promise<PlanRecord> {
@@ -35,6 +42,90 @@ async function pollUntilSettled(
     await sleep(200);
   } while (Date.now() < deadline);
   throw new CliError(`plan ${planId} did not settle within ${timeoutMs}ms`);
+}
+
+// Watches an epic dispatch session over WS and resolves once a fetched
+// progress snapshot reports `active: false` (the session ended — see
+// EpicEngine.completeEpic). Mirrors commands/orchestrate.ts's
+// createRunWatcher in every structural way that matters:
+//
+// - M4: `fetchProgress` is wrapped in `singleFlight` so however many
+//   `task.changed`/`run.changed` events land close together (a review
+//   merge touches both) collapse into exactly one HTTP call in flight at a
+//   time, never a race between overlapping ones — and its rejection is
+//   always routed through `fail()`, never left as a bare fire-and-forget
+//   `.catch`-less promise that could crash the process with an unhandled
+//   rejection if the daemon died mid-fetch.
+// - I2(a): refetches on every successful (re)connect (`onOpen`), not only
+//   on a WS event — the only way to recover a completion that happened
+//   during a disconnected gap.
+// - I2(b)/C1: `onGiveUp` rejects `waitForExit()` with a CliError instead of
+//   reconnecting forever; every caller MUST wrap this in try/finally and
+//   call `dispose()` unconditionally, exactly like createRunWatcher.
+//
+// `connectOptions` is exposed only for tests (packages/cli/test/
+// epic-watcher.test.ts); production callers never pass it.
+export function createEpicWatcher(
+  baseUrl: string,
+  fetchProgress: () => Promise<EpicProgress>,
+  onProgress: (progress: EpicProgress) => void,
+  connectOptions: Pick<
+    ConnectEventsOptions,
+    'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures'
+  > = {}
+): { waitForExit: () => Promise<void>; dispose: () => void } {
+  let settled = false;
+  let resolveExit!: () => void;
+  let rejectExit!: (err: Error) => void;
+  const exitPromise = new Promise<void>((resolve, reject) => {
+    resolveExit = resolve;
+    rejectExit = reject;
+  });
+  // See createRunWatcher's identical guard: makes the rejection never
+  // "unhandled" regardless of whether/when the caller awaits waitForExit().
+  exitPromise.catch(() => {});
+
+  function fail(err: Error): void {
+    if (settled) return;
+    settled = true;
+    rejectExit(err);
+  }
+
+  const refetch = singleFlight(async () => {
+    const progress = await fetchProgress();
+    if (settled) return;
+    onProgress(progress);
+    if (!progress.active) {
+      settled = true;
+      resolveExit();
+    }
+  });
+
+  function triggerRefetch(): void {
+    void refetch().catch((err: unknown) => {
+      fail(err instanceof Error ? err : new Error(String(err)));
+    });
+  }
+
+  const dispose = connectEvents(
+    baseUrl,
+    (event) => {
+      if (settled) return;
+      if (event.type === 'task.changed' || event.type === 'run.changed') {
+        triggerRefetch();
+      }
+    },
+    {
+      ...connectOptions,
+      onOpen: triggerRefetch,
+      onGiveUp: () => fail(new CliError('lost connection to dispatchd')),
+    }
+  );
+
+  return {
+    waitForExit: () => exitPromise,
+    dispose,
+  };
 }
 
 export function registerPlanCommands(program: Command, ctx: CliContext): void {
@@ -184,42 +275,32 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
         const baseUrl = await baseUrlFor(ctx);
         const client = createApiClient(baseUrl);
 
-        const printProgress = async () => {
-          const progress = await client.getEpicProgress(epicId);
+        const renderProgress = (progress: EpicProgress): void => {
           ctx.log(
             opts.json === true
               ? JSON.stringify(progress, null, 2)
               : formatEpicProgress(progress)
           );
-          return progress;
         };
 
-        const initial = await printProgress();
+        const initial = await client.getEpicProgress(epicId);
+        renderProgress(initial);
         if (opts.watch !== true || !initial.active) return;
 
-        // `task.changed`/`run.changed` can both fire for the same
-        // underlying action (a review merge touches both a task file and
-        // the run registry) — `settled` collapses however many of those
-        // land into exactly one final printProgress()/exit, rather than
-        // printing the same "now inactive" snapshot once per event.
-        let settled = false;
-        await new Promise<void>((resolve) => {
-          const dispose = connectEvents(baseUrl, (event) => {
-            if (
-              settled ||
-              (event.type !== 'task.changed' && event.type !== 'run.changed')
-            ) {
-              return;
-            }
-            void printProgress().then((progress) => {
-              if (!progress.active && !settled) {
-                settled = true;
-                dispose();
-                resolve();
-              }
-            });
-          });
-        });
+        // C1: try/finally so a lost-connection rejection (or any other
+        // failure) still disposes the watcher's WS connection/reconnect
+        // timer — undisposed, either would keep this process alive
+        // forever instead of letting the thrown error propagate normally.
+        const watcher = createEpicWatcher(
+          baseUrl,
+          () => client.getEpicProgress(epicId),
+          renderProgress
+        );
+        try {
+          await watcher.waitForExit();
+        } finally {
+          watcher.dispose();
+        }
       }
     );
 }
