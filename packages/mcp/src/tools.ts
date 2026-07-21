@@ -185,6 +185,113 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
   }
 }
 
+// Mirrors @dispatch/server's orchestrator/types.ts TERMINAL_RUN_STATES —
+// kept as a plain local copy (like run_list's loosely-typed RunMeta) since
+// @dispatch/mcp intentionally has no dependency on the Bun-only
+// @dispatch/server package.
+const TERMINAL_RUN_STATES = new Set(['finished', 'failed', 'cancelled']);
+
+interface LiveRunLike {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  state: string;
+}
+
+// Fetches `GET /api/runs` from the live daemon and narrows it to runs that
+// are not yet terminal — the only ones agent_message can actually reach.
+// Returns null when there is nothing to report at all (no daemon, unhealthy,
+// bad response shape) so the caller can fall back to a single "not running"
+// message instead of duplicating run_list's daemon-plumbing tolerance here.
+async function fetchLiveRuns(
+  rootDir: string
+): Promise<{ port: number; runs: LiveRunLike[] } | null> {
+  const daemon = readDaemonFile(rootDir);
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`);
+    if (!res.ok) return null;
+    const runs = await res.json();
+    if (!Array.isArray(runs)) return null;
+    return {
+      port: daemon.port,
+      runs: (runs as LiveRunLike[]).filter(
+        (r) => !TERMINAL_RUN_STATES.has(r.state)
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Builds the "nothing to message" error text agent_message returns when its
+// target (a runId or taskId) doesn't match any currently-live run — always
+// lists every other live run (id + task title) so the calling agent can
+// self-correct by picking one of those instead, or learn there simply are
+// none right now.
+function noLiveTargetMessage(target: string, live: LiveRunLike[]): string {
+  if (live.length === 0) {
+    return `no live run for ${target} — there are no live runs at all right now`;
+  }
+  const listing = live.map((r) => `${r.id} (${r.taskTitle})`).join(', ');
+  return `no live run for ${target} — live runs: ${listing}`;
+}
+
+// Proxies `POST /api/runs/:id/inject` — the messaging half of agent
+// collaboration (spec §5). Exactly one of `runId`/`taskId` must be given;
+// `taskId` is resolved to that task's one live run via the same `GET
+// /api/runs` fetch run_list already uses (no live run for that task is the
+// same "clean error" as an unrecognized runId, not a protocol-level
+// failure). The calling agent's own identity is unknown to MCP, so every
+// injected message is unconditionally prefixed — dispatchd's `inject()`
+// endpoint owns the actual prefixing (see orchestrator.ts's `inject`), this
+// tool only has to route to the right run.
+async function agentMessage(
+  rootDir: string,
+  args: { runId?: string; taskId?: string; text: string }
+): Promise<ToolOutcome> {
+  if (args.text.trim() === '') {
+    return toolError('text must not be empty');
+  }
+  if ((args.runId === undefined) === (args.taskId === undefined)) {
+    return toolError('exactly one of runId or taskId is required');
+  }
+
+  const live = await fetchLiveRuns(rootDir);
+  if (live === null) {
+    return toolError('dispatchd not running — no live runs to message');
+  }
+
+  const target = args.runId ?? args.taskId!;
+  const match =
+    args.runId !== undefined
+      ? live.runs.find((r) => r.id === args.runId)
+      : live.runs.find((r) => r.taskId === args.taskId);
+  if (match === undefined) {
+    return toolError(noLiveTargetMessage(target, live.runs));
+  }
+
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${live.port}/api/runs/${match.id}/inject`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: args.text }),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      return toolError(`inject failed: ${body.error ?? `HTTP ${res.status}`}`);
+    }
+    return toolResult({ ok: true, runId: match.id });
+  } catch (err) {
+    return toolError(`inject failed: ${(err as Error).message}`);
+  }
+}
+
 // Registers the five task_* tools plus run_list against a fixed root
 // directory. Each task_* tool re-resolves the TaskStore/config on every call
 // (rather than caching it at registration time) so a `dispatch init` that
@@ -408,5 +515,31 @@ export function registerDispatchTools(
       annotations: { readOnlyHint: true },
     },
     () => runList(rootDir)
+  );
+
+  server.registerTool(
+    'agent_message',
+    {
+      title: 'Message a live run',
+      description:
+        'Send a message into another live dispatch run — the messaging ' +
+        'half of agent collaboration. Target it with exactly one of runId ' +
+        "(a specific run) or taskId (that task's current live run); the " +
+        'message is delivered prefixed "[message from another agent]" so ' +
+        'the receiving agent can tell it apart from its own task prompt. ' +
+        'Fails with a clear error (and a list of what IS live right now) ' +
+        'when the target has no live run, or when dispatchd itself is not ' +
+        'running.',
+      inputSchema: {
+        runId: z.string().optional(),
+        taskId: z.string().optional(),
+        text: z.string(),
+      },
+      outputSchema: {
+        ok: z.boolean(),
+        runId: z.string(),
+      },
+    },
+    ({ runId, taskId, text }) => agentMessage(rootDir, { runId, taskId, text })
   );
 }

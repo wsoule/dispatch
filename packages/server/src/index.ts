@@ -8,9 +8,15 @@ import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
+import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
 import { FakeExecutor } from './orchestrator/executors/fake.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
+import { PlanManager } from './orchestrator/plan.js';
+import type { Planner } from './orchestrator/planner.js';
+import { ClaudePlanner } from './orchestrator/planners/claude.js';
+import type { CommandRunner } from './orchestrator/pr.js';
+import { detectPrCapability, PrManager } from './orchestrator/pr.js';
 import { watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -42,6 +48,18 @@ export interface StartServerOptions {
   // 'claude' too — the point being that no test outside the explicitly-
   // gated DISPATCH_CLAUDE_SMOKE one ever invokes a real Claude session.
   registerExecutors?: (orchestrator: Orchestrator) => void;
+  // Phase 5 P1. Defaults to a real ClaudePlanner rooted at `rootDir`; tests
+  // override with a FakePlanner (see orchestrator/planners/fake.ts) so
+  // nothing outside a DISPATCH_CLAUDE_SMOKE-style gate ever calls the real
+  // Agent SDK's plan mode.
+  planner?: Planner;
+  // Overrides PrManager's gh/git seam and its capability-detection seam
+  // (both take the same CommandRunner shape) so tests can exercise the PR
+  // review path without a real GitHub remote or a logged-in gh CLI.
+  prCommandRunner?: CommandRunner;
+  // How often PrManager polls open PRs for a merged state. Defaults to the
+  // plan's 60s; tests pass something much shorter.
+  prPollIntervalMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -173,6 +191,31 @@ export async function startServer(
   // transcript at all are pruned.
   orchestrator.reconcileOnBoot();
 
+  // Phase 5 P1: the planner (real ClaudePlanner by default; tests inject a
+  // FakePlanner) and the epic dispatch engine, both wired against the same
+  // store/cache/events/orchestrator every other request handler shares.
+  const planner = opts.planner ?? new ClaudePlanner(rootDir);
+  const planManager = new PlanManager({ store, cache, events }, planner);
+  const epicEngine = new EpicEngine({
+    rootDir,
+    store,
+    cache,
+    events,
+    orchestrator,
+  });
+
+  // PR capability is detected once, here at boot, and never rechecked per
+  // request — a project's gh/remote setup essentially never changes while
+  // dispatchd is running, and re-shelling-out to `gh --version` on every
+  // health check or review action would be wasted work.
+  const prCapability = detectPrCapability(rootDir, opts.prCommandRunner);
+  const prManager = new PrManager(
+    { store, cache, events, orchestrator },
+    prCapability,
+    opts.prCommandRunner
+  );
+  prManager.startPolling(opts.prPollIntervalMs);
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -180,6 +223,10 @@ export async function startServer(
     events,
     orchestrator,
     version: packageJson.version,
+    planManager,
+    epicEngine,
+    prManager,
+    prCapability,
   };
 
   const server = Bun.serve({
@@ -250,6 +297,7 @@ export async function startServer(
     port,
     async stop() {
       watcher.close();
+      prManager.stopPolling();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on

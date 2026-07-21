@@ -280,6 +280,34 @@ export class Orchestrator {
     return meta;
   }
 
+  // The messaging half of agent collaboration (spec's `agent_message`):
+  // injects a message from *another* agent into a live run's executor.
+  // Distinct from sendMessage's human-authored channel — this one always
+  // prefixes the text so the receiving agent can tell the difference, and
+  // deliberately only accepts a run that's actively `running` (not
+  // provisioning, not awaiting-approval, not terminal): every other state
+  // 409s, since "another agent has something to say right now" is only
+  // unambiguous while the run is actually running. `resume`-style
+  // reactivation is sendMessage's job, not this one's.
+  inject(runId: string, text: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (meta.state !== 'running') {
+      throw new OrchestratorConflictError(`run is not running: ${runId}`);
+    }
+    const executorRun = this.registry.getExecutorRun(runId);
+    if (executorRun === undefined) {
+      throw new OrchestratorClientError(`run has no live executor: ${runId}`);
+    }
+    const prefixed = `[message from another agent] ${text}`;
+    this.transcriptFor(runId).appendEntry({
+      ts: new Date().toISOString(),
+      kind: 'system',
+      text: prefixed,
+    });
+    executorRun.send(prefixed);
+    return meta;
+  }
+
   // Interrupts a live run's executor and marks it cancelled. The worktree is
   // deliberately left in place — per the plan, only a review action
   // (merge/discard) removes a run's worktree.
