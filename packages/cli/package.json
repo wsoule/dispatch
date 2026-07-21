@@ -22,5 +22,8 @@
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
