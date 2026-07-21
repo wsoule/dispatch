@@ -19,6 +19,7 @@ import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { GetStartedView } from './views/GetStartedView';
 import { PlansView } from './views/PlansView';
+import { PullRequestsView } from './views/PullRequestsView';
 import { RunsView } from './views/RunsView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
@@ -334,6 +335,7 @@ function App() {
           projectView={navState.projectView}
           globalView={navState.globalView}
           liveAgentCount={liveRuns.length}
+          prCount={data.runs.filter((r) => r.prUrl !== undefined).length}
           onSetProjectView={selectProjectView}
           onSetGlobalView={setGlobalView}
           switcherOpen={switcherOpen}
@@ -402,6 +404,20 @@ function App() {
                   onSelectRun={(runId) =>
                     dispatchNav({ type: 'openRun', runId })
                   }
+                  onViewPr={(runId) => {
+                    dispatchNav({ type: 'openRun', runId });
+                    selectProjectView('pull-requests');
+                  }}
+                />
+              )}
+              {navState.projectView === 'pull-requests' && (
+                <PullRequestsView
+                  data={data}
+                  selectedRunId={navState.activeRunId}
+                  onSelectRun={(runId) =>
+                    dispatchNav({ type: 'openRun', runId })
+                  }
+                  onCloseRun={() => dispatchNav({ type: 'closeRun' })}
                 />
               )}
               {navState.projectView === 'plans' && (

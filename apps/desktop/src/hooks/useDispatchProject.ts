@@ -65,6 +65,9 @@ export interface DispatchProjectData {
   diff: import('@dispatch/client').DiffResult | undefined;
   diffLoading: boolean;
   diffError: string | null;
+  prDetail: import('@dispatch/client').PrDetail | undefined;
+  prDetailLoading: boolean;
+  prDetailError: string | null;
   pendingApprovals: Map<string, PendingApproval>;
 
   planId: string | null;
@@ -88,6 +91,12 @@ export interface DispatchProjectData {
   handleReview: (runId: string, action: 'merge' | 'discard') => Promise<void>;
   handleRequestChanges: (runId: string, text: string) => Promise<void>;
   handleOpenPr: (runId: string) => Promise<void>;
+  handlePrReview: (
+    runId: string,
+    event: 'approve' | 'request-changes' | 'comment',
+    body?: string
+  ) => Promise<void>;
+  handlePrComment: (runId: string, body: string) => Promise<void>;
   handleWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   handleStopEpic: (epicId: string) => Promise<void>;
   handleSubmitPrompt: (prompt: string) => Promise<string>;
@@ -159,6 +168,10 @@ export function useDispatchProject(
   );
   const runDiffQueryKey = useMemo(
     () => ['dispatch-run-diff', port, selectedRunId],
+    [port, selectedRunId]
+  );
+  const runPrQueryKey = useMemo(
+    () => ['dispatch-run-pr', port, selectedRunId],
     [port, selectedRunId]
   );
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
@@ -242,6 +255,32 @@ export function useDispatchProject(
   });
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
+
+  // The GitHub PR status + conversation for the selected run, once it has an
+  // open PR (`prUrl` set). Separate from the diff query — the Pierre diff shows
+  // the *code*, this shows the PR's review state/threads on top of it.
+  const prEnabled =
+    client !== null &&
+    selectedRunId !== null &&
+    runDetail !== undefined &&
+    runDetail.meta.prUrl !== undefined;
+  const {
+    data: prDetail,
+    isLoading: prDetailLoading,
+    error: prDetailErrorDetail,
+  } = useQuery({
+    queryKey: runPrQueryKey,
+    queryFn: () => {
+      if (client === null || selectedRunId === null) {
+        throw new Error('no run selected');
+      }
+      return client.fetchPrDetail(selectedRunId);
+    },
+    enabled: prEnabled,
+    retry: false,
+  });
+  const prDetailError =
+    prDetailErrorDetail instanceof Error ? prDetailErrorDetail.message : null;
 
   const { data: health } = useQuery({
     queryKey: healthQueryKey,
@@ -530,6 +569,31 @@ export function useDispatchProject(
     [client, queryClient, runsQueryKey, port]
   );
 
+  // Submitting a review or a comment returns the refreshed PrDetail, which we
+  // write straight into the PR query's cache so the conversation/status update
+  // without a second round trip.
+  const handlePrReview = useCallback(
+    async (
+      runId: string,
+      event: 'approve' | 'request-changes' | 'comment',
+      body?: string
+    ): Promise<void> => {
+      if (client === null) return;
+      const detail = await client.reviewPr(runId, event, body);
+      queryClient.setQueryData(runPrQueryKey, detail);
+    },
+    [client, queryClient, runPrQueryKey]
+  );
+
+  const handlePrComment = useCallback(
+    async (runId: string, body: string): Promise<void> => {
+      if (client === null) return;
+      const detail = await client.commentPr(runId, body);
+      queryClient.setQueryData(runPrQueryKey, detail);
+    },
+    [client, queryClient, runPrQueryKey]
+  );
+
   const handleWorkEpic = useCallback(
     async (epicId: string, concurrency: number): Promise<void> => {
       if (client === null) return;
@@ -594,6 +658,9 @@ export function useDispatchProject(
     diff,
     diffLoading,
     diffError,
+    prDetail,
+    prDetailLoading,
+    prDetailError,
     pendingApprovals,
 
     planId,
@@ -610,6 +677,8 @@ export function useDispatchProject(
     handleReview,
     handleRequestChanges,
     handleOpenPr,
+    handlePrReview,
+    handlePrComment,
     handleWorkEpic,
     handleStopEpic,
     handleSubmitPrompt,
