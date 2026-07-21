@@ -326,6 +326,16 @@ export class ClaudeExecutor implements Executor {
       // sessionId, making it impossible to resume via sendMessage's
       // `resume: true` path.
       let sessionId: string | undefined;
+      // Set only by the 'result' branch below — tracks whether the loop
+      // actually reached a terminal SDK message, as opposed to the
+      // underlying async iterator simply running out (the CLI process
+      // exiting, a killed session, etc.) with no 'result' ever emitted.
+      // That "ran out with no result" case throws nothing, so without this
+      // flag the loop would fall through silently: no onFinish call at all,
+      // leaving the run stuck 'running' forever until a dispatchd restart's
+      // reconcileOnBoot eventually force-fails it with no error/turns/cost
+      // recorded (the bug this flag exists to prevent).
+      let gotResult = false;
       try {
         for await (const message of sdkQuery) {
           if (interrupted) break;
@@ -340,15 +350,24 @@ export class ClaudeExecutor implements Executor {
           } else if (message.type === 'system') {
             sessionId = message.session_id;
           } else if (message.type === 'result') {
+            gotResult = true;
             if (!interrupted) events.onFinish(finishFromResult(message));
             break;
           }
         }
-      } catch (err) {
-        if (!interrupted) {
+        if (!gotResult && !interrupted) {
           events.onFinish({
             state: 'failed',
-            error: (err as Error).message,
+            error: 'agent session ended without a final result',
+            sessionId,
+          });
+        }
+      } catch (err) {
+        if (!interrupted) {
+          const message = (err as Error).message;
+          events.onFinish({
+            state: 'failed',
+            error: message.length > 0 ? message : 'agent session error',
             sessionId,
           });
         }
