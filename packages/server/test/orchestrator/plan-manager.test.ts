@@ -45,6 +45,18 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   throw new Error('waitFor timed out');
 }
 
+// Starts a plan and waits for it to leave 'running' — confirm() now requires
+// state === 'ready' (see the minors fix), so every confirm-path test needs
+// the plan to have actually settled first, not just been started.
+async function startAndSettle(
+  manager: PlanManager,
+  prompt: string
+): Promise<ReturnType<PlanManager['get']>> {
+  const started = manager.startPlan(prompt);
+  await waitFor(() => manager.get(started.id).state !== 'running');
+  return manager.get(started.id);
+}
+
 const SAMPLE_PROPOSAL: PlanProposal = {
   epic: { title: 'Ship the widget', description: 'Build the whole widget.' },
   tasks: [
@@ -118,11 +130,11 @@ describe('PlanManager.startPlan / get', () => {
 });
 
 describe('PlanManager.confirm', () => {
-  it('writes the epic first, then tasks with parent + blockedBy wired from indices', () => {
+  it('writes the epic first, then tasks with parent + blockedBy wired from indices', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const result = manager.confirm(started.id, SAMPLE_PROPOSAL);
 
     expect(result.epicId).toBeDefined();
@@ -145,7 +157,7 @@ describe('PlanManager.confirm', () => {
     expect(implement?.body).toContain('Tests pass');
   });
 
-  it('writes a flat task list with no epic when the proposal omits one', () => {
+  it('writes a flat task list with no epic when the proposal omits one', async () => {
     const proposal: PlanProposal = {
       tasks: [
         {
@@ -158,7 +170,7 @@ describe('PlanManager.confirm', () => {
       ],
     };
     const manager = makeManager(new FakePlanner({ ok: true, proposal }));
-    const started = manager.startPlan('small thing');
+    const started = await startAndSettle(manager, 'small thing');
     const result = manager.confirm(started.id, proposal);
 
     expect(result.epicId).toBeUndefined();
@@ -166,7 +178,7 @@ describe('PlanManager.confirm', () => {
     expect(task?.meta.parent).toBeNull();
   });
 
-  it('404s confirming an unknown plan id', () => {
+  it('404s confirming an unknown plan id', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
@@ -175,22 +187,22 @@ describe('PlanManager.confirm', () => {
     );
   });
 
-  it('409s a second confirm of the same plan', () => {
+  it('409s a second confirm of the same plan', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     manager.confirm(started.id, SAMPLE_PROPOSAL);
     expect(() => manager.confirm(started.id, SAMPLE_PROPOSAL)).toThrow(
       OrchestratorConflictError
     );
   });
 
-  it('accepts a client-edited proposal instead of the stored one (confirm body is authoritative)', () => {
+  it('accepts a client-edited proposal instead of the stored one (confirm body is authoritative)', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const edited: PlanProposal = {
       tasks: [
         {
@@ -207,21 +219,21 @@ describe('PlanManager.confirm', () => {
     expect(store.get(result.taskIds[0])?.meta.title).toBe('Edited solo task');
   });
 
-  it('400s a proposal with a non-array tasks field', () => {
+  it('400s a proposal with a non-array tasks field', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     expect(() => manager.confirm(started.id, { tasks: 'nope' })).toThrow(
       OrchestratorClientError
     );
   });
 
-  it('400s a proposal with an empty task title', () => {
+  it('400s a proposal with an empty task title', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const bad: PlanProposal = {
       tasks: [
         {
@@ -238,11 +250,11 @@ describe('PlanManager.confirm', () => {
     );
   });
 
-  it('400s a proposal with an invalid priority', () => {
+  it('400s a proposal with an invalid priority', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const bad = {
       tasks: [
         {
@@ -259,11 +271,11 @@ describe('PlanManager.confirm', () => {
     );
   });
 
-  it('400s a proposal with an out-of-range blockedByIndices entry', () => {
+  it('400s a proposal with an out-of-range blockedByIndices entry', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const bad: PlanProposal = {
       tasks: [
         {
@@ -280,11 +292,11 @@ describe('PlanManager.confirm', () => {
     );
   });
 
-  it('400s a proposal whose blockedByIndices form a cycle', () => {
+  it('400s a proposal whose blockedByIndices form a cycle', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const bad: PlanProposal = {
       tasks: [
         {
@@ -308,11 +320,11 @@ describe('PlanManager.confirm', () => {
     );
   });
 
-  it('400s a proposal where a task blocks on itself', () => {
+  it('400s a proposal where a task blocks on itself', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const bad: PlanProposal = {
       tasks: [
         {
@@ -329,11 +341,11 @@ describe('PlanManager.confirm', () => {
     );
   });
 
-  it('ignores a client-supplied status field — tasks and epic are always created todo', () => {
+  it('ignores a client-supplied status field — tasks and epic are always created todo', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const started = manager.startPlan('build a widget feature');
+    const started = await startAndSettle(manager, 'build a widget feature');
     const withStatus = {
       epic: { title: 'Sneaky epic', description: '', status: 'done' },
       tasks: [
@@ -350,5 +362,95 @@ describe('PlanManager.confirm', () => {
     const result = manager.confirm(started.id, withStatus);
     expect(store.get(result.epicId!)?.meta.status).toBe('todo');
     expect(store.get(result.taskIds[0])?.meta.status).toBe('todo');
+  });
+
+  // Minor fix: confirm is only meaningful against a plan that actually
+  // produced a proposal — confirming one still `running` (the planner
+  // hasn't answered yet) or `failed` (it errored) must 409, not silently
+  // write whatever the client happened to send.
+  it('409s confirming a plan that is still running', () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const started = manager.startPlan('build a widget feature');
+    expect(manager.get(started.id).state).toBe('running');
+    expect(() => manager.confirm(started.id, SAMPLE_PROPOSAL)).toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  it('409s confirming a plan that failed', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: false, error: 'planner exploded' })
+    );
+    const started = await startAndSettle(manager, 'anything');
+    expect(started.state).toBe('failed');
+    expect(() => manager.confirm(started.id, SAMPLE_PROPOSAL)).toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  // Minor fix: a planner (Fake or Claude) can return a proposal that itself
+  // fails validation — confirm() re-validates from scratch regardless, but
+  // a plan should never sit at `ready` advertising a proposal nobody could
+  // actually confirm. runPlanner() now validates before marking ready, and
+  // downgrades to `failed` with the validation message on a bad proposal.
+  it('marks the plan failed (not ready) when the planner itself returns an invalid proposal', async () => {
+    const invalidProposal = {
+      tasks: [
+        {
+          title: 'Bad priority from planner',
+          description: '',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'super-urgent',
+        },
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: invalidProposal })
+    );
+    const started = await startAndSettle(manager, 'build a widget feature');
+    expect(started.state).toBe('failed');
+    expect(started.error).toMatch(/invalid priority/);
+    expect(started.proposal).toBeUndefined();
+  });
+
+  // Minor fix: duplicate indices in blockedByIndices (a planner artifact, or
+  // a client double-entry) must collapse to a single blockedBy id rather
+  // than writing the same real id into the array more than once.
+  it('dedupes duplicate blockedByIndices entries into a single blockedBy id', async () => {
+    const proposal: PlanProposal = {
+      tasks: [
+        {
+          title: 'A',
+          description: '',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'none',
+        },
+        {
+          title: 'B',
+          description: '',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'none',
+        },
+        {
+          title: 'C depends on A and B twice each',
+          description: '',
+          acceptanceCriteria: [],
+          blockedByIndices: [0, 0, 1, 1],
+          priority: 'none',
+        },
+      ],
+    };
+    const manager = makeManager(new FakePlanner({ ok: true, proposal }));
+    const started = await startAndSettle(manager, 'build a widget feature');
+    const result = manager.confirm(started.id, proposal);
+
+    const [aId, bId, cId] = result.taskIds;
+    expect(store.get(cId)?.meta.blockedBy).toEqual([aId, bId]);
   });
 });

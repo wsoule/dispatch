@@ -113,7 +113,14 @@ export class PlanManager {
     const record = this.plans.get(planId);
     if (record === undefined) return;
     try {
-      const proposal = await this.planner.plan(record.prompt);
+      const rawProposal = await this.planner.plan(record.prompt);
+      // Minor fix: a Planner (Fake or Claude) can itself return a proposal
+      // that fails validation — re-validate here too (the same
+      // validatePlanProposal confirm() uses) so a plan never sits at
+      // `ready` advertising a proposal nobody could actually confirm; an
+      // invalid one downgrades straight to `failed` with the validation
+      // message instead.
+      const proposal = validatePlanProposal(rawProposal);
       this.updateRecord(planId, { state: 'ready', proposal });
     } catch (err) {
       this.updateRecord(planId, {
@@ -152,6 +159,16 @@ export class PlanManager {
     const record = this.get(planId);
     if (record.confirmedAt !== undefined) {
       throw new OrchestratorConflictError(`plan already confirmed: ${planId}`);
+    }
+    // Minor fix: confirm is only meaningful once the planner has actually
+    // produced a (validated-at-ready-time) proposal — a plan still
+    // `running` or one that ended `failed` has nothing legitimate to
+    // confirm against, even though the confirm body itself is otherwise
+    // re-validated from scratch below.
+    if (record.state !== 'ready') {
+      throw new OrchestratorConflictError(
+        `plan is not ready to confirm: ${planId} (state: ${record.state})`
+      );
     }
     const proposal = validatePlanProposal(rawProposal);
 

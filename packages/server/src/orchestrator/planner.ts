@@ -145,7 +145,11 @@ function validatePlannedTask(
     title: t.title,
     description: typeof t.description === 'string' ? t.description : '',
     acceptanceCriteria: t.acceptanceCriteria,
-    blockedByIndices: t.blockedByIndices as number[],
+    // Minor fix: a duplicate index (a planner artifact, or a client
+    // double-entry) must collapse to a single blockedBy id at confirm time
+    // rather than writing the same real id into the array more than once —
+    // dedupe here, once, rather than at every later confirm() call site.
+    blockedByIndices: [...new Set(t.blockedByIndices as number[])],
     priority: t.priority as Priority,
   };
 }
