@@ -1,12 +1,21 @@
 import type { RunMeta } from '@dispatch/client';
-import type { Priority, TaskDoc, UpdatePatch } from '@dispatch/core';
-import { ArrowUpRight } from 'lucide-react';
+import type { Assignee, Priority, TaskDoc, UpdatePatch } from '@dispatch/core';
+import {
+  ArrowUpRight,
+  Ban,
+  Layers,
+  Milestone,
+  Plus,
+  Tag,
+  X,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { isTerminalRunState } from '../../lib/runState';
-import { parseTaskSections, sectionOrDash } from '../../lib/taskDisplay';
+import { parseTaskSections } from '../../lib/taskDisplay';
 import { RunStatePill } from '../runs/RunStatePill';
 import { AssigneeAvatar } from './AssigneeAvatar';
 import { PriorityIcon } from './PriorityIcon';
@@ -22,14 +31,227 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/ui/select';
+import { Textarea } from '@/ui/textarea';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
+const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
+
+// Radix `SelectItem` can't take an empty-string value (it's reserved for "no
+// selection"), so this sentinel stands in for the "No epic" option and is
+// translated back to `null` at the update boundary.
+const NO_EPIC = '__none__';
+
+// A ghost SelectTrigger that reads like one of Linear's inline property rows
+// rather than a bordered form control: no border/shadow/background at rest, a
+// subtle hover fill, full-width and left-aligned, and the trailing chevron
+// hidden (`[&>svg]:hidden` targets only the trigger's own direct chevron — the
+// leading status/priority/assignee glyph lives nested inside the SelectValue
+// span, so it stays).
+const RAIL_SELECT_TRIGGER =
+  'h-7 w-full justify-start gap-2 rounded-md border-transparent bg-transparent px-2 text-[13px] shadow-none hover:bg-muted/60 focus-visible:ring-1 data-[size=sm]:h-7 dark:bg-transparent dark:hover:bg-muted/60 [&>svg]:hidden';
 
 // `Assignee` is a fixed three-value enum ('agent'/'human'/'none') — a plain capitalize reads
 // fine for all three ("Agent"/"Human"/"None") without needing a dedicated label map here on
 // top of `AssigneeAvatar`'s own internal one.
 function capitalize(word: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// A titled group of rows in the rail (Properties, Labels, Blocked by) — the
+// small muted header that lets Linear stack several property groups down the
+// sidebar without any dividers doing the separating.
+function RailSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="text-muted-foreground/70 px-2 pb-1 text-[11px] font-medium tracking-wide">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// A titled block in the main column (Description, Acceptance Criteria,
+// Sessions, Activity) — a quiet header plus its content, separated from
+// neighbors by whitespace rather than the heavy top-borders the old
+// single-column layout stacked on every section.
+function MainSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-1.5">
+      <h3 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+// An inline-editable body section (Description, Acceptance Criteria): renders
+// as borderless prose until focused, auto-grows to its content, and commits on
+// blur only when the text actually changed — so reading the task costs nothing
+// and editing is one click into the text. `value` is the section's current
+// persisted text; the local draft resets whenever it (or the task) changes.
+function EditableBodySection({
+  title,
+  value,
+  placeholder,
+  onSave,
+}: {
+  title: string;
+  value: string;
+  placeholder: string;
+  onSave: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <MainSection title={title}>
+      <Textarea
+        className="text-foreground/90 hover:bg-muted/30 focus-visible:bg-muted/40 -mx-2 min-h-[2.25rem] resize-none rounded-md border-transparent bg-transparent px-2 py-1.5 text-[13.5px] leading-relaxed shadow-none transition-colors duration-150 focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (draft !== value) onSave(draft);
+        }}
+      />
+    </MainSection>
+  );
+}
+
+// The labels editor in the rail: existing labels as removable chips plus an
+// input that adds a label on Enter. Labels are freeform strings, so this is a
+// plain add/remove rather than a pick-from-list — deduped and trimmed before it
+// calls back with the whole new list (matching UpdatePatch.labels' shape).
+function LabelEditor({
+  labels,
+  onChange,
+}: {
+  labels: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  function add() {
+    const label = draft.trim();
+    if (label !== '' && !labels.includes(label)) onChange([...labels, label]);
+    setDraft('');
+  }
+  return (
+    <div className="flex flex-col gap-1.5 px-2 pt-0.5">
+      {labels.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {labels.map((label) => (
+            <Badge
+              key={label}
+              variant="secondary"
+              className="gap-1 pr-1 text-[11px]"
+            >
+              {label}
+              <button
+                type="button"
+                aria-label={`Remove label ${label}`}
+                className="hover:text-foreground text-muted-foreground"
+                onClick={() => onChange(labels.filter((l) => l !== label))}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
+      <Input
+        className="h-7 text-[12px]"
+        placeholder="Add label…"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') add();
+        }}
+        onBlur={add}
+      />
+    </div>
+  );
+}
+
+// The blocked-by editor in the rail: current blockers as removable chips (each
+// showing the blocking task's id) plus a Select of the other tasks in the
+// project to add one. Unlike labels this IS a pick-from-list — a blocker has to
+// be a real task id — so the add control is a dropdown of candidates (self and
+// already-listed blockers filtered out) rather than a free-text input.
+function BlockedByEditor({
+  blockedBy,
+  candidates,
+  onChange,
+}: {
+  blockedBy: string[];
+  candidates: TaskDoc[];
+  onChange: (next: string[]) => void;
+}) {
+  const addable = candidates.filter((t) => !blockedBy.includes(t.meta.id));
+  return (
+    <div className="flex flex-col gap-1.5 px-2 pt-0.5">
+      {blockedBy.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {blockedBy.map((id) => (
+            <Badge
+              key={id}
+              variant="secondary"
+              className="gap-1 pr-1 text-[11px]"
+            >
+              <span className="font-mono">{id}</span>
+              <button
+                type="button"
+                aria-label={`Remove blocker ${id}`}
+                className="hover:text-foreground text-muted-foreground"
+                onClick={() => onChange(blockedBy.filter((b) => b !== id))}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
+      {addable.length > 0 && (
+        // `key` on the Select resets it to the placeholder after each add, so it
+        // never shows a stale "selected" blocker and can add several in a row.
+        <Select
+          key={blockedBy.join(',')}
+          value=""
+          onValueChange={(id) => onChange([...blockedBy, id])}
+        >
+          <SelectTrigger
+            size="sm"
+            className="text-muted-foreground h-7 w-full justify-start gap-1.5 text-[12px] [&>svg]:hidden"
+          >
+            <Plus className="size-3.5" />
+            <span>Add blocker</span>
+          </SelectTrigger>
+          <SelectContent>
+            {addable.map((t) => (
+              <SelectItem key={t.meta.id} value={t.meta.id}>
+                <span className="text-muted-foreground font-mono text-[11px]">
+                  {t.meta.id}
+                </span>
+                <span className="truncate">{t.meta.title}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </div>
+  );
 }
 
 interface TaskDetailDialogProps {
@@ -40,6 +262,10 @@ interface TaskDetailDialogProps {
   /** Every run (agent session) this task has had — newest first — so the detail modal can
    * list them and let you jump into any session's log/review, not just the latest one. */
   runs: RunMeta[];
+  /** All epics in the project, for the editable Epic (parent) picker. */
+  epics: TaskDoc[];
+  /** All tasks in the project, for the editable Blocked-by picker (self is filtered out). */
+  tasks: TaskDoc[];
   onClose: () => void;
   onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   /** Optimistic status change (see `useDispatchProject.moveTaskStatus`) — the same one the
@@ -52,14 +278,15 @@ interface TaskDetailDialogProps {
 }
 
 /**
- * Task detail as a centered shadcn `Dialog` — Linear itself opens task detail as a modal, not
- * a side panel, so this replaces the old `TaskPeekPanel` overlay with the same treatment
- * `CreateTaskModal` already uses. Same fields/behavior as the panel it replaces (editable
- * title, status/priority selects, read-only frontmatter, body sections, an activity feed +
- * composer, and the dispatch/view-run row), plus an assignee field the panel never surfaced.
- * Dialog owns its own focus trap and Escape handling (Radix), so the panel's hand-rolled
- * `useFocusTrap` + backdrop-click-to-close are gone; closing routes through `onClose` the same
- * way either way — the caller (`App.tsx`) unmounts this on close, same as `CreateTaskModal`.
+ * Task detail as a wide, two-column shadcn `Dialog`, built to Linear's issue-detail anatomy: a
+ * roomy main column (the title as the one loud element, then inline-editable Description /
+ * Acceptance Criteria, Sessions, and Activity) beside a narrow right-hand *properties rail*
+ * where status, priority, assignee, epic, blockers, and labels are all editable as compact
+ * icon+value rows instead of boxed form fields. Every field on the task is editable in place:
+ * frontmatter fields go through `onUpdate`/`onMoveStatus`, and the free-text body sections go
+ * through `onUpdate`'s `description`/`acceptanceCriteria` (whole-section replacements — see
+ * core's setSection). Linear opens issues as a modal (not a side panel), so this stays a
+ * centered `Dialog` and owns its own focus trap and Escape handling via Radix.
  */
 export function TaskDetailDialog({
   doc,
@@ -67,6 +294,8 @@ export function TaskDetailDialog({
   ready,
   run,
   runs,
+  epics,
+  tasks,
   onClose,
   onUpdate,
   onMoveStatus,
@@ -157,14 +386,13 @@ export function TaskDetailDialog({
   }
 
   const sections = parseTaskSections(doc.body);
+  const description = sections.get('Description') ?? '';
+  const acceptance = sections.get('Acceptance Criteria') ?? '';
   // The Activity section body is append-only free text, one line per entry (see
-  // core/store.ts's template) — split it into a feed of entries rather than one flat block,
-  // matching the redesign brief's "Activity timeline styled as a feed".
-  const activityFeed = sectionOrDash(sections, 'Activity');
-  const activityEntries =
-    activityFeed === '—'
-      ? []
-      : activityFeed.split('\n').filter((line) => line.trim() !== '');
+  // core/store.ts's template) — split it into a feed of entries rather than one flat block.
+  const activityEntries = (sections.get('Activity') ?? '')
+    .split('\n')
+    .filter((line) => line.trim() !== '');
 
   return (
     <Dialog
@@ -174,7 +402,7 @@ export function TaskDetailDialog({
       }}
     >
       <DialogContent
-        className="flex max-h-[85vh] w-[min(640px,90vw)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[640px]"
+        className="flex h-[85vh] max-h-[760px] w-[min(960px,94vw)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[960px]"
         aria-describedby={undefined}
         // Radix's default open-autofocus lands on the first tabbable descendant — which is
         // the (pre-filled) title field — and browsers select a text input's full value when
@@ -187,260 +415,293 @@ export function TaskDetailDialog({
           (event.currentTarget as HTMLElement).focus();
         }}
       >
-        <div className="border-border flex shrink-0 items-center gap-2 border-b px-5 py-3.5">
+        {/* Breadcrumb-style header, matching Linear's `Team › Issues › ID`: just the id and
+            live status, quiet, above the two-column body. */}
+        <div className="border-border flex shrink-0 items-center gap-2 border-b px-6 py-3">
           <span className="text-muted-foreground font-mono text-[11px]">
             {doc.meta.id}
           </span>
-          <span className="text-muted-foreground/50">·</span>
+          <span className="text-muted-foreground/40">›</span>
           <StatusIcon status={doc.meta.status} />
           <span className="text-muted-foreground text-[12px]">
             {doc.meta.status}
           </span>
-          {/* Visually hidden — Radix requires an accessible dialog title; the visible header
-              above (id + status) is the actual title bar people see, so this only exists for
-              screen readers. */}
           <DialogTitle className="sr-only">
             {doc.meta.title || 'Task detail'}
           </DialogTitle>
         </div>
 
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-          {error !== null && (
-            <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
-              {error}
-            </div>
-          )}
-
-          <Input
-            className="text-foreground hover:border-border -mx-1 h-auto w-[calc(100%+0.5rem)] border-transparent px-1 py-1 text-[17px] font-medium shadow-none transition-colors duration-150"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={saveTitleIfChanged}
-            aria-label="Task title"
-          />
-
-          {(ready || hasOpenRun) && (
-            <div className="flex items-center gap-2">
-              {ready && (
-                <Button
-                  size="sm"
-                  disabled={dispatching}
-                  onClick={() => void dispatch()}
-                >
-                  Dispatch
-                </Button>
-              )}
-              {ready && isFakeExecutorDevToolEnabled() && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={dispatching}
-                  onClick={() => void dispatch('fake')}
-                >
-                  Dispatch (fake)
-                </Button>
-              )}
-              {hasOpenRun && run !== undefined && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onOpenRun(run.id)}
-                >
-                  {doc.meta.status === 'in-review' ? 'Review run' : 'View run'}
-                </Button>
-              )}
-              {run?.prUrl !== undefined && (
-                <a
-                  className="text-primary hover:bg-accent border-border inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors duration-150"
-                  href={run.prUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  PR
-                  <ArrowUpRight className="size-3" />
-                </a>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1 text-[13px]">
-              <span className="text-muted-foreground text-[11px]">Status</span>
-              <Select
-                value={doc.meta.status}
-                onValueChange={(value) => void changeStatus(value)}
-              >
-                <SelectTrigger size="sm" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {statuses.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      <StatusIcon status={s} />
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="flex flex-col gap-1 text-[13px]">
-              <span className="text-muted-foreground text-[11px]">
-                Priority
-              </span>
-              <Select
-                value={doc.meta.priority}
-                onValueChange={(value) =>
-                  void runUpdate({ priority: value as Priority })
-                }
-              >
-                <SelectTrigger size="sm" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PRIORITIES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      <PriorityIcon priority={p} />
-                      {p}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <div className="flex flex-col gap-1 text-[13px]">
-              <span className="text-muted-foreground text-[11px]">Kind</span>
-              <span className="text-foreground font-mono text-[13px]">
-                {doc.meta.kind}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 text-[13px]">
-              <span className="text-muted-foreground text-[11px]">Epic</span>
-              <span className="text-foreground font-mono text-[13px]">
-                {doc.meta.parent ?? '—'}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 text-[13px]">
-              <span className="text-muted-foreground text-[11px]">
-                Blocked by
-              </span>
-              <span className="text-foreground font-mono text-[13px]">
-                {doc.meta.blockedBy.length > 0
-                  ? doc.meta.blockedBy.join(', ')
-                  : '—'}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 text-[13px]">
-              <span className="text-muted-foreground text-[11px]">
-                Assignee
-              </span>
-              <span className="text-foreground flex items-center gap-1.5 text-[13px]">
-                <AssigneeAvatar assignee={doc.meta.assignee} />
-                {capitalize(doc.meta.assignee)}
-              </span>
-            </div>
-            {doc.meta.labels.length > 0 && (
-              <div className="col-span-2 flex flex-col gap-1 text-[13px]">
-                <span className="text-muted-foreground text-[11px]">
-                  Labels
-                </span>
-                <div className="flex flex-wrap gap-1">
-                  {doc.meta.labels.map((label) => (
-                    <Badge
-                      key={label}
-                      variant="secondary"
-                      className="text-[11px]"
-                    >
-                      {label}
-                    </Badge>
-                  ))}
-                </div>
+        <div className="flex min-h-0 flex-1">
+          {/* Main column: the title leads, then dispatch actions, editable prose sections,
+              sessions, and the activity feed + composer — all left-aligned in a roomy flow. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-8 py-6">
+            {error !== null && (
+              <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
+                {error}
               </div>
             )}
-          </div>
 
-          <div className="border-border flex flex-col gap-2 border-t pt-3">
-            <div className="text-foreground text-[13px] font-medium">
-              Sessions
-            </div>
-            {runs.length === 0 ? (
-              <p className="text-muted-foreground text-[13px]">
-                No agent has worked this task yet.
-              </p>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {runs.map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenRun(r.id)}
-                      className="hover:bg-accent border-border/60 flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150"
-                    >
-                      <RunStatePill state={r.state} />
-                      <span className="text-muted-foreground font-mono text-[11px]">
-                        {r.id}
-                      </span>
-                      <span className="text-muted-foreground/70 ml-auto text-[11px] whitespace-nowrap">
-                        {r.costUsd !== undefined &&
-                          `$${r.costUsd.toFixed(2)} · `}
-                        {formatRelativeTimeFromIso(r.updatedAt)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+            <Input
+              className="text-foreground hover:bg-muted/40 dark:hover:bg-muted/40 -mx-2 h-auto w-[calc(100%+1rem)] border-transparent bg-transparent px-2 py-1 text-[22px] leading-tight font-semibold shadow-none transition-colors duration-150 dark:bg-transparent"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={saveTitleIfChanged}
+              aria-label="Task title"
+            />
 
-          <div className="border-border flex flex-col gap-2 border-t pt-3">
-            <div className="text-foreground text-[13px] font-medium">
-              Description
-            </div>
-            <div className="text-muted-foreground text-[13px] whitespace-pre-wrap">
-              {sectionOrDash(sections, 'Description')}
-            </div>
-          </div>
-
-          <div className="border-border flex flex-col gap-2 border-t pt-3">
-            <div className="text-foreground text-[13px] font-medium">
-              Acceptance Criteria
-            </div>
-            <div className="text-muted-foreground text-[13px] whitespace-pre-wrap">
-              {sectionOrDash(sections, 'Acceptance Criteria')}
-            </div>
-          </div>
-
-          <div className="border-border flex flex-col gap-2 border-t pt-3">
-            <div className="text-foreground text-[13px] font-medium">
-              Activity
-            </div>
-            {activityEntries.length === 0 ? (
-              <p className="text-muted-foreground text-[13px]">—</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {activityEntries.map((entry, i) => (
-                  <li
-                    key={i}
-                    className="bg-muted text-muted-foreground border-primary/40 rounded-md border-l-2 px-3 py-2 text-[13px] whitespace-pre-wrap"
+            {(ready || hasOpenRun) && (
+              <div className="-mt-2 flex items-center gap-2">
+                {ready && (
+                  <Button
+                    size="sm"
+                    disabled={dispatching}
+                    onClick={() => void dispatch()}
                   >
-                    {entry}
-                  </li>
-                ))}
-              </ul>
+                    Dispatch
+                  </Button>
+                )}
+                {ready && isFakeExecutorDevToolEnabled() && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={dispatching}
+                    onClick={() => void dispatch('fake')}
+                  >
+                    Dispatch (fake)
+                  </Button>
+                )}
+                {hasOpenRun && run !== undefined && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => onOpenRun(run.id)}
+                  >
+                    {doc.meta.status === 'in-review'
+                      ? 'Review run'
+                      : 'View run'}
+                  </Button>
+                )}
+                {run?.prUrl !== undefined && (
+                  <a
+                    className="text-primary hover:bg-accent border-border inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors duration-150"
+                    href={run.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    PR
+                    <ArrowUpRight className="size-3" />
+                  </a>
+                )}
+              </div>
             )}
-            <div className="flex gap-2">
-              <Input
-                className="h-8 flex-1 text-[13px]"
-                placeholder="Add an activity note…"
-                value={activityDraft}
-                onChange={(e) => setActivityDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') submitActivity();
-                }}
-              />
-              <Button variant="secondary" size="sm" onClick={submitActivity}>
-                Add
-              </Button>
-            </div>
+
+            <EditableBodySection
+              title="Description"
+              value={description}
+              placeholder="Add a description…"
+              onSave={(next) => void runUpdate({ description: next })}
+            />
+
+            <EditableBodySection
+              title="Acceptance Criteria"
+              value={acceptance}
+              placeholder="Add acceptance criteria…"
+              onSave={(next) => void runUpdate({ acceptanceCriteria: next })}
+            />
+
+            <MainSection
+              title={`Sessions${runs.length > 0 ? ` · ${runs.length}` : ''}`}
+            >
+              {runs.length === 0 ? (
+                <p className="text-muted-foreground text-[13px]">
+                  No agent has worked this task yet.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {runs.map((r) => (
+                    <li key={r.id}>
+                      <button
+                        type="button"
+                        onClick={() => onOpenRun(r.id)}
+                        className="hover:bg-muted/60 border-border/60 flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150"
+                      >
+                        <RunStatePill state={r.state} />
+                        <span className="text-muted-foreground font-mono text-[11px]">
+                          {r.id}
+                        </span>
+                        <span className="text-muted-foreground/70 ml-auto text-[11px] whitespace-nowrap">
+                          {r.costUsd !== undefined &&
+                            `$${r.costUsd.toFixed(2)} · `}
+                          {formatRelativeTimeFromIso(r.updatedAt)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </MainSection>
+
+            <MainSection title="Activity">
+              {activityEntries.length === 0 ? (
+                <p className="text-muted-foreground text-[13px]">
+                  No activity yet.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {activityEntries.map((entry, i) => (
+                    <li
+                      key={i}
+                      className="text-muted-foreground text-[13px] whitespace-pre-wrap"
+                    >
+                      {entry}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {/* Linear-style comment composer: one bordered, rounded box that focuses as a
+                  unit, with the send affordance tucked inside on the right. */}
+              <div className="border-border focus-within:border-ring/60 mt-1 flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors duration-150">
+                <Input
+                  className="h-7 flex-1 border-transparent bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
+                  placeholder="Leave a note…"
+                  value={activityDraft}
+                  onChange={(e) => setActivityDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submitActivity();
+                  }}
+                />
+                <Button
+                  size="sm"
+                  disabled={activityDraft.trim() === ''}
+                  onClick={submitActivity}
+                >
+                  Add
+                </Button>
+              </div>
+            </MainSection>
           </div>
+
+          {/* Properties rail: the signature Linear element — every property editable in place
+              as a compact icon+value row (ghost selects) or chip editor, grouped under quiet
+              headers, instead of a grid of boxed form fields. */}
+          <aside className="border-border bg-muted/20 w-[248px] shrink-0 overflow-y-auto border-l px-4 py-6">
+            <div className="flex flex-col gap-5">
+              <RailSection title="Properties">
+                <Select
+                  value={doc.meta.status}
+                  onValueChange={(value) => void changeStatus(value)}
+                >
+                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statuses.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        <StatusIcon status={s} />
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={doc.meta.priority}
+                  onValueChange={(value) =>
+                    void runUpdate({ priority: value as Priority })
+                  }
+                >
+                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRIORITIES.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        <PriorityIcon priority={p} />
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={doc.meta.assignee}
+                  onValueChange={(value) =>
+                    void runUpdate({ assignee: value as Assignee })
+                  }
+                >
+                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ASSIGNEES.map((a) => (
+                      <SelectItem key={a} value={a}>
+                        <AssigneeAvatar assignee={a} />
+                        {capitalize(a)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={doc.meta.parent ?? NO_EPIC}
+                  onValueChange={(value) =>
+                    void runUpdate({
+                      parent: value === NO_EPIC ? null : value,
+                    })
+                  }
+                >
+                  <SelectTrigger size="sm" className={RAIL_SELECT_TRIGGER}>
+                    <span className="flex items-center gap-2">
+                      <Milestone className="text-muted-foreground size-3.5" />
+                      <SelectValue />
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_EPIC}>No epic</SelectItem>
+                    {epics.map((epic) => (
+                      <SelectItem key={epic.meta.id} value={epic.meta.id}>
+                        {epic.meta.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* Kind is fixed at creation (task vs epic) — the one property that stays
+                    read-only, shown for context alongside the editable rows. */}
+                <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]">
+                  <Layers className="text-muted-foreground size-3.5" />
+                  <span>{doc.meta.kind}</span>
+                </div>
+              </RailSection>
+
+              <RailSection title="Blocked by">
+                {doc.meta.blockedBy.length === 0 && (
+                  <div className="text-muted-foreground flex items-center gap-2 px-2 py-1.5 text-[13px]">
+                    <Ban className="size-3.5" />
+                    No blockers
+                  </div>
+                )}
+                <BlockedByEditor
+                  blockedBy={doc.meta.blockedBy}
+                  candidates={tasks.filter((t) => t.meta.id !== doc.meta.id)}
+                  onChange={(next) => void runUpdate({ blockedBy: next })}
+                />
+              </RailSection>
+
+              <RailSection title="Labels">
+                {doc.meta.labels.length === 0 && (
+                  <div className="text-muted-foreground flex items-center gap-2 px-2 pb-0.5 text-[13px]">
+                    <Tag className="size-3.5" />
+                    No labels
+                  </div>
+                )}
+                <LabelEditor
+                  labels={doc.meta.labels}
+                  onChange={(next) => void runUpdate({ labels: next })}
+                />
+              </RailSection>
+            </div>
+          </aside>
         </div>
       </DialogContent>
     </Dialog>
