@@ -11,6 +11,7 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
       status: 'todo',
       kind: 'task',
       parent: null,
+      milestone: null,
       blockedBy: [],
       labels: [],
       priority: 'none',

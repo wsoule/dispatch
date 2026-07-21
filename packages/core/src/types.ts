@@ -17,6 +17,10 @@ export interface TaskMeta {
   status: string;
   kind: TaskKind;
   parent: string | null;
+  // A milestone/project name this task belongs to — the Linear-style grouping *above* epics,
+  // free-form (ad-hoc names, not ids) so a project doesn't need any per-project setup. `null`
+  // when the task isn't assigned to one.
+  milestone: string | null;
   blockedBy: string[];
   labels: string[];
   priority: Priority;

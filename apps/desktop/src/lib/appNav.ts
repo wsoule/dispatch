@@ -15,6 +15,7 @@
 export type ProjectView =
   | 'overview'
   | 'board'
+  | 'milestones'
   | 'runs'
   | 'pull-requests'
   | 'notes'

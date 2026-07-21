@@ -35,6 +35,7 @@ export interface CreateInput {
   status?: string;
   description?: string;
   parent?: string | null;
+  milestone?: string | null;
   blockedBy?: string[];
   labels?: string[];
   priority?: Priority;
@@ -45,6 +46,7 @@ export interface UpdatePatch {
   title?: string;
   status?: string;
   parent?: string | null;
+  milestone?: string | null;
   blockedBy?: string[];
   labels?: string[];
   priority?: Priority;
@@ -108,6 +110,7 @@ export class TaskStore {
       status: input.status ?? 'todo',
       kind,
       parent: input.parent ?? null,
+      milestone: input.milestone ?? null,
       blockedBy: input.blockedBy ?? [],
       labels: input.labels ?? [],
       priority: input.priority ?? 'none',

@@ -18,6 +18,7 @@ import { currentProjectRoot, hasDispatch, listProjects } from './lib/tauri';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { GetStartedView } from './views/GetStartedView';
+import { MilestonesView } from './views/MilestonesView';
 import { NotesView } from './views/NotesView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
@@ -439,6 +440,14 @@ function App() {
                     dispatchNav({ type: 'openRun', runId })
                   }
                   onCloseRun={() => dispatchNav({ type: 'closeRun' })}
+                />
+              )}
+              {navState.projectView === 'milestones' && (
+                <MilestonesView
+                  data={data}
+                  onOpenTask={(taskId) =>
+                    dispatchNav({ type: 'openPeek', taskId })
+                  }
                 />
               )}
               {navState.projectView === 'notes' && (

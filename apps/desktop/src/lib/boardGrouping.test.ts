@@ -10,6 +10,7 @@ function makeTask(id: string, status: string): TaskDoc {
     status,
     kind: 'task',
     parent: null,
+    milestone: null,
     blockedBy: [],
     labels: [],
     priority: 'none',
