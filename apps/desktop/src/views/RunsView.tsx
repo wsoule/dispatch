@@ -36,6 +36,9 @@ interface RunsViewProps {
    * this view still pointed at whatever it had selected last, or nothing at all). */
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
+  /** Opens the Pull requests tab focused on a given run's PR — the run Review surface only
+   * links to PR review, it doesn't host it. */
+  onViewPr: (runId: string) => void;
 }
 
 /**
@@ -48,7 +51,12 @@ interface RunsViewProps {
  * straight to the diff — Session stays reachable (and is the default) for any run that hasn't
  * produced changes worth reviewing.
  */
-export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
+export function RunsView({
+  data,
+  selectedRunId,
+  onSelectRun,
+  onViewPr,
+}: RunsViewProps) {
   const [tab, setTab] = useState<RunTab>('session');
   // Which run id the tab above was last defaulted for — a default is only applied once per
   // run (on first seeing it, or once its diff resolves), so switching tabs manually never
@@ -210,6 +218,7 @@ export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
                         data.handleRequestChanges(selected.id, text)
                       }
                       onOpenPr={() => data.handleOpenPr(selected.id)}
+                      onViewPr={() => onViewPr(selected.id)}
                     />
                   )}
                 </TabsContent>

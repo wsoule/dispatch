@@ -12,7 +12,7 @@
  * review. The `board` id is kept (rather than renamed to e.g. `tasks`) so this type, the
  * reducer below, and every test against it stay untouched by the nav collapse — only
  * `Sidebar`'s single nav row and its label changed. */
-export type ProjectView = 'board' | 'runs' | 'plans';
+export type ProjectView = 'board' | 'runs' | 'pull-requests' | 'plans';
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar. */
 export type GlobalView = 'all-agents' | 'sessions' | 'settings';
@@ -79,9 +79,13 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         ...state,
         section: 'project',
         projectView: action.view,
-        // Leaving Runs behind clears the split-pane selection so re-entering starts fresh
-        // rather than reopening whatever run happened to be selected last time.
-        activeRunId: action.view === 'runs' ? state.activeRunId : null,
+        // Runs and Pull requests both key their selection off `activeRunId` (a PR is just a
+        // run with an open PR), so keep it when moving between those two; any other view
+        // clears it so re-entering starts fresh rather than reopening a stale selection.
+        activeRunId:
+          action.view === 'runs' || action.view === 'pull-requests'
+            ? state.activeRunId
+            : null,
       };
     case 'setGlobalView':
       // A global view (Settings, Sessions, All Agents) isn't showing any project's task

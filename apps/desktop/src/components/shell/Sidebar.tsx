@@ -2,6 +2,7 @@ import {
   Check,
   ChevronsUpDown,
   Cog,
+  GitPullRequest,
   ListChecks,
   NotebookPen,
   Play,
@@ -28,6 +29,7 @@ const PROJECT_VIEWS: {
 }[] = [
   { id: 'board', label: 'Tasks', icon: ListChecks },
   { id: 'runs', label: 'Runs', icon: Play },
+  { id: 'pull-requests', label: 'Pull requests', icon: GitPullRequest },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
 ];
 
@@ -56,6 +58,8 @@ interface SidebarProps {
   /** Count of non-terminal runs for this project — the "All Agents" badge, so you can tell
    * something is live without leaving whatever you're looking at. */
   liveAgentCount: number;
+  /** Count of runs with an open PR — the "Pull requests" nav badge. */
+  prCount: number;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
   /** Whether the project switcher dropdown is open (its project list is loaded lazily on
@@ -84,6 +88,7 @@ export function Sidebar({
   projectView,
   globalView,
   liveAgentCount,
+  prCount,
   onSetProjectView,
   onSetGlobalView,
   switcherOpen,
@@ -187,7 +192,12 @@ export function Sidebar({
               )}
             >
               <Icon className="size-4 shrink-0" strokeWidth={2} />
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {item.id === 'pull-requests' && prCount > 0 && (
+                <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
+                  {prCount}
+                </span>
+              )}
             </button>
           );
         })}
