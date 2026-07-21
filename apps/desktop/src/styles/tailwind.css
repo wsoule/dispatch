@@ -1,0 +1,95 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Dark mode follows the OS setting (this app has no in-app toggle), so the `dark:` variant is
+   wired to the media query rather than a `.dark` class. shadcn components mostly theme through
+   the semantic CSS variables below, which are overridden in the same media query. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/* shadcn semantic theme, mapped to the app's Linear palette (see styles/tokens.css — the same
+   values, exposed here under shadcn's names so shadcn/ui primitives match the hand-rolled
+   components exactly during the migration). Light values here; dark overrides in the media
+   query below. */
+:root {
+  --radius: 0.5rem;
+
+  --background: #fbfbfc;
+  --foreground: #1a1b1e;
+  --card: #ffffff;
+  --card-foreground: #1a1b1e;
+  --popover: #ffffff;
+  --popover-foreground: #1a1b1e;
+  --primary: #5e6ad2;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f2f4;
+  --secondary-foreground: #1a1b1e;
+  --muted: #f1f2f4;
+  --muted-foreground: #71757d;
+  --accent: #eceef8;
+  --accent-foreground: #5e6ad2;
+  --destructive: #d64c4c;
+  --destructive-foreground: #ffffff;
+  --border: #e8e9ec;
+  --input: #e8e9ec;
+  --ring: #5e6ad2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0e0f11;
+    --foreground: #f7f8f8;
+    --card: #17181c;
+    --card-foreground: #f7f8f8;
+    --popover: #1e1f24;
+    --popover-foreground: #f7f8f8;
+    --primary: #5e6ad2;
+    --primary-foreground: #ffffff;
+    --secondary: #1c1d21;
+    --secondary-foreground: #f7f8f8;
+    --muted: #1c1d21;
+    --muted-foreground: #858991;
+    --accent: #21243a;
+    --accent-foreground: #c3c8ec;
+    --destructive: #e5595b;
+    --destructive-foreground: #ffffff;
+    --border: #23252a;
+    --input: #23252a;
+    --ring: #5e6ad2;
+  }
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Fira Code', monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+}
