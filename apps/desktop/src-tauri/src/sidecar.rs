@@ -167,20 +167,31 @@ pub struct BunSpawner;
 
 impl DaemonSpawner for BunSpawner {
     fn spawn(&self, bin_path: &Path, root: &str) -> Result<Child, String> {
-        Command::new("bun")
+        let mut command = Command::new("bun");
+        command
             .arg(bin_path)
             .arg("--root")
             .arg(root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                format!(
-                    "failed to spawn dispatchd (bun {}): {e} — is bun installed? https://bun.sh",
-                    bin_path.display()
-                )
-            })
+            .stderr(Stdio::piped());
+        // Phase 7: `DISPATCH_ENABLE_FAKES=1` is what makes dispatchd register
+        // a FakeExecutor/FakePlanner alongside the real ones (see
+        // packages/server/src/bin.ts's own doc comment) — production
+        // dispatchd otherwise only ever wires up the real Claude backend.
+        // Setting it only in debug builds is what keeps the Tasks tab's
+        // existing hidden "dispatch with the fake executor" dev toggle
+        // (apps/desktop/src/lib/devTools.ts) working exactly as before this
+        // phase, while a release build's sidecar never sets it — matching
+        // the plan's "production default registers claude only".
+        #[cfg(debug_assertions)]
+        command.env("DISPATCH_ENABLE_FAKES", "1");
+        command.spawn().map_err(|e| {
+            format!(
+                "failed to spawn dispatchd (bun {}): {e} — is bun installed? https://bun.sh",
+                bin_path.display()
+            )
+        })
     }
 }
 
