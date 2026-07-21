@@ -186,6 +186,152 @@ describe('Orchestrator.cancel', () => {
   });
 });
 
+// Builds a controllable Executor whose `start()` never calls
+// onFinish/onApprovalRequest on its own — the run sits in `running` until
+// the test itself decides it's done observing, exactly the same shape
+// plan-epic-api.test.ts's HTTP-level inject tests use, just constructed
+// directly here for the orchestrator's own unit tests. `sent` collects
+// every `executorRun.send()` call so a test can assert on the exact text
+// (prefixed or not) the executor actually received.
+function controllableExecutor(sent: string[]): Executor {
+  return {
+    start(_opts: ExecutorStartOptions, _events: ExecutorEvents): ExecutorRun {
+      return {
+        interrupt: async () => {},
+        send: (message: string) => sent.push(message),
+        approve: () => {},
+      };
+    },
+  };
+}
+
+describe('Orchestrator.sendMessage (mid-run message)', () => {
+  it('records a from:user message entry and forwards the raw text to the executor', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const sent: string[] = [];
+    orchestrator.registerExecutor('fake', controllableExecutor(sent));
+    const task = store.create({ title: 'Talk to me' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+
+    orchestrator.sendMessage(meta.id, 'hello agent');
+
+    const entries = orchestrator.getRun(meta.id)!.entries;
+    const messageEntry = entries.find((e) => e.kind === 'message');
+    expect(messageEntry).toMatchObject({
+      kind: 'message',
+      from: 'user',
+      text: 'hello agent',
+    });
+    // sendMessage never prefixes — that's inject's job for the
+    // agent-to-agent channel, not the human-to-agent one.
+    expect(sent).toEqual(['hello agent']);
+  });
+});
+
+describe('Orchestrator.inject sender identity', () => {
+  it("resolves fromRunId to the sender run's task title + id label", () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const sent: string[] = [];
+    orchestrator.registerExecutor('fake', controllableExecutor(sent));
+
+    const senderTask = store.create({ title: 'Sender task' });
+    const senderMeta = orchestrator.dispatch(senderTask.meta.id, 'fake');
+    const targetTask = store.create({ title: 'Target task' });
+    const targetMeta = orchestrator.dispatch(targetTask.meta.id, 'fake');
+
+    orchestrator.inject(targetMeta.id, 'need a hand', {
+      runId: senderMeta.id,
+    });
+
+    const entries = orchestrator.getRun(targetMeta.id)!.entries;
+    const messageEntry = entries.find((e) => e.kind === 'message');
+    expect(messageEntry).toMatchObject({
+      kind: 'message',
+      from: 'agent',
+      fromLabel: `Sender task (${senderMeta.id})`,
+      text: 'need a hand',
+    });
+    expect(sent).toEqual([
+      `[message from Sender task (${senderMeta.id})] need a hand`,
+    ]);
+  });
+
+  it('falls back to the generic "another agent" label when fromRunId is omitted', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const sent: string[] = [];
+    orchestrator.registerExecutor('fake', controllableExecutor(sent));
+    const task = store.create({ title: 'Target task' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+
+    orchestrator.inject(meta.id, 'hello');
+
+    const entries = orchestrator.getRun(meta.id)!.entries;
+    const messageEntry = entries.find((e) => e.kind === 'message');
+    expect(messageEntry).toMatchObject({
+      kind: 'message',
+      from: 'agent',
+      fromLabel: 'another agent',
+      text: 'hello',
+    });
+    expect(sent).toEqual(['[message from another agent] hello']);
+  });
+
+  it('falls back to the generic label when fromRunId does not match a known run', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const sent: string[] = [];
+    orchestrator.registerExecutor('fake', controllableExecutor(sent));
+    const task = store.create({ title: 'Target task' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+
+    orchestrator.inject(meta.id, 'hello', { runId: 'r-nonexistent' });
+
+    const entries = orchestrator.getRun(meta.id)!.entries;
+    const messageEntry = entries.find((e) => e.kind === 'message');
+    expect(messageEntry?.fromLabel).toBe('another agent');
+  });
+});
+
+describe('Orchestrator.messageUser', () => {
+  it("records a from:agent entry on the run's own transcript labeled with its own task", () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const sent: string[] = [];
+    orchestrator.registerExecutor('fake', controllableExecutor(sent));
+    const task = store.create({ title: 'Flag something' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+
+    orchestrator.messageUser(meta.id, 'need clarification on X');
+
+    const entries = orchestrator.getRun(meta.id)!.entries;
+    const messageEntry = entries.find((e) => e.kind === 'message');
+    expect(messageEntry).toMatchObject({
+      kind: 'message',
+      from: 'agent',
+      fromLabel: `Flag something (${meta.id})`,
+      text: 'need clarification on X',
+    });
+    // messageUser never delivers into the executor — there is no recipient
+    // beyond the human reading this run's own Session tab.
+    expect(sent).toEqual([]);
+  });
+
+  it('409s a run that is not running', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Already finished' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(() => orchestrator.messageUser(meta.id, 'too late')).toThrow(
+      OrchestratorConflictError
+    );
+  });
+});
+
 describe('Orchestrator.sendMessage resume (request-changes)', () => {
   it('re-dispatches into the same worktree/branch after a finished run', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);

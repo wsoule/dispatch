@@ -49,4 +49,23 @@ Every task is a plain markdown file, so if a tool here doesn't cover what you
 need, reading or editing files under \`.dispatch/tasks/\` directly is always a
 valid fallback — just keep the YAML frontmatter's required fields (\`id\`,
 \`title\`, \`status\`, \`kind\`, \`created\`, \`updated\`) intact.
+
+## Talking to other agents and the human
+
+Other dispatch runs may be working in parallel, and a human may be watching
+this run's Session tab. Three channels cover every direction:
+
+- **Agent -> agent**: call \`run_list\` to see who else is live right now
+  (id, task, state), then \`agent_message\` with exactly one of
+  \`runId\`/\`taskId\` to send that run a message. It's delivered prefixed
+  \`[message from <sender>]\` (your own task title + run id when this
+  server knows it) so the receiving agent can tell who's talking — both
+  your and their Session tabs show the exchange.
+- **App/user -> agent**: the human talks to you through this run's own
+  Session composer in the app — those messages just show up as your next
+  turn, no tool call needed on your end to receive them.
+- **Agent -> app/user**: call \`message_user\` with a short \`text\`
+  whenever you want to flag a question, a blocker, or a notable update to
+  the human beyond your normal assistant output — it lands on your own
+  Session tab, badged as coming from you.
 `;

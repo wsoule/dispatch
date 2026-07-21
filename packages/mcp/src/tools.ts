@@ -262,15 +262,32 @@ function noLiveTargetMessage(target: string, live: LiveRunLike[]): string {
   return `no live run for ${target} — live runs: ${listing}`;
 }
 
+// The calling agent's own run id, as set by ClaudeExecutor's
+// buildDispatchMcpServerConfig (see packages/server/src/orchestrator/
+// executors/claude.ts) into this MCP server's own process env — this is how
+// `agent_message`/`message_user` know *whose* message they're forwarding
+// without the calling model having to know or supply its own run id.
+// `undefined` when this server wasn't launched by a real dispatch run (a
+// manually-started server, or a test) — every caller below treats that as
+// "sender identity unknown" rather than a hard error, so agent_message still
+// works (falling back to the generic label dispatchd's own inject() already
+// has) and only message_user, which has no meaning without an owning run,
+// treats it as fatal.
+function callingRunId(): string | undefined {
+  const id = process.env.DISPATCH_RUN_ID;
+  return id !== undefined && id !== '' ? id : undefined;
+}
+
 // Proxies `POST /api/runs/:id/inject` — the messaging half of agent
 // collaboration (spec §5). Exactly one of `runId`/`taskId` must be given;
 // `taskId` is resolved to that task's one live run via the same `GET
 // /api/runs` fetch run_list already uses (no live run for that task is the
 // same "clean error" as an unrecognized runId, not a protocol-level
-// failure). The calling agent's own identity is unknown to MCP, so every
-// injected message is unconditionally prefixed — dispatchd's `inject()`
-// endpoint owns the actual prefixing (see orchestrator.ts's `inject`), this
-// tool only has to route to the right run.
+// failure). The calling agent's identity comes from `DISPATCH_RUN_ID` (see
+// `callingRunId` above) and rides along as `fromRunId` so dispatchd's own
+// `inject()` can resolve a real sender label (task title + id) instead of
+// the generic "another agent" fallback — this tool itself never builds the
+// prefixed text, that's still entirely dispatchd's job.
 async function agentMessage(
   rootDir: string,
   args: { runId?: string; taskId?: string; text: string }
@@ -297,12 +314,17 @@ async function agentMessage(
   }
 
   try {
+    const fromRunId = callingRunId();
     const res = await fetch(
       `http://127.0.0.1:${live.port}/api/runs/${match.id}/inject`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: args.text }),
+        body: JSON.stringify(
+          fromRunId !== undefined
+            ? { text: args.text, fromRunId }
+            : { text: args.text }
+        ),
       }
     );
     if (!res.ok) {
@@ -314,6 +336,54 @@ async function agentMessage(
     return toolResult({ ok: true, runId: match.id });
   } catch (err) {
     return toolError(`inject failed: ${(err as Error).message}`);
+  }
+}
+
+// Proxies `POST /api/runs/:id/message-user` — the agent->human channel
+// (spec §8, `message_user`). Unlike `agent_message` there is no target to
+// pick: the message always lands on the CALLING agent's own run (from
+// `DISPATCH_RUN_ID`), which is also why a server not launched by a real
+// dispatch run (no DISPATCH_RUN_ID at all) can't use this tool — there is
+// no run for the message to belong to.
+async function messageUser(
+  rootDir: string,
+  args: { text: string }
+): Promise<ToolOutcome> {
+  if (args.text.trim() === '') {
+    return toolError('text must not be empty');
+  }
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'message_user requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — no live run to message from');
+  }
+
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${daemon.port}/api/runs/${runId}/message-user`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: args.text }),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      return toolError(
+        `message_user failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    return toolResult({ ok: true, runId });
+  } catch (err) {
+    return toolError(`message_user failed: ${(err as Error).message}`);
   }
 }
 
@@ -550,14 +620,16 @@ export function registerDispatchTools(
     {
       title: 'Message a live run',
       description:
-        'Send a message into another live dispatch run — the messaging ' +
+        'Send a message into another live dispatch run — the agent->agent ' +
         'half of agent collaboration. Target it with exactly one of runId ' +
         "(a specific run) or taskId (that task's current live run); the " +
-        'message is delivered prefixed "[message from another agent]" so ' +
-        'the receiving agent can tell it apart from its own task prompt. ' +
-        'Fails with a clear error (and a list of what IS live right now) ' +
-        'when the target has no live run, or when dispatchd itself is not ' +
-        'running.',
+        'message is delivered prefixed "[message from <sender>]" (your own ' +
+        'task title + run id when known, otherwise a generic "another ' +
+        'agent" label) so the receiving agent can tell who is talking and ' +
+        "tell it apart from its own task prompt. Both sides' Session tabs " +
+        'show it. Fails with a clear error (and a list of what IS live ' +
+        'right now) when the target has no live run, or when dispatchd ' +
+        'itself is not running.',
       inputSchema: {
         runId: z.string().optional(),
         taskId: z.string().optional(),
@@ -569,5 +641,28 @@ export function registerDispatchTools(
       },
     },
     ({ runId, taskId, text }) => agentMessage(rootDir, { runId, taskId, text })
+  );
+
+  server.registerTool(
+    'message_user',
+    {
+      title: 'Message the human',
+      description:
+        'Raise a message to the human running this task — the agent->user ' +
+        'channel of agent collaboration. Use it to flag a question, a ' +
+        'blocker, or a notable update that should surface beyond your own ' +
+        'assistant output, e.g. before pausing on something ambiguous. ' +
+        "Lands on this run's own Session tab, badged as coming from you. " +
+        'Requires a live dispatch run context; fails with a clear error ' +
+        'outside one (a manually-started MCP server, or dispatchd not ' +
+        'running).',
+      inputSchema: { text: z.string() },
+      outputSchema: {
+        ok: z.boolean(),
+        runId: z.string(),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    ({ text }) => messageUser(rootDir, { text })
   );
 }

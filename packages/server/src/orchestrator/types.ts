@@ -1,15 +1,27 @@
 // The Vibe Kanban pattern: every executor, real or fake, streams a uniform
 // log shape so the transcript/UI never needs to know which executor produced
 // an entry. `kind: 'usage'` entries carry running cost/turn info; everything
-// else is either assistant output, a tool invocation, model "thinking", or a
-// system-authored note (e.g. a user's mid-run message).
+// else is either assistant output, a tool invocation, model "thinking", a
+// system-authored note, or (agent-comms) an identified `message` — a
+// human-to-agent or agent-to-agent chat turn that carries `from`/`fromLabel`
+// so the transcript/UI can tell who's talking, instead of the undifferentiated
+// `system` "user: ..." notes this used to be recorded as. `from: 'user'` is
+// the run's own human via the Session composer; `from: 'agent'` is either
+// another live run's `agent_message` (sender identified via `fromLabel`) or
+// this run's own `message_user` call flagging something to the human.
 export interface NormalizedEntry {
   ts: string;
-  kind: 'assistant' | 'tool' | 'thinking' | 'system' | 'usage';
+  kind: 'assistant' | 'tool' | 'thinking' | 'system' | 'usage' | 'message';
   text?: string;
   toolName?: string;
   toolInput?: unknown;
   status?: 'running' | 'done' | 'error';
+  from?: 'user' | 'agent';
+  // Who sent a `from: 'agent'` message — e.g. the sender run's task title
+  // + id ("Fix login bug (r-abc123)"), or a generic fallback when the
+  // sender's identity couldn't be resolved. Never set for `from: 'user'`
+  // (the app renders that as "You" unconditionally).
+  fromLabel?: string;
 }
 
 // A live handle to a running executor invocation — the orchestrator holds
@@ -58,6 +70,14 @@ export interface ExecutorStartOptions {
   // fixtures that never touch this don't all need updating; every real
   // Orchestrator call site always passes it.
   projectRoot?: string;
+  // This run's own id — ClaudeExecutor passes it through as `DISPATCH_RUN_ID`
+  // in the dispatch MCP server's env (see claude.ts's
+  // buildDispatchMcpServerConfig) so `agent_message`/`message_user` know
+  // whose identity to attach to a message without the calling agent having
+  // to know or supply its own run id. Optional for the same reason
+  // `projectRoot` is: FakeExecutor fixtures that never touch messaging don't
+  // need to pass it; every real Orchestrator call site always does.
+  runId?: string;
 }
 
 // The load-bearing seam (spec §2): every agent backend — FakeExecutor here in

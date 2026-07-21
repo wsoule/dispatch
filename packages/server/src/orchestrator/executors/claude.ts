@@ -52,10 +52,14 @@ function resolveMcpBin(): string {
 // write both target the project's real daemon file and `.dispatch/tasks`
 // instead of the worktree's copy — see packages/mcp/src/tools.ts's
 // `projectRoot()` helper for why those two specifically cannot use the
-// worktree.
+// worktree. `DISPATCH_RUN_ID` (agent-comms) is this run's own id — the
+// dispatch MCP server's `agent_message`/`message_user` tools (packages/mcp/
+// src/tools.ts) read it back out so a calling agent never has to know or
+// supply its own run id just to be identified as the sender/raiser.
 function buildDispatchMcpServerConfig(
   cwd: string,
-  projectRoot: string
+  projectRoot: string,
+  runId: string
 ): McpServerConfig {
   // `McpStdioServerConfig.env` is `Record<string, string>`, but
   // `process.env` is `Record<string, string | undefined>` (any key can be
@@ -69,6 +73,7 @@ function buildDispatchMcpServerConfig(
     if (value !== undefined) env[key] = value;
   }
   env.DISPATCH_PROJECT_ROOT = projectRoot;
+  env.DISPATCH_RUN_ID = runId;
   return {
     type: 'stdio',
     command: 'bun',
@@ -305,7 +310,8 @@ export class ClaudeExecutor implements Executor {
       mcpServers: {
         dispatch: buildDispatchMcpServerConfig(
           opts.cwd,
-          opts.projectRoot ?? opts.cwd
+          opts.projectRoot ?? opts.cwd,
+          opts.runId ?? ''
         ),
       },
     };

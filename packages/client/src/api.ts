@@ -70,14 +70,20 @@ export interface RunMeta {
 }
 
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the
-// one log-entry shape every executor streams, real or fake.
+// one log-entry shape every executor streams, real or fake. `kind: 'message'`
+// is the agent-comms identified chat channel: `from: 'user'` is the run's own
+// human via the Session composer, `from: 'agent'` is either another live
+// run's `agent_message` (sender named in `fromLabel`) or this run's own
+// `message_user` call raised to the human.
 export interface NormalizedEntry {
   ts: string;
-  kind: 'assistant' | 'tool' | 'thinking' | 'system' | 'usage';
+  kind: 'assistant' | 'tool' | 'thinking' | 'system' | 'usage' | 'message';
   text?: string;
   toolName?: string;
   toolInput?: unknown;
   status?: 'running' | 'done' | 'error';
+  from?: 'user' | 'agent';
+  fromLabel?: string;
 }
 
 // The body of `GET /api/runs/:id`.
@@ -342,9 +348,15 @@ export interface ApiClient {
   ): Promise<RunMeta>;
   // Phase 5 P2: the messaging half (`agent_message`'s daemon-side landing
   // spot) — injects a message into a *running* run, prefixed
-  // `[message from another agent]` server-side. 409s when the run isn't
-  // currently `running`.
-  injectRun(runId: string, text: string): Promise<RunMeta>;
+  // `[message from <sender>]` server-side (a generic "another agent" label
+  // when `fromRunId` is omitted or doesn't resolve to a known run). 409s
+  // when the run isn't currently `running`.
+  injectRun(runId: string, text: string, fromRunId?: string): Promise<RunMeta>;
+  // agent-comms: the agent->human channel (`message_user`'s daemon-side
+  // landing spot) — records a `from: 'agent'` message on the run's OWN
+  // transcript rather than delivering into any executor. 409s when the run
+  // isn't currently `running`.
+  messageUser(runId: string, text: string): Promise<RunMeta>;
   // Phase 5 P2: the big-prompt plan flow. `startPlan` returns immediately
   // (202) with the plan's id — poll `fetchPlan`/watch `plan.changed` over WS
   // for it to move to `ready`/`failed`. `confirmPlan` sends the (possibly
@@ -415,8 +427,13 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ action }),
       }),
-    injectRun: (runId, text) =>
+    injectRun: (runId, text, fromRunId) =>
       request(baseUrl, `/api/runs/${runId}/inject`, {
+        method: 'POST',
+        ...jsonBody(fromRunId !== undefined ? { text, fromRunId } : { text }),
+      }),
+    messageUser: (runId, text) =>
+      request(baseUrl, `/api/runs/${runId}/message-user`, {
         method: 'POST',
         ...jsonBody({ text }),
       }),
