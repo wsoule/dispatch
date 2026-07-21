@@ -1,6 +1,7 @@
 import type {
   CreateInput,
   DispatchConfig,
+  Priority,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core';
@@ -17,6 +18,10 @@ export interface HealthPayload {
   ok: boolean;
   version: string;
   rootDir: string;
+  // Phase 5 P1: whether this project can use the PR review action (gh on
+  // PATH + a configured git remote) — gates whether the desktop UI shows
+  // the "Open PR" action at all.
+  pr: boolean;
 }
 
 export interface TaskFilter {
@@ -53,6 +58,15 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
+  // Phase 5 P1: set once a run has been reviewed (merge/discard/pr) or its PR
+  // has merged — mirrors RunMeta's own one-way markers in
+  // packages/server/src/orchestrator/types.ts.
+  reviewedAt?: string;
+  reviewAction?: 'merge' | 'discard' | 'pr';
+  // Set once the PR review action has pushed the branch and opened a GitHub
+  // PR — stays set (and `reviewedAt` stays unset) until the PR poller sees it
+  // merged.
+  prUrl?: string;
 }
 
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the
@@ -93,7 +107,73 @@ export type ServerEvent =
       runId: string;
       requestId: string;
       toolName: string;
-    };
+    }
+  // Phase 5 P2: a plan's state (running -> ready|failed) changed, or it was
+  // just confirmed. Same "go refetch" contract as the other *.changed events
+  // — mirrors packages/server/src/events.ts exactly.
+  | { type: 'plan.changed'; planId: string };
+
+// Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
+// `blockedByIndices` refers to *other entries in this same proposal's
+// `tasks` array* (0-based) — never a real task id, since ids are minted only
+// at confirm time.
+export interface PlannedTask {
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  blockedByIndices: number[];
+  priority: Priority;
+}
+
+// Mirrors PlanProposal in packages/server/src/orchestrator/planner.ts.
+export interface PlanProposal {
+  epic?: { title: string; description: string };
+  tasks: PlannedTask[];
+}
+
+export type PlanState = 'running' | 'ready' | 'failed';
+
+// Mirrors PlanRecord in packages/server/src/orchestrator/plan.ts — the body
+// of `GET /api/plan/:id`.
+export interface PlanRecord {
+  id: string;
+  prompt: string;
+  state: PlanState;
+  proposal?: PlanProposal;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string;
+}
+
+// The body of `POST /api/plan/:id/confirm`.
+export interface ConfirmResult {
+  epicId?: string;
+  taskIds: string[];
+}
+
+// Mirrors EpicSession in packages/server/src/orchestrator/epic.ts.
+export interface EpicSession {
+  epicId: string;
+  concurrency: number;
+  active: boolean;
+  completedAt?: string;
+}
+
+export interface EpicProgressChild {
+  id: string;
+  title: string;
+  status: string;
+}
+
+// The body of `GET /api/epics/:id/progress`.
+export interface EpicProgress {
+  epicId: string;
+  active: boolean;
+  concurrency?: number;
+  children: EpicProgressChild[];
+  liveRuns: RunMeta[];
+}
 
 // Shared fetch wrapper: resolves against `baseUrl`, throws with the server's
 // `{ error }` message (falling back to the status code) on any non-2xx
@@ -256,7 +336,31 @@ export interface ApiClient {
   ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
   fetchRunDiff(runId: string): Promise<DiffResult>;
-  reviewRun(runId: string, action: 'merge' | 'discard'): Promise<RunMeta>;
+  reviewRun(
+    runId: string,
+    action: 'merge' | 'discard' | 'pr'
+  ): Promise<RunMeta>;
+  // Phase 5 P2: the messaging half (`agent_message`'s daemon-side landing
+  // spot) — injects a message into a *running* run, prefixed
+  // `[message from another agent]` server-side. 409s when the run isn't
+  // currently `running`.
+  injectRun(runId: string, text: string): Promise<RunMeta>;
+  // Phase 5 P2: the big-prompt plan flow. `startPlan` returns immediately
+  // (202) with the plan's id — poll `fetchPlan`/watch `plan.changed` over WS
+  // for it to move to `ready`/`failed`. `confirmPlan` sends the (possibly
+  // client-edited) proposal back verbatim; the server re-validates it from
+  // scratch and is the only place that actually writes the epic/tasks.
+  startPlan(prompt: string): Promise<{ planId: string }>;
+  fetchPlan(planId: string): Promise<PlanRecord>;
+  confirmPlan(planId: string, proposal: PlanProposal): Promise<ConfirmResult>;
+  // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
+  // server-side to the project's `orchestrator.epicConcurrency` config.
+  startEpic(
+    epicId: string,
+    opts?: { concurrency?: number; executor?: 'fake' | 'claude' }
+  ): Promise<EpicSession>;
+  stopEpic(epicId: string): Promise<EpicSession>;
+  fetchEpicProgress(epicId: string): Promise<EpicProgress>;
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -311,6 +415,31 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ action }),
       }),
+    injectRun: (runId, text) =>
+      request(baseUrl, `/api/runs/${runId}/inject`, {
+        method: 'POST',
+        ...jsonBody({ text }),
+      }),
+    startPlan: (prompt) =>
+      request(baseUrl, '/api/plan', {
+        method: 'POST',
+        ...jsonBody({ prompt }),
+      }),
+    fetchPlan: (planId) => request(baseUrl, `/api/plan/${planId}`),
+    confirmPlan: (planId, proposal) =>
+      request(baseUrl, `/api/plan/${planId}/confirm`, {
+        method: 'POST',
+        ...jsonBody({ proposal }),
+      }),
+    startEpic: (epicId, opts = {}) =>
+      request(baseUrl, `/api/epics/${epicId}/dispatch`, {
+        method: 'POST',
+        ...jsonBody(opts),
+      }),
+    stopEpic: (epicId) =>
+      request(baseUrl, `/api/epics/${epicId}/stop`, { method: 'POST' }),
+    fetchEpicProgress: (epicId) =>
+      request(baseUrl, `/api/epics/${epicId}/progress`),
     wsUrl: () => wsUrl(baseUrl),
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, options),
