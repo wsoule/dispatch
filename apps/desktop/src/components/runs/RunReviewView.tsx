@@ -54,9 +54,14 @@ interface RunReviewViewProps {
   diff: DiffResult | undefined;
   diffLoading: boolean;
   diffError: string | null;
+  /** Whether this project can use the PR review action at all (gh + a configured git remote —
+   * see `GET /api/health`'s `pr` flag). The action is hidden entirely rather than shown
+   * disabled when this is false, since there's nothing the person could do in-app to fix it. */
+  prCapability: boolean;
   onMerge: () => Promise<void>;
   onDiscard: () => Promise<void>;
   onRequestChanges: (text: string) => Promise<void>;
+  onOpenPr: () => Promise<void>;
 }
 
 /**
@@ -71,9 +76,11 @@ export function RunReviewView({
   diff,
   diffLoading,
   diffError,
+  prCapability,
   onMerge,
   onDiscard,
   onRequestChanges,
+  onOpenPr,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
@@ -101,6 +108,14 @@ export function RunReviewView({
     });
   }
 
+  // Once a PR has been opened, that's the review path in progress — the
+  // run stays un-reviewed (`reviewedAt` unset) until PrManager's poller sees
+  // GitHub report it merged, so merge/discard/request-changes are hidden in
+  // favor of a single "waiting to merge" status + the PR link. The action
+  // itself is only offered while nothing has claimed this run yet.
+  const hasOpenPr = meta.prUrl !== undefined;
+  const canOpenPr = prCapability && meta.reviewedAt === undefined && !hasOpenPr;
+
   return (
     <div className="run-review-view">
       <div className="run-review-header">
@@ -112,6 +127,16 @@ export function RunReviewView({
         )}
         {meta.error !== undefined && (
           <span className="run-review-header-error-note">{meta.error}</span>
+        )}
+        {hasOpenPr && (
+          <a
+            className="run-review-header-pr-chip"
+            href={meta.prUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            PR opened ↗
+          </a>
         )}
       </div>
 
@@ -147,7 +172,12 @@ export function RunReviewView({
         </div>
       )}
 
-      {requestingChanges ? (
+      {hasOpenPr ? (
+        <p className="run-review-status">
+          Waiting for the PR to merge — this run will move to done automatically
+          once it does.
+        </p>
+      ) : requestingChanges ? (
         <div className="run-review-request-changes">
           <textarea
             className="run-review-request-changes-input"
@@ -179,6 +209,15 @@ export function RunReviewView({
           >
             Request changes
           </Button>
+          {canOpenPr && (
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void run(onOpenPr)}
+            >
+              Open PR
+            </Button>
+          )}
           <Button
             variant="secondary"
             disabled={busy}

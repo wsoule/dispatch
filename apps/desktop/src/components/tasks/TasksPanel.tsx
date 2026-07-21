@@ -1,7 +1,13 @@
-import type { RunDetail, RunMeta, RunState } from '@dispatch/client';
+import type {
+  EpicProgress,
+  PlanProposal,
+  RunDetail,
+  RunMeta,
+  RunState,
+} from '@dispatch/client';
 import { createApiClient } from '@dispatch/client';
 import type { CreateInput, UpdatePatch } from '@dispatch/core';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
 import { isTerminalRunState } from '../../lib/runState';
@@ -11,6 +17,8 @@ import { RunModal } from '../runs/RunModal';
 import { RunsRail } from '../runs/RunsRail';
 import { Button } from '../ui/Button';
 import { CreateTaskModal } from './CreateTaskModal';
+import type { PlanStage } from './PlanModal';
+import { PlanModal } from './PlanModal';
 import { TaskBoard } from './TaskBoard';
 import { TaskDetailModal } from './TaskDetailModal';
 import './TasksPanel.css';
@@ -41,6 +49,13 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
   const [pendingApprovals, setPendingApprovals] = useState<
     Map<string, PendingApproval>
   >(new Map());
+
+  // Phase 5 P2: the big-prompt plan flow. `planFlowOpen` gates whether
+  // PlanModal renders at all; `planId` is null only for the composer stage
+  // (before `POST /api/plan` has returned an id) — see `planStage` below for
+  // how the two combine into PlanModal's stage prop.
+  const [planFlowOpen, setPlanFlowOpen] = useState(false);
+  const [planId, setPlanId] = useState<string | null>(null);
 
   // Spawning a fresh dispatchd can take a couple of seconds (see
   // `ensure_dispatchd`'s 5s poll budget) — react-query's own loading state
@@ -81,6 +96,19 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
   const runDiffQueryKey = useMemo(
     () => ['dispatch-run-diff', port, selectedRunId],
     [port, selectedRunId]
+  );
+  const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
+  // Prefix shared by every epic's own progress query key (see
+  // `epicProgressQueries` below) — kept as its own memo so the WS-invalidate
+  // effect can invalidate every epic's progress at once without needing to
+  // know which epics exist.
+  const epicProgressKeyPrefix = useMemo(
+    () => ['dispatch-epic-progress', port],
+    [port]
+  );
+  const planQueryKey = useMemo(
+    () => ['dispatch-plan', port, planId],
+    [port, planId]
   );
 
   // `enabled: client !== null` keeps react-query from ever calling these while the port
@@ -154,6 +182,58 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
 
+  // `pr` gates whether RunModal's review surface offers "Open PR" at all —
+  // see PrManager.detectPrCapability server-side for what it checks.
+  const { data: health } = useQuery({
+    queryKey: healthQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchHealth();
+    },
+    enabled: client !== null,
+  });
+
+  const { data: planRecord } = useQuery({
+    queryKey: planQueryKey,
+    queryFn: () => {
+      if (client === null || planId === null) {
+        throw new Error('no plan in progress');
+      }
+      return client.fetchPlan(planId);
+    },
+    enabled: client !== null && planId !== null,
+  });
+
+  const epics = useMemo(
+    () => (tasks ?? []).filter((t) => t.meta.kind === 'epic'),
+    [tasks]
+  );
+
+  // One progress query per epic on the board — `useQueries` (rather than one
+  // useQuery per epic, which would violate the rules of hooks the moment the
+  // epic count changes across renders) is the react-query-supported way to
+  // run a dynamic list of queries. `active`/`concurrency` here are the one
+  // thing EpicEngine's own in-memory session state carries that a task's own
+  // TaskDoc/RunMeta never would.
+  const epicProgressResults = useQueries({
+    queries: epics.map((epic) => ({
+      queryKey: [...epicProgressKeyPrefix, epic.meta.id],
+      queryFn: () => {
+        if (client === null) throw new Error('dispatchd client not ready');
+        return client.fetchEpicProgress(epic.meta.id);
+      },
+      enabled: client !== null,
+    })),
+  });
+  const epicProgressById = useMemo(() => {
+    const map = new Map<string, EpicProgress>();
+    epics.forEach((epic, i) => {
+      const data = epicProgressResults[i]?.data;
+      if (data !== undefined) map.set(epic.meta.id, data);
+    });
+    return map;
+  }, [epics, epicProgressResults]);
+
   // dispatchd's WS protocol is "something changed, go refetch" with no payload for
   // `task.changed`/`run.changed` (see packages/server/src/events.ts) — invalidating on every
   // event is the react-query equivalent of @dispatch/web's useTasks calling its own
@@ -167,6 +247,12 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
         void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
         void queryClient.invalidateQueries({ queryKey: configQueryKey });
         void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+        // A task.changed can flip an epic's children (e.g. the plan/confirm
+        // flow just wrote new ones, or an epic's dispatch-started Activity
+        // line landed) — cheap enough to always refresh alongside the board.
+        void queryClient.invalidateQueries({
+          queryKey: epicProgressKeyPrefix,
+        });
       },
       {
         onEvent: (event) => {
@@ -174,6 +260,12 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-run', port],
+            });
+            // A run reaching a terminal state or being reviewed is exactly
+            // what can free/fill an epic's concurrency slot — see EpicEngine's
+            // own onRunTerminal/onRunReviewed hooks server-side.
+            void queryClient.invalidateQueries({
+              queryKey: epicProgressKeyPrefix,
             });
           } else if (event.type === 'run.log') {
             queryClient.setQueryData<RunDetail>(
@@ -192,6 +284,10 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
               });
               return next;
             });
+          } else if (event.type === 'plan.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: ['dispatch-plan', port, event.planId],
+            });
           }
         },
       }
@@ -203,6 +299,7 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
     configQueryKey,
     readyQueryKey,
     runsQueryKey,
+    epicProgressKeyPrefix,
     port,
   ]);
 
@@ -231,10 +328,6 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
     [readyTasks]
   );
   const blockedIds = useMemo(() => computeBlockedIds(tasks ?? []), [tasks]);
-  const epics = useMemo(
-    () => (tasks ?? []).filter((t) => t.meta.kind === 'epic'),
-    [tasks]
-  );
   const selectedDoc = useMemo(
     () => (tasks ?? []).find((t) => t.meta.id === selectedId) ?? null,
     [tasks, selectedId]
@@ -351,6 +444,69 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
     setSelectedRunId(meta.id);
   }
 
+  async function handleOpenPr(runId: string): Promise<void> {
+    if (client === null) return;
+    await client.reviewRun(runId, 'pr');
+    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+  }
+
+  async function handleWorkEpic(
+    epicId: string,
+    concurrency: number
+  ): Promise<void> {
+    if (client === null) return;
+    await client.startEpic(epicId, { concurrency });
+    void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+    void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+  }
+
+  async function handleStopEpic(epicId: string): Promise<void> {
+    if (client === null) return;
+    await client.stopEpic(epicId);
+    void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+  }
+
+  // Opens PlanModal fresh at the composer stage — `planId` starts null even
+  // if a previous plan flow left one set (that plan is done being shown
+  // either way: it was confirmed or explicitly dismissed to get here).
+  function openPlanFlow(): void {
+    setPlanId(null);
+    setPlanFlowOpen(true);
+  }
+
+  function closePlanFlow(): void {
+    setPlanFlowOpen(false);
+    setPlanId(null);
+  }
+
+  async function handleSubmitPrompt(prompt: string): Promise<void> {
+    if (client === null) return;
+    const { planId: newPlanId } = await client.startPlan(prompt);
+    setPlanId(newPlanId);
+  }
+
+  async function handleConfirmPlan(proposal: PlanProposal): Promise<void> {
+    if (client === null || planId === null) return;
+    await client.confirmPlan(planId, proposal);
+    void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+    void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    closePlanFlow();
+  }
+
+  // `planId === null` while the composer is up (no plan started yet);
+  // once `POST /api/plan` returns an id, the stage tracks the plan record's
+  // own state — 'running' by default until the first fetch resolves, since
+  // a plan really is running from the instant startPlan() returns.
+  const planStage: PlanStage =
+    planId === null
+      ? 'compose'
+      : (planRecord?.state ?? 'running') === 'ready'
+        ? 'ready'
+        : (planRecord?.state ?? 'running') === 'failed'
+          ? 'failed'
+          : 'running';
+
   if (portLoading) {
     return <p className="tasks-panel-status">Starting the task daemon…</p>;
   }
@@ -378,6 +534,9 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
   return (
     <div className="tasks-panel">
       <div className="tasks-panel-toolbar">
+        <Button variant="secondary" onClick={openPlanFlow}>
+          Plan work…
+        </Button>
         <Button onClick={() => setShowCreate(true)}>+ New Task</Button>
       </div>
 
@@ -385,7 +544,8 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
 
       {tasks.length === 0 ? (
         <p className="tasks-panel-status">
-          No tasks yet — create the first one to get started.
+          No tasks yet — create the first one, or describe the work with
+          &ldquo;Plan work…&rdquo; and let the planner draft it.
         </p>
       ) : (
         <TaskBoard
@@ -394,7 +554,11 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
           readyIds={readyIds}
           blockedIds={blockedIds}
           liveRunStateByTaskId={liveRunStateByTaskId}
+          epicProgressById={epicProgressById}
+          epicConcurrencyDefault={config.orchestrator.epicConcurrency}
           onSelect={setSelectedId}
+          onWorkEpic={handleWorkEpic}
+          onStopEpic={handleStopEpic}
         />
       )}
 
@@ -431,6 +595,7 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
           diff={diff}
           diffLoading={diffLoading}
           diffError={diffError}
+          prCapability={health?.pr ?? false}
           onApprove={(requestId, allow) =>
             handleApprove(selectedRunId, requestId, allow)
           }
@@ -439,7 +604,19 @@ export function TasksPanel({ projectPath }: TasksPanelProps) {
           onMerge={() => handleReview(selectedRunId, 'merge')}
           onDiscard={() => handleReview(selectedRunId, 'discard')}
           onRequestChanges={(text) => handleRequestChanges(selectedRunId, text)}
+          onOpenPr={() => handleOpenPr(selectedRunId)}
           onClose={() => setSelectedRunId(null)}
+        />
+      )}
+
+      {planFlowOpen && (
+        <PlanModal
+          stage={planStage}
+          error={planRecord?.error}
+          proposal={planRecord?.proposal}
+          onSubmitPrompt={handleSubmitPrompt}
+          onConfirm={handleConfirmPlan}
+          onCancel={closePlanFlow}
         />
       )}
     </div>

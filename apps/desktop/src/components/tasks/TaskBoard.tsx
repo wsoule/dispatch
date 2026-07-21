@@ -1,8 +1,9 @@
-import type { RunState } from '@dispatch/client';
+import type { EpicProgress, RunState } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
 
 import { statusTone } from '../../lib/taskDisplay';
 import { Pill } from '../ui/Pill';
+import { EpicCardTile } from './EpicCardTile';
 import { TaskCardTile } from './TaskCardTile';
 import './TaskBoard.css';
 
@@ -13,7 +14,13 @@ interface TaskBoardProps {
   blockedIds: Set<string>;
   /** Live (non-terminal) run state per task id — see TasksPanel's `liveRunStateByTaskId`. */
   liveRunStateByTaskId: Map<string, RunState>;
+  /** Epic dispatch progress per epic id, once fetched — see TasksPanel's `epicProgressById`. */
+  epicProgressById: Map<string, EpicProgress>;
+  /** Default concurrency for a fresh epic dispatch session (config's `orchestrator.epicConcurrency`). */
+  epicConcurrencyDefault: number;
   onSelect: (id: string) => void;
+  onWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
+  onStopEpic: (epicId: string) => Promise<void>;
 }
 
 /** One column per tracker status, in the order the project's `.dispatch/config.yml` lists
@@ -26,7 +33,11 @@ export function TaskBoard({
   readyIds,
   blockedIds,
   liveRunStateByTaskId,
+  epicProgressById,
+  epicConcurrencyDefault,
   onSelect,
+  onWorkEpic,
+  onStopEpic,
 }: TaskBoardProps) {
   return (
     <div className="task-board">
@@ -46,16 +57,28 @@ export function TaskBoard({
               {columnTasks.length === 0 && (
                 <div className="task-board-column-empty">No tasks</div>
               )}
-              {columnTasks.map((doc) => (
-                <TaskCardTile
-                  key={doc.meta.id}
-                  doc={doc}
-                  ready={readyIds.has(doc.meta.id)}
-                  blocked={blockedIds.has(doc.meta.id)}
-                  liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
-                  onClick={() => onSelect(doc.meta.id)}
-                />
-              ))}
+              {columnTasks.map((doc) =>
+                doc.meta.kind === 'epic' ? (
+                  <EpicCardTile
+                    key={doc.meta.id}
+                    doc={doc}
+                    progress={epicProgressById.get(doc.meta.id)}
+                    concurrencyDefault={epicConcurrencyDefault}
+                    onSelect={() => onSelect(doc.meta.id)}
+                    onWork={onWorkEpic}
+                    onStop={onStopEpic}
+                  />
+                ) : (
+                  <TaskCardTile
+                    key={doc.meta.id}
+                    doc={doc}
+                    ready={readyIds.has(doc.meta.id)}
+                    blocked={blockedIds.has(doc.meta.id)}
+                    liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
+                    onClick={() => onSelect(doc.meta.id)}
+                  />
+                )
+              )}
             </div>
           </div>
         );

@@ -25,6 +25,20 @@
   white-space: nowrap;
 }
 
+.run-review-header-pr-chip {
+  font-size: var(--text-sm);
+  color: var(--blue);
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-border);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-2);
+  text-decoration: none;
+}
+
+.run-review-header-pr-chip:hover {
+  text-decoration: underline;
+}
+
 .run-review-error {
   background: var(--red-bg);
   color: var(--red);
