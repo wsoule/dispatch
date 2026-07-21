@@ -417,6 +417,7 @@ function App() {
             statuses={data.config.statuses}
             ready={data.readyIds.has(selectedDoc.meta.id)}
             run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
+            runs={data.runs.filter((r) => r.taskId === selectedDoc.meta.id)}
             onClose={() => dispatchNav({ type: 'closePeek' })}
             onUpdate={data.handleUpdate}
             onMoveStatus={data.moveTaskStatus}
