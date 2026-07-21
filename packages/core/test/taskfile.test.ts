@@ -61,6 +61,7 @@ const doc: TaskDoc = {
     status: 'todo',
     kind: 'task',
     parent: 'e-8b21d0',
+    milestone: null,
     blockedBy: ['t-91c4aa'],
     labels: ['bug', 'auth'],
     priority: 'high',

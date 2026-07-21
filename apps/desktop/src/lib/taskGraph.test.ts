@@ -15,6 +15,7 @@ function makeTask(
       status,
       kind: 'task',
       parent: null,
+      milestone: null,
       blockedBy,
       labels: [],
       priority: 'none',
