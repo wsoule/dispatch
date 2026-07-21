@@ -29,14 +29,14 @@ function BoardSkeleton() {
           className="flex w-[272px] shrink-0 flex-col gap-2"
         >
           <div className="flex items-center gap-2 px-0.5">
-            <Skeleton className="size-1.5 rounded-full" />
+            <Skeleton className="size-3.5 rounded-full" />
             <Skeleton className="h-3 w-16" />
           </div>
           <div className="flex flex-col gap-2">
             {Array.from({ length: 3 }, (_, cardIndex) => (
               <Skeleton
                 key={cardIndex}
-                className="h-[72px] w-full rounded-md"
+                className="h-[86px] w-full rounded-[10px]"
               />
             ))}
           </div>
@@ -48,11 +48,10 @@ function BoardSkeleton() {
 
 /**
  * The heart of the app: a Linear-density Kanban of the active project's tasks, one column
- * per configured tracker status. Ready-to-start cards carry the accent treatment and an
- * inline Dispatch button (see `TaskCardTile`) so moving work forward never requires opening
- * the peek panel first. Loading/error/empty states mirror the old `TasksPanel`'s (starting
- * the daemon, daemon failed to start, no tasks yet) since this view now owns exactly the
- * slice of that component's responsibilities that belonged to the board.
+ * per configured tracker status. Cards are draggable between columns (see `TaskBoard`'s
+ * `@dnd-kit` wiring) — dropping onto a different column calls `moveTaskStatus`, which is
+ * already optimistic. Loading/error/empty states mirror the old `TasksPanel`'s (starting the
+ * daemon, daemon failed to start, no tasks yet).
  *
  * j/k/Enter roving focus (I6): traversal order is *column-major* — down through a column's
  * cards top to bottom, then wrap to the top of the next column — rather than row-major
@@ -88,7 +87,7 @@ export function BoardView({
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls —
     // an epic card's Work/Stop button, its concurrency `<input>`, or a card's inline
-    // inline "Dispatch" button — belongs to that control, not to board navigation. `.closest()`
+    // "Dispatch" button — belongs to that control, not to board navigation. `.closest()`
     // catches the case where the control wraps an inner element. Task cards are role="button"
     // divs (not real <button>s), so they fall through to the roving-cursor logic as intended.
     const controlEl = (e.target as HTMLElement).closest(
@@ -181,10 +180,13 @@ export function BoardView({
             liveRunStateByTaskId={data.liveRunStateByTaskId}
             epicProgressById={data.epicProgressById}
             epicConcurrencyDefault={data.config.orchestrator.epicConcurrency}
+            epics={data.epics}
             onSelect={onSelectTask}
             onDispatch={data.handleDispatch}
             onWorkEpic={data.handleWorkEpic}
             onStopEpic={data.handleStopEpic}
+            onMoveStatus={data.moveTaskStatus}
+            onAddTask={onNewTask}
             focusedTaskId={focusedTaskId}
             onCardFocus={setFocusedTaskId}
           />
