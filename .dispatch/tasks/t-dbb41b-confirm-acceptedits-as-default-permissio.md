@@ -16,8 +16,6 @@ external: null
 
 ## Description
 
-
-
 ## Acceptance Criteria
 
 ## Activity

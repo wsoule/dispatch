@@ -1,16 +1,16 @@
 ---
-id: t-a2c062
-title: Decide the product name
+id: t-5dfaf6
+title: Real-agent end-to-end validation of the headless loop
 status: todo
 kind: task
 parent: e-ec195e
 blocked-by: []
 labels:
-  - decision
+  - testing
 priority: high
 assignee: none
-created: 2026-07-21T02:39:34.670Z
-updated: 2026-07-21T02:39:34.670Z
+created: 2026-07-21T02:45:01.049Z
+updated: 2026-07-21T02:45:01.049Z
 external: null
 ---
 

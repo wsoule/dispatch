@@ -6,6 +6,7 @@ import type { EventBus } from '../events.js';
 import type { PlannedTask, Planner, PlanProposal } from './planner.js';
 import { validatePlanProposal } from './planner.js';
 import {
+  OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from './types.js';
@@ -82,20 +83,42 @@ function buildTaskDescription(task: PlannedTask): string {
  * `parent` and `blockedBy` wired from proposal indices to the real ids
  * TaskStore just minted. Proposals are NEVER written without an explicit
  * confirm call — this class is the one place that rule is enforced.
+ *
+ * Phase 7: planners are registered by name (mirrors Orchestrator's own
+ * `registerExecutor`/`registeredExecutorNames` pair) rather than the class
+ * being handed one fixed `Planner` — this is what lets `POST /api/plan`
+ * accept an optional `planner` field with the exact same "unknown name is a
+ * 400 naming every valid option" contract `executor` already has on
+ * `POST /api/tasks/:id/runs`, which in turn is what makes the CLI's
+ * `dispatch plan --planner claude|fake` a real per-request choice instead of
+ * a fixed, whole-server setting.
  */
 export class PlanManager {
   private readonly plans = new Map<string, PlanRecord>();
+  private readonly planners = new Map<string, Planner>();
 
-  constructor(
-    private readonly ctx: PlanManagerContext,
-    private readonly planner: Planner
-  ) {}
+  constructor(private readonly ctx: PlanManagerContext) {}
 
-  // Starts a plan running against `prompt` and returns its id immediately —
-  // the actual Planner call happens fire-and-forget (mirrors
-  // Orchestrator.dispatch()'s executor.start() pattern), with the result
-  // landing via runPlanner()'s state update + `plan.changed` broadcast.
-  startPlan(prompt: string): PlanRecord {
+  registerPlanner(name: string, planner: Planner): void {
+    this.planners.set(name, planner);
+  }
+
+  // api.ts derives its "is this planner name even valid" 400 message from
+  // exactly what's registered here, same as Orchestrator.registeredExecutorNames().
+  registeredPlannerNames(): string[] {
+    return [...this.planners.keys()];
+  }
+
+  // Starts a plan running against `prompt` on the named planner (defaults to
+  // 'claude') and returns its id immediately — the actual Planner call
+  // happens fire-and-forget (mirrors Orchestrator.dispatch()'s
+  // executor.start() pattern), with the result landing via runPlanner()'s
+  // state update + `plan.changed` broadcast.
+  startPlan(prompt: string, plannerName = 'claude'): PlanRecord {
+    const planner = this.planners.get(plannerName);
+    if (planner === undefined) {
+      throw new OrchestratorClientError(`unknown planner: ${plannerName}`);
+    }
     const now = new Date().toISOString();
     const record: PlanRecord = {
       id: generatePlanId(now),
@@ -105,15 +128,15 @@ export class PlanManager {
       updatedAt: now,
     };
     this.plans.set(record.id, record);
-    void this.runPlanner(record.id);
+    void this.runPlanner(record.id, planner);
     return record;
   }
 
-  private async runPlanner(planId: string): Promise<void> {
+  private async runPlanner(planId: string, planner: Planner): Promise<void> {
     const record = this.plans.get(planId);
     if (record === undefined) return;
     try {
-      const rawProposal = await this.planner.plan(record.prompt);
+      const rawProposal = await planner.plan(record.prompt);
       // Minor fix: a Planner (Fake or Claude) can itself return a proposal
       // that fails validation — re-validate here too (the same
       // validatePlanProposal confirm() uses) so a plan never sits at
