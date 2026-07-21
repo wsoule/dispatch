@@ -80,7 +80,16 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         activeRunId: action.view === 'runs' ? state.activeRunId : null,
       };
     case 'setGlobalView':
-      return { ...state, section: 'global', globalView: action.view };
+      // A global view (Settings, Sessions, All Agents) isn't showing any project's task
+      // list at all, so a task peek left open from whatever project view preceded it has
+      // nothing left to sit "over" — drop it rather than let it render on top of an
+      // unrelated global screen.
+      return {
+        ...state,
+        section: 'global',
+        globalView: action.view,
+        peekTaskId: null,
+      };
     case 'openPeek':
       return { ...state, peekTaskId: action.taskId };
     case 'closePeek':
