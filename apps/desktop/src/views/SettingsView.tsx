@@ -1,11 +1,14 @@
 import { Pill } from '../components/ui/Pill';
 import { StatTile } from '../components/ui/StatTile';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import type { ProjectSummary } from '../lib/types';
 import './SettingsView.css';
 
 interface SettingsViewProps {
-  activeProject: ProjectSummary | null;
+  /** The one project this window is scoped to — just its filesystem path is needed here, so
+   * this takes the same minimal `{ path, name }` shape `App.tsx` derives from
+   * `currentProjectRoot()`, not the full Relay `ProjectSummary` (id/lang/stack/etc.) that
+   * only makes sense for a row out of Relay's own multi-project database. */
+  activeProject: { path: string; name: string } | null;
   data: DispatchProjectData;
 }
 

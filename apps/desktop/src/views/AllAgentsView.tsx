@@ -1,47 +1,69 @@
+import type { ApiClient, RunMeta } from '@dispatch/client';
+
 import { RunStatePill } from '../components/runs/RunStatePill';
-import type { AllAgentsData } from '../hooks/useAllAgents';
-import { colorForProject } from '../lib/projectColor';
+import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import './AllAgentsView.css';
 
 interface AllAgentsViewProps {
-  data: AllAgentsData;
-  onJumpToRun: (projectId: string, runId: string) => void;
+  /** Every non-terminal run for this project, newest-first — see `App.tsx`'s `liveRuns`
+   * memo, computed once from `useDispatchProject`'s own run list rather than a separate
+   * cross-project fan-out (the old `useAllAgents`, which `ensure_dispatchd`'d a sidecar per
+   * dispatch-enabled project it could find). There's only one project now, so this is just
+   * that project's live runs. */
+  liveRuns: RunMeta[];
+  portLoading: boolean;
+  portError: boolean;
+  portErrorDetail: unknown;
+  client: ApiClient | null;
+  onRetry: () => void;
+  onJumpToRun: (runId: string) => void;
 }
 
 /**
- * Global view: every live (non-terminal) run across every dispatch-enabled project at once —
- * "what are my agents doing right now", independent of which project happens to be active in
- * the primary nav. Clicking a row jumps straight to that project's Runs view with the run
- * already selected, the same destination the sidebar's per-project Runs item leads to.
+ * "What is this project's agent doing right now" — every live (non-terminal) run for the
+ * active project, independent of which primary nav view (Board/Tasks/Runs/Plans) happens to
+ * be showing. Clicking a row jumps straight to the Runs view with that run already selected.
  */
-export function AllAgentsView({ data, onJumpToRun }: AllAgentsViewProps) {
+export function AllAgentsView({
+  liveRuns,
+  portLoading,
+  portError,
+  portErrorDetail,
+  client,
+  onRetry,
+  onJumpToRun,
+}: AllAgentsViewProps) {
+  if (portLoading || portError || client === null) {
+    return (
+      <div className="all-agents-view">
+        <h1 className="view-topbar-title">All Agents</h1>
+        <DaemonUnavailable
+          starting={portLoading}
+          errorDetail={portErrorDetail}
+          onRetry={onRetry}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="all-agents-view">
       <h1 className="view-topbar-title">All Agents</h1>
 
-      {data.loading ? (
-        <p className="all-agents-view-status">Checking every project…</p>
-      ) : data.liveRuns.length === 0 ? (
+      {liveRuns.length === 0 ? (
         <p className="all-agents-view-status">
-          No agents are running right now — dispatch a task from any
-          project&rsquo;s Board to start one.
+          No agents are running right now — dispatch a task from the Board to
+          start one.
         </p>
       ) : (
         <div className="all-agents-view-list">
-          {data.liveRuns.map(({ run, project }) => (
+          {liveRuns.map((run) => (
             <button
               key={run.id}
               type="button"
               className="all-agents-view-row"
-              onClick={() => onJumpToRun(project.id, run.id)}
+              onClick={() => onJumpToRun(run.id)}
             >
-              <span
-                className="all-agents-view-row-dot"
-                style={{ background: colorForProject(project.id) }}
-              />
-              <span className="all-agents-view-row-project">
-                {project.name}
-              </span>
               <span className="all-agents-view-row-task">{run.taskTitle}</span>
               <RunStatePill state={run.state} />
               {run.costUsd !== undefined && (
