@@ -2,6 +2,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect } from 'react';
 
+import { isTauri } from '../lib/tauri';
+
 /**
  * Subscribes once to the backend's coarse `data-changed` event and invalidates the
  * relevant React Query caches. Deliberately decoupled from the event payload shape —
@@ -13,6 +15,10 @@ export function useDataChangedEvents() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    // The Tauri event API only exists inside the webview; in the browser dev
+    // harness there's no backend to emit `data-changed`, so skip the listener
+    // rather than throw on the missing `__TAURI_INTERNALS__`.
+    if (!isTauri()) return;
     const unlisten = listen('data-changed', () => {
       // `invalidateQueries` returns a promise that resolves once the refetch settles;
       // nothing here awaits a refetch, so each call is deliberately fire-and-forget.
