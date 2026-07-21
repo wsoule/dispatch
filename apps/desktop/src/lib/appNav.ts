@@ -12,7 +12,12 @@
  * review. The `board` id is kept (rather than renamed to e.g. `tasks`) so this type, the
  * reducer below, and every test against it stay untouched by the nav collapse — only
  * `Sidebar`'s single nav row and its label changed. */
-export type ProjectView = 'board' | 'runs' | 'pull-requests' | 'plans';
+export type ProjectView =
+  | 'overview'
+  | 'board'
+  | 'runs'
+  | 'pull-requests'
+  | 'plans';
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar. */
 export type GlobalView = 'all-agents' | 'sessions' | 'settings';
@@ -37,7 +42,7 @@ export interface NavState {
 export const initialNavState: NavState = {
   section: 'project',
   activeProjectId: null,
-  projectView: 'board',
+  projectView: 'overview',
   globalView: 'sessions',
   peekTaskId: null,
   activeRunId: null,
@@ -70,7 +75,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         ...state,
         section: 'project',
         activeProjectId: action.projectId,
-        projectView: 'board',
+        projectView: 'overview',
         peekTaskId: null,
         activeRunId: null,
       };
