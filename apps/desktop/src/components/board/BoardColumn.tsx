@@ -1,3 +1,4 @@
+import { Plus } from 'lucide-react';
 import { useState } from 'react';
 
 import type {
@@ -6,7 +7,8 @@ import type {
   Session,
 } from '../../lib/types';
 import { CardTile } from './CardTile';
-import './BoardColumn.css';
+import { cn } from '@/lib/utils';
+import { Input } from '@/ui/input';
 
 interface BoardColumnProps {
   column: BoardColumnType;
@@ -47,7 +49,6 @@ export function BoardColumn({
 
   return (
     <div
-      className={`board-column${isDragOver ? ' board-column-drag-over' : ''}`}
       onDragOver={(e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
@@ -60,13 +61,21 @@ export function BoardColumn({
         const cardId = e.dataTransfer.getData('text/plain');
         if (cardId) onCardDrop(cardId, column.id);
       }}
+      className={cn(
+        'flex max-h-full w-[17.5rem] shrink-0 flex-col gap-2 rounded-lg p-3 transition-colors duration-150',
+        isDragOver ? 'bg-accent/60' : 'bg-muted/40'
+      )}
     >
-      <div className="board-column-header">
-        <span className="board-column-name">{column.name}</span>
-        <span className="board-column-count">{cards.length}</span>
+      <div className="flex items-center justify-between px-1">
+        <span className="text-foreground text-[13px] font-medium">
+          {column.name}
+        </span>
+        <span className="text-muted-foreground font-mono text-[11px]">
+          {cards.length}
+        </span>
       </div>
 
-      <div className="board-column-cards">
+      <div className="flex min-h-10 flex-col gap-2 overflow-y-auto">
         {cards.map((card) => (
           <CardTile
             key={card.id}
@@ -84,8 +93,7 @@ export function BoardColumn({
 
       {allowsManualAdd(column.role) ? (
         isAdding ? (
-          <input
-            className="board-column-add-input"
+          <Input
             autoFocus
             value={newTitle}
             placeholder="Card title…"
@@ -98,13 +106,16 @@ export function BoardColumn({
               }
             }}
             onBlur={submitNewCard}
+            className="h-8 text-[13px]"
           />
         ) : (
           <button
-            className="board-column-add-button"
+            type="button"
             onClick={() => setIsAdding(true)}
+            className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 rounded-md px-1 py-1.5 text-left text-[13px] transition-colors"
           >
-            + Add card
+            <Plus className="size-3.5" />
+            Add card
           </button>
         )
       ) : null}
