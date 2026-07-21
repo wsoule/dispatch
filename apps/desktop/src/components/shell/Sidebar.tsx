@@ -2,7 +2,6 @@ import {
   Check,
   ChevronsUpDown,
   Cog,
-  KanbanSquare,
   ListChecks,
   NotebookPen,
   Play,
@@ -19,13 +18,15 @@ import {
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 
+// `board` hosts both the Kanban and dense-list layouts behind its own in-view toggle now (see
+// `BoardView`), so it gets one "Tasks" row rather than the old separate Board/Tasks pair —
+// Linear itself doesn't split those into two nav destinations either.
 const PROJECT_VIEWS: {
   id: ProjectView;
   label: string;
-  icon: typeof KanbanSquare;
+  icon: typeof ListChecks;
 }[] = [
-  { id: 'board', label: 'Board', icon: KanbanSquare },
-  { id: 'tasks', label: 'Tasks', icon: ListChecks },
+  { id: 'board', label: 'Tasks', icon: ListChecks },
   { id: 'runs', label: 'Runs', icon: Play },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
 ];
