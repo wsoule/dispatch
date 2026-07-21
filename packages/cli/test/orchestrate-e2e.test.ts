@@ -229,7 +229,11 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     expect(stdout).toContain(
       `dispatch approve ${runId} fake-approval-1 --deny`
     );
-    expect(stdout).toContain('[assistant] Looking at the task');
+    expect(stdout).toContain('[assistant] ## Plan');
+    // The default fake script emits real tool entries (an Edit then a Bash) so
+    // the desktop Session tab has rich tool cards to render — assert the CLI
+    // watch surfaces them too.
+    expect(stdout).toContain('[tool');
 
     // The scripted approval round-trip: a SECOND CLI invocation, entirely
     // separate from the still-running --watch subprocess above.

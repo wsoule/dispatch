@@ -35,19 +35,64 @@ import { FakePlanner } from './orchestrator/planners/fake.js';
 // ---------------------------------------------------------------------------
 
 // The one default script every DISPATCH_ENABLE_FAKES daemon's 'fake' executor
-// plays back: two log entries (so `--watch` has something to render), one
-// real file write + commit (so `dispatch diff`/`dispatch review merge` have
-// real git content to act on), and — gated on DISPATCH_FAKE_APPROVAL=1 — a
-// trailing approval request (so the CLI's approve/deny path has something to
-// exercise). Kept as one fixed script rather than something configurable per
-// invocation: this is a test/e2e hook, not a general scripting facility.
+// plays back: a markdown assistant plan, two tool entries (an Edit and a Bash,
+// so the desktop Session tab has rich tool cards — and a diff — to render), a
+// final assistant note, one real file write + commit (so `dispatch diff`/
+// `dispatch review merge` have real git content to act on), and — gated on
+// DISPATCH_FAKE_APPROVAL=1 — a trailing approval request (so the CLI's
+// approve/deny path has something to exercise). Kept as one fixed script rather
+// than something configurable per invocation: this is a test/e2e hook, not a
+// general scripting facility.
 function buildDefaultFakeScript(): FakeExecutorScript {
   const steps: NonNullable<FakeExecutorScript['steps']> = [
     {
+      // Markdown so the Session tab's renderer has real structure to show —
+      // headings, a list, inline code, and a fenced code block.
       entry: {
         ts: new Date().toISOString(),
         kind: 'assistant',
-        text: 'Looking at the task and planning a fix.',
+        text: [
+          '## Plan',
+          '',
+          "I'll make a small, safe change:",
+          '',
+          '1. Add a `FAKE_OUTPUT.txt` marker file',
+          '2. Verify it exists',
+          '3. Commit',
+          '',
+          'The marker looks like:',
+          '',
+          '```txt',
+          'fake executor output — safe to discard',
+          '```',
+        ].join('\n'),
+      },
+    },
+    {
+      // A tool entry so the Session tab renders a rich Edit card (a diff)
+      // rather than a JSON blob.
+      entry: {
+        ts: new Date().toISOString(),
+        kind: 'tool',
+        toolName: 'Edit',
+        toolInput: {
+          file_path: 'FAKE_OUTPUT.txt',
+          old_string: '',
+          new_string: 'fake executor output — safe to discard',
+        },
+        status: 'running',
+      },
+    },
+    {
+      entry: {
+        ts: new Date().toISOString(),
+        kind: 'tool',
+        toolName: 'Bash',
+        toolInput: {
+          command: 'cat FAKE_OUTPUT.txt',
+          description: 'Verify the marker file',
+        },
+        status: 'running',
       },
     },
     {
