@@ -14,16 +14,19 @@ function sleep(ms: number): Promise<void> {
 // since this module's reconnect logic was ported from that same design.
 class FakeSocket implements SocketLike {
   closed = false;
+  private readonly openListeners: (() => void)[] = [];
   private readonly messageListeners: ((event: { data: unknown }) => void)[] =
     [];
   private readonly closeListeners: (() => void)[] = [];
   private readonly errorListeners: (() => void)[] = [];
 
   addEventListener(
-    type: 'message' | 'close' | 'error',
+    type: 'open' | 'message' | 'close' | 'error',
     listener: ((event: { data: unknown }) => void) | (() => void)
   ): void {
-    if (type === 'message') {
+    if (type === 'open') {
+      this.openListeners.push(listener as () => void);
+    } else if (type === 'message') {
       this.messageListeners.push(
         listener as (event: { data: unknown }) => void
       );
@@ -36,6 +39,10 @@ class FakeSocket implements SocketLike {
 
   close(): void {
     this.closed = true;
+  }
+
+  emitOpen(): void {
+    for (const listener of this.openListeners) listener();
   }
 
   emitMessage(data: unknown): void {
@@ -200,5 +207,103 @@ describe('connectEvents', () => {
     created[0].emitClose();
     await sleep(30);
     expect(created.length).toBe(1);
+  });
+
+  // I2(a): every (re)connect must give the caller a chance to refetch
+  // authoritative state over HTTP — a WS event that landed while
+  // disconnected (or before the very first connection finished opening) is
+  // otherwise gone forever.
+  it('calls onOpen every time a socket successfully opens, including reconnects', async () => {
+    const created: FakeSocket[] = [];
+    let opens = 0;
+    const dispose = connectEvents(BASE_URL, () => {}, {
+      createSocket: () => {
+        const socket = new FakeSocket();
+        created.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 5,
+      onOpen: () => {
+        opens++;
+      },
+    });
+
+    created[0].emitOpen();
+    expect(opens).toBe(1);
+
+    created[0].emitClose();
+    await sleep(30);
+    created[1].emitOpen();
+    expect(opens).toBe(2);
+
+    dispose();
+  });
+
+  // I2(b): a socket that never opens (immediate error/close every attempt)
+  // must not retry forever — after `maxConsecutiveFailures` failed
+  // attempts in a row, connectEvents gives up and calls `onGiveUp` instead
+  // of scheduling yet another reconnect.
+  it('gives up after maxConsecutiveFailures consecutive failed attempts', async () => {
+    const created: FakeSocket[] = [];
+    let gaveUp = 0;
+    const dispose = connectEvents(BASE_URL, () => {}, {
+      createSocket: () => {
+        const socket = new FakeSocket();
+        created.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 2,
+      maxConsecutiveFailures: 3,
+      onGiveUp: () => {
+        gaveUp++;
+      },
+    });
+
+    // Fail 3 times in a row (the socket never opens between attempts).
+    for (let i = 0; i < 3; i++) {
+      created[created.length - 1].emitClose();
+      await sleep(15);
+    }
+
+    expect(gaveUp).toBe(1);
+    const countAfterGiveUp = created.length;
+
+    // No further reconnect attempts after giving up.
+    await sleep(30);
+    expect(created.length).toBe(countAfterGiveUp);
+
+    dispose();
+  });
+
+  it('resets the failure count once a connection successfully opens', async () => {
+    const created: FakeSocket[] = [];
+    let gaveUp = 0;
+    const dispose = connectEvents(BASE_URL, () => {}, {
+      createSocket: () => {
+        const socket = new FakeSocket();
+        created.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 2,
+      maxConsecutiveFailures: 3,
+      onGiveUp: () => {
+        gaveUp++;
+      },
+    });
+
+    // Two failures, then a successful open, then two more failures — never
+    // 3 *consecutive* failures, so this must never give up.
+    created[0].emitClose();
+    await sleep(15);
+    created[1].emitClose();
+    await sleep(15);
+    created[2].emitOpen();
+    created[2].emitClose();
+    await sleep(15);
+    created[3].emitClose();
+    await sleep(15);
+
+    expect(gaveUp).toBe(0);
+    dispose();
   });
 });
