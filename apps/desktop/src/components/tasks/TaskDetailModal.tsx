@@ -142,6 +142,16 @@ export function TaskDetailModal({
                 {doc.meta.status === 'in-review' ? 'Review run' : 'View run'}
               </Button>
             )}
+            {run?.prUrl !== undefined && (
+              <a
+                className="task-detail-modal-pr-chip"
+                href={run.prUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                PR ↗
+              </a>
+            )}
           </div>
         )}
 

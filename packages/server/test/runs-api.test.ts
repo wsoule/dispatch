@@ -361,7 +361,7 @@ describe('run review: merge and discard', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error).toBe(
-      'invalid action: wat (expected merge|discard)'
+      'invalid action: wat (expected merge|discard|pr)'
     );
   });
 

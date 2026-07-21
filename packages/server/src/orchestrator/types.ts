@@ -97,7 +97,13 @@ export interface RunMeta {
   // already had (finished/failed/cancelled); reviewing a run never changes
   // its RunState, it only records that the review happened.
   reviewedAt?: string;
-  reviewAction?: 'merge' | 'discard';
+  reviewAction?: 'merge' | 'discard' | 'pr';
+  // Phase 5 P1: set once a run's PR review action has pushed the branch and
+  // opened a GitHub PR (see PrManager.openPr) — the run stays un-reviewed
+  // (reviewedAt unset) until PrManager's poller sees the PR merged and calls
+  // Orchestrator.markRunMergedViaPr, at which point reviewAction becomes
+  // 'pr'.
+  prUrl?: string;
 }
 
 // Typed errors the orchestrator throws for the API layer to map to HTTP

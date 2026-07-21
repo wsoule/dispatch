@@ -35,7 +35,10 @@ export interface TranscriptStateLine {
   // `state` itself — the append is still the same "one more fact about this
   // run just became true" event the rest of appendState() exists for.
   reviewedAt?: string;
-  reviewAction?: 'merge' | 'discard';
+  reviewAction?: 'merge' | 'discard' | 'pr';
+  // Rides along on a state line exactly like reviewedAt/reviewAction — see
+  // RunMeta.prUrl's comment for what sets this and when.
+  prUrl?: string;
 }
 
 export type TranscriptLine =
@@ -73,7 +76,8 @@ export class Transcript {
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
-      reviewAction?: 'merge' | 'discard';
+      reviewAction?: 'merge' | 'discard' | 'pr';
+      prUrl?: string;
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
@@ -141,6 +145,7 @@ export function replayTranscript(
         error: line.error ?? meta.error,
         reviewedAt: line.reviewedAt ?? meta.reviewedAt,
         reviewAction: line.reviewAction ?? meta.reviewAction,
+        prUrl: line.prUrl ?? meta.prUrl,
       };
     }
   }

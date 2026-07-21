@@ -125,6 +125,7 @@ describe('dispatch mcp (CLI entrypoint) stdio e2e', () => {
         .map((t) => t.name)
         .sort();
       expect(names).toEqual([
+        'agent_message',
         'run_list',
         'task_comment',
         'task_get',

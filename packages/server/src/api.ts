@@ -11,7 +11,10 @@ import type { CreateInput, DispatchConfig, UpdatePatch } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import type { EpicEngine } from './orchestrator/epic.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
+import type { PlanManager } from './orchestrator/plan.js';
+import type { PrManager } from './orchestrator/pr.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -28,6 +31,14 @@ export interface ApiContext {
   events: EventBus;
   orchestrator: Orchestrator;
   version: string;
+  // Phase 5 P1.
+  planManager: PlanManager;
+  epicEngine: EpicEngine;
+  prManager: PrManager;
+  // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
+  // GET /api/health as `pr` so a client can hide/disable the PR action
+  // without probing per-run.
+  prCapability: boolean;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -287,6 +298,12 @@ async function sendRunMessage(
   return jsonResponse(meta);
 }
 
+// Phase 5 P1: `action: 'pr'` is routed to PrManager.openPr rather than
+// Orchestrator.review — pushing a branch and opening a GitHub PR is a
+// different kind of "review" than the local merge/discard actions
+// Orchestrator itself owns, and keeping it in its own module is what lets
+// tests inject a stubbed gh/git CommandRunner (see pr.ts) without pulling
+// that seam into Orchestrator's own constructor.
 async function reviewRun(
   req: Request,
   ctx: ApiContext,
@@ -297,15 +314,80 @@ async function reviewRun(
   const body = parsed.value as { action?: unknown };
   if (
     typeof body.action !== 'string' ||
-    (body.action !== 'merge' && body.action !== 'discard')
+    (body.action !== 'merge' &&
+      body.action !== 'discard' &&
+      body.action !== 'pr')
   ) {
     return errorResponse(
       400,
-      `invalid action: ${String(body.action)} (expected merge|discard)`
+      `invalid action: ${String(body.action)} (expected merge|discard|pr)`
     );
+  }
+  if (body.action === 'pr') {
+    const meta = await ctx.prManager.openPr(runId);
+    return jsonResponse(meta);
   }
   const meta = ctx.orchestrator.review(runId, body.action);
   return jsonResponse(meta);
+}
+
+async function injectRunMessage(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const meta = ctx.orchestrator.inject(runId, body.text);
+  return jsonResponse(meta);
+}
+
+async function startPlan(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { prompt?: unknown };
+  if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
+    return errorResponse(400, 'invalid prompt: prompt is required');
+  }
+  const record = ctx.planManager.startPlan(body.prompt);
+  return jsonResponse({ planId: record.id }, 202);
+}
+
+async function confirmPlan(
+  req: Request,
+  ctx: ApiContext,
+  planId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { proposal?: unknown };
+  const result = ctx.planManager.confirm(planId, body.proposal);
+  return jsonResponse(result);
+}
+
+async function startEpic(
+  req: Request,
+  ctx: ApiContext,
+  epicId: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { concurrency?: unknown; executor?: unknown };
+  if (body.concurrency !== undefined && typeof body.concurrency !== 'number') {
+    return errorResponse(400, 'invalid concurrency: expected a number');
+  }
+  if (body.executor !== undefined && typeof body.executor !== 'string') {
+    return errorResponse(400, 'invalid executor: expected a string');
+  }
+  const session = ctx.epicEngine.start(epicId, {
+    concurrency: body.concurrency,
+    executor: body.executor,
+  });
+  return jsonResponse(session, 201);
 }
 
 // Routes every `/api/*` request. Called only for paths under `/api` — the
@@ -335,6 +417,9 @@ export async function handleApi(
         // daemon keeps serving the last-good cache regardless; this is
         // visibility, not a fatal signal (`ok` stays true).
         problems: ctx.cache.problems(),
+        // Phase 5 P1: whether this project can use the PR review action
+        // (gh on PATH + a configured git remote), detected once at boot.
+        pr: ctx.prCapability,
       });
     }
 
@@ -421,6 +506,53 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await reviewRun(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'inject' &&
+        method === 'POST'
+      ) {
+        return await injectRunMessage(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'plan') {
+      if (segments.length === 1 && method === 'POST') {
+        return await startPlan(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        return jsonResponse(ctx.planManager.get(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'confirm' &&
+        method === 'POST'
+      ) {
+        return await confirmPlan(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'epics') {
+      if (
+        segments.length === 3 &&
+        segments[2] === 'dispatch' &&
+        method === 'POST'
+      ) {
+        return await startEpic(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'stop' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.epicEngine.stop(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'progress' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(ctx.epicEngine.progress(segments[1]));
       }
     }
 

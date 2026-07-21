@@ -59,9 +59,48 @@ export class Orchestrator {
   private readonly registry = new RunRegistry();
   private readonly worktrees: WorktreeManager;
   private readonly executors = new Map<string, Executor>();
+  // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
+  // a terminal state AND every bit of bookkeeping that goes with that
+  // (task status, Activity) has already landed — see fireTerminalHooks()'s
+  // call sites in handleFinish()/cancel(). The epic dispatch engine is the
+  // one production subscriber today.
+  private readonly terminalHooks: Array<(meta: RunMeta) => void> = [];
+  // Phase 5 P1: callbacks fired whenever a run is reviewed — merge, discard,
+  // or (via markRunMergedViaPr) a merged PR — i.e. whenever a task might
+  // have just moved to `done`. A run reaching a terminal state (finished/
+  // failed/cancelled) only ever leaves its task at `in-review`
+  // (handleFinish); readyTasks() in @dispatch/core gates on a blocker being
+  // `done`/`cancelled`, so the epic engine needs this *second* seam — not
+  // just onRunTerminal above — to know when a blocked sibling has actually
+  // become dispatchable, since that only happens once a review action runs.
+  private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
+  }
+
+  // Subscribes to "a run just reached a terminal state" — provisioning ->
+  // running -> finished/failed/cancelled, exactly once per run. Returns an
+  // unsubscribe function. This is the clean, push-based seam the epic engine
+  // uses to know when a concurrency slot has freed up instead of polling
+  // run state on a timer.
+  onRunTerminal(callback: (meta: RunMeta) => void): () => void {
+    this.terminalHooks.push(callback);
+    return () => {
+      const idx = this.terminalHooks.indexOf(callback);
+      if (idx !== -1) this.terminalHooks.splice(idx, 1);
+    };
+  }
+
+  // Subscribes to "a run was just reviewed" — merge, discard, or a merged
+  // PR (see the reviewedHooks field comment for why this exists alongside
+  // onRunTerminal). Same unsubscribe-function shape.
+  onRunReviewed(callback: (meta: RunMeta) => void): () => void {
+    this.reviewedHooks.push(callback);
+    return () => {
+      const idx = this.reviewedHooks.indexOf(callback);
+      if (idx !== -1) this.reviewedHooks.splice(idx, 1);
+    };
   }
 
   registerExecutor(name: string, executor: Executor): void {
@@ -222,6 +261,7 @@ export class Orchestrator {
           `run has already been reviewed: ${runId}`
         );
       }
+      this.requireNoOpenPr(meta);
       return this.requestChanges(meta, text);
     }
 
@@ -238,6 +278,34 @@ export class Orchestrator {
       text: `user: ${text}`,
     });
     executorRun.send(text);
+    return meta;
+  }
+
+  // The messaging half of agent collaboration (spec's `agent_message`):
+  // injects a message from *another* agent into a live run's executor.
+  // Distinct from sendMessage's human-authored channel — this one always
+  // prefixes the text so the receiving agent can tell the difference, and
+  // deliberately only accepts a run that's actively `running` (not
+  // provisioning, not awaiting-approval, not terminal): every other state
+  // 409s, since "another agent has something to say right now" is only
+  // unambiguous while the run is actually running. `resume`-style
+  // reactivation is sendMessage's job, not this one's.
+  inject(runId: string, text: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (meta.state !== 'running') {
+      throw new OrchestratorConflictError(`run is not running: ${runId}`);
+    }
+    const executorRun = this.registry.getExecutorRun(runId);
+    if (executorRun === undefined) {
+      throw new OrchestratorClientError(`run has no live executor: ${runId}`);
+    }
+    const prefixed = `[message from another agent] ${text}`;
+    this.transcriptFor(runId).appendEntry({
+      ts: new Date().toISOString(),
+      kind: 'system',
+      text: prefixed,
+    });
+    executorRun.send(prefixed);
     return meta;
   }
 
@@ -268,6 +336,7 @@ export class Orchestrator {
     );
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
+    this.fireTerminalHooks(runId);
   }
 
   // The review surface's unified diff: everything committed on the run's
@@ -313,6 +382,7 @@ export class Orchestrator {
         `run has already been reviewed: ${runId}`
       );
     }
+    this.requireNoOpenPr(meta);
     const now = new Date().toISOString();
 
     if (action === 'merge') {
@@ -339,7 +409,62 @@ export class Orchestrator {
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
     this.ctx.events.broadcast({ type: 'run.changed' });
+    const reviewed = this.registry.get(runId)!;
+    this.invokeHooksSafely(this.reviewedHooks, reviewed);
+    return reviewed;
+  }
+
+  // Phase 5 P1: records a run's freshly-opened PR url. Called by
+  // PrManager.openPr right after `gh pr create` succeeds — this run stays
+  // un-reviewed (reviewedAt unset) until the PR poller sees it merged and
+  // calls markRunMergedViaPr below. Not routed through transition() since
+  // the run's RunState itself doesn't change here, only one more fact about
+  // it becomes known — same rationale as review()'s reviewedAt-only update,
+  // just without a state-transition side effect to piggyback on, so this
+  // appends its own state line directly.
+  setRunPrUrl(runId: string, url: string): RunMeta {
+    const meta = this.requireRun(runId);
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { prUrl: url, updatedAt: now });
+    this.transcriptFor(runId).appendState(meta.state, now, { prUrl: url });
+    this.ctx.events.broadcast({ type: 'run.changed' });
     return this.registry.get(runId)!;
+  }
+
+  // Phase 5 P1: the PR poller's terminal action once GitHub reports a run's
+  // PR as merged — mirrors review()'s 'discard' bookkeeping shape (worktree
+  // cleanup + a task-file update) but marks the task `done` (the work really
+  // did land, just via a remote PR merge rather than review()'s local
+  // squash-merge) and records `reviewAction: 'pr'`. Deliberately does NOT
+  // run mergeRun()'s local `git merge --squash` — that content already
+  // landed on the remote base branch through the PR itself; redoing it
+  // locally would either no-op or conflict with what's already there.
+  markRunMergedViaPr(runId: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (meta.reviewedAt !== undefined) {
+      throw new OrchestratorConflictError(
+        `run has already been reviewed: ${runId}`
+      );
+    }
+    const now = new Date().toISOString();
+    this.worktrees.remove(meta.worktreePath, meta.branch);
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: 'done',
+        appendActivity: `${now} run ${runId} merged via PR (${meta.prUrl ?? 'unknown url'})`,
+      },
+      now
+    );
+    this.transition(runId, meta.state, {
+      reviewedAt: now,
+      reviewAction: 'pr',
+    });
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+    const reviewedViaPr = this.registry.get(runId)!;
+    this.invokeHooksSafely(this.reviewedHooks, reviewedViaPr);
+    return reviewedViaPr;
   }
 
   // C1: squash-merges `meta.branch` into the main checkout and folds this
@@ -480,6 +605,22 @@ export class Orchestrator {
     return meta;
   }
 
+  // I4: once PrManager.openPr has pushed a run's branch and opened a PR
+  // (recorded as meta.prUrl), every *local* review/resume action must
+  // refuse rather than race the remote review — a local merge/discard
+  // would tear down the very worktree/branch the open PR points at, and
+  // resuming would keep pushing commits to a branch someone may already be
+  // reviewing on GitHub. The poller (PrManager.pollOnce) already skips any
+  // run that's been reviewed, so this is the complementary guard on the
+  // still-open side.
+  private requireNoOpenPr(meta: RunMeta): void {
+    if (meta.prUrl !== undefined) {
+      throw new OrchestratorConflictError(
+        'run has an open PR — close or merge it on GitHub instead'
+      );
+    }
+  }
+
   private transcriptFor(runId: string): Transcript {
     return new Transcript(transcriptPath(this.ctx.rootDir, runId));
   }
@@ -555,7 +696,7 @@ export class Orchestrator {
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
-      reviewAction?: 'merge' | 'discard';
+      reviewAction?: 'merge' | 'discard' | 'pr';
     }
   ): void {
     const meta = this.registry.get(runId);
@@ -579,9 +720,68 @@ export class Orchestrator {
       return;
     }
     const now = new Date().toISOString();
-    this.registry.updateMeta(runId, { state, updatedAt: now, ...finish });
+    this.registry.updateMeta(runId, {
+      state,
+      updatedAt: now,
+      ...finish,
+    });
     this.transcriptFor(runId).appendState(state, now, finish);
     this.ctx.events.broadcast({ type: 'run.changed' });
+    // Phase 5 P1: onRunTerminal is deliberately NOT fired from here. A run
+    // "reaching" a terminal state is only fully visible to a subscriber once
+    // handleFinish()/cancel() have also finished updating the run's *task*
+    // (e.g. flipping it to `in-review`) — firing this mid-transition, before
+    // that task update lands, is exactly the ordering bug that made the epic
+    // engine see a stale `in-progress` task status on the very same tick a
+    // run it was tracking finished. See the explicit fireTerminalHooks()
+    // calls at the end of handleFinish()/cancel() instead.
+  }
+
+  // Fires every onRunTerminal subscriber for `runId`'s *current* meta — only
+  // ever called once the run's terminal transition AND every bit of
+  // bookkeeping that goes with it (task status, Activity) has already
+  // landed, so a subscriber never observes a run whose task hasn't caught up
+  // yet (see transition()'s comment for the bug this ordering avoids).
+  private fireTerminalHooks(runId: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    this.invokeHooksSafely(this.terminalHooks, meta);
+  }
+
+  // C2(b): runs every hook in `hooks` against `meta`, isolating each call —
+  // a subscriber's own bug must never change the outcome of the operation
+  // that fired it (a merge/discard/finish/cancel has already fully
+  // committed its own effects by the time hooks run) and must never stop a
+  // *different* subscriber from still getting its turn. A throwing hook is
+  // logged server-side and recorded as an Activity line on the run's own
+  // task, purely for visibility — never re-thrown.
+  private invokeHooksSafely(
+    hooks: ReadonlyArray<(meta: RunMeta) => void>,
+    meta: RunMeta
+  ): void {
+    for (const hook of hooks) {
+      try {
+        hook(meta);
+      } catch (err) {
+        const message = (err as Error).message;
+        console.error(
+          `dispatchd: run lifecycle hook failed for run ${meta.id}: ${message}`
+        );
+        try {
+          const now = new Date().toISOString();
+          this.ctx.store.update(
+            meta.taskId,
+            { appendActivity: `${now} [hook error] ${message}` },
+            now
+          );
+          this.ctx.cache.rebuild(this.ctx.store);
+          this.ctx.events.broadcast({ type: 'task.changed' });
+        } catch {
+          // Even the Activity append failing must not propagate — the
+          // triggering operation's own result already stands regardless.
+        }
+      }
+    }
   }
 
   // Builds the ExecutorEvents callbacks for one run, closing over its runId
@@ -672,6 +872,7 @@ export class Orchestrator {
     this.ctx.store.update(meta.taskId, patch, now);
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
+    this.fireTerminalHooks(runId);
   }
 
   // The request-changes path: same task/branch/worktree as `oldMeta`, but a

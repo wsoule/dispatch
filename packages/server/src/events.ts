@@ -22,7 +22,11 @@ export type ServerEvent =
       runId: string;
       requestId: string;
       toolName: string;
-    };
+    }
+  // Phase 5 P1: a plan's state (running -> ready|failed) changed, or it was
+  // just confirmed — same "go refetch, no payload beyond the id" contract as
+  // run.changed.
+  | { type: 'plan.changed'; planId: string };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

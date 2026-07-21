@@ -31,10 +31,14 @@ const KNOWN_PERMISSION_MODES = [
 // how many turns an agent gets, an optional USD spend cap, and which
 // permission mode it starts in. `maxBudgetUsd` has no default — omitting it
 // means "no budget cap" — everything else always has a concrete value.
+// `epicConcurrency` (Phase 5) is the default cap the epic dispatch engine
+// applies when starting an epic without an explicit override -- how many of
+// an epic's ready children may have a live run at once.
 export interface OrchestratorConfig {
   maxTurns: number;
   maxBudgetUsd?: number;
   permissionMode: string;
+  epicConcurrency: number;
 }
 
 export interface DispatchConfig {
@@ -46,6 +50,7 @@ export interface DispatchConfig {
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   maxTurns: 100,
   permissionMode: 'acceptEdits',
+  epicConcurrency: 3,
 };
 
 const DEFAULTS: DispatchConfig = {
@@ -105,10 +110,23 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { epicConcurrency } = obj;
+  if (
+    epicConcurrency !== undefined &&
+    (typeof epicConcurrency !== 'number' ||
+      !Number.isInteger(epicConcurrency) ||
+      epicConcurrency < 1)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: orchestrator.epicConcurrency must be an integer >= 1'
+    );
+  }
+
   return {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
     maxBudgetUsd,
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
+    epicConcurrency: epicConcurrency ?? DEFAULT_ORCHESTRATOR.epicConcurrency,
   };
 }
 

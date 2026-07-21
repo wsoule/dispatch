@@ -12,12 +12,14 @@ interface RunModalProps {
   diff: DiffResult | undefined;
   diffLoading: boolean;
   diffError: string | null;
+  prCapability: boolean;
   onApprove: (requestId: string, allow: boolean) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
   onMerge: () => Promise<void>;
   onDiscard: () => Promise<void>;
   onRequestChanges: (text: string) => Promise<void>;
+  onOpenPr: () => Promise<void>;
   onClose: () => void;
 }
 
@@ -31,12 +33,14 @@ export function RunModal({
   diff,
   diffLoading,
   diffError,
+  prCapability,
   onApprove,
   onSendMessage,
   onCancel,
   onMerge,
   onDiscard,
   onRequestChanges,
+  onOpenPr,
   onClose,
 }: RunModalProps) {
   return (
@@ -52,9 +56,11 @@ export function RunModal({
           diff={diff}
           diffLoading={diffLoading}
           diffError={diffError}
+          prCapability={prCapability}
           onMerge={onMerge}
           onDiscard={onDiscard}
           onRequestChanges={onRequestChanges}
+          onOpenPr={onOpenPr}
         />
       ) : (
         <RunLogView
