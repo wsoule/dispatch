@@ -139,6 +139,43 @@ describe('EpicEngine.start', () => {
     );
   });
 
+  // C2(a): a bogus executor must 400 before any session is ever created —
+  // and, critically, must NOT leave a half-created session wedged in place
+  // that would 409 a subsequent, correctly-specified retry.
+  it('400s a bogus executor without wedging the session for a later valid retry', () => {
+    const { epics, store } = makeHarness();
+    const epic = store.create({ title: 'Epic', kind: 'epic' });
+    expect(() =>
+      epics.start(epic.meta.id, { executor: 'not-a-real-executor' })
+    ).toThrow(OrchestratorClientError);
+
+    // No wedge: retrying with a real executor must succeed, not 409.
+    const session = epics.start(epic.meta.id, { executor: 'fake' });
+    expect(session.active).toBe(true);
+  });
+
+  // C2(a): if the initial fillQueue() call itself throws (a real, unexpected
+  // error — not the OrchestratorConflictError race fillQueue already
+  // tolerates), the just-created session must be rolled back so a retry
+  // isn't blocked by "already has an active session". Forces a real
+  // dispatch()-path failure (git worktree creation) by stripping all
+  // permissions off `.git` — a plain Error `WorktreeManager.add()` throws,
+  // uncaught by fillQueue's own (narrower) OrchestratorConflictError catch.
+  it('rolls back the session when the initial fillQueue throws, so a retry can succeed', () => {
+    const { epics, store } = makeHarness();
+    const { epicId } = createEpicWithChildren(store, 1);
+    const gitDir = join(repo, '.git');
+    Bun.spawnSync(['chmod', '-R', '000', gitDir]);
+    try {
+      expect(() => epics.start(epicId, { executor: 'fake' })).toThrow();
+    } finally {
+      Bun.spawnSync(['chmod', '-R', '755', gitDir]);
+    }
+
+    const session = epics.start(epicId, { executor: 'fake' });
+    expect(session.active).toBe(true);
+  });
+
   it('dispatches up to the concurrency cap and never exceeds it across 5 ready children with limit 2', async () => {
     const harness = makeHarness();
     const { epicId, childIds } = createEpicWithChildren(harness.store, 5);
@@ -249,6 +286,88 @@ describe('EpicEngine.start', () => {
     expect(harness.store.get(blockerId)?.meta.status).toBe('done');
   });
 
+  // I3 (adjudicated): discarding a run returns its task to `todo`, but that
+  // must NOT be read by the active session as "newly ready" — a discard
+  // means a human judged the work wrong, and auto-re-dispatching the exact
+  // same prompt would just burn budget repeating the same mistake. The task
+  // stays in the ready queue for a human or a future session to explicitly
+  // pick up again. Uses two independent children under concurrency 2 so the
+  // session stays active (child B still live) at the moment child A is
+  // discarded — a single-child epic would otherwise auto-complete (and
+  // deactivate) the instant its one run finishes, before discard ever runs,
+  // masking whether the *discard-specific* cascade gate actually works.
+  it('does not auto-re-dispatch a discarded child while the session is active', async () => {
+    const harness = makeHarness();
+    const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
+    const [aId] = childIds;
+
+    harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
+    await waitFor(() => harness.orchestrator.list().length === 2);
+    const runA = harness.orchestrator.list().find((r) => r.taskId === aId)!;
+    harness.orchestrator.approve(runA.id, 'go', true);
+    await waitFor(() => harness.store.get(aId)?.meta.status === 'in-review');
+
+    expect(harness.epics.progress(epicId).active).toBe(true);
+    harness.orchestrator.review(runA.id, 'discard');
+
+    // Give the (buggy, pre-fix) synchronous cascade a moment to land before
+    // asserting the final state: with the bug present, the task flashes
+    // through 'todo' straight into a re-dispatched 'in-progress' inside
+    // review()'s own hook-firing call, before this line even runs — so the
+    // meaningful assertion is the *settled* state, not an intermediate one.
+    await sleep(80);
+    expect(harness.store.get(aId)?.meta.status).toBe('todo');
+    const runsForA = harness.orchestrator
+      .list()
+      .filter((r) => r.taskId === aId);
+    expect(runsForA).toHaveLength(1);
+    expect(runsForA[0].id).toBe(runA.id);
+  });
+
+  // C1: readyTasks(children) alone treats a blocker id outside the passed
+  // array as satisfied (dangling ids never block, per core's own readyTasks
+  // doc comment) — which silently ignores a blocker that genuinely exists
+  // elsewhere in the project, just not as a sibling child. Readiness must be
+  // computed over the FULL task set and only then intersected with the
+  // epic's children.
+  it('does not dispatch a child blocked by an outside (non-sibling) task until that task is done', async () => {
+    const harness = makeHarness();
+    const outside = harness.store.create({ title: 'Outside blocker' });
+    const { epicId, childIds } = createEpicWithChildren(
+      harness.store,
+      1,
+      () => [outside.meta.id]
+    );
+    harness.cache.rebuild(harness.store);
+
+    harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
+    await sleep(60);
+    expect(harness.orchestrator.list()).toHaveLength(0);
+    expect(harness.store.get(childIds[0])?.meta.status).toBe('todo');
+
+    // Finishing+merging the outside blocker (unrelated to any epic) must
+    // cascade-dispatch the now-unblocked child.
+    const outsideRun = harness.orchestrator.dispatch(outside.meta.id, 'fake');
+    await waitFor(() =>
+      harness.orchestrator
+        .list()
+        .some((r) => r.id === outsideRun.id && r.state === 'awaiting-approval')
+    );
+    harness.orchestrator.approve(outsideRun.id, 'go', true);
+    await waitFor(
+      () => harness.store.get(outside.meta.id)?.meta.status === 'in-review'
+    );
+    harness.orchestrator.review(outsideRun.id, 'merge');
+
+    await waitFor(() =>
+      harness.orchestrator
+        .list()
+        .some(
+          (r) => r.taskId === childIds[0] && r.state === 'awaiting-approval'
+        )
+    );
+  });
+
   it('stop halts new dispatches while letting the live run finish', async () => {
     const harness = makeHarness();
     const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
@@ -297,11 +416,11 @@ describe('EpicEngine.start', () => {
     );
     await waitFor(() => {
       const body = harness.store.get(epicId)?.body ?? '';
-      return body.includes('epic dispatch complete');
+      return body.includes('epic dispatch session ended');
     });
     const epicDoc = harness.store.get(epicId);
     expect(epicDoc?.body).toContain('epic dispatch started');
-    expect(epicDoc?.body).toContain('epic dispatch complete');
+    expect(epicDoc?.body).toContain('epic dispatch session ended');
     expect(harness.epics.progress(epicId).active).toBe(false);
   });
 
