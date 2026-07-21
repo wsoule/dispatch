@@ -393,7 +393,7 @@ function App() {
                   onSelectTask={(taskId) =>
                     dispatchNav({ type: 'openPeek', taskId })
                   }
-                  onNewTask={() => setShowCreate(true)}
+                  onAddTask={() => setShowCreate(true)}
                 />
               )}
               {navState.projectView === 'runs' && (
