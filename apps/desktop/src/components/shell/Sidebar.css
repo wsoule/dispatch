@@ -47,8 +47,12 @@
   color: var(--text-muted);
 }
 
-/* Non-interactive — this app is scoped to one project, not a switcher, so the active
-   project's row never needs the hover/active-state treatment `sidebar-nav-item` gets. */
+.sidebar-project-switcher {
+  position: relative;
+}
+
+/* The active-project row is a dropdown trigger: one project is active at a time, but you
+   can switch which one from here. */
 .sidebar-project-current {
   display: flex;
   align-items: center;
@@ -58,6 +62,72 @@
   font-size: var(--text-base);
   font-weight: 500;
   color: var(--text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 6px);
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-project-current:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.sidebar-project-caret {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.sidebar-project-menu {
+  position: absolute;
+  left: var(--space-1, 4px);
+  right: var(--space-1, 4px);
+  top: calc(100% + 2px);
+  z-index: 20;
+  padding: var(--space-1, 4px);
+  background: var(--bg-elevated, #1b1c20);
+  border: 1px solid var(--border, #2a2b30);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.sidebar-project-menu-active,
+.sidebar-project-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm, 4px);
+  text-align: left;
+}
+
+.sidebar-project-menu-active {
+  color: var(--text-muted);
+}
+
+.sidebar-project-menu-check {
+  margin-left: auto;
+  color: var(--accent, #c8f04a);
+}
+
+.sidebar-project-menu-item {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.sidebar-project-menu-item:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.sidebar-project-menu-empty {
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
 }
 
 .sidebar-project-dot {

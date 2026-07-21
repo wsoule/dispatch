@@ -13,7 +13,7 @@ import type { GlobalView, ProjectView } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { basename } from './lib/projectName';
 import { isTerminalRunState } from './lib/runState';
-import { currentProjectRoot, hasDispatch } from './lib/tauri';
+import { currentProjectRoot, hasDispatch, listProjects } from './lib/tauri';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { GetStartedView } from './views/GetStartedView';
@@ -39,7 +39,7 @@ function App() {
   // instead of the one this window is actually running in. `retry: false` on both queries
   // below so a real failure surfaces as an explicit error rather than another perpetual spinner.
   const {
-    data: root,
+    data: launchRoot,
     isError: rootError,
     error: rootErrorDetail,
   } = useQuery({
@@ -48,6 +48,49 @@ function App() {
     staleTime: Infinity,
     retry: false,
   });
+
+  // The switcher lets you move this window to another dispatch-enabled project
+  // without giving up the single-project focus — one project is active at a
+  // time. `overrideRoot` (set by the sidebar dropdown) wins over the launch
+  // project; `null` means "stay on the project this window launched in".
+  const [overrideRoot, setOverrideRoot] = useState<string | null>(null);
+  const root = overrideRoot ?? launchRoot;
+
+  // The dropdown's project list is loaded lazily — only once the switcher is
+  // opened — and with `allSettled` so a single stale/missing path can never
+  // reject the batch. This is deliberately OFF the boot path: the app resolves
+  // its launch project and renders immediately; discovering *other* projects is
+  // a background nicety that must never be able to hang the app (the exact
+  // failure mode the single-project pivot fixed).
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const { data: switchProjects } = useQuery({
+    queryKey: ['switcher-projects'],
+    queryFn: async () => {
+      const projects = await listProjects();
+      const checks = await Promise.allSettled(
+        projects.map(async (p) => ((await hasDispatch(p.path)) ? p : null))
+      );
+      return checks
+        .filter(
+          (r): r is PromiseFulfilledResult<(typeof projects)[number] | null> =>
+            r.status === 'fulfilled'
+        )
+        .map((r) => r.value)
+        .filter((p): p is (typeof projects)[number] => p !== null)
+        .map((p) => ({ path: p.path, name: basename(p.path) }));
+    },
+    enabled: switcherOpen,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  const selectSwitchProject = useCallback((path: string) => {
+    setOverrideRoot(path);
+    setSwitcherOpen(false);
+    // Drop the current project's nav context so the new project opens clean on
+    // its Board rather than inheriting a peek/run id from the previous one.
+    dispatchNav({ type: 'selectProject', projectId: path });
+  }, []);
 
   const {
     data: rootHasDispatch,
@@ -282,6 +325,10 @@ function App() {
         liveAgentCount={liveRuns.length}
         onSetProjectView={selectProjectView}
         onSetGlobalView={setGlobalView}
+        switcherOpen={switcherOpen}
+        onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
+        switchProjects={switchProjects ?? []}
+        onSelectProject={selectSwitchProject}
       />
       <main className="app-main">
         {resolutionError !== null ? (
