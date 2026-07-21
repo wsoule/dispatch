@@ -1,18 +1,57 @@
 import type { RunMeta } from '@dispatch/client';
 import type { Priority, TaskDoc, UpdatePatch } from '@dispatch/core';
+import {
+  ArrowUpRight,
+  ChevronsUp,
+  Minus,
+  SignalHigh,
+  SignalLow,
+  SignalMedium,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections, sectionOrDash } from '../../lib/taskDisplay';
-import { Button } from '../ui/Button';
-import { Pill } from '../ui/Pill';
-import { Select } from '../ui/Select';
-import { TextInput } from '../ui/TextInput';
-import './TaskPeekPanel.css';
+import { Badge } from '../../ui/badge';
+import { Button } from '../../ui/button';
+import { Input } from '../../ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../ui/select';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
+
+// Per-priority icon + color, matching the redesign brief's "priority is a small lucide icon,
+// color-coded" direction. Unlike `priorityTone` (lib/taskDisplay.ts), which only colors
+// urgent/high for the list/board's low-noise chip, the peek panel's own priority *control*
+// shows every value distinctly (a select needs to represent whatever is currently chosen).
+const PRIORITY_ICON: Record<Priority, typeof ChevronsUp> = {
+  urgent: ChevronsUp,
+  high: SignalHigh,
+  medium: SignalMedium,
+  low: SignalLow,
+  none: Minus,
+};
+
+const PRIORITY_COLOR: Record<Priority, string> = {
+  urgent: 'text-destructive',
+  high: 'text-amber-500',
+  medium: 'text-muted-foreground',
+  low: 'text-muted-foreground',
+  none: 'text-muted-foreground',
+};
+
+function PriorityGlyph({ priority }: { priority: Priority }) {
+  const Icon = PRIORITY_ICON[priority];
+  return <Icon className={`size-3.5 shrink-0 ${PRIORITY_COLOR[priority]}`} />;
+}
 
 interface TaskPeekPanelProps {
   doc: TaskDoc;
@@ -130,29 +169,39 @@ export function TaskPeekPanel({
       : activityFeed.split('\n').filter((line) => line.trim() !== '');
 
   return (
-    <div className="task-peek-backdrop" onClick={onClose}>
+    <div
+      className="animate-in fade-in-0 fixed inset-0 z-40 bg-black/40 duration-150"
+      onClick={onClose}
+    >
       <aside
         ref={panelRef}
-        className="task-peek-panel"
+        className="border-border bg-card animate-in slide-in-from-right-4 fade-in-0 fixed top-0 right-0 bottom-0 z-50 flex w-[min(28rem,92vw)] flex-col border-l shadow-2xl duration-150"
         onClick={(e) => e.stopPropagation()}
         aria-label={`Task ${doc.meta.id} detail`}
       >
-        <div className="task-peek-header">
-          <span className="task-peek-id">{doc.meta.id}</span>
-          <button
-            className="task-peek-close"
+        <div className="border-border flex shrink-0 items-center justify-between border-b px-4 py-3">
+          <span className="text-muted-foreground font-mono text-[11px]">
+            {doc.meta.id}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
             aria-label="Close"
           >
-            ×
-          </button>
+            <X className="size-4" />
+          </Button>
         </div>
 
-        <div className="task-peek-body">
-          {error !== null && <div className="task-peek-error">{error}</div>}
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+          {error !== null && (
+            <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
+              {error}
+            </div>
+          )}
 
-          <TextInput
-            className="task-peek-title"
+          <Input
+            className="text-foreground hover:border-border -mx-1 h-auto w-[calc(100%+0.5rem)] border-transparent px-1 py-1 text-[15px] font-medium shadow-none transition-colors duration-150"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={saveTitleIfChanged}
@@ -160,15 +209,20 @@ export function TaskPeekPanel({
           />
 
           {(ready || hasOpenRun) && (
-            <div className="task-peek-run-row">
+            <div className="flex items-center gap-2">
               {ready && (
-                <Button disabled={dispatching} onClick={() => void dispatch()}>
+                <Button
+                  size="sm"
+                  disabled={dispatching}
+                  onClick={() => void dispatch()}
+                >
                   Dispatch
                 </Button>
               )}
               {ready && isFakeExecutorDevToolEnabled() && (
                 <Button
                   variant="secondary"
+                  size="sm"
                   disabled={dispatching}
                   onClick={() => void dispatch('fake')}
                 >
@@ -176,113 +230,151 @@ export function TaskPeekPanel({
                 </Button>
               )}
               {hasOpenRun && run !== undefined && (
-                <Button variant="secondary" onClick={() => onOpenRun(run.id)}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onOpenRun(run.id)}
+                >
                   {doc.meta.status === 'in-review' ? 'Review run' : 'View run'}
                 </Button>
               )}
               {run?.prUrl !== undefined && (
                 <a
-                  className="task-peek-pr-chip"
+                  className="text-primary hover:bg-accent border-border inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors duration-150"
                   href={run.prUrl}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  PR ↗
+                  PR
+                  <ArrowUpRight className="size-3" />
                 </a>
               )}
             </div>
           )}
 
-          <div className="task-peek-fields">
-            <label className="task-peek-field">
-              <span className="task-peek-field-label">Status</span>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1 text-[13px]">
+              <span className="text-muted-foreground text-[11px]">Status</span>
               <Select
                 value={doc.meta.status}
-                onChange={(e) => void runUpdate({ status: e.target.value })}
+                onValueChange={(value) => void runUpdate({ status: value })}
               >
-                {statuses.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
+                <SelectTrigger size="sm" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {statuses.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </label>
-            <label className="task-peek-field">
-              <span className="task-peek-field-label">Priority</span>
+            <label className="flex flex-col gap-1 text-[13px]">
+              <span className="text-muted-foreground text-[11px]">
+                Priority
+              </span>
               <Select
                 value={doc.meta.priority}
-                onChange={(e) =>
-                  void runUpdate({ priority: e.target.value as Priority })
+                onValueChange={(value) =>
+                  void runUpdate({ priority: value as Priority })
                 }
               >
-                {PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
+                <SelectTrigger size="sm" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRIORITIES.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      <PriorityGlyph priority={p} />
+                      {p}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </label>
-            <div className="task-peek-field">
-              <span className="task-peek-field-label">Kind</span>
-              <span className="task-peek-field-value">{doc.meta.kind}</span>
+            <div className="flex flex-col gap-1 text-[13px]">
+              <span className="text-muted-foreground text-[11px]">Kind</span>
+              <span className="text-foreground font-mono text-[13px]">
+                {doc.meta.kind}
+              </span>
             </div>
-            <div className="task-peek-field">
-              <span className="task-peek-field-label">Epic</span>
-              <span className="task-peek-field-value">
+            <div className="flex flex-col gap-1 text-[13px]">
+              <span className="text-muted-foreground text-[11px]">Epic</span>
+              <span className="text-foreground font-mono text-[13px]">
                 {doc.meta.parent ?? '—'}
               </span>
             </div>
-            <div className="task-peek-field">
-              <span className="task-peek-field-label">Blocked by</span>
-              <span className="task-peek-field-value">
+            <div className="flex flex-col gap-1 text-[13px]">
+              <span className="text-muted-foreground text-[11px]">
+                Blocked by
+              </span>
+              <span className="text-foreground font-mono text-[13px]">
                 {doc.meta.blockedBy.length > 0
                   ? doc.meta.blockedBy.join(', ')
                   : '—'}
               </span>
             </div>
             {doc.meta.labels.length > 0 && (
-              <div className="task-peek-field">
-                <span className="task-peek-field-label">Labels</span>
-                <div className="task-peek-field-labels">
+              <div className="col-span-2 flex flex-col gap-1 text-[13px]">
+                <span className="text-muted-foreground text-[11px]">
+                  Labels
+                </span>
+                <div className="flex flex-wrap gap-1">
                   {doc.meta.labels.map((label) => (
-                    <Pill key={label} variant="tag" tone="gray">
+                    <Badge
+                      key={label}
+                      variant="secondary"
+                      className="text-[11px]"
+                    >
                       {label}
-                    </Pill>
+                    </Badge>
                   ))}
                 </div>
               </div>
             )}
           </div>
 
-          <div className="task-peek-section">
-            <div className="task-peek-section-title">Description</div>
-            <div className="task-peek-section-body">
+          <div className="border-border flex flex-col gap-2 border-t pt-3">
+            <div className="text-foreground text-[13px] font-medium">
+              Description
+            </div>
+            <div className="text-muted-foreground text-[13px] whitespace-pre-wrap">
               {sectionOrDash(sections, 'Description')}
             </div>
           </div>
 
-          <div className="task-peek-section">
-            <div className="task-peek-section-title">Acceptance Criteria</div>
-            <div className="task-peek-section-body">
+          <div className="border-border flex flex-col gap-2 border-t pt-3">
+            <div className="text-foreground text-[13px] font-medium">
+              Acceptance Criteria
+            </div>
+            <div className="text-muted-foreground text-[13px] whitespace-pre-wrap">
               {sectionOrDash(sections, 'Acceptance Criteria')}
             </div>
           </div>
 
-          <div className="task-peek-section">
-            <div className="task-peek-section-title">Activity</div>
+          <div className="border-border flex flex-col gap-2 border-t pt-3">
+            <div className="text-foreground text-[13px] font-medium">
+              Activity
+            </div>
             {activityEntries.length === 0 ? (
-              <p className="task-peek-section-body">—</p>
+              <p className="text-muted-foreground text-[13px]">—</p>
             ) : (
-              <ul className="task-peek-activity-feed">
+              <ul className="flex flex-col gap-2">
                 {activityEntries.map((entry, i) => (
-                  <li key={i} className="task-peek-activity-entry">
+                  <li
+                    key={i}
+                    className="bg-muted text-muted-foreground border-primary/40 rounded-md border-l-2 px-3 py-2 text-[13px] whitespace-pre-wrap"
+                  >
                     {entry}
                   </li>
                 ))}
               </ul>
             )}
-            <div className="task-peek-activity-row">
-              <TextInput
+            <div className="flex gap-2">
+              <Input
+                className="h-8 flex-1 text-[13px]"
                 placeholder="Add an activity note…"
                 value={activityDraft}
                 onChange={(e) => setActivityDraft(e.target.value)}
@@ -290,7 +382,7 @@ export function TaskPeekPanel({
                   if (e.key === 'Enter') submitActivity();
                 }}
               />
-              <Button variant="secondary" onClick={submitActivity}>
+              <Button variant="secondary" size="sm" onClick={submitActivity}>
                 Add
               </Button>
             </div>
