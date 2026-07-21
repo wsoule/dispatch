@@ -30,6 +30,11 @@ interface TaskBoardProps {
   /** Id of the card the Board's j/k roving-focus cursor is currently on, if any — see
    * `BoardView`'s column-major traversal. `undefined`/no match renders every card unfocused. */
   focusedTaskId?: string | null;
+  /** Called whenever real DOM focus lands on any card (click, Tab, or the roving-focus
+   * effect) — lets `BoardView` sync `focusedTaskId` to wherever focus actually is, so a
+   * mouse click (which the j/k cursor never hears about on its own) can't leave Enter
+   * opening a stale card instead of the one that's visibly focused. */
+  onCardFocus?: (taskId: string) => void;
 }
 
 /** One column per tracker status, in the order the project's `.dispatch/config.yml` lists
@@ -52,6 +57,7 @@ export function TaskBoard({
   onWorkEpic,
   onStopEpic,
   focusedTaskId = null,
+  onCardFocus,
 }: TaskBoardProps) {
   const columns = groupTasksByStatus(tasks, statuses);
 
@@ -82,6 +88,7 @@ export function TaskBoard({
                   onWork={onWorkEpic}
                   onStop={onStopEpic}
                   focused={doc.meta.id === focusedTaskId}
+                  onFocus={() => onCardFocus?.(doc.meta.id)}
                 />
               ) : (
                 <TaskCardTile
@@ -97,6 +104,7 @@ export function TaskBoard({
                       : undefined
                   }
                   focused={doc.meta.id === focusedTaskId}
+                  onFocus={() => onCardFocus?.(doc.meta.id)}
                 />
               )
             )}
