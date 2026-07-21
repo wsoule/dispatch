@@ -14,6 +14,9 @@
   },
   "dependencies": {
     "@dispatch/client": "workspace:*",
+    "@dnd-kit/core": "catalog:",
+    "@dnd-kit/sortable": "catalog:",
+    "@dnd-kit/utilities": "catalog:",
     "@fontsource/ibm-plex-mono": "catalog:",
     "@fontsource/inter": "catalog:",
     "@pierre/diffs": "catalog:",

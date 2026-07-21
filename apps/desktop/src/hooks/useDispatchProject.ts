@@ -72,6 +72,7 @@ export interface DispatchProjectData {
   planRecord: import('@dispatch/client').PlanRecord | undefined;
 
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
+  moveTaskStatus: (id: string, status: string) => Promise<void>;
   handleCreate: (input: CreateInput) => Promise<void>;
   handleDispatch: (
     taskId: string,
@@ -397,6 +398,33 @@ export function useDispatchProject(
     [client, queryClient, tasksQueryKey, readyQueryKey]
   );
 
+  // Optimistic status change for the board's drag-and-drop: the card jumps to
+  // the new column immediately (the whole point of direct manipulation — waiting
+  // for a round-trip would feel broken), then the PATCH lands. On error the
+  // snapshot is restored so the card snaps back to where it was.
+  const moveTaskStatus = useCallback(
+    async (id: string, status: string): Promise<void> => {
+      if (client === null) return;
+      const previous = queryClient.getQueryData<TaskDoc[]>(tasksQueryKey);
+      queryClient.setQueryData<TaskDoc[]>(tasksQueryKey, (old) =>
+        old?.map((doc) =>
+          doc.meta.id === id ? { ...doc, meta: { ...doc.meta, status } } : doc
+        )
+      );
+      try {
+        await client.updateTask(id, { status });
+      } catch (err) {
+        if (previous !== undefined) {
+          queryClient.setQueryData(tasksQueryKey, previous);
+        }
+        throw err;
+      }
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    },
+    [client, queryClient, tasksQueryKey, readyQueryKey]
+  );
+
   const handleCreate = useCallback(
     async (input: CreateInput): Promise<void> => {
       if (client === null) return;
@@ -573,6 +601,7 @@ export function useDispatchProject(
     planRecord,
 
     handleUpdate,
+    moveTaskStatus,
     handleCreate,
     handleDispatch,
     handleApprove,
