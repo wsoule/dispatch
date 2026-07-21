@@ -1,4 +1,14 @@
 import type { NormalizedEntry, RunMeta } from '@dispatch/client';
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleCheck,
+  CircleX,
+  Info,
+  Loader2,
+  MessageSquare,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 
 import {
@@ -6,11 +16,11 @@ import {
   liveCostUsd,
   toolEntryPreview,
 } from '../../lib/runLog';
-import { Button } from '../ui/Button';
-import { TextInput } from '../ui/TextInput';
 import { ApprovalCard } from './ApprovalCard';
 import { RunStatePill } from './RunStatePill';
-import './RunLogView.css';
+import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { Input } from '@/ui/input';
 
 const LIVE_STATES = new Set<RunMeta['state']>([
   'provisioning',
@@ -18,60 +28,94 @@ const LIVE_STATES = new Set<RunMeta['state']>([
   'awaiting-approval',
 ]);
 
-// One assistant/thinking/system entry as its own chat-style bubble. `kind`
+const ROLE_LABEL: Record<'assistant' | 'thinking' | 'system', string> = {
+  assistant: 'Agent',
+  thinking: 'Thinking',
+  system: 'System',
+};
+
+// One assistant/thinking/system entry as its own chat-style row. `kind`
 // picks the label and lean (thinking reads as a quieter aside, system as a
-// centered note rather than a message from either side).
+// centered note rather than a message from either side) — per the redesign
+// brief, roles get subtle/muted styling distinctions, not loud colored
+// chat bubbles.
 function MessageBubble({ entry }: { entry: NormalizedEntry }) {
-  const roleLabel =
-    entry.kind === 'assistant'
-      ? 'Agent'
-      : entry.kind === 'thinking'
-        ? 'Thinking'
-        : 'System';
+  const kind = entry.kind as 'assistant' | 'thinking' | 'system';
+
+  if (kind === 'system') {
+    return (
+      <div className="text-muted-foreground flex items-center justify-center gap-1.5 py-1 text-center text-[11px]">
+        <Info className="size-3 shrink-0" />
+        {entry.text ?? ''}
+      </div>
+    );
+  }
+
   return (
-    <div className={`run-log-bubble run-log-bubble-${entry.kind}`}>
-      <div className="run-log-bubble-role">{roleLabel}</div>
-      <div className="run-log-bubble-text">{entry.text ?? ''}</div>
+    <div
+      className={cn(
+        'flex max-w-[90%] flex-col gap-0.5 self-start rounded-md px-3 py-2',
+        kind === 'assistant'
+          ? 'border border-border bg-muted/50'
+          : 'text-muted-foreground italic'
+      )}
+    >
+      <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        {ROLE_LABEL[kind]}
+      </div>
+      <div className="text-foreground text-[13px] break-words whitespace-pre-wrap">
+        {entry.text ?? ''}
+      </div>
     </div>
   );
 }
 
+const TOOL_STATUS_ICON: Record<
+  NonNullable<NormalizedEntry['status']>,
+  ReactNode
+> = {
+  running: <Loader2 className="size-3 shrink-0 animate-spin" />,
+  done: <CircleCheck className="size-3 shrink-0 text-emerald-500" />,
+  error: <CircleX className="text-destructive size-3 shrink-0" />,
+};
+
 // A cluster of consecutive tool-call entries (see groupLogEntries) rendered
 // as one collapsible block — collapsed by default so a turn with several
 // tool calls doesn't dominate the log; expanding shows every call's full
-// input and status.
+// input and status. Uses lucide chevrons for the disclosure affordance per
+// the redesign brief.
 function ToolCluster({ entries }: { entries: NormalizedEntry[] }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="run-log-tools">
+    <div className="flex max-w-[90%] flex-col gap-1 self-start">
       <button
         type="button"
-        className="run-log-tools-toggle"
         onClick={() => setExpanded((e) => !e)}
         aria-expanded={expanded}
+        className="border-border bg-muted/40 text-muted-foreground hover:border-border hover:bg-muted flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left font-mono text-[12px] transition-colors duration-150"
       >
-        <span className="run-log-tools-caret">{expanded ? '▾' : '▸'}</span>
-        {entries.length === 1
-          ? toolEntryPreview(entries[0])
-          : `${entries.length} tool calls`}
+        {expanded ? (
+          <ChevronDown className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0" />
+        )}
+        <span className="truncate">
+          {entries.length === 1
+            ? toolEntryPreview(entries[0])
+            : `${entries.length} tool calls`}
+        </span>
       </button>
       {expanded && (
-        <ul className="run-log-tools-list">
+        <ul className="animate-in fade-in-0 border-border bg-card flex flex-col gap-2 rounded-md border p-2 duration-150">
           {entries.map((entry, i) => (
-            <li key={i} className="run-log-tools-item">
-              <div className="run-log-tools-item-header">
-                <span className="run-log-tools-item-name">
+            <li key={i} className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
+                {entry.status !== undefined && TOOL_STATUS_ICON[entry.status]}
+                <span className="text-foreground font-mono text-[12px]">
                   {entry.toolName ?? 'tool'}
                 </span>
-                {entry.status !== undefined && (
-                  <span
-                    className={`run-log-tools-item-status run-log-tools-item-status-${entry.status}`}
-                  >
-                    {entry.status}
-                  </span>
-                )}
               </div>
-              <pre className="run-log-tools-item-input">
+              <pre className="text-muted-foreground max-h-32 overflow-auto font-mono text-[11px] break-words whitespace-pre-wrap">
                 {entry.toolInput !== undefined
                   ? JSON.stringify(entry.toolInput, null, 2)
                   : '(no input)'}
@@ -159,20 +203,27 @@ export function RunLogView({
   }
 
   return (
-    <div className="run-log-view">
-      <div className="run-log-header">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="border-border flex items-center gap-3 border-b pb-3">
         <RunStatePill state={meta.state} />
-        <span className="run-log-header-branch">{meta.branch}</span>
+        <span className="text-muted-foreground truncate font-mono text-[11px]">
+          {meta.branch}
+        </span>
         {cost !== null && (
-          <span className="run-log-header-cost">${cost.toFixed(2)}</span>
+          <span className="text-muted-foreground font-mono text-[12px]">
+            ${cost.toFixed(2)}
+          </span>
         )}
         {meta.turns !== undefined && (
-          <span className="run-log-header-turns">{meta.turns} turns</span>
+          <span className="text-muted-foreground text-[11px]">
+            {meta.turns} turns
+          </span>
         )}
-        <div className="run-log-header-spacer" />
+        <div className="flex-1" />
         {live && (
           <Button
-            variant="secondary"
+            variant="ghost"
+            size="sm"
             disabled={cancelling}
             onClick={() => void submitCancel()}
           >
@@ -181,15 +232,22 @@ export function RunLogView({
         )}
       </div>
 
-      {error !== null && <div className="run-log-error">{error}</div>}
+      {error !== null && (
+        <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
+          {error}
+        </div>
+      )}
 
-      <div className="run-log-body">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1">
         {groups.length === 0 && (
-          <p className="run-log-empty">
-            {meta.state === 'provisioning'
-              ? 'Waiting for the run to start…'
-              : 'No log entries yet.'}
-          </p>
+          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
+            <MessageSquare className="size-5" />
+            <p className="text-[13px]">
+              {meta.state === 'provisioning'
+                ? 'Waiting for the run to start…'
+                : 'No log entries yet.'}
+            </p>
+          </div>
         )}
         {groups.map((group, i) =>
           group.kind === 'tools' ? (
@@ -208,7 +266,8 @@ export function RunLogView({
             onDecide={(allow) => onApprove(pendingApproval.requestId, allow)}
           />
         ) : (
-          <div className="run-log-stale-approval">
+          <div className="border-border bg-muted/40 text-muted-foreground flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+            <Info className="size-3.5 shrink-0 translate-y-0.5" />
             This run is waiting on an approval this window didn&rsquo;t see live
             — reopen it from a session that was connected when the approval was
             requested, or check the run&rsquo;s process directly.
@@ -216,8 +275,8 @@ export function RunLogView({
         ))}
 
       {meta.state === 'running' && (
-        <div className="run-log-followup">
-          <TextInput
+        <div className="border-border flex gap-2 border-t pt-3">
+          <Input
             placeholder="Send a follow-up message…"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -225,6 +284,7 @@ export function RunLogView({
               if (e.key === 'Enter') void submitFollowUp();
             }}
             disabled={sending}
+            className="flex-1"
           />
           <Button disabled={sending} onClick={() => void submitFollowUp()}>
             Send

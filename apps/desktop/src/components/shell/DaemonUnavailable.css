@@ -1,8 +1,0 @@
-.daemon-unavailable {
-  color: var(--text-muted);
-  font-size: var(--text-base);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  align-items: flex-start;
-}

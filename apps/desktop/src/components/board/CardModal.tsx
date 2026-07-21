@@ -2,8 +2,17 @@ import { useState } from 'react';
 
 import { agentMeta } from '../../lib/agents';
 import type { Card, Session } from '../../lib/types';
-import { Modal } from '../ui/Modal';
-import './CardModal.css';
+import { Button } from '@/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
+import { Input } from '@/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
+import { Textarea } from '@/ui/textarea';
 
 interface CardModalProps {
   card: Card;
@@ -34,66 +43,80 @@ export function CardModal({
     title !== card.title || description !== (card.description ?? '');
 
   return (
-    <Modal isOpen onClose={onClose} title="Card">
-      <div className="card-modal">
-        <input
-          className="card-modal-title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Card title"
-        />
-        <textarea
-          className="card-modal-description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Description (optional)"
-          rows={4}
-        />
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-[15px] font-medium">Card</DialogTitle>
+        </DialogHeader>
 
-        {linkedSession ? (
-          <div className="card-modal-session">
-            <span className="card-modal-session-label">Linked session</span>
-            <span className="card-modal-session-value">
-              {agentMeta(linkedSession.agent).icon}{' '}
-              {linkedSession.model ?? agentMeta(linkedSession.agent).label} ·{' '}
-              {linkedSession.status}
-              {linkedSession.summary ? ` — ${linkedSession.summary}` : ''}
-            </span>
-          </div>
-        ) : linkableSessions.length > 0 ? (
-          <div className="card-modal-session">
-            <span className="card-modal-session-label">Link to session</span>
-            <select
-              defaultValue=""
-              onChange={(e) => e.target.value && onLinkSession(e.target.value)}
+        <div className="flex flex-col gap-4">
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Card title"
+            className="text-[13px] font-medium"
+          />
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Description (optional)"
+            rows={4}
+            className="text-[13px]"
+          />
+
+          {linkedSession ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                Linked session
+              </span>
+              <span className="text-foreground font-mono text-[12px]">
+                {agentMeta(linkedSession.agent).icon}{' '}
+                {linkedSession.model ?? agentMeta(linkedSession.agent).label} ·{' '}
+                {linkedSession.status}
+                {linkedSession.summary ? ` — ${linkedSession.summary}` : ''}
+              </span>
+            </div>
+          ) : linkableSessions.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                Link to session
+              </span>
+              <Select onValueChange={(value) => value && onLinkSession(value)}>
+                <SelectTrigger className="w-full text-[13px]">
+                  <SelectValue placeholder="Choose a session…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {linkableSessions.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {agentMeta(s.agent).icon}{' '}
+                      {s.model ?? agentMeta(s.agent).label} · {s.status} ·{' '}
+                      {new Date((s.started_at ?? 0) * 1000).toLocaleString()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
+          <div className="flex items-center justify-between pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={onDelete}
             >
-              <option value="" disabled>
-                Choose a session…
-              </option>
-              {linkableSessions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {agentMeta(s.agent).icon}{' '}
-                  {s.model ?? agentMeta(s.agent).label} · {s.status} ·{' '}
-                  {new Date((s.started_at ?? 0) * 1000).toLocaleString()}
-                </option>
-              ))}
-            </select>
+              Delete
+            </Button>
+            <Button
+              size="sm"
+              disabled={!dirty || title.trim() === ''}
+              onClick={() => onSave(title.trim(), description.trim())}
+            >
+              Save
+            </Button>
           </div>
-        ) : null}
-
-        <div className="card-modal-actions">
-          <button className="card-modal-delete" onClick={onDelete}>
-            Delete
-          </button>
-          <button
-            className="card-modal-save"
-            disabled={!dirty || title.trim() === ''}
-            onClick={() => onSave(title.trim(), description.trim())}
-          >
-            Save
-          </button>
         </div>
-      </div>
-    </Modal>
+      </DialogContent>
+    </Dialog>
   );
 }

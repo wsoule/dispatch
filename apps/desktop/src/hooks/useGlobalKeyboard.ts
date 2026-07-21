@@ -13,17 +13,24 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return isTypingTagName(target.tagName, target.isContentEditable);
 }
 
-/** True while any `Modal`-based dialog (see `components/ui/Modal.tsx`'s `data-modal="true"`
- * marker) is currently mounted. Checked live via a DOM query at the moment a keydown fires,
- * rather than threaded through as reactive React state — every `Modal` instance (
- * CreateTaskModal, SessionDetailModal, DiffModal, …) already only renders into the DOM while
- * open, so the query itself is always exactly as current as the state would be, without
- * App.tsx needing to know about every modal that exists anywhere in the component tree
- * (including ones mounted deep inside the Sessions hub, which App.tsx has no direct view
- * into). Excludes the command palette on purpose — see Modal.tsx's doc comment on
+/** True while any dialog is currently open — either a legacy `Modal` (see
+ * `components/ui/Modal.tsx`'s `data-modal="true"` marker) or a shadcn/Radix `Dialog`
+ * (`@/ui/dialog`'s `DialogContent` renders with `data-slot="dialog-content"`, and Radix keeps
+ * `data-state="open"` on it only while open — briefly `"closed"` during its exit animation, so
+ * that state is checked too rather than just presence in the DOM). Checked live via a DOM
+ * query at the moment a keydown fires, rather than threaded through as reactive React state —
+ * every dialog instance (CreateTaskModal, SessionDetailModal, DiffModal, …) already only
+ * renders into the DOM while open, so the query itself is always exactly as current as the
+ * state would be, without App.tsx needing to know about every modal that exists anywhere in the
+ * component tree (including ones mounted deep inside the Sessions hub, which App.tsx has no
+ * direct view into). Excludes the command palette on purpose — see Modal.tsx's doc comment on
  * `data-modal`. */
 function isAnyModalOpen(): boolean {
-  return document.querySelector('[data-modal="true"]') !== null;
+  return (
+    document.querySelector(
+      '[data-modal="true"], [data-slot="dialog-content"][data-state="open"]'
+    ) !== null
+  );
 }
 
 interface UseGlobalKeyboardOptions {

@@ -1,12 +1,14 @@
 import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
+import { AlertCircle, Play, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { clampConcurrencyInput } from '../../lib/epicConcurrency';
-import { priorityTone } from '../../lib/taskDisplay';
-import { Button } from '../ui/Button';
-import { Pill } from '../ui/Pill';
-import './EpicCardTile.css';
+import { PriorityIcon } from './TaskCardTile';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import { Input } from '@/ui/input';
 
 interface EpicCardTileProps {
   doc: TaskDoc;
@@ -46,7 +48,6 @@ export function EpicCardTile({
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tone = priorityTone(doc.meta.priority);
   const active = progress?.active ?? false;
   const headerRef = useRef<HTMLDivElement>(null);
 
@@ -74,12 +75,17 @@ export function EpicCardTile({
   const liveCount = progress?.liveRuns.length ?? 0;
 
   return (
-    <div className="epic-card-tile">
+    <div className="border-border border-l-primary/70 bg-card flex w-full flex-col gap-2 rounded-md border border-l-2 p-2.5">
       <div
         ref={headerRef}
-        className="epic-card-tile-header"
         role="button"
         tabIndex={0}
+        data-focused={focused}
+        className={cn(
+          'flex flex-col gap-1 rounded-sm text-left transition-colors duration-150',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+          'data-[focused=true]:ring-2 data-[focused=true]:ring-ring/50'
+        )}
         onClick={onSelect}
         onFocus={onFocus}
         onKeyDown={(e) => {
@@ -90,33 +96,48 @@ export function EpicCardTile({
           }
         }}
       >
-        <div className="epic-card-tile-top">
-          <span className="epic-card-tile-id">{doc.meta.id}</span>
-          <Pill variant="tag" tone="accent">
-            epic
-          </Pill>
-          {tone !== null && (
-            <Pill variant="tag" tone={tone}>
-              {doc.meta.priority}
-            </Pill>
-          )}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="text-muted-foreground/70 truncate font-mono text-[11px]">
+              {doc.meta.id}
+            </span>
+            <Badge
+              variant="outline"
+              className="bg-accent text-accent-foreground h-4 rounded border-transparent px-1.5 py-0 text-[10px] font-medium"
+            >
+              Epic
+            </Badge>
+          </div>
+          <PriorityIcon priority={doc.meta.priority} />
         </div>
-        <div className="epic-card-tile-title">{doc.meta.title}</div>
+        <div className="text-foreground text-[13px] leading-snug font-medium">
+          {doc.meta.title}
+        </div>
       </div>
 
       {totalCount > 0 && (
-        <div className="epic-card-tile-progress">
-          {doneCount}/{totalCount} done
-          {liveCount > 0 && ` · ${liveCount} running`}
+        <div className="text-muted-foreground flex items-center gap-1 font-mono text-[11px]">
+          {liveCount > 0 && (
+            <span className="bg-primary size-1.5 shrink-0 animate-pulse rounded-full motion-reduce:animate-none" />
+          )}
+          <span>
+            {doneCount}/{totalCount} done
+            {liveCount > 0 && ` · ${liveCount} running`}
+          </span>
         </div>
       )}
 
-      {error !== null && <div className="epic-card-tile-error">{error}</div>}
+      {error !== null && (
+        <div className="bg-destructive/10 text-destructive flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]">
+          <AlertCircle className="size-3 shrink-0" />
+          <span className="truncate">{error}</span>
+        </div>
+      )}
 
-      <div className="epic-card-tile-controls">
-        <label className="epic-card-tile-concurrency">
+      <div className="border-border flex items-center justify-between gap-2 border-t pt-2">
+        <label className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
           <span>Concurrency</span>
-          <input
+          <Input
             type="number"
             min={1}
             value={concurrency}
@@ -125,21 +146,29 @@ export function EpicCardTile({
               setConcurrency(clampConcurrencyInput(e.target.value))
             }
             aria-label="Epic dispatch concurrency"
+            className="h-6 w-12 rounded px-1.5 py-0 text-[11px]"
           />
         </label>
         {active ? (
           <Button
-            variant="secondary"
+            variant="ghost"
+            size="sm"
             disabled={busy}
             onClick={() => void run(() => onStop(doc.meta.id))}
+            className="hover:bg-destructive/10 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
           >
+            <Square className="size-3" />
             Stop
           </Button>
         ) : (
           <Button
+            variant="outline"
+            size="sm"
             disabled={busy}
             onClick={() => void run(() => onWork(doc.meta.id, concurrency))}
+            className="hover:border-primary/40 hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
           >
+            <Play className="size-3" />
             Work this epic
           </Button>
         )}
