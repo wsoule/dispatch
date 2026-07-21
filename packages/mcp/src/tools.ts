@@ -23,6 +23,31 @@ import { isDaemonHealthy, readDaemonFile } from './daemon.js';
 // guidance.
 class ToolError extends Error {}
 
+// Bug fix (fix/executor-mcp-wiring): when this server is launched by a
+// dispatch run's own ClaudeExecutor (see packages/server/src/orchestrator/
+// executors/claude.ts), `rootDir` is the run's git WORKTREE — a different
+// directory than the dispatch PROJECT it was cut from — so task_list/
+// task_get/task_save/task_next keep reading and writing the exact task files
+// the run's own repo checkout sees. Two things must NOT resolve against that
+// worktree, though:
+//  - daemon discovery (run_list, agent_message): dispatchd's daemon file is
+//    keyed by a hash of the PROJECT root (see daemon.ts), not the worktree —
+//    a worktree path hashes to a different, nonexistent file, so these tools
+//    would always report "dispatchd not running" for a project whose daemon
+//    is, in fact, running.
+//  - task_comment's write: a comment appended to the worktree's copy of a
+//    task file lives on the run's own branch and is discarded the moment
+//    that branch is squash-merged or the worktree is torn down — comments
+//    need to land in the PROJECT's .dispatch/tasks, the one copy that
+//    outlives any single run.
+// The executor sets DISPATCH_PROJECT_ROOT to the project root whenever it
+// differs from the worktree `--root` it passes; every other tool in this
+// file keeps resolving against the raw `rootDir` argument.
+function projectRoot(rootDir: string): string {
+  const override = process.env.DISPATCH_PROJECT_ROOT;
+  return override !== undefined && override !== '' ? override : rootDir;
+}
+
 // Same "not initialized" gate as the CLI's requireStore() (packages/cli/src/
 // commands/task.ts) — same message, so a client rendering either surface
 // shows the same instruction.
@@ -170,7 +195,7 @@ function noDaemonResult(): ToolOutcome {
 // typed loosely here since @dispatch/mcp intentionally has no dependency on
 // @dispatch/server, which is Bun-only).
 async function runList(rootDir: string): Promise<ToolOutcome> {
-  const daemon = readDaemonFile(rootDir);
+  const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
     return noDaemonResult();
   }
@@ -206,7 +231,7 @@ interface LiveRunLike {
 async function fetchLiveRuns(
   rootDir: string
 ): Promise<{ port: number; runs: LiveRunLike[] } | null> {
-  const daemon = readDaemonFile(rootDir);
+  const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) return null;
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`);
@@ -467,7 +492,10 @@ export function registerDispatchTools(
     },
     ({ id, text }) =>
       wrap(() => {
-        const store = requireStore(rootDir);
+        // projectRoot(), not the raw rootDir — see its doc comment above:
+        // a comment written to a run's worktree copy of a task file would
+        // be discarded the moment that run's branch is merged or discarded.
+        const store = requireStore(projectRoot(rootDir));
         if (store.get(id) === null)
           throw new ToolError(`task not found: ${id}`);
         const doc = store.update(id, {
