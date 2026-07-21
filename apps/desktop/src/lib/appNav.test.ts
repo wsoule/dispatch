@@ -51,6 +51,12 @@ describe('navReducer', () => {
     expect(next.globalView).toBe('all-agents');
   });
 
+  test('setGlobalView clears an open peek — it should never render over Settings/Sessions', () => {
+    const state: NavState = { ...initialNavState, peekTaskId: 'task-1' };
+    const next = navReducer(state, { type: 'setGlobalView', view: 'settings' });
+    expect(next.peekTaskId).toBeNull();
+  });
+
   test('openPeek/closePeek toggle peekTaskId', () => {
     const opened = navReducer(initialNavState, {
       type: 'openPeek',

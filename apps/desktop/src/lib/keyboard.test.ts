@@ -5,7 +5,12 @@ import type {
   KeyInput,
   ListKeyboardContext,
 } from './keyboard';
-import { resolveGlobalKeyCommand, resolveListKeyCommand } from './keyboard';
+import {
+  isTypingTagName,
+  resolveCardKeyAction,
+  resolveGlobalKeyCommand,
+  resolveListKeyCommand,
+} from './keyboard';
 
 const baseGlobalCtx: GlobalKeyboardContext = {
   isTyping: false,
@@ -124,5 +129,47 @@ describe('resolveListKeyCommand', () => {
 
   test('unrelated keys resolve to null', () => {
     expect(resolveListKeyCommand(key('a'), baseListCtx)).toBeNull();
+  });
+});
+
+describe('isTypingTagName', () => {
+  // The board's roving-focus track handler used to hardcode `isTyping: false`, so j/k typed
+  // into the epic card's concurrency <input> (nested inside the board's keydown-listening
+  // track) navigated the board instead of editing the field. This is the pure decision
+  // `isTypingTarget` (hooks/useGlobalKeyboard.ts) delegates to once it has pulled a tag name
+  // and contenteditable flag off a real DOM node — kept separate so the actual logic is
+  // testable without a DOM.
+  test('is true for INPUT and TEXTAREA tag names', () => {
+    expect(isTypingTagName('INPUT', false)).toBe(true);
+    expect(isTypingTagName('TEXTAREA', false)).toBe(true);
+  });
+
+  test('is true for any contenteditable element regardless of tag name', () => {
+    expect(isTypingTagName('DIV', true)).toBe(true);
+  });
+
+  test('is false for a plain button or div', () => {
+    expect(isTypingTagName('BUTTON', false)).toBe(false);
+    expect(isTypingTagName('DIV', false)).toBe(false);
+  });
+});
+
+describe('resolveCardKeyAction', () => {
+  // A Board card (TaskCardTile) wraps its inline "Dispatch →" button — a native keydown on
+  // that button still bubbles up through the card's own onKeyDown. Without this guard,
+  // pressing Enter/Space to activate the button also opened the card's peek panel.
+  test('activates on Enter/Space when the keydown originated directly on the card', () => {
+    expect(resolveCardKeyAction('Enter', true)).toBe('activate');
+    expect(resolveCardKeyAction(' ', true)).toBe('activate');
+  });
+
+  test('a keydown bubbled up from a nested interactive child never activates the card', () => {
+    expect(resolveCardKeyAction('Enter', false)).toBeNull();
+    expect(resolveCardKeyAction(' ', false)).toBeNull();
+  });
+
+  test('unrelated keys never activate, even directly on the card', () => {
+    expect(resolveCardKeyAction('a', true)).toBeNull();
+    expect(resolveCardKeyAction('Tab', true)).toBeNull();
   });
 });

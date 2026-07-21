@@ -78,3 +78,33 @@ export function resolveListKeyCommand(
   if (input.key === 'Enter') return 'list-confirm';
   return null;
 }
+
+/** The actual "does this tag name/contenteditable-ness count as typing" decision —
+ * `isTypingTarget` (hooks/useGlobalKeyboard.ts) is the thin DOM-touching wrapper that pulls
+ * `tagName`/`isContentEditable` off a real `EventTarget` and calls this; kept separate so the
+ * decision itself is testable without a DOM. Any view with a keydown-listening container that
+ * also contains real form controls (the Board's roving-focus track wrapping an epic card's
+ * concurrency `<input>` is the motivating case) should build its `isTyping` this way rather
+ * than hardcoding `false`. */
+export function isTypingTagName(
+  tagName: string,
+  isContentEditable: boolean
+): boolean {
+  return tagName === 'INPUT' || tagName === 'TEXTAREA' || isContentEditable;
+}
+
+export type CardKeyAction = 'activate' | null;
+
+/** Decides what a keydown on a Board card's root element should do, given which key was
+ * pressed and whether the keydown originated directly on the card (`isDirectTarget`, the
+ * caller's `e.target === e.currentTarget`) rather than bubbling up from a nested interactive
+ * child — a card's own inline "Dispatch →" button is exactly such a child: pressing
+ * Enter/Space to activate *that* button still fires a keydown that bubbles through the
+ * card's own `onKeyDown`, and without this guard also opened the card's peek panel. */
+export function resolveCardKeyAction(
+  key: string,
+  isDirectTarget: boolean
+): CardKeyAction {
+  if (!isDirectTarget) return null;
+  return key === 'Enter' || key === ' ' ? 'activate' : null;
+}
