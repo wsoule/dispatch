@@ -1,12 +1,32 @@
 import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
+import type {
+  DraggableAttributes,
+  DraggableSyntheticListeners,
+} from '@dnd-kit/core';
+import { AlertCircle, Play, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { clampConcurrencyInput } from '../../lib/epicConcurrency';
-import { priorityTone } from '../../lib/taskDisplay';
-import { Button } from '../ui/Button';
-import { Pill } from '../ui/Pill';
-import './EpicCardTile.css';
+import { formatRelativeTimeFromIso } from '../../lib/format';
+import { PriorityIcon } from './PriorityIcon';
+import { StatusIcon } from './StatusIcon';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import { Input } from '@/ui/input';
+
+// See `TaskCardTile`'s identical type — kept as its own copy rather than a shared import
+// since the two cards' JSX around it differs enough that sharing the type alone wouldn't
+// save much, and both files independently need it with no natural home to hoist it to
+// without creating an extra shared-types file for two small interfaces.
+export interface CardDragProps {
+  setNodeRef: (node: HTMLElement | null) => void;
+  style: React.CSSProperties | undefined;
+  attributes: DraggableAttributes;
+  listeners: DraggableSyntheticListeners;
+  isDragging: boolean;
+}
 
 interface EpicCardTileProps {
   doc: TaskDoc;
@@ -24,15 +44,20 @@ interface EpicCardTileProps {
   /** Same meaning as `TaskCardTile`'s `onFocus` — syncs `BoardView`'s `focusedTaskId` cursor
    * to wherever real DOM focus actually lands on this card. */
   onFocus?: () => void;
+  /** See `CardDragProps` — omitted for a card that isn't draggable. */
+  drag?: CardDragProps;
 }
 
-/** Board card for a `kind: 'epic'` task: the same id/priority/title header as a plain
- * TaskCardTile (click to open detail), plus the epic-level parallel dispatch controls the plan
- * calls for — a concurrency stepper, "Work this epic" (or "Stop" once a session is active),
- * and a live x/y-done + running-count progress line once the epic has ever been dispatched.
- * A distinct component from TaskCardTile (rather than a kind-branch inside it) because it
- * needs a click target for "open detail" *and* independent interactive controls below it —
- * two nested `<button>`s isn't valid HTML, so this uses a plain clickable header instead. */
+/** Board card for a `kind: 'epic'` task: the same StatusIcon/PriorityIcon/title language as a
+ * plain `TaskCardTile` (click to open detail), plus the epic-level parallel dispatch controls
+ * — a concurrency stepper, "Work"/"Stop", and a live x/y-done + running-count progress line
+ * once the epic has ever been dispatched. The dispatch controls live in the footer as
+ * hover/focus-revealed actions (always visible once a session is active), matching the plain
+ * card's "Dispatch" affordance rather than a permanently-visible control row — keeps the two
+ * card types visually coherent. A distinct component from TaskCardTile (rather than a
+ * kind-branch inside it) because it needs a click target for "open detail" *and* independent
+ * interactive controls below it — two nested `<button>`s isn't valid HTML, so this uses a
+ * plain clickable card root instead. */
 export function EpicCardTile({
   doc,
   progress,
@@ -42,16 +67,16 @@ export function EpicCardTile({
   onStop,
   focused = false,
   onFocus,
+  drag,
 }: EpicCardTileProps) {
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tone = priorityTone(doc.meta.priority);
   const active = progress?.active ?? false;
-  const headerRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (focused) headerRef.current?.focus();
+    if (focused) cardRef.current?.focus();
   }, [focused]);
 
   async function run(action: () => Promise<void>) {
@@ -74,49 +99,98 @@ export function EpicCardTile({
   const liveCount = progress?.liveRuns.length ?? 0;
 
   return (
-    <div className="epic-card-tile">
-      <div
-        ref={headerRef}
-        className="epic-card-tile-header"
-        role="button"
-        tabIndex={0}
-        onClick={onSelect}
-        onFocus={onFocus}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') onSelect();
-          else if (e.key === ' ') {
-            e.preventDefault();
-            onSelect();
-          }
-        }}
-      >
-        <div className="epic-card-tile-top">
-          <span className="epic-card-tile-id">{doc.meta.id}</span>
-          <Pill variant="tag" tone="accent">
-            epic
-          </Pill>
-          {tone !== null && (
-            <Pill variant="tag" tone={tone}>
-              {doc.meta.priority}
-            </Pill>
-          )}
-        </div>
-        <div className="epic-card-tile-title">{doc.meta.title}</div>
+    <div
+      ref={(node) => {
+        cardRef.current = node;
+        drag?.setNodeRef(node);
+      }}
+      style={drag?.style}
+      {...drag?.attributes}
+      {...drag?.listeners}
+      role="button"
+      tabIndex={0}
+      data-focused={focused}
+      className={cn(
+        'group border-border/60 bg-card flex w-full cursor-pointer flex-col gap-2 rounded-lg border p-3 text-left shadow-sm transition-colors duration-150',
+        'hover:border-border hover:bg-card/80',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+        'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
+        drag?.isDragging === true && 'opacity-40'
+      )}
+      onClick={onSelect}
+      onFocus={onFocus}
+      onKeyDown={(e) => {
+        const isDirectTarget = e.target === e.currentTarget;
+        if (drag !== undefined && e.key === ' ' && isDirectTarget) {
+          drag.listeners?.onKeyDown?.(e);
+          return;
+        }
+        if (isDirectTarget && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onSelect();
+          return;
+        }
+        if (!isDirectTarget) {
+          // A keydown bubbled from the concurrency input or the Work/Stop button below —
+          // those own their own Enter/Space handling, so it must not also reach the Board's
+          // roving-focus track.
+          e.stopPropagation();
+        }
+      }}
+    >
+      <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
+        <span className="text-muted-foreground/70 shrink-0 font-mono">
+          {doc.meta.id}
+        </span>
+        <Badge
+          variant="outline"
+          className="bg-accent text-accent-foreground h-4 rounded border-transparent px-1.5 py-0 text-[10px] font-medium"
+        >
+          Epic
+        </Badge>
       </div>
 
-      {totalCount > 0 && (
-        <div className="epic-card-tile-progress">
-          {doneCount}/{totalCount} done
-          {liveCount > 0 && ` · ${liveCount} running`}
+      <div className="flex items-start gap-1.5">
+        <span className="mt-0.5">
+          <StatusIcon status={doc.meta.status} />
+        </span>
+        <span className="text-foreground line-clamp-2 text-[13px] leading-snug font-medium">
+          {doc.meta.title}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <PriorityIcon priority={doc.meta.priority} />
+        {totalCount > 0 && (
+          <span className="text-muted-foreground flex items-center gap-1 font-mono text-[11px]">
+            {liveCount > 0 && (
+              <span className="bg-primary size-1.5 shrink-0 animate-pulse rounded-full motion-reduce:animate-none" />
+            )}
+            {doneCount}/{totalCount} done
+            {liveCount > 0 && ` · ${liveCount} running`}
+          </span>
+        )}
+      </div>
+
+      {error !== null && (
+        <div className="bg-destructive/10 text-destructive flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]">
+          <AlertCircle className="size-3 shrink-0" />
+          <span className="truncate">{error}</span>
         </div>
       )}
 
-      {error !== null && <div className="epic-card-tile-error">{error}</div>}
-
-      <div className="epic-card-tile-controls">
-        <label className="epic-card-tile-concurrency">
-          <span>Concurrency</span>
-          <input
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
+          {formatRelativeTimeFromIso(doc.meta.updated)}
+        </span>
+        <div
+          className={cn(
+            'flex items-center gap-1.5 opacity-0 transition-opacity duration-150',
+            'group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100',
+            active && 'opacity-100'
+          )}
+        >
+          <Input
             type="number"
             min={1}
             value={concurrency}
@@ -125,24 +199,32 @@ export function EpicCardTile({
               setConcurrency(clampConcurrencyInput(e.target.value))
             }
             aria-label="Epic dispatch concurrency"
+            className="h-6 w-11 rounded px-1.5 py-0 text-[11px]"
           />
-        </label>
-        {active ? (
-          <Button
-            variant="secondary"
-            disabled={busy}
-            onClick={() => void run(() => onStop(doc.meta.id))}
-          >
-            Stop
-          </Button>
-        ) : (
-          <Button
-            disabled={busy}
-            onClick={() => void run(() => onWork(doc.meta.id, concurrency))}
-          >
-            Work this epic
-          </Button>
-        )}
+          {active ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => void run(() => onStop(doc.meta.id))}
+              className="hover:bg-destructive/10 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
+            >
+              <Square className="size-3" />
+              Stop
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => void run(() => onWork(doc.meta.id, concurrency))}
+              className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
+            >
+              <Play className="size-3" />
+              Work
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

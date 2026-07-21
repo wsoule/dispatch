@@ -1,15 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
+import { AlertCircle, History } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
-import { Button } from '../components/ui/Button';
-import { Pill } from '../components/ui/Pill';
-import { Select } from '../components/ui/Select';
 import { formatRelativeTime, sessionDisplayName } from '../lib/format';
 import { colorForProject } from '../lib/projectColor';
 import { listProjects, listSessions } from '../lib/tauri';
 import type { ProjectSummary, Session } from '../lib/types';
 import { SessionDetailModal } from './SessionDetailModal';
-import './TimelineView.css';
+import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
+import { Skeleton } from '@/ui/skeleton';
 
 /** `tags` is stored as a JSON array string (e.g. `["bugfix","refactor"]`); fall back to
  * treating the raw string as a single tag if it doesn't parse, rather than hiding it.
@@ -41,7 +48,17 @@ function projectNameFor(
   return projects?.find((p) => p.id === projectId)?.name ?? projectId;
 }
 
+function statusDotClass(status: Session['status']): string {
+  return status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50';
+}
+
 type DatePreset = 'all' | 'today' | 'week';
+
+const DATE_PRESETS: { value: DatePreset; label: string }[] = [
+  { value: 'all', label: 'All time' },
+  { value: 'today', label: 'Today' },
+  { value: 'week', label: 'This week' },
+];
 
 function isWithinDatePreset(
   timestampSeconds: number,
@@ -75,31 +92,37 @@ function TimelineEntry({ session, projectName, onClick }: TimelineEntryProps) {
   const tags = parseTags(session.tags);
 
   return (
-    <button className="timeline-entry" onClick={onClick}>
+    <button
+      onClick={onClick}
+      className="border-border bg-card hover:bg-accent/40 flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors"
+    >
       <span
-        className="timeline-entry-dot"
+        className="mt-1 size-2.5 flex-shrink-0 rounded-full"
         style={{ backgroundColor: colorForProject(session.project_id) }}
         aria-hidden="true"
       />
-      <div className="timeline-entry-main">
-        <div className="timeline-entry-top">
-          <span className="timeline-entry-project">{projectName}</span>
-          <Pill
-            variant="status"
-            tone={session.status === 'active' ? 'green' : 'gray'}
-          >
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-foreground text-[13px] font-medium">
+            {projectName}
+          </span>
+          <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+            <span
+              className={`size-1.5 rounded-full ${statusDotClass(session.status)}`}
+              aria-hidden="true"
+            />
             {session.status}
-          </Pill>
+          </span>
           {tags.map((tag) => (
-            <Pill key={tag} variant="tag">
+            <Badge key={tag} variant="outline">
               {tag}
-            </Pill>
+            </Badge>
           ))}
-          <span className="timeline-entry-time">
+          <span className="text-muted-foreground ml-auto text-[11px]">
             {formatRelativeTime(timelineTimestamp(session))}
           </span>
         </div>
-        <div className="timeline-entry-summary">
+        <div className="text-muted-foreground truncate text-[13px]">
           {sessionDisplayName(session.title, session.summary)}
         </div>
       </div>
@@ -159,88 +182,94 @@ export function TimelineView() {
   }, [sessions, projectFilter, tagFilter, datePreset]);
 
   return (
-    <div className="timeline-view">
-      <div className="view-topbar">
-        <h1 className="view-topbar-title">Timeline</h1>
-      </div>
+    <div className="flex flex-col gap-4">
+      <h1 className="text-foreground text-[15px] font-medium">Timeline</h1>
 
-      {isLoading && <p className="timeline-view-status">Loading timeline…</p>}
+      {isLoading && (
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      )}
 
       {isError && (
-        <p className="timeline-view-status">
-          Couldn't load sessions. Is the backend running?
-        </p>
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+          <AlertCircle className="text-destructive size-5" />
+          <p className="text-muted-foreground text-[13px]">
+            Couldn&rsquo;t load sessions. Is the backend running?
+          </p>
+        </div>
       )}
 
       {!isLoading && !isError && (!sessions || sessions.length === 0) && (
-        <p className="timeline-view-status">
-          No sessions yet — start a Claude Code session in any repo and it will
-          appear here.
-        </p>
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+          <History className="text-muted-foreground size-5" />
+          <p className="text-muted-foreground max-w-sm text-[13px]">
+            No sessions yet — start a Claude Code session in any repo and it
+            will appear here.
+          </p>
+        </div>
       )}
 
       {!isLoading && !isError && sessions && sessions.length > 0 && (
         <>
-          <div className="timeline-filters">
-            <Select
-              value={projectFilter}
-              onChange={(e) => setProjectFilter(e.target.value)}
-              aria-label="Filter by project"
-            >
-              <option value="all">All projects</option>
-              {projects?.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={projectFilter} onValueChange={setProjectFilter}>
+              <SelectTrigger size="sm" aria-label="Filter by project">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All projects</SelectItem>
+                {projects?.map((project) => (
+                  <SelectItem key={project.id} value={project.id}>
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
 
-            <Select
-              value={tagFilter}
-              onChange={(e) => setTagFilter(e.target.value)}
-              aria-label="Filter by tag"
-            >
-              <option value="all">All tags</option>
-              {availableTags.map((tag) => (
-                <option key={tag} value={tag}>
-                  {tag}
-                </option>
-              ))}
+            <Select value={tagFilter} onValueChange={setTagFilter}>
+              <SelectTrigger size="sm" aria-label="Filter by tag">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All tags</SelectItem>
+                {availableTags.map((tag) => (
+                  <SelectItem key={tag} value={tag}>
+                    {tag}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
 
             <div
-              className="timeline-filter-presets"
+              className="flex gap-1"
               role="group"
               aria-label="Filter by date"
             >
-              {(['all', 'today', 'week'] as const).map((preset) => (
+              {DATE_PRESETS.map((preset) => (
                 <Button
-                  key={preset}
+                  key={preset.value}
                   type="button"
-                  variant="secondary"
-                  className={
-                    datePreset === preset
-                      ? 'timeline-filter-preset-active'
-                      : undefined
+                  variant={
+                    datePreset === preset.value ? 'default' : 'secondary'
                   }
-                  onClick={() => setDatePreset(preset)}
+                  size="sm"
+                  onClick={() => setDatePreset(preset.value)}
                 >
-                  {preset === 'all'
-                    ? 'All time'
-                    : preset === 'today'
-                      ? 'Today'
-                      : 'This week'}
+                  {preset.label}
                 </Button>
               ))}
             </div>
           </div>
 
           {sortedAndFiltered.length === 0 ? (
-            <p className="timeline-view-status">
+            <p className="text-muted-foreground text-[13px]">
               No sessions match the current filters.
             </p>
           ) : (
-            <div className="timeline-list">
+            <div className="flex flex-col gap-2">
               {sortedAndFiltered.map((session) => (
                 <TimelineEntry
                   key={session.id}

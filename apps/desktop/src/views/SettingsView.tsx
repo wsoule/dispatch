@@ -1,7 +1,9 @@
-import { Pill } from '../components/ui/Pill';
+import { AlertCircle, FolderSearch } from 'lucide-react';
+
 import { StatTile } from '../components/ui/StatTile';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import './SettingsView.css';
+import { Badge } from '@/ui/badge';
+import { Separator } from '@/ui/separator';
 
 interface SettingsViewProps {
   /** The one project this window is scoped to — just its filesystem path is needed here, so
@@ -10,6 +12,18 @@ interface SettingsViewProps {
    * only makes sense for a row out of Relay's own multi-project database. */
   activeProject: { path: string; name: string } | null;
   data: DispatchProjectData;
+}
+
+/** Daemon status renders as a small colored dot rather than a text pill: gray while
+ * starting, indigo once connected, red if the sidecar never came up. */
+function daemonDotClass(data: DispatchProjectData): string {
+  if (data.portLoading) return 'bg-muted-foreground/40';
+  return data.client !== null ? 'bg-primary' : 'bg-red-500';
+}
+
+function daemonStatusLabel(data: DispatchProjectData): string {
+  if (data.portLoading) return 'starting';
+  return data.client !== null ? 'running' : 'not running';
 }
 
 /**
@@ -21,41 +35,42 @@ interface SettingsViewProps {
 export function SettingsView({ activeProject, data }: SettingsViewProps) {
   if (activeProject === null) {
     return (
-      <div className="settings-view">
-        <h1 className="view-topbar-title">Settings</h1>
-        <p className="settings-view-status">
-          Select a project from the sidebar to see its daemon status and tracker
-          config.
-        </p>
+      <div className="flex max-w-2xl flex-col gap-5">
+        <h1 className="text-foreground text-[15px] font-medium">Settings</h1>
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+          <FolderSearch className="text-muted-foreground size-5" />
+          <p className="text-muted-foreground max-w-sm text-[13px]">
+            Select a project from the sidebar to see its daemon status and
+            tracker config.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="settings-view">
-      <h1 className="view-topbar-title">Settings</h1>
+    <div className="flex max-w-2xl flex-col gap-5">
+      <h1 className="text-foreground text-[15px] font-medium">Settings</h1>
 
-      <section className="settings-view-section">
-        <h2 className="settings-view-section-title">Daemon</h2>
-        <div className="settings-view-daemon-row">
-          <Pill
-            variant="status"
-            tone={
-              data.portLoading ? 'gray' : data.client !== null ? 'green' : 'red'
-            }
-          >
-            {data.portLoading
-              ? 'starting'
-              : data.client !== null
-                ? 'running'
-                : 'not running'}
-          </Pill>
-          <span className="settings-view-daemon-path">
+      <section className="flex flex-col gap-3">
+        <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+          Daemon
+        </h2>
+        <div className="flex items-center gap-2">
+          <span
+            className={`size-1.5 flex-shrink-0 rounded-full ${daemonDotClass(data)}`}
+            aria-hidden="true"
+          />
+          <span className="text-foreground text-[13px]">
+            {daemonStatusLabel(data)}
+          </span>
+          <span className="text-muted-foreground font-mono text-[11px]">
             {activeProject.path}
           </span>
         </div>
         {data.portError && (
-          <p className="settings-view-status">
+          <p className="text-destructive flex items-center gap-1.5 text-[13px]">
+            <AlertCircle className="size-3.5 flex-shrink-0" />
             Couldn&rsquo;t start dispatchd
             {data.portErrorDetail instanceof Error
               ? `: ${data.portErrorDetail.message}`
@@ -63,7 +78,7 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
           </p>
         )}
         {data.health !== undefined && (
-          <div className="settings-view-stats">
+          <div className="grid grid-cols-3 gap-3">
             <StatTile
               value={data.health.pr ? 'Yes' : 'No'}
               label="PR capability"
@@ -75,59 +90,72 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
       </section>
 
       {data.config !== null && (
-        <section className="settings-view-section">
-          <h2 className="settings-view-section-title">Tracker config</h2>
-          <div className="settings-view-config-row">
-            <span className="settings-view-config-label">Statuses</span>
-            <div className="settings-view-config-pills">
-              {data.config.statuses.map((status) => (
-                <Pill key={status} variant="tag" tone="gray">
-                  {status}
-                </Pill>
-              ))}
-            </div>
-          </div>
-          <div className="settings-view-config-row">
-            <span className="settings-view-config-label">Auto-commit</span>
-            <span className="settings-view-config-value">
-              {data.config.autoCommit ? 'enabled' : 'disabled'}
-            </span>
-          </div>
-          <div className="settings-view-config-row">
-            <span className="settings-view-config-label">Max turns</span>
-            <span className="settings-view-config-value">
-              {data.config.orchestrator.maxTurns}
-            </span>
-          </div>
-          <div className="settings-view-config-row">
-            <span className="settings-view-config-label">Permission mode</span>
-            <span className="settings-view-config-value">
-              {data.config.orchestrator.permissionMode}
-            </span>
-          </div>
-          <div className="settings-view-config-row">
-            <span className="settings-view-config-label">
-              Default epic concurrency
-            </span>
-            <span className="settings-view-config-value">
-              {data.config.orchestrator.epicConcurrency}
-            </span>
-          </div>
-          {data.config.orchestrator.maxBudgetUsd !== undefined && (
-            <div className="settings-view-config-row">
-              <span className="settings-view-config-label">
-                Max budget per run
+        <>
+          <Separator />
+          <section className="flex flex-col gap-1">
+            <h2 className="text-muted-foreground mb-2 text-[11px] font-medium tracking-wide uppercase">
+              Tracker config
+            </h2>
+            <div className="border-border flex items-center gap-3 border-b py-2">
+              <span className="text-muted-foreground w-48 flex-shrink-0 text-[13px]">
+                Statuses
               </span>
-              <span className="settings-view-config-value">
-                ${data.config.orchestrator.maxBudgetUsd.toFixed(2)}
+              <div className="flex flex-wrap gap-1">
+                {data.config.statuses.map((status) => (
+                  <Badge key={status} variant="outline">
+                    {status}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div className="border-border flex items-center gap-3 border-b py-2">
+              <span className="text-muted-foreground w-48 flex-shrink-0 text-[13px]">
+                Auto-commit
+              </span>
+              <span className="text-foreground font-mono text-[13px]">
+                {data.config.autoCommit ? 'enabled' : 'disabled'}
               </span>
             </div>
-          )}
-          <p className="settings-view-config-hint">
-            Edit <code>.dispatch/config.yml</code> in the project to change
-            these — this view is read-only.
-          </p>
-        </section>
+            <div className="border-border flex items-center gap-3 border-b py-2">
+              <span className="text-muted-foreground w-48 flex-shrink-0 text-[13px]">
+                Max turns
+              </span>
+              <span className="text-foreground font-mono text-[13px]">
+                {data.config.orchestrator.maxTurns}
+              </span>
+            </div>
+            <div className="border-border flex items-center gap-3 border-b py-2">
+              <span className="text-muted-foreground w-48 flex-shrink-0 text-[13px]">
+                Permission mode
+              </span>
+              <span className="text-foreground font-mono text-[13px]">
+                {data.config.orchestrator.permissionMode}
+              </span>
+            </div>
+            <div className="border-border flex items-center gap-3 border-b py-2">
+              <span className="text-muted-foreground w-48 flex-shrink-0 text-[13px]">
+                Default epic concurrency
+              </span>
+              <span className="text-foreground font-mono text-[13px]">
+                {data.config.orchestrator.epicConcurrency}
+              </span>
+            </div>
+            {data.config.orchestrator.maxBudgetUsd !== undefined && (
+              <div className="border-border flex items-center gap-3 border-b py-2">
+                <span className="text-muted-foreground w-48 flex-shrink-0 text-[13px]">
+                  Max budget per run
+                </span>
+                <span className="text-foreground font-mono text-[13px]">
+                  ${data.config.orchestrator.maxBudgetUsd.toFixed(2)}
+                </span>
+              </div>
+            )}
+            <p className="text-muted-foreground pt-2 text-[11px]">
+              Edit <code className="font-mono">.dispatch/config.yml</code> in
+              the project to change these — this view is read-only.
+            </p>
+          </section>
+        </>
       )}
     </div>
   );

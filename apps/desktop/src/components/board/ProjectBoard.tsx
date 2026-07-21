@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import {
@@ -15,7 +16,8 @@ import {
 import type { Card } from '../../lib/types';
 import { BoardColumn } from './BoardColumn';
 import { CardModal } from './CardModal';
-import './ProjectBoard.css';
+import { Input } from '@/ui/input';
+import { Skeleton } from '@/ui/skeleton';
 
 interface ProjectBoardProps {
   projectId: string;
@@ -60,12 +62,18 @@ export function ProjectBoard({ projectId }: ProjectBoardProps) {
     boardData?.cards.find((c) => c.id === selectedCardId) ?? null;
 
   if (isLoading || !boardData) {
-    return <p className="project-board-status">Loading board…</p>;
+    return (
+      <div className="flex gap-4 overflow-x-auto pb-4">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-64 w-[17.5rem] shrink-0 rounded-lg" />
+        ))}
+      </div>
+    );
   }
 
   return (
-    <div className="project-board">
-      <div className="project-board-columns">
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-4 overflow-x-auto pb-4">
         {boardData.columns.map((column) => (
           <BoardColumn
             key={column.id}
@@ -111,10 +119,9 @@ export function ProjectBoard({ projectId }: ProjectBoardProps) {
           />
         ))}
 
-        <div className="project-board-add-column">
+        <div className="w-[12.5rem] shrink-0">
           {isAddingColumn ? (
-            <input
-              className="board-column-add-input"
+            <Input
               autoFocus
               value={newColumnName}
               placeholder="Column name…"
@@ -134,13 +141,16 @@ export function ProjectBoard({ projectId }: ProjectBoardProps) {
                 setNewColumnName('');
                 setIsAddingColumn(false);
               }}
+              className="h-8 text-[13px]"
             />
           ) : (
             <button
-              className="board-column-add-button"
+              type="button"
               onClick={() => setIsAddingColumn(true)}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] transition-colors"
             >
-              + Add column
+              <Plus className="size-3.5" />
+              Add column
             </button>
           )}
         </div>

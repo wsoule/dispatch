@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { formatRelativeTime, sessionDisplayName } from './format.ts';
+import {
+  formatRelativeTime,
+  formatRelativeTimeFromIso,
+  sessionDisplayName,
+} from './format.ts';
 import { colorForProject } from './projectColor.ts';
 
 // Placeholder coverage for the vendored lib helpers (R1 vendor slice). Exercises the pure
@@ -27,6 +31,17 @@ describe('formatRelativeTime', () => {
 
   test('formats minutes ago', () => {
     expect(formatRelativeTime(Date.now() / 1000 - 5 * 60)).toBe('5m ago');
+  });
+});
+
+describe('formatRelativeTimeFromIso', () => {
+  test('formats a recent ISO timestamp the same way formatRelativeTime does', () => {
+    const iso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    expect(formatRelativeTimeFromIso(iso)).toBe('5m ago');
+  });
+
+  test('returns an em dash for an unparseable timestamp', () => {
+    expect(formatRelativeTimeFromIso('not-a-date')).toBe('—');
   });
 });
 

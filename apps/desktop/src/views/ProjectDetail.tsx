@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ProjectBoard } from '../components/board/ProjectBoard';
@@ -9,7 +10,7 @@ import { getProjectGitInsights, listSessions } from '../lib/tauri';
 import type { ProjectSummary } from '../lib/types';
 import { SessionDetailModal } from './SessionDetailModal';
 import { SessionRow } from './SessionRow';
-import './ProjectDetail.css';
+import { cn } from '@/lib/utils';
 
 type ProjectDetailTab = 'overview' | 'board' | 'sessions';
 
@@ -57,18 +58,28 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
   );
 
   return (
-    <div className="project-detail">
-      <div className="project-detail-header">
-        <h1 className="project-detail-name">{project.name}</h1>
-        <div className="project-detail-path">{project.path}</div>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-foreground text-[15px] font-medium">
+          {project.name}
+        </h1>
+        <div className="text-muted-foreground truncate font-mono text-[12px]">
+          {project.path}
+        </div>
       </div>
 
-      <div className="project-detail-tabs">
+      <div className="border-border flex gap-4 border-b">
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            className={`project-detail-tab${activeTab === tab.id ? ' project-detail-tab-active' : ''}`}
+            type="button"
             onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              'text-muted-foreground -mb-px border-b-2 border-transparent py-2 text-[13px] font-medium transition-colors',
+              activeTab === tab.id
+                ? 'border-primary text-foreground'
+                : 'hover:text-foreground'
+            )}
           >
             {tab.label}
           </button>
@@ -76,8 +87,8 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
       </div>
 
       {activeTab === 'overview' && (
-        <div className="project-detail-overview">
-          <div className="project-detail-stats">
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-3">
             <StatTile value={project.session_count} label="Sessions" />
             <StatTile
               value={`$${project.total_cost_usd.toFixed(2)}`}
@@ -85,32 +96,42 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
             />
           </div>
 
-          <ActivityHeatmap data={gitInsights?.commit_heatmap ?? []} />
+          <div className="border-border bg-card rounded-lg border p-4">
+            <ActivityHeatmap data={gitInsights?.commit_heatmap ?? []} />
+          </div>
 
-          <div className="project-detail-commits">
-            <h2 className="project-detail-commits-title">Recent commits</h2>
+          <div className="flex flex-col gap-2">
+            <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+              Recent commits
+            </h2>
 
             {!gitInsights && (
-              <p className="project-detail-status">Loading commit history…</p>
+              <div className="text-muted-foreground flex items-center gap-2 text-[13px]">
+                <Loader2 className="size-3.5 animate-spin" />
+                Loading commit history…
+              </div>
             )}
 
             {gitInsights && gitInsights.recent_commits.length === 0 && (
-              <p className="project-detail-status">
+              <p className="text-muted-foreground text-[13px]">
                 No git history detected for this project.
               </p>
             )}
 
             {gitInsights && gitInsights.recent_commits.length > 0 && (
-              <ul className="project-detail-commit-list">
+              <ul className="flex flex-col">
                 {gitInsights.recent_commits.map((commit) => (
-                  <li key={commit.hash} className="project-detail-commit">
-                    <span className="project-detail-commit-hash">
+                  <li
+                    key={commit.hash}
+                    className="border-border flex items-baseline gap-3 border-b py-2 last:border-b-0"
+                  >
+                    <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
                       {commit.hash}
                     </span>
-                    <span className="project-detail-commit-message">
+                    <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
                       {commit.message}
                     </span>
-                    <span className="project-detail-commit-meta">
+                    <span className="text-muted-foreground shrink-0 text-[11px] whitespace-nowrap">
                       {commit.author} · {formatRelativeTime(commit.timestamp)}
                     </span>
                   </li>
@@ -122,29 +143,34 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
       )}
 
       {activeTab === 'board' && (
-        <div className="project-detail-board">
+        <div className="flex flex-col gap-2">
           <ProjectBoard projectId={project.id} />
         </div>
       )}
 
       {activeTab === 'sessions' && (
-        <div className="project-detail-sessions">
+        <div className="flex flex-col gap-2">
           {isLoading && (
-            <p className="project-detail-status">Loading sessions…</p>
+            <div className="text-muted-foreground flex items-center gap-2 text-[13px]">
+              <Loader2 className="size-3.5 animate-spin" />
+              Loading sessions…
+            </div>
           )}
 
           {isError && (
-            <p className="project-detail-status">Couldn't load sessions.</p>
+            <p className="text-muted-foreground text-[13px]">
+              Couldn&rsquo;t load sessions.
+            </p>
           )}
 
           {!isLoading && !isError && projectSessions.length === 0 && (
-            <p className="project-detail-status">
+            <p className="text-muted-foreground text-[13px]">
               No sessions yet for this project.
             </p>
           )}
 
           {!isLoading && !isError && projectSessions.length > 0 && (
-            <div className="project-detail-session-list">
+            <div className="flex flex-col gap-2">
               {projectSessions.map((session) => (
                 <SessionRow
                   key={session.id}

@@ -1,38 +1,63 @@
 import type { CreateInput, Priority, TaskDoc, TaskKind } from '@dispatch/core';
 import { useState } from 'react';
 
-import { Button } from '../ui/Button';
-import { Modal } from '../ui/Modal';
-import { Select } from '../ui/Select';
-import { TextInput } from '../ui/TextInput';
-import './CreateTaskModal.css';
+import { Button } from '../../ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../ui/dialog';
+import { Input } from '../../ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../ui/select';
+import { Textarea } from '../../ui/textarea';
 
 // Fixed, non-config-driven enums — see TaskDetailModal.tsx for why these
 // mirror core/types.ts's constants instead of importing them at runtime.
 const KINDS: TaskKind[] = ['task', 'epic'];
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
+// Radix `SelectItem` can't take an empty-string `value` (it's reserved to mean "no
+// selection" internally) — this stands in for the "None" epic option, and is translated
+// back to `''`/`null` at the state and submit boundaries so the rest of the component still
+// only ever deals with the plain empty string it always has.
+const NO_EPIC = '__none__';
+
 interface CreateTaskModalProps {
   statuses: string[];
   epics: TaskDoc[];
+  /** Pre-selects the Status field — the board/list column-header "+" button opens this modal
+   * already set to that column's status, matching Linear's own "add to this column" gesture,
+   * rather than always defaulting to `statuses[0]`. */
+  initialStatus?: string;
   onCreate: (input: CreateInput) => Promise<void>;
   onClose: () => void;
 }
 
 /** Modal for creating a task. Title is the only required field; everything else has a sane
  * default so a quick "just capture this" flow stays one field deep. Mirrors
- * packages/web/src/components/CreateTask.tsx's fields, restyled native to Relay's Modal/tokens
- * rather than web's own modal markup. */
+ * packages/web/src/components/CreateTask.tsx's fields, built on shadcn's `Dialog` — a true
+ * modal that blocks the rest of the app, unlike the peek panel's overlay. */
 export function CreateTaskModal({
   statuses,
   epics,
+  initialStatus,
   onCreate,
   onClose,
 }: CreateTaskModalProps) {
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState<TaskKind>('task');
   const [priority, setPriority] = useState<Priority>('none');
-  const [status, setStatus] = useState(statuses[0] ?? 'backlog');
+  const [status, setStatus] = useState(
+    initialStatus ?? statuses[0] ?? 'backlog'
+  );
   const [parent, setParent] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -63,93 +88,134 @@ export function CreateTaskModal({
   }
 
   return (
-    <Modal isOpen onClose={onClose} title="New Task">
-      <div className="create-task-modal">
-        {error !== null && (
-          <div className="create-task-modal-error">{error}</div>
-        )}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New task</DialogTitle>
+        </DialogHeader>
 
-        <label className="create-task-modal-field">
-          <span className="create-task-modal-field-label">Title</span>
-          <TextInput
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            autoFocus
-          />
-        </label>
+        <div className="flex flex-col gap-4">
+          {error !== null && (
+            <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
+              {error}
+            </div>
+          )}
 
-        <div className="create-task-modal-row">
-          <label className="create-task-modal-field">
-            <span className="create-task-modal-field-label">Kind</span>
-            <Select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as TaskKind)}
-            >
-              {KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </Select>
+          <label className="flex flex-1 flex-col gap-1.5">
+            <span className="text-muted-foreground text-[13px]">Title</span>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              autoFocus
+            />
           </label>
-          <label className="create-task-modal-field">
-            <span className="create-task-modal-field-label">Priority</span>
-            <Select
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as Priority)}
-            >
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </Select>
+
+          <div className="flex gap-3">
+            <label className="flex flex-1 flex-col gap-1.5">
+              <span className="text-muted-foreground text-[13px]">Kind</span>
+              <Select
+                value={kind}
+                onValueChange={(value) => setKind(value as TaskKind)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {KINDS.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {k}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="flex flex-1 flex-col gap-1.5">
+              <span className="text-muted-foreground text-[13px]">
+                Priority
+              </span>
+              <Select
+                value={priority}
+                onValueChange={(value) => setPriority(value as Priority)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRIORITIES.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {p}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+
+          <div className="flex gap-3">
+            <label className="flex flex-1 flex-col gap-1.5">
+              <span className="text-muted-foreground text-[13px]">Status</span>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {statuses.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="flex flex-1 flex-col gap-1.5">
+              <span className="text-muted-foreground text-[13px]">Epic</span>
+              <Select
+                value={parent === '' ? NO_EPIC : parent}
+                onValueChange={(value) =>
+                  setParent(value === NO_EPIC ? '' : value)
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_EPIC}>None</SelectItem>
+                  {epics.map((epic) => (
+                    <SelectItem key={epic.meta.id} value={epic.meta.id}>
+                      {epic.meta.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-muted-foreground text-[13px]">
+              Description
+            </span>
+            <Textarea
+              rows={4}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </label>
         </div>
 
-        <div className="create-task-modal-row">
-          <label className="create-task-modal-field">
-            <span className="create-task-modal-field-label">Status</span>
-            <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-              {statuses.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label className="create-task-modal-field">
-            <span className="create-task-modal-field-label">Epic</span>
-            <Select value={parent} onChange={(e) => setParent(e.target.value)}>
-              <option value="">None</option>
-              {epics.map((epic) => (
-                <option key={epic.meta.id} value={epic.meta.id}>
-                  {epic.meta.title}
-                </option>
-              ))}
-            </Select>
-          </label>
-        </div>
-
-        <label className="create-task-modal-field">
-          <span className="create-task-modal-field-label">Description</span>
-          <textarea
-            className="create-task-modal-description"
-            rows={4}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </label>
-
-        <div className="create-task-modal-actions">
-          <Button variant="secondary" onClick={onClose}>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button disabled={submitting} onClick={() => void submit()}>
             Create
           </Button>
-        </div>
-      </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

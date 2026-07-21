@@ -1,13 +1,21 @@
 import type { DiffFile, DiffResult, RunMeta } from '@dispatch/client';
 import { PatchDiff } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
+import {
+  CircleAlert,
+  ExternalLink,
+  FileX,
+  GitMerge,
+  MessageSquarePlus,
+  Trash2,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
-import { Button } from '../ui/Button';
 import { PierreWorkerPool } from './PierreWorkerPool';
-import { RunStatePill } from './RunStatePill';
-import './RunReviewView.css';
+import { Button } from '@/ui/button';
+import { Skeleton } from '@/ui/skeleton';
+import { Textarea } from '@/ui/textarea';
 
 // The changed-files tree for a run's diff, git-status decorated (added/
 // modified/deleted/renamed). A separate component (rather than inlined in
@@ -16,6 +24,11 @@ import './RunReviewView.css';
 // FileTree(options))` — so this only mounts once `files` is known, and
 // re-syncs imperatively via `resetPaths`/`setGitStatus` if the diff is ever
 // refetched while the view stays open.
+//
+// Note: the tree/diff widgets themselves (`FileTree`, `PatchDiff`) are the
+// Pierre package's own internals and are out of scope for this redesign —
+// only the chrome/frame around them (headers, panes, borders) is restyled
+// here; their look is themed globally via styles/pierreTheme.css instead.
 function ChangedFilesTree({ files }: { files: DiffFile[] }) {
   const paths = useMemo(
     () => files.map((f) => normalizeDiffFilePath(f.path)),
@@ -43,8 +56,12 @@ function ChangedFilesTree({ files }: { files: DiffFile[] }) {
   return (
     <FileTree
       model={model}
-      header={<span className="run-review-tree-header">Changed files</span>}
-      className="run-review-tree"
+      header={
+        <span className="text-muted-foreground block px-3 py-2 text-[11px] tracking-wide uppercase">
+          Changed files
+        </span>
+      }
+      className="size-full"
     />
   );
 }
@@ -70,7 +87,8 @@ interface RunReviewViewProps {
  * merge / discard / request-changes actions. `diff`/`diffLoading`/`diffError` are owned by the
  * caller (RunsView, via `useDispatchProject`'s `GET /api/runs/:id/diff` query) rather than
  * fetched here, matching this codebase's presentational-component convention for the primary
- * dispatch views.
+ * dispatch views. Merge is the single primary/filled action on this surface per the redesign
+ * brief; Request changes/Open PR/Discard are ghost buttons.
  */
 export function RunReviewView({
   meta,
@@ -118,52 +136,47 @@ export function RunReviewView({
   const canOpenPr = prCapability && meta.reviewedAt === undefined && !hasOpenPr;
 
   return (
-    <div className="run-review-view">
-      <div className="run-review-header">
-        <RunStatePill state={meta.state} />
-        {meta.costUsd !== undefined && (
-          <span className="run-review-header-cost">
-            ${meta.costUsd.toFixed(2)}
-          </span>
-        )}
-        {meta.error !== undefined && (
-          <span className="run-review-header-error-note">{meta.error}</span>
-        )}
-        {hasOpenPr && (
-          <a
-            className="run-review-header-pr-chip"
-            href={meta.prUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            PR opened ↗
-          </a>
-        )}
-      </div>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      {error !== null && (
+        <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
+          {error}
+        </div>
+      )}
 
-      {error !== null && <div className="run-review-error">{error}</div>}
+      {diffLoading && (
+        <div className="grid grid-cols-[14rem_1fr] gap-3">
+          <Skeleton className="h-80 rounded-md" />
+          <Skeleton className="h-80 rounded-md" />
+        </div>
+      )}
 
-      {diffLoading && <p className="run-review-status">Loading diff…</p>}
       {diffError !== null && (
-        <p className="run-review-status">
-          Couldn&rsquo;t load the diff: {diffError}
-        </p>
+        <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
+          <CircleAlert className="size-5" />
+          <p className="text-[13px]">
+            Couldn&rsquo;t load the diff: {diffError}
+          </p>
+        </div>
       )}
 
       {!diffLoading && diffError === null && diff !== undefined && (
-        <div className="run-review-body">
-          <div className="run-review-tree-pane">
+        <div className="grid min-h-80 flex-1 grid-cols-[14rem_1fr] gap-3">
+          <div className="border-border bg-muted/30 overflow-auto rounded-md border">
             {diff.files.length === 0 ? (
-              <p className="run-review-status">No file changes recorded.</p>
+              <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+                <FileX className="size-4" />
+                <p className="text-[12px]">No file changes recorded.</p>
+              </div>
             ) : (
               <ChangedFilesTree files={diff.files} />
             )}
           </div>
-          <div className="run-review-diff-pane">
+          <div className="border-border overflow-auto rounded-md border">
             {diff.patch.trim() === '' ? (
-              <p className="run-review-status">
-                No changes to show for this run.
-              </p>
+              <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+                <FileX className="size-4" />
+                <p className="text-[12px]">No changes to show for this run.</p>
+              </div>
             ) : (
               <PierreWorkerPool>
                 <PatchDiff patch={diff.patch} />
@@ -174,59 +187,71 @@ export function RunReviewView({
       )}
 
       {hasOpenPr ? (
-        <p className="run-review-status">
+        <p className="text-muted-foreground text-[12px]">
           Waiting for the PR to merge — this run will move to done automatically
           once it does.
         </p>
       ) : requestingChanges ? (
-        <div className="run-review-request-changes">
-          <textarea
-            className="run-review-request-changes-input"
+        <div className="animate-in fade-in-0 flex flex-col gap-2 duration-150">
+          <Textarea
             rows={3}
             placeholder="Describe what should change…"
             value={changesDraft}
             onChange={(e) => setChangesDraft(e.target.value)}
             autoFocus
           />
-          <div className="run-review-request-changes-actions">
+          <div className="flex justify-end gap-2">
             <Button
-              variant="secondary"
+              variant="ghost"
+              size="sm"
               disabled={busy}
               onClick={() => setRequestingChanges(false)}
             >
               Cancel
             </Button>
-            <Button disabled={busy} onClick={() => void submitRequestChanges()}>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => void submitRequestChanges()}
+            >
               Send
             </Button>
           </div>
         </div>
       ) : (
-        <div className="run-review-actions">
+        <div className="border-border flex justify-end gap-2 border-t pt-3">
           <Button
-            variant="secondary"
+            variant="ghost"
+            size="sm"
             disabled={busy}
             onClick={() => setRequestingChanges(true)}
           >
+            <MessageSquarePlus className="size-3.5" />
             Request changes
           </Button>
           {canOpenPr && (
             <Button
-              variant="secondary"
+              variant="ghost"
+              size="sm"
               disabled={busy}
               onClick={() => void run(onOpenPr)}
             >
+              <ExternalLink className="size-3.5" />
               Open PR
             </Button>
           )}
           <Button
-            variant="secondary"
+            variant="ghost"
+            size="sm"
             disabled={busy}
+            className="hover:text-destructive"
             onClick={() => void run(onDiscard)}
           >
+            <Trash2 className="size-3.5" />
             Discard
           </Button>
-          <Button disabled={busy} onClick={() => void run(onMerge)}>
+          <Button size="sm" disabled={busy} onClick={() => void run(onMerge)}>
+            <GitMerge className="size-3.5" />
             Merge
           </Button>
         </div>
