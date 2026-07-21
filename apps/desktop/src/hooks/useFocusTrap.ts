@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 
 // Elements a person can actually Tab to. Deliberately conservative (no `[contenteditable]`,
-// no exhaustive ARIA-widget list) — every current use of this hook (TaskPeekPanel,
-// CommandPalette) only ever contains plain inputs/buttons/links/selects.
+// no exhaustive ARIA-widget list) — every current use of this hook (`CommandPalette`) only
+// ever contains plain inputs/buttons/links/selects.
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -17,9 +17,9 @@ function queryFocusable(container: HTMLElement): HTMLElement[] {
  * container's first focusable element the moment it becomes active, and restores focus to
  * whatever was focused beforehand once it deactivates (unmounts, or `active` flips back to
  * false) — the standard modal/overlay focus-discipline contract (I7 in the phase-8 fix
- * report), shared by `TaskPeekPanel` and `CommandPalette` rather than each hand-rolling its
- * own partial version. `Modal` (components/ui/Modal.tsx) is untouched — its own Escape
- * listener stays independent of this.
+ * report). `CommandPalette` is the one remaining hand-rolled overlay that still needs this;
+ * every dialog-shaped surface (task detail, create task, session/diff modals) now builds on
+ * shadcn's `Dialog` (Radix), which owns its own focus trap and Escape handling instead.
  */
 export function useFocusTrap(
   containerRef: React.RefObject<HTMLElement | null>,

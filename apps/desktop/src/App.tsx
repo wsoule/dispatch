@@ -6,7 +6,7 @@ import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { Sidebar } from './components/shell/Sidebar';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
-import { TaskPeekPanel } from './components/tasks/TaskPeekPanel';
+import { TaskDetailDialog } from './components/tasks/TaskDetailDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
@@ -412,13 +412,14 @@ function App() {
         </main>
 
         {selectedDoc !== null && data.config !== null && (
-          <TaskPeekPanel
+          <TaskDetailDialog
             doc={selectedDoc}
             statuses={data.config.statuses}
             ready={data.readyIds.has(selectedDoc.meta.id)}
             run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
             onClose={() => dispatchNav({ type: 'closePeek' })}
             onUpdate={data.handleUpdate}
+            onMoveStatus={data.moveTaskStatus}
             onDispatch={data.handleDispatch}
             onOpenRun={(runId) => {
               dispatchNav({ type: 'closePeek' });
