@@ -2,6 +2,7 @@ import type { RunState } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
 import { useEffect, useRef, useState } from 'react';
 
+import { resolveCardKeyAction } from '../../lib/keyboard';
 import { priorityTone } from '../../lib/taskDisplay';
 import { RunStatePill } from '../runs/RunStatePill';
 import { Pill } from '../ui/Pill';
@@ -22,6 +23,10 @@ interface TaskCardTileProps {
    * moves real DOM focus onto the card so `:focus-visible` and screen readers agree with
    * what j/k just did, rather than a CSS-only highlight that looks focused but isn't. */
   focused?: boolean;
+  /** Called whenever real DOM focus lands on this card (click, Tab, or the `focused` effect
+   * above) — lets `BoardView` sync its `focusedTaskId` cursor to wherever focus actually is,
+   * so it can never diverge from what Enter would open. */
+  onFocus?: () => void;
 }
 
 /** A single Board card: id (mono), a live-run pulse when an agent is actively on it,
@@ -36,6 +41,7 @@ export function TaskCardTile({
   onClick,
   onDispatch,
   focused = false,
+  onFocus,
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const tone = priorityTone(doc.meta.priority);
@@ -64,13 +70,22 @@ export function TaskCardTile({
       className="task-card-tile"
       data-ready={ready}
       onClick={onClick}
+      onFocus={onFocus}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onClick();
-        else if (e.key === ' ') {
+        const isDirectTarget = e.target === e.currentTarget;
+        if (resolveCardKeyAction(e.key, isDirectTarget) === 'activate') {
           // Space's native behavior on a focusable div is to scroll the page — this is a
           // button-role element, so Space should activate it, not scroll past it.
           e.preventDefault();
           onClick();
+          return;
+        }
+        if (!isDirectTarget) {
+          // This keydown originated on a nested interactive child — the inline Dispatch
+          // button below — which owns its own Enter/Space activation. Stop it here so it
+          // never reaches the Board's roving-focus track above, which would otherwise treat
+          // it as board-level j/k/Enter navigation.
+          e.stopPropagation();
         }
       }}
     >

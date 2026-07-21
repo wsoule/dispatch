@@ -4,6 +4,7 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { TaskBoard } from '../components/tasks/TaskBoard';
 import { Button } from '../components/ui/Button';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { groupTasksByStatus } from '../lib/boardGrouping';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import './BoardView.css';
@@ -55,9 +56,14 @@ export function BoardView({
   );
 
   function handleBoardKeyDown(e: React.KeyboardEvent) {
+    // Computed from the real event target, not hardcoded — the board's keydown-listening
+    // track wraps every card, including an epic card's concurrency `<input>` and its
+    // Work/Stop buttons. Without this, typing a number into that field (or just pressing
+    // "j"/"k" while it happens to have focus) moved the roving-focus cursor and yanked
+    // focus away mid-edit instead of editing the field.
     const command = resolveListKeyCommand(
       { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
-      { isTyping: false }
+      { isTyping: isTypingTarget(e.target) }
     );
     if (command === null || orderedTaskIds.length === 0) return;
     e.preventDefault();
@@ -128,6 +134,7 @@ export function BoardView({
             onWorkEpic={data.handleWorkEpic}
             onStopEpic={data.handleStopEpic}
             focusedTaskId={focusedTaskId}
+            onCardFocus={setFocusedTaskId}
           />
         </div>
       )}

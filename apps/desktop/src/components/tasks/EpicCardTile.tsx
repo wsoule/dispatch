@@ -21,6 +21,9 @@ interface EpicCardTileProps {
   onStop: (epicId: string) => Promise<void>;
   /** Same meaning as `TaskCardTile`'s `focused` — the Board's j/k roving-focus cursor. */
   focused?: boolean;
+  /** Same meaning as `TaskCardTile`'s `onFocus` — syncs `BoardView`'s `focusedTaskId` cursor
+   * to wherever real DOM focus actually lands on this card. */
+  onFocus?: () => void;
 }
 
 /** Board card for a `kind: 'epic'` task: the same id/priority/title header as a plain
@@ -38,6 +41,7 @@ export function EpicCardTile({
   onWork,
   onStop,
   focused = false,
+  onFocus,
 }: EpicCardTileProps) {
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const [busy, setBusy] = useState(false);
@@ -77,6 +81,7 @@ export function EpicCardTile({
         role="button"
         tabIndex={0}
         onClick={onSelect}
+        onFocus={onFocus}
         onKeyDown={(e) => {
           if (e.key === 'Enter') onSelect();
           else if (e.key === ' ') {
