@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import type { ChildProcess } from 'node:child_process';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -167,7 +168,46 @@ export async function ensureDaemon(
       'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
     );
   }
-  return { port };
+  return { port: await resolveRaceWinner(ctx.cwd, child, port) };
+}
+
+// I3: two concurrent `ensureDaemon` calls for the same rootDir (e.g. two
+// separate `dispatch` invocations racing each other with no daemon running
+// yet) can each see "no daemon file" and each spawn their own dispatchd —
+// both eventually call `writeDaemonFile` for the exact same path, so only
+// the LAST write survives, but the FIRST writer's process keeps running
+// regardless: a leaked dispatchd nobody will ever talk to again. Once our
+// own spawn is confirmed healthy, re-read the daemon file one more time —
+// if it now names a different (and itself healthy) pid, that other
+// dispatchd is the race's actual winner; kill the one we spawned rather
+// than leak it, and defer to the winner's port.
+//
+// SIGKILL, not SIGTERM: bin.ts's graceful-shutdown path calls
+// `removeDaemonFile`, which deletes whatever is CURRENTLY at that path —
+// if the loser's own shutdown ran after the winner had already overwritten
+// the file with its own info, a graceful kill would delete the WINNER's
+// still-valid daemon file. SIGKILL bypasses that handler entirely, so the
+// file (already showing the winner) is left untouched.
+async function resolveRaceWinner(
+  rootDir: string,
+  spawnedChild: ChildProcess,
+  fallbackPort: number
+): Promise<number> {
+  const info = readDaemonFile(rootDir);
+  if (
+    info !== null &&
+    spawnedChild.pid !== undefined &&
+    info.pid !== spawnedChild.pid &&
+    (await isHealthy(info.port))
+  ) {
+    try {
+      process.kill(spawnedChild.pid, 'SIGKILL');
+    } catch {
+      // Already gone, or never actually started — nothing more to clean up.
+    }
+    return info.port;
+  }
+  return fallbackPort;
 }
 
 export function registerDaemonCommands(
