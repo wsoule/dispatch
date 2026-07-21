@@ -1,0 +1,2 @@
+statuses: [backlog, todo, in-progress, in-review, done, cancelled]
+autoCommit: false
