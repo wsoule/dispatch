@@ -33,11 +33,12 @@ export function buildTaskPrompt(
   );
 
   sections.push(
-    'Other agents may be dispatched on other tasks in this tracker at the ' +
-      'same time: check `run_list` via the dispatch MCP server before ' +
-      'assuming you have exclusive access to the repo, and log meaningful ' +
-      "progress with `task_comment` — this task's Activity log is the " +
-      'shared record other agents and humans will read.'
+    'The dispatch MCP server is connected in this session, with `run_list` ' +
+      'and `task_comment` available now — other agents may be dispatched ' +
+      'on other tasks in this tracker at the same time, so call `run_list` ' +
+      'before assuming you have exclusive access to the repo, and log ' +
+      "meaningful progress with `task_comment`; this task's Activity log " +
+      'is the shared record other agents and humans will read.'
   );
 
   sections.push(
