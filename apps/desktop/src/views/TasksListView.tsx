@@ -1,15 +1,23 @@
 import type { TaskDoc } from '@dispatch/core';
+import {
+  ChevronsUp,
+  ListTodo,
+  Plus,
+  Search,
+  SearchX,
+  SignalHigh,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { Button } from '../components/ui/Button';
-import { Pill } from '../components/ui/Pill';
-import { TextInput } from '../components/ui/TextInput';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { priorityTone, statusTone } from '../lib/taskDisplay';
-import './TasksListView.css';
+import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Skeleton } from '../ui/skeleton';
 
 interface TasksListViewProps {
   data: DispatchProjectData;
@@ -27,6 +35,37 @@ function matchesFilter(doc: TaskDoc, filter: string): boolean {
     doc.meta.id.toLowerCase().includes(needle) ||
     doc.meta.title.toLowerCase().includes(needle)
   );
+}
+
+// Maps a `statusTone`/`priorityTone` result to the small dot's background color — the same
+// six-tone vocabulary `Pill` used, just rendered as a dot instead of a filled chip per the
+// Linear redesign's "status is a dot, not a pill" direction.
+function toneDotClass(tone: string): string {
+  switch (tone) {
+    case 'green':
+      return 'bg-emerald-500';
+    case 'blue':
+      return 'bg-blue-500';
+    case 'red':
+      return 'bg-destructive';
+    case 'amber':
+      return 'bg-amber-500';
+    case 'accent':
+      return 'bg-primary';
+    default:
+      return 'bg-muted-foreground/50';
+  }
+}
+
+// Small lucide icon in place of the old priority text pill. `priorityTone` already encodes
+// the "only urgent/high deserve a color treatment" decision (see lib/taskDisplay.ts) — this
+// just picks the icon + color for the (only ever) two tones it actually returns; typed as a
+// plain string rather than importing `Tone` (unexported from lib/taskDisplay.ts).
+function PriorityIcon({ tone }: { tone: string }) {
+  const isUrgent = tone === 'red';
+  const Icon = isUrgent ? ChevronsUp : SignalHigh;
+  const colorClass = isUrgent ? 'text-destructive' : 'text-amber-500';
+  return <Icon className={`size-3.5 shrink-0 ${colorClass}`} />;
 }
 
 /**
@@ -91,35 +130,74 @@ export function TasksListView({
   }
 
   if (data.tasksLoading || data.config === null) {
-    return <p className="tasks-list-view-status">Loading tasks…</p>;
+    return (
+      <div className="flex h-full flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h1 className="text-foreground text-[15px] font-medium">Tasks</h1>
+          <Skeleton className="h-8 w-24" />
+        </div>
+        <Skeleton className="h-9 w-full" />
+        <div className="border-border flex flex-col gap-px overflow-hidden rounded-md border">
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+              <Skeleton className="h-3 w-10 shrink-0" />
+              <Skeleton className="h-3 flex-1" />
+              <Skeleton className="h-4 w-14 shrink-0 rounded-full" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="tasks-list-view">
-      <div className="tasks-list-view-toolbar">
-        <h1 className="view-topbar-title">Tasks</h1>
-        <Button onClick={onNewTask}>+ New Task</Button>
+    <div className="flex h-full flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h1 className="text-foreground text-[15px] font-medium">Tasks</h1>
+        <Button size="sm" onClick={onNewTask}>
+          <Plus className="size-3.5" />
+          New task
+        </Button>
       </div>
 
-      <TextInput
-        className="tasks-list-view-filter"
-        placeholder="Filter by id or title…"
-        value={filter}
-        onChange={(e) => {
-          setFilter(e.target.value);
-          setHighlighted(0);
-        }}
-      />
+      <div className="relative">
+        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+        <Input
+          className="pl-8 text-[13px]"
+          placeholder="Filter by id or title…"
+          value={filter}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            setHighlighted(0);
+          }}
+        />
+      </div>
 
       {filtered.length === 0 ? (
-        <p className="tasks-list-view-status">
-          {data.tasks.length === 0
-            ? 'No tasks yet — create the first one from the Board.'
-            : 'No tasks match this filter.'}
-        </p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          {data.tasks.length === 0 ? (
+            <>
+              <ListTodo className="text-muted-foreground size-5" />
+              <p className="text-muted-foreground max-w-sm text-[13px]">
+                No tasks yet — create the first one from the Board.
+              </p>
+              <Button size="sm" onClick={onNewTask}>
+                <Plus className="size-3.5" />
+                New task
+              </Button>
+            </>
+          ) : (
+            <>
+              <SearchX className="text-muted-foreground size-5" />
+              <p className="text-muted-foreground text-[13px]">
+                No tasks match this filter.
+              </p>
+            </>
+          )}
+        </div>
       ) : (
         <div
-          className="tasks-list-view-list"
+          className="border-border flex flex-col overflow-hidden rounded-md border"
           ref={listRef}
           tabIndex={0}
           onKeyDown={handleListKeyDown}
@@ -131,33 +209,41 @@ export function TasksListView({
               <button
                 key={doc.meta.id}
                 type="button"
-                className={`tasks-list-view-row${
-                  i === highlighted ? ' active' : ''
+                className={`border-border flex w-full items-center gap-3 border-b px-3 py-2.5 text-left transition-colors duration-150 last:border-b-0 ${
+                  i === highlighted ? 'bg-accent' : 'bg-card hover:bg-accent/60'
                 }`}
                 onMouseEnter={() => setHighlighted(i)}
                 onClick={() => onSelectTask(doc.meta.id)}
               >
-                <span className="tasks-list-view-row-id">{doc.meta.id}</span>
-                <span className="tasks-list-view-row-title">
+                <span className="text-muted-foreground w-16 shrink-0 font-mono text-[11px]">
+                  {doc.meta.id}
+                </span>
+                <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
                   {doc.meta.title}
                 </span>
-                <span className="tasks-list-view-row-badges">
+                <span className="flex shrink-0 items-center gap-2">
                   {data.blockedIds.has(doc.meta.id) && (
-                    <Pill variant="tag" tone="red">
+                    <Badge
+                      variant="outline"
+                      className="border-destructive/30 text-destructive text-[11px]"
+                    >
                       blocked
-                    </Pill>
+                    </Badge>
                   )}
-                  {tone !== null && (
-                    <Pill variant="tag" tone={tone}>
-                      {doc.meta.priority}
-                    </Pill>
-                  )}
+                  {tone !== null && <PriorityIcon tone={tone} />}
                   {liveState !== undefined && (
                     <RunStatePill state={liveState} />
                   )}
-                  <Pill variant="status" tone={statusTone(doc.meta.status)}>
-                    {doc.meta.status}
-                  </Pill>
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={`size-1.5 shrink-0 rounded-full ${toneDotClass(
+                        statusTone(doc.meta.status)
+                      )}`}
+                    />
+                    <span className="text-muted-foreground text-[11px]">
+                      {doc.meta.status}
+                    </span>
+                  </span>
                 </span>
               </button>
             );
