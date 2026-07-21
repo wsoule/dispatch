@@ -18,3 +18,12 @@ export function formatRelativeTime(unixSeconds: number): string {
   if (diffHr < 24) return `${diffHr}h ago`;
   return `${Math.round(diffHr / 24)}d ago`;
 }
+
+/** Formats a task's ISO-8601 `updated`/`created` frontmatter timestamp as the same short
+ * relative string `formatRelativeTime` produces from unix seconds — the board/list card
+ * footer's "Updated 2d ago", the closest analog to Linear's "Created May 1" line. Returns an
+ * em dash for a timestamp that fails to parse rather than throwing or rendering "NaNm ago". */
+export function formatRelativeTimeFromIso(iso: string): string {
+  const unixSeconds = new Date(iso).getTime() / 1000;
+  return Number.isNaN(unixSeconds) ? '—' : formatRelativeTime(unixSeconds);
+}

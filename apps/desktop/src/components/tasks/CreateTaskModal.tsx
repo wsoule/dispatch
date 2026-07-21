@@ -33,6 +33,10 @@ const NO_EPIC = '__none__';
 interface CreateTaskModalProps {
   statuses: string[];
   epics: TaskDoc[];
+  /** Pre-selects the Status field — the board/list column-header "+" button opens this modal
+   * already set to that column's status, matching Linear's own "add to this column" gesture,
+   * rather than always defaulting to `statuses[0]`. */
+  initialStatus?: string;
   onCreate: (input: CreateInput) => Promise<void>;
   onClose: () => void;
 }
@@ -44,13 +48,16 @@ interface CreateTaskModalProps {
 export function CreateTaskModal({
   statuses,
   epics,
+  initialStatus,
   onCreate,
   onClose,
 }: CreateTaskModalProps) {
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState<TaskKind>('task');
   const [priority, setPriority] = useState<Priority>('none');
-  const [status, setStatus] = useState(statuses[0] ?? 'backlog');
+  const [status, setStatus] = useState(
+    initialStatus ?? statuses[0] ?? 'backlog'
+  );
   const [parent, setParent] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);

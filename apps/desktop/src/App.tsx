@@ -22,12 +22,16 @@ import { PlansView } from './views/PlansView';
 import { RunsView } from './views/RunsView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
-import { TasksListView } from './views/TasksListView';
 import { TooltipProvider } from '@/ui/tooltip';
 
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
+  // Pre-selects `CreateTaskModal`'s Status field when it's opened from a board column's or
+  // list group's hover "+" button (see `BoardView`'s `onNewTask`) — `null` when opened from
+  // the plain "New task" button, which leaves the modal to default to the first configured
+  // status on its own.
+  const [createStatus, setCreateStatus] = useState<string | null>(null);
 
   useDataChangedEvents();
 
@@ -135,6 +139,15 @@ function App() {
     dispatchNav({ type: 'setGlobalView', view });
   }, []);
 
+  // Opens `CreateTaskModal`, optionally pre-set to a status — the single entry point every
+  // "New task"/"+" affordance (the header button, a board column's or list group's hover "+",
+  // the palette action, the global "c" shortcut) calls through, so the modal's initial status
+  // is always explicit rather than a leftover from whichever column's "+" was clicked last.
+  const openCreateTask = useCallback((status?: string) => {
+    setCreateStatus(status ?? null);
+    setShowCreate(true);
+  }, []);
+
   // Jumps straight to the Runs view with `runId` already selected — used by both the task peek
   // panel and the (now single-project) Agents view. There is only one project to switch to, so
   // unlike the old cross-project `jumpToRun` this never needs a project id.
@@ -181,7 +194,7 @@ function App() {
         activeProject !== null &&
         data.client !== null
       ) {
-        setShowCreate(true);
+        openCreateTask();
       }
     },
   });
@@ -213,7 +226,7 @@ function App() {
           id: 'action-new-task',
           label: 'New task',
           kind: 'action',
-          run: () => setShowCreate(true),
+          run: () => openCreateTask(),
         },
         {
           id: 'action-plan-work',
@@ -222,16 +235,10 @@ function App() {
           run: () => selectProjectView('plans'),
         },
         {
-          id: 'go-board',
-          label: 'Go to Board',
-          kind: 'go to',
-          run: () => selectProjectView('board'),
-        },
-        {
           id: 'go-tasks',
           label: 'Go to Tasks',
           kind: 'go to',
-          run: () => selectProjectView('tasks'),
+          run: () => selectProjectView('board'),
         },
         {
           id: 'go-runs',
@@ -297,6 +304,7 @@ function App() {
     handleDispatch,
     selectProjectView,
     setGlobalView,
+    openCreateTask,
   ]);
 
   // Resolution states for the single active project, checked in order: an outright failure to
@@ -383,17 +391,8 @@ function App() {
                   onSelectTask={(taskId) =>
                     dispatchNav({ type: 'openPeek', taskId })
                   }
-                  onNewTask={() => setShowCreate(true)}
+                  onNewTask={openCreateTask}
                   onPlanWork={() => selectProjectView('plans')}
-                />
-              )}
-              {navState.projectView === 'tasks' && (
-                <TasksListView
-                  data={data}
-                  onSelectTask={(taskId) =>
-                    dispatchNav({ type: 'openPeek', taskId })
-                  }
-                  onNewTask={() => setShowCreate(true)}
                 />
               )}
               {navState.projectView === 'runs' && (
@@ -433,6 +432,7 @@ function App() {
           <CreateTaskModal
             statuses={data.config.statuses}
             epics={data.epics}
+            initialStatus={createStatus ?? undefined}
             onCreate={data.handleCreate}
             onClose={() => setShowCreate(false)}
           />
