@@ -59,9 +59,48 @@ export class Orchestrator {
   private readonly registry = new RunRegistry();
   private readonly worktrees: WorktreeManager;
   private readonly executors = new Map<string, Executor>();
+  // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
+  // a terminal state AND every bit of bookkeeping that goes with that
+  // (task status, Activity) has already landed — see fireTerminalHooks()'s
+  // call sites in handleFinish()/cancel(). The epic dispatch engine is the
+  // one production subscriber today.
+  private readonly terminalHooks: Array<(meta: RunMeta) => void> = [];
+  // Phase 5 P1: callbacks fired whenever a run is reviewed (merge or
+  // discard) — i.e. whenever a task might have just moved to `done`. A run
+  // reaching a terminal state (finished/failed/cancelled) only ever leaves
+  // its task at `in-review` (handleFinish); readyTasks() in @dispatch/core
+  // gates on a blocker being `done`/`cancelled`, so the epic engine needs
+  // this *second* seam — not
+  // just onRunTerminal above — to know when a blocked sibling has actually
+  // become dispatchable, since that only happens once a review action runs.
+  private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
+  }
+
+  // Subscribes to "a run just reached a terminal state" — provisioning ->
+  // running -> finished/failed/cancelled, exactly once per run. Returns an
+  // unsubscribe function. This is the clean, push-based seam the epic engine
+  // uses to know when a concurrency slot has freed up instead of polling
+  // run state on a timer.
+  onRunTerminal(callback: (meta: RunMeta) => void): () => void {
+    this.terminalHooks.push(callback);
+    return () => {
+      const idx = this.terminalHooks.indexOf(callback);
+      if (idx !== -1) this.terminalHooks.splice(idx, 1);
+    };
+  }
+
+  // Subscribes to "a run was just reviewed" — merge, discard, or a merged
+  // PR (see the reviewedHooks field comment for why this exists alongside
+  // onRunTerminal). Same unsubscribe-function shape.
+  onRunReviewed(callback: (meta: RunMeta) => void): () => void {
+    this.reviewedHooks.push(callback);
+    return () => {
+      const idx = this.reviewedHooks.indexOf(callback);
+      if (idx !== -1) this.reviewedHooks.splice(idx, 1);
+    };
   }
 
   registerExecutor(name: string, executor: Executor): void {
@@ -268,6 +307,7 @@ export class Orchestrator {
     );
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
+    this.fireTerminalHooks(runId);
   }
 
   // The review surface's unified diff: everything committed on the run's
@@ -339,7 +379,9 @@ export class Orchestrator {
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
     this.ctx.events.broadcast({ type: 'run.changed' });
-    return this.registry.get(runId)!;
+    const reviewed = this.registry.get(runId)!;
+    for (const hook of this.reviewedHooks) hook(reviewed);
+    return reviewed;
   }
 
   // C1: squash-merges `meta.branch` into the main checkout and folds this
@@ -579,9 +621,32 @@ export class Orchestrator {
       return;
     }
     const now = new Date().toISOString();
-    this.registry.updateMeta(runId, { state, updatedAt: now, ...finish });
+    this.registry.updateMeta(runId, {
+      state,
+      updatedAt: now,
+      ...finish,
+    });
     this.transcriptFor(runId).appendState(state, now, finish);
     this.ctx.events.broadcast({ type: 'run.changed' });
+    // Phase 5 P1: onRunTerminal is deliberately NOT fired from here. A run
+    // "reaching" a terminal state is only fully visible to a subscriber once
+    // handleFinish()/cancel() have also finished updating the run's *task*
+    // (e.g. flipping it to `in-review`) — firing this mid-transition, before
+    // that task update lands, is exactly the ordering bug that made the epic
+    // engine see a stale `in-progress` task status on the very same tick a
+    // run it was tracking finished. See the explicit fireTerminalHooks()
+    // calls at the end of handleFinish()/cancel() instead.
+  }
+
+  // Fires every onRunTerminal subscriber for `runId`'s *current* meta — only
+  // ever called once the run's terminal transition AND every bit of
+  // bookkeeping that goes with it (task status, Activity) has already
+  // landed, so a subscriber never observes a run whose task hasn't caught up
+  // yet (see transition()'s comment for the bug this ordering avoids).
+  private fireTerminalHooks(runId: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    for (const hook of this.terminalHooks) hook(meta);
   }
 
   // Builds the ExecutorEvents callbacks for one run, closing over its runId
@@ -672,6 +737,7 @@ export class Orchestrator {
     this.ctx.store.update(meta.taskId, patch, now);
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
+    this.fireTerminalHooks(runId);
   }
 
   // The request-changes path: same task/branch/worktree as `oldMeta`, but a
