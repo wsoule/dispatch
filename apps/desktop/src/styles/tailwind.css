@@ -25,8 +25,12 @@
   --secondary-foreground: #1a1b1e;
   --muted: #f1f2f4;
   --muted-foreground: #71757d;
-  --accent: #eceef8;
-  --accent-foreground: #5e6ad2;
+  /* Namespaced so it doesn't collide with tokens.css's `--accent` (the app's brand indigo).
+     shadcn's `accent` is a *subtle* hover/fill, distinct from `primary`; tokens.css loads
+     after this file, so an unprefixed `--accent` here would be overwritten by the brand
+     indigo and turn every shadcn skeleton/hover bright indigo. */
+  --sh-accent: #eceef8;
+  --sh-accent-foreground: #5e6ad2;
   --destructive: #d64c4c;
   --destructive-foreground: #ffffff;
   --border: #e8e9ec;
@@ -48,8 +52,8 @@
     --secondary-foreground: #f7f8f8;
     --muted: #1c1d21;
     --muted-foreground: #858991;
-    --accent: #21243a;
-    --accent-foreground: #c3c8ec;
+    --sh-accent: #21243a;
+    --sh-accent-foreground: #c3c8ec;
     --destructive: #e5595b;
     --destructive-foreground: #ffffff;
     --border: #23252a;
@@ -76,8 +80,8 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--sh-accent);
+  --color-accent-foreground: var(--sh-accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
