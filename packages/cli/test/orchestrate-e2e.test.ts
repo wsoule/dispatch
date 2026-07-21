@@ -381,6 +381,42 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('task not found: t-doesnotexist');
   }, 12_000);
+
+  // M6: `dispatch plan show <plan-id>` renders the same proposal `dispatch
+  // plan` itself would have, for checking back on a plan later (the whole
+  // point of the not-settled message pointing at it — see plan-poll.test.ts
+  // for the timeout/message logic itself). `--timeout` is validated here
+  // end-to-end against the real daemon: a normal (fast) value still works,
+  // and a non-positive one is rejected before ever calling the server.
+  it('plan show renders a ready proposal, and --timeout is validated', () => {
+    const record = JSON.parse(
+      cli('plan', 'a prompt for plan show', '--planner', 'fake', '--json')
+    ) as { id: string; state: string };
+    expect(record.state).toBe('ready');
+
+    const shown = cli('plan', 'show', record.id);
+    expect(shown).toContain('Fake planned epic');
+
+    const withTimeout = JSON.parse(
+      cli(
+        'plan',
+        'another prompt',
+        '--planner',
+        'fake',
+        '--timeout',
+        '5',
+        '--json'
+      )
+    ) as { state: string };
+    expect(withTimeout.state).toBe('ready');
+
+    const badTimeout = runCli(
+      ['plan', 'a third prompt', '--planner', 'fake', '--timeout', '0'],
+      { cwd: repo, dispatchHome }
+    );
+    expect(badTimeout.code).not.toBe(0);
+    expect(badTimeout.stderr).toContain('invalid --timeout');
+  });
 });
 
 // ---------------------------------------------------------------------------

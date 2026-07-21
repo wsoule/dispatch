@@ -30,7 +30,11 @@ function sleep(ms: number): Promise<void> {
 // failed), for callers that didn't ask to watch this over WS. The plan spec
 // allows either WS or poll for this — polling keeps `dispatch plan` simple
 // and avoids opening a socket for what's usually a few-second wait.
-async function pollUntilSettled(
+//
+// M6: exported so tests can drive it directly against a scripted ApiClient
+// (packages/cli/test/plan-poll.test.ts) instead of needing a real planner
+// that takes `timeoutMs` to actually settle.
+export async function pollUntilSettled(
   client: ApiClient,
   planId: string,
   timeoutMs = 60_000
@@ -41,7 +45,12 @@ async function pollUntilSettled(
     if (record.state !== 'running') return record;
     await sleep(200);
   } while (Date.now() < deadline);
-  throw new CliError(`plan ${planId} did not settle within ${timeoutMs}ms`);
+  // M6: a plan that never settles isn't a dead end — the planner keeps
+  // running server-side regardless of this CLI invocation giving up on it,
+  // so point at the one command that can still check on it later.
+  throw new CliError(
+    `plan ${planId} has not settled after ${timeoutMs}ms — check it later with: dispatch plan show ${planId}`
+  );
 }
 
 // Watches an epic dispatch session over WS and resolves once a fetched
@@ -142,17 +151,37 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .option('--planner <name>', 'claude|fake', 'claude')
     .option('--json', 'print the plan record (and confirm result) as JSON')
     .option('--yes', 'confirm the proposal immediately once it is ready')
+    .option(
+      '--timeout <seconds>',
+      'how long to poll for the plan to settle before giving up',
+      '60'
+    )
     .action(
       async (
         promptParts: string[],
-        opts: { planner: string; json?: boolean; yes?: boolean }
+        opts: {
+          planner: string;
+          json?: boolean;
+          yes?: boolean;
+          timeout: string;
+        }
       ) => {
         const baseUrl = await baseUrlFor(ctx);
         const client = createApiClient(baseUrl);
         const prompt = promptParts.join(' ');
+        const timeoutSeconds = Number(opts.timeout);
+        if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+          throw new CliError(
+            `invalid --timeout: ${opts.timeout} (expected a positive number of seconds)`
+          );
+        }
 
         const started = await client.startPlan(prompt, opts.planner);
-        const record = await pollUntilSettled(client, started.planId);
+        const record = await pollUntilSettled(
+          client,
+          started.planId,
+          timeoutSeconds * 1000
+        );
 
         if (record.state === 'failed') {
           throw new CliError(`plan failed: ${record.error ?? 'unknown error'}`);
@@ -219,6 +248,31 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
           ? `confirmed: epic ${result.epicId}, ${result.taskIds.length} task(s)`
           : `confirmed: ${result.taskIds.length} task(s)`
       );
+    });
+
+  // M6: the follow-up `dispatch plan` itself points at once a plan hasn't
+  // settled within `--timeout` — also useful any time later, for a plan
+  // that settled long after the original `dispatch plan` invocation ended.
+  plan
+    .command('show <planId>')
+    .option('--json')
+    .action(async (planId: string, opts: { json?: boolean }) => {
+      const baseUrl = await baseUrlFor(ctx);
+      const client = createApiClient(baseUrl);
+      const record = await client.getPlan(planId);
+
+      if (opts.json === true) {
+        ctx.log(JSON.stringify(record, null, 2));
+        return;
+      }
+      if (record.proposal === undefined) {
+        ctx.log(
+          `plan ${record.id}: ${record.state}` +
+            (record.error !== undefined ? ` — ${record.error}` : '')
+        );
+        return;
+      }
+      ctx.log(formatProposal(record.proposal));
     });
 
   const epic = program
