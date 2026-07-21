@@ -1,7 +1,7 @@
 ---
 id: t-5dfaf6
 title: Real-agent end-to-end validation of the headless loop
-status: todo
+status: done
 kind: task
 parent: e-ec195e
 blocked-by: []
@@ -10,7 +10,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-07-21T02:45:01.049Z
-updated: 2026-07-21T02:45:01.049Z
+updated: 2026-07-21T05:09:07.626Z
 external: null
 ---
 
@@ -19,3 +19,4 @@ external: null
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-21T05:09:07.625Z status → done
