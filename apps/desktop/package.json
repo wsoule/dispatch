@@ -29,6 +29,9 @@
     "radix-ui": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-markdown": "catalog:",
+    "rehype-highlight": "catalog:",
+    "remark-gfm": "catalog:",
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {

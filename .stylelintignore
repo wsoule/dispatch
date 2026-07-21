@@ -13,3 +13,4 @@ out/
 coverage/
 *.min.css
 apps/desktop/src/styles/tailwind.css
+apps/desktop/src/styles/markdown.css
