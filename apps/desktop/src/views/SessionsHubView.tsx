@@ -5,7 +5,7 @@ import { ProjectsView } from './ProjectsView';
 import { ReportView } from './ReportView';
 import { SessionsView } from './SessionsView';
 import { TimelineView } from './TimelineView';
-import './SessionsHubView.css';
+import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 
 type SessionsTab =
   | 'dashboard'
@@ -34,20 +34,24 @@ export function SessionsHubView() {
   const [tab, setTab] = useState<SessionsTab>('dashboard');
 
   return (
-    <div className="sessions-hub-view">
-      <div className="sessions-hub-view-tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`sessions-hub-view-tab${tab === t.id ? ' active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="sessions-hub-view-body">
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <Tabs value={tab} onValueChange={(value) => setTab(value as SessionsTab)}>
+        <TabsList
+          variant="line"
+          className="border-border w-full justify-start gap-4 border-b p-0"
+        >
+          {TABS.map((t) => (
+            <TabsTrigger
+              key={t.id}
+              value={t.id}
+              className="flex-none px-0 text-[13px]"
+            >
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'dashboard' && <DashboardView />}
         {tab === 'projects' && <ProjectsView />}
         {tab === 'sessions' && <SessionsView />}
