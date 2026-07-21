@@ -111,10 +111,10 @@ export function EpicCardTile({
       tabIndex={0}
       data-focused={focused}
       className={cn(
-        'group flex w-full flex-col gap-1.5 rounded-[10px] bg-card p-3 text-left transition-colors duration-150',
-        'hover:bg-accent/40',
+        'group border-border/60 bg-card flex w-full cursor-pointer flex-col gap-2 rounded-lg border p-3 text-left shadow-sm transition-colors duration-150',
+        'hover:border-border hover:bg-card/80',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        'data-[focused=true]:ring-2 data-[focused=true]:ring-ring/50',
+        'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
         drag?.isDragging === true && 'opacity-40'
       )}
       onClick={onSelect}
@@ -179,9 +179,9 @@ export function EpicCardTile({
         </div>
       )}
 
-      <div className="mt-0.5 flex items-center justify-between gap-2">
-        <span className="text-muted-foreground/70 text-[11px]">
-          Updated {formatRelativeTimeFromIso(doc.meta.updated)}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
+          {formatRelativeTimeFromIso(doc.meta.updated)}
         </span>
         <div
           className={cn(

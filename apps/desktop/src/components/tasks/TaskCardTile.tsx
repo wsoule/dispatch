@@ -121,10 +121,10 @@ export function TaskCardTile({
       tabIndex={0}
       data-focused={focused}
       className={cn(
-        'group flex w-full flex-col gap-1.5 rounded-[10px] bg-card p-3 text-left transition-colors duration-150',
-        'hover:bg-accent/40',
+        'group border-border/60 bg-card flex w-full cursor-pointer flex-col gap-2 rounded-lg border p-3 text-left shadow-sm transition-colors duration-150',
+        'hover:border-border hover:bg-card/80',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        'data-[focused=true]:ring-2 data-[focused=true]:ring-ring/50',
+        'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
         drag?.isDragging === true && 'opacity-40'
       )}
       onClick={onClick}
@@ -158,26 +158,28 @@ export function TaskCardTile({
     >
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1 text-[11px]">
-          <span className="text-muted-foreground/70 shrink-0 font-mono">
+          <span className="text-muted-foreground/60 shrink-0 font-mono tracking-tight">
             {doc.meta.id}
           </span>
           {epicTitle !== undefined && (
             <>
-              <ChevronRight className="text-muted-foreground/50 size-3 shrink-0" />
-              <span className="text-muted-foreground min-w-0 truncate">
+              <ChevronRight className="text-muted-foreground/40 size-3 shrink-0" />
+              <span className="text-muted-foreground/80 min-w-0 truncate">
                 {epicTitle}
               </span>
             </>
           )}
         </div>
-        <AssigneeAvatar assignee={doc.meta.assignee} />
+        {doc.meta.assignee !== 'none' && (
+          <AssigneeAvatar assignee={doc.meta.assignee} />
+        )}
       </div>
 
-      <div className="flex items-start gap-1.5">
-        <span className="mt-0.5">
+      <div className="flex items-start gap-2">
+        <span className="mt-px shrink-0">
           <StatusIcon status={doc.meta.status} />
         </span>
-        <span className="text-foreground line-clamp-2 text-[13px] leading-snug font-medium">
+        <span className="text-foreground line-clamp-2 text-[13.5px] leading-[1.35] font-medium">
           {doc.meta.title}
         </span>
       </div>
@@ -217,9 +219,9 @@ export function TaskCardTile({
         </div>
       )}
 
-      <div className="mt-0.5 flex items-center justify-between gap-2">
-        <span className="text-muted-foreground/70 text-[11px]">
-          Updated {formatRelativeTimeFromIso(doc.meta.updated)}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
+          {formatRelativeTimeFromIso(doc.meta.updated)}
         </span>
         {ready && onDispatch !== undefined && (
           <button
