@@ -99,4 +99,46 @@ describe('navReducer', () => {
     const next = navReducer(initialNavState, { type: 'escape' });
     expect(next).toEqual(initialNavState);
   });
+
+  // C1 regression guard: `activeRunId` is the *only* place "which run is selected" lives —
+  // `useDispatchProject` and `RunsView` both read it directly now (no more hook-internal
+  // duplicate). These sequences are exactly what App.tsx's `jumpToRun` (All Agents → a run
+  // in another project) and the task peek panel's "View run"/"Review run" button each
+  // dispatch, chained through the same reducer instance a real `useReducer` would use.
+  test('jumpToRun sequence (selectProject, setProjectView runs, openRun) ends with the run selected', () => {
+    let state = navReducer(initialNavState, {
+      type: 'selectProject',
+      projectId: 'proj-b',
+    });
+    state = navReducer(state, { type: 'setProjectView', view: 'runs' });
+    state = navReducer(state, { type: 'openRun', runId: 'run-42' });
+
+    expect(state.activeProjectId).toBe('proj-b');
+    expect(state.projectView).toBe('runs');
+    expect(state.activeRunId).toBe('run-42');
+  });
+
+  test('the peek panel\'s "view run" sequence (closePeek, setProjectView runs, openRun) selects the run', () => {
+    let state: NavState = { ...initialNavState, peekTaskId: 'task-9' };
+    state = navReducer(state, { type: 'closePeek' });
+    state = navReducer(state, { type: 'setProjectView', view: 'runs' });
+    state = navReducer(state, { type: 'openRun', runId: 'run-7' });
+
+    expect(state.peekTaskId).toBeNull();
+    expect(state.projectView).toBe('runs');
+    expect(state.activeRunId).toBe('run-7');
+  });
+
+  test("switching projects mid-run-selection drops the previous project's run id", () => {
+    let state = navReducer(initialNavState, {
+      type: 'openRun',
+      runId: 'run-from-project-a',
+    });
+    state = navReducer(state, {
+      type: 'selectProject',
+      projectId: 'proj-b',
+    });
+
+    expect(state.activeRunId).toBeNull();
+  });
 });

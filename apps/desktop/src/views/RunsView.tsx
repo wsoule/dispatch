@@ -1,12 +1,20 @@
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
 import { RunStatePill } from '../components/runs/RunStatePill';
+import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTerminalRunState } from '../lib/runState';
 import './RunsView.css';
 
 interface RunsViewProps {
   data: DispatchProjectData;
+  /** The single source of truth for which run is open — `navReducer`'s `activeRunId` (see
+   * C1 in the phase-8 fix report: this view used to read/write its own copy of "selected
+   * run" via a `useDispatchProject`-internal `selectedRunId` state that nothing else in the
+   * app ever wrote to, so opening a run from the task peek panel updated nav state but left
+   * this view still pointed at whatever it had selected last, or nothing at all). */
+  selectedRunId: string | null;
+  onSelectRun: (runId: string) => void;
 }
 
 /**
@@ -17,12 +25,22 @@ interface RunsViewProps {
  * finished — swapped in place on `meta.state`, exactly like the old `RunModal` did, just
  * inline in a page instead of inside a dialog.
  */
-export function RunsView({ data }: RunsViewProps) {
-  if (data.portLoading || data.tasksLoading) {
+export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
+  if (data.portLoading || data.portError || data.client === null) {
+    return (
+      <DaemonUnavailable
+        starting={data.portLoading}
+        errorDetail={data.portErrorDetail}
+        onRetry={data.retryEnsureDispatchd}
+      />
+    );
+  }
+
+  if (data.tasksLoading) {
     return <p className="runs-view-status">Loading runs…</p>;
   }
 
-  const selected = data.runs.find((r) => r.id === data.selectedRunId);
+  const selected = data.runs.find((r) => r.id === selectedRunId);
 
   return (
     <div className="runs-view">
@@ -39,9 +57,9 @@ export function RunsView({ data }: RunsViewProps) {
                 key={run.id}
                 type="button"
                 className={`runs-view-list-item${
-                  run.id === data.selectedRunId ? ' active' : ''
+                  run.id === selectedRunId ? ' active' : ''
                 }`}
-                onClick={() => data.setSelectedRunId(run.id)}
+                onClick={() => onSelectRun(run.id)}
               >
                 <RunStatePill state={run.state} />
                 <span className="runs-view-list-item-title">
