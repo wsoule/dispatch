@@ -178,6 +178,64 @@ describe('ClaudeExecutor session-id capture on a mid-stream failure', () => {
   });
 });
 
+// Bug 2 (fix/executor-mcp-wiring): a run whose underlying SDK stream ends
+// with no 'result' message at all — the CLI process getting killed out from
+// under an approval it was waiting on, or any other abrupt exit — must still
+// reach onFinish with a real error, not silently leave the run stuck
+// 'running' forever with nothing left driving it (which is what previously
+// surfaced downstream as state=failed/error=None/turns=None/cost=None once
+// a dispatchd restart's reconcileOnBoot eventually force-failed it).
+describe('ClaudeExecutor abrupt stream end with no result message', () => {
+  it('reports a failed finish with a non-empty error when the stream ends without a result', async () => {
+    const repo = initGitRepo('dispatch-claude-no-result-');
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      function* fakeMessages(): Generator<any> {
+        yield {
+          type: 'system',
+          subtype: 'init',
+          session_id: 'sess-no-result',
+        };
+        // No 'result' message, and the generator just returns — the
+        // "process exited without ever finishing the turn" case.
+      }
+      const fakeQueryFn = () => fakeMessages() as unknown as Query;
+      const executor = new ClaudeExecutor(fakeQueryFn);
+
+      const finish = await new Promise<{
+        state: string;
+        error?: string;
+        sessionId?: string;
+        turns?: number;
+        costUsd?: number;
+      }>((resolve) => {
+        const events: ExecutorEvents = {
+          onEntry: () => {},
+          onApprovalRequest: () => {},
+          onFinish: (result) => resolve(result),
+        };
+        executor.start(
+          {
+            cwd: repo,
+            projectRoot: repo,
+            prompt: 'do the thing',
+            permissionMode: 'acceptEdits',
+            maxTurns: 5,
+          },
+          events
+        );
+      });
+
+      expect(finish.state).toBe('failed');
+      expect(finish.error).toBe('agent session ended without a final result');
+      expect(finish.error).toBeTruthy();
+      expect(finish.sessionId).toBe('sess-no-result');
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 // Real end-to-end smoke test against the actual Agent SDK: a trivial task
 // prompt, a real (throwaway) git repo, a small maxTurns cap. Only runs when
 // DISPATCH_CLAUDE_SMOKE is set — CI never sets it, so this never needs
