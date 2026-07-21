@@ -137,4 +137,28 @@ describe('update', () => {
       /task not found/
     );
   });
+
+  it('edits the Description and Acceptance Criteria body sections in place', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create(
+      { title: 'Ship docs', description: 'old description' },
+      '2026-07-13T18:00:00Z'
+    );
+    const out = store.update(doc.meta.id, {
+      description: 'new description',
+      acceptanceCriteria: '- done when merged',
+    });
+    // Re-read from disk so we assert the persisted body, not just the return.
+    const reread = store.get(doc.meta.id)!;
+    expect(reread.body).toContain('## Description\n\nnew description\n');
+    expect(reread.body).toContain(
+      '## Acceptance Criteria\n\n- done when merged\n'
+    );
+    expect(reread.body).not.toContain('old description');
+    // Body edits must not disturb frontmatter or the Activity section order.
+    expect(out.meta.title).toBe('Ship docs');
+    expect(reread.body.indexOf('## Acceptance Criteria')).toBeLessThan(
+      reread.body.indexOf('## Activity')
+    );
+  });
 });

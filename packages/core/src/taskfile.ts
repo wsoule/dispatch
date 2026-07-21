@@ -105,6 +105,53 @@ export function serializeTaskFile(doc: TaskDoc): string {
 }
 
 /**
+ * Replaces the text under a `## <heading>` section of the body, preserving
+ * every other section and their order. Used to make the free-text body
+ * sections (Description, Acceptance Criteria) editable from the app the same
+ * way frontmatter fields already are, without the caller having to
+ * hand-splice markdown. If the heading doesn't exist yet it's inserted before
+ * `## Activity` (so the append-only activity log stays last, matching the
+ * create template) or appended when there's no Activity section. `content` is
+ * trimmed and re-wrapped in the template's blank-line spacing so repeated
+ * edits round-trip to stable output.
+ */
+export function setSection(
+  body: string,
+  heading: string,
+  content: string
+): string {
+  // Split on section-heading lines, keeping the headings via the capture
+  // group: parts = [preamble, "## H1", body1, "## H2", body2, ...].
+  const parts = body.split(/^(## .+)$/m);
+  const preamble = parts[0];
+  const sections: { heading: string; content: string }[] = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    sections.push({
+      heading: parts[i].replace(/^## /, '').trim(),
+      content: parts[i + 1] ?? '',
+    });
+  }
+
+  const trimmed = content.trim();
+  // The template wraps a section's text in a blank line on each side; an empty
+  // section collapses to just those blank lines so the next heading still has
+  // breathing room.
+  const wrapped = trimmed === '' ? '\n\n' : `\n\n${trimmed}\n\n`;
+
+  const existing = sections.find((s) => s.heading === heading);
+  if (existing !== undefined) {
+    existing.content = wrapped;
+  } else {
+    const activityIdx = sections.findIndex((s) => s.heading === 'Activity');
+    const section = { heading, content: wrapped };
+    if (activityIdx >= 0) sections.splice(activityIdx, 0, section);
+    else sections.push(section);
+  }
+
+  return preamble + sections.map((s) => `## ${s.heading}${s.content}`).join('');
+}
+
+/**
  * Appends an activity bullet. Assumes `## Activity` is the LAST section of the
  * body (the store's create template guarantees this).
  */

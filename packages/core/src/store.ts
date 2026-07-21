@@ -13,6 +13,7 @@ import {
   appendActivity,
   parseTaskFile,
   serializeTaskFile,
+  setSection,
 } from './taskfile.js';
 import type {
   Assignee,
@@ -49,6 +50,12 @@ export interface UpdatePatch {
   priority?: Priority;
   assignee?: Assignee;
   appendActivity?: string;
+  // Free-text body sections (edited as whole-section replacements via
+  // taskfile.ts's setSection), so the app can edit a task's Description and
+  // Acceptance Criteria the same way it edits frontmatter fields. Unlike the
+  // meta fields above these live in the markdown body, not the frontmatter.
+  description?: string;
+  acceptanceCriteria?: string;
 }
 
 export interface ListFilter {
@@ -185,13 +192,25 @@ export class TaskStore {
     const file = this.taskFilePath(id);
     if (!file) throw new Error(`task not found: ${id}`);
     const doc = parseTaskFile(readFileSync(file, 'utf8'), file);
-    const { appendActivity: activityLine, ...patchFields } = patch;
+    // `description`/`acceptanceCriteria` and `appendActivity` target the
+    // markdown body, not the frontmatter, so they're pulled out here and never
+    // spread into `meta` — only the remaining fields are frontmatter.
+    const {
+      appendActivity: activityLine,
+      description,
+      acceptanceCriteria,
+      ...patchFields
+    } = patch;
     // Drop undefined entries so a partial patch never blanks existing fields.
     const fields = Object.fromEntries(
       Object.entries(patchFields).filter(([, v]) => v !== undefined)
     );
     const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
     let body = doc.body;
+    if (description !== undefined)
+      body = setSection(body, 'Description', description);
+    if (acceptanceCriteria !== undefined)
+      body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
     if (activityLine) body = appendActivity(body, activityLine);
     const next: TaskDoc = { meta, body };
     writeFileSync(file, serializeTaskFile(next));

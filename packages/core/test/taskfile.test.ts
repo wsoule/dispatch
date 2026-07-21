@@ -3,9 +3,56 @@ import { describe, expect, it } from 'bun:test';
 import {
   parseTaskFile,
   serializeTaskFile,
+  setSection,
   TaskParseError,
 } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
+
+describe('setSection', () => {
+  const body =
+    '\n## Description\n\nold\n\n## Acceptance Criteria\n\n## Activity\n- created\n';
+
+  it('replaces a section body while preserving the others and their order', () => {
+    const out = setSection(body, 'Description', 'brand new text');
+    expect(out).toContain('## Description\n\nbrand new text\n\n');
+    // Untouched sections and the activity log stay put, in the same order.
+    expect(out).toContain('## Activity\n- created\n');
+    expect(out.indexOf('## Description')).toBeLessThan(
+      out.indexOf('## Acceptance Criteria')
+    );
+    expect(out.indexOf('## Acceptance Criteria')).toBeLessThan(
+      out.indexOf('## Activity')
+    );
+  });
+
+  it('fills an empty section', () => {
+    const out = setSection(body, 'Acceptance Criteria', '- ships green');
+    expect(out).toContain('## Acceptance Criteria\n\n- ships green\n\n');
+  });
+
+  it('collapses to blank lines when cleared', () => {
+    const out = setSection(body, 'Description', '   ');
+    expect(out).toContain('## Description\n\n## Acceptance Criteria');
+  });
+
+  it('inserts a missing section before Activity', () => {
+    const out = setSection('\n## Activity\n- created\n', 'Description', 'hi');
+    expect(out).toMatch(/## Description\n\nhi\n\n## Activity/);
+  });
+
+  it('round-trips through parse + serialize', () => {
+    const edited = setSection(body, 'Description', 'edited');
+    const doc: TaskDoc = {
+      meta: parseTaskFile(FRONTMATTER + body).meta,
+      body: edited,
+    };
+    const reparsed = parseTaskFile(serializeTaskFile(doc));
+    expect(reparsed.body).toContain('edited');
+  });
+});
+
+const FRONTMATTER =
+  '---\nid: t-3fa9c2\ntitle: T\nstatus: todo\nkind: task\ncreated: 2026-07-13T00:00:00Z\nupdated: 2026-07-13T00:00:00Z\n---\n';
 
 const doc: TaskDoc = {
   meta: {
