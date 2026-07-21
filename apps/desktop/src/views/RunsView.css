@@ -1,0 +1,78 @@
+.runs-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+}
+
+.runs-view-status,
+.runs-view-empty {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  padding: var(--space-3);
+}
+
+.runs-view-body {
+  display: flex;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+}
+
+.runs-view-list {
+  width: 18rem;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow-y: auto;
+  border-right: 1px solid var(--border-default);
+  padding-right: var(--space-3);
+}
+
+.runs-view-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.runs-view-list-item:hover {
+  background: var(--surface-raised);
+}
+
+.runs-view-list-item.active {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+
+.runs-view-list-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.runs-view-list-item-cost {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.runs-view-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}

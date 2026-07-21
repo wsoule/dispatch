@@ -42,6 +42,19 @@ button {
   cursor: pointer;
 }
 
+/* One global focus ring for every button/interactive row in the app (I7 in the phase-8 fix
+   report) — deliberately a single rule here rather than each component styling its own
+   `:focus`/`:focus-visible` state, so keyboard focus always looks the same regardless of
+   which component you're tabbing through: the Board's cards, the Tasks/Runs lists, the
+   command palette's rows, the sidebar's nav items, every plain `<button>`. `:focus-visible`
+   (not `:focus`) so a mouse click doesn't show the ring — only keyboard/programmatic focus
+   (which is exactly how the Board's j/k roving focus moves real DOM focus) does. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .app-shell {
   display: flex;
   height: 100vh;
