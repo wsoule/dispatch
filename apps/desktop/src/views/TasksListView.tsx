@@ -1,9 +1,12 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import { Plus, SearchX } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
-import { PriorityIcon } from '../components/tasks/PriorityIcon';
+import {
+  AssigneeControl,
+  PriorityControl,
+  StatusControl,
+} from '../components/tasks/PropertyControls';
 import { StatusIcon } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { groupTasksByStatus } from '../lib/boardGrouping';
@@ -168,9 +171,16 @@ export function TasksListView({
                             ? epicTitleById.get(doc.meta.parent)
                             : undefined
                         }
+                        statuses={data.config?.statuses ?? []}
                         focused={doc.meta.id === focusedTaskId}
                         onClick={() => onSelectTask(doc.meta.id)}
                         onMouseEnter={() => setFocusedTaskId(doc.meta.id)}
+                        onStatusChange={(status) =>
+                          void data.moveTaskStatus(doc.meta.id, status)
+                        }
+                        onEditTask={(patch) =>
+                          void data.handleUpdate(doc.meta.id, patch)
+                        }
                       />
                     ))}
                   </div>
@@ -186,41 +196,56 @@ export function TasksListView({
 interface TaskListRowProps {
   doc: TaskDoc;
   epicTitle?: string;
+  statuses: string[];
   focused: boolean;
   onClick: () => void;
   onMouseEnter: () => void;
+  onStatusChange: (status: string) => void;
+  onEditTask: (patch: UpdatePatch) => void;
 }
 
 /** A single ~36px dense row: priority · id · status · title (+ epic breadcrumb) · labels ·
- * assignee · relative "updated" time — Linear's list-row anatomy. `focused` is a CSS-only
- * highlight (this list's j/k cursor never moves real DOM focus off the list container itself,
- * matching the previous flat list's `highlighted`-index treatment) rather than the board
- * card's per-row `:focus-visible` treatment. */
+ * assignee · relative "updated" time — Linear's list-row anatomy, with priority/status/assignee
+ * editable inline (click the glyph → picker). `focused` is a CSS-only highlight (this list's
+ * j/k cursor never moves real DOM focus off the list container itself). The row is a
+ * `div role="button"` rather than a real `<button>` precisely so those inline picker triggers
+ * can be nested interactive elements without invalid button-in-button markup. */
 function TaskListRow({
   doc,
   epicTitle,
+  statuses,
   focused,
   onClick,
   onMouseEnter,
+  onStatusChange,
+  onEditTask,
 }: TaskListRowProps) {
   const visibleLabels = doc.meta.labels.slice(0, MAX_VISIBLE_LABELS);
   const hiddenLabelCount = doc.meta.labels.length - visibleLabels.length;
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={-1}
       data-row-id={doc.meta.id}
       onMouseEnter={onMouseEnter}
       onClick={onClick}
-      className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${
+      className={`flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${
         focused ? 'bg-accent/50' : 'hover:bg-accent/30'
       }`}
     >
-      <PriorityIcon priority={doc.meta.priority} />
+      <PriorityControl
+        value={doc.meta.priority}
+        onChange={(p) => onEditTask({ priority: p })}
+      />
       <span className="text-muted-foreground w-14 shrink-0 truncate font-mono text-[11px]">
         {doc.meta.id}
       </span>
-      <StatusIcon status={doc.meta.status} />
+      <StatusControl
+        value={doc.meta.status}
+        statuses={statuses}
+        onChange={onStatusChange}
+      />
       <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
         {doc.meta.title}
         {epicTitle !== undefined && (
@@ -245,10 +270,13 @@ function TaskListRow({
           )}
         </span>
       )}
-      <AssigneeAvatar assignee={doc.meta.assignee} className="shrink-0" />
+      <AssigneeControl
+        value={doc.meta.assignee}
+        onChange={(a) => onEditTask({ assignee: a })}
+      />
       <span className="text-muted-foreground/70 w-14 shrink-0 text-right text-[11px]">
         {formatRelativeTimeFromIso(doc.meta.updated)}
       </span>
-    </button>
+    </div>
   );
 }
