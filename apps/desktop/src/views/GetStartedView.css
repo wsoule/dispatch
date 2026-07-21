@@ -10,10 +10,6 @@
   line-height: 1.6;
 }
 
-.get-started-view-empty {
-  color: var(--text-muted);
-}
-
 .get-started-view-list {
   display: flex;
   flex-direction: column;
@@ -41,10 +37,6 @@
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
-}
-
-.get-started-view-row-name {
-  font-weight: 500;
 }
 
 .get-started-view-row-command {
