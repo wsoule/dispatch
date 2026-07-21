@@ -13,6 +13,7 @@ import '@fontsource/ibm-plex-mono/600.css';
 import './styles/tailwind.css';
 import './styles/tokens.css';
 import './styles/pierreTheme.css';
+import './styles/markdown.css';
 import './styles/global.css';
 import App from './App.tsx';
 

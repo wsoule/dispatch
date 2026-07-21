@@ -1,0 +1,158 @@
+/* Styling for rendered agent markdown (see components/runs/Markdown.tsx). Scoped to
+   `.dispatch-md` so it never leaks into the rest of the app, and driven by the same semantic
+   CSS variables as everything else so it themes light/dark automatically. Kept as hand-written
+   CSS (rather than Tailwind classes on every element) because the elements are produced by
+   react-markdown, not written in JSX — there's nowhere to hang utility classes. */
+
+.dispatch-md {
+  overflow-wrap: anywhere;
+}
+
+.dispatch-md > :first-child {
+  margin-top: 0;
+}
+
+.dispatch-md > :last-child {
+  margin-bottom: 0;
+}
+
+.dispatch-md p {
+  margin: 0.4em 0;
+}
+
+.dispatch-md ul,
+.dispatch-md ol {
+  margin: 0.4em 0;
+  padding-left: 1.3em;
+}
+
+.dispatch-md ul {
+  list-style: disc;
+}
+
+.dispatch-md ol {
+  list-style: decimal;
+}
+
+.dispatch-md li {
+  margin: 0.15em 0;
+}
+
+.dispatch-md li::marker {
+  color: var(--muted-foreground);
+}
+
+.dispatch-md h1,
+.dispatch-md h2,
+.dispatch-md h3,
+.dispatch-md h4 {
+  margin: 0.7em 0 0.3em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.dispatch-md h1 {
+  font-size: 1.2em;
+}
+
+.dispatch-md h2 {
+  font-size: 1.12em;
+}
+
+.dispatch-md h3 {
+  font-size: 1.04em;
+}
+
+.dispatch-md h4 {
+  font-size: 1em;
+}
+
+.dispatch-md a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dispatch-md blockquote {
+  margin: 0.4em 0;
+  padding-left: 0.8em;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.dispatch-md hr {
+  margin: 0.8em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.dispatch-md table {
+  margin: 0.5em 0;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.dispatch-md th,
+.dispatch-md td {
+  padding: 0.25em 0.55em;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.dispatch-md th {
+  background: color-mix(in srgb, var(--muted) 60%, transparent);
+  font-weight: 600;
+}
+
+/* highlight.js tokens — a compact theme tuned to read on the app's muted code-block
+   background in both light and dark. rehype-highlight adds these `hljs-*` classes. */
+.dispatch-md .hljs-comment,
+.dispatch-md .hljs-quote {
+  color: #7d8590;
+  font-style: italic;
+}
+
+.dispatch-md .hljs-keyword,
+.dispatch-md .hljs-selector-tag,
+.dispatch-md .hljs-literal,
+.dispatch-md .hljs-section {
+  color: #a78bfa;
+}
+
+.dispatch-md .hljs-string,
+.dispatch-md .hljs-attr,
+.dispatch-md .hljs-meta .hljs-string {
+  color: #3fb950;
+}
+
+.dispatch-md .hljs-number,
+.dispatch-md .hljs-symbol,
+.dispatch-md .hljs-bullet {
+  color: #d29922;
+}
+
+.dispatch-md .hljs-title,
+.dispatch-md .hljs-title.function_,
+.dispatch-md .hljs-name {
+  color: #60a5fa;
+}
+
+.dispatch-md .hljs-type,
+.dispatch-md .hljs-built_in,
+.dispatch-md .hljs-class .hljs-title {
+  color: #f778ba;
+}
+
+.dispatch-md .hljs-attribute,
+.dispatch-md .hljs-variable,
+.dispatch-md .hljs-template-variable {
+  color: #22d3ee;
+}
+
+.dispatch-md .hljs-emphasis {
+  font-style: italic;
+}
+
+.dispatch-md .hljs-strong {
+  font-weight: 600;
+}

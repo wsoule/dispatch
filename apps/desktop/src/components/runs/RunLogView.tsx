@@ -1,22 +1,18 @@
 import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import {
-  ChevronDown,
-  ChevronRight,
-  CircleCheck,
-  CircleX,
   Info,
-  Loader2,
   Megaphone,
   MessageSquare,
   MessageSquarePlus,
   Send,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
 import { useState } from 'react';
 
-import { groupLogEntries, toolEntryPreview } from '../../lib/runLog';
+import { groupLogEntries } from '../../lib/runLog';
 import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
+import { Markdown } from './Markdown';
+import { ToolCard } from './ToolCard';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
@@ -64,9 +60,10 @@ function MessageBubble({ entry }: { entry: NormalizedEntry }) {
       <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
         {ROLE_LABEL[kind]}
       </div>
-      <div className="text-foreground text-[13px] break-words whitespace-pre-wrap">
-        {entry.text ?? ''}
-      </div>
+      <Markdown
+        content={entry.text ?? ''}
+        className="text-foreground text-[13px]"
+      />
     </div>
   );
 }
@@ -96,9 +93,7 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
             from {entry.fromLabel ?? 'an agent'}
           </span>
         </div>
-        <div className="text-[13px] break-words whitespace-pre-wrap">
-          {entry.text ?? ''}
-        </div>
+        <Markdown content={entry.text ?? ''} className="text-[13px]" />
       </div>
     );
   }
@@ -120,67 +115,7 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
       >
         {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}
       </div>
-      <div className="text-[13px] break-words whitespace-pre-wrap">
-        {entry.text ?? ''}
-      </div>
-    </div>
-  );
-}
-
-const TOOL_STATUS_ICON: Record<
-  NonNullable<NormalizedEntry['status']>,
-  ReactNode
-> = {
-  running: <Loader2 className="size-3 shrink-0 animate-spin" />,
-  done: <CircleCheck className="size-3 shrink-0 text-emerald-500" />,
-  error: <CircleX className="text-destructive size-3 shrink-0" />,
-};
-
-// A cluster of consecutive tool-call entries (see groupLogEntries) rendered
-// as one collapsible block — collapsed by default so a turn with several
-// tool calls doesn't dominate the log; expanding shows every call's full
-// input and status. Uses lucide chevrons for the disclosure affordance per
-// the redesign brief.
-function ToolCluster({ entries }: { entries: NormalizedEntry[] }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="flex max-w-[90%] flex-col gap-1 self-start">
-      <button
-        type="button"
-        onClick={() => setExpanded((e) => !e)}
-        aria-expanded={expanded}
-        className="border-border bg-muted/40 text-muted-foreground hover:border-border hover:bg-muted flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left font-mono text-[12px] transition-colors duration-150"
-      >
-        {expanded ? (
-          <ChevronDown className="size-3.5 shrink-0" />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0" />
-        )}
-        <span className="truncate">
-          {entries.length === 1
-            ? toolEntryPreview(entries[0])
-            : `${entries.length} tool calls`}
-        </span>
-      </button>
-      {expanded && (
-        <ul className="animate-in fade-in-0 border-border bg-card flex flex-col gap-2 rounded-md border p-2 duration-150">
-          {entries.map((entry, i) => (
-            <li key={i} className="flex flex-col gap-1">
-              <div className="flex items-center gap-1.5">
-                {entry.status !== undefined && TOOL_STATUS_ICON[entry.status]}
-                <span className="text-foreground font-mono text-[12px]">
-                  {entry.toolName ?? 'tool'}
-                </span>
-              </div>
-              <pre className="text-muted-foreground max-h-32 overflow-auto font-mono text-[11px] break-words whitespace-pre-wrap">
-                {entry.toolInput !== undefined
-                  ? JSON.stringify(entry.toolInput, null, 2)
-                  : '(no input)'}
-              </pre>
-            </li>
-          ))}
-        </ul>
-      )}
+      <Markdown content={entry.text ?? ''} className="text-[13px]" />
     </div>
   );
 }
@@ -267,7 +202,11 @@ export function RunLogView({
         )}
         {groups.map((group, i) =>
           group.kind === 'tools' ? (
-            <ToolCluster key={i} entries={group.entries} />
+            <div key={i} className="flex flex-col gap-1.5">
+              {group.entries.map((entry, j) => (
+                <ToolCard key={j} entry={entry} />
+              ))}
+            </div>
           ) : group.entries[0].kind === 'message' ? (
             <ChatMessageBubble key={i} entry={group.entries[0]} />
           ) : (
