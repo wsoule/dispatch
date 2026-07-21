@@ -7,23 +7,23 @@ import {
   Info,
   Loader2,
   MessageSquare,
+  MessageSquarePlus,
+  Send,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
-import {
-  groupLogEntries,
-  liveCostUsd,
-  toolEntryPreview,
-} from '../../lib/runLog';
+import { groupLogEntries, toolEntryPreview } from '../../lib/runLog';
+import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
-import { RunStatePill } from './RunStatePill';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import { Textarea } from '@/ui/textarea';
 
-const LIVE_STATES = new Set<RunMeta['state']>([
-  'provisioning',
+// The two states where the composer talks to a still-running agent (send a follow-up
+// message) rather than resuming a finished one (request changes) — deliberately excludes
+// `provisioning`, which has no agent listening yet.
+const SENDABLE_STATES = new Set<RunMeta['state']>([
   'running',
   'awaiting-approval',
 ]);
@@ -139,29 +139,33 @@ interface RunLogViewProps {
   pendingApproval: { requestId: string; toolName: string } | null;
   onApprove: (requestId: string, allow: boolean) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
-  onCancel: () => Promise<void>;
+  /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
+   * button drives) — this view offers it too once the run is done, so talking to the agent
+   * works the same way (one composer, always in the same place) whether the run is still
+   * going or already finished. */
+  onRequestChanges: (text: string) => Promise<void>;
 }
 
-/** Live run view: chat-style normalized log, the approval gate when one is pending, a
- * follow-up message box while the run is actively working, and cancel. Shown inside RunsView's
- * right pane for any non-terminal run; RunReviewView takes over once a run reaches
- * finished/failed/cancelled. */
+/** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
+ * a message composer whose action switches with the run's own state — "Send" while an agent
+ * is actually listening (running/awaiting-approval), "Request changes" once the run is done
+ * (resumes it with feedback). Always shown in RunsView's Session tab, live or terminal, so the
+ * user can see and talk to the agent regardless of which tab they're on. */
 export function RunLogView({
   meta,
   entries,
   pendingApproval,
   onApprove,
   onSendMessage,
-  onCancel,
+  onRequestChanges,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const groups = groupLogEntries(entries);
-  const cost = liveCostUsd(meta, entries);
-  const live = LIVE_STATES.has(meta.state);
+  const terminal = isTerminalRunState(meta.state);
+  const canSend = SENDABLE_STATES.has(meta.state);
 
   // Finds the most recent tool-log entry with a matching name to back the
   // approval card's input preview — see the field doc comment above for why
@@ -176,12 +180,13 @@ export function RunLogView({
           .at(-1)?.toolInput
       : undefined;
 
-  async function submitFollowUp() {
+  async function submit() {
     if (draft.trim() === '') return;
     setSending(true);
     setError(null);
     try {
-      await onSendMessage(draft.trim());
+      if (terminal) await onRequestChanges(draft.trim());
+      else await onSendMessage(draft.trim());
       setDraft('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -190,54 +195,8 @@ export function RunLogView({
     }
   }
 
-  async function submitCancel() {
-    setCancelling(true);
-    setError(null);
-    try {
-      await onCancel();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCancelling(false);
-    }
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="border-border flex items-center gap-3 border-b pb-3">
-        <RunStatePill state={meta.state} />
-        <span className="text-muted-foreground truncate font-mono text-[11px]">
-          {meta.branch}
-        </span>
-        {cost !== null && (
-          <span className="text-muted-foreground font-mono text-[12px]">
-            ${cost.toFixed(2)}
-          </span>
-        )}
-        {meta.turns !== undefined && (
-          <span className="text-muted-foreground text-[11px]">
-            {meta.turns} turns
-          </span>
-        )}
-        <div className="flex-1" />
-        {live && (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={cancelling}
-            onClick={() => void submitCancel()}
-          >
-            Cancel
-          </Button>
-        )}
-      </div>
-
-      {error !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
-          {error}
-        </div>
-      )}
-
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1">
         {groups.length === 0 && (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
@@ -274,21 +233,56 @@ export function RunLogView({
           </div>
         ))}
 
-      {meta.state === 'running' && (
-        <div className="border-border flex gap-2 border-t pt-3">
-          <Input
-            placeholder="Send a follow-up message…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submitFollowUp();
-            }}
-            disabled={sending}
-            className="flex-1"
-          />
-          <Button disabled={sending} onClick={() => void submitFollowUp()}>
-            Send
-          </Button>
+      {error !== null && (
+        <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
+          {error}
+        </div>
+      )}
+
+      {(canSend || terminal) && (
+        <div className="border-border flex flex-col gap-1.5 border-t pt-3">
+          <span className="text-muted-foreground text-[11px]">
+            {terminal
+              ? 'This run is done — sending feedback resumes it with your notes.'
+              : 'Talk to the agent — it reads this while the run keeps going.'}
+          </span>
+          <div className="flex gap-2">
+            <Textarea
+              rows={2}
+              placeholder={
+                terminal
+                  ? 'Describe what should change…'
+                  : 'Send a follow-up message…'
+              }
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void submit();
+                }
+              }}
+              disabled={sending}
+              className="min-h-0 flex-1 resize-none"
+            />
+            <Button
+              disabled={sending}
+              onClick={() => void submit()}
+              className="self-end"
+            >
+              {terminal ? (
+                <>
+                  <MessageSquarePlus className="size-3.5" />
+                  Request changes
+                </>
+              ) : (
+                <>
+                  <Send className="size-3.5" />
+                  Send
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       )}
     </div>
