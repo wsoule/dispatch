@@ -6,18 +6,14 @@ import type { PaletteEntry } from './components/shell/CommandPalette';
 import { Sidebar } from './components/shell/Sidebar';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { TaskPeekPanel } from './components/tasks/TaskPeekPanel';
-import { useAllAgents } from './hooks/useAllAgents';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import type { GlobalView, ProjectView } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
-import {
-  dedupeProjectsByPath,
-  filterDispatchEnabledProjects,
-} from './lib/dispatchProjects';
-import { hasDispatch, listProjects } from './lib/tauri';
-import type { ProjectSummary } from './lib/types';
+import { basename } from './lib/projectName';
+import { isTerminalRunState } from './lib/runState';
+import { currentProjectRoot, hasDispatch } from './lib/tauri';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { GetStartedView } from './views/GetStartedView';
@@ -27,125 +23,77 @@ import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TasksListView } from './views/TasksListView';
 
-const LAST_PROJECT_STORAGE_KEY = 'dispatch:lastActiveProjectId';
-
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
-  // Overrides whatever's in the main pane with the get-started flow, scoped to one specific
-  // project — set by clicking a "no tracker" entry in the sidebar's project switcher.
-  // `null` means "not focused on a specific project" (the general first-run empty state can
-  // still show on its own, see `showGetStarted` below).
-  const [getStartedFocus, setGetStartedFocus] = useState<ProjectSummary | null>(
-    null
-  );
 
   useDataChangedEvents();
 
-  const { data: projects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: listProjects,
+  // The app is scoped to a single project — the one it was launched from (see
+  // `commands::current_project_root`'s doc comment for the `tauri dev`-vs-packaged-app
+  // resolution). This replaces the old `listProjects` + per-path `hasDispatch` fan-out, which
+  // enumerated every project Relay had ever seen (100+ on a real machine, many stale/deleted)
+  // and ran a `Promise.all` over all of them: one slow/failing entry there took the *whole*
+  // batch down, leaving every view stuck on `portLoading`'s "Loading" state forever, and even
+  // when it didn't outright fail, it could just as easily resolve to an unrelated project
+  // instead of the one this window is actually running in. `retry: false` on both queries
+  // below so a real failure surfaces as an explicit error rather than another perpetual spinner.
+  const {
+    data: root,
+    isError: rootError,
+    error: rootErrorDetail,
+  } = useQuery({
+    queryKey: ['current-project-root'],
+    queryFn: currentProjectRoot,
+    staleTime: Infinity,
+    retry: false,
   });
-  // Relay's project list can carry more than one row for the same path (see
-  // `dedupeProjectsByPath`'s doc comment) — collapsed to one row per path *before* anything
-  // dispatch-facing (the sidebar switcher, the palette's project entries, the cross-project
-  // "All Agents" fan-out) reads it, since a dispatchd sidecar is 1:1 with a path, never with
-  // Relay's row id.
-  const dedupedProjects = useMemo(
-    () => dedupeProjectsByPath(projects ?? []),
-    [projects]
-  );
-  const projectPaths = useMemo(
-    () => dedupedProjects.map((p) => p.path),
-    [dedupedProjects]
-  );
-  const { data: hasDispatchByPath } = useQuery({
-    queryKey: ['has-dispatch-map', projectPaths],
-    queryFn: async () => {
-      const entries = await Promise.all(
-        projectPaths.map(
-          async (path) => [path, await hasDispatch(path)] as const
-        )
-      );
-      return new Map(entries);
+
+  const {
+    data: rootHasDispatch,
+    isError: hasDispatchError,
+    error: hasDispatchErrorDetail,
+  } = useQuery({
+    queryKey: ['has-dispatch', root],
+    queryFn: () => {
+      if (root === undefined) throw new Error('project root not resolved');
+      return hasDispatch(root);
     },
-    enabled: projects !== undefined,
+    enabled: root !== undefined,
+    staleTime: Infinity,
+    retry: false,
   });
 
-  const dispatchProjects = useMemo(
+  const activeProject = useMemo(
     () =>
-      filterDispatchEnabledProjects(
-        dedupedProjects,
-        hasDispatchByPath ?? new Map()
-      ),
-    [dedupedProjects, hasDispatchByPath]
-  );
-  const dispatchProjectIds = useMemo(
-    () => new Set(dispatchProjects.map((p) => p.id)),
-    [dispatchProjects]
-  );
-  const otherProjects = useMemo(
-    () => dedupedProjects.filter((p) => !dispatchProjectIds.has(p.id)),
-    [dedupedProjects, dispatchProjectIds]
+      root !== undefined && rootHasDispatch === true
+        ? { path: root, name: basename(root) }
+        : null,
+    [root, rootHasDispatch]
   );
 
-  // Restores the last project this window had active (per the redesign brief's "default
-  // screen on launch: the last-active dispatch-enabled project's Board") once the
-  // dispatch-enabled project list resolves; falls back to the first dispatch-enabled
-  // project if there's no usable persisted id, and does nothing (leaving the get-started
-  // screen up) when there are none at all yet.
+  // Mirrors the previous "restore last active project" effect's one real job now that there
+  // is only ever one project to select: moves `navReducer` into its `project` section (default
+  // Board view, no stale peek/run) the moment this window's project resolves as
+  // dispatch-enabled. `projectId` here is just `navState`'s existing "is a project active"
+  // marker, not a switcher target — see `Sidebar`'s `hasActiveProject` prop for how it's read.
   useEffect(() => {
-    if (navState.activeProjectId !== null || dispatchProjects.length === 0)
-      return;
-    let restoreId: string | null = null;
-    try {
-      restoreId = window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY);
-    } catch {
-      restoreId = null;
-    }
-    const target =
-      dispatchProjects.find((p) => p.id === restoreId) ?? dispatchProjects[0];
-    dispatchNav({ type: 'selectProject', projectId: target.id });
-  }, [dispatchProjects, navState.activeProjectId]);
+    if (activeProject === null || navState.activeProjectId !== null) return;
+    dispatchNav({ type: 'selectProject', projectId: activeProject.path });
+  }, [activeProject, navState.activeProjectId]);
 
-  const activeProject =
-    dispatchProjects.find((p) => p.id === navState.activeProjectId) ?? null;
-
-  useEffect(() => {
-    if (activeProject === null) return;
-    try {
-      window.localStorage.setItem(LAST_PROJECT_STORAGE_KEY, activeProject.id);
-    } catch {
-      // Persisted "last active project" is a convenience, not a correctness requirement.
-    }
-  }, [activeProject]);
-
-  // Stabilized (useCallback) so `paletteEntries` below can list every handler it actually
-  // calls in its dependency array and mean it, rather than reaching for an
-  // `eslint-disable-next-line react-hooks/exhaustive-deps` to hide the fact that a plain
-  // function declared in the component body has a new identity every render.
-  const selectProject = useCallback((projectId: string) => {
-    setGetStartedFocus(null);
-    dispatchNav({ type: 'selectProject', projectId });
-  }, []);
-
-  const selectUninitialized = useCallback((project: ProjectSummary) => {
-    setGetStartedFocus(project);
-  }, []);
-
-  const setProjectView = useCallback((view: ProjectView) => {
-    setGetStartedFocus(null);
+  const selectProjectView = useCallback((view: ProjectView) => {
     dispatchNav({ type: 'setProjectView', view });
   }, []);
 
   const setGlobalView = useCallback((view: GlobalView) => {
-    setGetStartedFocus(null);
     dispatchNav({ type: 'setGlobalView', view });
   }, []);
 
-  const jumpToRun = useCallback((projectId: string, runId: string) => {
-    setGetStartedFocus(null);
-    dispatchNav({ type: 'selectProject', projectId });
+  // Jumps straight to the Runs view with `runId` already selected — used by both the task peek
+  // panel and the (now single-project) Agents view. There is only one project to switch to, so
+  // unlike the old cross-project `jumpToRun` this never needs a project id.
+  const jumpToRun = useCallback((runId: string) => {
     dispatchNav({ type: 'setProjectView', view: 'runs' });
     dispatchNav({ type: 'openRun', runId });
   }, []);
@@ -156,17 +104,24 @@ function App() {
   // in the phase-8 fix report).
   const onRunDispatched = useCallback(
     (runId: string) => {
-      setProjectView('runs');
+      selectProjectView('runs');
       dispatchNav({ type: 'openRun', runId });
     },
-    [setProjectView]
+    [selectProjectView]
   );
 
   const data = useDispatchProject(activeProject?.path ?? null, {
     selectedRunId: navState.activeRunId,
     onRunDispatched,
   });
-  const allAgents = useAllAgents(dispatchProjects);
+
+  // Every non-terminal run for this project — the "Agents" view's list and the sidebar's live
+  // badge both read from this single project's own run list now, not a cross-project fan-out
+  // of N daemons (the old `useAllAgents`, removed with this pivot).
+  const liveRuns = useMemo(
+    () => data.runs.filter((run) => !isTerminalRunState(run.state)),
+    [data.runs]
+  );
 
   useGlobalKeyboard({
     // `modalOpen` (I3) is computed inside the hook itself now, via a live DOM check for any
@@ -219,31 +174,31 @@ function App() {
           id: 'action-plan-work',
           label: 'Plan work…',
           kind: 'action',
-          run: () => setProjectView('plans'),
+          run: () => selectProjectView('plans'),
         },
         {
           id: 'go-board',
           label: 'Go to Board',
           kind: 'go to',
-          run: () => setProjectView('board'),
+          run: () => selectProjectView('board'),
         },
         {
           id: 'go-tasks',
           label: 'Go to Tasks',
           kind: 'go to',
-          run: () => setProjectView('tasks'),
+          run: () => selectProjectView('tasks'),
         },
         {
           id: 'go-runs',
           label: 'Go to Runs',
           kind: 'go to',
-          run: () => setProjectView('runs'),
+          run: () => selectProjectView('runs'),
         },
         {
           id: 'go-plans',
           label: 'Go to Plans',
           kind: 'go to',
-          run: () => setProjectView('plans'),
+          run: () => selectProjectView('plans'),
         }
       );
       for (const doc of paletteTasks) {
@@ -253,7 +208,7 @@ function App() {
           sublabel: doc.meta.id,
           kind: 'task',
           run: () => {
-            setProjectView('board');
+            selectProjectView('board');
             dispatchNav({ type: 'openPeek', taskId: doc.meta.id });
           },
         });
@@ -289,57 +244,64 @@ function App() {
         run: () => setGlobalView('settings'),
       }
     );
-    for (const project of dispatchProjects) {
-      entries.push({
-        id: `project-${project.id}`,
-        label: project.name,
-        sublabel: 'switch project',
-        kind: 'project',
-        run: () => selectProject(project.id),
-      });
-    }
     return entries;
   }, [
     activeProject,
     paletteTasks,
     paletteReadyIds,
     handleDispatch,
-    dispatchProjects,
-    setProjectView,
+    selectProjectView,
     setGlobalView,
-    selectProject,
   ]);
 
+  // Resolution states for the single active project, checked in order: an outright failure to
+  // resolve the project root or check it for a `.dispatch/` tracker (rare — both are local
+  // filesystem operations — but `retry: false` means either can surface as an error rather
+  // than hang) always wins over "still loading," and "still loading" always wins over
+  // rendering the wrong thing while `root`/`rootHasDispatch` are still in flight.
+  const resolutionError = rootError
+    ? `Couldn't resolve the current project: ${rootErrorDetail instanceof Error ? rootErrorDetail.message : String(rootErrorDetail)}`
+    : hasDispatchError
+      ? `Couldn't check this project for a .dispatch/ tracker: ${hasDispatchErrorDetail instanceof Error ? hasDispatchErrorDetail.message : String(hasDispatchErrorDetail)}`
+      : null;
   const showGetStarted =
-    getStartedFocus !== null ||
-    (navState.activeProjectId === null && dispatchProjects.length === 0);
+    resolutionError === null && root !== undefined && rootHasDispatch === false;
+  const stillResolving =
+    resolutionError === null &&
+    (root === undefined || rootHasDispatch === undefined);
 
   return (
     <div className="app-shell">
       <Sidebar
-        dispatchProjects={dispatchProjects}
-        otherProjects={otherProjects}
-        activeProjectId={navState.activeProjectId}
+        projectName={activeProject?.name ?? null}
+        projectPath={activeProject?.path ?? null}
+        hasActiveProject={activeProject !== null}
         section={navState.section}
         projectView={navState.projectView}
         globalView={navState.globalView}
-        liveAgentCount={allAgents.liveRuns.length}
-        onSelectProject={selectProject}
-        onSelectUninitialized={selectUninitialized}
-        onSetProjectView={setProjectView}
+        liveAgentCount={liveRuns.length}
+        onSetProjectView={selectProjectView}
         onSetGlobalView={setGlobalView}
       />
       <main className="app-main">
-        {showGetStarted ? (
-          <GetStartedView
-            projects={dedupedProjects}
-            dispatchEnabledIds={dispatchProjectIds}
-            focusProjectId={getStartedFocus?.id ?? null}
-          />
+        {resolutionError !== null ? (
+          <p className="board-view-status">{resolutionError}</p>
+        ) : stillResolving ? (
+          <p className="board-view-status">Loading project…</p>
+        ) : showGetStarted ? (
+          <GetStartedView projectPath={root} />
         ) : navState.section === 'global' ? (
           <>
             {navState.globalView === 'all-agents' && (
-              <AllAgentsView data={allAgents} onJumpToRun={jumpToRun} />
+              <AllAgentsView
+                liveRuns={liveRuns}
+                portLoading={data.portLoading}
+                portError={data.portError}
+                portErrorDetail={data.portErrorDetail}
+                client={data.client}
+                onRetry={data.retryEnsureDispatchd}
+                onJumpToRun={jumpToRun}
+              />
             )}
             {navState.globalView === 'sessions' && <SessionsHubView />}
             {navState.globalView === 'settings' && (
@@ -357,7 +319,7 @@ function App() {
                   dispatchNav({ type: 'openPeek', taskId })
                 }
                 onNewTask={() => setShowCreate(true)}
-                onPlanWork={() => setProjectView('plans')}
+                onPlanWork={() => selectProjectView('plans')}
               />
             )}
             {navState.projectView === 'tasks' && (
@@ -394,7 +356,7 @@ function App() {
           onDispatch={data.handleDispatch}
           onOpenRun={(runId) => {
             dispatchNav({ type: 'closePeek' });
-            setProjectView('runs');
+            selectProjectView('runs');
             dispatchNav({ type: 'openRun', runId });
           }}
         />

@@ -41,47 +41,23 @@
   padding: var(--space-3) var(--space-2) var(--space-2);
 }
 
-.sidebar-project-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 12rem;
-  overflow-y: auto;
-}
-
 .sidebar-project-empty {
   padding: 0 var(--space-2);
   font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
-.sidebar-project-item {
+/* Non-interactive — this app is scoped to one project, not a switcher, so the active
+   project's row never needs the hover/active-state treatment `sidebar-nav-item` gets. */
+.sidebar-project-current {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
   padding: var(--space-2);
-  border: none;
-  background: transparent;
-  border-radius: 7px;
   font-size: var(--text-base);
-  color: var(--text-secondary);
-  text-align: left;
-  cursor: pointer;
-}
-
-.sidebar-project-item:hover {
-  background: var(--surface-raised);
-}
-
-.sidebar-project-item.active {
-  background: var(--accent-muted);
-  color: var(--accent);
   font-weight: 500;
-}
-
-.sidebar-project-item-uninitialized {
-  color: var(--text-ghost);
+  color: var(--text-primary);
 }
 
 .sidebar-project-dot {
@@ -91,23 +67,12 @@
   flex-shrink: 0;
 }
 
-.sidebar-project-dot-empty {
-  border: 1px solid var(--border-strong);
-  background: transparent;
-}
-
 .sidebar-project-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sidebar-project-tag {
-  font-size: var(--text-xs);
-  color: var(--text-ghost);
-  flex-shrink: 0;
 }
 
 .sidebar-nav-item {

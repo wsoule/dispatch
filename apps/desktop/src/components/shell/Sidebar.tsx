@@ -1,6 +1,5 @@
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
-import type { ProjectSummary } from '../../lib/types';
 import './Sidebar.css';
 
 const PROJECT_VIEWS: { id: ProjectView; label: string; icon: string }[] = [
@@ -17,45 +16,41 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: string }[] = [
 ];
 
 interface SidebarProps {
-  dispatchProjects: ProjectSummary[];
-  otherProjects: ProjectSummary[];
-  activeProjectId: string | null;
+  /** Basename of the single project this window is scoped to, or `null` before
+   * `currentProjectRoot()` has resolved. There is no switcher anymore — this app is a
+   * workspace for one project, not a project picker. */
+  projectName: string | null;
+  /** Full path, shown as a tooltip on the project row so the exact root is always checkable
+   * even though only the basename is displayed. */
+  projectPath: string | null;
+  hasActiveProject: boolean;
   section: 'project' | 'global';
   projectView: ProjectView;
   globalView: GlobalView;
-  /** Count of non-terminal runs across every dispatch-enabled project — the "All Agents"
-   * badge, so you can tell something is live without leaving whatever you're looking at. */
+  /** Count of non-terminal runs for this project — the "All Agents" badge, so you can tell
+   * something is live without leaving whatever you're looking at. */
   liveAgentCount: number;
-  onSelectProject: (projectId: string) => void;
-  /** A project without a `.dispatch/` tracker was clicked — routes to the get-started flow
-   * scoped to that project rather than doing nothing (no dead buttons in the switcher). */
-  onSelectUninitialized: (project: ProjectSummary) => void;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
 }
 
 /**
- * Persistent, Linear-style left rail: wordmark, a project switcher (dispatch-enabled
- * projects first, everything else greyed under "no tracker"), the active project's primary
- * nav (Board/Tasks/Runs/Plans), and the global section (All Agents/Sessions/Settings) below
- * a divider. Replaces the old flat `nav/Sidebar.tsx` — there is no more single global "Tasks"
- * nav item that browses every project; picking a project here *is* the navigation.
+ * Persistent, Linear-style left rail: wordmark, the one active project's name (not a
+ * switcher — this app pivoted from a multi-project switcher to a single-project workspace),
+ * that project's primary nav (Board/Tasks/Runs/Plans), and the global section (All Agents/
+ * Sessions/Settings) below a divider.
  */
 export function Sidebar({
-  dispatchProjects,
-  otherProjects,
-  activeProjectId,
+  projectName,
+  projectPath,
+  hasActiveProject,
   section,
   projectView,
   globalView,
   liveAgentCount,
-  onSelectProject,
-  onSelectUninitialized,
   onSetProjectView,
   onSetGlobalView,
 }: SidebarProps) {
-  const hasActiveProject = activeProjectId !== null;
-
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -63,41 +58,21 @@ export function Sidebar({
         Dispatch
       </div>
 
-      <div className="sidebar-section-label">Projects</div>
-      <nav className="sidebar-project-list">
-        {dispatchProjects.map((project) => (
-          <button
-            key={project.id}
-            type="button"
-            className={`sidebar-project-item${
-              activeProjectId === project.id ? ' active' : ''
-            }`}
-            onClick={() => onSelectProject(project.id)}
-          >
-            <span
-              className="sidebar-project-dot"
-              style={{ background: colorForProject(project.id) }}
-            />
-            <span className="sidebar-project-name">{project.name}</span>
-          </button>
-        ))}
-        {otherProjects.map((project) => (
-          <button
-            key={project.id}
-            type="button"
-            className="sidebar-project-item sidebar-project-item-uninitialized"
-            onClick={() => onSelectUninitialized(project)}
-            title="No tracker — initialize dispatch in this project"
-          >
-            <span className="sidebar-project-dot sidebar-project-dot-empty" />
-            <span className="sidebar-project-name">{project.name}</span>
-            <span className="sidebar-project-tag">no tracker</span>
-          </button>
-        ))}
-        {dispatchProjects.length === 0 && otherProjects.length === 0 && (
-          <p className="sidebar-project-empty">No projects found yet.</p>
-        )}
-      </nav>
+      <div className="sidebar-section-label">Project</div>
+      {projectName !== null ? (
+        <div
+          className="sidebar-project-current"
+          title={projectPath ?? undefined}
+        >
+          <span
+            className="sidebar-project-dot"
+            style={{ background: colorForProject(projectName) }}
+          />
+          <span className="sidebar-project-name">{projectName}</span>
+        </div>
+      ) : (
+        <p className="sidebar-project-empty">Resolving project…</p>
+      )}
 
       <div className="sidebar-section-label">Workspace</div>
       <nav>
