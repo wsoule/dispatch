@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,6 +40,17 @@ describe('watchTasks', () => {
     const changed = waitForChange(store.tasksDir);
     store.create({ title: 'New task' });
     await changed;
+  });
+
+  it('does not throw when the tasks dir is missing (creates it instead)', () => {
+    // A daemon can be pointed at a root whose .dispatch/tasks doesn't exist
+    // (stale worktree, partially-removed .dispatch). watch() would throw ENOENT
+    // and crash startServer; watchTasks must survive it.
+    const bare = mkdtempSync(join(tmpdir(), 'dispatch-watcher-bare-'));
+    const missing = join(bare, '.dispatch', 'tasks');
+    expect(existsSync(missing)).toBe(false);
+    watcher = watchTasks(missing, () => {});
+    expect(existsSync(missing)).toBe(true);
   });
 
   it('collapses a burst of writes into a single onChange call', async () => {
