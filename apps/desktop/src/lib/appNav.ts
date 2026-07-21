@@ -17,6 +17,7 @@ export type ProjectView =
   | 'board'
   | 'runs'
   | 'pull-requests'
+  | 'notes'
   | 'plans';
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar. */

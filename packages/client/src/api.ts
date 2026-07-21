@@ -151,6 +151,36 @@ export interface PrDetail {
 
 export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
 
+// The notes/triage hub — mirrors Note / NoteKind in packages/server/src/notes.ts. A
+// lightweight item (triage an agent found, a follow-up, a free note, a personal todo) that
+// can later be promoted into a real task.
+export type NoteKind = 'note' | 'triage' | 'followup' | 'todo';
+
+export interface Note {
+  id: string;
+  kind: NoteKind;
+  title: string;
+  body: string;
+  done: boolean;
+  linkedTaskId: string | null;
+  createdByRunId: string | null;
+  created: string;
+  updated: string;
+}
+
+export interface CreateNoteInput {
+  kind: NoteKind;
+  title: string;
+  body?: string;
+}
+
+export interface UpdateNotePatch {
+  title?: string;
+  body?: string;
+  kind?: NoteKind;
+  done?: boolean;
+}
+
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
@@ -165,7 +195,8 @@ export type ServerEvent =
   // Phase 5 P2: a plan's state (running -> ready|failed) changed, or it was
   // just confirmed. Same "go refetch" contract as the other *.changed events
   // — mirrors packages/server/src/events.ts exactly.
-  | { type: 'plan.changed'; planId: string };
+  | { type: 'plan.changed'; planId: string }
+  | { type: 'note.changed' };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's
@@ -408,6 +439,13 @@ export interface ApiClient {
     body?: string
   ): Promise<PrDetail>;
   commentPr(runId: string, body: string): Promise<PrDetail>;
+  // The notes/triage hub.
+  fetchNotes(): Promise<Note[]>;
+  createNote(input: CreateNoteInput): Promise<Note>;
+  updateNote(id: string, patch: UpdateNotePatch): Promise<Note>;
+  deleteNote(id: string): Promise<void>;
+  /** Promote a note into a task; returns the new task. */
+  promoteNote(id: string): Promise<{ meta: { id: string } }>;
   // Phase 5 P2: the messaging half (`agent_message`'s daemon-side landing
   // spot) — injects a message into a *running* run, prefixed
   // `[message from <sender>]` server-side (a generic "another agent" label
@@ -503,6 +541,19 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ body }),
       }),
+    fetchNotes: () => request(baseUrl, '/api/notes'),
+    createNote: (input) =>
+      request(baseUrl, '/api/notes', { method: 'POST', ...jsonBody(input) }),
+    updateNote: (id, patch) =>
+      request(baseUrl, `/api/notes/${id}`, {
+        method: 'PATCH',
+        ...jsonBody(patch),
+      }),
+    deleteNote: async (id) => {
+      await request(baseUrl, `/api/notes/${id}`, { method: 'DELETE' });
+    },
+    promoteNote: (id) =>
+      request(baseUrl, `/api/notes/${id}/promote`, { method: 'POST' }),
     injectRun: (runId, text, fromRunId) =>
       request(baseUrl, `/api/runs/${runId}/inject`, {
         method: 'POST',

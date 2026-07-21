@@ -11,6 +11,8 @@ import type { CreateInput, DispatchConfig, UpdatePatch } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import type { NoteKind } from './notes.js';
+import { NOTE_KINDS, type NoteStore } from './notes.js';
 import type { EpicEngine } from './orchestrator/epic.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
@@ -35,6 +37,7 @@ export interface ApiContext {
   planManager: PlanManager;
   epicEngine: EpicEngine;
   prManager: PrManager;
+  noteStore: NoteStore;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
@@ -535,6 +538,110 @@ async function startEpic(
 
 // Routes every `/api/*` request. Called only for paths under `/api` — the
 // caller (index.ts) handles `/ws` upgrades and static file serving itself.
+// POST /api/notes — create a note/triage/follow-up/todo. Used by the app's
+// Notes tab and (via the MCP `dispatch_note` tool) by agents flagging triage
+// they find mid-run. `createdByRunId` optionally records which agent added it.
+async function createNote(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    kind?: unknown;
+    title?: unknown;
+    body?: unknown;
+    createdByRunId?: unknown;
+  };
+  if (
+    typeof body.kind !== 'string' ||
+    !NOTE_KINDS.includes(body.kind as NoteKind)
+  ) {
+    return errorResponse(
+      400,
+      `invalid kind: ${String(body.kind)} (expected ${NOTE_KINDS.join('|')})`
+    );
+  }
+  if (typeof body.title !== 'string' || body.title.trim() === '') {
+    return errorResponse(400, 'invalid title: title is required');
+  }
+  const note = ctx.noteStore.create({
+    kind: body.kind as NoteKind,
+    title: body.title.trim(),
+    body: typeof body.body === 'string' ? body.body : undefined,
+    createdByRunId:
+      typeof body.createdByRunId === 'string' ? body.createdByRunId : undefined,
+  });
+  ctx.events.broadcast({ type: 'note.changed' });
+  return jsonResponse(note, 201);
+}
+
+// PATCH /api/notes/:id — edit a note or toggle its done flag.
+async function updateNote(
+  req: Request,
+  ctx: ApiContext,
+  id: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    title?: unknown;
+    body?: unknown;
+    kind?: unknown;
+    done?: unknown;
+  };
+  if (
+    body.kind !== undefined &&
+    (typeof body.kind !== 'string' ||
+      !NOTE_KINDS.includes(body.kind as NoteKind))
+  ) {
+    return errorResponse(400, `invalid kind: ${String(body.kind)}`);
+  }
+  try {
+    const note = ctx.noteStore.update(id, {
+      title: typeof body.title === 'string' ? body.title : undefined,
+      body: typeof body.body === 'string' ? body.body : undefined,
+      kind: body.kind as NoteKind | undefined,
+      done: typeof body.done === 'boolean' ? body.done : undefined,
+    });
+    ctx.events.broadcast({ type: 'note.changed' });
+    return jsonResponse(note);
+  } catch {
+    return errorResponse(404, `note not found: ${id}`);
+  }
+}
+
+// DELETE /api/notes/:id.
+function deleteNote(ctx: ApiContext, id: string): Response {
+  try {
+    ctx.noteStore.delete(id);
+    ctx.events.broadcast({ type: 'note.changed' });
+    return jsonResponse({ ok: true });
+  } catch {
+    return errorResponse(404, `note not found: ${id}`);
+  }
+}
+
+// POST /api/notes/:id/promote — turn a note into a real task (its title +
+// body become the task's title + description), and link the note to the new
+// task so the hub can show "promoted → t-xxxxxx" instead of offering it again.
+function promoteNote(ctx: ApiContext, id: string): Response {
+  const note = ctx.noteStore.get(id);
+  if (note === null) return errorResponse(404, `note not found: ${id}`);
+  if (note.linkedTaskId !== null) {
+    return errorResponse(409, `note already promoted: ${note.linkedTaskId}`);
+  }
+  const task = ctx.store.create({
+    title: note.title,
+    description: note.body,
+    // A triage an agent flagged is real work → default it to a task; everything
+    // else (a follow-up/note/todo) becomes a task too, all in the backlog.
+    kind: 'task',
+  });
+  ctx.noteStore.update(id, { linkedTaskId: task.meta.id, done: true });
+  ctx.cache.rebuild(ctx.store);
+  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'note.changed' });
+  return jsonResponse(task, 201);
+}
+
 export async function handleApi(
   req: Request,
   ctx: ApiContext
@@ -682,6 +789,28 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await messageUser(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'notes') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.noteStore.list());
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await createNote(req, ctx);
+      }
+      if (segments.length === 2 && method === 'PATCH') {
+        return await updateNote(req, ctx, segments[1]);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        return deleteNote(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'promote' &&
+        method === 'POST'
+      ) {
+        return promoteNote(ctx, segments[1]);
       }
     }
 

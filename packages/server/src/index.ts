@@ -8,6 +8,7 @@ import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
+import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
@@ -263,6 +264,7 @@ export async function startServer(
     epicEngine,
     prManager,
     prCapability,
+    noteStore: new NoteStore(rootDir),
   };
 
   const server = Bun.serve({
