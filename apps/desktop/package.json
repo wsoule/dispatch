@@ -14,23 +14,34 @@
   },
   "dependencies": {
     "@dispatch/client": "workspace:*",
+    "@dnd-kit/core": "catalog:",
+    "@dnd-kit/sortable": "catalog:",
+    "@dnd-kit/utilities": "catalog:",
     "@fontsource/ibm-plex-mono": "catalog:",
     "@fontsource/inter": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tauri-apps/api": "catalog:",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
+    "lucide-react": "catalog:",
+    "radix-ui": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "tailwind-merge": "catalog:"
   },
   "devDependencies": {
     "@dispatch/core": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
     "@tauri-apps/cli": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "tw-animate-css": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
   }

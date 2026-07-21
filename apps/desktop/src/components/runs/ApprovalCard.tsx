@@ -1,7 +1,7 @@
+import { TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
-import { Button } from '../ui/Button';
-import './ApprovalCard.css';
+import { Button } from '@/ui/button';
 
 interface ApprovalCardProps {
   toolName: string;
@@ -29,6 +29,8 @@ function formatInput(toolInput: unknown): string {
  * scripted approval gate (FakeExecutor): shows which tool wants to run and with what input,
  * then lets the user allow or deny it. Both buttons disable together while a decision is in
  * flight so a slow network can't double-submit two different answers to the same request.
+ * Per the redesign brief, Approve is the single filled/primary action on this surface; Deny
+ * is a ghost button so the two aren't weighted equally.
  */
 export function ApprovalCard({
   toolName,
@@ -51,23 +53,33 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="approval-card">
-      <div className="approval-card-header">
-        <span className="approval-card-label">Waiting on approval</span>
-        <span className="approval-card-tool">{toolName}</span>
+    <div className="animate-in fade-in-0 flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5 duration-150">
+      <div className="flex items-center gap-2">
+        <TriangleAlert className="size-3.5 shrink-0 text-amber-500" />
+        <span className="text-[11px] font-medium tracking-wide text-amber-600 uppercase dark:text-amber-400">
+          Waiting on approval
+        </span>
+        <span className="text-foreground truncate font-mono text-[12px]">
+          {toolName}
+        </span>
       </div>
-      <pre className="approval-card-input">{formatInput(toolInput)}</pre>
-      {error !== null && <div className="approval-card-error">{error}</div>}
-      <div className="approval-card-actions">
+      <pre className="border-border bg-card text-muted-foreground max-h-40 overflow-auto rounded-md border p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
+        {formatInput(toolInput)}
+      </pre>
+      {error !== null && (
+        <div className="text-destructive text-[12px]">{error}</div>
+      )}
+      <div className="flex justify-end gap-2">
         <Button
-          variant="secondary"
+          variant="ghost"
+          size="sm"
           disabled={deciding}
           onClick={() => void decide(false)}
         >
           Deny
         </Button>
-        <Button disabled={deciding} onClick={() => void decide(true)}>
-          Allow
+        <Button size="sm" disabled={deciding} onClick={() => void decide(true)}>
+          Approve
         </Button>
       </div>
     </div>

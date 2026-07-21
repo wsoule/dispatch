@@ -1,15 +1,37 @@
 import type { PlannedTask, PlanProposal, PlanState } from '@dispatch/client';
 import { reduceProposal } from '@dispatch/client';
 import type { Priority } from '@dispatch/core';
+import {
+  AlertTriangle,
+  Check,
+  CircleAlert,
+  History,
+  Link2,
+  Loader2,
+  Minus,
+  Send,
+  SignalHigh,
+  SignalLow,
+  SignalMedium,
+  Trash2,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { Button } from '../components/ui/Button';
-import { Pill } from '../components/ui/Pill';
-import { Select } from '../components/ui/Select';
-import { TextInput } from '../components/ui/TextInput';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import './PlansView.css';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import { Input } from '@/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
+import { Skeleton } from '@/ui/skeleton';
+import { Textarea } from '@/ui/textarea';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
@@ -49,6 +71,53 @@ function saveHistory(projectPath: string, history: PlanHistoryEntry[]): void {
   }
 }
 
+/** Small color-coded lucide icon in place of a text pill — only urgent/high get a color
+ * treatment (matches `priorityTone`'s "don't compete for attention" rule elsewhere in the
+ * app); medium/low/none stay a muted, silent icon shape. */
+function PriorityIcon({
+  priority,
+  className,
+}: {
+  priority: Priority;
+  className?: string;
+}) {
+  switch (priority) {
+    case 'urgent':
+      return <AlertTriangle className={cn('text-destructive', className)} />;
+    case 'high':
+      return (
+        <SignalHigh
+          className={cn('text-amber-500 dark:text-amber-400', className)}
+        />
+      );
+    case 'medium':
+      return (
+        <SignalMedium className={cn('text-muted-foreground', className)} />
+      );
+    case 'low':
+      return <SignalLow className={cn('text-muted-foreground', className)} />;
+    case 'none':
+      return <Minus className={cn('text-muted-foreground/60', className)} />;
+  }
+}
+
+/** Small colored dot for a history entry's plan state — the brief's "status = a dot, not a
+ * text pill" rule. `running` pulses (mirrors the Board's live-run pulse) since it's the one
+ * state that's actively changing underneath the user. */
+function PlanStateDot({ state }: { state: PlanHistoryEntry['state'] }) {
+  return (
+    <span
+      className={cn(
+        'size-1.5 shrink-0 rounded-full',
+        state === 'ready' && 'bg-emerald-500',
+        state === 'failed' && 'bg-destructive',
+        state === 'running' && 'bg-primary animate-pulse',
+        state === 'unknown' && 'bg-muted-foreground/40'
+      )}
+    />
+  );
+}
+
 interface PlanTaskRowProps {
   task: PlannedTask;
   index: number;
@@ -57,10 +126,10 @@ interface PlanTaskRowProps {
   onRemove: (index: number) => void;
 }
 
-/** One row of the full-width proposal table. "Dependency arrows" are rendered as a plain
- * "← blocked by …" chip line naming the blocking tasks by their (possibly just-edited)
+/** One card of the proposal review list. "Dependency arrows" are rendered as a plain
+ * "blocked by …" badge line naming the blocking tasks by their (possibly just-edited)
  * title — a real arrow-diagram would need a layout engine this view doesn't have yet; the
- * chip conveys the same ordering information, and titles are looked up live off the current
+ * badges convey the same ordering information, and titles are looked up live off the current
  * draft so an edited blocker's new title shows immediately in its dependents' rows. */
 function PlanTaskRow({
   task,
@@ -74,48 +143,76 @@ function PlanTaskRow({
     .filter((title): title is string => title !== undefined);
 
   return (
-    <div className="plans-view-task-row">
-      <span className="plans-view-task-row-index">{index + 1}</span>
-      <div className="plans-view-task-row-main">
-        <TextInput
-          className="plans-view-task-row-title"
-          value={task.title}
-          onChange={(e) => onEdit(index, { title: e.target.value })}
-          aria-label={`Task ${index + 1} title`}
-        />
-        <textarea
-          className="plans-view-task-row-description"
-          rows={2}
-          value={task.description}
-          onChange={(e) => onEdit(index, { description: e.target.value })}
-          aria-label={`Task ${index + 1} description`}
-        />
-        {blockerTitles.length > 0 && (
-          <div className="plans-view-task-row-blocked">
-            ← blocked by {blockerTitles.join(', ')}
-          </div>
-        )}
+    <div className="border-border bg-card hover:border-muted-foreground/30 flex flex-col gap-2 rounded-lg border p-3 transition-colors duration-150">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground w-5 shrink-0 font-mono text-[11px]">
+          {index + 1}
+        </span>
+        <Select
+          value={task.priority}
+          onValueChange={(value) =>
+            onEdit(index, { priority: value as Priority })
+          }
+        >
+          <SelectTrigger
+            size="sm"
+            aria-label={`Task ${index + 1} priority`}
+            className="h-7 w-[112px] gap-1.5 px-2 text-[12px]"
+          >
+            <PriorityIcon priority={task.priority} className="size-3.5" />
+            <SelectValue className="capitalize" />
+          </SelectTrigger>
+          <SelectContent align="start">
+            {PRIORITIES.map((p) => (
+              <SelectItem key={p} value={p}>
+                <PriorityIcon priority={p} className="size-3.5" />
+                <span className="capitalize">{p}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex-1" />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => onRemove(index)}
+          aria-label={`Remove task ${index + 1}`}
+          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
       </div>
-      <Select
-        value={task.priority}
-        onChange={(e) =>
-          onEdit(index, { priority: e.target.value as Priority })
-        }
-        aria-label={`Task ${index + 1} priority`}
-      >
-        {PRIORITIES.map((p) => (
-          <option key={p} value={p}>
-            {p}
-          </option>
-        ))}
-      </Select>
-      <Button
-        variant="secondary"
-        onClick={() => onRemove(index)}
-        aria-label={`Remove task ${index + 1}`}
-      >
-        Remove
-      </Button>
+
+      <Input
+        value={task.title}
+        onChange={(e) => onEdit(index, { title: e.target.value })}
+        aria-label={`Task ${index + 1} title`}
+        className="focus-visible:ring-ring/40 h-auto border-none bg-transparent px-0 py-0.5 text-[13px] font-medium shadow-none focus-visible:ring-1"
+      />
+      <Textarea
+        rows={2}
+        value={task.description}
+        onChange={(e) => onEdit(index, { description: e.target.value })}
+        aria-label={`Task ${index + 1} description`}
+        className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-y border-none bg-transparent px-0 py-0.5 text-[12px] shadow-none focus-visible:ring-1"
+      />
+
+      {blockerTitles.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <Link2 className="text-muted-foreground size-3" />
+          <span className="text-muted-foreground text-[11px]">Blocked by</span>
+          {blockerTitles.map((title, i) => (
+            <Badge
+              key={`${title}-${i}`}
+              variant="secondary"
+              className="max-w-[12rem] truncate font-normal"
+            >
+              {title}
+            </Badge>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -128,7 +225,7 @@ interface PlansViewProps {
 /**
  * The plan-work flow as its own primary view rather than a modal: a composer at top
  * ("Describe the work…"), this session's plan history below it, and — once a plan resolves
- * — a full-width editable proposal table with a confirm bar, in place of the composer.
+ * — an editable proposal review list, in place of the composer.
  */
 export function PlansView({ data, projectPath }: PlansViewProps) {
   const [history, setHistory] = useState<PlanHistoryEntry[]>(() =>
@@ -256,60 +353,92 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     );
   }
 
+  const planIsPending =
+    data.planId !== null &&
+    !showProposalTable &&
+    (data.planRecord === undefined || data.planRecord.state === 'running');
+
   return (
-    <div className="plans-view">
+    <div className="mx-auto flex w-full max-w-[60rem] flex-col gap-6">
       <h1 className="view-topbar-title">Plans</h1>
 
       {!showProposalTable && (
-        <div className="plans-view-composer">
+        <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
           {submitError !== null && (
-            <div className="plans-view-error">{submitError}</div>
+            <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+              <CircleAlert className="size-4 shrink-0" />
+              <span>{submitError}</span>
+            </div>
           )}
-          <textarea
-            className="plans-view-prompt-input"
+          <Textarea
             rows={4}
             placeholder="Describe the work — the planner will propose an epic and its tasks…"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            className="resize-y text-[13px]"
           />
-          <div className="plans-view-composer-actions">
+          <div className="flex justify-end">
             <Button
               disabled={submitting || prompt.trim() === ''}
               onClick={() => void submitPrompt()}
             >
-              {submitting ? 'Starting…' : 'Plan work…'}
+              {submitting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> Starting…
+                </>
+              ) : (
+                <>
+                  <Send className="size-4" /> Plan work…
+                </>
+              )}
             </Button>
           </div>
         </div>
       )}
 
-      {data.planId !== null &&
-        !showProposalTable &&
-        (data.planRecord === undefined ||
-          data.planRecord.state === 'running') && (
-          <p className="plans-view-status">
-            Planning… the agent is reading the codebase and drafting an epic and
-            its tasks. This can take a minute.
-          </p>
-        )}
+      {planIsPending && (
+        <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
+          <div className="text-muted-foreground flex items-center gap-2 text-[13px]">
+            <Loader2 className="text-primary size-4 animate-spin" />
+            <span>
+              Planning — the agent is reading the codebase and drafting an epic
+              and its tasks. This can take a minute.
+            </span>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </div>
+        </div>
+      )}
 
       {data.planId !== null && data.planRecord?.state === 'failed' && (
-        <p className="plans-view-error">
-          Planning failed
-          {data.planRecord.error ? `: ${data.planRecord.error}` : '.'}
-        </p>
+        <div className="border-destructive/30 bg-destructive/10 text-destructive animate-in fade-in-0 flex items-center gap-2 rounded-md border px-3 py-2 text-[13px] duration-150">
+          <CircleAlert className="size-4 shrink-0" />
+          <span>
+            Planning failed
+            {data.planRecord.error ? `: ${data.planRecord.error}` : '.'}
+          </span>
+        </div>
       )}
 
       {showProposalTable && draft !== null && (
-        <div className="plans-view-proposal">
+        <div className="animate-in fade-in-0 flex flex-col gap-4 duration-150">
           {confirmError !== null && (
-            <div className="plans-view-error">{confirmError}</div>
+            <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+              <CircleAlert className="size-4 shrink-0" />
+              <span>{confirmError}</span>
+            </div>
           )}
 
           {draft.epic !== undefined && (
-            <div className="plans-view-epic">
-              <TextInput
-                className="plans-view-epic-title"
+            <div className="border-border bg-card flex flex-col gap-2 rounded-lg border p-4">
+              <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                Epic
+              </div>
+              <Input
                 value={draft.epic.title}
                 onChange={(e) =>
                   setDraft((prev) =>
@@ -322,9 +451,9 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
                   )
                 }
                 aria-label="Epic title"
+                className="focus-visible:ring-ring/40 h-auto border-none bg-transparent px-0 text-[14px] font-medium shadow-none focus-visible:ring-1"
               />
-              <textarea
-                className="plans-view-epic-description"
+              <Textarea
                 rows={2}
                 value={draft.epic.description}
                 onChange={(e) =>
@@ -338,11 +467,12 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
                   )
                 }
                 aria-label="Epic description"
+                className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-y border-none bg-transparent px-0 text-[13px] shadow-none focus-visible:ring-1"
               />
             </div>
           )}
 
-          <div className="plans-view-task-table">
+          <div className="flex flex-col gap-2">
             {draft.tasks.map((task, i) => (
               <PlanTaskRow
                 key={taskKeys[i] ?? i}
@@ -355,9 +485,9 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
             ))}
           </div>
 
-          <div className="plans-view-confirm-bar">
+          <div className="border-border flex items-center justify-end gap-2 border-t pt-3">
             <Button
-              variant="secondary"
+              variant="ghost"
               onClick={() => {
                 setDraft(null);
                 setTaskKeys([]);
@@ -371,45 +501,52 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
               disabled={confirming || draft.tasks.length === 0}
               onClick={() => void submitConfirm()}
             >
-              {confirming ? 'Creating…' : `Confirm ${draft.tasks.length} tasks`}
+              {confirming ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> Creating…
+                </>
+              ) : (
+                <>
+                  <Check className="size-4" /> Confirm {draft.tasks.length}{' '}
+                  tasks
+                </>
+              )}
             </Button>
           </div>
         </div>
       )}
 
-      <div className="plans-view-history">
-        <div className="plans-view-history-title">History</div>
+      <div className="flex flex-col gap-2">
+        <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+          History
+        </div>
         {history.length === 0 ? (
-          <p className="plans-view-status">
-            No plans started yet this session.
-          </p>
+          <div className="border-border flex flex-col items-center gap-2 rounded-lg border border-dashed py-8 text-center">
+            <History className="text-muted-foreground size-5" />
+            <p className="text-muted-foreground text-[13px]">
+              No plans started yet this session.
+            </p>
+          </div>
         ) : (
-          history.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              className={`plans-view-history-item${
-                entry.id === data.planId ? ' active' : ''
-              }`}
-              onClick={() => openHistoryEntry(entry)}
-            >
-              <span className="plans-view-history-item-prompt">
-                {entry.prompt}
-              </span>
-              <Pill
-                variant="status"
-                tone={
-                  entry.state === 'ready'
-                    ? 'green'
-                    : entry.state === 'failed'
-                      ? 'red'
-                      : 'gray'
-                }
+          <div className="flex flex-col gap-1.5">
+            {history.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => openHistoryEntry(entry)}
+                className={cn(
+                  'border-border bg-card hover:border-muted-foreground/30 flex items-center gap-2 rounded-md border px-3 py-2 text-left text-[13px] transition-colors duration-150',
+                  entry.id === data.planId && 'border-primary/40 bg-accent'
+                )}
               >
-                {entry.state}
-              </Pill>
-            </button>
-          ))
+                <PlanStateDot state={entry.state} />
+                <span className="min-w-0 flex-1 truncate">{entry.prompt}</span>
+                <span className="text-muted-foreground shrink-0 text-[11px] capitalize">
+                  {entry.state}
+                </span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </div>

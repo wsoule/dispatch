@@ -1,13 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { ActivityBars } from '../components/ui/ActivityBars';
-import { Pill } from '../components/ui/Pill';
 import { ProjectDot } from '../components/ui/ProjectDot';
 import { agentMeta } from '../lib/agents';
 import { formatRelativeTime } from '../lib/format';
 import { getProjectActivity } from '../lib/tauri';
 import type { ProjectSummary } from '../lib/types';
-import './ProjectCard.css';
+import { Badge } from '@/ui/badge';
 
 interface ProjectCardProps {
   project: ProjectSummary;
@@ -28,25 +27,34 @@ export function ProjectCard({ project, onClick }: ProjectCardProps) {
   });
 
   return (
-    <button className="project-card" onClick={onClick}>
-      <div className="project-card-header">
-        <span className="project-card-name">
+    <button
+      onClick={onClick}
+      className="border-border bg-card hover:border-foreground/15 flex w-full flex-col gap-2 rounded-lg border p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-foreground inline-flex min-w-0 items-center gap-2 truncate text-[13px] font-medium">
           <ProjectDot projectId={project.id} />
           {project.name}
         </span>
-        <span className="project-card-agents">
+        <span className="inline-flex flex-wrap items-center gap-1">
           {project.agents.map((agentId) => {
             const meta = agentMeta(agentId);
             return (
-              <Pill variant="agent" tone="accent" key={agentId}>
+              <Badge
+                key={agentId}
+                variant="secondary"
+                className="bg-accent text-accent-foreground border-transparent"
+              >
                 {meta.icon} {meta.label}
-              </Pill>
+              </Badge>
             );
           })}
         </span>
       </div>
-      <div className="project-card-path">{project.path}</div>
-      <div className="project-card-stats">
+      <div className="text-muted-foreground truncate font-mono text-[12px]">
+        {project.path}
+      </div>
+      <div className="text-muted-foreground flex gap-3 text-[12px]">
         <span>
           {project.session_count} session
           {project.session_count === 1 ? '' : 's'}
