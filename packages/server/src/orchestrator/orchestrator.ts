@@ -365,6 +365,7 @@ export class Orchestrator {
       kind: 'message',
       from: 'agent',
       fromLabel: `${meta.taskTitle} (${meta.id})`,
+      toUser: true,
       text,
     };
     this.transcriptFor(runId).appendEntry(entry);
