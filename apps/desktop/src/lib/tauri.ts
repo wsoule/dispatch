@@ -160,3 +160,12 @@ export function hasDispatch(root: string): Promise<boolean> {
 export function ensureDispatchd(root: string): Promise<number> {
   return invoke('ensure_dispatchd', { root });
 }
+
+/** The single project this window is scoped to — the app's one active project root, resolved
+ * on the backend (see `commands::current_project_root`'s doc comment for the `tauri dev` vs
+ * packaged-app resolution and its TODO). Replaces the old `listProjects` + per-path
+ * `hasDispatch` fan-out that used to decide which of Relay's *many* discovered projects was
+ * "active" — this app is a single-project workspace now, not a switcher. */
+export function currentProjectRoot(): Promise<string> {
+  return invoke('current_project_root');
+}
