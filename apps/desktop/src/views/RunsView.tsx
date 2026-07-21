@@ -1,10 +1,13 @@
+import { GitBranch, MousePointerClick } from 'lucide-react';
+
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTerminalRunState } from '../lib/runState';
-import './RunsView.css';
+import { cn } from '@/lib/utils';
+import { Skeleton } from '@/ui/skeleton';
 
 interface RunsViewProps {
   data: DispatchProjectData;
@@ -36,37 +39,45 @@ export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
     );
   }
 
-  if (data.tasksLoading) {
-    return <p className="runs-view-status">Loading runs…</p>;
-  }
-
   const selected = data.runs.find((r) => r.id === selectedRunId);
 
   return (
-    <div className="runs-view">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <h1 className="view-topbar-title">Runs</h1>
-      <div className="runs-view-body">
-        <div className="runs-view-list">
-          {data.runs.length === 0 ? (
-            <p className="runs-view-empty">
-              No runs yet — dispatch a ready task from the Board to start one.
-            </p>
+      <div className="flex min-h-0 flex-1 gap-4">
+        <div className="border-border flex w-72 shrink-0 flex-col gap-1 overflow-y-auto border-r pr-3">
+          {data.tasksLoading ? (
+            <div className="flex flex-col gap-2 p-1">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 rounded-md" />
+              ))}
+            </div>
+          ) : data.runs.length === 0 ? (
+            <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+              <GitBranch className="size-5" />
+              <p className="text-[13px]">
+                No runs yet — dispatch a ready task from the Board to start one.
+              </p>
+            </div>
           ) : (
             data.runs.map((run) => (
               <button
                 key={run.id}
                 type="button"
-                className={`runs-view-list-item${
-                  run.id === selectedRunId ? ' active' : ''
-                }`}
                 onClick={() => onSelectRun(run.id)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors duration-150',
+                  run.id === selectedRunId
+                    ? 'border-border bg-accent'
+                    : 'hover:bg-muted/60'
+                )}
               >
-                <RunStatePill state={run.state} />
-                <span className="runs-view-list-item-title">
+                <RunStatePill state={run.state} className="shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-[13px]">
                   {run.taskTitle}
                 </span>
                 {run.costUsd !== undefined && (
-                  <span className="runs-view-list-item-cost">
+                  <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
                     ${run.costUsd.toFixed(2)}
                   </span>
                 )}
@@ -75,13 +86,20 @@ export function RunsView({ data, selectedRunId, onSelectRun }: RunsViewProps) {
           )}
         </div>
 
-        <div className="runs-view-detail">
+        <div className="min-w-0 flex-1 overflow-y-auto">
           {selected === undefined ? (
-            <p className="runs-view-empty">
-              Select a run on the left to see its log or review its result.
-            </p>
+            <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
+              <MousePointerClick className="size-5" />
+              <p className="text-[13px]">
+                Select a run on the left to see its log or review its result.
+              </p>
+            </div>
           ) : data.runDetail === undefined ? (
-            <p className="runs-view-empty">Loading run…</p>
+            <div className="flex flex-col gap-3 p-1">
+              <Skeleton className="h-6 w-48 rounded-md" />
+              <Skeleton className="h-32 rounded-md" />
+              <Skeleton className="h-32 rounded-md" />
+            </div>
           ) : isTerminalRunState(selected.state) ? (
             <RunReviewView
               meta={data.runDetail.meta}

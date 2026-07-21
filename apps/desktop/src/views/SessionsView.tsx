@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
+import { AlertCircle, Inbox } from 'lucide-react';
 import { useState } from 'react';
 
 import { listProjects, listSessions } from '../lib/tauri';
 import type { ProjectSummary } from '../lib/types';
 import { SessionDetailModal } from './SessionDetailModal';
 import { SessionRow } from './SessionRow';
-import './SessionsView.css';
+import { Skeleton } from '@/ui/skeleton';
 
 function projectNameFor(
   projects: ProjectSummary[] | undefined,
@@ -31,28 +32,38 @@ export function SessionsView() {
   });
 
   return (
-    <div className="sessions-view">
-      <div className="view-topbar">
-        <h1 className="view-topbar-title">Sessions</h1>
-      </div>
+    <div className="flex flex-col gap-4">
+      <h1 className="text-foreground text-[15px] font-medium">Sessions</h1>
 
-      {isLoading && <p className="sessions-view-status">Loading sessions…</p>}
+      {isLoading && (
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      )}
 
       {isError && (
-        <p className="sessions-view-status">
-          Couldn't load sessions. Is the backend running?
-        </p>
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+          <AlertCircle className="text-destructive size-5" />
+          <p className="text-muted-foreground text-[13px]">
+            Couldn&rsquo;t load sessions. Is the backend running?
+          </p>
+        </div>
       )}
 
       {!isLoading && !isError && (!sessions || sessions.length === 0) && (
-        <p className="sessions-view-status">
-          No sessions yet — start a Claude Code session in any repo and it will
-          appear here.
-        </p>
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+          <Inbox className="text-muted-foreground size-5" />
+          <p className="text-muted-foreground max-w-sm text-[13px]">
+            No sessions yet — start a Claude Code session in any repo and it
+            will appear here.
+          </p>
+        </div>
       )}
 
       {!isLoading && !isError && sessions && sessions.length > 0 && (
-        <div className="sessions-view-list">
+        <div className="flex flex-col gap-2">
           {sessions.map((session) => (
             <SessionRow
               key={session.id}
