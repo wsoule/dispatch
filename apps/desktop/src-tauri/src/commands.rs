@@ -685,9 +685,44 @@ pub fn has_dispatch(root: String) -> bool {
     sidecar::has_dispatch(&root)
 }
 
+/// The single project this window is scoped to — the app pivoted from a
+/// project *switcher* (built on Relay's `list_projects`, which enumerates
+/// every path under `~/.claude/projects` — 100+ on a real machine, many
+/// stale/deleted — and a `Promise.all` over `has_dispatch` for each one,
+/// so a single slow/failing entry broke the whole app into a permanent
+/// "Loading" state) to a single-project workspace: whichever project the
+/// app was launched from.
+///
+/// For `tauri dev` this resolves to the crate's own working directory,
+/// which is the monorepo/project root the dev server was started in.
+///
+/// TODO(packaged app): a double-clicked app bundle's cwd is not a project
+/// directory at all (typically `/` or the bundle's own path) — before
+/// shipping a packaged build, this needs to read a folder the user
+/// explicitly opened (persisted app state, likely via a "Open folder…"
+/// picker) instead of `current_dir()`.
+#[tauri::command]
+pub fn current_project_root() -> Result<String, String> {
+    std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| "project root path is not valid UTF-8".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_project_root_matches_the_process_working_directory() {
+        let expected = std::env::current_dir()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(current_project_root(), Ok(expected));
+    }
 
     #[test]
     fn dense_daily_activity_fills_gaps_and_keeps_range_inclusive() {
