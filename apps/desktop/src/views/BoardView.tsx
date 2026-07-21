@@ -56,11 +56,17 @@ export function BoardView({
   );
 
   function handleBoardKeyDown(e: React.KeyboardEvent) {
-    // Computed from the real event target, not hardcoded — the board's keydown-listening
-    // track wraps every card, including an epic card's concurrency `<input>` and its
-    // Work/Stop buttons. Without this, typing a number into that field (or just pressing
-    // "j"/"k" while it happens to have focus) moved the roving-focus cursor and yanked
-    // focus away mid-edit instead of editing the field.
+    // A keydown that lands on (or inside) one of the track's own interactive controls —
+    // an epic card's Work/Stop button, its concurrency `<input>`, or a card's inline
+    // "Dispatch →" button — belongs to that control, not to board navigation. `.closest()`
+    // catches the case where the control wraps an inner element. Task cards are role="button"
+    // divs (not real <button>s), so they fall through to the roving-cursor logic as intended.
+    const controlEl = (e.target as HTMLElement).closest(
+      'button, a, select, input, textarea, [contenteditable="true"]'
+    );
+    if (controlEl !== null && controlEl !== e.currentTarget) return;
+    // Computed from the real event target, not hardcoded — belt-and-braces with the guard
+    // above for typing targets specifically.
     const command = resolveListKeyCommand(
       { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
       { isTyping: isTypingTarget(e.target) }

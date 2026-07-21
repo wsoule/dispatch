@@ -6,6 +6,7 @@ import type {
   ListKeyboardContext,
 } from './keyboard';
 import {
+  isInteractiveControlTagName,
   isTypingTagName,
   resolveCardKeyAction,
   resolveGlobalKeyCommand,
@@ -151,6 +152,23 @@ describe('isTypingTagName', () => {
   test('is false for a plain button or div', () => {
     expect(isTypingTagName('BUTTON', false)).toBe(false);
     expect(isTypingTagName('DIV', false)).toBe(false);
+  });
+});
+
+describe('isInteractiveControlTagName', () => {
+  // The Board track wraps an epic card's Work/Stop <button>s and a card's inline
+  // "Dispatch →" button. A keydown on one of those must NOT be hijacked for board
+  // navigation — Enter should activate the button. Cards themselves are role="button"
+  // DIVs, so they must fall through (return false) to keep j/k/Enter roving navigation.
+  test('is true for click-style and form controls', () => {
+    for (const tag of ['BUTTON', 'A', 'SELECT', 'INPUT', 'TEXTAREA']) {
+      expect(isInteractiveControlTagName(tag)).toBe(true);
+    }
+  });
+
+  test('is false for a card DIV (role=button) and other non-controls', () => {
+    expect(isInteractiveControlTagName('DIV')).toBe(false);
+    expect(isInteractiveControlTagName('SPAN')).toBe(false);
   });
 });
 
