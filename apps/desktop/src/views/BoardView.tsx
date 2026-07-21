@@ -1,6 +1,11 @@
+import { useMemo, useState } from 'react';
+
+import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { TaskBoard } from '../components/tasks/TaskBoard';
 import { Button } from '../components/ui/Button';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { groupTasksByStatus } from '../lib/boardGrouping';
+import { resolveListKeyCommand } from '../lib/keyboard';
 import './BoardView.css';
 
 interface BoardViewProps {
@@ -17,6 +22,14 @@ interface BoardViewProps {
  * the peek panel first. Loading/error/empty states mirror the old `TasksPanel`'s (starting
  * the daemon, daemon failed to start, no tasks yet) since this view now owns exactly the
  * slice of that component's responsibilities that belonged to the board.
+ *
+ * j/k/Enter roving focus (I6): traversal order is *column-major* — down through a column's
+ * cards top to bottom, then wrap to the top of the next column — rather than row-major
+ * (across cards that happen to share a visual row). Columns rarely have aligned rows once
+ * card heights differ (a card with labels/a blocked badge is taller than one without), so
+ * row-major would jump unpredictably between unrelated cards; column-major matches how
+ * someone actually scans a kanban board — finish scanning this column's queue, then move to
+ * the next one.
  */
 export function BoardView({
   data,
@@ -24,23 +37,50 @@ export function BoardView({
   onNewTask,
   onPlanWork,
 }: BoardViewProps) {
-  if (data.portLoading) {
-    return <p className="board-view-status">Starting the task daemon…</p>;
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+
+  // Hooks run unconditionally on every render (before any of the early returns below) — both
+  // are cheap no-ops (empty array in, empty array out) while the daemon/board data isn't
+  // ready yet.
+  const columns = useMemo(
+    () =>
+      data.config !== null
+        ? groupTasksByStatus(data.tasks, data.config.statuses)
+        : [],
+    [data.tasks, data.config]
+  );
+  const orderedTaskIds = useMemo(
+    () => columns.flatMap((column) => column.tasks.map((t) => t.meta.id)),
+    [columns]
+  );
+
+  function handleBoardKeyDown(e: React.KeyboardEvent) {
+    const command = resolveListKeyCommand(
+      { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
+      { isTyping: false }
+    );
+    if (command === null || orderedTaskIds.length === 0) return;
+    e.preventDefault();
+    if (command === 'list-confirm') {
+      if (focusedTaskId !== null) onSelectTask(focusedTaskId);
+      return;
+    }
+    const currentIndex =
+      focusedTaskId !== null ? orderedTaskIds.indexOf(focusedTaskId) : -1;
+    const nextIndex =
+      command === 'list-down'
+        ? Math.min(currentIndex + 1, orderedTaskIds.length - 1)
+        : Math.max(currentIndex - 1, 0);
+    setFocusedTaskId(orderedTaskIds[Math.max(nextIndex, 0)] ?? null);
   }
 
-  if (data.portError || data.client === null) {
+  if (data.portLoading || data.portError || data.client === null) {
     return (
-      <div className="board-view-status">
-        <p>
-          Couldn&rsquo;t start dispatchd for this project
-          {data.portErrorDetail instanceof Error
-            ? `: ${data.portErrorDetail.message}`
-            : '.'}
-        </p>
-        <Button variant="secondary" onClick={data.retryEnsureDispatchd}>
-          Retry
-        </Button>
-      </div>
+      <DaemonUnavailable
+        starting={data.portLoading}
+        errorDetail={data.portErrorDetail}
+        onRetry={data.retryEnsureDispatchd}
+      />
     );
   }
 
@@ -66,19 +106,30 @@ export function BoardView({
           &ldquo;Plan work…&rdquo; and let the planner draft it.
         </p>
       ) : (
-        <TaskBoard
-          tasks={data.tasks}
-          statuses={data.config.statuses}
-          readyIds={data.readyIds}
-          blockedIds={data.blockedIds}
-          liveRunStateByTaskId={data.liveRunStateByTaskId}
-          epicProgressById={data.epicProgressById}
-          epicConcurrencyDefault={data.config.orchestrator.epicConcurrency}
-          onSelect={onSelectTask}
-          onDispatch={data.handleDispatch}
-          onWorkEpic={data.handleWorkEpic}
-          onStopEpic={data.handleStopEpic}
-        />
+        // `tabIndex={0}` puts the track itself in the natural tab order (so someone can
+        // Tab/click into the board and start using j/k immediately, matching
+        // TasksListView's own focusable list container) — the individual cards remain the
+        // real roving-focus targets once `focusedTaskId` moves onto one of them.
+        <div
+          className="board-view-track"
+          tabIndex={0}
+          onKeyDown={handleBoardKeyDown}
+        >
+          <TaskBoard
+            tasks={data.tasks}
+            statuses={data.config.statuses}
+            readyIds={data.readyIds}
+            blockedIds={data.blockedIds}
+            liveRunStateByTaskId={data.liveRunStateByTaskId}
+            epicProgressById={data.epicProgressById}
+            epicConcurrencyDefault={data.config.orchestrator.epicConcurrency}
+            onSelect={onSelectTask}
+            onDispatch={data.handleDispatch}
+            onWorkEpic={data.handleWorkEpic}
+            onStopEpic={data.handleStopEpic}
+            focusedTaskId={focusedTaskId}
+          />
+        </div>
       )}
     </div>
   );

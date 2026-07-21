@@ -3,6 +3,7 @@ import { reduceProposal } from '@dispatch/client';
 import type { Priority } from '@dispatch/core';
 import { useEffect, useState } from 'react';
 
+import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { Button } from '../components/ui/Button';
 import { Pill } from '../components/ui/Pill';
 import { Select } from '../components/ui/Select';
@@ -137,6 +138,11 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [draft, setDraft] = useState<PlanProposal | null>(null);
+  // Stable per-row identity for `draft.tasks`, kept in lockstep with it (same length, same
+  // order) — index-based keys would make React reuse a row's DOM node/focus/scroll position
+  // for whatever task slides into that index after `removeTask` splices one out, which reads
+  // as a row's in-progress edit jumping to a different task.
+  const [taskKeys, setTaskKeys] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
 
@@ -156,6 +162,11 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     if (planRecord.state === 'ready' && planRecord.proposal) {
       const proposal = planRecord.proposal;
       setDraft((prev) => prev ?? proposal);
+      setTaskKeys((prev) =>
+        prev.length === 0
+          ? proposal.tasks.map((_, i) => `plan-task-${data.planId}-${i}`)
+          : prev
+      );
     }
   }, [data.planId, data.planRecord, projectPath]);
 
@@ -164,6 +175,7 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     setSubmitting(true);
     setSubmitError(null);
     setDraft(null);
+    setTaskKeys([]);
     try {
       const newPlanId = await data.handleSubmitPrompt(prompt.trim());
       const entry: PlanHistoryEntry = {
@@ -199,6 +211,7 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     setDraft((prev) =>
       prev === null ? prev : reduceProposal(prev, { type: 'removeTask', index })
     );
+    setTaskKeys((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function submitConfirm() {
@@ -208,6 +221,7 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     try {
       await data.handleConfirmPlan(draft);
       setDraft(null);
+      setTaskKeys([]);
       data.setPlanId(null);
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : String(err));
@@ -218,12 +232,29 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
 
   function openHistoryEntry(entry: PlanHistoryEntry) {
     setDraft(null);
+    // Cleared here too (not just on submitPrompt) — switching to a *different* history entry
+    // must not carry over the previous entry's row keys onto this one's tasks.
+    setTaskKeys([]);
     setConfirmError(null);
     data.setPlanId(entry.id);
   }
 
   const showProposalTable =
     draft !== null && data.planRecord?.state === 'ready';
+
+  // A composer that submits against a dead daemon would just hang on "Starting…" forever
+  // (`handleSubmitPrompt` throws once `client` is null, but only *after* the click) — show
+  // the same daemon-unavailable state every other primary view shows instead of a live
+  // composer with nothing behind it (I4).
+  if (data.portLoading || data.portError || data.client === null) {
+    return (
+      <DaemonUnavailable
+        starting={data.portLoading}
+        errorDetail={data.portErrorDetail}
+        onRetry={data.retryEnsureDispatchd}
+      />
+    );
+  }
 
   return (
     <div className="plans-view">
@@ -314,7 +345,7 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
           <div className="plans-view-task-table">
             {draft.tasks.map((task, i) => (
               <PlanTaskRow
-                key={i}
+                key={taskKeys[i] ?? i}
                 task={task}
                 index={i}
                 allTasks={draft.tasks}
@@ -329,6 +360,7 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
               variant="secondary"
               onClick={() => {
                 setDraft(null);
+                setTaskKeys([]);
                 data.setPlanId(null);
               }}
               disabled={confirming}

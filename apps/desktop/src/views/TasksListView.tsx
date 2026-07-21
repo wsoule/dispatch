@@ -1,12 +1,13 @@
 import type { TaskDoc } from '@dispatch/core';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { RunStatePill } from '../components/runs/RunStatePill';
+import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { Button } from '../components/ui/Button';
 import { Pill } from '../components/ui/Pill';
 import { TextInput } from '../components/ui/TextInput';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { resolveKeyCommand } from '../lib/keyboard';
+import { resolveListKeyCommand } from '../lib/keyboard';
 import { priorityTone, statusTone } from '../lib/taskDisplay';
 import './TasksListView.css';
 
@@ -33,7 +34,8 @@ function matchesFilter(doc: TaskDoc, filter: string): boolean {
  * complementing the Board's column view when you want to scan or search rather than group by
  * status. Supports the redesign brief's j/k + Enter list navigation directly on the row
  * list (only while the filter input itself isn't focused, so "j"/"k" keep working as
- * ordinary filter-text characters while typing).
+ * ordinary filter-text characters while typing). The list container auto-focuses itself on
+ * mount (view enter) so j/k work immediately without first requiring a click or Tab.
  */
 export function TasksListView({
   data,
@@ -49,10 +51,21 @@ export function TasksListView({
     [data.tasks, filter]
   );
 
+  useEffect(() => {
+    listRef.current?.focus();
+  }, []);
+
+  // Keeps the highlighted row visible as j/k moves it — `listRef`'s direct children are the
+  // row buttons in list order, so the highlighted index doubles as a DOM child index.
+  useEffect(() => {
+    const row = listRef.current?.children[highlighted];
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [highlighted]);
+
   function handleListKeyDown(e: React.KeyboardEvent) {
-    const command = resolveKeyCommand(
+    const command = resolveListKeyCommand(
       { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
-      { isTyping: false, paletteOpen: false, peekOpen: false }
+      { isTyping: false }
     );
     if (command === 'list-down') {
       e.preventDefault();
@@ -67,7 +80,17 @@ export function TasksListView({
     }
   }
 
-  if (data.portLoading || data.tasksLoading || data.config === null) {
+  if (data.portLoading || data.portError || data.client === null) {
+    return (
+      <DaemonUnavailable
+        starting={data.portLoading}
+        errorDetail={data.portErrorDetail}
+        onRetry={data.retryEnsureDispatchd}
+      />
+    );
+  }
+
+  if (data.tasksLoading || data.config === null) {
     return <p className="tasks-list-view-status">Loading tasks…</p>;
   }
 
