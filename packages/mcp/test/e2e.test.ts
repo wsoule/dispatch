@@ -101,6 +101,7 @@ describe('dispatch-mcp stdio e2e', () => {
         .sort();
       expect(names).toEqual([
         'agent_message',
+        'message_user',
         'run_list',
         'task_comment',
         'task_get',
