@@ -18,6 +18,7 @@ import { currentProjectRoot, hasDispatch, listProjects } from './lib/tauri';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { GetStartedView } from './views/GetStartedView';
+import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { PullRequestsView } from './views/PullRequestsView';
 import { RunsView } from './views/RunsView';
@@ -387,6 +388,25 @@ function App() {
             </div>
           ) : (
             <>
+              {navState.projectView === 'overview' && (
+                <OverviewView
+                  data={data}
+                  projectName={activeProject?.name ?? null}
+                  onOpenRun={(runId) => {
+                    dispatchNav({ type: 'openRun', runId });
+                    selectProjectView('runs');
+                  }}
+                  onOpenTask={(taskId) =>
+                    dispatchNav({ type: 'openPeek', taskId })
+                  }
+                  onOpenPr={(runId) => {
+                    dispatchNav({ type: 'openRun', runId });
+                    selectProjectView('pull-requests');
+                  }}
+                  onDispatch={(taskId) => data.handleDispatch(taskId)}
+                  onGoToBoard={() => selectProjectView('board')}
+                />
+              )}
               {navState.projectView === 'board' && (
                 <BoardView
                   data={data}

@@ -3,6 +3,7 @@ import {
   ChevronsUpDown,
   Cog,
   GitPullRequest,
+  LayoutDashboard,
   ListChecks,
   NotebookPen,
   Play,
@@ -27,6 +28,7 @@ const PROJECT_VIEWS: {
   label: string;
   icon: typeof ListChecks;
 }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'board', label: 'Tasks', icon: ListChecks },
   { id: 'runs', label: 'Runs', icon: Play },
   { id: 'pull-requests', label: 'Pull requests', icon: GitPullRequest },
