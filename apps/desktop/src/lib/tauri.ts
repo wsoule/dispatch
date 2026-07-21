@@ -29,6 +29,10 @@ function browserParam(name: string): string | null {
 }
 
 export function listProjects(): Promise<ProjectSummary[]> {
+  // Relay's project enumeration is backed by Tauri IPC; in the browser dev
+  // harness there's no backend, so degrade to an empty list rather than
+  // throwing (the switcher dropdown simply shows only the active project).
+  if (!isTauri()) return Promise.resolve([]);
   return invoke('list_projects');
 }
 
