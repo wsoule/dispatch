@@ -65,12 +65,12 @@ export class Orchestrator {
   // call sites in handleFinish()/cancel(). The epic dispatch engine is the
   // one production subscriber today.
   private readonly terminalHooks: Array<(meta: RunMeta) => void> = [];
-  // Phase 5 P1: callbacks fired whenever a run is reviewed (merge or
-  // discard) — i.e. whenever a task might have just moved to `done`. A run
-  // reaching a terminal state (finished/failed/cancelled) only ever leaves
-  // its task at `in-review` (handleFinish); readyTasks() in @dispatch/core
-  // gates on a blocker being `done`/`cancelled`, so the epic engine needs
-  // this *second* seam — not
+  // Phase 5 P1: callbacks fired whenever a run is reviewed — merge, discard,
+  // or (via markRunMergedViaPr) a merged PR — i.e. whenever a task might
+  // have just moved to `done`. A run reaching a terminal state (finished/
+  // failed/cancelled) only ever leaves its task at `in-review`
+  // (handleFinish); readyTasks() in @dispatch/core gates on a blocker being
+  // `done`/`cancelled`, so the epic engine needs this *second* seam — not
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.
   private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
@@ -384,6 +384,59 @@ export class Orchestrator {
     return reviewed;
   }
 
+  // Phase 5 P1: records a run's freshly-opened PR url. Called by
+  // PrManager.openPr right after `gh pr create` succeeds — this run stays
+  // un-reviewed (reviewedAt unset) until the PR poller sees it merged and
+  // calls markRunMergedViaPr below. Not routed through transition() since
+  // the run's RunState itself doesn't change here, only one more fact about
+  // it becomes known — same rationale as review()'s reviewedAt-only update,
+  // just without a state-transition side effect to piggyback on, so this
+  // appends its own state line directly.
+  setRunPrUrl(runId: string, url: string): RunMeta {
+    const meta = this.requireRun(runId);
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { prUrl: url, updatedAt: now });
+    this.transcriptFor(runId).appendState(meta.state, now, { prUrl: url });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return this.registry.get(runId)!;
+  }
+
+  // Phase 5 P1: the PR poller's terminal action once GitHub reports a run's
+  // PR as merged — mirrors review()'s 'discard' bookkeeping shape (worktree
+  // cleanup + a task-file update) but marks the task `done` (the work really
+  // did land, just via a remote PR merge rather than review()'s local
+  // squash-merge) and records `reviewAction: 'pr'`. Deliberately does NOT
+  // run mergeRun()'s local `git merge --squash` — that content already
+  // landed on the remote base branch through the PR itself; redoing it
+  // locally would either no-op or conflict with what's already there.
+  markRunMergedViaPr(runId: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (meta.reviewedAt !== undefined) {
+      throw new OrchestratorConflictError(
+        `run has already been reviewed: ${runId}`
+      );
+    }
+    const now = new Date().toISOString();
+    this.worktrees.remove(meta.worktreePath, meta.branch);
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: 'done',
+        appendActivity: `${now} run ${runId} merged via PR (${meta.prUrl ?? 'unknown url'})`,
+      },
+      now
+    );
+    this.transition(runId, meta.state, {
+      reviewedAt: now,
+      reviewAction: 'pr',
+    });
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+    const reviewedViaPr = this.registry.get(runId)!;
+    for (const hook of this.reviewedHooks) hook(reviewedViaPr);
+    return reviewedViaPr;
+  }
+
   // C1: squash-merges `meta.branch` into the main checkout and folds this
   // run's own task-file bookkeeping into that same commit. Ordering is load-
   // bearing here: the squash-merge runs *before* any task-file edit, so a
@@ -597,7 +650,7 @@ export class Orchestrator {
       sessionId?: string;
       error?: string;
       reviewedAt?: string;
-      reviewAction?: 'merge' | 'discard';
+      reviewAction?: 'merge' | 'discard' | 'pr';
     }
   ): void {
     const meta = this.registry.get(runId);
