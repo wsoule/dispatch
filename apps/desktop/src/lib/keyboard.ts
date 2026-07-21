@@ -93,6 +93,24 @@ export function isTypingTagName(
   return tagName === 'INPUT' || tagName === 'TEXTAREA' || isContentEditable;
 }
 
+/** True for tag names that are their own interactive controls — a keydown landing on one
+ * inside a keydown-listening container (the Board track wraps an epic card's Work/Stop
+ * `<button>`s and the inline "Dispatch →" button) belongs to that control, not to board
+ * navigation. Extends the typing guard (INPUT/TEXTAREA/contenteditable) to the click-style
+ * controls (BUTTON/A/SELECT) so pressing Enter on an epic's Work button activates it instead
+ * of moving the roving cursor. Kept DOM-free for testability, like `isTypingTagName`; the
+ * view pairs it with `.closest()` so a control wrapping an inner element (e.g. a `<span>`)
+ * still counts. */
+export function isInteractiveControlTagName(tagName: string): boolean {
+  return (
+    tagName === 'BUTTON' ||
+    tagName === 'A' ||
+    tagName === 'SELECT' ||
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA'
+  );
+}
+
 export type CardKeyAction = 'activate' | null;
 
 /** Decides what a keydown on a Board card's root element should do, given which key was

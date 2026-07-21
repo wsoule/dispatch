@@ -43,6 +43,9 @@
     ".source",
     ".vercel",
     "*.patch",
-    "README"
+    "README",
+    ".dispatch",
+    ".mcp.json",
+    "Relay"
   ]
 }
