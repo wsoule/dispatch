@@ -418,6 +418,8 @@ function App() {
             ready={data.readyIds.has(selectedDoc.meta.id)}
             run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
             runs={data.runs.filter((r) => r.taskId === selectedDoc.meta.id)}
+            epics={data.epics}
+            tasks={data.tasks}
             onClose={() => dispatchNav({ type: 'closePeek' })}
             onUpdate={data.handleUpdate}
             onMoveStatus={data.moveTaskStatus}
