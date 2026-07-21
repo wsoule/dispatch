@@ -83,6 +83,7 @@ pub fn run() {
       commands::open_url,
       commands::ensure_dispatchd,
       commands::has_dispatch,
+      commands::current_project_root,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
