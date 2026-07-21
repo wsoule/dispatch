@@ -70,6 +70,40 @@ function MessageBubble({ entry }: { entry: NormalizedEntry }) {
   );
 }
 
+// A `kind: 'message'` entry — the agent-comms identified chat channel,
+// deliberately NOT styled like MessageBubble's muted system/assistant rows:
+// this is an actual conversation turn with a named sender, so it earns a
+// side and a tint. `from: 'user'` (the run's own human, via the Session
+// composer) leans right as "You" in the accent color; `from: 'agent'` leans
+// left as "↳ <fromLabel>" in a distinct (non-accent) tint — covers both the
+// agent->agent channel (fromLabel names the sending run) and the agent->user
+// channel (an agent's own `message_user` call, fromLabel names itself).
+function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
+  const fromUser = entry.from === 'user';
+  return (
+    <div
+      className={cn(
+        'flex max-w-[90%] flex-col gap-0.5 rounded-md px-3 py-2',
+        fromUser
+          ? 'bg-primary text-primary-foreground self-end'
+          : 'border border-amber-500/30 bg-amber-500/10 self-start'
+      )}
+    >
+      <div
+        className={cn(
+          'text-[11px] font-medium tracking-wide uppercase',
+          fromUser ? 'text-primary-foreground/70' : 'text-amber-600'
+        )}
+      >
+        {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}
+      </div>
+      <div className="text-[13px] break-words whitespace-pre-wrap">
+        {entry.text ?? ''}
+      </div>
+    </div>
+  );
+}
+
 const TOOL_STATUS_ICON: Record<
   NonNullable<NormalizedEntry['status']>,
   ReactNode
@@ -211,6 +245,8 @@ export function RunLogView({
         {groups.map((group, i) =>
           group.kind === 'tools' ? (
             <ToolCluster key={i} entries={group.entries} />
+          ) : group.entries[0].kind === 'message' ? (
+            <ChatMessageBubble key={i} entry={group.entries[0]} />
           ) : (
             <MessageBubble key={i} entry={group.entries[0]} />
           )

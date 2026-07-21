@@ -118,6 +118,37 @@ describe('ClaudeExecutor dispatch MCP server wiring', () => {
       '/tmp/dispatch-worktree-only'
     );
   });
+
+  // agent-comms: `agent_message`/`message_user` (packages/mcp/src/tools.ts)
+  // read DISPATCH_RUN_ID back out of their own process env to identify the
+  // calling run as a message's sender without it having to know its own run
+  // id ahead of time — this proves the executor actually wires that env var
+  // through to the spawned MCP server.
+  it('wires DISPATCH_RUN_ID to the run id passed in ExecutorStartOptions', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        projectRoot: '/tmp/dispatch-project-y',
+        runId: 'r-abc123',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      noopEvents
+    );
+
+    const dispatch = captured?.mcpServers?.dispatch as
+      | McpStdioServerConfig
+      | undefined;
+    expect(dispatch?.env?.DISPATCH_RUN_ID).toBe('r-abc123');
+  });
 });
 
 // M7: a run that fails mid-stream — after the SDK's very first message (the

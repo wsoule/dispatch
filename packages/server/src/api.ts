@@ -331,7 +331,46 @@ async function reviewRun(
   return jsonResponse(meta);
 }
 
+// `fromRunId` is optional and identifies the SENDER (a different run than
+// `runId`, the recipient) — the MCP `agent_message` tool passes its own
+// `DISPATCH_RUN_ID` here so Orchestrator.inject can resolve a real sender
+// label (task title + id) instead of falling back to the generic "another
+// agent". A `fromRunId` that doesn't resolve to a known run is not an
+// error here — inject()'s own resolveSenderLabel already tolerates an
+// unresolvable sender by falling back to the generic label, so this route
+// just passes the raw value through rather than pre-validating it.
 async function injectRunMessage(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown; fromRunId?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  if (body.fromRunId !== undefined && typeof body.fromRunId !== 'string') {
+    return errorResponse(400, 'invalid fromRunId: expected a string');
+  }
+  const meta = ctx.orchestrator.inject(
+    runId,
+    body.text,
+    body.fromRunId !== undefined ? { runId: body.fromRunId } : undefined
+  );
+  return jsonResponse(meta);
+}
+
+// POST /api/runs/:id/message-user — the agent→human channel (spec's
+// `message_user`): records a `from: 'agent'` message entry on the AGENT'S
+// OWN run, using that run's own task title + id as the label, so the human
+// sees "this agent flagged something" in the exact same Session tab as
+// everything else that run has said. Unlike `inject`, this never sends
+// anything back into the executor (there is no "recipient" to deliver
+// to) — it only needs the run to still be live so appending to its
+// transcript/broadcasting means something to a connected client, the same
+// liveness bar `inject` itself already enforces.
+async function messageUser(
   req: Request,
   ctx: ApiContext,
   runId: string
@@ -342,7 +381,7 @@ async function injectRunMessage(
   if (typeof body.text !== 'string' || body.text.trim() === '') {
     return errorResponse(400, 'invalid text: text is required');
   }
-  const meta = ctx.orchestrator.inject(runId, body.text);
+  const meta = ctx.orchestrator.messageUser(runId, body.text);
   return jsonResponse(meta);
 }
 
@@ -531,6 +570,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await injectRunMessage(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'message-user' &&
+        method === 'POST'
+      ) {
+        return await messageUser(req, ctx, segments[1]);
       }
     }
 
