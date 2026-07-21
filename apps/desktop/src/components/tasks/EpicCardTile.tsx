@@ -2,6 +2,7 @@ import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
 import { useState } from 'react';
 
+import { clampConcurrencyInput } from '../../lib/epicConcurrency';
 import { priorityTone } from '../../lib/taskDisplay';
 import { Button } from '../ui/Button';
 import { Pill } from '../ui/Pill';
@@ -103,7 +104,7 @@ export function EpicCardTile({
             value={concurrency}
             disabled={active || busy}
             onChange={(e) =>
-              setConcurrency(Math.max(1, Number(e.target.value) || 1))
+              setConcurrency(clampConcurrencyInput(e.target.value))
             }
             aria-label="Epic dispatch concurrency"
           />
