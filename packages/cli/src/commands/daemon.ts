@@ -119,6 +119,57 @@ async function waitForHealthyDaemon(
   return null;
 }
 
+export interface EnsureDaemonOptions {
+  // Port to request when a fresh daemon must be spawned (default: ephemeral,
+  // same as `dispatch serve`/`dispatch ui` with no `--port`).
+  port?: string;
+}
+
+// Shared "get me a healthy daemon for this project, starting one if none is
+// running" logic — every command that needs to talk to dispatchd (`dispatch
+// ui`, and every Phase 7 orchestrate/plan/epic command) goes through this
+// exact same path: reuse an already-healthy daemon found via its daemon
+// file, or spawn a fresh detached one and poll until it answers
+// `/api/health`. Extracted from `dispatch ui`'s own action (which now just
+// calls this and opens a browser at the result) so headless commands get
+// identical auto-start behavior without duplicating it.
+export async function ensureDaemon(
+  ctx: CliContext,
+  opts: EnsureDaemonOptions = {}
+): Promise<{ port: number }> {
+  const existing = readDaemonFile(ctx.cwd);
+  if (existing !== null && (await isHealthy(existing.port))) {
+    return { port: existing.port };
+  }
+
+  const binPath = resolveDaemonBin();
+  const args = [binPath, '--root', ctx.cwd];
+  if (opts.port !== undefined) args.push('--port', opts.port);
+
+  // Detached + ignored stdio: this daemon should outlive the CLI invocation
+  // that spawned it and keep running in the background, the same way
+  // `dispatch serve` running in a separate terminal would. No `env` override
+  // is passed, so the child inherits this process's full environment —
+  // including `DISPATCH_ENABLE_FAKES`/`DISPATCH_HOME` when a test (or a
+  // user) has set them, which is what lets the CLI's own e2e tests exercise
+  // this exact auto-start path against a fakes-enabled daemon.
+  const child = spawn('bun', args, { detached: true, stdio: 'ignore' });
+  child.on('error', () => {
+    // Surfaced below via the health-poll timeout instead of here — by the
+    // time this fires asynchronously, the caller may already have moved on
+    // to polling, so there's nothing safe to throw into.
+  });
+  child.unref();
+
+  const port = await waitForHealthyDaemon(ctx.cwd, 5000);
+  if (port === null) {
+    throw new CliError(
+      'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
+    );
+  }
+  return { port };
+}
+
 export function registerDaemonCommands(
   program: Command,
   ctx: CliContext
@@ -149,34 +200,7 @@ export function registerDaemonCommands(
     .option('--port <n>', 'port to use when starting dispatchd')
     .action(async (opts: { port?: string }) => {
       requireStore(ctx);
-
-      const existing = readDaemonFile(ctx.cwd);
-      if (existing !== null && (await isHealthy(existing.port))) {
-        openBrowserFor(ctx, `http://127.0.0.1:${existing.port}`);
-        return;
-      }
-
-      const binPath = resolveDaemonBin();
-      const args = [binPath, '--root', ctx.cwd];
-      if (opts.port !== undefined) args.push('--port', opts.port);
-
-      // Detached + ignored stdio: this daemon should outlive `dispatch ui`
-      // and keep running in the background, the same way `dispatch serve`
-      // running in a separate terminal would.
-      const child = spawn('bun', args, { detached: true, stdio: 'ignore' });
-      child.on('error', () => {
-        // Surfaced below via the health-poll timeout instead of here — by
-        // the time this fires asynchronously, the action may already have
-        // moved on to polling, so there's nothing safe to throw into.
-      });
-      child.unref();
-
-      const port = await waitForHealthyDaemon(ctx.cwd, 5000);
-      if (port === null) {
-        throw new CliError(
-          'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
-        );
-      }
+      const { port } = await ensureDaemon(ctx, { port: opts.port });
       openBrowserFor(ctx, `http://127.0.0.1:${port}`);
     });
 }
