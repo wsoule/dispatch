@@ -2,67 +2,41 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 
 import { ProjectBoard } from '../components/board/ProjectBoard';
-import { TasksPanel } from '../components/tasks/TasksPanel';
 import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { StatTile } from '../components/ui/StatTile';
 import { formatRelativeTime } from '../lib/format';
-import type { ProjectTab } from '../lib/projectTabs';
-import { resolveActiveTab } from '../lib/projectTabs';
-import { getProjectGitInsights, hasDispatch, listSessions } from '../lib/tauri';
+import { getProjectGitInsights, listSessions } from '../lib/tauri';
 import type { ProjectSummary } from '../lib/types';
 import { SessionDetailModal } from './SessionDetailModal';
 import { SessionRow } from './SessionRow';
 import './ProjectDetail.css';
 
+type ProjectDetailTab = 'overview' | 'board' | 'sessions';
+
 interface ProjectDetailProps {
   project: ProjectSummary;
-  /** Which tab opens first — defaults to 'overview'. TasksView jumps straight to 'tasks'
-   * when it opens a dispatch-enabled project from the global Tasks nav item. */
-  initialTab?: ProjectTab;
 }
 
-const BASE_TABS: { id: ProjectTab; label: string }[] = [
+const TABS: { id: ProjectDetailTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'board', label: 'Board' },
   { id: 'sessions', label: 'Sessions' },
 ];
 
 /**
- * Full-page detail shown in `ProjectsView` once a project card is clicked. Tabs (Overview /
- * Board / Sessions, plus Tasks when the project has a `.dispatch/` tracker) behind a top tab
- * bar rather than one long scrolling column — the Kanban board in particular wants its own
- * uncluttered page. Reuses `SessionRow` (shared with `SessionsView`) rather than
- * re-implementing row rendering here, `ProjectBoard` (shared with the old standalone Board
- * page) for the Kanban tab, and `TasksPanel` (Phase 2R Slice R2) for the dispatchd-backed
- * Tasks tab.
+ * Full-page detail shown in the Sessions hub's Projects tab once a project card is clicked.
+ * Three tabs — Overview / Board (Relay's own session-linked kanban, unrelated to the
+ * dispatch task Board) / Sessions — behind a top tab bar rather than one long scrolling
+ * column. There is deliberately no Tasks tab here anymore: dispatch task/run/plan work lives
+ * in the primary Board/Tasks/Runs/Plans nav for whichever project is active, not nested
+ * inside this Relay-observability page — the whole point of the redesign this view is part
+ * of is that Dispatch stops reading as "Relay with a Tasks tab" wired in here.
  */
-export function ProjectDetail({
-  project,
-  initialTab = 'overview',
-}: ProjectDetailProps) {
-  const [activeTab, setActiveTab] = useState<ProjectTab>(initialTab);
+export function ProjectDetail({ project }: ProjectDetailProps) {
+  const [activeTab, setActiveTab] = useState<ProjectDetailTab>('overview');
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
-
-  // Gates the Tasks tab: only dispatch-enabled projects (those with a `.dispatch/`
-  // directory) get one. `retry: false` — a failure here (e.g. the path no longer exists)
-  // should just leave the tab hidden, not retry noisily.
-  const { data: dispatchEnabled } = useQuery({
-    queryKey: ['has-dispatch', project.path],
-    queryFn: () => hasDispatch(project.path),
-    retry: false,
-  });
-
-  const tabs = dispatchEnabled
-    ? [...BASE_TABS, { id: 'tasks' as const, label: 'Tasks' }]
-    : BASE_TABS;
-
-  // `activeTab` reflects what was requested (the initial prop, or the user clicking a tab
-  // button); `effectiveTab` is what's actually safe to render right now — see
-  // resolveActiveTab's doc comment for why these can differ (a `tasks` request against a
-  // project that turned out not to be dispatch-enabled).
-  const effectiveTab = resolveActiveTab(activeTab, dispatchEnabled);
 
   const {
     data: sessions,
@@ -90,10 +64,10 @@ export function ProjectDetail({
       </div>
 
       <div className="project-detail-tabs">
-        {tabs.map((tab) => (
+        {TABS.map((tab) => (
           <button
             key={tab.id}
-            className={`project-detail-tab${effectiveTab === tab.id ? ' project-detail-tab-active' : ''}`}
+            className={`project-detail-tab${activeTab === tab.id ? ' project-detail-tab-active' : ''}`}
             onClick={() => setActiveTab(tab.id)}
           >
             {tab.label}
@@ -101,7 +75,7 @@ export function ProjectDetail({
         ))}
       </div>
 
-      {effectiveTab === 'overview' && (
+      {activeTab === 'overview' && (
         <div className="project-detail-overview">
           <div className="project-detail-stats">
             <StatTile value={project.session_count} label="Sessions" />
@@ -147,23 +121,13 @@ export function ProjectDetail({
         </div>
       )}
 
-      {effectiveTab === 'board' && (
+      {activeTab === 'board' && (
         <div className="project-detail-board">
           <ProjectBoard projectId={project.id} />
         </div>
       )}
 
-      {effectiveTab === 'tasks' && dispatchEnabled === undefined && (
-        <p className="project-detail-status">Checking task tracker…</p>
-      )}
-
-      {effectiveTab === 'tasks' && dispatchEnabled === true && (
-        <div className="project-detail-tasks">
-          <TasksPanel projectPath={project.path} />
-        </div>
-      )}
-
-      {effectiveTab === 'sessions' && (
+      {activeTab === 'sessions' && (
         <div className="project-detail-sessions">
           {isLoading && (
             <p className="project-detail-status">Loading sessions…</p>
