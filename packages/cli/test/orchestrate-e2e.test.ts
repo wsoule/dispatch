@@ -109,6 +109,42 @@ async function spawnDaemon(
   return { proc, port };
 }
 
+// Runs the built CLI once as a subprocess with a hard timeout: if the
+// process is still alive once `timeoutMs` elapses, it's force-killed and
+// `timedOut` comes back true — used by the C1/I2 regression tests below so
+// a reintroduced hang fails the test itself (quickly) instead of hanging
+// the whole test run indefinitely.
+async function runCliBounded(
+  args: string[],
+  env: { cwd: string; dispatchHome: string; extra?: Record<string, string> },
+  timeoutMs: number
+): Promise<{
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  timedOut: boolean;
+}> {
+  const proc = Bun.spawn({
+    cmd: ['node', CLI_BIN, ...args],
+    cwd: env.cwd,
+    env: { ...process.env, DISPATCH_HOME: env.dispatchHome, ...env.extra },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc.kill();
+  }, timeoutMs);
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  clearTimeout(timer);
+  return { stdout, stderr, code, timedOut };
+}
+
 interface RunMetaLike {
   id: string;
   taskId: string;
@@ -326,6 +362,103 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     expect(detail.meta.id).toBe(runs[0].id);
     expect(Array.isArray(detail.entries)).toBe(true);
   });
+
+  // C1 regression: `run --watch` used to hang forever on a dispatch
+  // failure (createRun rejecting a 4xx) because the WS connection it opens
+  // BEFORE calling createRun was never disposed on that path — an open
+  // socket/reconnect timer keeps node's event loop (and so the process)
+  // alive regardless of the thrown error already having set an exit code.
+  // `runCliBounded` force-kills the subprocess if it's still alive past
+  // the timeout, so a reintroduced hang fails this test in ~8s instead of
+  // hanging the whole suite.
+  it('run --watch exits promptly (not hung) when dispatching a nonexistent task', async () => {
+    const result = await runCliBounded(
+      ['run', 't-doesnotexist', '--executor', 'fake', '--watch'],
+      { cwd: repo, dispatchHome },
+      8000
+    );
+    expect(result.timedOut).toBe(false);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('task not found: t-doesnotexist');
+  }, 12_000);
+});
+
+// ---------------------------------------------------------------------------
+// Suite 3 (I2): a daemon that dies mid-`--watch` must be detected and
+// reported cleanly — never an infinite reconnect loop, never a hang. Needs
+// its OWN daemon (killed partway through), so it can't share Suite 1's.
+// ---------------------------------------------------------------------------
+describe('lost connection mid-watch (I2)', () => {
+  it('run --watch exits 1 with a lost-connection message once dispatchd dies', async () => {
+    const repo = initGitRepo('dispatch-cli-e2e-lostconn-');
+    const dispatchHome = mkdtempSync(
+      join(tmpdir(), 'dispatch-cli-e2e-lostconn-home-')
+    );
+    const init = runCli(['init'], { cwd: repo, dispatchHome });
+    expect(init.code).toBe(0);
+    commitAll(repo, 'init');
+
+    const { proc: daemon } = await spawnDaemon(repo, dispatchHome, {
+      DISPATCH_ENABLE_FAKES: '1',
+      DISPATCH_FAKE_APPROVAL: '1',
+    });
+
+    try {
+      const task = JSON.parse(
+        runCli(['task', 'create', 'Lost connection test', '--json'], {
+          cwd: repo,
+          dispatchHome,
+        }).stdout
+      ) as { meta: { id: string } };
+
+      const watch = spawn(
+        'node',
+        [CLI_BIN, 'run', task.meta.id, '--executor', 'fake', '--watch'],
+        { cwd: repo, env: { ...process.env, DISPATCH_HOME: dispatchHome } }
+      );
+      let stdout = '';
+      let stderr = '';
+      watch.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      watch.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      // Wait until the watch is genuinely live and connected (paused at
+      // the scripted approval gate) before pulling the rug out.
+      const connectedDeadline = Date.now() + 10_000;
+      while (
+        !stdout.includes('approval requested') &&
+        Date.now() < connectedDeadline
+      ) {
+        await sleep(50);
+      }
+      expect(stdout).toContain('approval requested');
+
+      // SIGKILL: bypasses bin.ts's graceful-shutdown entirely, so the
+      // socket the CLI is holding open just goes dead with no close
+      // frame — the realistic "the daemon's process vanished" case, not a
+      // clean disconnect.
+      daemon.kill('SIGKILL');
+
+      // Bounded wait for the watch subprocess to give up and exit on its
+      // own — force-kill it if the fix regresses, so this fails fast
+      // instead of hanging the suite.
+      const killTimer = setTimeout(() => watch.kill('SIGKILL'), 15_000);
+      const code = await new Promise<number>((resolveExit) => {
+        watch.on('exit', (exitCode) => resolveExit(exitCode ?? -1));
+      });
+      clearTimeout(killTimer);
+
+      expect(code).toBe(1);
+      expect(stderr).toContain('lost connection to dispatchd');
+    } finally {
+      daemon.kill('SIGKILL');
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(dispatchHome, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
