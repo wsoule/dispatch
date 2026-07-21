@@ -93,6 +93,17 @@ function safeRebuild(store: TaskStore, cache: TaskCache): void {
   }
 }
 
+// Adds permissive CORS headers to a response so the desktop webview / browser
+// dev harness (a different origin than `http://127.0.0.1:<port>`) can read it.
+// Loopback-only daemon, no credentials, so `*` is safe. Mutating the existing
+// response's headers keeps streamed bodies (Bun.file static responses) intact.
+function withCors(res: Response): Response {
+  res.headers.set('access-control-allow-origin', '*');
+  res.headers.set('access-control-allow-methods', 'GET, POST, PATCH, OPTIONS');
+  res.headers.set('access-control-allow-headers', 'content-type');
+  return res;
+}
+
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -229,19 +240,31 @@ export async function startServer(
 
       if (url.pathname === '/ws') {
         if (srv.upgrade(req)) return undefined;
-        return new Response('expected websocket upgrade', { status: 400 });
+        return withCors(
+          new Response('expected websocket upgrade', { status: 400 })
+        );
+      }
+
+      // The desktop webview and the browser dev harness both fetch this daemon
+      // cross-origin (webview origin vs `http://127.0.0.1:<port>`), so every
+      // response needs CORS headers or the browser blocks the JS from reading
+      // it ("TypeError: Failed to fetch") — which manifested as the UI hanging
+      // forever on "Loading board…". The daemon is loopback-only, so a wildcard
+      // origin is safe. A JSON PATCH/POST triggers a preflight; answer it here.
+      if (req.method === 'OPTIONS') {
+        return withCors(new Response(null, { status: 204 }));
       }
 
       if (url.pathname.startsWith('/api/')) {
-        return handleApi(req, apiCtx);
+        return withCors(await handleApi(req, apiCtx));
       }
 
       if (webDistDir !== null) {
         const staticResponse = await serveStatic(url.pathname, webDistDir);
-        if (staticResponse !== null) return staticResponse;
+        if (staticResponse !== null) return withCors(staticResponse);
       }
 
-      return new Response('not found', { status: 404 });
+      return withCors(new Response('not found', { status: 404 }));
     },
     // Without this, an error escaping `fetch` falls to Bun's development
     // error page, which embeds the stack trace, absolute paths, and source
@@ -249,10 +272,12 @@ export async function startServer(
     // never carry stack traces — log server-side, return opaque JSON.
     error(err) {
       console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
-      return new Response(JSON.stringify({ error: 'internal error' }), {
-        status: 500,
-        headers: { 'content-type': 'application/json; charset=utf-8' },
-      });
+      return withCors(
+        new Response(JSON.stringify({ error: 'internal error' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        })
+      );
     },
     websocket: {
       open(ws) {
