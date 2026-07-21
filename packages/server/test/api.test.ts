@@ -61,6 +61,27 @@ describe('GET /api/health', () => {
       'application/json; charset=utf-8'
     );
   });
+
+  // Regression: the desktop webview and browser dev harness fetch this daemon
+  // cross-origin; without CORS headers the browser blocks the JS from reading
+  // the response ("TypeError: Failed to fetch") and the UI hangs forever on
+  // "Loading board…". curl never enforces CORS, so this must be asserted here.
+  it('sends a permissive CORS origin header on API responses', async () => {
+    const res = await fetch(`${baseUrl}/api/health`);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+  });
+});
+
+describe('CORS preflight', () => {
+  it('answers an OPTIONS preflight with 204 and the allow headers', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, { method: 'OPTIONS' });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-methods')).toContain('PATCH');
+    expect(res.headers.get('access-control-allow-headers')).toContain(
+      'content-type'
+    );
+  });
 });
 
 describe('GET /api/config', () => {

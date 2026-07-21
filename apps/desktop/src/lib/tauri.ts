@@ -13,6 +13,21 @@ import type {
   SessionDetail,
 } from './types';
 
+// True when running inside the Tauri webview (the packaged/dev desktop app),
+// false when the same React bundle is served by plain Vite in a browser. Used
+// for the browser-dev fallback below: opening the Vite URL with
+// `?root=<abs path>&port=<dispatchd port>` lets the whole dispatch UI run and be
+// inspected in an ordinary browser (devtools, automation) against an already
+// running daemon — Tauri IPC (`invoke`) is simply unavailable there.
+export function isTauri(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+function browserParam(name: string): string | null {
+  if (typeof window === 'undefined') return null;
+  return new URLSearchParams(window.location.search).get(name);
+}
+
 export function listProjects(): Promise<ProjectSummary[]> {
   return invoke('list_projects');
 }
@@ -149,6 +164,10 @@ export function launchOrAttachSession(cardId: string): Promise<string> {
  * `ProjectDetail` offers a Tasks tab at all. Pure filesystem check on the backend, no daemon
  * involved. */
 export function hasDispatch(root: string): Promise<boolean> {
+  // Browser-dev fallback: if a `port` param is present the caller has already
+  // pointed us at a running daemon, so the project is dispatch-enabled by
+  // definition.
+  if (!isTauri()) return Promise.resolve(browserParam('port') !== null);
   return invoke('has_dispatch', { root });
 }
 
@@ -158,6 +177,14 @@ export function hasDispatch(root: string): Promise<boolean> {
  * `sidecar::ensure_dispatchd` on the backend. Rejects if `bun` isn't on `PATH` or the daemon
  * never becomes healthy in time. */
 export function ensureDispatchd(root: string): Promise<number> {
+  // Browser-dev fallback: the daemon is already running (started outside the
+  // app); take its port straight from the URL param instead of spawning one.
+  if (!isTauri()) {
+    const port = browserParam('port');
+    return port !== null
+      ? Promise.resolve(Number(port))
+      : Promise.reject(new Error('no ?port= param for browser-dev mode'));
+  }
   return invoke('ensure_dispatchd', { root });
 }
 
@@ -167,5 +194,13 @@ export function ensureDispatchd(root: string): Promise<number> {
  * `hasDispatch` fan-out that used to decide which of Relay's *many* discovered projects was
  * "active" — this app is a single-project workspace now, not a switcher. */
 export function currentProjectRoot(): Promise<string> {
+  // Browser-dev fallback: the active project root comes from the URL param so
+  // the full UI can run against a live daemon in a plain browser.
+  if (!isTauri()) {
+    const root = browserParam('root');
+    return root !== null
+      ? Promise.resolve(root)
+      : Promise.reject(new Error('no ?root= param for browser-dev mode'));
+  }
   return invoke('current_project_root');
 }
