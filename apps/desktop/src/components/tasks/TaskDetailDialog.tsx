@@ -4,8 +4,10 @@ import { ArrowUpRight } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
+import { formatRelativeTimeFromIso } from '../../lib/format';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections, sectionOrDash } from '../../lib/taskDisplay';
+import { RunStatePill } from '../runs/RunStatePill';
 import { AssigneeAvatar } from './AssigneeAvatar';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
@@ -35,6 +37,9 @@ interface TaskDetailDialogProps {
   statuses: string[];
   ready: boolean;
   run: RunMeta | undefined;
+  /** Every run (agent session) this task has had — newest first — so the detail modal can
+   * list them and let you jump into any session's log/review, not just the latest one. */
+  runs: RunMeta[];
   onClose: () => void;
   onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   /** Optimistic status change (see `useDispatchProject.moveTaskStatus`) — the same one the
@@ -61,6 +66,7 @@ export function TaskDetailDialog({
   statuses,
   ready,
   run,
+  runs,
   onClose,
   onUpdate,
   onMoveStatus,
@@ -348,6 +354,39 @@ export function TaskDetailDialog({
                   ))}
                 </div>
               </div>
+            )}
+          </div>
+
+          <div className="border-border flex flex-col gap-2 border-t pt-3">
+            <div className="text-foreground text-[13px] font-medium">
+              Sessions
+            </div>
+            {runs.length === 0 ? (
+              <p className="text-muted-foreground text-[13px]">
+                No agent has worked this task yet.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {runs.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => onOpenRun(r.id)}
+                      className="hover:bg-accent border-border/60 flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150"
+                    >
+                      <RunStatePill state={r.state} />
+                      <span className="text-muted-foreground font-mono text-[11px]">
+                        {r.id}
+                      </span>
+                      <span className="text-muted-foreground/70 ml-auto text-[11px] whitespace-nowrap">
+                        {r.costUsd !== undefined &&
+                          `$${r.costUsd.toFixed(2)} · `}
+                        {formatRelativeTimeFromIso(r.updatedAt)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
