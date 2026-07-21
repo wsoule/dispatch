@@ -22,6 +22,12 @@ export interface FakeStep {
   // matching every existing script's assumption that a write step commits.
   commit?: boolean;
   approval?: { requestId: string; toolName: string; input: unknown };
+  // Keeps the run in the `running` state for this many ms before continuing —
+  // lets a script hold a fake run open long enough to exercise live-run
+  // features (mid-run messaging/injection, the live Session tab) that a
+  // normally-instant fake run would finish before you could reach. Cancellation
+  // still interrupts it promptly.
+  delayMs?: number;
 }
 
 export interface FakeFinish {
@@ -72,6 +78,16 @@ export class FakeExecutor implements Executor {
           if (cancelled) return;
 
           if (step.entry !== undefined) events.onEntry(step.entry);
+
+          if (step.delayMs !== undefined) {
+            // Poll in short slices so a cancel during the wait is honored
+            // promptly rather than blocking for the whole delay.
+            const deadline = Date.now() + step.delayMs;
+            while (Date.now() < deadline && !cancelled) {
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            if (cancelled) return;
+          }
 
           if (step.write !== undefined) {
             step.write(opts.cwd);

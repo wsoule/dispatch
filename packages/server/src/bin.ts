@@ -74,6 +74,13 @@ function buildDefaultFakeScript(): FakeExecutorScript {
       },
     });
   }
+  // DISPATCH_FAKE_LINGER_MS=<n> holds the fake run in the `running` state for n
+  // ms before it finishes — so a live run stays open long enough to exercise
+  // mid-run messaging (user→agent, agent→agent) and the live Session tab.
+  const lingerMs = Number(process.env.DISPATCH_FAKE_LINGER_MS);
+  if (Number.isFinite(lingerMs) && lingerMs > 0) {
+    steps.push({ delayMs: lingerMs });
+  }
   return {
     steps,
     finish: { state: 'finished', costUsd: 0.01, turns: steps.length },
