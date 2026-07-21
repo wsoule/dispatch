@@ -4,7 +4,7 @@ import type { NavState } from './appNav';
 import { initialNavState, navReducer } from './appNav';
 
 describe('navReducer', () => {
-  test('selectProject switches section to project, defaults to board, and clears peek/run', () => {
+  test('selectProject switches section to project, defaults to overview, and clears peek/run', () => {
     const state: NavState = {
       ...initialNavState,
       section: 'global',
@@ -19,7 +19,7 @@ describe('navReducer', () => {
     });
     expect(next.section).toBe('project');
     expect(next.activeProjectId).toBe('proj-a');
-    expect(next.projectView).toBe('board');
+    expect(next.projectView).toBe('overview');
     expect(next.peekTaskId).toBeNull();
     expect(next.activeRunId).toBeNull();
   });
