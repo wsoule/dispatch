@@ -169,11 +169,10 @@ function App() {
   const allAgents = useAllAgents(dispatchProjects);
 
   useGlobalKeyboard({
-    // The only app-root `Modal` today — CreateTaskModal. Suppresses the global `escape`
-    // command entirely while it's open (I3), so a single Escape press closes *only* the
-    // modal (via its own listener) instead of also firing `navReducer`'s `escape` and
-    // closing the task peek panel stacked behind it in the same keystroke.
-    modalOpen: showCreate,
+    // `modalOpen` (I3) is computed inside the hook itself now, via a live DOM check for any
+    // open `Modal` instance — not just `showCreate` (App.tsx's only *direct* modal), so
+    // SessionDetailModal/DiffModal mounted deep inside the Sessions hub also suppress the
+    // global `escape` command while open, the same as CreateTaskModal always did.
     onCommand: (command) => {
       if (command === 'open-palette') dispatchNav({ type: 'togglePalette' });
       else if (command === 'escape') dispatchNav({ type: 'escape' });
