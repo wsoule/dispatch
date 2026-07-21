@@ -67,6 +67,11 @@ export interface ExecutorStartOptions {
   permissionMode: string;
   maxTurns: number;
   maxBudgetUsd?: number;
+  // The Claude model this run should use (an SDK model id like
+  // 'claude-opus-4-8' or an alias like 'sonnet'), chosen at dispatch time.
+  // Optional — omitted falls back to the SDK/CLI default, so FakeExecutor
+  // fixtures and callers that don't care never need to set it.
+  model?: string;
   // The dispatch PROJECT's root directory — distinct from `cwd`, which for a
   // real run is the run's own git worktree (a different directory than the
   // project it was cut from). ClaudeExecutor needs both: `cwd` to root the
@@ -128,6 +133,10 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
+  // The Claude model this run was dispatched with, if one was chosen (see
+  // ExecutorStartOptions.model) — surfaced so the UI can show which model ran
+  // a given task.
+  model?: string;
   // C2: once a run has been merged or discarded, review() must refuse any
   // further review/resume calls on it — this pair of fields, once set, is
   // that one-way marker. `state` itself stays whatever terminal value it

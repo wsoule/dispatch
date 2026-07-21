@@ -277,9 +277,16 @@ async function createRun(
     return errorResponse(409, `cannot dispatch a ${task.meta.status} task`);
   }
 
+  const modelField = parsed.value.model;
+  if (modelField !== undefined && typeof modelField !== 'string') {
+    return errorResponse(400, 'invalid model: expected a string');
+  }
+
   const executorName =
     typeof executorField === 'string' ? executorField : 'claude';
-  const meta = ctx.orchestrator.dispatch(taskId, executorName);
+  const meta = ctx.orchestrator.dispatch(taskId, executorName, {
+    model: modelField,
+  });
   return jsonResponse(meta, 201);
 }
 

@@ -1,11 +1,21 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
-import { ArrowUpRight, Ban, Layers, Plus, Tag, X } from 'lucide-react';
+import {
+  ArrowUpRight,
+  Ban,
+  Check,
+  ChevronDown,
+  Layers,
+  Plus,
+  Tag,
+  X,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { formatRelativeTimeFromIso } from '../../lib/format';
+import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections } from '../../lib/taskDisplay';
 import { RunStatePill } from '../runs/RunStatePill';
@@ -19,6 +29,12 @@ import { StatusIcon } from './StatusIcon';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/ui/dropdown-menu';
 import { Input } from '@/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/ui/select';
 import { Textarea } from '@/ui/textarea';
@@ -239,7 +255,11 @@ interface TaskDetailDialogProps {
    * immediate as dragging its card, rather than waiting on a round-trip like every other field
    * here (`onUpdate`) does. */
   onMoveStatus: (id: string, status: string) => Promise<void>;
-  onDispatch: (id: string, executor?: 'fake' | 'claude') => Promise<void>;
+  onDispatch: (
+    id: string,
+    executor?: 'fake' | 'claude',
+    model?: string
+  ) => Promise<void>;
   onOpenRun: (runId: string) => void;
 }
 
@@ -272,6 +292,9 @@ export function TaskDetailDialog({
   const [activityDraft, setActivityDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  // The model this dispatch will use — seeded from the saved default, overridable per-dispatch
+  // via the picker beside the Dispatch button.
+  const [model, setModel] = useState(readDefaultModel);
 
   // Derived from the run's own state, not the task's status string: the old check compared
   // `doc.meta.status` against the literal built-in strings `'in-progress'`/`'in-review'`,
@@ -284,7 +307,11 @@ export function TaskDetailDialog({
     setDispatching(true);
     setError(null);
     try {
-      await onDispatch(doc.meta.id, executor);
+      await onDispatch(
+        doc.meta.id,
+        executor,
+        executor === 'fake' ? undefined : model
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -418,13 +445,40 @@ export function TaskDetailDialog({
             {(ready || hasOpenRun) && (
               <div className="-mt-2 flex items-center gap-2">
                 {ready && (
-                  <Button
-                    size="sm"
-                    disabled={dispatching}
-                    onClick={() => void dispatch()}
-                  >
-                    Dispatch
-                  </Button>
+                  <>
+                    <Button
+                      size="sm"
+                      disabled={dispatching}
+                      onClick={() => void dispatch()}
+                    >
+                      Dispatch
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:bg-muted/60 hover:text-foreground inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-[12px] transition-colors duration-150"
+                        >
+                          {modelLabel(model)}
+                          <ChevronDown className="size-3" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start">
+                        {MODELS.map((m) => (
+                          <DropdownMenuItem
+                            key={m.id}
+                            onSelect={() => setModel(m.id)}
+                            className="gap-2 pr-8 text-[13px]"
+                          >
+                            <span className="flex-1">{m.label}</span>
+                            {m.id === model && (
+                              <Check className="ml-auto size-3.5" />
+                            )}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
                 )}
                 {ready && isFakeExecutorDevToolEnabled() && (
                   <Button

@@ -58,6 +58,8 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
+  /** The Claude model this run was dispatched with, if one was chosen. */
+  model?: string;
   // Phase 5 P1: set once a run has been reviewed (merge/discard/pr) or its PR
   // has merged — mirrors RunMeta's own one-way markers in
   // packages/server/src/orchestrator/types.ts.
@@ -377,7 +379,10 @@ export interface ApiClient {
   // these mirror. `executor` defaults to 'claude' server-side when omitted;
   // 'fake' stays reachable for the dev-only manual-smoke toggle the desktop
   // UI gates behind a localStorage flag (see apps/desktop/src/lib/devTools.ts).
-  createRun(taskId: string, executor?: 'fake' | 'claude'): Promise<RunMeta>;
+  createRun(
+    taskId: string,
+    opts?: { executor?: 'fake' | 'claude'; model?: string }
+  ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
   approveRun(runId: string, requestId: string, allow: boolean): Promise<void>;
@@ -457,10 +462,13 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'PATCH',
         ...jsonBody(patch),
       }),
-    createRun: (taskId, executor) =>
+    createRun: (taskId, opts = {}) =>
       request(baseUrl, `/api/tasks/${taskId}/runs`, {
         method: 'POST',
-        ...jsonBody(executor !== undefined ? { executor } : {}),
+        ...jsonBody({
+          ...(opts.executor !== undefined ? { executor: opts.executor } : {}),
+          ...(opts.model !== undefined ? { model: opts.model } : {}),
+        }),
       }),
     fetchRuns: () => request(baseUrl, '/api/runs'),
     fetchRun: (id) => request(baseUrl, `/api/runs/${id}`),

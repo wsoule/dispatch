@@ -2,6 +2,7 @@ import type { RunMeta } from '@dispatch/client';
 import { ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 
+import { modelLabel } from '../../lib/models';
 import { RunStatePill } from './RunStatePill';
 import { Button } from '@/ui/button';
 
@@ -54,6 +55,11 @@ export function RunDetailHeader({
         {meta.branch !== undefined && (
           <span className="text-muted-foreground truncate font-mono text-[11px]">
             {meta.branch}
+          </span>
+        )}
+        {meta.model !== undefined && (
+          <span className="border-border text-muted-foreground shrink-0 rounded-full border px-2 py-0.5 text-[11px]">
+            {modelLabel(meta.model)}
           </span>
         )}
         {cost !== null && (

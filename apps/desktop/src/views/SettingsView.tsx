@@ -1,7 +1,10 @@
-import { AlertCircle, FolderSearch } from 'lucide-react';
+import { AlertCircle, Check, FolderSearch } from 'lucide-react';
+import { useState } from 'react';
 
 import { StatTile } from '../components/ui/StatTile';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { MODELS, readDefaultModel, writeDefaultModel } from '../lib/models';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Separator } from '@/ui/separator';
 
@@ -24,6 +27,52 @@ function daemonDotClass(data: DispatchProjectData): string {
 function daemonStatusLabel(data: DispatchProjectData): string {
   if (data.portLoading) return 'starting';
   return data.client !== null ? 'running' : 'not running';
+}
+
+// The one writable setting: which Claude model new dispatches use by default. Persisted to
+// localStorage (see lib/models.ts) and read by useDispatchProject.handleDispatch, so changing
+// it here changes what every subsequent "Dispatch" runs with — overridable per-dispatch from
+// the task detail's model picker.
+function DefaultModelSection() {
+  const [selected, setSelected] = useState(readDefaultModel);
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        Default model
+      </h2>
+      <div className="flex flex-col gap-1.5">
+        {MODELS.map((model) => {
+          const active = model.id === selected;
+          return (
+            <button
+              key={model.id}
+              type="button"
+              onClick={() => {
+                writeDefaultModel(model.id);
+                setSelected(model.id);
+              }}
+              className={cn(
+                'flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors duration-150',
+                active
+                  ? 'border-primary/50 bg-primary/5'
+                  : 'border-border hover:bg-muted/40'
+              )}
+            >
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="text-foreground text-[13px] font-medium">
+                  {model.label}
+                </span>
+                <span className="text-muted-foreground text-[11px]">
+                  {model.hint}
+                </span>
+              </div>
+              {active && <Check className="text-primary size-4 shrink-0" />}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 /**
@@ -51,6 +100,10 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
   return (
     <div className="flex max-w-2xl flex-col gap-5">
       <h1 className="text-foreground text-[15px] font-medium">Settings</h1>
+
+      <DefaultModelSection />
+
+      <Separator />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
