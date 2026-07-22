@@ -109,8 +109,29 @@ export function Sidebar({
   return (
     <aside className="border-border bg-background flex w-60 shrink-0 flex-col overflow-y-auto border-r px-3 py-4">
       <div className="text-foreground mb-4 flex items-center gap-2 px-2 font-mono text-[13px] font-semibold">
-        <span className="bg-primary text-primary-foreground inline-flex size-5 items-center justify-center rounded-md text-[11px]">
-          D
+        {/* The Dispatch orbit mark — an agent orbiting the orchestrator hub, matching the app
+            icon (see app-icon.svg). Rendered as a small indigo tile so it reads at 20px. */}
+        <span className="bg-primary inline-flex size-5 items-center justify-center rounded-md">
+          <svg
+            viewBox="0 0 24 24"
+            className="size-3.5"
+            fill="none"
+            aria-hidden="true"
+          >
+            <g transform="rotate(-20 12 12)">
+              <ellipse
+                cx="12"
+                cy="12"
+                rx="8"
+                ry="4.2"
+                stroke="#ffffff"
+                strokeOpacity="0.6"
+                strokeWidth="1.4"
+              />
+            </g>
+            <circle cx="12" cy="12" r="2.1" fill="#ffffff" />
+            <circle cx="17.4" cy="7.8" r="1.7" fill="#ffffff" />
+          </svg>
         </span>
         Dispatch
       </div>

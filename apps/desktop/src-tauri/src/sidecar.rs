@@ -159,6 +159,27 @@ pub trait DaemonSpawner: Send + Sync {
     fn spawn(&self, bin_path: &Path, root: &str) -> Result<Child, String>;
 }
 
+/// Resolves the `bun` executable to an absolute path. A macOS app launched from
+/// Finder/Spotlight inherits a minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`)
+/// that omits `~/.bun/bin`, so a bare `bun` fails to resolve in a packaged
+/// release build — even though the same `bun` is right there for a terminal
+/// launch. Probe the standard install locations first and fall back to bare
+/// `bun` (found on `PATH`) for a terminal launch or a Linux host.
+fn resolve_bun() -> std::ffi::OsString {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(Path::new(&home).join(".bun/bin/bun"));
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin/bun"));
+    candidates.push(PathBuf::from("/usr/local/bin/bun"));
+    for candidate in candidates {
+        if candidate.exists() {
+            return candidate.into_os_string();
+        }
+    }
+    std::ffi::OsString::from("bun")
+}
+
 /// Real spawner: `bun <bin_path> --root <root>`. Stdio is piped rather than
 /// inherited/null so `forward_child_output` can surface dispatchd's own log
 /// lines through Rust's `log` — the desktop app has no separate terminal
@@ -167,7 +188,7 @@ pub struct BunSpawner;
 
 impl DaemonSpawner for BunSpawner {
     fn spawn(&self, bin_path: &Path, root: &str) -> Result<Child, String> {
-        let mut command = Command::new("bun");
+        let mut command = Command::new(resolve_bun());
         command
             .arg(bin_path)
             .arg("--root")
