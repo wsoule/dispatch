@@ -665,16 +665,42 @@ pub fn launch_or_attach_session(db: State<'_, Db>, card_id: String) -> Result<St
 /// dev-only bin resolution walks up from to find `packages/server/src/bin.ts`.
 #[tauri::command]
 pub async fn ensure_dispatchd(
+    app: tauri::AppHandle,
     children: State<'_, sidecar::DispatchdChildren>,
     root: String,
 ) -> Result<u16, String> {
-    sidecar::ensure_dispatchd(
-        &sidecar::BunSpawner,
-        &children,
-        Path::new(env!("CARGO_MANIFEST_DIR")),
-        &root,
-    )
-    .await
+    let launch = resolve_daemon_launch(&app)?;
+    sidecar::ensure_dispatchd(&sidecar::BunSpawner, &children, launch, &root).await
+}
+
+/// Picks how to start dispatchd for the running build. A dev build runs the TS
+/// entry through `bun` from this checkout (`CARGO_MANIFEST_DIR`); a packaged
+/// release runs the two standalone binaries bundled under the app's Resource
+/// dir, so the shipped app depends on neither `bun` nor the checkout.
+fn resolve_daemon_launch(
+    app: &tauri::AppHandle,
+) -> Result<sidecar::DaemonLaunch, String> {
+    #[cfg(debug_assertions)]
+    {
+        let _ = app;
+        Ok(sidecar::dev_launch(Path::new(env!("CARGO_MANIFEST_DIR"))))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        use tauri::Manager;
+        let dispatchd = app
+            .path()
+            .resolve("resources/dispatchd", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| format!("cannot locate bundled dispatchd: {e}"))?;
+        let mcp = app
+            .path()
+            .resolve(
+                "resources/dispatch-mcp",
+                tauri::path::BaseDirectory::Resource,
+            )
+            .map_err(|e| format!("cannot locate bundled MCP server: {e}"))?;
+        Ok(sidecar::DaemonLaunch::Bundled { dispatchd, mcp })
+    }
 }
 
 /// True if `root` has a `.dispatch/` directory — gates whether

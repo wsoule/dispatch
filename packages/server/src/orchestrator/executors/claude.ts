@@ -74,6 +74,15 @@ function buildDispatchMcpServerConfig(
   }
   env.DISPATCH_PROJECT_ROOT = projectRoot;
   env.DISPATCH_RUN_ID = runId;
+  // `DISPATCH_MCP_BIN` is set by the packaged desktop app's sidecar wiring to
+  // the bundled, `bun build --compile`d MCP server binary — run it directly so
+  // a self-contained release needs neither `bun` on PATH nor the monorepo
+  // checkout `resolveMcpBin()` walks to. Unset in dev / a plain `dispatch
+  // serve`, where the TS entry runs through `bun` as before.
+  const mcpBin = process.env.DISPATCH_MCP_BIN;
+  if (mcpBin !== undefined && mcpBin !== '') {
+    return { type: 'stdio', command: mcpBin, args: ['--root', cwd], env };
+  }
   return {
     type: 'stdio',
     command: 'bun',

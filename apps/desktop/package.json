@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:sidecars": "bun build ../../packages/server/src/bin.ts --compile --outfile src-tauri/resources/dispatchd && bun build ../../packages/mcp/src/bin.ts --compile --outfile src-tauri/resources/dispatch-mcp && chmod +x src-tauri/resources/dispatchd src-tauri/resources/dispatch-mcp",
+    "build:app": "bun run build && bun run build:sidecars",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "bun test",
