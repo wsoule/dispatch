@@ -138,6 +138,7 @@ async fn is_healthy(client: &reqwest::Client, port: u16) -> bool {
 /// down into `packages/server/src/bin.ts`. Valid only when running from this
 /// checkout — see this module's doc comment for the Phase 6 packaged-binary
 /// TODO.
+#[cfg_attr(not(any(debug_assertions, test)), allow(dead_code))]
 fn dispatchd_bin_path(manifest_dir: &Path) -> PathBuf {
     manifest_dir
         .join("..")
@@ -149,6 +150,26 @@ fn dispatchd_bin_path(manifest_dir: &Path) -> PathBuf {
         .join("bin.ts")
 }
 
+/// How to start dispatchd. A dev build runs the TypeScript entry through `bun`
+/// straight from the monorepo checkout (hot, no build step); a packaged release
+/// runs the standalone `bun build --compile`d binary directly and points it at
+/// the equally-standalone bundled MCP binary (via `DISPATCH_MCP_BIN`), so a
+/// shipped app needs neither `bun` on `PATH` nor the checkout on disk.
+pub enum DaemonLaunch {
+    /// `bun <bin.ts> --root <root>` — the dev/`dispatch serve` path.
+    BunScript(PathBuf),
+    /// Run the compiled dispatchd binary directly, telling it where the
+    /// compiled MCP binary lives so its executor spawns that instead of `bun`.
+    Bundled { dispatchd: PathBuf, mcp: PathBuf },
+}
+
+/// The dev launch, resolved from `CARGO_MANIFEST_DIR` (see `dispatchd_bin_path`).
+/// Dead in a release build (which always uses `Bundled`), live in dev + tests.
+#[cfg_attr(not(any(debug_assertions, test)), allow(dead_code))]
+pub fn dev_launch(manifest_dir: &Path) -> DaemonLaunch {
+    DaemonLaunch::BunScript(dispatchd_bin_path(manifest_dir))
+}
+
 /// Abstraction over spawning the dispatchd child process, so `ensure_dispatchd`'s
 /// health-check/poll logic can be exercised in tests (e.g. "bun isn't
 /// installed" surfacing as a clear error) without actually invoking `bun`.
@@ -156,7 +177,7 @@ fn dispatchd_bin_path(manifest_dir: &Path) -> PathBuf {
 /// inside `ensure_dispatchd`, and Tauri's async commands require their
 /// whole future to be `Send`.
 pub trait DaemonSpawner: Send + Sync {
-    fn spawn(&self, bin_path: &Path, root: &str) -> Result<Child, String>;
+    fn spawn(&self, launch: &DaemonLaunch, root: &str) -> Result<Child, String>;
 }
 
 /// Resolves the `bun` executable to an absolute path. A macOS app launched from
@@ -187,31 +208,36 @@ fn resolve_bun() -> std::ffi::OsString {
 pub struct BunSpawner;
 
 impl DaemonSpawner for BunSpawner {
-    fn spawn(&self, bin_path: &Path, root: &str) -> Result<Child, String> {
-        let mut command = Command::new(resolve_bun());
+    fn spawn(&self, launch: &DaemonLaunch, root: &str) -> Result<Child, String> {
+        let mut command = match launch {
+            // Dev: `bun <bin.ts> --root <root>`, with the fake executor toggle.
+            DaemonLaunch::BunScript(bin_path) => {
+                let mut c = Command::new(resolve_bun());
+                c.arg(bin_path).arg("--root").arg(root);
+                // Phase 7: `DISPATCH_ENABLE_FAKES=1` makes dispatchd register a
+                // FakeExecutor/FakePlanner alongside the real ones (see
+                // packages/server/src/bin.ts) — set only in debug builds so the
+                // Tasks tab's hidden "dispatch with the fake executor" dev
+                // toggle works, while a release never registers fakes.
+                #[cfg(debug_assertions)]
+                c.env("DISPATCH_ENABLE_FAKES", "1");
+                c
+            }
+            // Release: run the compiled dispatchd directly, and tell it where
+            // the compiled MCP binary is so its executor runs that rather than
+            // shelling out to `bun` (see buildDispatchMcpServerConfig).
+            DaemonLaunch::Bundled { dispatchd, mcp } => {
+                let mut c = Command::new(dispatchd);
+                c.arg("--root").arg(root).env("DISPATCH_MCP_BIN", mcp);
+                c
+            }
+        };
         command
-            .arg(bin_path)
-            .arg("--root")
-            .arg(root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // Phase 7: `DISPATCH_ENABLE_FAKES=1` is what makes dispatchd register
-        // a FakeExecutor/FakePlanner alongside the real ones (see
-        // packages/server/src/bin.ts's own doc comment) — production
-        // dispatchd otherwise only ever wires up the real Claude backend.
-        // Setting it only in debug builds is what keeps the Tasks tab's
-        // existing hidden "dispatch with the fake executor" dev toggle
-        // (apps/desktop/src/lib/devTools.ts) working exactly as before this
-        // phase, while a release build's sidecar never sets it — matching
-        // the plan's "production default registers claude only".
-        #[cfg(debug_assertions)]
-        command.env("DISPATCH_ENABLE_FAKES", "1");
         command.spawn().map_err(|e| {
-            format!(
-                "failed to spawn dispatchd (bun {}): {e} — is bun installed? https://bun.sh",
-                bin_path.display()
-            )
+            format!("failed to spawn dispatchd: {e} — is bun installed? https://bun.sh")
         })
     }
 }
@@ -338,7 +364,7 @@ async fn poll_for_healthy_daemon(
 pub async fn ensure_dispatchd(
     spawner: &dyn DaemonSpawner,
     children: &DispatchdChildren,
-    manifest_dir: &Path,
+    launch: DaemonLaunch,
     root: &str,
 ) -> Result<u16, String> {
     let root = normalize_root(root)?;
@@ -351,8 +377,7 @@ pub async fn ensure_dispatchd(
         }
     }
 
-    let bin_path = dispatchd_bin_path(manifest_dir);
-    let mut child = spawner.spawn(&bin_path, root)?;
+    let mut child = spawner.spawn(&launch, root)?;
     forward_child_output(&mut child);
     children.push(child);
 
@@ -547,7 +572,7 @@ mod tests {
     struct FailingSpawner;
 
     impl DaemonSpawner for FailingSpawner {
-        fn spawn(&self, _bin_path: &Path, _root: &str) -> Result<Child, String> {
+        fn spawn(&self, _launch: &DaemonLaunch, _root: &str) -> Result<Child, String> {
             Err("bun: command not found".to_string())
         }
     }
@@ -562,7 +587,8 @@ mod tests {
         let manifest_dir = Path::new("/repo/apps/desktop/src-tauri");
 
         let result =
-            ensure_dispatchd(&FailingSpawner, &children, manifest_dir, root).await;
+            ensure_dispatchd(&FailingSpawner, &children, dev_launch(manifest_dir), root)
+                .await;
 
         assert_eq!(result, Err("bun: command not found".to_string()));
         assert!(children.0.lock().unwrap().is_empty());

@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeBuildCommand": "bun run build:app"
   },
   "app": {
     "windows": [
@@ -29,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": ["resources/dispatchd", "resources/dispatch-mcp"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
