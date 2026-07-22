@@ -23,13 +23,14 @@ directory — that directory is gitignored, is **never modified**, and is not pa
 of this package; it exists purely as read-only source material for comparing
 against future re-vendoring passes.
 
-### Licensing gate (release blocker)
+### Licensing
 
-**Relay carries no license.** The user asserts permission from the author is
-held/obtainable, and vendoring proceeds locally on that basis. **A written grant
-(or relicense) from the upstream author must be recorded before any public
-release, npm publish, or repo publication of this package.** This is tracked in
-the roadmap; do not ship `apps/desktop` publicly until that grant is recorded.
+Relay's upstream repository carries no license file. Permission to include,
+modify, and publish the vendored code in this repository was granted by the
+upstream author, Tanmay Dabhade, to Wyat Soule (grant reported and recorded here
+2026-07-22). The Dispatch-authored portions of this package are covered by the
+repository's Apache-2.0 license; the vendored Relay portions are used with the
+author's permission as described above.
 
 ## Architecture
 
