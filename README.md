@@ -80,6 +80,15 @@ the full design.
   `docs/superpowers/specs/2026-07-13-agent-orchestration-platform-design.md`
 - Research: `docs/research/2026-07-13-landscape-research.md`
 
+## Credits
+
+The desktop app (`apps/desktop`) builds on
+[Relay](https://github.com/TanmayDabhade/Relay) by Tanmay Dabhade — its Tauri
+shell, Rust observability backend, and React frontend were vendored (with the
+author's permission) as the foundation for Dispatch's desktop shell. See
+`apps/desktop/README.md` for full provenance and licensing details.
+
 ## License
 
-Apache-2.0
+Apache-2.0. The vendored Relay portions of `apps/desktop` are used with their
+author's permission — see `apps/desktop/README.md`.
