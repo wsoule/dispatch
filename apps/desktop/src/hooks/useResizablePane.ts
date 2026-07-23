@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 
 // A pane can never be dragged narrower than this — below it, list rows and controls stop
 // being usable.
@@ -29,9 +35,30 @@ export function useResizablePane(
   // can compute an absolute new width from the total delta rather than accumulating
   // per-event drift.
   const dragOrigin = useRef<{ x: number; width: number } | null>(null);
+  // Track whether a drag is currently active to avoid persisting on every pointermove frame.
+  const isDragging = useRef(false);
 
+  // After mount, re-clamp the restored width against the live container width in case a
+  // previously-persisted wide value exceeds the max-50%-of-container invariant. Runs once
+  // on mount; intentionally excludes width and containerRef from deps to run only at mount.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    const containerWidth = containerRef.current?.clientWidth;
+    if (containerWidth) {
+      const max = Math.max(MIN_WIDTH_PX, containerWidth * MAX_WIDTH_RATIO);
+      const clamped = Math.min(Math.max(width, MIN_WIDTH_PX), max);
+      if (clamped !== width) {
+        setWidth(clamped);
+      }
+    }
+  }, []);
+
+  // Persist width to localStorage, but skip during active drag to avoid hammering storage
+  // on every pointermove frame. Drag release and non-drag setters will still persist.
   useEffect(() => {
-    window.localStorage.setItem(storageKey, String(width));
+    if (!isDragging.current) {
+      window.localStorage.setItem(storageKey, String(width));
+    }
   }, [storageKey, width]);
 
   const clamp = useCallback(
@@ -46,6 +73,7 @@ export function useResizablePane(
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.currentTarget.setPointerCapture(e.pointerId);
+      isDragging.current = true;
       dragOrigin.current = { x: e.clientX, width };
     },
     [width]
@@ -61,15 +89,33 @@ export function useResizablePane(
     [clamp]
   );
 
-  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    dragOrigin.current = null;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-  }, []);
-
-  const onDoubleClick = useCallback(
-    () => setWidth(defaultWidth),
-    [defaultWidth]
+  const endDrag = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      isDragging.current = false;
+      dragOrigin.current = null;
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      // Explicitly persist the final width after drag release.
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(storageKey, String(width));
+      }
+    },
+    [storageKey, width]
   );
 
-  return { width, onPointerDown, onPointerMove, onPointerUp, onDoubleClick };
+  const onPointerUp = endDrag;
+  const onPointerCancel = endDrag;
+
+  const onDoubleClick = useCallback(
+    () => setWidth(clamp(defaultWidth)),
+    [defaultWidth, clamp]
+  );
+
+  return {
+    width,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    onPointerCancel,
+    onDoubleClick,
+  };
 }
