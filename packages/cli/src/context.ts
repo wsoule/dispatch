@@ -7,6 +7,13 @@ export interface CliContext {
   // `defaultOpenBrowser` in commands/daemon.ts) when this is omitted, and
   // tests can inject a stub to assert on the URL without opening anything.
   openBrowser?: (url: string) => void;
+  // Launches the installed desktop app for a project root, used by the bare
+  // `dispatch` default action when the app is present (see
+  // `openDesktopOrBrowser` in commands/daemon.ts). Optional for the same
+  // reason as `openBrowser`: real usage falls back to spawning `open -a
+  // <productName>`, and tests inject a stub to assert on the root without
+  // actually launching anything.
+  openApp?: (rootDir: string) => void;
 }
 
 export class CliError extends Error {

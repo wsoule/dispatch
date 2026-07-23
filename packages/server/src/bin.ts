@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
+import { existsSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 import { startServer } from './index.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
@@ -313,6 +314,18 @@ const port = portArg !== undefined ? Number(portArg) : 0;
 if (portArg !== undefined && Number.isNaN(port)) {
   console.error(`invalid --port: ${portArg}`);
   process.exit(1);
+}
+
+// The desktop app's add-project flow can spawn a daemon for a folder that
+// hasn't run `dispatch init` yet — init lives here (rather than requiring the
+// caller to shell out to the CLI first) so that logic stays in TS and this
+// one bin covers both "start a daemon" and "start a daemon, initializing the
+// project first" in a single spawn.
+if (
+  args.includes('--init') &&
+  !existsSync(join(rootDir, DISPATCH_DIR, 'tasks'))
+) {
+  TaskStore.init(rootDir);
 }
 
 const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';
