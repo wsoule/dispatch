@@ -45,13 +45,15 @@ export function QueueMergeControl({
   const queuePosition =
     activeEntry !== undefined ? entries.indexOf(activeEntry) + 1 : undefined;
   // A failed attempt moves out of `entries` into `history` — surfaced only when there's no
-  // active entry for this run, since a fresh enqueue after a failure starts a new entry.
-  const failedEntry =
+  // active entry for this run, since a fresh enqueue after a failure starts a new entry. History
+  // is most-recent-first, so the run's own most recent entry (not just any past failed one) is
+  // what determines whether "Failed: ..." still applies — otherwise a run that failed once and
+  // later merged successfully would show a stale failure label forever.
+  const latestEntry =
     activeEntry === undefined
-      ? mergeQueue?.history.find(
-          (e) => e.runId === meta.id && e.state === 'failed'
-        )
+      ? mergeQueue?.history.find((e) => e.runId === meta.id)
       : undefined;
+  const failedEntry = latestEntry?.state === 'failed' ? latestEntry : undefined;
   const alreadyReviewed = meta.reviewedAt !== undefined;
   const disabledReason = alreadyReviewed
     ? 'This run has already been reviewed'

@@ -83,7 +83,15 @@ function resolveDaemonBin(): string {
 // inject a stub; real usage falls through to here).
 function defaultOpenBrowser(url: string): void {
   const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
-  spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+  const child = spawn(cmd, [url], { stdio: 'ignore', detached: true });
+  // The daemon is already up by the time this runs — a host missing
+  // `open`/`xdg-open` must not crash a bare `dispatch` invocation just
+  // because it couldn't show the UI. Log and move on, same as
+  // ensureDaemon's spawn error comment.
+  child.on('error', (err) => {
+    console.error(`dispatch: failed to open browser: ${err.message}`);
+  });
+  child.unref();
 }
 
 function openBrowserFor(ctx: CliContext, url: string): void {
@@ -103,10 +111,18 @@ const DESKTOP_PRODUCT_NAME = 'Dispatch';
 // instance is running yet. The registry entry (written before this is
 // called) is what makes the project show up in the switcher either way.
 function defaultOpenApp(rootDir: string): void {
-  spawn('open', ['-a', DESKTOP_PRODUCT_NAME, '--args', '--root', rootDir], {
-    stdio: 'ignore',
-    detached: true,
-  }).unref();
+  const child = spawn(
+    'open',
+    ['-a', DESKTOP_PRODUCT_NAME, '--args', '--root', rootDir],
+    { stdio: 'ignore', detached: true }
+  );
+  // Same rationale as defaultOpenBrowser's error handler: the daemon is
+  // already up, so a spawn failure here (e.g. `open` missing on a non-macOS
+  // host) is not fatal — just log it instead of letting it crash the CLI.
+  child.on('error', (err) => {
+    console.error(`dispatch: failed to open desktop app: ${err.message}`);
+  });
+  child.unref();
 }
 
 // Bare `dispatch`'s "show me the UI" step: prefer the installed desktop app
