@@ -365,6 +365,11 @@ describe('PrManager polling', () => {
     const run = harness.orchestrator.getRun(runId);
     expect(run?.meta.reviewedAt).toBeDefined();
     expect(run?.meta.reviewAction).toBe('pr');
+
+    // markRunMergedViaPr removes the worktree just like a local review() —
+    // its diff must survive via the same snapshot fallback rather than
+    // 409ing now that there's nothing left to diff live.
+    expect(() => harness.orchestrator.diff(runId)).not.toThrow();
   });
 
   it('skips a run whose gh pr view call fails without affecting others', async () => {

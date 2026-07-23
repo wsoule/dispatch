@@ -33,6 +33,16 @@ export function transcriptPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.jsonl`);
 }
 
+// Where a run's diff snapshot (see Orchestrator.persistDiffSnapshot) lives —
+// written right before the run's worktree is removed on every review path
+// (local merge, discard, PR merge) so GET .../diff still has something to
+// serve once the worktree that produced the diff is gone. Kept alongside the
+// transcript in the same per-run-state directory rather than under the
+// worktree itself, since the worktree is exactly what's about to disappear.
+export function diffSnapshotPath(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.diff.json`);
+}
+
 export function worktreesDir(rootDir: string): string {
   return join(dispatchHome(), '.dispatch', 'worktrees', rootHash(rootDir));
 }

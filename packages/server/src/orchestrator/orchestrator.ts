@@ -7,12 +7,19 @@ import {
   TaskStore,
 } from '@dispatch/core';
 import type { OrchestratorConfig, TaskDoc, UpdatePatch } from '@dispatch/core';
-import { existsSync, readdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import {
+  diffSnapshotPath,
   runsDir,
   transcriptPath,
   worktreePath,
@@ -411,20 +418,51 @@ export class Orchestrator {
 
   // The review surface's unified diff: everything committed on the run's
   // branch since it diverged from its base branch, plus per-file status.
+  //
+  // Every review path (local merge, discard, a merged PR) removes the run's
+  // worktree, which used to make this permanently 404/409 the moment review
+  // happened — the diff a reviewer just looked at would vanish right after
+  // they acted on it. persistDiffSnapshot now writes that diff to disk right
+  // before each removal, so once the live worktree is gone this falls back
+  // to the snapshot instead of erroring. The live worktree is preferred
+  // whenever it's still there (the common case pre-review) rather than ever
+  // preferring a possibly-stale snapshot over the real thing.
   diff(runId: string): DiffResult {
     const meta = this.requireRun(runId);
-    // Important #7: a reviewed run's worktree is gone (merge removes it
-    // outright; discard too) — check both the review marker and the
-    // worktree's actual existence (a defensive belt-and-suspenders: either
-    // one alone can lag behind reality after a crash) rather than letting
-    // `git diff` run against a cwd that no longer exists and surface as an
-    // opaque internal error.
-    if (meta.reviewedAt !== undefined || !existsSync(meta.worktreePath)) {
-      throw new OrchestratorConflictError(
-        `run has no worktree to diff: ${runId}`
+    if (existsSync(meta.worktreePath)) {
+      return this.worktrees.diff(meta.worktreePath, meta.baseBranch);
+    }
+    const snapshotPath = diffSnapshotPath(this.ctx.rootDir, runId);
+    if (existsSync(snapshotPath)) {
+      return JSON.parse(readFileSync(snapshotPath, 'utf8')) as DiffResult;
+    }
+    throw new OrchestratorConflictError(
+      `run has no worktree to diff: ${runId}`
+    );
+  }
+
+  // Snapshots a run's diff to disk immediately before its worktree is
+  // removed on a review path (local merge, discard, PR merge) — see diff()'s
+  // comment for why this exists. `precomputed` lets mergeRun() reuse the
+  // diff it already had to compute anyway (to decide whether there's
+  // anything to squash) instead of shelling out to git twice. A snapshot
+  // failure (a git error, a full disk) must never block the review action
+  // itself — this only logs and returns, same convention as the other
+  // best-effort hooks in this file.
+  private persistDiffSnapshot(meta: RunMeta, precomputed?: DiffResult): void {
+    try {
+      const result =
+        precomputed ?? this.worktrees.diff(meta.worktreePath, meta.baseBranch);
+      mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
+      writeFileSync(
+        diffSnapshotPath(this.ctx.rootDir, meta.id),
+        JSON.stringify(result)
+      );
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to snapshot diff for run ${meta.id}: ${(err as Error).message}`
       );
     }
-    return this.worktrees.diff(meta.worktreePath, meta.baseBranch);
   }
 
   // Terminal review action for a run: 'merge' squash-merges the branch into
@@ -458,6 +496,7 @@ export class Orchestrator {
     if (action === 'merge') {
       this.mergeRun(meta, now);
     } else {
+      this.persistDiffSnapshot(meta);
       this.worktrees.remove(meta.worktreePath, meta.branch);
       this.ctx.store.update(
         meta.taskId,
@@ -517,6 +556,7 @@ export class Orchestrator {
       );
     }
     const now = new Date().toISOString();
+    this.persistDiffSnapshot(meta);
     this.worktrees.remove(meta.worktreePath, meta.branch);
     this.ctx.store.update(
       meta.taskId,
@@ -584,8 +624,11 @@ export class Orchestrator {
     // run that made no file changes) has nothing to squash — skip
     // mergeSquash entirely rather than let its trailing `git commit` fail
     // with "nothing to commit" on an otherwise perfectly valid merge.
-    const hasChanges =
-      this.worktrees.diff(meta.worktreePath, meta.baseBranch).files.length > 0;
+    const preMergeDiff = this.worktrees.diff(
+      meta.worktreePath,
+      meta.baseBranch
+    );
+    const hasChanges = preMergeDiff.files.length > 0;
     if (hasChanges) {
       try {
         this.worktrees.mergeSquash(meta.branch, message);
@@ -626,6 +669,7 @@ export class Orchestrator {
       : ['commit', '-m', message];
     Bun.spawnSync(['git', ...commitArgs], { cwd: this.ctx.rootDir });
 
+    this.persistDiffSnapshot(meta, preMergeDiff);
     this.worktrees.remove(meta.worktreePath, meta.branch);
   }
 
