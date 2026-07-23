@@ -760,8 +760,11 @@ fn resolve_project_root(
         if !path.is_absolute() {
             return Err(format!("--root must be an absolute path, got: {root}"));
         }
-        if !path.is_dir() {
+        if !path.exists() {
             return Err(format!("--root path does not exist: {root}"));
+        }
+        if !path.is_dir() {
+            return Err(format!("--root is not a directory: {root}"));
         }
         return Ok(root);
     }
@@ -1012,6 +1015,37 @@ mod tests {
         assert!(
             resolve_project_root(&missing, None, Path::new(env!("CARGO_MANIFEST_DIR"))).is_err()
         );
+    }
+
+    #[test]
+    fn resolve_project_root_distinguishes_missing_from_non_directory_root_arg() {
+        // A `--root` pointing at a path that doesn't exist at all gets the "does not
+        // exist" message; one pointing at an existing *file* (not a directory) gets a
+        // different, more accurate message — the two used to be conflated under a
+        // single "does not exist" error even though the file is right there on disk.
+        let missing = vec![
+            "app".to_string(),
+            "--root".to_string(),
+            "/no/such/dir/anywhere-12345".to_string(),
+        ];
+        let missing_err =
+            resolve_project_root(&missing, None, Path::new(env!("CARGO_MANIFEST_DIR")))
+                .unwrap_err();
+        assert!(missing_err.contains("does not exist"));
+
+        let file = std::env::temp_dir().join(format!(
+            "dispatch-resolve-project-root-not-a-dir-{}",
+            std::process::id()
+        ));
+        std::fs::write(&file, b"not a directory").unwrap();
+        let file_str = file.to_str().unwrap().to_string();
+        let args = vec!["app".to_string(), "--root".to_string(), file_str.clone()];
+        let file_err = resolve_project_root(&args, None, Path::new(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_err();
+        assert!(file_err.contains("is not a directory"));
+        assert!(!file_err.contains("does not exist"));
+
+        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]
