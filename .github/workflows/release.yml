@@ -16,6 +16,17 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual runs exist to (re-)publish the Homebrew cask for an
+  # already-released tag — only the update-homebrew-tap job runs (the
+  # create-release/build jobs are push-gated below), so this never rebuilds
+  # or re-uploads assets.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description:
+          'Existing release tag (e.g. v0.2.1) to publish to the Homebrew tap'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,6 +34,7 @@ permissions:
 jobs:
   create-release:
     name: Create draft release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -43,6 +55,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.os }})
+    if: github.event_name == 'push'
     needs: create-release
     strategy:
       fail-fast: false
@@ -157,3 +170,64 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --clobber \
             ${{ matrix.bundles }}
+
+  # Publishes the release to the Homebrew tap: downloads the two DMGs the
+  # build jobs uploaded, computes their sha256s, and pushes a version+hash
+  # bump to wsoule/homebrew-tap's Casks/dispatch.rb. Authenticates with the
+  # TAP_DEPLOY_KEY secret (a write deploy key on the tap repo). Runs after a
+  # tag build, or standalone via workflow_dispatch for an existing tag —
+  # `!cancelled()` lets it run when build was skipped (dispatch) but still
+  # requires build success on tag pushes. Idempotent: an already-current cask
+  # exits without committing.
+  update-homebrew-tap:
+    name: Update Homebrew cask
+    needs: build
+    if:
+      ${{ !cancelled() && (github.event_name == 'workflow_dispatch' ||
+      needs.build.result == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
+      # inputs.tag is user-typed: it reaches the shell only via env (never
+      # inline ${{ }} in run:) and is format-validated before any use.
+      - name: Resolve and validate the release tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "tag '$TAG' does not look like vX.Y.Z" >&2
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Download release DMGs and compute checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.dmg'
+          ARM_SHA=$(sha256sum "Dispatch_${VERSION}_aarch64.dmg" | cut -d' ' -f1)
+          X64_SHA=$(sha256sum "Dispatch_${VERSION}_x64.dmg" | cut -d' ' -f1)
+          echo "ARM_SHA=$ARM_SHA" >> "$GITHUB_ENV"
+          echo "X64_SHA=$X64_SHA" >> "$GITHUB_ENV"
+
+      - name: Push cask bump to the tap
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap_deploy_key
+          chmod 600 ~/.ssh/tap_deploy_key
+          export GIT_SSH_COMMAND='ssh -i ~/.ssh/tap_deploy_key -o StrictHostKeyChecking=accept-new'
+          git clone --depth 1 git@github.com:wsoule/homebrew-tap.git tap
+          cd tap
+          sed -i -E "s|^  version \"[^\"]*\"|  version \"${VERSION}\"|" Casks/dispatch.rb
+          sed -i -E "s|^  sha256 arm:   \"[0-9a-f]*\",|  sha256 arm:   \"${ARM_SHA}\",|" Casks/dispatch.rb
+          sed -i -E "s|^         intel: \"[0-9a-f]*\"|         intel: \"${X64_SHA}\"|" Casks/dispatch.rb
+          if git diff --quiet; then
+            echo "cask already at ${VERSION} — nothing to push"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "dispatch ${VERSION}"
+          git push origin HEAD:main
