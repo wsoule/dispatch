@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type {
   BoardColumn,
@@ -207,4 +208,85 @@ export function currentProjectRoot(): Promise<string> {
       : Promise.reject(new Error('no ?root= param for browser-dev mode'));
   }
   return invoke('current_project_root');
+}
+
+// --- Project registry + onboarding (Task 8) ---
+
+/** A project the user has added/opened, as stored in `~/.dispatch/projects.json`. The Rust
+ * side returns `addedAt`/`lastOpenedAt` too, but the switcher only needs these two fields. */
+export interface RegisteredProject {
+  path: string;
+  name: string;
+}
+
+/** Every project in the registry — the persistent half of the switcher's project list.
+ * Browser-dev fallback: no backend, so an empty list (the switcher just shows the active
+ * project), matching `listProjects`'s own degrade-to-empty behavior. */
+export function listRegisteredProjects(): Promise<RegisteredProject[]> {
+  if (!isTauri()) return Promise.resolve([]);
+  return invoke('list_registered_projects');
+}
+
+/** Registers `path` (must be an existing directory) and resolves to the normalized absolute
+ * path stored for it — the caller then switches the window to that path. Rejects in
+ * browser-dev, where there's no registry to write to. */
+export function addProject(path: string): Promise<string> {
+  if (!isTauri()) {
+    return Promise.reject(
+      new Error('adding projects requires the desktop app')
+    );
+  }
+  return invoke('add_project', { path });
+}
+
+/** Stamps `lastOpenedAt` for `path` in the registry (adding it if absent). Fire-and-forget on
+ * every project switch; a no-op in browser-dev. */
+export function touchProjectOpened(path: string): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke('touch_project_opened', { path });
+}
+
+/** Opens a native folder picker (via the `tauri-plugin-dialog` JS API) and resolves to the
+ * chosen absolute path, or `null` if the user cancelled. Uses the plugin's JS `open` directly
+ * rather than a bespoke Rust command — it's the idiomatic Tauri-2 surface and needs only the
+ * `dialog:default` capability. Returns `null` in browser-dev, where no native dialog exists. */
+export function pickDirectory(): Promise<string | null> {
+  if (!isTauri()) return Promise.resolve(null);
+  return openDialog({ directory: true, multiple: false }).then((result) =>
+    typeof result === 'string' ? result : null
+  );
+}
+
+/** A GitHub repository from `gh repo list`, for the "From GitHub" clone flow. */
+export interface GithubRepo {
+  nameWithOwner: string;
+  name: string;
+  description: string;
+}
+
+/** Lists the authenticated user's GitHub repos via `gh repo list` (backend runs `gh auth
+ * status` first). Rejects with a clear message if `gh` is missing/unauthenticated, or in
+ * browser-dev. */
+export function listGithubRepos(): Promise<GithubRepo[]> {
+  if (!isTauri()) {
+    return Promise.reject(
+      new Error('listing GitHub repos requires the desktop app')
+    );
+  }
+  return invoke('list_github_repos');
+}
+
+/** Clones `nameWithOwner` into `parentDir`/<repo-name> via `gh repo clone` and resolves to the
+ * cloned checkout's absolute path. Rejects if the target already exists, on clone failure, or
+ * in browser-dev. */
+export function cloneGithubRepo(
+  nameWithOwner: string,
+  parentDir: string
+): Promise<string> {
+  if (!isTauri()) {
+    return Promise.reject(
+      new Error('cloning repositories requires the desktop app')
+    );
+  }
+  return invoke('clone_github_repo', { nameWithOwner, parentDir });
 }

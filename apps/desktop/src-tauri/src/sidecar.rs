@@ -82,7 +82,7 @@ fn daemon_file_path_under(home: &Path, root_dir: &str) -> PathBuf {
 /// worktree state instead of daemon files, but reads the identical env var
 /// with the identical fallback rule); update all five together if this
 /// scheme ever changes.
-fn daemon_home() -> PathBuf {
+pub(crate) fn daemon_home() -> PathBuf {
     match std::env::var("DISPATCH_HOME") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
         _ => dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
@@ -209,11 +209,22 @@ pub struct BunSpawner;
 
 impl DaemonSpawner for BunSpawner {
     fn spawn(&self, launch: &DaemonLaunch, root: &str) -> Result<Child, String> {
+        // A project added through the desktop's onboarding flow (a fresh folder,
+        // or a just-cloned GitHub repo) may have no `.dispatch/tasks` tracker
+        // yet. Passing `--init` tells dispatchd (via bin.ts's `--init` handling,
+        // added in Task 7) to run `TaskStore.init` before serving, so the very
+        // first daemon spawn for such a root creates the tracker instead of
+        // erroring out. Harmless for an already-initialized root — bin.ts only
+        // initializes when `.dispatch/tasks` is missing.
+        let init = needs_init(root);
         let mut command = match launch {
             // Dev: `bun <bin.ts> --root <root>`, with the fake executor toggle.
             DaemonLaunch::BunScript(bin_path) => {
                 let mut c = Command::new(resolve_bun());
                 c.arg(bin_path).arg("--root").arg(root);
+                if init {
+                    c.arg("--init");
+                }
                 // Phase 7: `DISPATCH_ENABLE_FAKES=1` makes dispatchd register a
                 // FakeExecutor/FakePlanner alongside the real ones (see
                 // packages/server/src/bin.ts) — set only in debug builds so the
@@ -229,6 +240,9 @@ impl DaemonSpawner for BunSpawner {
             DaemonLaunch::Bundled { dispatchd, mcp } => {
                 let mut c = Command::new(dispatchd);
                 c.arg("--root").arg(root).env("DISPATCH_MCP_BIN", mcp);
+                if init {
+                    c.arg("--init");
+                }
                 c
             }
         };
@@ -397,6 +411,14 @@ pub fn has_dispatch(root: &str) -> bool {
     Path::new(root).join(".dispatch").is_dir()
 }
 
+/// True when `root` has no `.dispatch/tasks` tracker directory yet — the signal
+/// `BunSpawner::spawn` uses to decide whether to pass dispatchd `--init` on the
+/// first spawn for a newly onboarded project. Mirrors the same missing-tracker
+/// check bin.ts's `--init` handling performs on the daemon side.
+fn needs_init(root: &str) -> bool {
+    !Path::new(root).join(".dispatch").join("tasks").is_dir()
+}
+
 /// Normalizes `root` before it's hashed into a daemon-file key or handed to
 /// the spawner. `packages/server/src/bin.ts` resolves `--root` with Node's
 /// `path.resolve` before this same rootDir is hashed on the TS side
@@ -407,7 +429,7 @@ pub fn has_dispatch(root: &str) -> bool {
 /// spawning) its own dispatchd for what is really one project root — e.g.
 /// `9006acb0ea0b` vs `7236b3b9dccb` for the same directory. Bare `/` is left
 /// as `/` rather than becoming empty.
-fn normalize_root(root: &str) -> Result<String, String> {
+pub(crate) fn normalize_root(root: &str) -> Result<String, String> {
     if !Path::new(root).is_absolute() {
         return Err(format!(
             "dispatchd root must be an absolute path, got: {root:?}"
@@ -562,6 +584,29 @@ mod tests {
 
         fs::create_dir_all(dir.join(".dispatch")).unwrap();
         assert!(has_dispatch(dir.to_str().unwrap()));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn needs_init_true_until_dot_dispatch_tasks_dir_exists() {
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-needs-init-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let root = dir.to_str().unwrap();
+
+        // No `.dispatch/` at all → needs init.
+        assert!(needs_init(root));
+
+        // `.dispatch/` present but no `tasks` subdir → still needs init.
+        fs::create_dir_all(dir.join(".dispatch")).unwrap();
+        assert!(needs_init(root));
+
+        // `.dispatch/tasks/` present → already initialized.
+        fs::create_dir_all(dir.join(".dispatch").join("tasks")).unwrap();
+        assert!(!needs_init(root));
 
         fs::remove_dir_all(&dir).unwrap();
     }
