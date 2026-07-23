@@ -466,7 +466,9 @@ function App() {
         </main>
 
         {selectedDoc !== null && data.config !== null && (
+          // Remount dialog per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
           <TaskDetailDialog
+            key={selectedDoc.meta.id}
             doc={selectedDoc}
             statuses={data.config.statuses}
             ready={data.readyIds.has(selectedDoc.meta.id)}

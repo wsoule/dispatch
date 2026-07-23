@@ -15,9 +15,9 @@ import { Skeleton } from '@/ui/skeleton';
 interface BoardViewProps {
   data: DispatchProjectData;
   onSelectTask: (taskId: string) => void;
-  /** Opens `CreateTaskModal`, optionally pre-set to a given status — the column/group
-   * header's hover "+" button passes its own status through; the header's plain "New task"
-   * button omits it and lets the modal default to the first configured status. */
+  /** Opens `CreateTaskModal`, optionally pre-set to a given status — TaskBoard's column
+   * header's hover "+" button passes its own status through; other contexts omit it and let
+   * the modal default to the first configured status. */
   onNewTask: (status?: string) => void;
   onPlanWork: () => void;
 }
