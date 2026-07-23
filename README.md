@@ -15,9 +15,8 @@ Desktop app for macOS via Homebrew:
 
 Or grab an installer from the
 [latest release](https://github.com/wsoule/dispatch/releases/latest): macOS DMGs
-(Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. The app is not
-code-signed yet — on macOS, right-click the app and choose Open on first launch
-(or pass `--no-quarantine` to `brew install`).
+(Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
+signed and notarized (Developer ID) as of v0.1.1.
 
 ## Quickstart
 
