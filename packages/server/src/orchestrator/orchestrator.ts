@@ -434,7 +434,20 @@ export class Orchestrator {
     }
     const snapshotPath = diffSnapshotPath(this.ctx.rootDir, runId);
     if (existsSync(snapshotPath)) {
-      return JSON.parse(readFileSync(snapshotPath, 'utf8')) as DiffResult;
+      // A corrupt snapshot (persistDiffSnapshot's writeFileSync is not
+      // atomic, so a crash mid-write can leave truncated/garbage JSON on
+      // disk) must never escape as a raw SyntaxError — that would bypass
+      // api.ts's typed-error mapping entirely and surface an opaque 500
+      // with no CORS headers instead of the same 409 a missing snapshot
+      // gets below. Treat a failed read/parse as "no usable snapshot" and
+      // fall through to the OrchestratorConflictError.
+      try {
+        return JSON.parse(readFileSync(snapshotPath, 'utf8')) as DiffResult;
+      } catch (err) {
+        console.error(
+          `dispatchd: failed to read diff snapshot for run ${runId}: ${(err as Error).message}`
+        );
+      }
     }
     throw new OrchestratorConflictError(
       `run has no worktree to diff: ${runId}`

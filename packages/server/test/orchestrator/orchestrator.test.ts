@@ -16,6 +16,7 @@ import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import {
+  diffSnapshotPath,
   runsDir,
   transcriptPath,
   worktreesDir,
@@ -1068,6 +1069,33 @@ describe('Orchestrator.diff survives worktree removal via a snapshot', () => {
     // Simulate a crash/manual cleanup that removed the worktree directly,
     // bypassing review() entirely — no snapshot was ever written for it.
     rmSync(meta.worktreePath, { recursive: true, force: true });
+
+    expect(() => orchestrator.diff(meta.id)).toThrow(OrchestratorConflictError);
+  });
+
+  // Task-11 fix: a corrupt snapshot (persistDiffSnapshot's writeFileSync is
+  // not atomic, so a crash mid-write — or any other on-disk corruption — can
+  // leave truncated/garbage JSON behind) must degrade to the same 409-mapped
+  // OrchestratorConflictError a missing snapshot gets, never an unguarded
+  // JSON.parse SyntaxError escaping past the typed-error mapping.
+  it('falls through to the conflict error when the persisted snapshot is corrupt', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Corrupt snapshot' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    orchestrator.review(meta.id, 'discard');
+    expect(existsSync(meta.worktreePath)).toBe(false);
+
+    // Simulate a non-atomic write getting interrupted mid-flight by
+    // clobbering the just-persisted snapshot with unparseable garbage.
+    writeFileSync(diffSnapshotPath(repo, meta.id), '{not valid json');
 
     expect(() => orchestrator.diff(meta.id)).toThrow(OrchestratorConflictError);
   });
