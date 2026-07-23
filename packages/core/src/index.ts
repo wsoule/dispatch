@@ -22,6 +22,8 @@ export {
   isDone,
   PRIORITY_ORDER,
   findDependencyCycles,
+  computeStack,
 } from './graph.js';
+export type { TaskStack } from './graph.js';
 export { loadConfig, ConfigError } from './config.js';
 export type { DispatchConfig, OrchestratorConfig } from './config.js';
