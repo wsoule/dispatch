@@ -109,28 +109,19 @@ export function Sidebar({
   return (
     <aside className="border-border bg-background flex w-60 shrink-0 flex-col overflow-y-auto border-r px-3 py-4">
       <div className="text-foreground mb-4 flex items-center gap-2 px-2 font-mono text-[13px] font-semibold">
-        {/* The Dispatch orbit mark — an agent orbiting the orchestrator hub, matching the app
-            icon (see app-icon.svg). Rendered as a small indigo tile so it reads at 20px. */}
-        <span className="bg-primary inline-flex size-5 items-center justify-center rounded-md">
+        {/* The Hydrogen mark — a circle with an orbiting satellite node, matching the app
+            icon (see app-icon.svg). White tile + black mark so it reads at 20px in both themes. */}
+        <span className="border-border inline-flex size-5 items-center justify-center rounded-md border bg-white">
           <svg
-            viewBox="0 0 24 24"
+            viewBox="0 0 34 36"
             className="size-3.5"
             fill="none"
             aria-hidden="true"
           >
-            <g transform="rotate(-20 12 12)">
-              <ellipse
-                cx="12"
-                cy="12"
-                rx="8"
-                ry="4.2"
-                stroke="#ffffff"
-                strokeOpacity="0.6"
-                strokeWidth="1.4"
-              />
-            </g>
-            <circle cx="12" cy="12" r="2.1" fill="#ffffff" />
-            <circle cx="17.4" cy="7.8" r="1.7" fill="#ffffff" />
+            <path
+              d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
+              fill="#000000"
+            />
           </svg>
         </span>
         Dispatch
