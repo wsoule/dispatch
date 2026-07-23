@@ -2,6 +2,7 @@ import type {
   MergeQueueEntry,
   MergeQueueEntryState,
   MergeQueueSnapshot,
+  RepoPr,
   RunMeta,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
@@ -193,12 +194,58 @@ interface PrEpicGroup {
 }
 
 /**
+ * One row in the "Other open PRs" section — a repo PR dispatch never opened itself (no run's
+ * `prUrl` matches it), so there's no run/stack/queue context to show, just what `gh pr list`
+ * reports. v1 has no in-app detail for these (follow-up: fetch a `PrDetail` for an arbitrary
+ * PR url, not just a run's own); the whole row is instead a plain external link out to GitHub.
+ */
+function OtherOpenPrRow({ pr }: { pr: RepoPr }) {
+  return (
+    <a
+      href={pr.url}
+      target="_blank"
+      rel="noreferrer"
+      className={cn(
+        'group flex w-full items-center gap-3 rounded-md border border-transparent px-3 py-2.5 text-left transition-colors duration-150',
+        'hover:border-border hover:bg-muted/50'
+      )}
+    >
+      <GitPullRequest className="size-4 shrink-0 text-emerald-500" />
+      <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
+        #{pr.number}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-foreground truncate text-[13px] font-medium">
+          {pr.title}
+        </span>
+        <span className="text-muted-foreground truncate font-mono text-[11px]">
+          {pr.author} · {pr.headRefName}
+        </span>
+      </div>
+      {pr.isDraft && (
+        <span className="border-border bg-muted/60 text-muted-foreground shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium">
+          Draft
+        </span>
+      )}
+      <span className="text-muted-foreground/70 w-16 shrink-0 text-right text-[11px]">
+        {formatRelativeTimeFromIso(pr.updatedAt)}
+      </span>
+      <ExternalLink className="text-muted-foreground group-hover:text-foreground size-3.5 shrink-0" />
+    </a>
+  );
+}
+
+/**
  * Top-level Pull requests destination — a run's GitHub PR is reviewed here, not buried inside
  * the Runs split view. A full-width list of the project's open PRs (grouped under epic headers,
  * each row carrying its stack position and merge-queue state), a merge-queue panel above it, and
  * — once you pick one — a single full-width detail (a back link, the stack rail, the diff, then
  * the review panel) stacked vertically. The diff is the shared RunDiffView (@pierre), the review
  * the shared PrReviewPanel; this view only owns the list + queue panel + framing.
+ *
+ * Below the dispatch-run rows, an "Other open PRs" section (item B) lists every open repo PR
+ * `gh pr list` reports that no run's own `prUrl` already covers — plain external-link rows with
+ * no in-app detail in v1 (see OtherOpenPrRow's own comment for the follow-up).
  */
 export function PullRequestsView({
   data,
@@ -221,6 +268,22 @@ export function PullRequestsView({
   const taskById = useMemo(
     () => new Map(data.tasks.map((t: TaskDoc) => [t.meta.id, t])),
     [data.tasks]
+  );
+
+  // Item B: the "Other open PRs" section — every repo PR `gh pr list` reports whose url
+  // doesn't match any dispatch run's own `prUrl` (those are already the rich rows above,
+  // via `prRuns`/`groups`). `data.repoPrs` is `null` while loading or when this project has
+  // no pr capability at all — either way there's nothing to add here.
+  const dispatchPrUrls = useMemo(
+    () =>
+      new Set(
+        prRuns.map((r) => r.prUrl).filter((u): u is string => u !== undefined)
+      ),
+    [prRuns]
+  );
+  const otherPrs = useMemo(
+    () => (data.repoPrs ?? []).filter((pr) => !dispatchPrUrls.has(pr.url)),
+    [data.repoPrs, dispatchPrUrls]
   );
 
   // One entry per run currently pending/active in the queue (never history — a row's pill only
@@ -400,7 +463,7 @@ export function PullRequestsView({
         />
       )}
 
-      {prRuns.length === 0 ? (
+      {prRuns.length === 0 && otherPrs.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
           <GitPullRequest className="size-6" />
           <p className="text-[13px]">
@@ -478,6 +541,17 @@ export function PullRequestsView({
               })}
             </div>
           ))}
+
+          {otherPrs.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-muted-foreground px-1 text-[11px] font-medium tracking-wide uppercase">
+                Other open PRs
+              </span>
+              {otherPrs.map((pr) => (
+                <OtherOpenPrRow key={pr.url} pr={pr} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -151,6 +151,19 @@ export interface PrDetail {
 
 export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
 
+// Mirrors RepoPr in packages/server/src/orchestrator/pr.ts — the body of
+// `GET /api/prs`: every open PR in the repo, not just the ones dispatch
+// itself opened (see PullRequestsView's "Other open PRs" section).
+export interface RepoPr {
+  number: number;
+  title: string;
+  url: string;
+  headRefName: string;
+  author: string;
+  isDraft: boolean;
+  updatedAt: string;
+}
+
 // The notes/triage hub — mirrors Note / NoteKind in packages/server/src/notes.ts. A
 // lightweight item (triage an agent found, a follow-up, a free note, a personal todo) that
 // can later be promoted into a real task.
@@ -475,6 +488,10 @@ export interface ApiClient {
     body?: string
   ): Promise<PrDetail>;
   commentPr(runId: string, body: string): Promise<PrDetail>;
+  // Item B: every open PR in the repo (`GET /api/prs`), for the PRs page's
+  // "Other open PRs" section. 409s the same way every other PR route does
+  // when this project lacks the `pr` capability.
+  fetchRepoPrs(): Promise<RepoPr[]>;
   // The notes/triage hub.
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
@@ -585,6 +602,7 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ body }),
       }),
+    fetchRepoPrs: () => request(baseUrl, '/api/prs'),
     fetchNotes: () => request(baseUrl, '/api/notes'),
     createNote: (input) =>
       request(baseUrl, '/api/notes', { method: 'POST', ...jsonBody(input) }),

@@ -3,6 +3,7 @@ import type {
   EpicProgress,
   MergeQueueSnapshot,
   PlanProposal,
+  RepoPr,
   RunDetail,
   RunMeta,
   RunState,
@@ -66,6 +67,11 @@ export interface DispatchProjectData {
   // history) — `null` until the query has ever resolved, so callers can show
   // an empty/loading state without treating "no entries yet" as an error.
   mergeQueue: MergeQueueSnapshot | null;
+  // Item B: every open PR in the repo, not just the ones dispatch itself
+  // opened — gated on `health.pr === true` (see the query's own comment),
+  // so `null` covers both "hasn't loaded yet" and "this project has no pr
+  // capability" alike; PullRequestsView treats both as "nothing to show".
+  repoPrs: RepoPr[] | null;
 
   runDetail: RunDetail | undefined;
   diff: import('@dispatch/client').DiffResult | undefined;
@@ -212,6 +218,7 @@ export function useDispatchProject(
     () => ['dispatch-merge-queue', port],
     [port]
   );
+  const repoPrsQueryKey = useMemo(() => ['dispatch-repo-prs', port], [port]);
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
@@ -358,6 +365,24 @@ export function useDispatchProject(
       return client.fetchMergeQueue();
     },
     enabled: client !== null,
+  });
+
+  // Item B: every open PR in the repo, gated on the project actually having
+  // pr capability (same gate the "Open PR" action itself uses) — a project
+  // with no gh/remote would just 409 on every fetch otherwise. No WS event
+  // announces a repo PR appearing/closing on GitHub (unlike every other
+  // query here, which the WS effect below invalidates on its own `*.changed`
+  // event) — a moderate staleTime plus refetch-on-focus is an acceptable
+  // "close enough" substitute for a surface that's read-only in this app.
+  const { data: repoPrs } = useQuery({
+    queryKey: repoPrsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchRepoPrs();
+    },
+    enabled: client !== null && health?.pr === true,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const epics = useMemo(
@@ -792,6 +817,7 @@ export function useDispatchProject(
     liveRunStateByTaskId,
     latestRunByTaskId,
     mergeQueue: mergeQueue ?? null,
+    repoPrs: repoPrs ?? null,
 
     runDetail,
     diff,
