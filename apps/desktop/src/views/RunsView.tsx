@@ -8,6 +8,7 @@ import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StackBadge, StackRail } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useResizablePane } from '../hooks/useResizablePane';
 import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
 import { cn } from '@/lib/utils';
@@ -15,6 +16,10 @@ import { Skeleton } from '@/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
 
 type RunTab = 'session' | 'diff';
+
+// The run-list column's width before any manual resize, and what double-clicking the drag
+// handle resets it back to — matches the old fixed `w-72`.
+const DEFAULT_RUN_LIST_WIDTH = 288;
 
 // A muted centered placeholder for the Diff tab when there's nothing to review yet — a run
 // that's still going (no worktree diff exposed until it's terminal) or a terminal run whose
@@ -63,6 +68,21 @@ export function RunsView({
   // run (on first seeing it, or once its diff resolves), so switching tabs manually never
   // gets clobbered by a later poll of the same run's data.
   const defaultedRunIdRef = useRef<string | null>(null);
+
+  // The split container the run-list column and drag handle live in — its width is the
+  // clamp ceiling for the resize (the list can take at most half of it).
+  const splitRef = useRef<HTMLDivElement>(null);
+  const {
+    width: listWidth,
+    onPointerDown: onResizePointerDown,
+    onPointerMove: onResizePointerMove,
+    onPointerUp: onResizePointerUp,
+    onDoubleClick: onResizeDoubleClick,
+  } = useResizablePane(
+    'dispatch:runs-list-width',
+    DEFAULT_RUN_LIST_WIDTH,
+    splitRef
+  );
 
   const selected = data.runs.find((r) => r.id === selectedRunId);
   const selectedId = selected?.id;
@@ -117,8 +137,11 @@ export function RunsView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <h1 className="view-topbar-title">Runs</h1>
-      <div className="flex min-h-0 flex-1 gap-4">
-        <div className="border-border flex w-72 shrink-0 flex-col gap-1 overflow-y-auto border-r pr-3">
+      <div ref={splitRef} className="flex min-h-0 flex-1">
+        <div
+          className="flex shrink-0 flex-col gap-1 overflow-y-auto pr-3"
+          style={{ width: listWidth }}
+        >
           {data.tasksLoading ? (
             <div className="flex flex-col gap-2 p-1">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -173,7 +196,24 @@ export function RunsView({
           )}
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        {/* Drag handle: pointer-based resize rather than a CSS `resize` handle, so the width
+            can be clamped to the container and persisted across reloads (see
+            useResizablePane). The visible line sits on an invisible wider hit target so it's
+            easy to grab without a pixel-perfect cursor. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize run list"
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          onDoubleClick={onResizeDoubleClick}
+          className="group relative w-2 shrink-0 cursor-col-resize touch-none"
+        >
+          <div className="bg-border group-hover:bg-primary/50 absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors" />
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col pl-1">
           {selected === undefined ? (
             <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
               <MousePointerClick className="size-5" />

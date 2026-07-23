@@ -1,5 +1,7 @@
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   ChevronsUpDown,
   Cog,
   GitPullRequest,
@@ -12,6 +14,7 @@ import {
   StickyNote,
   Target,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
@@ -50,6 +53,15 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
 export interface SwitchProject {
   path: string;
   name: string;
+}
+
+// Persists whether the left rail is collapsed to an icon-only strip, so the choice survives a
+// reload instead of resetting every time the app opens.
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'dispatch:sidebar-collapsed';
+
+function readStoredSidebarCollapsed(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
 }
 
 interface SidebarProps {
@@ -112,12 +124,33 @@ export function Sidebar({
   // already active.
   const otherProjects = switchProjects.filter((p) => p.path !== projectPath);
 
+  // Collapsed rail state — narrows the sidebar to icon-only so a deeply nested project (many
+  // Workspace rows) doesn't dominate the window. Read from localStorage once on mount and
+  // written back on every change so the choice survives a reload.
+  const [collapsed, setCollapsed] = useState(readStoredSidebarCollapsed);
+  useEffect(() => {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSED_STORAGE_KEY,
+      collapsed ? '1' : '0'
+    );
+  }, [collapsed]);
+
   return (
-    <aside className="border-border bg-background flex w-60 shrink-0 flex-col overflow-y-auto border-r px-3 py-4">
-      <div className="text-foreground mb-4 flex items-center gap-2 px-2 font-mono text-[13px] font-semibold">
+    <aside
+      className={cn(
+        'border-border bg-background flex shrink-0 flex-col overflow-y-auto border-r py-4 transition-[width] duration-150',
+        collapsed ? 'w-14 items-center px-2' : 'w-60 px-3'
+      )}
+    >
+      <div
+        className={cn(
+          'text-foreground mb-4 flex items-center font-mono text-[13px] font-semibold',
+          collapsed ? 'justify-center' : 'gap-2 px-2'
+        )}
+      >
         {/* The Hydrogen mark — a circle with an orbiting satellite node, matching the app
             icon (see app-icon.svg). White tile + black mark so it reads at 20px in both themes. */}
-        <span className="border-border inline-flex size-5 items-center justify-center rounded-md border bg-white">
+        <span className="border-border inline-flex size-5 shrink-0 items-center justify-center rounded-md border bg-white">
           <svg
             viewBox="0 0 34 36"
             className="size-3.5"
@@ -130,12 +163,14 @@ export function Sidebar({
             />
           </svg>
         </span>
-        Dispatch
+        {!collapsed && 'Dispatch'}
       </div>
 
-      <div className="text-muted-foreground px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-wide uppercase">
-        Project
-      </div>
+      {!collapsed && (
+        <div className="text-muted-foreground px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-wide uppercase">
+          Project
+        </div>
+      )}
       {projectName !== null ? (
         <DropdownMenu
           open={switcherOpen}
@@ -144,15 +179,22 @@ export function Sidebar({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              title={projectPath ?? undefined}
-              className="text-foreground hover:bg-accent flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium transition-colors duration-150"
+              title={projectPath ?? projectName}
+              className={cn(
+                'text-foreground hover:bg-accent flex items-center rounded-md py-1.5 text-left text-[13px] font-medium transition-colors duration-150',
+                collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2'
+              )}
             >
               <span
                 className="size-2 shrink-0 rounded-full"
                 style={{ background: colorForProject(projectName) }}
               />
-              <span className="min-w-0 flex-1 truncate">{projectName}</span>
-              <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
+              {!collapsed && (
+                <>
+                  <span className="min-w-0 flex-1 truncate">{projectName}</span>
+                  <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
+                </>
+              )}
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
@@ -193,15 +235,19 @@ export function Sidebar({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <p className="text-muted-foreground px-2 text-[13px]">
-          Resolving project…
-        </p>
+        !collapsed && (
+          <p className="text-muted-foreground px-2 text-[13px]">
+            Resolving project…
+          </p>
+        )
       )}
 
-      <div className="text-muted-foreground px-2 pt-3 pb-1.5 text-[11px] font-medium tracking-wide uppercase">
-        Workspace
-      </div>
-      <nav className="flex flex-col gap-0.5">
+      {!collapsed && (
+        <div className="text-muted-foreground px-2 pt-3 pb-1.5 text-[11px] font-medium tracking-wide uppercase">
+          Workspace
+        </div>
+      )}
+      <nav className={cn('flex w-full flex-col gap-0.5', collapsed && 'mt-3')}>
         {PROJECT_VIEWS.map((item) => {
           const Icon = item.icon;
           const active = section === 'project' && projectView === item.id;
@@ -209,10 +255,12 @@ export function Sidebar({
             <button
               key={item.id}
               type="button"
+              title={item.label}
               disabled={!hasActiveProject}
               onClick={() => onSetProjectView(item.id)}
               className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-150',
+                'flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
+                collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2',
                 active
                   ? 'bg-accent font-medium text-accent-foreground'
                   : 'text-foreground/80 hover:bg-accent/60',
@@ -221,20 +269,24 @@ export function Sidebar({
               )}
             >
               <Icon className="size-4 shrink-0" strokeWidth={2} />
-              <span className="flex-1">{item.label}</span>
-              {item.id === 'pull-requests' && prCount > 0 && (
-                <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
-                  {prCount}
-                </span>
+              {!collapsed && (
+                <>
+                  <span className="flex-1">{item.label}</span>
+                  {item.id === 'pull-requests' && prCount > 0 && (
+                    <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
+                      {prCount}
+                    </span>
+                  )}
+                </>
               )}
             </button>
           );
         })}
       </nav>
 
-      <div className="bg-border my-3 h-px" />
+      <div className="bg-border my-3 h-px w-full" />
 
-      <nav className="flex flex-col gap-0.5">
+      <nav className="flex w-full flex-col gap-0.5">
         {GLOBAL_VIEWS.map((item) => {
           const Icon = item.icon;
           const active = section === 'global' && globalView === item.id;
@@ -242,31 +294,60 @@ export function Sidebar({
             <button
               key={item.id}
               type="button"
+              title={item.label}
               onClick={() => onSetGlobalView(item.id)}
               className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-150',
+                'flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
+                collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2',
                 active
                   ? 'bg-accent font-medium text-accent-foreground'
                   : 'text-foreground/80 hover:bg-accent/60'
               )}
             >
               <Icon className="size-4 shrink-0" strokeWidth={2} />
-              <span className="flex-1">{item.label}</span>
-              {item.id === 'all-agents' && liveAgentCount > 0 && (
-                <span className="bg-primary text-primary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
-                  {liveAgentCount}
-                </span>
+              {!collapsed && (
+                <>
+                  <span className="flex-1">{item.label}</span>
+                  {item.id === 'all-agents' && liveAgentCount > 0 && (
+                    <span className="bg-primary text-primary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
+                      {liveAgentCount}
+                    </span>
+                  )}
+                </>
               )}
             </button>
           );
         })}
       </nav>
 
-      <div className="text-muted-foreground mt-auto px-2 pt-3 text-[11px]">
-        <kbd className="border-border bg-secondary rounded border px-1 py-0.5 font-mono text-[10px]">
-          ⌘K
-        </kbd>{' '}
-        to jump anywhere
+      <div
+        className={cn(
+          'mt-auto flex items-center pt-3',
+          collapsed ? 'justify-center' : 'justify-between px-2'
+        )}
+      >
+        {!collapsed && (
+          <span className="text-muted-foreground text-[11px]">
+            <kbd className="border-border bg-secondary rounded border px-1 py-0.5 font-mono text-[10px]">
+              ⌘K
+            </kbd>{' '}
+            to jump anywhere
+          </span>
+        )}
+        <button
+          type="button"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={() => setCollapsed((value) => !value)}
+          className="text-muted-foreground hover:bg-accent hover:text-foreground flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-150"
+        >
+          {collapsed ? (
+            <ChevronRight className="size-4" />
+          ) : (
+            <ChevronLeft className="size-4" />
+          )}
+        </button>
       </div>
     </aside>
   );

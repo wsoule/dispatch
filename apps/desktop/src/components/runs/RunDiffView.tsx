@@ -35,6 +35,15 @@ function ChangedFilesTree({ files }: { files: DiffFile[] }) {
   useEffect(() => {
     model.resetPaths(paths);
     model.setGitStatus(gitStatus);
+    // Diff panes should never sit empty-feeling: auto-focus the first changed file
+    // whenever the diff first loads, or whenever a refetch changes the file list out
+    // from under the current focus (e.g. the run re-ran and touched different files).
+    // Skipped when the existing focus is still one of the current paths so a manual
+    // click never gets clobbered by the next poll of the same diff.
+    const focused = model.getFocusedPath();
+    if (paths.length > 0 && (focused === null || !paths.includes(focused))) {
+      model.focusPath(paths[0]);
+    }
   }, [model, paths, gitStatus]);
 
   return (
