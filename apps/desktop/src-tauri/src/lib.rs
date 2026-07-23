@@ -3,6 +3,7 @@ mod commands;
 mod cost;
 mod db;
 mod parser;
+mod registry;
 mod sidecar;
 mod summarize;
 mod tags;
@@ -21,6 +22,10 @@ const SWEEP_INTERVAL_SECS: u64 = 20;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    // Folder picker for the add-project flow — the frontend calls the dialog
+    // plugin's JS `open({ directory: true })` API directly (see `pickDirectory`
+    // in tauri.ts), gated by the `dialog:default` capability permission.
+    .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -84,6 +89,11 @@ pub fn run() {
       commands::ensure_dispatchd,
       commands::has_dispatch,
       commands::current_project_root,
+      commands::list_registered_projects,
+      commands::add_project,
+      commands::touch_project_opened,
+      commands::list_github_repos,
+      commands::clone_github_repo,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

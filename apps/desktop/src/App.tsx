@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Loader2, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 
+import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { Sidebar } from './components/shell/Sidebar';
@@ -14,7 +15,14 @@ import type { GlobalView, ProjectView } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { basename } from './lib/projectName';
 import { isTerminalRunState } from './lib/runState';
-import { currentProjectRoot, hasDispatch, listProjects } from './lib/tauri';
+import {
+  addProject,
+  currentProjectRoot,
+  hasDispatch,
+  listProjects,
+  listRegisteredProjects,
+  touchProjectOpened,
+} from './lib/tauri';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { GetStartedView } from './views/GetStartedView';
@@ -76,31 +84,75 @@ function App() {
   const { data: switchProjects } = useQuery({
     queryKey: ['switcher-projects'],
     queryFn: async () => {
-      const projects = await listProjects();
-      const checks = await Promise.allSettled(
-        projects.map(async (p) => ((await hasDispatch(p.path)) ? p : null))
-      );
-      return checks
-        .filter(
-          (r): r is PromiseFulfilledResult<(typeof projects)[number] | null> =>
-            r.status === 'fulfilled'
-        )
-        .map((r) => r.value)
-        .filter((p): p is (typeof projects)[number] => p !== null)
-        .map((p) => ({ path: p.path, name: basename(p.path) }));
+      // Two sources, resolved together: the persistent registry (projects the user has
+      // explicitly added/opened) and Relay's discovered projects (dispatch-enabled paths it
+      // already knows about). `allSettled` on the discovery side so a single stale/missing
+      // path can never reject the batch.
+      const [registered, discovered] = await Promise.all([
+        listRegisteredProjects(),
+        (async () => {
+          const projects = await listProjects();
+          const checks = await Promise.allSettled(
+            projects.map(async (p) => ((await hasDispatch(p.path)) ? p : null))
+          );
+          return checks
+            .filter(
+              (
+                r
+              ): r is PromiseFulfilledResult<
+                (typeof projects)[number] | null
+              > => r.status === 'fulfilled'
+            )
+            .map((r) => r.value)
+            .filter((p): p is (typeof projects)[number] => p !== null)
+            .map((p) => ({ path: p.path, name: basename(p.path) }));
+        })(),
+      ]);
+
+      // Registry entries first, then discovered ones, deduped by path so a project that's both
+      // registered and discovered appears once (with its registry name).
+      const merged: { path: string; name: string }[] = [];
+      const seen = new Set<string>();
+      for (const p of [
+        ...registered.map((r) => ({ path: r.path, name: r.name })),
+        ...discovered,
+      ]) {
+        if (seen.has(p.path)) continue;
+        seen.add(p.path);
+        merged.push(p);
+      }
+      return merged;
     },
     enabled: switcherOpen,
     staleTime: 30_000,
     retry: false,
   });
 
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
+
   const selectSwitchProject = useCallback((path: string) => {
     setOverrideRoot(path);
     setSwitcherOpen(false);
+    // Stamp `lastOpenedAt` so this project becomes the registry's "most recent" — both for the
+    // switcher's ordering and for `current_project_root`'s reopen-last chain on next launch.
+    // Fire-and-forget: a registry write failure must not block switching the window.
+    void touchProjectOpened(path);
     // Drop the current project's nav context so the new project opens clean on
     // its Board rather than inheriting a peek/run id from the previous one.
     dispatchNav({ type: 'selectProject', projectId: path });
   }, []);
+
+  // Registers the folder/repo the add-project dialog produced, then switches the window to the
+  // normalized path the backend stored (which `addProject` returns). Rethrows so the dialog can
+  // surface a validation error (e.g. the path isn't a directory) instead of silently closing.
+  const handleAddProject = useCallback(
+    async (path: string) => {
+      const normalized = await addProject(path);
+      setAddProjectOpen(false);
+      selectSwitchProject(normalized);
+    },
+    [selectSwitchProject]
+  );
 
   const {
     data: rootHasDispatch,
@@ -345,6 +397,10 @@ function App() {
           onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
           switchProjects={switchProjects ?? []}
           onSelectProject={selectSwitchProject}
+          onAddProject={() => {
+            setSwitcherOpen(false);
+            setAddProjectOpen(true);
+          }}
         />
         <main className="min-w-0 flex-1 overflow-auto p-6">
           {resolutionError !== null ? (
@@ -497,6 +553,13 @@ function App() {
             initialStatus={createStatus ?? undefined}
             onCreate={data.handleCreate}
             onClose={() => setShowCreate(false)}
+          />
+        )}
+
+        {addProjectOpen && (
+          <AddProjectDialog
+            onAdd={handleAddProject}
+            onClose={() => setAddProjectOpen(false)}
           />
         )}
 

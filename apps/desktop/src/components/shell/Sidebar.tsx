@@ -7,6 +7,7 @@ import {
   ListChecks,
   NotebookPen,
   Play,
+  Plus,
   Radar,
   StickyNote,
   Target,
@@ -19,6 +20,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 
@@ -76,6 +78,9 @@ interface SidebarProps {
    * (or always empty in the browser dev harness, where only the active project is reachable). */
   switchProjects: SwitchProject[];
   onSelectProject: (path: string) => void;
+  /** Opens the add-project dialog (local folder or GitHub clone) — the last item in the
+   * switcher dropdown. */
+  onAddProject: () => void;
 }
 
 /**
@@ -101,6 +106,7 @@ export function Sidebar({
   onToggleSwitcher,
   switchProjects,
   onSelectProject,
+  onAddProject,
 }: SidebarProps) {
   // Other dispatch-enabled projects to show in the dropdown, excluding the one
   // already active.
@@ -179,6 +185,11 @@ export function Sidebar({
                 </DropdownMenuItem>
               ))
             )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onAddProject()}>
+              <Plus className="text-muted-foreground size-3.5" />
+              <span className="flex-1">Add project</span>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (

@@ -1,6 +1,7 @@
 use crate::activity;
 use crate::db::{queries, Db};
 use crate::parser;
+use crate::registry;
 use crate::sidecar;
 use crate::terminal;
 use chrono::{Duration, NaiveDate, Utc};
@@ -711,34 +712,70 @@ pub fn has_dispatch(root: String) -> bool {
     sidecar::has_dispatch(&root)
 }
 
-/// The single project this window is scoped to — the app pivoted from a
-/// project *switcher* (built on Relay's `list_projects`, which enumerates
-/// every path under `~/.claude/projects` — 100+ on a real machine, many
-/// stale/deleted — and a `Promise.all` over `has_dispatch` for each one,
-/// so a single slow/failing entry broke the whole app into a permanent
-/// "Loading" state) to a single-project workspace: whichever project the
-/// app was launched from.
+/// Extracts a `--root <path>` (or `--root=<path>`) value from a process's
+/// argument list, if present. This is how a packaged/standalone launch tells the
+/// app which project to open — e.g. `open -a Dispatch --args --root /path/to/proj`
+/// or `dispatch-desktop --root /path/to/proj` — the first link in
+/// `resolve_project_root`'s chain.
+fn root_arg_from(args: &[String]) -> Option<String> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if let Some(value) = arg.strip_prefix("--root=") {
+            return Some(value.to_string());
+        }
+        if arg == "--root" {
+            return iter.next().cloned();
+        }
+    }
+    None
+}
+
+/// Resolves the single project this window opens to, in priority order:
 ///
-/// Deliberately *not* `std::env::current_dir()`: the Tauri CLI's `cargo run`
-/// runs with its cwd set to this crate's own directory
-/// (`apps/desktop/src-tauri`), not the monorepo root — verified live by
-/// checking a running `tauri dev` process's cwd (`lsof -p <pid> -d cwd`)
-/// during this feature's own testing. Using cwd here would resolve to
-/// `apps/desktop/src-tauri` itself, which has no `.dispatch/` directory,
-/// silently sending every launch to the get-started screen instead of the
-/// project's Board. Walking up from `CARGO_MANIFEST_DIR` (baked in at
-/// compile time to this crate's absolute path in whichever checkout/
-/// worktree built it) is the same trick `sidecar::dispatchd_bin_path`
-/// already uses for the identical reason, so this stays correct across
-/// worktrees without depending on the launcher's invocation cwd.
+/// 1. An explicit `--root <path>` launch argument (validated absolute + an
+///    existing directory) — how a packaged build is pointed at a project.
+/// 2. The registry's most-recently-opened project — "reopen what I last had
+///    open" across app restarts, and where the add-project/switcher flow's
+///    selection persists to.
+/// 3. A dev-only walk up from `CARGO_MANIFEST_DIR` (`apps/desktop/src-tauri` ->
+///    three levels up to the monorepo root). This is the original single-project
+///    behavior, kept as the fallback for a `tauri dev` run started with neither
+///    a `--root` arg nor any registry entries yet. Deliberately *not*
+///    `std::env::current_dir()`: `cargo run`'s cwd is this crate's own directory
+///    (verified live via `lsof -p <pid> -d cwd`), which has no `.dispatch/`, so
+///    cwd would silently send every launch to the get-started screen; walking up
+///    from `CARGO_MANIFEST_DIR` (baked in at compile time) is the same trick
+///    `sidecar::dispatchd_bin_path` uses, correct across worktrees.
 ///
-/// TODO(packaged app): a packaged binary has no monorepo checkout above it
-/// to walk up to at all — before shipping a packaged build, this needs to
-/// read a folder the user explicitly opened (persisted app state, likely
-/// via a "Open folder…" picker) instead.
-#[tauri::command]
-pub fn current_project_root() -> Result<String, String> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+/// Split from the `#[tauri::command]` wrapper so the chain is unit-testable with
+/// injected args/registry rather than the process's real argv and the machine's
+/// real `~/.dispatch/projects.json`.
+fn resolve_project_root(
+    args: &[String],
+    registry_recent: Option<String>,
+    manifest_dir: &Path,
+) -> Result<String, String> {
+    if let Some(root) = root_arg_from(args) {
+        let path = Path::new(&root);
+        if !path.is_absolute() {
+            return Err(format!("--root must be an absolute path, got: {root}"));
+        }
+        if !path.is_dir() {
+            return Err(format!("--root path does not exist: {root}"));
+        }
+        return Ok(root);
+    }
+
+    if let Some(recent) = registry_recent {
+        // A stale registry entry (project deleted/moved on disk) falls through to
+        // the dev walk-up rather than surfacing an error for a directory the user
+        // can no longer open anyway.
+        if Path::new(&recent).is_dir() {
+            return Ok(recent);
+        }
+    }
+
+    manifest_dir
         .join("..")
         .join("..")
         .join("..")
@@ -749,17 +786,171 @@ pub fn current_project_root() -> Result<String, String> {
         .ok_or_else(|| "project root path is not valid UTF-8".to_string())
 }
 
+/// The single project this window is scoped to — see `resolve_project_root` for
+/// the launch-arg -> registry -> dev-walk-up resolution chain.
+#[tauri::command]
+pub fn current_project_root() -> Result<String, String> {
+    let args: Vec<String> = std::env::args().collect();
+    resolve_project_root(
+        &args,
+        registry::most_recent_path(),
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+}
+
+// --- Project registry + onboarding (Task 8) ---
+
+/// Every project the user has added/opened, for the sidebar's project switcher.
+/// Reads `~/.dispatch/projects.json`; a missing/corrupt file reads as an empty
+/// list (see `registry::list`), so this never errors.
+#[tauri::command]
+pub fn list_registered_projects() -> Vec<registry::RegisteredProject> {
+    registry::list()
+}
+
+/// Registers `path` as a project (validating it's an existing directory first)
+/// and returns the normalized absolute path stored for it — the caller then
+/// switches the window to that normalized path.
+#[tauri::command]
+pub fn add_project(path: String) -> Result<String, String> {
+    if !Path::new(&path).is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
+    registry::upsert(&path).map(|entry| entry.path)
+}
+
+/// Stamps `lastOpenedAt` for `path` in the registry (adding it if absent), so the
+/// switcher's "most recently opened" ordering and `current_project_root`'s
+/// reopen-last chain stay current. Fired whenever the window switches projects.
+#[tauri::command]
+pub fn touch_project_opened(path: String) -> Result<(), String> {
+    registry::touch_opened(&path)
+}
+
+/// One GitHub repository from `gh repo list`. `name_with_owner` (e.g.
+/// `octocat/hello-world`) is what `clone_github_repo` clones; `name` is the bare
+/// repo name for display and as the clone target's directory name. Serializes
+/// `camelCase` both to match `gh`'s `--json` output (deserialize) and the
+/// frontend's `GithubRepo` interface (serialize).
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepo {
+    pub name_with_owner: String,
+    pub name: String,
+    /// Empty string when the repo has no description (`gh` emits `""`, not null).
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Verifies the GitHub CLI is installed and authenticated, turning both failure
+/// modes into a clear, actionable error string rather than a cryptic downstream
+/// clone/list failure. Runs `gh auth status`, which exits non-zero when `gh` is
+/// present but unauthenticated.
+fn ensure_gh_authenticated() -> Result<(), String> {
+    let output = Command::new("gh")
+        .arg("auth")
+        .arg("status")
+        .output()
+        .map_err(|e| {
+            format!("GitHub CLI (`gh`) is not installed or not on PATH: {e} — https://cli.github.com")
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "GitHub CLI is not authenticated — run `gh auth login`.\n{}",
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Lists the authenticated user's GitHub repositories (up to 100) via `gh repo
+/// list`. Runs on a blocking thread pool so the shellout can't freeze the UI.
+/// Errors cleanly when `gh` is missing/unauthenticated (see
+/// `ensure_gh_authenticated`).
+#[tauri::command]
+pub async fn list_github_repos() -> Result<Vec<GithubRepo>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        ensure_gh_authenticated()?;
+        let output = Command::new("gh")
+            .args([
+                "repo",
+                "list",
+                "--json",
+                "nameWithOwner,name,description",
+                "--limit",
+                "100",
+            ])
+            .output()
+            .map_err(|e| format!("failed to run `gh repo list`: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "`gh repo list` failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        serde_json::from_slice::<Vec<GithubRepo>>(&output.stdout)
+            .map_err(|e| format!("could not parse `gh repo list` output: {e}"))
+    })
+    .await
+    .map_err(|e| format!("gh task panicked: {e}"))?
+}
+
+/// Clones `name_with_owner` into `parent_dir`/<repo-name> via `gh repo clone` and
+/// returns the absolute path of the new checkout. Errors if the target already
+/// exists (rather than letting `gh` fail or clone into an unexpected place).
+/// Runs on a blocking thread pool so the (potentially slow) clone can't freeze
+/// the UI.
+#[tauri::command]
+pub async fn clone_github_repo(
+    name_with_owner: String,
+    parent_dir: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo_name = name_with_owner
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("invalid repository name: {name_with_owner}"))?;
+        let target = Path::new(&parent_dir).join(repo_name);
+        if target.exists() {
+            return Err(format!(
+                "a folder already exists at {} — pick a different location or remove it first",
+                target.display()
+            ));
+        }
+        let output = Command::new("gh")
+            .arg("repo")
+            .arg("clone")
+            .arg(&name_with_owner)
+            .arg(&target)
+            .output()
+            .map_err(|e| format!("failed to run `gh repo clone`: {e} — is `gh` installed?"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "`gh repo clone` failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(target.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("clone task panicked: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn current_project_root_walks_up_three_levels_to_the_monorepo_root() {
-        // Mirrors `sidecar`'s own `dispatchd_bin_path_resolves_to_a_real_file_in_this_checkout`
-        // test: three levels up from this crate (`apps/desktop/src-tauri`) should land on the
-        // checkout root, identifiable here by its root `package.json` (every workspace app/
-        // package has its own, but only the root one sits at this exact level).
-        let result = current_project_root().unwrap();
+    fn resolve_project_root_walks_up_three_levels_to_the_monorepo_root() {
+        // With no `--root` arg and no registry entry, the dev fallback walks three levels up
+        // from this crate (`apps/desktop/src-tauri`) to the checkout root — identifiable here
+        // by its root `package.json` (every workspace app/package has its own, but only the
+        // root one sits at this exact level). Mirrors `sidecar`'s
+        // `dispatchd_bin_path_resolves_to_a_real_file_in_this_checkout`.
+        let result =
+            resolve_project_root(&[], None, Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
         assert!(
             Path::new(&result).join("package.json").is_file(),
             "expected {result} to be the monorepo root (no package.json found there)"
@@ -767,14 +958,88 @@ mod tests {
     }
 
     #[test]
-    fn current_project_root_does_not_resolve_to_the_process_working_directory() {
+    fn resolve_project_root_does_not_resolve_to_the_process_working_directory() {
         // Regression guard for the bug this function exists to avoid: the Tauri CLI's `cargo
-        // run` sets its cwd to this crate's own directory, not the monorepo root, so
-        // `current_project_root` must never be implemented in terms of
-        // `std::env::current_dir()` again.
-        let result = current_project_root().unwrap();
+        // run` sets its cwd to this crate's own directory, not the monorepo root, so the dev
+        // fallback must never be implemented in terms of `std::env::current_dir()` again.
+        let result =
+            resolve_project_root(&[], None, Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
         let cwd = std::env::current_dir().unwrap().to_str().unwrap().to_string();
         assert_ne!(result, cwd);
+    }
+
+    #[test]
+    fn root_arg_from_reads_both_spaced_and_equals_forms() {
+        assert_eq!(
+            root_arg_from(&["app".to_string(), "--root".to_string(), "/x".to_string()]),
+            Some("/x".to_string())
+        );
+        assert_eq!(
+            root_arg_from(&["app".to_string(), "--root=/y".to_string()]),
+            Some("/y".to_string())
+        );
+        assert_eq!(root_arg_from(&["app".to_string()]), None);
+    }
+
+    #[test]
+    fn resolve_project_root_prefers_a_valid_root_arg_over_everything() {
+        // An existing absolute dir passed via `--root` wins over both the registry and the dev
+        // walk-up. Use the OS temp dir as a guaranteed-existing absolute directory.
+        let tmp = std::env::temp_dir();
+        let tmp_str = tmp.to_str().unwrap().to_string();
+        let args = vec!["app".to_string(), "--root".to_string(), tmp_str.clone()];
+        let result = resolve_project_root(
+            &args,
+            Some("/some/registry/path".to_string()),
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .unwrap();
+        assert_eq!(result, tmp_str);
+    }
+
+    #[test]
+    fn resolve_project_root_rejects_a_relative_or_missing_root_arg() {
+        let relative = vec!["app".to_string(), "--root".to_string(), "rel/path".to_string()];
+        assert!(
+            resolve_project_root(&relative, None, Path::new(env!("CARGO_MANIFEST_DIR"))).is_err()
+        );
+
+        let missing = vec![
+            "app".to_string(),
+            "--root".to_string(),
+            "/no/such/dir/anywhere-12345".to_string(),
+        ];
+        assert!(
+            resolve_project_root(&missing, None, Path::new(env!("CARGO_MANIFEST_DIR"))).is_err()
+        );
+    }
+
+    #[test]
+    fn resolve_project_root_uses_a_valid_registry_entry_when_no_root_arg() {
+        // An existing registry path (again the temp dir stands in for a real project) is used
+        // when there's no `--root` arg.
+        let tmp = std::env::temp_dir();
+        let tmp_str = tmp.to_str().unwrap().to_string();
+        let result = resolve_project_root(
+            &[],
+            Some(tmp_str.clone()),
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .unwrap();
+        assert_eq!(result, tmp_str);
+    }
+
+    #[test]
+    fn resolve_project_root_ignores_a_stale_registry_entry() {
+        // A registry entry pointing at a deleted/moved directory falls through to the dev
+        // walk-up rather than erroring.
+        let result = resolve_project_root(
+            &[],
+            Some("/no/such/dir/anywhere-12345".to_string()),
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .unwrap();
+        assert!(Path::new(&result).join("package.json").is_file());
     }
 
     #[test]
