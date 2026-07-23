@@ -195,6 +195,42 @@ pub trait DaemonSpawner: Send + Sync {
     fn spawn(&self, launch: &DaemonLaunch, root: &str) -> Result<Child, String>;
 }
 
+/// PATH for the spawned dispatchd child: the app's own PATH plus the standard
+/// tool-install directories a Finder/Spotlight launch omits. The daemon shells
+/// out to `gh` (PR capability/reviews/merge-queue) and `git`; with the
+/// Finder-minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`) a Homebrew-installed
+/// `gh` is invisible, so a packaged app loses PR features that work fine from
+/// a terminal launch. Appending (not prepending) keeps an explicitly
+/// configured PATH's own ordering authoritative.
+fn enriched_child_path() -> std::ffi::OsString {
+    let current = std::env::var("PATH").unwrap_or_default();
+    let home = std::env::var("HOME").ok();
+    std::ffi::OsString::from(enrich_path(&current, home.as_deref()))
+}
+
+/// Pure core of `enriched_child_path`, split out so tests can drive it with
+/// explicit inputs instead of mutating process-global env vars (the same
+/// parallel-safety convention as the registry/needs_init tests).
+fn enrich_path(current: &str, home: Option<&str>) -> String {
+    let mut parts: Vec<String> = current
+        .split(':')
+        .filter(|p| !p.is_empty())
+        .map(String::from)
+        .collect();
+    let mut extras: Vec<String> =
+        vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()];
+    if let Some(home) = home {
+        extras.push(format!("{home}/.bun/bin"));
+        extras.push(format!("{home}/.local/bin"));
+    }
+    for extra in extras {
+        if !parts.iter().any(|p| p == &extra) {
+            parts.push(extra);
+        }
+    }
+    parts.join(":")
+}
+
 /// Resolves the `bun` executable to an absolute path. A macOS app launched from
 /// Finder/Spotlight inherits a minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`)
 /// that omits `~/.bun/bin`, so a bare `bun` fails to resolve in a packaged
@@ -262,6 +298,7 @@ impl DaemonSpawner for BunSpawner {
             }
         };
         command
+            .env("PATH", enriched_child_path())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -596,6 +633,27 @@ pub(crate) fn normalize_root(root: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn enrich_path_appends_missing_tool_dirs_without_reordering() {
+        let result = enrich_path("/usr/bin:/bin", Some("/Users/x"));
+        assert_eq!(
+            result,
+            "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/Users/x/.bun/bin:/Users/x/.local/bin"
+        );
+    }
+
+    #[test]
+    fn enrich_path_never_duplicates_an_already_present_dir() {
+        let result = enrich_path("/opt/homebrew/bin:/usr/bin", None);
+        assert_eq!(result, "/opt/homebrew/bin:/usr/bin:/usr/local/bin");
+    }
+
+    #[test]
+    fn enrich_path_tolerates_an_empty_path() {
+        let result = enrich_path("", None);
+        assert_eq!(result, "/opt/homebrew/bin:/usr/local/bin");
+    }
 
     #[test]
     fn daemon_file_key_matches_the_documented_hash_scheme() {
