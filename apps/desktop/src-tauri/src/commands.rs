@@ -747,6 +747,16 @@ fn root_arg_from(args: &[String]) -> Option<String> {
 ///    from `CARGO_MANIFEST_DIR` (baked in at compile time) is the same trick
 ///    `sidecar::dispatchd_bin_path` uses, correct across worktrees.
 ///
+/// Returns `Ok(None)` — not an error — when none of the three steps apply: no
+/// `--root` arg, an empty (or entirely stale) registry, and a dev walk-up whose
+/// manifest-derived monorepo root doesn't exist on this machine (always true in
+/// a packaged build, since `CARGO_MANIFEST_DIR` is baked in from the build
+/// machine's checkout). That's the legitimate first-run state — an empty
+/// `~/.dispatch/projects.json`, no launch arg, no dev checkout above the binary
+/// — and the frontend handles it by offering "+ Add project" rather than a
+/// fatal error screen. A malformed `--root` (relative, missing, not a
+/// directory) is still a real error and stays `Err`.
+///
 /// Split from the `#[tauri::command]` wrapper so the chain is unit-testable with
 /// injected args/registry rather than the process's real argv and the machine's
 /// real `~/.dispatch/projects.json`.
@@ -754,7 +764,7 @@ fn resolve_project_root(
     args: &[String],
     registry_recent: Option<String>,
     manifest_dir: &Path,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
     if let Some(root) = root_arg_from(args) {
         let path = Path::new(&root);
         if !path.is_absolute() {
@@ -766,7 +776,7 @@ fn resolve_project_root(
         if !path.is_dir() {
             return Err(format!("--root is not a directory: {root}"));
         }
-        return Ok(root);
+        return Ok(Some(root));
     }
 
     if let Some(recent) = registry_recent {
@@ -774,25 +784,32 @@ fn resolve_project_root(
         // the dev walk-up rather than surfacing an error for a directory the user
         // can no longer open anyway.
         if Path::new(&recent).is_dir() {
-            return Ok(recent);
+            return Ok(Some(recent));
         }
     }
 
-    manifest_dir
-        .join("..")
-        .join("..")
-        .join("..")
-        .canonicalize()
-        .map_err(|e| e.to_string())?
+    let dev_root = manifest_dir.join("..").join("..").join("..");
+    if !dev_root.is_dir() {
+        // No dev checkout above this binary — the manifest-derived path simply
+        // doesn't exist (the packaged-app case). Combined with no `--root` and no
+        // surviving registry entry above, there is genuinely no project to open
+        // yet, so this is "no project" rather than an error.
+        return Ok(None);
+    }
+
+    let canon = dev_root.canonicalize().map_err(|e| e.to_string())?;
+    let root = canon
         .to_str()
-        .map(str::to_string)
-        .ok_or_else(|| "project root path is not valid UTF-8".to_string())
+        .ok_or_else(|| "project root path is not valid UTF-8".to_string())?;
+    Ok(Some(root.to_string()))
 }
 
-/// The single project this window is scoped to — see `resolve_project_root` for
-/// the launch-arg -> registry -> dev-walk-up resolution chain.
+/// The single project this window is scoped to, or `None` on a genuine first
+/// run (no launch arg, empty registry, no dev checkout above the binary) — see
+/// `resolve_project_root` for the full launch-arg -> registry -> dev-walk-up
+/// resolution chain and its "no project yet" vs real-error distinction.
 #[tauri::command]
-pub fn current_project_root() -> Result<String, String> {
+pub fn current_project_root() -> Result<Option<String>, String> {
     let args: Vec<String> = std::env::args().collect();
     resolve_project_root(
         &args,
@@ -952,8 +969,9 @@ mod tests {
         // by its root `package.json` (every workspace app/package has its own, but only the
         // root one sits at this exact level). Mirrors `sidecar`'s
         // `dispatchd_bin_path_resolves_to_a_real_file_in_this_checkout`.
-        let result =
-            resolve_project_root(&[], None, Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let result = resolve_project_root(&[], None, Path::new(env!("CARGO_MANIFEST_DIR")))
+            .unwrap()
+            .expect("dev walk-up should resolve when CARGO_MANIFEST_DIR is a real checkout");
         assert!(
             Path::new(&result).join("package.json").is_file(),
             "expected {result} to be the monorepo root (no package.json found there)"
@@ -965,8 +983,9 @@ mod tests {
         // Regression guard for the bug this function exists to avoid: the Tauri CLI's `cargo
         // run` sets its cwd to this crate's own directory, not the monorepo root, so the dev
         // fallback must never be implemented in terms of `std::env::current_dir()` again.
-        let result =
-            resolve_project_root(&[], None, Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let result = resolve_project_root(&[], None, Path::new(env!("CARGO_MANIFEST_DIR")))
+            .unwrap()
+            .expect("dev walk-up should resolve when CARGO_MANIFEST_DIR is a real checkout");
         let cwd = std::env::current_dir().unwrap().to_str().unwrap().to_string();
         assert_ne!(result, cwd);
     }
@@ -997,7 +1016,7 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")),
         )
         .unwrap();
-        assert_eq!(result, tmp_str);
+        assert_eq!(result, Some(tmp_str));
     }
 
     #[test]
@@ -1060,7 +1079,7 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")),
         )
         .unwrap();
-        assert_eq!(result, tmp_str);
+        assert_eq!(result, Some(tmp_str));
     }
 
     #[test]
@@ -1072,8 +1091,25 @@ mod tests {
             Some("/no/such/dir/anywhere-12345".to_string()),
             Path::new(env!("CARGO_MANIFEST_DIR")),
         )
-        .unwrap();
+        .unwrap()
+        .expect("dev walk-up should resolve when CARGO_MANIFEST_DIR is a real checkout");
         assert!(Path::new(&result).join("package.json").is_file());
+    }
+
+    #[test]
+    fn resolve_project_root_returns_none_when_nothing_resolves() {
+        // The genuine first-run case: no `--root` arg, no registry entry, and a manifest dir
+        // whose three-level walk-up doesn't exist on disk — simulating a packaged build where
+        // `CARGO_MANIFEST_DIR` was baked in at compile time on a different machine, so there is
+        // no dev checkout above the binary either. This must be `Ok(None)` ("no project yet"),
+        // not an `Err` — that's exactly the case that used to crash first launch with a fatal
+        // "Couldn't resolve the current project" screen instead of offering "+ Add project".
+        let fake_manifest_dir = std::env::temp_dir().join(format!(
+            "dispatch-resolve-project-root-no-manifest-{}",
+            std::process::id()
+        ));
+        let result = resolve_project_root(&[], None, &fake_manifest_dir).unwrap();
+        assert_eq!(result, None);
     }
 
     #[test]

@@ -90,8 +90,14 @@ interface SidebarProps {
    * (or always empty in the browser dev harness, where only the active project is reachable). */
   switchProjects: SwitchProject[];
   onSelectProject: (path: string) => void;
+  /** True once project resolution has settled with no active project (a genuine first run:
+   * empty registry, no launch arg, no dev checkout above the binary) — swaps the "Resolving
+   * project…" placeholder for an actionable "Add project…" row instead of leaving the sidebar
+   * stuck on a spinner with no way forward. `false` both before resolution settles and once a
+   * project is active. */
+  noProjectYet: boolean;
   /** Opens the add-project dialog (local folder or GitHub clone) — the last item in the
-   * switcher dropdown. */
+   * switcher dropdown, and also the first-run "Add project…" row when `noProjectYet`. */
   onAddProject: () => void;
 }
 
@@ -118,6 +124,7 @@ export function Sidebar({
   onToggleSwitcher,
   switchProjects,
   onSelectProject,
+  noProjectYet,
   onAddProject,
 }: SidebarProps) {
   // Other dispatch-enabled projects to show in the dropdown, excluding the one
@@ -234,6 +241,18 @@ export function Sidebar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+      ) : noProjectYet ? (
+        <button
+          type="button"
+          onClick={() => onAddProject()}
+          className={cn(
+            'text-muted-foreground hover:bg-accent hover:text-foreground flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
+            collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2'
+          )}
+        >
+          <Plus className="size-3.5 shrink-0" />
+          {!collapsed && <span className="flex-1">Add project…</span>}
+        </button>
       ) : (
         !collapsed && (
           <p className="text-muted-foreground px-2 text-[13px]">
