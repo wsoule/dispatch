@@ -17,10 +17,11 @@
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader};
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Mirrors `packages/server/src/daemonfile.ts`'s `DaemonFileInfo` shape
@@ -92,6 +93,19 @@ pub(crate) fn daemon_home() -> PathBuf {
 
 fn daemon_file_path(root_dir: &str) -> PathBuf {
     daemon_file_path_under(&daemon_home(), root_dir)
+}
+
+/// Path of the per-root log file dispatchd's stdout/stderr is tee'd to on
+/// every spawn — `<daemon_home>/.dispatch/logs/<daemon-file-key>.log`, keyed
+/// the same way as the daemon file itself so the two are easy to correlate.
+/// Truncated on each spawn (see `forward_child_output`), so it always
+/// reflects only the most recently spawned daemon for this root, not a
+/// growing history across restarts.
+fn daemon_log_path(root_dir: &str) -> PathBuf {
+    daemon_home()
+        .join(".dispatch")
+        .join("logs")
+        .join(format!("{}.log", daemon_file_key(root_dir)))
 }
 
 /// Pure parse half of `read_daemon_file`, taking an explicit path so tests
@@ -251,27 +265,109 @@ impl DaemonSpawner for BunSpawner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        command.spawn().map_err(|e| {
-            format!("failed to spawn dispatchd: {e} — is bun installed? https://bun.sh")
+        command.spawn().map_err(|e| match launch {
+            // Only the BunScript path actually depends on `bun` resolving — the
+            // Bundled path runs the compiled binary directly, so pointing a user
+            // at bun.sh for a bundled-binary spawn failure would be misleading.
+            DaemonLaunch::BunScript(_) => {
+                format!("failed to spawn dispatchd: {e} — is bun installed? https://bun.sh")
+            }
+            DaemonLaunch::Bundled { dispatchd, .. } => {
+                format!("failed to spawn bundled dispatchd ({}): {e}", dispatchd.display())
+            }
         })
     }
 }
 
+/// Describes which launch path was used, for embedding in error messages so a
+/// user (or us, reading a bug report) can immediately tell whether a packaged
+/// release took the bundled-binary path or a dev build shelled out to `bun` —
+/// the two have entirely different failure modes. Only the `BunScript` case
+/// mentions `bun`/bun.sh, since a bundled release binary never touches `bun`.
+fn describe_launch(launch: &DaemonLaunch) -> String {
+    match launch {
+        DaemonLaunch::BunScript(bin_path) => format!(
+            "launch: bun {} — is bun installed? https://bun.sh",
+            bin_path.display()
+        ),
+        DaemonLaunch::Bundled { dispatchd, .. } => {
+            format!("launch: bundled {}", dispatchd.display())
+        }
+    }
+}
+
+/// Cap on how many of the child's most recent stdout/stderr lines are kept in
+/// memory (see `OutputTail`) for quoting in a health-wait timeout error —
+/// enough to show a crash-on-boot's actual error without unbounded memory
+/// growth over a long-lived daemon that never times out.
+const OUTPUT_TAIL_LINES: usize = 30;
+
+/// Shared ring buffer of a spawned dispatchd's recent stdout/stderr lines.
+/// `forward_child_output` appends to it as lines arrive; `ensure_dispatchd`
+/// reads it if the health-wait poll times out, so the returned error can
+/// include what the daemon actually said instead of just the generic
+/// timeout message (previously the failure this whole file's Bug A report
+/// was about: the real error was only ever visible in the app's own log).
+type OutputTail = Arc<Mutex<VecDeque<String>>>;
+
+/// Appends `line` to the ring buffer (evicting the oldest entry once it's at
+/// `OUTPUT_TAIL_LINES` capacity) and, if the per-root log file opened
+/// successfully, to that file too. Shared by the stdout and stderr
+/// forwarding threads in `forward_child_output`.
+fn record_output_line(tail: &OutputTail, log_file: &Option<Arc<Mutex<std::fs::File>>>, line: &str) {
+    {
+        let mut buf = tail.lock().unwrap();
+        if buf.len() >= OUTPUT_TAIL_LINES {
+            buf.pop_front();
+        }
+        buf.push_back(line.to_string());
+    }
+    if let Some(file) = log_file {
+        let mut f = file.lock().unwrap();
+        // Best-effort: a failed write to the log file shouldn't take down
+        // output forwarding, and there's nowhere better to report it from a
+        // background thread than swallowing it here.
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// Spawns background threads that forward a child process's stdout/stderr
-/// lines into Rust's `log`, prefixed so they're identifiable among Relay's
-/// own log output — see `BunSpawner`'s doc comment for why this matters.
-fn forward_child_output(child: &mut Child) {
+/// lines into Rust's `log` (prefixed so they're identifiable among the app's
+/// own log output — see `BunSpawner`'s doc comment for why this matters),
+/// while also recording each line into `tail` (for a timeout error to quote)
+/// and tee-ing it to `log_path` so a user can inspect the daemon's own output
+/// after the fact, without needing to reproduce a failure live. `log_path` is
+/// truncated up front so each new spawn starts a fresh log rather than
+/// accumulating output across restarts.
+fn forward_child_output(child: &mut Child, tail: OutputTail, log_path: PathBuf) {
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+        .ok()
+        .map(|f| Arc::new(Mutex::new(f)));
+
     if let Some(stdout) = child.stdout.take() {
+        let tail = Arc::clone(&tail);
+        let log_file = log_file.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 log::info!("dispatchd: {line}");
+                record_output_line(&tail, &log_file, &line);
             }
         });
     }
     if let Some(stderr) = child.stderr.take() {
+        let tail = Arc::clone(&tail);
+        let log_file = log_file.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                 log::warn!("dispatchd: {line}");
+                record_output_line(&tail, &log_file, &line);
             }
         });
     }
@@ -345,8 +441,43 @@ impl Default for DispatchdChildren {
     }
 }
 
-const POLL_TIMEOUT: Duration = Duration::from_secs(5);
+// 15s, not 5s: a just-installed notarized release binary can pay Gatekeeper
+// or AV-scan latency on its very first launch (macOS re-verifying the
+// signature/notarization before it's allowed to execute at all), which can
+// blow well past a 5s budget even though the binary itself boots in well
+// under a second once that one-time check clears. POLL_INTERVAL stays as-is
+// since it only controls how often we recheck, not the overall budget.
+const POLL_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Pure formatting half of the health-wait timeout error, split out from
+/// `ensure_dispatchd` so it's unit-testable without actually spawning a
+/// child process. `launch_desc` names which launch path was used (see
+/// `describe_launch` — it also carries the bun.sh hint when relevant),
+/// `lines` is the ring-buffer tail of the child's recent stdout/stderr
+/// (`OutputTail`, already unlocked and cloned by the caller), and `log_path`
+/// is where the full per-root log was tee'd to, for self-diagnosis after the
+/// fact. This is the fix for Bug A: previously the only error the caller saw
+/// was the generic "did not become healthy" message, with the daemon's own
+/// explanation of what went wrong swallowed into the app's log.
+fn format_timeout_error(
+    timeout: Duration,
+    launch_desc: &str,
+    lines: &[String],
+    log_path: &Path,
+) -> String {
+    let tail = if lines.is_empty() {
+        "(no output)".to_string()
+    } else {
+        lines.join("\n")
+    };
+    format!(
+        "dispatchd did not become healthy within {}s ({}). Full log: {}. Recent daemon output:\n{tail}",
+        timeout.as_secs(),
+        launch_desc,
+        log_path.display(),
+    )
+}
 
 /// Polls the daemon file + its `/api/health` for up to `timeout`, for the
 /// case where a fresh dispatchd was just spawned and needs time to finish
@@ -386,21 +517,38 @@ pub async fn ensure_dispatchd(
     let root = root.as_str();
     let client = reqwest::Client::new();
 
-    if let Some(info) = read_daemon_file(root) {
-        if is_healthy(&client, info.port).await {
-            return Ok(info.port);
+    // Skip the reuse fast path entirely when `root` still needs `--init`: a
+    // healthy daemon already running for this root necessarily predates the
+    // current onboarding attempt, so it was never told to `--init` and can't
+    // retroactively create the tracker now — reusing it here would silently
+    // no-op the "Initialize project" click (the daemon reports healthy, the
+    // caller resolves, and `.dispatch/tasks` still never gets created). Fall
+    // through to a fresh spawn with `--init` instead. That fresh spawn can
+    // race the still-running old daemon's own daemon-file write, but that's
+    // the exact same last-writer-wins race the CLI already accepts via
+    // `resolveRaceWinner` in packages/cli/src/commands/daemon.ts — harmless
+    // here for the same reason: whichever daemon's write lands last is the
+    // one every subsequent health check and root lookup will find anyway.
+    if !needs_init(root) {
+        if let Some(info) = read_daemon_file(root) {
+            if is_healthy(&client, info.port).await {
+                return Ok(info.port);
+            }
         }
     }
 
+    let log_path = daemon_log_path(root);
+    let tail: OutputTail = Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_LINES)));
+
     let mut child = spawner.spawn(&launch, root)?;
-    forward_child_output(&mut child);
+    forward_child_output(&mut child, Arc::clone(&tail), log_path.clone());
     children.push(child);
 
     poll_for_healthy_daemon(&client, root, POLL_TIMEOUT)
         .await
         .ok_or_else(|| {
-            "dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)"
-                .to_string()
+            let lines: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
+            format_timeout_error(POLL_TIMEOUT, &describe_launch(&launch), &lines, &log_path)
         })
 }
 
@@ -659,6 +807,105 @@ mod tests {
         // exactly one entry remains tracked (the second — whether or not it has
         // exited yet itself).
         assert_eq!(children.0.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn format_timeout_error_shows_no_output_placeholder_when_the_tail_is_empty() {
+        let msg = format_timeout_error(
+            Duration::from_secs(15),
+            "launch: bundled /opt/Dispatch.app/dispatchd",
+            &[],
+            Path::new("/home/user/.dispatch/logs/abc123.log"),
+        );
+        assert!(msg.contains("did not become healthy within 15s"));
+        assert!(msg.contains("launch: bundled /opt/Dispatch.app/dispatchd"));
+        assert!(msg.contains("/home/user/.dispatch/logs/abc123.log"));
+        assert!(msg.contains("(no output)"));
+    }
+
+    #[test]
+    fn format_timeout_error_joins_the_captured_tail_lines_with_newlines() {
+        let lines = vec![
+            "Listening on port 4771".to_string(),
+            "error: something exploded".to_string(),
+        ];
+        let msg = format_timeout_error(
+            Duration::from_secs(15),
+            "launch: bundled /opt/Dispatch.app/dispatchd",
+            &lines,
+            Path::new("/home/user/.dispatch/logs/abc123.log"),
+        );
+        assert!(msg.contains("Listening on port 4771\nerror: something exploded"));
+        assert!(!msg.contains("(no output)"));
+    }
+
+    #[test]
+    fn describe_launch_only_mentions_bun_for_the_bun_script_path() {
+        let bun_desc = describe_launch(&DaemonLaunch::BunScript(PathBuf::from("/repo/bin.ts")));
+        assert!(bun_desc.contains("bun"));
+        assert!(bun_desc.contains("bun.sh"));
+        assert!(bun_desc.contains("/repo/bin.ts"));
+
+        let bundled_desc = describe_launch(&DaemonLaunch::Bundled {
+            dispatchd: PathBuf::from("/opt/Dispatch.app/dispatchd"),
+            mcp: PathBuf::from("/opt/Dispatch.app/dispatch-mcp"),
+        });
+        // "bundled" itself contains the substring "bun", so assert on the
+        // actual bun-specific hint text rather than the bare substring.
+        assert!(!bundled_desc.contains("bun.sh"));
+        assert!(!bundled_desc.contains("is bun installed"));
+        assert!(bundled_desc.contains("/opt/Dispatch.app/dispatchd"));
+    }
+
+    #[test]
+    fn forward_child_output_captures_stdout_and_stderr_into_the_tail_and_log_file() {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("echo from-stdout; echo from-stderr 1>&2")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-forward-output-{}",
+            std::process::id()
+        ));
+        let log_path = dir.join("daemon.log");
+        let tail: OutputTail = Arc::new(Mutex::new(VecDeque::new()));
+
+        forward_child_output(&mut child, Arc::clone(&tail), log_path.clone());
+        child.wait().expect("child exits");
+        // The forwarding threads read asynchronously off the now-exited child's
+        // pipes; give them a moment to finish draining before asserting.
+        std::thread::sleep(Duration::from_millis(200));
+
+        let captured = tail.lock().unwrap();
+        assert!(captured.iter().any(|l| l == "from-stdout"));
+        assert!(captured.iter().any(|l| l == "from-stderr"));
+        drop(captured);
+
+        let logged = fs::read_to_string(&log_path).expect("log file was written");
+        assert!(logged.contains("from-stdout"));
+        assert!(logged.contains("from-stderr"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn forward_child_output_evicts_the_oldest_line_once_over_capacity() {
+        let tail: OutputTail = Arc::new(Mutex::new(VecDeque::new()));
+        let log_file: Option<Arc<Mutex<std::fs::File>>> = None;
+        for i in 0..(OUTPUT_TAIL_LINES + 5) {
+            record_output_line(&tail, &log_file, &format!("line-{i}"));
+        }
+        let buf = tail.lock().unwrap();
+        assert_eq!(buf.len(), OUTPUT_TAIL_LINES);
+        // The first 5 lines (0..5) should have been evicted; the buffer should
+        // start at line-5 and run through line-(N+4).
+        assert_eq!(buf.front().unwrap(), "line-5");
+        assert_eq!(buf.back().unwrap(), &format!("line-{}", OUTPUT_TAIL_LINES + 4));
     }
 
     #[test]
