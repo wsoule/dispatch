@@ -75,6 +75,29 @@ describe('loadConfig', () => {
     writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: "yes"\n');
     expect(() => loadConfig(root)).toThrow(/autoCommit must be/);
   });
+  it('parses verifyCommand when provided as a non-empty string', () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(root, '.dispatch/config.yml'),
+      'verifyCommand: bun test\n'
+    );
+    expect(loadConfig(root).verifyCommand).toBe('bun test');
+  });
+  it('leaves verifyCommand undefined when omitted', () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: true\n');
+    expect(loadConfig(root).verifyCommand).toBeUndefined();
+  });
+  it('throws when verifyCommand is not a string', () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(join(root, '.dispatch/config.yml'), 'verifyCommand: 5\n');
+    expect(() => loadConfig(root)).toThrow(/verifyCommand must be/);
+  });
+  it('throws when verifyCommand is an empty string', () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(join(root, '.dispatch/config.yml'), 'verifyCommand: ""\n');
+    expect(() => loadConfig(root)).toThrow(/verifyCommand must be/);
+  });
 
   describe('orchestrator block', () => {
     it('defaults to 100 turns, no budget cap, acceptEdits, epicConcurrency 3', () => {
