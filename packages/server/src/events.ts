@@ -30,7 +30,10 @@ export type ServerEvent =
   // A note/triage/follow-up was created, edited, promoted, or deleted — same
   // "go refetch" contract as task.changed. Lets an agent-created triage (via
   // the MCP `dispatch_note` tool) show up live in an open Notes tab.
-  | { type: 'note.changed' };
+  | { type: 'note.changed' }
+  // The merge queue's state changed (entry added/removed/advanced) — same
+  // "go refetch" contract as run.changed.
+  | { type: 'merge-queue.changed' };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
