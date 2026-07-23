@@ -177,10 +177,13 @@ export function hasDispatch(root: string): Promise<boolean> {
 }
 
 /** Ensures a `dispatchd` sidecar is running for `root` and resolves to its port — reuses an
- * already-healthy daemon if one exists, otherwise spawns one (`bun packages/server/src/bin.ts
- * --root <root>`, dev-only wiring) and waits up to 5s for it to come up. See
- * `sidecar::ensure_dispatchd` on the backend. Rejects if `bun` isn't on `PATH` or the daemon
- * never becomes healthy in time. */
+ * already-healthy daemon if one exists (unless `root` still needs `--init`, in which case a
+ * fresh spawn always runs so initialization actually happens), otherwise spawns one (`bun
+ * packages/server/src/bin.ts --root <root>` in dev, or the bundled compiled binary in a
+ * packaged release) and waits up to 15s for it to come up. See `sidecar::ensure_dispatchd` on
+ * the backend. Rejects with a multi-line message (launch path used + the daemon's own recent
+ * stdout/stderr) if the daemon never becomes healthy in time, or with the bare spawn error if
+ * the process couldn't even start. */
 export function ensureDispatchd(root: string): Promise<number> {
   // Browser-dev fallback: the daemon is already running (started outside the
   // app); take its port straight from the URL param instead of spawning one.

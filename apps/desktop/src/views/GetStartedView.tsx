@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Loader2, Terminal, TriangleAlert } from 'lucide-react';
+import { Loader2, Terminal, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
 import { ensureDispatchd } from '../lib/tauri';
@@ -15,34 +15,25 @@ interface GetStartedViewProps {
 /**
  * First-run / no-tracker screen: shown whenever the app's single active project (see
  * `App.tsx`'s `currentProjectRoot()` resolution) doesn't have a `.dispatch/` tracker yet.
- * Offers two paths to the same outcome: the primary "Initialize project" button drives
- * `ensureDispatchd`, whose Rust sidecar spawns dispatchd with `--init` for a root missing
- * `.dispatch/tasks` (see `sidecar::needs_init`/`BunSpawner::spawn`) — `bin.ts`'s `--init`
- * handling runs `TaskStore.init` before the server starts, so by the time that promise
- * resolves the tracker is already on disk. The copy-paste `dispatch init` command stays as
- * the secondary/manual path for anyone who'd rather run it themselves (e.g. no `bun` findable
- * by the sidecar, or they want to inspect the CLI's own init output first).
+ * The "Initialize project" button drives `ensureDispatchd`, whose Rust sidecar spawns
+ * dispatchd with `--init` for a root missing `.dispatch/tasks` (see
+ * `sidecar::needs_init`/`BunSpawner::spawn`) — `bin.ts`'s `--init` handling runs
+ * `TaskStore.init` before the server starts, so by the time that promise resolves the
+ * tracker is already on disk.
+ *
+ * There is deliberately no copy-paste `dispatch init` command here: a packaged release of
+ * this app ships no `dispatch` CLI on `PATH`, so showing one just hands the user a "command
+ * not found" dead end. Initialize is the only supported path from this screen.
  */
 export function GetStartedView({ projectPath }: GetStartedViewProps) {
-  const [copied, setCopied] = useState(false);
-  const command = `cd ${projectPath} && dispatch init`;
   const queryClient = useQueryClient();
 
-  // Tracks the primary button's own request, separate from `copied`'s ephemeral clipboard
-  // toast — `error` holds the thrown message (or `null` once cleared by a fresh attempt).
+  // `initState` tracks the button's own in-flight request; `initError` holds the thrown
+  // message (or `null` once cleared by a fresh attempt) — now potentially several lines
+  // long (see `ensureDispatchd`'s doc comment on the backend), since a health-wait timeout
+  // includes which launch path ran plus a tail of the daemon's own stdout/stderr.
   const [initState, setInitState] = useState<'idle' | 'pending'>('idle');
   const [initError, setInitError] = useState<string | null>(null);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard access can be denied by the OS — the command is still shown as plain text,
-      // so it's copyable by hand even if the button silently fails.
-    }
-  }
 
   // Boots dispatchd for this root with `--init` (see this component's doc comment). On
   // success, the daemon has already created `.dispatch/tasks` before `ensureDispatchd`'s
@@ -95,35 +86,25 @@ export function GetStartedView({ projectPath }: GetStartedViewProps) {
       </Button>
 
       {initError !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive flex w-full items-start gap-2 rounded-lg border px-3 py-2.5 text-left text-[13px]">
+        <div className="border-destructive/30 bg-destructive/10 text-destructive flex w-full max-w-full items-start gap-2 rounded-lg border px-3 py-2.5 text-left text-[13px]">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-          <span>{initError}</span>
+          <pre className="max-h-48 min-w-0 flex-1 overflow-auto font-mono text-[12px] break-words whitespace-pre-wrap">
+            {initError}
+          </pre>
         </div>
       )}
 
-      <p className="text-muted-foreground text-[12px]">Or run it yourself:</p>
-
-      <div className="border-border bg-card flex w-full items-center gap-2 rounded-lg border px-3 py-2.5">
-        <code className="text-foreground min-w-0 flex-1 truncate text-left font-mono text-[12px]">
-          {command}
+      <p className="text-muted-foreground text-[12px] leading-relaxed">
+        Initialize creates a{' '}
+        <code className="bg-secondary rounded px-1 py-0.5 font-mono text-[11px]">
+          .dispatch/
+        </code>{' '}
+        tracker folder in{' '}
+        <code className="bg-secondary rounded px-1 py-0.5 font-mono text-[11px] break-all">
+          {projectPath}
         </code>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => void copy()}
-          className="shrink-0"
-        >
-          {copied ? (
-            <>
-              <Check className="size-3.5" /> Copied
-            </>
-          ) : (
-            <>
-              <Copy className="size-3.5" /> Copy command
-            </>
-          )}
-        </Button>
-      </div>
+        .
+      </p>
     </div>
   );
 }
