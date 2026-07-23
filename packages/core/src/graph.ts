@@ -149,10 +149,10 @@ export function computeStack(
   };
   const inDegree = new Map<string, number>();
   for (const id of component) {
-    const deps = byId
-      .get(id)!
-      .meta.blockedBy.filter((d) => component.has(d) && d !== id);
-    inDegree.set(id, deps.length);
+    const deps = new Set(
+      byId.get(id)!.meta.blockedBy.filter((d) => component.has(d) && d !== id)
+    );
+    inDegree.set(id, deps.size);
   }
   const pool = [...component].filter((id) => inDegree.get(id) === 0);
   const order: string[] = [];
