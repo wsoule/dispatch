@@ -1,8 +1,14 @@
-import type { DiffResult, RunMeta } from '@dispatch/client';
+import type {
+  DiffResult,
+  MergeQueueEntryState,
+  MergeQueueSnapshot,
+  RunMeta,
+} from '@dispatch/client';
 import {
   ExternalLink,
   GitMerge,
   GitPullRequest,
+  ListOrdered,
   MessageSquarePlus,
   Trash2,
 } from 'lucide-react';
@@ -21,6 +27,10 @@ interface RunReviewViewProps {
    * see `GET /api/health`'s `pr` flag). The action is hidden entirely rather than shown
    * disabled when this is false, since there's nothing the person could do in-app to fix it. */
   prCapability: boolean;
+  /** The merge queue's live snapshot, so the "Queue merge" control can show this run's own
+   * position/state instead of a plain static button once it has an entry. `null` while the
+   * query hasn't resolved yet — treated the same as an empty queue. */
+  mergeQueue: MergeQueueSnapshot | null;
   onMerge: () => Promise<void>;
   onDiscard: () => Promise<void>;
   onRequestChanges: (text: string) => Promise<void>;
@@ -28,6 +38,85 @@ interface RunReviewViewProps {
   /** Jumps to the Pull requests tab (this run's PR, once opened, is reviewed there rather than
    * inline here — keeps the run surface from nesting a whole second review surface inside it). */
   onViewPr: () => void;
+  onQueueMerge: () => Promise<void>;
+}
+
+// Live-state label for a run currently sitting in the merge queue — 'queued' gets its own
+// position-aware label built inline (see `QueueMergeControl` below), every other non-terminal
+// state maps to a short present-progressive label straight off the snapshot.
+const QUEUE_STATE_LABEL: Partial<Record<MergeQueueEntryState, string>> = {
+  'waiting-blockers': 'Waiting on blockers…',
+  rebasing: 'Rebasing…',
+  verifying: 'Verifying…',
+  merging: 'Merging…',
+};
+
+/**
+ * The "Queue merge" control: a plain button when this run has no merge-queue entry, live state
+ * text (e.g. "Queued · #2", "Rebasing…") while an entry is actively in the queue, and — once a
+ * past attempt has failed without the run ever becoming reviewed — the failure reason plus a
+ * re-enabled button so the person can retry. Disabled (with a reason tooltip) once the run has
+ * already been reviewed, mirroring the server's own 409 for that case.
+ */
+function QueueMergeControl({
+  meta,
+  mergeQueue,
+  busy,
+  onQueueMerge,
+}: {
+  meta: RunMeta;
+  mergeQueue: MergeQueueSnapshot | null;
+  busy: boolean;
+  onQueueMerge: () => void;
+}) {
+  const entries = mergeQueue?.entries ?? [];
+  const activeEntry = entries.find((e) => e.runId === meta.id);
+  const queuePosition =
+    activeEntry !== undefined ? entries.indexOf(activeEntry) + 1 : undefined;
+  // A failed attempt moves out of `entries` into `history` — surfaced only when there's no
+  // active entry for this run, since a fresh enqueue after a failure starts a new entry.
+  const failedEntry =
+    activeEntry === undefined
+      ? mergeQueue?.history.find(
+          (e) => e.runId === meta.id && e.state === 'failed'
+        )
+      : undefined;
+  const alreadyReviewed = meta.reviewedAt !== undefined;
+  const disabledReason = alreadyReviewed
+    ? 'This run has already been reviewed'
+    : undefined;
+
+  return (
+    <div className="flex items-center gap-2">
+      {activeEntry !== undefined ? (
+        <span className="text-muted-foreground inline-flex items-center gap-1.5 text-[12px]">
+          <ListOrdered className="size-3.5" />
+          {activeEntry.state === 'queued'
+            ? `Queued · #${queuePosition}`
+            : (QUEUE_STATE_LABEL[activeEntry.state] ?? activeEntry.state)}
+        </span>
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy || alreadyReviewed}
+          title={disabledReason}
+          onClick={onQueueMerge}
+        >
+          <ListOrdered className="size-3.5" />
+          Queue merge
+        </Button>
+      )}
+      {failedEntry !== undefined && (
+        <span
+          className="text-destructive max-w-40 truncate text-[11px]"
+          title={failedEntry.reason}
+        >
+          Failed: {failedEntry.reason ?? 'unknown error'}
+        </span>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -44,11 +133,13 @@ export function RunReviewView({
   diffLoading,
   diffError,
   prCapability,
+  mergeQueue,
   onMerge,
   onDiscard,
   onRequestChanges,
   onOpenPr,
   onViewPr,
+  onQueueMerge,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
@@ -133,7 +224,13 @@ export function RunReviewView({
           </div>
         </div>
       ) : (
-        <div className="border-border flex justify-end gap-2 border-t pt-3">
+        <div className="border-border flex items-center justify-end gap-2 border-t pt-3">
+          <QueueMergeControl
+            meta={meta}
+            mergeQueue={mergeQueue}
+            busy={busy}
+            onQueueMerge={() => void run(onQueueMerge)}
+          />
           <Button
             variant="ghost"
             size="sm"

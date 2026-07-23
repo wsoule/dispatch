@@ -1,6 +1,7 @@
 import type {
   ApiClient,
   EpicProgress,
+  MergeQueueSnapshot,
   PlanProposal,
   RunDetail,
   RunMeta,
@@ -61,6 +62,10 @@ export interface DispatchProjectData {
   epicProgressById: Map<string, EpicProgress>;
   liveRunStateByTaskId: Map<string, RunState>;
   latestRunByTaskId: Map<string, RunMeta>;
+  // Task 6: the merge queue's live snapshot (pending/active entries + a capped
+  // history) — `null` until the query has ever resolved, so callers can show
+  // an empty/loading state without treating "no entries yet" as an error.
+  mergeQueue: MergeQueueSnapshot | null;
 
   runDetail: RunDetail | undefined;
   diff: import('@dispatch/client').DiffResult | undefined;
@@ -113,6 +118,13 @@ export interface DispatchProjectData {
   handleStopEpic: (epicId: string) => Promise<void>;
   handleSubmitPrompt: (prompt: string) => Promise<string>;
   handleConfirmPlan: (proposal: PlanProposal) => Promise<void>;
+  // Task 6: enqueue/dequeue a run in the merge queue. Both let the server's
+  // 404/409 (unknown run, not terminal, already reviewed, already queued, or
+  // "can't remove the actively-processing entry") propagate as a thrown
+  // Error — callers surface `err.message` the same way every other mutation
+  // here does, rather than swallowing it.
+  handleEnqueueMerge: (runId: string) => Promise<void>;
+  handleDequeueMerge: (runId: string) => Promise<void>;
 }
 
 /**
@@ -195,6 +207,10 @@ export function useDispatchProject(
   const planQueryKey = useMemo(
     () => ['dispatch-plan', port, planId],
     [port, planId]
+  );
+  const mergeQueueQueryKey = useMemo(
+    () => ['dispatch-merge-queue', port],
+    [port]
   );
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
@@ -332,6 +348,18 @@ export function useDispatchProject(
       query.state.data?.state === 'running' ? 2000 : false,
   });
 
+  // Task 6: the merge queue snapshot — same "poll on mount, refetch on the
+  // matching WS event" shape as every other query here (see the
+  // `merge-queue.changed` branch in the WS effect below).
+  const { data: mergeQueue } = useQuery({
+    queryKey: mergeQueueQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchMergeQueue();
+    },
+    enabled: client !== null,
+  });
+
   const epics = useMemo(
     () => (tasks ?? []).filter((t) => t.meta.kind === 'epic'),
     [tasks]
@@ -398,6 +426,10 @@ export function useDispatchProject(
             });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+          } else if (event.type === 'merge-queue.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: mergeQueueQueryKey,
+            });
           }
         },
       }
@@ -411,6 +443,7 @@ export function useDispatchProject(
     runsQueryKey,
     notesQueryKey,
     epicProgressKeyPrefix,
+    mergeQueueQueryKey,
     port,
   ]);
 
@@ -714,6 +747,32 @@ export function useDispatchProject(
     [client, planId, queryClient, tasksQueryKey, readyQueryKey]
   );
 
+  // Task 6: enqueue a terminal, unreviewed run into the merge queue. The
+  // server 409s (unknown run, non-terminal, already reviewed, already
+  // queued) surface to the caller as a thrown Error with the server's own
+  // message — callers (RunReviewView) catch it and render it inline, the
+  // same pattern every other review action here already uses. The queue
+  // itself also broadcasts `merge-queue.changed` once the entry lands, so
+  // the invalidation here is just for the immediate optimistic refetch
+  // rather than the only way this query ever updates.
+  const handleEnqueueMerge = useCallback(
+    async (runId: string): Promise<void> => {
+      if (client === null) return;
+      await client.enqueueMergeQueue(runId);
+      void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
+    },
+    [client, queryClient, mergeQueueQueryKey]
+  );
+
+  const handleDequeueMerge = useCallback(
+    async (runId: string): Promise<void> => {
+      if (client === null) return;
+      await client.removeFromMergeQueue(runId);
+      void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
+    },
+    [client, queryClient, mergeQueueQueryKey]
+  );
+
   return {
     client,
     portLoading,
@@ -732,6 +791,7 @@ export function useDispatchProject(
     epicProgressById,
     liveRunStateByTaskId,
     latestRunByTaskId,
+    mergeQueue: mergeQueue ?? null,
 
     runDetail,
     diff,
@@ -767,5 +827,7 @@ export function useDispatchProject(
     handleStopEpic,
     handleSubmitPrompt,
     handleConfirmPlan,
+    handleEnqueueMerge,
+    handleDequeueMerge,
   };
 }

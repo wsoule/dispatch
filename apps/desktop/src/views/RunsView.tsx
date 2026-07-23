@@ -1,11 +1,12 @@
 import { FileX, GitBranch, MousePointerClick } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { StackBadge, StackRail } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
@@ -70,6 +71,18 @@ export function RunsView({
   const diffLoading = data.diffLoading;
   const diff = data.diff;
 
+  // Built once per `data.tasks`/`data.epics` change rather than re-scanned per row: a run
+  // row's epic breadcrumb needs its task's `parent`, then that parent id's title.
+  const taskById = useMemo(
+    () => new Map(data.tasks.map((t) => [t.meta.id, t])),
+    [data.tasks]
+  );
+  const epicTitleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const epic of data.epics) map.set(epic.meta.id, epic.meta.title);
+    return map;
+  }, [data.epics]);
+
   useEffect(() => {
     if (selectedId === undefined || selectedState === undefined) return;
     if (defaultedRunIdRef.current === selectedId) return;
@@ -120,29 +133,43 @@ export function RunsView({
               </p>
             </div>
           ) : (
-            data.runs.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                onClick={() => onSelectRun(run.id)}
-                className={cn(
-                  'flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors duration-150',
-                  run.id === selectedRunId
-                    ? 'border-border bg-accent'
-                    : 'hover:bg-muted/60'
-                )}
-              >
-                <RunStatePill state={run.state} className="shrink-0" />
-                <span className="min-w-0 flex-1 truncate text-[13px]">
-                  {run.taskTitle}
-                </span>
-                {run.costUsd !== undefined && (
-                  <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
-                    ${run.costUsd.toFixed(2)}
+            data.runs.map((run) => {
+              const task = taskById.get(run.taskId);
+              const epicTitle =
+                task?.meta.parent != null
+                  ? epicTitleById.get(task.meta.parent)
+                  : undefined;
+              return (
+                <button
+                  key={run.id}
+                  type="button"
+                  onClick={() => onSelectRun(run.id)}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors duration-150',
+                    run.id === selectedRunId
+                      ? 'border-border bg-accent'
+                      : 'hover:bg-muted/60'
+                  )}
+                >
+                  <RunStatePill state={run.state} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-[13px]">
+                    {run.taskTitle}
+                    {epicTitle !== undefined && (
+                      <span className="text-muted-foreground">
+                        {' '}
+                        › {epicTitle}
+                      </span>
+                    )}
                   </span>
-                )}
-              </button>
-            ))
+                  <StackBadge tasks={data.tasks} taskId={run.taskId} />
+                  {run.costUsd !== undefined && (
+                    <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
+                      ${run.costUsd.toFixed(2)}
+                    </span>
+                  )}
+                </button>
+              );
+            })
           )}
         </div>
 
@@ -167,6 +194,16 @@ export function RunsView({
                 cost={liveCostUsd(data.runDetail.meta, data.runDetail.entries)}
                 live={!isTerminalRunState(selected.state)}
                 onCancel={() => data.handleCancelRun(selected.id)}
+              />
+
+              <StackRail
+                tasks={data.tasks}
+                taskId={selected.taskId}
+                latestRunByTaskId={data.latestRunByTaskId}
+                onOpenTask={(taskId) => {
+                  const run = data.latestRunByTaskId.get(taskId);
+                  if (run !== undefined) onSelectRun(run.id);
+                }}
               />
 
               <Tabs
@@ -210,6 +247,7 @@ export function RunsView({
                       diffLoading={data.diffLoading}
                       diffError={data.diffError}
                       prCapability={data.health?.pr ?? false}
+                      mergeQueue={data.mergeQueue}
                       onMerge={() => data.handleReview(selected.id, 'merge')}
                       onDiscard={() =>
                         data.handleReview(selected.id, 'discard')
@@ -219,6 +257,7 @@ export function RunsView({
                       }
                       onOpenPr={() => data.handleOpenPr(selected.id)}
                       onViewPr={() => onViewPr(selected.id)}
+                      onQueueMerge={() => data.handleEnqueueMerge(selected.id)}
                     />
                   )}
                 </TabsContent>
