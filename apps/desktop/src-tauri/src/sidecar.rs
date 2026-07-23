@@ -1,4 +1,4 @@
-//! Dev-only wiring for `dispatchd` — the Bun HTTP+WS daemon that serves
+//! Wiring for `dispatchd` — the Bun HTTP+WS daemon that serves
 //! `.dispatch/` task data for one project root (see
 //! `packages/server/src/daemonfile.ts` and `packages/server/src/bin.ts`).
 //!
@@ -7,12 +7,13 @@
 //! running. This mirrors `dispatch ui`'s own ensure-daemon flow
 //! (`packages/cli/src/commands/daemon.ts`'s `waitForHealthyDaemon`) almost
 //! exactly, reimplemented here so the desktop app doesn't need Node or
-//! `@dispatch/cli` on `PATH` — only `bun`.
+//! `@dispatch/cli` on `PATH`.
 //!
-//! Phase 6 TODO: once dispatchd ships as a packaged binary
-//! (`bun build --compile`), replace `dispatchd_bin_path`'s dev-only
-//! resolution (a walk up from `CARGO_MANIFEST_DIR`, valid only when running
-//! from this monorepo checkout) with a path into the app bundle's resources.
+//! How dispatchd starts depends on the build (see `DaemonLaunch` and
+//! `commands.rs`'s `resolve_daemon_launch`): a dev build runs the TypeScript
+//! entry through `bun` straight from this checkout, while a packaged release
+//! runs the standalone `bun build --compile`d binaries bundled under the
+//! app's Resource dir, so a shipped app needs neither `bun` nor the checkout.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -136,8 +137,8 @@ async fn is_healthy(client: &reqwest::Client, port: u16) -> bool {
 /// manifest dir (`apps/desktop/src-tauri`) to the monorepo root — three
 /// levels (`src-tauri` -> `desktop` -> `apps` -> repo root), not two — then
 /// down into `packages/server/src/bin.ts`. Valid only when running from this
-/// checkout — see this module's doc comment for the Phase 6 packaged-binary
-/// TODO.
+/// checkout — a packaged release never takes this path; it uses
+/// `DaemonLaunch::Bundled` (see `commands.rs`'s `resolve_daemon_launch`).
 #[cfg_attr(not(any(debug_assertions, test)), allow(dead_code))]
 fn dispatchd_bin_path(manifest_dir: &Path) -> PathBuf {
     manifest_dir

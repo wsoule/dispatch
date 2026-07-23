@@ -7,6 +7,17 @@ by humans and agents alike.
 **Status:** Phase 1 (tracker core + CLI). Roadmap:
 `docs/superpowers/plans/2026-07-13-dispatch-roadmap.md`.
 
+## Install
+
+Desktop app for macOS via Homebrew:
+
+    brew install --cask wsoule/tap/dispatch
+
+Or grab an installer from the
+[latest release](https://github.com/wsoule/dispatch/releases/latest): macOS DMGs
+(Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
+signed and notarized (Developer ID) as of v0.1.1.
+
 ## Quickstart
 
     bun install && bun run build
