@@ -44,6 +44,7 @@ export interface OrchestratorConfig {
 export interface DispatchConfig {
   statuses: string[];
   autoCommit: boolean;
+  verifyCommand?: string;
   orchestrator: OrchestratorConfig;
 }
 
@@ -162,9 +163,18 @@ export function loadConfig(rootDir: string): DispatchConfig {
       'invalid .dispatch/config.yml: autoCommit must be a boolean'
     );
   }
+  if (
+    raw.verifyCommand !== undefined &&
+    (typeof raw.verifyCommand !== 'string' || raw.verifyCommand.trim() === '')
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: verifyCommand must be a non-empty string'
+    );
+  }
   return {
     statuses: [...(raw.statuses ?? DEFAULTS.statuses)],
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
+    verifyCommand: raw.verifyCommand,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
   };
 }
