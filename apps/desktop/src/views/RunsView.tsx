@@ -77,6 +77,7 @@ export function RunsView({
     onPointerDown: onResizePointerDown,
     onPointerMove: onResizePointerMove,
     onPointerUp: onResizePointerUp,
+    onPointerCancel: onResizePointerCancel,
     onDoubleClick: onResizeDoubleClick,
   } = useResizablePane(
     'dispatch:runs-list-width',
@@ -207,6 +208,7 @@ export function RunsView({
           onPointerDown={onResizePointerDown}
           onPointerMove={onResizePointerMove}
           onPointerUp={onResizePointerUp}
+          onPointerCancel={onResizePointerCancel}
           onDoubleClick={onResizeDoubleClick}
           className="group relative w-2 shrink-0 cursor-col-resize touch-none"
         >
