@@ -81,4 +81,18 @@ describe('computeStack', () => {
     const tasks = [mkTask('a', ['ghost'])];
     expect(computeStack(tasks, 'a')).toBeNull();
   });
+
+  test('duplicate blockedBy entries do not inflate in-degree (repro)', () => {
+    const tasks = [
+      mkTask('a', [], '2026-01-01'),
+      mkTask('b', ['a'], '2026-01-02'),
+      mkTask('c', ['a', 'a'], '2026-01-03'),
+      mkTask('d', ['c'], '2026-01-01'),
+    ];
+    const stack = computeStack(tasks, 'd');
+    expect(stack).toEqual({
+      order: ['a', 'b', 'c', 'd'],
+      index: 3,
+    });
+  });
 });
