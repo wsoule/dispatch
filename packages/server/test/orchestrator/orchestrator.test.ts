@@ -950,11 +950,12 @@ describe('Orchestrator hook isolation', () => {
   });
 });
 
-// Important #7: a reviewed run has no worktree left to diff at all — the
-// endpoint must answer with a clean 409, not let a git command run against a
-// removed cwd and blow up as an internal error.
+// Important #7 (superseded by the diff-snapshot fix below): a reviewed run's
+// worktree is gone, but persistDiffSnapshot wrote a snapshot right before
+// review() removed it — the endpoint must serve that snapshot instead of
+// 409ing, even for a run whose diff happens to be empty.
 describe('Orchestrator.diff on a reviewed run', () => {
-  it('409s instead of erroring once the run has been reviewed and its worktree removed', async () => {
+  it('serves the persisted (empty) snapshot once the run has been reviewed and its worktree removed', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
       'fake',
@@ -967,6 +968,106 @@ describe('Orchestrator.diff on a reviewed run', () => {
     );
 
     orchestrator.review(meta.id, 'discard');
+
+    expect(existsSync(meta.worktreePath)).toBe(false);
+    const result = orchestrator.diff(meta.id);
+    expect(result.patch).toBe('');
+    expect(result.files).toEqual([]);
+  });
+});
+
+// The user-reported bug this fix addresses: every review path (local merge,
+// discard, PR merge) removes a run's worktree, which used to make its diff
+// permanently unviewable. persistDiffSnapshot now writes the diff to disk
+// right before each removal so GET .../diff can fall back to it.
+describe('Orchestrator.diff survives worktree removal via a snapshot', () => {
+  it('returns the pre-merge patch once review(merge) has removed the worktree', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(
+                join(cwd, 'snapshot-merge.txt'),
+                'merged content\n'
+              );
+            },
+            commitMessage: 'agent: add snapshot-merge.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Diff survives merge' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const preMergeDiff = orchestrator.diff(meta.id);
+    expect(preMergeDiff.files).toEqual([
+      { path: 'snapshot-merge.txt', status: 'A' },
+    ]);
+
+    orchestrator.review(meta.id, 'merge');
+
+    expect(existsSync(meta.worktreePath)).toBe(false);
+    expect(orchestrator.diff(meta.id)).toEqual(preMergeDiff);
+  });
+
+  it('returns the pre-discard patch once review(discard) has removed the worktree', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(
+                join(cwd, 'snapshot-discard.txt'),
+                'discarded content\n'
+              );
+            },
+            commitMessage: 'agent: add snapshot-discard.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Diff survives discard' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const preDiscardDiff = orchestrator.diff(meta.id);
+    expect(preDiscardDiff.files).toEqual([
+      { path: 'snapshot-discard.txt', status: 'A' },
+    ]);
+
+    orchestrator.review(meta.id, 'discard');
+
+    expect(existsSync(meta.worktreePath)).toBe(false);
+    expect(orchestrator.diff(meta.id)).toEqual(preDiscardDiff);
+  });
+
+  it('still throws when a run has neither a live worktree nor a snapshot', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Worktree vanished without review' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    // Simulate a crash/manual cleanup that removed the worktree directly,
+    // bypassing review() entirely — no snapshot was ever written for it.
+    rmSync(meta.worktreePath, { recursive: true, force: true });
 
     expect(() => orchestrator.diff(meta.id)).toThrow(OrchestratorConflictError);
   });
