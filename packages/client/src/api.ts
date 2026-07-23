@@ -196,7 +196,11 @@ export type ServerEvent =
   // just confirmed. Same "go refetch" contract as the other *.changed events
   // — mirrors packages/server/src/events.ts exactly.
   | { type: 'plan.changed'; planId: string }
-  | { type: 'note.changed' };
+  | { type: 'note.changed' }
+  // The merge queue's state changed (entry added/removed/advanced) — same
+  // "go refetch" contract as run.changed. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'merge-queue.changed' };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's
@@ -258,6 +262,38 @@ export interface EpicProgress {
   concurrency?: number;
   children: EpicProgressChild[];
   liveRuns: RunMeta[];
+}
+
+// Mirrors MergeQueueEntryState in packages/server/src/orchestrator/mergeQueue.ts.
+export type MergeQueueEntryState =
+  | 'queued'
+  | 'waiting-blockers'
+  | 'rebasing'
+  | 'verifying'
+  | 'merging'
+  | 'merged'
+  | 'failed';
+
+// Mirrors MergeQueueEntry in packages/server/src/orchestrator/mergeQueue.ts.
+export interface MergeQueueEntry {
+  runId: string;
+  taskId: string;
+  taskTitle: string;
+  state: MergeQueueEntryState;
+  /** Failure detail — set only once an entry lands in `failed`. */
+  reason?: string;
+  enqueuedAt: string;
+  /** Set only once an entry lands in `merged`/`failed`. */
+  finishedAt?: string;
+}
+
+// The body of `GET /api/merge-queue` — mirrors MergeQueueSnapshot in
+// packages/server/src/orchestrator/mergeQueue.ts.
+export interface MergeQueueSnapshot {
+  /** Pending + active entries, in queue order. */
+  entries: MergeQueueEntry[];
+  /** Terminal entries (merged/failed), most-recent-first, capped at 20. */
+  history: MergeQueueEntry[];
 }
 
 // Shared fetch wrapper: resolves against `baseUrl`, throws with the server's
@@ -473,6 +509,14 @@ export interface ApiClient {
   ): Promise<EpicSession>;
   stopEpic(epicId: string): Promise<EpicSession>;
   fetchEpicProgress(epicId: string): Promise<EpicProgress>;
+  // The merge queue: serialized rebase -> verify -> merge over
+  // reviewed-and-approved runs. `enqueueMergeQueue` 404/409s the same way
+  // the server's MergeQueue.enqueue does (unknown run, non-terminal, already
+  // reviewed, already queued); `removeFromMergeQueue` 409s only when the
+  // given run is the entry actively being processed.
+  fetchMergeQueue(): Promise<MergeQueueSnapshot>;
+  enqueueMergeQueue(runId: string): Promise<MergeQueueEntry>;
+  removeFromMergeQueue(runId: string): Promise<void>;
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -584,6 +628,28 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/epics/${epicId}/stop`, { method: 'POST' }),
     fetchEpicProgress: (epicId) =>
       request(baseUrl, `/api/epics/${epicId}/progress`),
+    fetchMergeQueue: () => request(baseUrl, '/api/merge-queue'),
+    enqueueMergeQueue: (runId) =>
+      request(baseUrl, '/api/merge-queue', {
+        method: 'POST',
+        ...jsonBody({ runId }),
+      }),
+    // Not routed through the shared `request()` helper: the server answers
+    // this one with 204 No Content (per the merge queue's REST contract), and
+    // `request()` always tries to parse a JSON body on success — which throws
+    // on an empty 204 body. This mirrors `request()`'s own error-handling
+    // shape otherwise (throw the server's `{ error }` message on non-2xx).
+    removeFromMergeQueue: async (runId) => {
+      const res = await fetch(`${baseUrl}/api/merge-queue/${runId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(body.error ?? `request failed: ${res.status}`);
+      }
+    },
     wsUrl: () => wsUrl(baseUrl),
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, options),

@@ -14,6 +14,7 @@ import type { EventBus } from './events.js';
 import type { NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import type { EpicEngine } from './orchestrator/epic.js';
+import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager } from './orchestrator/pr.js';
@@ -37,6 +38,7 @@ export interface ApiContext {
   planManager: PlanManager;
   epicEngine: EpicEngine;
   prManager: PrManager;
+  mergeQueue: MergeQueue;
   noteStore: NoteStore;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
@@ -536,6 +538,23 @@ async function startEpic(
   return jsonResponse(session, 201);
 }
 
+// POST /api/merge-queue { runId }. Enqueues a finished, unreviewed run for
+// the serial rebase -> verify -> merge pipeline. 404/409 map straight from
+// MergeQueue.enqueue's typed errors via the shared handler below.
+async function enqueueMergeQueue(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { runId?: unknown };
+  if (typeof body.runId !== 'string' || body.runId.trim() === '') {
+    return errorResponse(400, 'invalid runId: runId is required');
+  }
+  const entry = ctx.mergeQueue.enqueue(body.runId);
+  return jsonResponse(entry, 201);
+}
+
 // Routes every `/api/*` request. Called only for paths under `/api` — the
 // caller (index.ts) handles `/ws` upgrades and static file serving itself.
 // POST /api/notes — create a note/triage/follow-up/todo. Used by the app's
@@ -851,6 +870,19 @@ export async function handleApi(
         method === 'GET'
       ) {
         return jsonResponse(ctx.epicEngine.progress(segments[1]));
+      }
+    }
+
+    if (segments[0] === 'merge-queue') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.mergeQueue.snapshot());
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await enqueueMergeQueue(req, ctx);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        ctx.mergeQueue.remove(segments[1]);
+        return new Response(null, { status: 204 });
       }
     }
 

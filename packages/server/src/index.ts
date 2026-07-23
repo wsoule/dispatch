@@ -11,6 +11,7 @@ import { EventBus } from './events.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
@@ -253,6 +254,14 @@ export async function startServer(
   );
   prManager.startPolling(opts.prPollIntervalMs);
 
+  // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,
+  // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
+  // stub) fakes the merge queue's own gh/git calls too, not just PrManager's.
+  const mergeQueue = new MergeQueue(
+    { rootDir, store, cache, events, orchestrator },
+    opts.prCommandRunner
+  );
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -263,6 +272,7 @@ export async function startServer(
     planManager,
     epicEngine,
     prManager,
+    mergeQueue,
     prCapability,
     noteStore: new NoteStore(rootDir),
   };
