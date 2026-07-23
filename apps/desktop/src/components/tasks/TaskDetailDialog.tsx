@@ -1,4 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
+import { computeStack } from '@dispatch/core';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import {
   ArrowUpRight,
@@ -12,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { formatRelativeTimeFromIso } from '../../lib/format';
@@ -26,6 +27,7 @@ import {
   PriorityControl,
   StatusControl,
 } from './PropertyControls';
+import { StackRail } from './StackRail';
 import { StatusIcon } from './StatusIcon';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
@@ -285,8 +287,11 @@ interface TaskDetailDialogProps {
   runs: RunMeta[];
   /** All epics in the project, for the editable Epic (parent) picker. */
   epics: TaskDoc[];
-  /** All tasks in the project, for the editable Blocked-by picker (self is filtered out). */
+  /** All tasks in the project, for the editable Blocked-by picker (self is filtered out) and
+   * for `StackRail` to derive this task's stack. */
   tasks: TaskDoc[];
+  /** Every task's latest run, for `StackRail`'s per-row run/PR chip. */
+  latestRunByTaskId: Map<string, RunMeta>;
   onClose: () => void;
   onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   /** Optimistic status change (see `useDispatchProject.moveTaskStatus`) — the same one the
@@ -300,6 +305,10 @@ interface TaskDetailDialogProps {
     model?: string
   ) => Promise<void>;
   onOpenRun: (runId: string) => void;
+  /** Re-points this dialog at a different task — e.g. clicking another task in `StackRail`.
+   * Omitted (the palette/board's older call sites) hides the rail's title links, rendering
+   * them as plain text instead. */
+  onOpenTask?: (taskId: string) => void;
 }
 
 /**
@@ -321,11 +330,13 @@ export function TaskDetailDialog({
   runs,
   epics,
   tasks,
+  latestRunByTaskId,
   onClose,
   onUpdate,
   onMoveStatus,
   onDispatch,
   onOpenRun,
+  onOpenTask,
 }: TaskDetailDialogProps) {
   const [title, setTitle] = useState(doc.meta.title);
   const [activityDraft, setActivityDraft] = useState('');
@@ -341,6 +352,14 @@ export function TaskDetailDialog({
   // in-flight statuses something else. A run that isn't in a terminal state *is* an "open
   // run" regardless of what the task's own status happens to be called.
   const hasOpenRun = run !== undefined && !isTerminalRunState(run.state);
+
+  // Whether this task belongs to a stack (a connected chain of blockedBy edges) — gates
+  // whether the "Stack" rail section renders at all, so a lone task (the common case) never
+  // shows an empty heading with nothing beneath it.
+  const stack = useMemo(
+    () => computeStack(tasks, doc.meta.id),
+    [tasks, doc.meta.id]
+  );
 
   async function dispatch(executor?: 'fake' | 'claude') {
     setDispatching(true);
@@ -705,6 +724,20 @@ export function TaskDetailDialog({
                   onChange={(next) => void runUpdate({ blockedBy: next })}
                 />
               </RailSection>
+
+              {/* Gated on `stack` (not just letting `StackRail` render null on its own) so a
+                  lone task — the common case, not a "stack" of one — never shows an empty
+                  "Stack" heading with nothing beneath it. */}
+              {stack !== null && (
+                <RailSection title="Stack">
+                  <StackRail
+                    tasks={tasks}
+                    taskId={doc.meta.id}
+                    latestRunByTaskId={latestRunByTaskId}
+                    onOpenTask={onOpenTask}
+                  />
+                </RailSection>
+              )}
 
               <RailSection title="Labels">
                 {doc.meta.labels.length === 0 && (

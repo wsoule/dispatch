@@ -1,5 +1,6 @@
+import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
-import { Plus, SearchX } from 'lucide-react';
+import { ChevronDown, ChevronRight, SearchX } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -7,9 +8,8 @@ import {
   PriorityControl,
   StatusControl,
 } from '../components/tasks/PropertyControls';
-import { StatusIcon } from '../components/tasks/StatusIcon';
+import { StackBadge } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { groupTasksByStatus } from '../lib/boardGrouping';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { Badge } from '../ui/badge';
@@ -18,10 +18,20 @@ import { Input } from '../ui/input';
 interface TasksListViewProps {
   data: DispatchProjectData;
   onSelectTask: (taskId: string) => void;
-  /** Opens `CreateTaskModal` pre-set to a given status — wired to each group header's
-   * hover-revealed "+" button, mirroring the board's column header. */
-  onAddTask?: (status: string) => void;
 }
+
+// A group of rows under one epic-grouping header: `epicId` is `null` for the catch-all "No
+// epic" bucket (always rendered last) — everything else is keyed by the parent id the tasks
+// in it actually carry, even if that id doesn't resolve to a known epic (a dangling parent
+// reference still needs somewhere honest to render, rather than silently joining "No epic").
+interface EpicGroup {
+  epicId: string | null;
+  title: string;
+  progress: EpicProgress | undefined;
+  tasks: TaskDoc[];
+}
+
+const NO_EPIC_KEY = '__no-epic__';
 
 // Case-insensitive substring match against a task's id and title — a plain narrowing filter
 // (not the palette's fuzzy ranking), since a dense grouped list benefits more from a
@@ -38,22 +48,22 @@ function matchesFilter(doc: TaskDoc, filter: string): boolean {
 const MAX_VISIBLE_LABELS = 2;
 
 /**
- * Linear's dense grouped list: one section per tracker status (config order, same grouping
- * `TaskBoard` uses), each a full-width header (StatusIcon + name + count + hover "+"), then
- * ~36px rows — priority · id · StatusIcon · title (+ epic breadcrumb) · labels · assignee ·
- * relative "updated" time. The caller (`BoardView`, now the single "Tasks" nav destination)
- * owns the page header/New task button and the List/Board toggle; this component only ever
- * renders once there's at least one task in the project, so it doesn't duplicate that
- * container's own empty-project state — it only needs its own empty state for "the search
- * filter matched nothing."
+ * Linear's dense grouped list: one section per epic (project order, "No epic" last), each a
+ * full-width collapsible header (chevron + epic title + done/total progress, reusing the same
+ * `epicProgressById` data `TaskBoard`'s epic cards show), then ~36px rows — priority · id ·
+ * StatusIcon · title (+ epic breadcrumb, + stack badge) · labels · assignee · relative
+ * "updated" time. The caller (`BoardView`, now the single "Tasks" nav destination) owns the
+ * page header/New task button and the List/Board toggle; this component only ever renders
+ * once there's at least one task in the project, so it doesn't duplicate that container's own
+ * empty-project state — it only needs its own empty state for "the search filter matched
+ * nothing."
  */
-export function TasksListView({
-  data,
-  onSelectTask,
-  onAddTask,
-}: TasksListViewProps) {
+export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   const [filter, setFilter] = useState('');
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set()
+  );
   const listRef = useRef<HTMLDivElement>(null);
 
   const epicTitleById = useMemo(() => {
@@ -62,16 +72,80 @@ export function TasksListView({
     return map;
   }, [data.epics]);
 
-  const groups = useMemo(() => {
+  // Buckets every filtered task under its `parent` epic id in one pass, then orders the
+  // resulting groups: known epics first (in the project's own epic order, skipping any epic
+  // with zero matching tasks so an empty header never renders), then any dangling parent ids
+  // that don't resolve to a known epic, then "No epic" last.
+  const groups = useMemo<EpicGroup[]>(() => {
     if (data.config === null) return [];
     const filtered = data.tasks.filter((doc) => matchesFilter(doc, filter));
-    return groupTasksByStatus(filtered, data.config.statuses);
-  }, [data.tasks, data.config, filter]);
 
+    const byParent = new Map<string, TaskDoc[]>();
+    const noEpic: TaskDoc[] = [];
+    for (const doc of filtered) {
+      const parent = doc.meta.parent;
+      if (parent === null) {
+        noEpic.push(doc);
+        continue;
+      }
+      const bucket = byParent.get(parent);
+      if (bucket !== undefined) bucket.push(doc);
+      else byParent.set(parent, [doc]);
+    }
+
+    const result: EpicGroup[] = [];
+    const seenParents = new Set<string>();
+    for (const epic of data.epics) {
+      const bucket = byParent.get(epic.meta.id);
+      if (bucket === undefined) continue;
+      seenParents.add(epic.meta.id);
+      result.push({
+        epicId: epic.meta.id,
+        title: epic.meta.title,
+        progress: data.epicProgressById.get(epic.meta.id),
+        tasks: bucket,
+      });
+    }
+    for (const [parentId, bucket] of byParent) {
+      if (seenParents.has(parentId)) continue;
+      result.push({
+        epicId: parentId,
+        title: parentId,
+        progress: undefined,
+        tasks: bucket,
+      });
+    }
+    if (noEpic.length > 0) {
+      result.push({
+        epicId: null,
+        title: 'No epic',
+        progress: undefined,
+        tasks: noEpic,
+      });
+    }
+    return result;
+  }, [data.tasks, data.config, data.epics, data.epicProgressById, filter]);
+
+  // j/k roving-focus + Enter-to-open only ever considers rows in expanded groups — a collapsed
+  // group's tasks are no more reachable by keyboard than they are visible.
   const orderedIds = useMemo(
-    () => groups.flatMap((g) => g.tasks.map((t) => t.meta.id)),
-    [groups]
+    () =>
+      groups.flatMap((g) =>
+        collapsedGroups.has(g.epicId ?? NO_EPIC_KEY)
+          ? []
+          : g.tasks.map((t) => t.meta.id)
+      ),
+    [groups, collapsedGroups]
   );
+
+  function toggleGroup(key: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   useEffect(() => {
     listRef.current?.focus();
@@ -138,34 +212,46 @@ export function TasksListView({
           onKeyDown={handleListKeyDown}
           className="min-h-0 flex-1 overflow-y-auto"
         >
-          {groups.map(
-            (group) =>
-              group.tasks.length > 0 && (
-                <div key={group.status} className="mb-1">
-                  <div className="group/header bg-background sticky top-0 z-10 flex items-center gap-1.5 px-1 py-1.5">
-                    <StatusIcon status={group.status} />
-                    <span className="text-muted-foreground text-[11px] font-medium">
-                      {group.status}
+          {groups.map((group) => {
+            const key = group.epicId ?? NO_EPIC_KEY;
+            const collapsed = collapsedGroups.has(key);
+            const doneCount =
+              group.progress?.children.filter(
+                (c) => c.status === 'done' || c.status === 'cancelled'
+              ).length ?? 0;
+            const totalCount = group.progress?.children.length ?? 0;
+            return (
+              <div key={key} className="mb-1">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(key)}
+                  aria-expanded={!collapsed}
+                  className="bg-background sticky top-0 z-10 flex w-full items-center gap-1.5 px-1 py-1.5 text-left"
+                >
+                  {collapsed ? (
+                    <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
+                  ) : (
+                    <ChevronDown className="text-muted-foreground size-3.5 shrink-0" />
+                  )}
+                  <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
+                    {group.title}
+                  </span>
+                  <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
+                    {group.tasks.length}
+                  </span>
+                  {totalCount > 0 && (
+                    <span className="text-muted-foreground/70 shrink-0 text-[11px]">
+                      {doneCount}/{totalCount} done
                     </span>
-                    <span className="text-muted-foreground/60 font-mono text-[11px]">
-                      {group.tasks.length}
-                    </span>
-                    {onAddTask !== undefined && (
-                      <button
-                        type="button"
-                        onClick={() => onAddTask(group.status)}
-                        aria-label={`New task in ${group.status}`}
-                        className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto rounded-md p-0.5 opacity-0 transition-opacity duration-150 group-hover/header:opacity-100 focus-visible:opacity-100"
-                      >
-                        <Plus className="size-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  )}
+                </button>
+                {!collapsed && (
                   <div className="flex flex-col">
                     {group.tasks.map((doc) => (
                       <TaskListRow
                         key={doc.meta.id}
                         doc={doc}
+                        tasks={data.tasks}
                         epicTitle={
                           doc.meta.parent !== null
                             ? epicTitleById.get(doc.meta.parent)
@@ -184,9 +270,10 @@ export function TasksListView({
                       />
                     ))}
                   </div>
-                </div>
-              )
-          )}
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -195,6 +282,9 @@ export function TasksListView({
 
 interface TaskListRowProps {
   doc: TaskDoc;
+  /** Full project task list, passed through to `StackBadge` so it can derive this row's
+   * stack position without the list needing its own precomputed map. */
+  tasks: TaskDoc[];
   epicTitle?: string;
   statuses: string[];
   focused: boolean;
@@ -204,14 +294,16 @@ interface TaskListRowProps {
   onEditTask: (patch: UpdatePatch) => void;
 }
 
-/** A single ~36px dense row: priority · id · status · title (+ epic breadcrumb) · labels ·
- * assignee · relative "updated" time — Linear's list-row anatomy, with priority/status/assignee
- * editable inline (click the glyph → picker). `focused` is a CSS-only highlight (this list's
- * j/k cursor never moves real DOM focus off the list container itself). The row is a
- * `div role="button"` rather than a real `<button>` precisely so those inline picker triggers
- * can be nested interactive elements without invalid button-in-button markup. */
+/** A single ~36px dense row: priority · id · status · title (+ epic breadcrumb, + stack badge)
+ * · labels · assignee · relative "updated" time — Linear's list-row anatomy, with
+ * priority/status/assignee editable inline (click the glyph → picker). `focused` is a
+ * CSS-only highlight (this list's j/k cursor never moves real DOM focus off the list
+ * container itself). The row is a `div role="button"` rather than a real `<button>` precisely
+ * so those inline picker triggers can be nested interactive elements without invalid
+ * button-in-button markup. */
 function TaskListRow({
   doc,
+  tasks,
   epicTitle,
   statuses,
   focused,
@@ -252,6 +344,7 @@ function TaskListRow({
           <span className="text-muted-foreground"> › {epicTitle}</span>
         )}
       </span>
+      <StackBadge tasks={tasks} taskId={doc.meta.id} />
       {visibleLabels.length > 0 && (
         <span className="flex shrink-0 items-center gap-1">
           {visibleLabels.map((label) => (
