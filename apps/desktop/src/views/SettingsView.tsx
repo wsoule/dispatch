@@ -1,6 +1,7 @@
 import { AlertCircle, Check, FolderSearch } from 'lucide-react';
 import { useState } from 'react';
 
+import { describeDaemonError } from '../components/shell/DaemonUnavailable';
 import { StatTile } from '../components/ui/StatTile';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { MODELS, readDefaultModel, writeDefaultModel } from '../lib/models';
@@ -122,13 +123,17 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
           </span>
         </div>
         {data.portError && (
-          <p className="text-destructive flex items-center gap-1.5 text-[13px]">
-            <AlertCircle className="size-3.5 flex-shrink-0" />
-            Couldn&rsquo;t start dispatchd
-            {data.portErrorDetail instanceof Error
-              ? `: ${data.portErrorDetail.message}`
-              : '.'}
-          </p>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-destructive flex items-center gap-1.5 text-[13px]">
+              <AlertCircle className="size-3.5 flex-shrink-0" />
+              Couldn&rsquo;t start dispatchd
+            </p>
+            {describeDaemonError(data.portErrorDetail) !== null && (
+              <pre className="text-muted-foreground bg-secondary/50 max-h-48 overflow-auto rounded-md p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
+                {describeDaemonError(data.portErrorDetail)}
+              </pre>
+            )}
+          </div>
         )}
         {data.health !== undefined && (
           <div className="grid grid-cols-3 gap-3">

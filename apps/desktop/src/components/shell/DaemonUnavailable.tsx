@@ -33,16 +33,33 @@ export function DaemonUnavailable({
     );
   }
 
+  const detail = describeDaemonError(errorDetail);
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
       <OctagonAlert className="text-destructive size-5" />
       <p className="text-muted-foreground max-w-sm text-[13px]">
         Couldn&rsquo;t start dispatchd for this project
-        {errorDetail instanceof Error ? `: ${errorDetail.message}` : '.'}
       </p>
+      {detail !== null && (
+        <pre className="text-muted-foreground bg-secondary/50 max-h-48 max-w-lg overflow-auto rounded-md p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
+          {detail}
+        </pre>
+      )}
       <Button variant="secondary" size="sm" onClick={onRetry}>
         Retry
       </Button>
     </div>
   );
+}
+
+// Tauri `invoke` rejections arrive as plain strings (the Rust command's
+// Err(String)), not Error instances — an `instanceof Error` check alone
+// silently swallows exactly the diagnostic detail (daemon output tail, log
+// path) the sidecar now works to provide. Accept both shapes.
+export function describeDaemonError(errorDetail: unknown): string | null {
+  if (errorDetail instanceof Error) return errorDetail.message;
+  if (typeof errorDetail === 'string' && errorDetail.length > 0) {
+    return errorDetail;
+  }
+  return null;
 }
