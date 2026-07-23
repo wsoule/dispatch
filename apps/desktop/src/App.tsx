@@ -474,6 +474,7 @@ function App() {
             runs={data.runs.filter((r) => r.taskId === selectedDoc.meta.id)}
             epics={data.epics}
             tasks={data.tasks}
+            latestRunByTaskId={data.latestRunByTaskId}
             onClose={() => dispatchNav({ type: 'closePeek' })}
             onUpdate={data.handleUpdate}
             onMoveStatus={data.moveTaskStatus}
@@ -483,6 +484,7 @@ function App() {
               selectProjectView('runs');
               dispatchNav({ type: 'openRun', runId });
             }}
+            onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
           />
         )}
 

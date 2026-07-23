@@ -251,11 +251,7 @@ export function BoardView({
           />
         </div>
       ) : (
-        <TasksListView
-          data={data}
-          onSelectTask={onSelectTask}
-          onAddTask={onNewTask}
-        />
+        <TasksListView data={data} onSelectTask={onSelectTask} />
       )}
     </div>
   );
