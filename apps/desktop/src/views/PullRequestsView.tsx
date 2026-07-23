@@ -12,9 +12,10 @@ import {
   Loader2,
   X,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PrReviewPanel } from '../components/runs/PrReviewPanel';
+import { QueueMergeControl } from '../components/runs/QueueMergeControl';
 import { RunDiffView } from '../components/runs/RunDiffView';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StackBadge, StackRail } from '../components/tasks/StackRail';
@@ -84,12 +85,18 @@ function MergeQueueStatePill({ state }: { state: MergeQueueEntryState }) {
  * server's own 409 on removing the active entry), then a short capped history underneath.
  * Renders nothing when the queue has never had an entry, so an unused merge queue doesn't add
  * permanent chrome to the page.
+ *
+ * `error`, when set, renders inline below the header — surfaces a dequeue that the server
+ * rejected (e.g. a 409 because the entry became active between refetch and click) instead of
+ * letting it fail silently. The caller clears it once a dequeue succeeds or the queue refetches.
  */
 function MergeQueuePanel({
   mergeQueue,
+  error,
   onDequeue,
 }: {
   mergeQueue: MergeQueueSnapshot;
+  error: string | null;
   onDequeue: (runId: string) => void;
 }) {
   if (mergeQueue.entries.length === 0 && mergeQueue.history.length === 0) {
@@ -101,6 +108,10 @@ function MergeQueuePanel({
       <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
         Merge queue
       </span>
+
+      {error !== null && (
+        <p className="text-destructive text-[11px]">{error}</p>
+      )}
 
       {mergeQueue.entries.length === 0 ? (
         <p className="text-muted-foreground text-[12px]">Nothing queued.</p>
@@ -260,6 +271,51 @@ export function PullRequestsView({
     return result;
   }, [prRuns, taskById, data.epics]);
 
+  // Dequeue can 409 (the entry became active between the last refetch and the click) — this
+  // surfaces that inline in the queue panel instead of leaving it as an unhandled rejection, the
+  // same catch-and-display pattern RunReviewView's own `run()` uses for its action row. Cleared
+  // on a successful dequeue, and on every subsequent queue refetch (polled, WS-driven, or from
+  // this same action) since a stale error stops applying the moment the snapshot moves on.
+  const [dequeueError, setDequeueError] = useState<string | null>(null);
+  useEffect(() => {
+    setDequeueError(null);
+  }, [data.mergeQueue]);
+
+  const handleDequeue = useCallback(
+    (runId: string) => {
+      data
+        .handleDequeueMerge(runId)
+        .then(() => setDequeueError(null))
+        .catch((err) => {
+          setDequeueError(err instanceof Error ? err.message : String(err));
+        });
+    },
+    [data]
+  );
+
+  // "Queue merge" action for the PR detail header — reuses the shared QueueMergeControl (also
+  // used by RunReviewView's action row) rather than a second copy of the run -> queue-state
+  // mapping, with the same busy/error handling RunReviewView's `run()` applies to its actions.
+  const [queueMergeBusy, setQueueMergeBusy] = useState(false);
+  const [queueMergeError, setQueueMergeError] = useState<string | null>(null);
+  useEffect(() => {
+    setQueueMergeError(null);
+  }, [selectedRunId]);
+
+  const handleQueueMerge = useCallback(
+    (runId: string) => {
+      setQueueMergeBusy(true);
+      setQueueMergeError(null);
+      data
+        .handleEnqueueMerge(runId)
+        .catch((err) => {
+          setQueueMergeError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => setQueueMergeBusy(false));
+    },
+    [data]
+  );
+
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <DaemonUnavailable
@@ -278,20 +334,34 @@ export function PullRequestsView({
   if (selected !== undefined) {
     return (
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onCloseRun}
-            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[13px]"
-          >
-            <ChevronLeft className="size-4" />
-            Pull requests
-          </button>
-          <span className="text-muted-foreground/40">/</span>
-          <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
-            {selected.taskTitle}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={onCloseRun}
+              className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 text-[13px]"
+            >
+              <ChevronLeft className="size-4" />
+              Pull requests
+            </button>
+            <span className="text-muted-foreground/40">/</span>
+            <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
+              {selected.taskTitle}
+            </span>
+          </div>
+          <QueueMergeControl
+            meta={selected}
+            mergeQueue={data.mergeQueue}
+            busy={queueMergeBusy}
+            onQueueMerge={() => handleQueueMerge(selected.id)}
+          />
         </div>
+
+        {queueMergeError !== null && (
+          <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
+            {queueMergeError}
+          </div>
+        )}
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
           <StackRail
@@ -325,7 +395,8 @@ export function PullRequestsView({
       {data.mergeQueue !== null && (
         <MergeQueuePanel
           mergeQueue={data.mergeQueue}
-          onDequeue={(runId) => void data.handleDequeueMerge(runId)}
+          error={dequeueError}
+          onDequeue={handleDequeue}
         />
       )}
 
