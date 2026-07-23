@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the bun-compiled sidecar binaries (dispatchd,
+  dispatch-mcp) when they are codesigned with the hardened runtime, which
+  notarization requires for every executable in the app bundle. Bun
+  executables embed JavaScriptCore, whose JIT needs these three exceptions
+  or the signed binary crashes on launch. This is bun's documented
+  requirement for compiled single-file executables, not an app-specific
+  choice. (No double hyphens in this comment: Apple's entitlements parser
+  rejects them inside XML comments.)
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-executable-page-protection</key>
+  <true/>
+</dict>
+</plist>
