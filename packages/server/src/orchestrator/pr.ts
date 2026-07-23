@@ -45,13 +45,22 @@ export async function defaultCommandRunner(
   cwd: string,
   cmd: string[]
 ): Promise<CommandResult> {
-  const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return { ok: exitCode === 0, stdout, stderr };
+  // Bun.spawn THROWS synchronously when the executable isn't on PATH (e.g.
+  // `gh` missing from a Finder-launched app's minimal environment) — an
+  // uncaught throw here took the whole daemon down at boot via
+  // detectPrCapability. A missing binary is just a failed command: report
+  // ok:false so callers degrade (pr capability false) instead of crashing.
+  try {
+    const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { ok: exitCode === 0, stdout, stderr };
+  } catch (err) {
+    return { ok: false, stdout: '', stderr: (err as Error).message };
+  }
 }
 
 // Whether this project can use the PR review action: `gh` must be reachable
