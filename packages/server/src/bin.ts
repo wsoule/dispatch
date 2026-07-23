@@ -225,6 +225,35 @@ function makeFakeGhRunner(): CommandRunner {
       return ok(url);
     }
 
+    if (bin === 'gh' && sub === 'pr' && action === 'list') {
+      // Every PR this fake has "opened" via `gh pr create` above, plus one
+      // standalone fake PR that was never dispatched through this daemon at
+      // all — so the PRs page's "Other open PRs" section has a real
+      // non-dispatch row to render in demo mode (DISPATCH_FAKE_GH=1), not
+      // just an empty section.
+      const dispatchPrs = [...prs.values()]
+        .filter((pr) => pr.state === 'OPEN')
+        .map((pr) => ({
+          number: pr.number,
+          title: pr.title,
+          url: pr.url,
+          headRefName: `dispatch/fake-${pr.number}`,
+          author: { login: 'you' },
+          isDraft: false,
+          updatedAt: now,
+        }));
+      const standalone = {
+        number: 7,
+        title: 'Bump dependency versions',
+        url: 'https://github.com/dispatch-demo/repo/pull/7',
+        headRefName: 'deps/bump-versions',
+        author: { login: 'dependabot' },
+        isDraft: false,
+        updatedAt: now,
+      };
+      return ok(JSON.stringify([...dispatchPrs, standalone]));
+    }
+
     if (bin === 'gh' && sub === 'pr' && action === 'view') {
       const url = cmd[3];
       const pr = prs.get(url);

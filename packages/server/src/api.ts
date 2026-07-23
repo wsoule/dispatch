@@ -811,6 +811,14 @@ export async function handleApi(
       }
     }
 
+    // GET /api/prs (item B): every open PR in the repo — see
+    // PrManager.listRepoPrs for the gh call + parsing, and its 409 when this
+    // project lacks the `pr` capability (mapped by the typed-error catch
+    // below, same as every other PR route).
+    if (segments[0] === 'prs' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(await ctx.prManager.listRepoPrs());
+    }
+
     if (segments[0] === 'notes') {
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(ctx.noteStore.list());

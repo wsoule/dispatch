@@ -118,6 +118,24 @@ class StubRunner {
   };
   reviewResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   commentResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  // `gh pr list --json …` result listRepoPrs parses — one open PR by
+  // default, shaped exactly like gh's real output (author as a `{login}`
+  // object, camelCase field names).
+  listResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify([
+      {
+        number: 9,
+        title: 'Repo PR from someone else',
+        url: 'https://github.com/example/repo/pull/9',
+        headRefName: 'feature/someone-else',
+        author: { login: 'teammate' },
+        isDraft: true,
+        updatedAt: '2026-07-22T00:00:00Z',
+      },
+    ]),
+    stderr: '',
+  };
   delayMs = 0;
 
   run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
@@ -126,6 +144,9 @@ class StubRunner {
     if (cmd[0] === 'git' && cmd[1] === 'push') return this.pushResult;
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'create') {
       return this.createResult;
+    }
+    if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'list') {
+      return this.listResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'review') {
       return this.reviewResult;
@@ -552,5 +573,76 @@ describe('PrManager.commentPr', () => {
     const commentCall = stub.calls.find((c) => c.cmd[2] === 'comment')?.cmd;
     expect(commentCall).toContain('--body');
     expect(commentCall).toContain('a general note');
+  });
+});
+
+// Item B: the PRs page lists every open PR in the repo, not just the ones
+// dispatch itself opened — listRepoPrs is the server-side half of that
+// (GET /api/prs's endpoint test in prs-api.test.ts covers the HTTP route +
+// its 409 mapping; this covers the gh call + JSON parsing directly).
+describe('PrManager.listRepoPrs', () => {
+  it('calls gh pr list with the expected flags and parses the result, flattening author to a login string', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    const prs = await pr.listRepoPrs();
+
+    expect(prs).toEqual([
+      {
+        number: 9,
+        title: 'Repo PR from someone else',
+        url: 'https://github.com/example/repo/pull/9',
+        headRefName: 'feature/someone-else',
+        author: 'teammate',
+        isDraft: true,
+        updatedAt: '2026-07-22T00:00:00Z',
+      },
+    ]);
+    const listCall = stub.calls.find(
+      (c) => c.cmd[0] === 'gh' && c.cmd[1] === 'pr' && c.cmd[2] === 'list'
+    )?.cmd;
+    expect(listCall).toEqual([
+      'gh',
+      'pr',
+      'list',
+      '--json',
+      'number,title,url,headRefName,author,isDraft,updatedAt',
+      '--state',
+      'open',
+      '--limit',
+      '50',
+    ]);
+  });
+
+  it('409s when the project lacks the pr capability, without shelling out at all', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, false, stub.run);
+
+    await expect(pr.listRepoPrs()).rejects.toThrow(OrchestratorConflictError);
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it('409s when gh pr list fails', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'gh: not authenticated',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.listRepoPrs()).rejects.toThrow(/gh pr list failed/);
+  });
+
+  it('409s when gh pr list returns invalid JSON', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = { ok: true, stdout: 'not json', stderr: '' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.listRepoPrs()).rejects.toThrow(/invalid JSON/);
   });
 });

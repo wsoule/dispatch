@@ -137,6 +137,21 @@ export interface PrDetail {
 // the other two require one (enforced at the API layer, mirroring gh itself).
 export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
 
+// One open PR in the repo, from `gh pr list --json …` — the body of
+// `GET /api/prs` (item B: the PRs page lists every open PR, not just the
+// ones dispatch itself opened). `author` is flattened to its `login` string
+// (mirroring PrConversationItem's own author handling) rather than exposing
+// gh's `{login: string}` object shape.
+export interface RepoPr {
+  number: number;
+  title: string;
+  url: string;
+  headRefName: string;
+  author: string;
+  isDraft: boolean;
+  updatedAt: string;
+}
+
 // Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
 // parts, so the line-comment REST call (which gh's `pr view --json` can't
 // return) can address the right repo/PR. Returns null for anything that isn't
@@ -288,6 +303,50 @@ export class PrManager {
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
     return this.ctx.orchestrator.setRunPrUrl(runId, url);
+  }
+
+  // GET /api/prs (item B): every open PR in the repo, not just the ones
+  // dispatch itself opened — the client renders dispatch's own PR rows
+  // separately (via each run's `prUrl`) and lists whatever's left over here
+  // under "Other open PRs". 409s outright when this project lacks the `pr`
+  // capability, same as openPr — there's no gh/remote to list against.
+  async listRepoPrs(): Promise<RepoPr[]> {
+    if (!this.capability) {
+      throw new OrchestratorConflictError(
+        'PR review requires the gh CLI and a configured git remote'
+      );
+    }
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'pr',
+      'list',
+      '--json',
+      'number,title,url,headRefName,author,isDraft,updatedAt',
+      '--state',
+      'open',
+      '--limit',
+      '50',
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr list failed: ${commandErrorText(result)}`
+      );
+    }
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+    } catch {
+      throw new OrchestratorConflictError('gh pr list returned invalid JSON');
+    }
+    return raw.map((item) => ({
+      number: Number(item.number ?? 0),
+      title: String(item.title ?? ''),
+      url: String(item.url ?? ''),
+      headRefName: String(item.headRefName ?? ''),
+      author: authorLogin(item.author),
+      isDraft: item.isDraft === true,
+      updatedAt: String(item.updatedAt ?? ''),
+    }));
   }
 
   // Starts the merge poller on `intervalMs` (default 60s per the plan;
