@@ -36,9 +36,10 @@ const stackCache = new WeakMap<TaskDoc[], Map<string, TaskStack>>();
  * only ever invoked once per connected component of the blockedBy graph — every task in that
  * component is filled in from that single result — and a task with no real blockedBy edge at
  * all (the common case: a plain, unblocked, unblocking task) skips `computeStack` entirely,
- * since it can never be part of a multi-task stack. Cached in a `WeakMap` keyed by the `tasks`
- * array's own identity, so a fresh task list (e.g. after a refetch) naturally invalidates the
- * old entry instead of ever serving a stale one.
+ * since it can never be part of a multi-task stack. Each member is stored with the shared
+ * `order` array but its own `index` within that array. Cached in a `WeakMap` keyed by the
+ * `tasks` array's own identity, so a fresh task list (e.g. after a refetch) naturally
+ * invalidates the old entry instead of ever serving a stale one.
  */
 function getStackByTaskId(tasks: TaskDoc[]): Map<string, TaskStack> {
   const cached = stackCache.get(tasks);
@@ -66,10 +67,10 @@ function getStackByTaskId(tasks: TaskDoc[]): Map<string, TaskStack> {
       visited.add(id);
       continue;
     }
-    for (const memberId of stack.order) {
+    stack.order.forEach((memberId, memberIndex) => {
       visited.add(memberId);
-      result.set(memberId, stack);
-    }
+      result.set(memberId, { order: stack.order, index: memberIndex });
+    });
   }
 
   stackCache.set(tasks, result);
