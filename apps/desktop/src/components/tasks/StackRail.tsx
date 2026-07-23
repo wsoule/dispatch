@@ -1,6 +1,7 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskDoc, TaskStack } from '@dispatch/core';
-import { computeStack } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core';
+import { computeStack } from '@dispatch/core/graph';
+import type { TaskStack } from '@dispatch/core/graph';
 import { GitPullRequest, Layers2 } from 'lucide-react';
 
 import { RunStatePill } from '../runs/RunStatePill';

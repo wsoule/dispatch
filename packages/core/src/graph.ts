@@ -1,3 +1,5 @@
+// This module must stay free of node:* imports — it is exported as the
+// browser-safe '@dispatch/core/graph' subpath consumed by the desktop webview.
 import type { Priority, TaskDoc } from './types.js';
 
 export const PRIORITY_ORDER: Record<Priority, number> = {

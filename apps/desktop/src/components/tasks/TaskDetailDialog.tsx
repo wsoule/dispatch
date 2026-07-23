@@ -1,6 +1,6 @@
 import type { RunMeta } from '@dispatch/client';
-import { computeStack } from '@dispatch/core';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
+import { computeStack } from '@dispatch/core/graph';
 import {
   ArrowUpRight,
   Ban,
