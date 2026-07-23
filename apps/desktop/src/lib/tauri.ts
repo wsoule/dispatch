@@ -195,17 +195,20 @@ export function ensureDispatchd(root: string): Promise<number> {
 
 /** The single project this window is scoped to — the app's one active project root, resolved
  * on the backend (see `commands::current_project_root`'s doc comment for the `tauri dev` vs
- * packaged-app resolution and its TODO). Replaces the old `listProjects` + per-path
- * `hasDispatch` fan-out that used to decide which of Relay's *many* discovered projects was
- * "active" — this app is a single-project workspace now, not a switcher. */
-export function currentProjectRoot(): Promise<string> {
-  // Browser-dev fallback: the active project root comes from the URL param so
-  // the full UI can run against a live daemon in a plain browser.
+ * packaged-app resolution). Replaces the old `listProjects` + per-path `hasDispatch` fan-out
+ * that used to decide which of Relay's *many* discovered projects was "active" — this app is a
+ * single-project workspace now, not a switcher.
+ *
+ * Resolves to `null` — not a rejection — on a genuine first run (empty registry, no launch
+ * arg, no dev checkout above the binary): that's an expected state the frontend handles by
+ * offering "+ Add project", not an error to surface as a fatal screen. */
+export function currentProjectRoot(): Promise<string | null> {
+  // Browser-dev fallback: the active project root comes from the URL param so the full UI can
+  // run against a live daemon in a plain browser. A missing `?root=` resolves to `null` (same
+  // "no project yet" contract as the packaged app), matching this function's return type
+  // rather than rejecting.
   if (!isTauri()) {
-    const root = browserParam('root');
-    return root !== null
-      ? Promise.resolve(root)
-      : Promise.reject(new Error('no ?root= param for browser-dev mode'));
+    return Promise.resolve(browserParam('root'));
   }
   return invoke('current_project_root');
 }
