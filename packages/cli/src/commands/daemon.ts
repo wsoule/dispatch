@@ -90,6 +90,43 @@ function openBrowserFor(ctx: CliContext, url: string): void {
   (ctx.openBrowser ?? defaultOpenBrowser)(url);
 }
 
+// Must match apps/desktop/src-tauri/tauri.conf.json's `productName` exactly —
+// that's the name macOS's LaunchServices registry knows the app by, which is
+// what `open -Ra <name>` and `open -a <name>` both key on.
+const DESKTOP_PRODUCT_NAME = 'Dispatch';
+
+// Default `openApp` used when a CliContext doesn't inject its own (tests
+// inject a stub; real usage falls through to here). `--args --root <rootDir>`
+// is passed through to the app the same way `bun bin.ts --root <rootDir>`
+// would be, but a v1 limitation applies: an already-running desktop instance
+// ignores launch args entirely, so this only actually seeds the root when no
+// instance is running yet. The registry entry (written before this is
+// called) is what makes the project show up in the switcher either way.
+function defaultOpenApp(rootDir: string): void {
+  spawn('open', ['-a', DESKTOP_PRODUCT_NAME, '--args', '--root', rootDir], {
+    stdio: 'ignore',
+    detached: true,
+  }).unref();
+}
+
+// Bare `dispatch`'s "show me the UI" step: prefer the installed desktop app
+// over a browser tab when one is present. `open -Ra <name>` asks
+// LaunchServices to resolve the app by name without launching it, exiting 0
+// iff it's installed — so a non-zero exit (not installed) or any non-darwin
+// platform falls back to the browser at the daemon's own URL. Both branches
+// route through CliContext seams (`openApp`/`openBrowser`) so tests can
+// assert on which path was taken without anything actually opening.
+export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
+  if (process.platform === 'darwin') {
+    const probe = spawnSync('open', ['-Ra', DESKTOP_PRODUCT_NAME]);
+    if (probe.status === 0) {
+      (ctx.openApp ?? defaultOpenApp)(ctx.cwd);
+      return;
+    }
+  }
+  openBrowserFor(ctx, `http://127.0.0.1:${port}`);
+}
+
 async function isHealthy(port: number): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`);

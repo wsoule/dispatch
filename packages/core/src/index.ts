@@ -27,3 +27,9 @@ export {
 export type { TaskStack } from './graph.js';
 export { loadConfig, ConfigError } from './config.js';
 export type { DispatchConfig, OrchestratorConfig } from './config.js';
+export {
+  readRegistry,
+  registryPath,
+  upsertRegisteredProject,
+} from './registry.js';
+export type { RegisteredProject } from './registry.js';
