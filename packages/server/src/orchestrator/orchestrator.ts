@@ -51,6 +51,14 @@ export interface OrchestratorContext {
   events: EventBus;
 }
 
+// The name api.ts's createRun falls back to when a caller omits `executor`
+// entirely — also the first name requestChanges() tries when a run's
+// original executor is no longer registered on this daemon (see
+// resolveExecutorForResume below), since that's overwhelmingly the common
+// case (a run created with a dev-only executor, now being resumed under a
+// daemon that only has the real one).
+const DEFAULT_EXECUTOR_NAME = 'claude';
+
 /**
  * Coordinates the full lifecycle of orchestrator runs for one dispatch
  * project: provisioning a git worktree, starting an Executor, recording its
@@ -244,8 +252,14 @@ export class Orchestrator {
       );
     }
     const executorRun = this.registry.getExecutorRun(runId);
+    // The run's own state checks above already guarantee non-terminal here
+    // (awaiting-approval) — a missing ExecutorRun at this point means the
+    // executor that was supposed to be driving it is gone (the daemon that
+    // started it died/restarted without this run ever reaching a terminal
+    // state). healZombieRun marks it failed and throws a clear error instead
+    // of this silently doing nothing.
     if (executorRun === undefined) {
-      throw new OrchestratorClientError(`run has no live executor: ${runId}`);
+      this.healZombieRun(meta);
     }
     this.registry.setPendingApproval(runId, undefined);
     executorRun.approve(requestId, allow);
@@ -284,8 +298,13 @@ export class Orchestrator {
       throw new OrchestratorClientError(`run is not live: ${runId}`);
     }
     const executorRun = this.registry.getExecutorRun(runId);
+    // Same zombie self-heal as approve() above — the terminal-state check
+    // just above guarantees `meta.state` is non-terminal here, so a missing
+    // ExecutorRun means this run's executor died out from under it (an old
+    // daemon process crashed, or this daemon's own dispatch() start() call
+    // itself failed) rather than the run ever reaching a normal finish.
     if (executorRun === undefined) {
-      throw new OrchestratorClientError(`run has no live executor: ${runId}`);
+      this.healZombieRun(meta);
     }
     const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
@@ -340,8 +359,11 @@ export class Orchestrator {
       throw new OrchestratorConflictError(`run is not running: ${runId}`);
     }
     const executorRun = this.registry.getExecutorRun(runId);
+    // Same zombie self-heal as approve()/sendMessage() above — the state
+    // check just above guarantees `meta.state === 'running'` here, so a
+    // missing ExecutorRun means the executor died out from under a live run.
     if (executorRun === undefined) {
-      throw new OrchestratorClientError(`run has no live executor: ${runId}`);
+      this.healZombieRun(meta);
     }
     const { fromLabel } = this.resolveSenderLabel(from);
     const prefixed = `[message from ${fromLabel}] ${text}`;
@@ -732,6 +754,43 @@ export class Orchestrator {
     return meta;
   }
 
+  // Self-heals a "zombie" run: `meta.state` is still non-terminal (running /
+  // awaiting-approval), but this daemon has no live ExecutorRun for it —
+  // e.g. the process actually driving it crashed/restarted without ever
+  // reaching handleFinish (an old daemon dying mid-run, or this daemon's own
+  // dispatch()/requestChanges() start() call throwing after the run was
+  // already registered as 'running'). reconcileOnBoot() already heals this
+  // exact shape of zombie once, at boot, for every run whose transcript is
+  // non-terminal; this covers the same run going zombie *after* boot, lazily,
+  // the moment approve()/sendMessage()/inject() next tries to reach its
+  // executor and finds nothing there.
+  //
+  // Reuses transition()'s state-line/registry-update/`run.changed` broadcast
+  // for the state flip, and handleFinish()'s own "only move an in-progress
+  // task to in-review" rule for the task-side bookkeeping — never reinventing
+  // either. Always throws (return type `never`), so every call site's control
+  // flow after it can assume a live `executorRun`.
+  private healZombieRun(meta: RunMeta): never {
+    const errorMessage =
+      "this run's executor is no longer alive (the daemon restarted); the run has been marked failed";
+    this.transition(meta.id, 'failed', { error: errorMessage });
+
+    const task = this.ctx.store.get(meta.taskId);
+    if (task !== null) {
+      const now = new Date().toISOString();
+      const patch: UpdatePatch = {
+        appendActivity: `${now} [run ${meta.id}] marked failed: executor no longer alive (daemon restarted)`,
+      };
+      if (task.meta.status === 'in-progress') patch.status = 'in-review';
+      this.ctx.store.update(meta.taskId, patch, now);
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    }
+    this.fireTerminalHooks(meta.id);
+
+    throw new OrchestratorConflictError(errorMessage);
+  }
+
   // I4: once PrManager.openPr has pushed a run's branch and opened a PR
   // (recorded as meta.prUrl), every *local* review/resume action must
   // refuse rather than race the remote review — a local merge/discard
@@ -1002,22 +1061,57 @@ export class Orchestrator {
     this.fireTerminalHooks(runId);
   }
 
+  // Resolves which executor a request-changes redispatch should actually use
+  // — normally just `executorName` itself, but a run's *original* executor
+  // can go missing on this daemon (the bug this fixes): a run dispatched
+  // with a dev-only executor ('fake') now being resumed under a release
+  // daemon that only ever registers 'claude', or a run whose executor name
+  // simply predates whatever this process happens to have registered.
+  // Falls back to the default 'claude' executor if that's registered, else
+  // the single other executor this daemon does have registered (so a
+  // single-executor test harness/e2e daemon that never registers 'claude'
+  // under its own name still resumes cleanly), else throws the same
+  // `unknown executor` OrchestratorClientError dispatch() itself throws for
+  // an unregistered name.
+  private resolveExecutorForResume(executorName: string): {
+    executor: Executor;
+    name: string;
+    substituted: boolean;
+  } {
+    const direct = this.executors.get(executorName);
+    if (direct !== undefined) {
+      return { executor: direct, name: executorName, substituted: false };
+    }
+    const fallbackDefault = this.executors.get(DEFAULT_EXECUTOR_NAME);
+    if (fallbackDefault !== undefined) {
+      return {
+        executor: fallbackDefault,
+        name: DEFAULT_EXECUTOR_NAME,
+        substituted: true,
+      };
+    }
+    if (this.executors.size === 1) {
+      const [name, executor] = [...this.executors][0];
+      return { executor, name, substituted: true };
+    }
+    throw new OrchestratorClientError(`unknown executor: ${executorName}`);
+  }
+
   // The request-changes path: same task/branch/worktree as `oldMeta`, but a
   // fresh run id and transcript, resuming the executor's prior session.
   private requestChanges(oldMeta: RunMeta, text: string): RunMeta {
-    const executor = this.executors.get(oldMeta.executor);
-    if (executor === undefined) {
-      throw new OrchestratorClientError(
-        `unknown executor: ${oldMeta.executor}`
-      );
-    }
+    const {
+      executor,
+      name: executorName,
+      substituted,
+    } = this.resolveExecutorForResume(oldMeta.executor);
     const now = new Date().toISOString();
     const runId = generateRunId(now);
     const meta: RunMeta = {
       id: runId,
       taskId: oldMeta.taskId,
       taskTitle: oldMeta.taskTitle,
-      executor: oldMeta.executor,
+      executor: executorName,
       state: 'provisioning',
       branch: oldMeta.branch,
       baseBranch: oldMeta.baseBranch,
@@ -1029,11 +1123,18 @@ export class Orchestrator {
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
 
+    // Records the executor substitution as part of the same Activity line a
+    // request-changes redispatch always writes, so the "why did this run end
+    // up on a different executor" question is answered right there in the
+    // task's own history rather than only in server logs.
+    const substitutionNote = substituted
+      ? ` (executor '${oldMeta.executor}' is no longer registered — substituted '${executorName}')`
+      : '';
     this.ctx.store.update(
       oldMeta.taskId,
       {
         status: 'in-progress',
-        appendActivity: `${now} requested changes (run ${runId}): ${text}`,
+        appendActivity: `${now} requested changes (run ${runId}): ${text}${substitutionNote}`,
       },
       now
     );

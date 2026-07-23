@@ -1420,6 +1420,218 @@ describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
   });
 });
 
+// The user-reported "run has no executor" bug (item A), fix half 1: a
+// request-changes redispatch used to hard-throw `unknown executor: <name>`
+// the moment a run's *original* executor wasn't registered on the current
+// daemon — the real-world case being a run created with the 'fake' executor
+// under a dev daemon, later resumed under a release daemon that never
+// registers 'fake' at all. requestChanges() now falls back through
+// resolveExecutorForResume(): the default 'claude' if registered, else the
+// single other registered executor, else the same throw as before.
+describe('Orchestrator request-changes executor fallback', () => {
+  it("falls back to the default 'claude' executor when the original run's executor is no longer registered", async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
+    );
+    const task = store.create({ title: 'Resume under a different daemon' });
+    const meta = first.dispatch(task.meta.id, 'fake');
+    await waitFor(() => first.getRun(meta.id)?.meta.state === 'finished');
+
+    // A fresh Orchestrator sharing the same on-disk project — simulating a
+    // release daemon that only ever registers the real 'claude' executor,
+    // never 'fake' — hydrated via the same reconcileOnBoot() every real
+    // daemon runs at boot.
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const events2 = new EventBus();
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: events2,
+    });
+    second.reconcileOnBoot();
+    const sent: string[] = [];
+    second.registerExecutor('claude', controllableExecutor(sent));
+
+    const resumed = second.sendMessage(meta.id, 'please fix x', {
+      resume: true,
+    });
+
+    expect(resumed.executor).toBe('claude');
+    expect(store.get(task.meta.id)!.body).toContain(
+      `requested changes (run ${resumed.id}): please fix x (executor 'fake' is no longer registered — substituted 'claude')`
+    );
+  });
+
+  it('falls back to the single other registered executor when neither the original nor the default is registered', async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({
+      title: 'Resume onto a single-executor daemon',
+    });
+    const meta = first.dispatch(task.meta.id, 'fake');
+    await waitFor(() => first.getRun(meta.id)?.meta.state === 'finished');
+
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const events2 = new EventBus();
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: events2,
+    });
+    second.reconcileOnBoot();
+    const sent: string[] = [];
+    second.registerExecutor('weird-single', controllableExecutor(sent));
+
+    const resumed = second.sendMessage(meta.id, 'please fix y', {
+      resume: true,
+    });
+
+    expect(resumed.executor).toBe('weird-single');
+  });
+
+  it('throws unknown executor when nothing can be resolved (neither the original, the default, nor a lone fallback)', async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Resume with no viable fallback' });
+    const meta = first.dispatch(task.meta.id, 'fake');
+    await waitFor(() => first.getRun(meta.id)?.meta.state === 'finished');
+
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const events2 = new EventBus();
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: events2,
+    });
+    second.reconcileOnBoot();
+    second.registerExecutor('other-a', controllableExecutor([]));
+    second.registerExecutor('other-b', controllableExecutor([]));
+
+    expect(() =>
+      second.sendMessage(meta.id, 'please fix z', { resume: true })
+    ).toThrow(OrchestratorClientError);
+  });
+});
+
+// The user-reported "run has no executor" bug (item A), fix half 2: a run
+// whose state is still non-terminal (running/awaiting-approval) but whose
+// in-memory ExecutorRun handle is gone — the process actually driving it
+// died/never came up — used to make approve()/sendMessage()/inject() throw
+// an opaque `run has no live executor: <id>` forever, with no way for the
+// run to ever leave that state. All three now call the shared
+// healZombieRun() helper: mark the run failed (same bookkeeping
+// reconcileOnBoot's own heal + handleFinish's task-update convention use),
+// then throw a clear, actionable conflict error.
+describe('Orchestrator lazy zombie self-heal (no live executor, non-terminal state)', () => {
+  // Reproduces "the executor never actually came up alive" by having
+  // Executor.start() itself throw — dispatch()/requestChanges() already
+  // registers the run (and, for a plain dispatch, transitions it to
+  // 'running') *before* calling start(), so a start() failure leaves exactly
+  // the zombie shape this heals: a non-terminal run with no ExecutorRun ever
+  // set.
+  class ThrowingStartExecutor implements Executor {
+    start(): ExecutorRun {
+      throw new Error('boom: executor process failed to start');
+    }
+  }
+
+  it('sendMessage marks a non-terminal run with no live executor failed and throws a clear conflict error', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor('fake', new ThrowingStartExecutor());
+    const task = store.create({ title: 'Zombie via failed executor start' });
+
+    expect(() => orchestrator.dispatch(task.meta.id, 'fake')).toThrow(
+      'boom: executor process failed to start'
+    );
+    const zombie = orchestrator.list()[0];
+    expect(zombie.state).toBe('running');
+
+    let thrown: Error | undefined;
+    try {
+      orchestrator.sendMessage(zombie.id, 'hello');
+    } catch (err) {
+      thrown = err as Error;
+    }
+    expect(thrown).toBeInstanceOf(OrchestratorConflictError);
+    expect(thrown?.message).toMatch(/executor is no longer alive/);
+
+    const healed = orchestrator.getRun(zombie.id)!.meta;
+    expect(healed.state).toBe('failed');
+    expect(healed.error).toMatch(/executor is no longer alive/);
+    // Same "only an in-progress task moves to in-review" rule handleFinish
+    // uses for a normal finish/failure.
+    expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)!.body).toContain(
+      `[run ${zombie.id}] marked failed: executor no longer alive`
+    );
+  });
+
+  it('inject marks a running run with no live executor failed and throws a clear conflict error', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor('fake', new ThrowingStartExecutor());
+    const task = store.create({ title: 'Zombie via failed start (inject)' });
+
+    expect(() => orchestrator.dispatch(task.meta.id, 'fake')).toThrow();
+    const zombie = orchestrator.list()[0];
+
+    let thrown: Error | undefined;
+    try {
+      orchestrator.inject(zombie.id, 'hi');
+    } catch (err) {
+      thrown = err as Error;
+    }
+    expect(thrown).toBeInstanceOf(OrchestratorConflictError);
+    expect(orchestrator.getRun(zombie.id)?.meta.state).toBe('failed');
+  });
+
+  it('approve marks an awaiting-approval run with no live executor failed and throws a clear conflict error', () => {
+    // A synchronous approval request fired from inside start() itself,
+    // before start() returns and dispatch() gets a chance to register an
+    // ExecutorRun — the awaiting-approval counterpart of the same "start()
+    // never actually hands back a live executor" shape.
+    class SyncApprovalThenCrashExecutor implements Executor {
+      start(_opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+        events.onApprovalRequest({
+          requestId: 'req-1',
+          toolName: 't',
+          input: {},
+        });
+        throw new Error('boom: crashed right after requesting approval');
+      }
+    }
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor('fake', new SyncApprovalThenCrashExecutor());
+    const task = store.create({ title: 'Zombie via failed start (approve)' });
+
+    expect(() => orchestrator.dispatch(task.meta.id, 'fake')).toThrow();
+    const zombie = orchestrator.list()[0];
+    expect(zombie.state).toBe('awaiting-approval');
+
+    let thrown: Error | undefined;
+    try {
+      orchestrator.approve(zombie.id, 'req-1', true);
+    } catch (err) {
+      thrown = err as Error;
+    }
+    expect(thrown).toBeInstanceOf(OrchestratorConflictError);
+    expect(orchestrator.getRun(zombie.id)?.meta.state).toBe('failed');
+  });
+});
+
 describe('Orchestrator per-run caps and prompt assembly', () => {
   // A minimal Executor that just records the options it was started with
   // and finishes immediately — used to assert on exactly what the
