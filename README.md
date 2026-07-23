@@ -14,10 +14,10 @@ Desktop app for macOS via Homebrew:
     brew install --cask wsoule/tap/dispatch
 
 Or grab an installer from the
-[latest release](https://github.com/wsoule/dispatch/releases/latest): macOS
-DMGs (Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. The app is
-not code-signed yet — on macOS, right-click the app and choose Open on first
-launch (or pass `--no-quarantine` to `brew install`).
+[latest release](https://github.com/wsoule/dispatch/releases/latest): macOS DMGs
+(Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. The app is not
+code-signed yet — on macOS, right-click the app and choose Open on first launch
+(or pass `--no-quarantine` to `brew install`).
 
 ## Quickstart
 
