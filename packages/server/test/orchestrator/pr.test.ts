@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +18,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
+import { WorktreeManager } from '../../src/orchestrator/worktree.js';
 import { initGitRepo } from './helpers.js';
 
 let fakeHome: string;
@@ -420,6 +421,85 @@ describe('PrManager polling', () => {
     // its diff must survive via the same snapshot fallback rather than
     // 409ing now that there's nothing left to diff live.
     expect(() => harness.orchestrator.diff(runId)).not.toThrow();
+  });
+
+  // Regression: markRunMergedViaPr used to call persistDiffSnapshot with no
+  // `precomputed` diff, so it fell back to the live, working-tree-inclusive
+  // `diff()` — which folds in whatever is still sitting uncommitted/
+  // untracked in the worktree at that instant. A run merged via a GitHub PR
+  // only ever actually lands what got committed to its branch (that's what
+  // `git push` sent up and `gh` merged); this run's worktree carries a stray
+  // uncommitted edit and an untracked file the PR itself never saw. The
+  // persisted "merged" snapshot must match `diffCommittedOnly` — the same
+  // ground truth mergeRun()'s own local-merge path snapshots — not bake in
+  // content that was never actually part of the merge.
+  it('persists a committed-only diff snapshot for a run merged via PR, ignoring stray uncommitted/untracked files', async () => {
+    const harness = makeHarness();
+    harness.orchestrator.registerExecutor(
+      'fake-committed-change',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) =>
+              writeFileSync(join(cwd, 'feature.txt'), 'real change\n'),
+            commitMessage: 'add feature',
+          },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const task = harness.store.create({ title: 'PR me with stray files' });
+    const dispatched = harness.orchestrator.dispatch(
+      task.meta.id,
+      'fake-committed-change'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.getRun(dispatched.id)?.meta.state === 'finished'
+    );
+    const runId = dispatched.id;
+    const taskId = task.meta.id;
+
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    await pr.openPr(runId);
+
+    // Plant stray uncommitted/untracked content directly in the run's
+    // worktree, after it finished (and after the branch was already pushed
+    // for the PR) — content that never reached GitHub through the PR.
+    const runMeta = harness.orchestrator.getRun(runId)!.meta;
+    writeFileSync(
+      join(runMeta.worktreePath, 'feature.txt'),
+      'real change\nplus an uncommitted edit\n'
+    );
+    writeFileSync(
+      join(runMeta.worktreePath, 'untracked.txt'),
+      'never actually merged\n'
+    );
+
+    // Ground truth, computed directly while the worktree still exists, via
+    // the same WorktreeManager method markRunMergedViaPr now uses.
+    const worktrees = new WorktreeManager(harness.rootDir);
+    const expectedDiff = worktrees.diffCommittedOnly(
+      runMeta.worktreePath,
+      runMeta.baseBranch
+    );
+    expect(expectedDiff.files).toEqual([{ path: 'feature.txt', status: 'A' }]);
+
+    stub.viewResult = {
+      ok: true,
+      stdout: JSON.stringify({ state: 'MERGED' }),
+      stderr: '',
+    };
+    await pr.pollOnce();
+
+    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+
+    // Worktree is gone now, so this reads the persisted snapshot.
+    const persisted = harness.orchestrator.diff(runId);
+    expect(persisted).toEqual(expectedDiff);
+    expect(persisted.patch).not.toContain('plus an uncommitted edit');
+    expect(persisted.files.some((f) => f.path === 'untracked.txt')).toBe(false);
   });
 
   it('skips a run whose gh pr view call fails without affecting others', async () => {

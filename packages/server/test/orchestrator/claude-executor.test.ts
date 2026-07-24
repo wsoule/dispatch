@@ -187,6 +187,113 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
   });
 });
 
+// A minimal-but-valid stand-in for the second (`options`) argument
+// `canUseTool` receives from the SDK — only `requestId` and `toolUseID` are
+// actually read by this executor's callback and by the approval-flow
+// assertions below; `signal` is required by the type but never inspected.
+function fakeCanUseToolOptions(
+  requestId: string
+): Parameters<NonNullable<Options['canUseTool']>>[2] {
+  return {
+    signal: new AbortController().signal,
+    toolUseID: `tu-${requestId}`,
+    requestId,
+  };
+}
+
+// AUTO_ALLOWED_EDIT_TOOLS's fast-path is deliberately scoped to
+// `permissionMode: 'acceptEdits'` only (see the doc comment on
+// AUTO_ALLOWED_EDIT_TOOLS in claude.ts): under `'auto'`, the SDK's own model
+// classifier already auto-approves the routine calls before `canUseTool` is
+// even invoked, and only forwards the ones it flagged worth a human look —
+// force-allowing an edit tool that reaches this callback under `'auto'`
+// would silently discard that one safety valve. These tests call the exact
+// `canUseTool` this executor hands to `query()` directly, at the same
+// `queryFn` capture seam the tests above use, rather than driving a full
+// scripted SDK message stream.
+describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
+  it("does NOT auto-allow an edit tool under permissionMode 'auto' — it goes to the approval flow instead", async () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    let approvalRequested = false;
+    let requestedToolName: string | undefined;
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'do the thing',
+        permissionMode: 'auto',
+        maxTurns: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: (request) => {
+          approvalRequested = true;
+          requestedToolName = request.toolName;
+        },
+        onFinish: () => {},
+      }
+    );
+
+    // Fire-and-forget: the callback awaits approve(), which nothing ever
+    // calls in this test — only whether it routed to the approval flow at
+    // all (rather than resolving immediately with 'allow') is under test.
+    void captured?.canUseTool?.(
+      'Write',
+      {},
+      fakeCanUseToolOptions('req-auto-write')
+    );
+    // Let the microtask queue drain so the async canUseTool body actually
+    // runs up to its `onApprovalRequest` call before asserting on it.
+    await Promise.resolve();
+
+    expect(approvalRequested).toBe(true);
+    expect(requestedToolName).toBe('Write');
+  });
+
+  it("still auto-allows an edit tool under permissionMode 'acceptEdits' (fast-path unchanged)", async () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    let approvalRequested = false;
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: () => {
+          approvalRequested = true;
+        },
+        onFinish: () => {},
+      }
+    );
+
+    const result = await captured?.canUseTool?.(
+      'Write',
+      { file_path: 'x.txt' },
+      fakeCanUseToolOptions('req-acceptedits-write')
+    );
+
+    expect(result).toEqual({
+      behavior: 'allow',
+      updatedInput: { file_path: 'x.txt' },
+    });
+    expect(approvalRequested).toBe(false);
+  });
+});
+
 // The "keeps saying running" bug's root cause for a packaged app: the SDK
 // spawns a native CLI it can't find, so query() throws
 // "Native CLI binary for <platform>-<arch> not found. Reinstall
