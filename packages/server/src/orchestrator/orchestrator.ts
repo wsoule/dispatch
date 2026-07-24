@@ -660,7 +660,25 @@ export class Orchestrator {
     // run that made no file changes) has nothing to squash — skip
     // mergeSquash entirely rather than let its trailing `git commit` fail
     // with "nothing to commit" on an otherwise perfectly valid merge.
-    const preMergeDiff = this.worktrees.diff(
+    //
+    // Deliberately `diffCommittedOnly`, not the live `diff()` the review
+    // surface polls: `git merge --squash branch` below only ever pulls in
+    // commits reachable from `meta.branch`, so `hasChanges` must match that
+    // exact same universe. Every terminal-finish path runs
+    // `autoCommitIfDirty` before a run ever becomes reviewable (see
+    // handleFinish), so in the normal finished/failed case the worktree is
+    // already fully committed and the two diffs agree — but `cancel()`
+    // deliberately does *not* run that auto-commit (a cancelled run's
+    // worktree is left as-is), so a cancelled run can still be sitting on
+    // stray uncommitted or untracked files when it reaches review(). Using
+    // the live diff here would count those as `hasChanges`, drive
+    // `mergeSquash` on a branch with no actual new commits (which fails
+    // trying to commit nothing), and would persist a "merged" snapshot that
+    // includes content the squash never actually merged into main. Using
+    // `diffCommittedOnly` keeps this decision anchored to what the squash
+    // itself will really do, regardless of what the live worktree happens to
+    // look like.
+    const preMergeDiff = this.worktrees.diffCommittedOnly(
       meta.worktreePath,
       meta.baseBranch
     );

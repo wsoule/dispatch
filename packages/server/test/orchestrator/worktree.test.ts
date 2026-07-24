@@ -174,6 +174,77 @@ describe('WorktreeManager.diff', () => {
 
     rmSync(path, { recursive: true, force: true });
   });
+
+  // C3 (live diff while a run executes): the whole point of `diff()` folding
+  // in the working tree is that a run mid-execution — nothing committed yet
+  // at all — still has a real diff to show. Covers both halves of that: an
+  // uncommitted edit to a tracked file, and a brand-new untracked file.
+  it('includes an uncommitted modification and an untracked file with no commits at all', () => {
+    const repo = initGitRepo();
+    const worktrees = new WorktreeManager(repo);
+    const path = join(repo, '..', 'wt-live-diff');
+    worktrees.add(path, 'dispatch/t-live-diff-fix', 'main');
+
+    // Uncommitted edit to a file that already existed on `main` (README.md,
+    // written by initGitRepo).
+    writeFileSync(join(path, 'README.md'), 'edited but never committed\n');
+    // Brand new file, never `git add`ed at all.
+    writeFileSync(join(path, 'untracked.txt'), 'new untracked content\n');
+
+    const result = worktrees.diff(path, 'main');
+
+    const statusByPath = new Map(result.files.map((f) => [f.path, f.status]));
+    expect(statusByPath.get('README.md')).toBe('M');
+    expect(statusByPath.get('untracked.txt')).toBe('A');
+    expect(result.patch).toContain('edited but never committed');
+    expect(result.patch).toContain('new untracked content');
+
+    rmSync(path, { recursive: true, force: true });
+  });
+});
+
+describe('WorktreeManager.diffCommittedOnly', () => {
+  // mergeRun()'s own gate needs a diff that agrees with what `git merge
+  // --squash` actually sees — commits only, never the live working tree —
+  // so this must NOT see an uncommitted change or an untracked file the way
+  // the live `diff()` above does.
+  it('ignores uncommitted changes and untracked files entirely', () => {
+    const repo = initGitRepo();
+    const worktrees = new WorktreeManager(repo);
+    const path = join(repo, '..', 'wt-committed-only');
+    worktrees.add(path, 'dispatch/t-committed-only-fix', 'main');
+
+    writeFileSync(join(path, 'README.md'), 'edited but never committed\n');
+    writeFileSync(join(path, 'untracked.txt'), 'new untracked content\n');
+
+    const result = worktrees.diffCommittedOnly(path, 'main');
+
+    expect(result.files).toEqual([]);
+    expect(result.patch).toBe('');
+
+    rmSync(path, { recursive: true, force: true });
+  });
+
+  it('still reports committed changes on the branch', () => {
+    const repo = initGitRepo();
+    const worktrees = new WorktreeManager(repo);
+    const path = join(repo, '..', 'wt-committed-only-2');
+    worktrees.add(path, 'dispatch/t-committed-only-fix-2', 'main');
+    writeFileSync(join(path, 'added.txt'), 'new content\n');
+    runGitSync(path, ['add', '-A']);
+    runGitSync(path, ['commit', '-m', 'add file']);
+    // An uncommitted change sitting alongside the real commit must still be
+    // excluded.
+    writeFileSync(join(path, 'added.txt'), 'new content\nplus uncommitted\n');
+
+    const result = worktrees.diffCommittedOnly(path, 'main');
+
+    expect(result.files).toEqual([{ path: 'added.txt', status: 'A' }]);
+    expect(result.patch).toContain('+new content');
+    expect(result.patch).not.toContain('plus uncommitted');
+
+    rmSync(path, { recursive: true, force: true });
+  });
 });
 
 describe('WorktreeManager.pruneOrphans', () => {

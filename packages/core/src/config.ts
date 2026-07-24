@@ -34,6 +34,14 @@ const KNOWN_PERMISSION_MODES = [
 // `epicConcurrency` (Phase 5) is the default cap the epic dispatch engine
 // applies when starting an epic without an explicit override -- how many of
 // an epic's ready children may have a live run at once.
+//
+// `permissionMode: 'auto'` is the default rather than `'acceptEdits'`: the
+// SDK's own model-classifier auto-approves the whole run (edits and every
+// other tool), not just file edits, so a dispatched agent proceeds
+// unattended instead of stalling on the first non-edit tool call (a Bash
+// command, an MCP tool) waiting for a human who isn't watching. Verified
+// against the installed SDK (0.3.207)'s `PermissionMode` union, which
+// includes `'auto'`.
 export interface OrchestratorConfig {
   maxTurns: number;
   maxBudgetUsd?: number;
@@ -50,7 +58,7 @@ export interface DispatchConfig {
 
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   maxTurns: 100,
-  permissionMode: 'acceptEdits',
+  permissionMode: 'auto',
   epicConcurrency: 3,
 };
 

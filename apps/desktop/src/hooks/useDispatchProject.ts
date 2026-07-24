@@ -269,11 +269,21 @@ export function useDispatchProject(
     enabled: client !== null && selectedRunId !== null,
     retry: false,
   });
+  // The diff is fetchable the moment a run has a worktree to diff, not just once it's
+  // terminal — the worktree exists (and has a real merge base to diff against) from the
+  // instant the run is dispatched, so a still-running run's diff is just as fetchable as a
+  // finished one. `runDetail` is still required so this query only fires once we actually
+  // know which run's diff to fetch.
   const diffEnabled =
-    client !== null &&
-    selectedRunId !== null &&
-    runDetail !== undefined &&
-    isTerminalRunState(runDetail.meta.state);
+    client !== null && selectedRunId !== null && runDetail !== undefined;
+  // While the selected run is still going, poll the diff so it live-updates as the agent
+  // writes/edits files — a terminal run's worktree/diff snapshot never changes again once
+  // reviewed, so there's nothing to poll for and this stays `false` (react-query's "no
+  // interval" value) to avoid a pointless timer.
+  const diffRefetchInterval =
+    runDetail !== undefined && !isTerminalRunState(runDetail.meta.state)
+      ? 4000
+      : false;
   const {
     data: diff,
     isLoading: diffLoading,
@@ -287,6 +297,7 @@ export function useDispatchProject(
       return client.fetchRunDiff(selectedRunId);
     },
     enabled: diffEnabled,
+    refetchInterval: diffRefetchInterval,
     retry: false,
   });
   const diffError =
