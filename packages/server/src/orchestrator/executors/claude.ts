@@ -109,14 +109,16 @@ type ApprovalResolver = (allow: boolean) => void;
 // prompt); every other tool, and every tool under any other permission
 // mode, always goes through the orchestrator's approval flow below.
 //
-// `'auto'` gets the exact same treatment: under that mode the SDK's own
-// model classifier handles approval for tools it covers, so `canUseTool`
-// simply never fires for most of them — but these edit tools hit the same
-// gap `acceptEdits` has above and still reach this callback. Falling
-// through to the orchestrator's human-approval flow for them would leave a
-// dispatched `'auto'` run stalled waiting on a human who was never meant to
-// be in the loop, so this auto-allows them here exactly as `acceptEdits`
-// does.
+// Deliberately NOT extended to `'auto'`: under that mode the SDK's own
+// model classifier already auto-approves the routine calls itself (the vast
+// majority never even reach `canUseTool`) and only routes a call here when
+// it judged that specific call worth a human look (surfaced via
+// `decisionReason`, e.g. `'safetyCheck'`). Force-allowing edit tools that
+// reach this callback under `'auto'` would make it behave exactly like
+// `bypassPermissions` and throw away the one safety valve the mode actually
+// offers — these escalations are meant to be rare, and the orchestrator's
+// approval flow (below) is exactly where they should surface for a human to
+// look at, not somewhere they get silently rubber-stamped.
 const AUTO_ALLOWED_EDIT_TOOLS = new Set([
   'Write',
   'Edit',
@@ -273,12 +275,13 @@ function finishFromResult(message: SDKResultMessage): {
  * Every run uses streaming-input mode (a `MessageQueue` as `prompt`, not a
  * plain string) purely so `interrupt()` and mid-run `send()` are available —
  * both are streaming-input-only Query features. Tool permissions run through
- * a single `canUseTool`: under `permissionMode: 'acceptEdits'` or `'auto'` it
- * auto-allows Claude Code's file-edit tools itself (see
- * AUTO_ALLOWED_EDIT_TOOLS — the SDK does not pre-empt the callback for these
- * the way one might expect from its own docs); every other tool, and every
- * tool under any other permission mode, raises the orchestrator's approval
- * flow and waits for `approve()`.
+ * a single `canUseTool`: under `permissionMode: 'acceptEdits'` it auto-allows
+ * Claude Code's file-edit tools itself (see AUTO_ALLOWED_EDIT_TOOLS — the SDK
+ * does not pre-empt the callback for these the way one might expect from its
+ * own docs); every other tool, every tool under `'auto'` (whose own SDK-side
+ * classifier already handles the routine cases and only forwards the ones it
+ * flagged for a human look), and every tool under any other permission mode,
+ * raises the orchestrator's approval flow and waits for `approve()`.
  */
 export class ClaudeExecutor implements Executor {
   // Defaults to the real SDK's `query()`; tests inject a stub that yields a
@@ -309,8 +312,7 @@ export class ClaudeExecutor implements Executor {
         return { behavior: 'deny', message: 'run cancelled' };
       }
       if (
-        (opts.permissionMode === 'acceptEdits' ||
-          opts.permissionMode === 'auto') &&
+        opts.permissionMode === 'acceptEdits' &&
         AUTO_ALLOWED_EDIT_TOOLS.has(toolName)
       ) {
         return { behavior: 'allow', updatedInput: input };

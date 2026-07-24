@@ -592,7 +592,21 @@ export class Orchestrator {
       );
     }
     const now = new Date().toISOString();
-    this.persistDiffSnapshot(meta);
+    // Deliberately `diffCommittedOnly`, not the live `diff()` the review
+    // surface polls while a run is active: this run's content already landed
+    // on the remote base branch through the PR itself, which only ever
+    // contains what actually got committed to the branch — a stray
+    // uncommitted or untracked file still sitting in this worktree (this
+    // path skips mergeRun()'s own autoCommitIfDirty-adjacent handling) was
+    // never part of that PR. Snapshotting the live diff here would bake that
+    // never-merged content into the "merged" snapshot review() later serves
+    // up as if it had actually landed — see mergeRun()'s own comment for the
+    // same reasoning applied to its local-merge counterpart.
+    const mergedDiff = this.worktrees.diffCommittedOnly(
+      meta.worktreePath,
+      meta.baseBranch
+    );
+    this.persistDiffSnapshot(meta, mergedDiff);
     this.worktrees.remove(meta.worktreePath, meta.branch);
     this.ctx.store.update(
       meta.taskId,
@@ -1101,11 +1115,13 @@ export class Orchestrator {
     try {
       // Stop-hook safety net: an executor (any executor — this runs
       // regardless of which one finished) can stop with uncommitted changes
-      // sitting in its worktree, and the review surface's diff only ever
-      // shows committed history (`git diff <mergeBase>...HEAD`, run below).
-      // Sweeping those changes into one auto-commit here is what makes them
-      // reviewable/mergeable at all, instead of silently vanishing when the
-      // worktree is eventually removed.
+      // sitting in its worktree. The review surface's live diff (run below,
+      // via WorktreeManager.diff()) already folds in uncommitted/untracked
+      // content, but a squash-merge only ever pulls in what's actually
+      // committed — so this auto-commit, run here before that diff, is what
+      // makes those changes part of the run's real committed history and
+      // therefore genuinely mergeable, instead of only ever showing up live
+      // and then silently vanishing once the worktree is removed.
       this.autoCommitIfDirty(meta.worktreePath, runId);
     } catch (err) {
       effectiveFinish = {
