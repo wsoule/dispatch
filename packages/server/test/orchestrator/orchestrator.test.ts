@@ -1667,7 +1667,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.permissionMode).toBe('plan');
   });
 
-  it('falls back to 100 turns / acceptEdits with no config file', async () => {
+  it('falls back to 100 turns / auto with no config file', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const executor = new CapturingExecutor();
     orchestrator.registerExecutor('fake', executor);
@@ -1680,7 +1680,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
 
     expect(executor.lastOpts?.maxTurns).toBe(100);
     expect(executor.lastOpts?.maxBudgetUsd).toBeUndefined();
-    expect(executor.lastOpts?.permissionMode).toBe('acceptEdits');
+    expect(executor.lastOpts?.permissionMode).toBe('auto');
   });
 
   it('builds a prompt that includes the parent epic when the task has one', async () => {

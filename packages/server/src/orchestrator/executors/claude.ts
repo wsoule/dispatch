@@ -107,6 +107,15 @@ type ApprovalResolver = (allow: boolean) => void;
 // --permission-mode acceptEdits` would see (edits proceed without a
 // prompt); every other tool, and every tool under any other permission
 // mode, always goes through the orchestrator's approval flow below.
+//
+// `'auto'` gets the exact same treatment: under that mode the SDK's own
+// model classifier handles approval for tools it covers, so `canUseTool`
+// simply never fires for most of them — but these edit tools hit the same
+// gap `acceptEdits` has above and still reach this callback. Falling
+// through to the orchestrator's human-approval flow for them would leave a
+// dispatched `'auto'` run stalled waiting on a human who was never meant to
+// be in the loop, so this auto-allows them here exactly as `acceptEdits`
+// does.
 const AUTO_ALLOWED_EDIT_TOOLS = new Set([
   'Write',
   'Edit',
@@ -288,11 +297,12 @@ function rewriteMissingCliError(message: string): string {
  * Every run uses streaming-input mode (a `MessageQueue` as `prompt`, not a
  * plain string) purely so `interrupt()` and mid-run `send()` are available —
  * both are streaming-input-only Query features. Tool permissions run through
- * a single `canUseTool`: under `permissionMode: 'acceptEdits'` it auto-allows
- * Claude Code's file-edit tools itself (see AUTO_ALLOWED_EDIT_TOOLS — the SDK
- * does not pre-empt the callback for these the way one might expect from its
- * own docs); every other tool, and every tool under any other permission
- * mode, raises the orchestrator's approval flow and waits for `approve()`.
+ * a single `canUseTool`: under `permissionMode: 'acceptEdits'` or `'auto'` it
+ * auto-allows Claude Code's file-edit tools itself (see
+ * AUTO_ALLOWED_EDIT_TOOLS — the SDK does not pre-empt the callback for these
+ * the way one might expect from its own docs); every other tool, and every
+ * tool under any other permission mode, raises the orchestrator's approval
+ * flow and waits for `approve()`.
  */
 export class ClaudeExecutor implements Executor {
   // Defaults to the real SDK's `query()`; tests inject a stub that yields a
@@ -359,7 +369,8 @@ export class ClaudeExecutor implements Executor {
         return { behavior: 'deny', message: 'run cancelled' };
       }
       if (
-        opts.permissionMode === 'acceptEdits' &&
+        (opts.permissionMode === 'acceptEdits' ||
+          opts.permissionMode === 'auto') &&
         AUTO_ALLOWED_EDIT_TOOLS.has(toolName)
       ) {
         return { behavior: 'allow', updatedInput: input };
@@ -382,6 +393,25 @@ export class ClaudeExecutor implements Executor {
       model: opts.model,
       resume: opts.resumeSessionId,
       canUseTool,
+      // Same "query() doesn't auto-load what the CLI does" class of bug as
+      // the `.mcp.json` fix directly below: a dispatched run must behave
+      // like a human running `claude` in this checkout, not like a bare SDK
+      // session with none of its project context. `systemPrompt` opts into
+      // the CLI's own default system prompt (sdk.d.ts ~1977: the untyped
+      // default here is a minimal one with none of Claude Code's own
+      // instructions) and `settingSources` opts into loading this worktree's
+      // filesystem settings — sdk.d.ts ~1861-1870: omitting `settingSources`
+      // already loads all sources by default, matching CLI behavior, but
+      // pinning it explicitly here means a future SDK default change can't
+      // silently stop a dispatched agent from reading CLAUDE.md/AGENTS.md;
+      // the doc there is also explicit that `'project'` specifically is
+      // required to load CLAUDE.md files at all. The run's `cwd` is this
+      // run's own git WORKTREE, a full checkout of the project (worktrees
+      // share the same working files as any other clone), so its committed
+      // CLAUDE.md/AGENTS.md/.claude/settings.json are all present on disk for
+      // these to actually find.
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      settingSources: ['user', 'project', 'local'],
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
       // project's committed `.mcp.json` the way the interactive `claude` CLI
       // does — without this, a dispatched run has no dispatch MCP tools at

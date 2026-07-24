@@ -2,6 +2,7 @@ import { FileX, GitBranch, MousePointerClick } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { RunDetailHeader } from '../components/runs/RunDetailHeader';
+import { RunDiffView } from '../components/runs/RunDiffView';
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
 import { RunStatePill } from '../components/runs/RunStatePill';
@@ -279,7 +280,17 @@ export function RunsView({
 
                 <TabsContent value="diff" className="min-h-0">
                   {!isTerminalRunState(selected.state) ? (
-                    <DiffEmptyState message="No diff to review yet — check back once the run finishes." />
+                    // A live run's diff is fetchable and now polls (see
+                    // useDispatchProject's diffRefetchInterval) — show the
+                    // plain diff view (RunDiffView handles its own loading/
+                    // empty/error states) rather than the full review
+                    // surface, since merge/discard/PR only make sense once
+                    // the run is actually terminal.
+                    <RunDiffView
+                      diff={data.diff}
+                      diffLoading={data.diffLoading}
+                      diffError={data.diffError}
+                    />
                   ) : data.diffError !== null ? (
                     <DiffEmptyState message="This run has no changes to review." />
                   ) : (

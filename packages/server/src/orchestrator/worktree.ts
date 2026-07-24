@@ -181,19 +181,96 @@ export class WorktreeManager {
     }
   }
 
-  // The review surface's diff: a unified patch plus per-file status, both
-  // computed against the merge base with `baseBranch` (not `baseBranch`
-  // itself) so a base branch that moved on since the worktree was created
-  // doesn't pollute the diff with unrelated upstream commits.
+  // The merge base of `baseBranch` and `HEAD` in `worktreePath` — a base
+  // branch that moved on since the worktree was created must not pollute a
+  // diff with unrelated upstream commits, so every diff method below anchors
+  // on this rather than `baseBranch` directly. Falls back to `baseBranch`
+  // itself on a git error (no shared history — shouldn't happen for a
+  // worktree actually branched from it, but a hard failure here would take
+  // the whole diff down with it).
+  private mergeBaseWith(worktreePath: string, baseBranch: string): string {
+    const result = runGit(worktreePath, ['merge-base', baseBranch, 'HEAD']);
+    return result.ok ? result.stdout.trim() : baseBranch;
+  }
+
+  // The review surface's *live* diff: everything since the merge base,
+  // including uncommitted edits and brand-new untracked files still sitting
+  // in the worktree — not just what's already committed to `HEAD`. This is
+  // what makes the diff update while a run is still executing (the agent's
+  // edits land on disk turns before it ever runs `git commit`) and right
+  // after it finishes but before the orchestrator's own auto-commit runs.
+  //
+  // `git diff <mergeBase>` (deliberately not `<mergeBase>...HEAD`) compares
+  // the merge base directly against the working tree, which folds in both
+  // committed history and anything still uncommitted in one pass. Untracked
+  // files never show up in that diff at all (by design — `git diff` only
+  // ever compares tracked content), so they're listed separately via `git
+  // ls-files --others` and each turned into its own "added" patch via `git
+  // diff --no-index` against `/dev/null`.
   diff(worktreePath: string, baseBranch: string): DiffResult {
-    const mergeBaseResult = runGit(worktreePath, [
-      'merge-base',
-      baseBranch,
-      'HEAD',
+    const mergeBase = this.mergeBaseWith(worktreePath, baseBranch);
+    const patch = runGit(worktreePath, ['diff', mergeBase]);
+    const nameStatus = runGit(worktreePath, [
+      'diff',
+      '--name-status',
+      mergeBase,
     ]);
-    const mergeBase = mergeBaseResult.ok
-      ? mergeBaseResult.stdout.trim()
-      : baseBranch;
+    const files = nameStatus.stdout
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => {
+        const [status, ...rest] = line.split('\t');
+        return { path: rest.join('\t'), status: status ?? '' };
+      });
+
+    let patchText = patch.stdout;
+    const untracked = runGit(worktreePath, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+    ])
+      .stdout.split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    // One `--no-index` diff per untracked file — bounded by how many
+    // untracked files actually exist, no repeated scans over the same list.
+    // `git diff --no-index` exits 1 (not 0) when the two sides differ, which
+    // is every real file compared against an empty `/dev/null` — that exit
+    // code is this command's normal "found a difference" signal, not a
+    // failure, so it's read for its stdout regardless of exit code. A
+    // genuinely empty file (no difference from `/dev/null`) or a binary file
+    // (whose "Binary files ... differ" stdout has no diff hunks to show) is
+    // skipped rather than folded into the patch as noise.
+    for (const file of untracked) {
+      const result = Bun.spawnSync(
+        ['git', 'diff', '--no-index', '--', '/dev/null', file],
+        { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' }
+      );
+      const stdout = result.stdout.toString('utf8');
+      if (stdout.trim() === '' || stdout.includes('Binary files')) continue;
+      if (patchText.length > 0 && !patchText.endsWith('\n')) {
+        patchText += '\n';
+      }
+      patchText += stdout;
+      files.push({ path: file, status: 'A' });
+    }
+
+    return { patch: patchText, files };
+  }
+
+  // The *committed-only* counterpart to `diff()` above — `mergeBase...HEAD`,
+  // exactly what `diff()` itself used to compute before it started folding
+  // in the live working tree. `mergeRun()` needs this specific variant: its
+  // `git merge --squash` only ever pulls in commits reachable from the run's
+  // branch ref, never whatever happens to be sitting uncommitted in that
+  // branch's worktree, so deciding *whether there's anything to squash* (and
+  // persisting the diff snapshot for a run that got merged) has to match
+  // what the squash-merge itself actually sees — see mergeRun()'s own
+  // comment on why the live, working-tree-inclusive `diff()` would be wrong
+  // there.
+  diffCommittedOnly(worktreePath: string, baseBranch: string): DiffResult {
+    const mergeBase = this.mergeBaseWith(worktreePath, baseBranch);
     const range = `${mergeBase}...HEAD`;
     const patch = runGit(worktreePath, ['diff', range]);
     const nameStatus = runGit(worktreePath, ['diff', '--name-status', range]);

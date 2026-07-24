@@ -151,6 +151,42 @@ describe('ClaudeExecutor dispatch MCP server wiring', () => {
   });
 });
 
+// Dispatched agents must behave like a human running `claude` in the
+// worktree — reading this project's own CLAUDE.md/AGENTS.md and getting the
+// CLI's real system prompt — rather than a bare SDK session with neither.
+// `query()`'s own defaults already cover this (per sdk.d.ts), but pinning
+// both explicitly means a future SDK default change can't silently regress
+// it; this proves the exact `Options` this executor hands to `query()`
+// carries both, at the same `queryFn` seam the mcpServers wiring tests above
+// use.
+describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
+  it('requests the claude_code preset system prompt and loads user/project/local settings', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        projectRoot: '/tmp/dispatch-project-y',
+        prompt: 'do the thing',
+        permissionMode: 'auto',
+        maxTurns: 5,
+      },
+      noopEvents
+    );
+
+    expect(captured?.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+    });
+    expect(captured?.settingSources).toEqual(['user', 'project', 'local']);
+  });
+});
+
 // The "keeps saying running" bug's root cause for a packaged app: the SDK
 // spawns a native CLI it can't find, so query() throws
 // "Native CLI binary for <platform>-<arch> not found. Reinstall
