@@ -151,6 +151,87 @@ describe('ClaudeExecutor dispatch MCP server wiring', () => {
   });
 });
 
+// The "keeps saying running" bug's root cause for a packaged app: the SDK
+// spawns a native CLI it can't find, so query() throws
+// "Native CLI binary for <platform>-<arch> not found. Reinstall
+// @anthropic-ai/claude-agent-sdk without --omit=optional, ..." — a message
+// meaningless to a desktop-app user. The executor rewrites that into an
+// actionable install command, and honors DISPATCH_CLAUDE_BIN as an explicit
+// override so a machine with Claude Code installed elsewhere still works.
+describe('ClaudeExecutor Claude Code CLI resolution', () => {
+  it('rewrites the SDK "Native CLI binary not found" error into an actionable install command', () => {
+    const fakeQueryFn = () => {
+      throw new Error(
+        'Native CLI binary for darwin-arm64 not found. Reinstall ' +
+          '@anthropic-ai/claude-agent-sdk without --omit=optional, or set ' +
+          'options.pathToClaudeCodeExecutable.'
+      );
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn as never);
+
+    expect(() =>
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'do the thing',
+          permissionMode: 'acceptEdits',
+          maxTurns: 5,
+        },
+        noopEvents
+      )
+    ).toThrow(/Claude Code CLI not found.*install\.sh/s);
+  });
+
+  it('passes DISPATCH_CLAUDE_BIN through as pathToClaudeCodeExecutable', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    const prev = process.env.DISPATCH_CLAUDE_BIN;
+    process.env.DISPATCH_CLAUDE_BIN = '/opt/custom/claude';
+    try {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'do the thing',
+          permissionMode: 'acceptEdits',
+          maxTurns: 5,
+        },
+        noopEvents
+      );
+    } finally {
+      if (prev === undefined) delete process.env.DISPATCH_CLAUDE_BIN;
+      else process.env.DISPATCH_CLAUDE_BIN = prev;
+    }
+
+    expect(captured?.pathToClaudeCodeExecutable).toBe('/opt/custom/claude');
+  });
+
+  // A non-CLI error is passed through unchanged — the rewrite must not swallow
+  // unrelated startup failures behind a misleading "install Claude Code" hint.
+  it('passes a non-CLI startup error through unchanged', () => {
+    const fakeQueryFn = () => {
+      throw new Error('some other startup failure');
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn as never);
+
+    expect(() =>
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'do the thing',
+          permissionMode: 'acceptEdits',
+          maxTurns: 5,
+        },
+        noopEvents
+      )
+    ).toThrow('some other startup failure');
+  });
+});
+
 // M7: a run that fails mid-stream — after the SDK's very first message (the
 // 'system'/'init' message that always carries the session id) but before
 // any terminal 'result' message ever arrives — must still report the

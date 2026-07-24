@@ -1527,82 +1527,81 @@ describe('Orchestrator request-changes executor fallback', () => {
   });
 });
 
-// The user-reported "run has no executor" bug (item A), fix half 2: a run
-// whose state is still non-terminal (running/awaiting-approval) but whose
-// in-memory ExecutorRun handle is gone — the process actually driving it
-// died/never came up — used to make approve()/sendMessage()/inject() throw
-// an opaque `run has no live executor: <id>` forever, with no way for the
-// run to ever leave that state. All three now call the shared
-// healZombieRun() helper: mark the run failed (same bookkeeping
-// reconcileOnBoot's own heal + handleFinish's task-update convention use),
-// then throw a clear, actionable conflict error.
-describe('Orchestrator lazy zombie self-heal (no live executor, non-terminal state)', () => {
-  // Reproduces "the executor never actually came up alive" by having
-  // Executor.start() itself throw — dispatch()/requestChanges() already
-  // registers the run (and, for a plain dispatch, transitions it to
-  // 'running') *before* calling start(), so a start() failure leaves exactly
-  // the zombie shape this heals: a non-terminal run with no ExecutorRun ever
-  // set.
+// The user-reported "keeps saying running" bug: an Executor whose start()
+// throws synchronously (most often the Claude Agent SDK failing to locate its
+// native CLI binary) used to strand the run in 'running' with no ExecutorRun
+// behind it — dispatch()/requestChanges() transition the run to 'running'
+// *before* calling start(), so a start() throw left a zombie the caller could
+// neither message nor finish. Its only eventual resolution was the next
+// approve()/sendMessage()/inject() lazily healing it via healZombieRun() and
+// stamping the misleading "the daemon restarted" message on a daemon that
+// never restarted; the throw itself also escaped to Bun.serve's `error`
+// handler as an opaque 500.
+//
+// startAndRegister() now heals that *eagerly*: a start() throw marks the run
+// failed immediately, at dispatch time, carrying the real error — so the run
+// never enters the confusing "running" limbo and dispatch()/requestChanges()
+// return a run that is already terminally 'failed'. (healZombieRun() stays as
+// a defense-in-depth guard for any other way a non-terminal run could lose
+// its executor handle; both paths funnel through the shared markRunFailed()
+// bookkeeping asserted below.)
+describe('Orchestrator eager fail on executor start failure (no zombie)', () => {
+  // The exact shape of the reported bug: Executor.start() throws before ever
+  // returning an ExecutorRun.
   class ThrowingStartExecutor implements Executor {
     start(): ExecutorRun {
       throw new Error('boom: executor process failed to start');
     }
   }
 
-  it('sendMessage marks a non-terminal run with no live executor failed and throws a clear conflict error', () => {
+  it('a synchronous start() failure marks the run failed immediately instead of stranding it running', () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor('fake', new ThrowingStartExecutor());
-    const task = store.create({ title: 'Zombie via failed executor start' });
+    const task = store.create({ title: 'Failed executor start' });
 
-    expect(() => orchestrator.dispatch(task.meta.id, 'fake')).toThrow(
-      'boom: executor process failed to start'
-    );
-    const zombie = orchestrator.list()[0];
-    expect(zombie.state).toBe('running');
+    // dispatch() no longer lets the start() error escape — it returns a run
+    // that is already terminally failed.
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    expect(meta.state).toBe('failed');
+    expect(meta.error).toMatch(/failed to start/);
+    expect(meta.error).toContain('boom: executor process failed to start');
 
-    let thrown: Error | undefined;
-    try {
-      orchestrator.sendMessage(zombie.id, 'hello');
-    } catch (err) {
-      thrown = err as Error;
-    }
-    expect(thrown).toBeInstanceOf(OrchestratorConflictError);
-    expect(thrown?.message).toMatch(/executor is no longer alive/);
-
-    const healed = orchestrator.getRun(zombie.id)!.meta;
-    expect(healed.state).toBe('failed');
-    expect(healed.error).toMatch(/executor is no longer alive/);
+    const persisted = orchestrator.getRun(meta.id)!.meta;
+    expect(persisted.state).toBe('failed');
     // Same "only an in-progress task moves to in-review" rule handleFinish
-    // uses for a normal finish/failure.
+    // uses for a normal finish/failure — shared via markRunFailed().
     expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
     expect(store.get(task.meta.id)!.body).toContain(
-      `[run ${zombie.id}] marked failed: executor no longer alive`
+      `[run ${meta.id}] failed to start:`
     );
   });
 
-  it('inject marks a running run with no live executor failed and throws a clear conflict error', () => {
+  it('a follow-up message to a run whose start failed reports it terminal, not "running"', () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor('fake', new ThrowingStartExecutor());
-    const task = store.create({ title: 'Zombie via failed start (inject)' });
+    const task = store.create({ title: 'Follow-up after failed start' });
 
-    expect(() => orchestrator.dispatch(task.meta.id, 'fake')).toThrow();
-    const zombie = orchestrator.list()[0];
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    expect(meta.state).toBe('failed');
 
-    let thrown: Error | undefined;
-    try {
-      orchestrator.inject(zombie.id, 'hi');
-    } catch (err) {
-      thrown = err as Error;
-    }
-    expect(thrown).toBeInstanceOf(OrchestratorConflictError);
-    expect(orchestrator.getRun(zombie.id)?.meta.state).toBe('failed');
+    // Because the run is already terminal, a follow-up hits the normal
+    // "run is not live" guard rather than the old zombie self-heal — the user
+    // gets an honest terminal-state error, never the misleading
+    // "keeps saying running" limbo.
+    expect(() => orchestrator.sendMessage(meta.id, 'hello')).toThrow(
+      /run is not live/
+    );
+    expect(() => orchestrator.inject(meta.id, 'hi')).toThrow(
+      /run is not running/
+    );
   });
 
-  it('approve marks an awaiting-approval run with no live executor failed and throws a clear conflict error', () => {
-    // A synchronous approval request fired from inside start() itself,
-    // before start() returns and dispatch() gets a chance to register an
-    // ExecutorRun — the awaiting-approval counterpart of the same "start()
-    // never actually hands back a live executor" shape.
+  it('an approval request fired right before start() throws still ends failed, not stuck awaiting-approval', () => {
+    // A synchronous approval request fired from inside start() itself, right
+    // before start() throws: the run momentarily transitions to
+    // 'awaiting-approval', but the start() failure must still drive it to a
+    // clean terminal 'failed' rather than leaving it stuck awaiting an
+    // approval no live executor can ever consume.
     class SyncApprovalThenCrashExecutor implements Executor {
       start(_opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
         events.onApprovalRequest({
@@ -1615,20 +1614,16 @@ describe('Orchestrator lazy zombie self-heal (no live executor, non-terminal sta
     }
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor('fake', new SyncApprovalThenCrashExecutor());
-    const task = store.create({ title: 'Zombie via failed start (approve)' });
+    const task = store.create({ title: 'Approval then failed start' });
 
-    expect(() => orchestrator.dispatch(task.meta.id, 'fake')).toThrow();
-    const zombie = orchestrator.list()[0];
-    expect(zombie.state).toBe('awaiting-approval');
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    expect(meta.state).toBe('failed');
+    expect(meta.error).toContain('crashed right after requesting approval');
 
-    let thrown: Error | undefined;
-    try {
-      orchestrator.approve(zombie.id, 'req-1', true);
-    } catch (err) {
-      thrown = err as Error;
-    }
-    expect(thrown).toBeInstanceOf(OrchestratorConflictError);
-    expect(orchestrator.getRun(zombie.id)?.meta.state).toBe('failed');
+    // The pending approval can no longer be answered — the run is terminal.
+    expect(() => orchestrator.approve(meta.id, 'req-1', true)).toThrow(
+      /run is not awaiting approval/
+    );
   });
 });
 
