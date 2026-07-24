@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 
+import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type { Planner, PlanProposal } from '../planner.js';
 
 // The exact JSON Schema handed to the SDK's `outputFormat: { type:
@@ -96,27 +97,46 @@ export class ClaudePlanner implements Planner {
       permissionMode: 'plan',
       outputFormat: { type: 'json_schema', schema: PROPOSAL_JSON_SCHEMA },
     };
-    const sdkQuery: Query = this.queryFn({
-      prompt: buildPlannerPrompt(prompt),
-      options,
-    });
+    // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
+    // PATH `claude` -> install hint) ClaudeExecutor.openQuery uses — see
+    // claudeCli.ts. Without this, a packaged app (no node_modules bundled
+    // CLI) surfaced the SDK's raw "Native CLI binary for ... not found"
+    // message straight through PlanManager's `plan.changed` broadcast as
+    // "planning failed: Native CLI binary ...", even though dispatching a
+    // run from the task page already worked (that path goes through
+    // ClaudeExecutor, which had this fallback chain and the earlier
+    // packaged-desktop-app fix did not extend it here).
+    const sdkQuery: Query = openClaudeQuery(
+      this.queryFn,
+      buildPlannerPrompt(prompt),
+      options
+    );
 
-    for await (const message of sdkQuery) {
-      if (message.type !== 'result') continue;
-      if (message.subtype !== 'success') {
-        throw new Error(
-          `planner failed: ${message.subtype}${
-            'errors' in message && message.errors.length > 0
-              ? ` — ${message.errors.join('; ')}`
-              : ''
-          }`
-        );
+    try {
+      for await (const message of sdkQuery) {
+        if (message.type !== 'result') continue;
+        if (message.subtype !== 'success') {
+          throw new Error(
+            `planner failed: ${message.subtype}${
+              'errors' in message && message.errors.length > 0
+                ? ` — ${message.errors.join('; ')}`
+                : ''
+            }`
+          );
+        }
+        if (message.structured_output === undefined) {
+          throw new Error('planner produced no structured output');
+        }
+        return message.structured_output as PlanProposal;
       }
-      if (message.structured_output === undefined) {
-        throw new Error('planner produced no structured output');
-      }
-      return message.structured_output as PlanProposal;
+      throw new Error('planner produced no result message');
+    } catch (err) {
+      // The missing-CLI error can also surface lazily on the first
+      // iteration (rather than synchronously from openClaudeQuery above) —
+      // apply the same install-hint rewrite here too, mirroring
+      // ClaudeExecutor's consume() catch block. Any other error (validation
+      // failure, no-result, ...) passes through unchanged.
+      throw new Error(rewriteMissingCliError((err as Error).message));
     }
-    throw new Error('planner produced no result message');
   }
 }
