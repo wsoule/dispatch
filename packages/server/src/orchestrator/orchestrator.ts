@@ -31,6 +31,7 @@ import { replayTranscript, Transcript } from './transcript.js';
 import type {
   Executor,
   ExecutorEvents,
+  ExecutorStartOptions,
   NormalizedEntry,
   RunMeta,
   RunState,
@@ -216,7 +217,8 @@ export class Orchestrator {
 
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
-    const executorRun = executor.start(
+    this.startAndRegister(
+      runId,
       {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
@@ -227,9 +229,8 @@ export class Orchestrator {
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
       },
-      this.makeEvents(runId)
+      executor
     );
-    this.registry.setExecutorRun(runId, executorRun);
 
     return this.registry.get(runId)!;
   }
@@ -773,13 +774,35 @@ export class Orchestrator {
   private healZombieRun(meta: RunMeta): never {
     const errorMessage =
       "this run's executor is no longer alive (the daemon restarted); the run has been marked failed";
-    this.transition(meta.id, 'failed', { error: errorMessage });
+    this.markRunFailed(
+      meta,
+      errorMessage,
+      `[run ${meta.id}] marked failed: executor no longer alive (daemon restarted)`
+    );
+    throw new OrchestratorConflictError(errorMessage);
+  }
+
+  // Shared terminal-failure bookkeeping for a run that has to be force-failed
+  // *outside* the normal handleFinish path — flips the run to 'failed' with
+  // `error`, moves its task to 'in-review' only when it's still 'in-progress'
+  // (handleFinish's own rule, never reinvented), records `activityNote` on the
+  // task, and fires terminal hooks. The two force-fail paths funnel through
+  // here so they stay identical: healZombieRun (the executor died out from
+  // under an already-live run) and startAndRegister (the executor never
+  // started at all). `activityNote` is prefixed with the timestamp here so
+  // callers pass only the note text.
+  private markRunFailed(
+    meta: RunMeta,
+    error: string,
+    activityNote: string
+  ): void {
+    this.transition(meta.id, 'failed', { error });
 
     const task = this.ctx.store.get(meta.taskId);
     if (task !== null) {
       const now = new Date().toISOString();
       const patch: UpdatePatch = {
-        appendActivity: `${now} [run ${meta.id}] marked failed: executor no longer alive (daemon restarted)`,
+        appendActivity: `${now} ${activityNote}`,
       };
       if (task.meta.status === 'in-progress') patch.status = 'in-review';
       this.ctx.store.update(meta.taskId, patch, now);
@@ -787,8 +810,44 @@ export class Orchestrator {
       this.ctx.events.broadcast({ type: 'task.changed' });
     }
     this.fireTerminalHooks(meta.id);
+  }
 
-    throw new OrchestratorConflictError(errorMessage);
+  // Starts `executor` for a run that dispatch()/requestChanges() has already
+  // registered and transitioned to 'running', then records its live
+  // ExecutorRun so approve()/sendMessage()/inject() can reach it.
+  //
+  // If start() throws *synchronously* — most commonly the Claude Agent SDK
+  // failing to locate its native CLI binary (a broken `--omit=optional`
+  // install), but any spawn-time failure counts — the run would otherwise be
+  // stranded 'running' forever with no ExecutorRun behind it: a zombie the
+  // caller can neither message nor finish, whose only eventual resolution is a
+  // later restart's healZombieRun stamping the misleading "the daemon
+  // restarted" message on a daemon that never restarted. That error also
+  // escapes all the way to Bun.serve's `error` handler as an opaque 500. This
+  // converts both into one honest, immediate terminal failure carrying the
+  // real error, so dispatch()/requestChanges() still return a run — just one
+  // already 'failed' with a visible reason instead of a stuck 'running'.
+  private startAndRegister(
+    runId: string,
+    opts: ExecutorStartOptions,
+    executor: Executor
+  ): void {
+    let executorRun;
+    try {
+      executorRun = executor.start(opts, this.makeEvents(runId));
+    } catch (err) {
+      const raw = (err as Error).message;
+      const meta = this.registry.get(runId);
+      if (meta !== undefined) {
+        this.markRunFailed(
+          meta,
+          `failed to start: ${raw.length > 0 ? raw : 'executor failed to start'}`,
+          `[run ${runId}] failed to start: ${raw}`
+        );
+      }
+      return;
+    }
+    this.registry.setExecutorRun(runId, executorRun);
   }
 
   // I4: once PrManager.openPr has pushed a run's branch and opened a PR
@@ -1143,7 +1202,8 @@ export class Orchestrator {
 
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
-    const executorRun = executor.start(
+    this.startAndRegister(
+      runId,
       {
         cwd: meta.worktreePath,
         projectRoot: this.ctx.rootDir,
@@ -1154,9 +1214,8 @@ export class Orchestrator {
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
       },
-      this.makeEvents(runId)
+      executor
     );
-    this.registry.setExecutorRun(runId, executorRun);
     return this.registry.get(runId)!;
   }
 
