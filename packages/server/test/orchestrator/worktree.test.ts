@@ -9,7 +9,7 @@ import {
 import { join } from 'node:path';
 
 import { WorktreeManager } from '../../src/orchestrator/worktree.js';
-import { initGitRepo, runGitSync } from './helpers.js';
+import { initGitRepo, runGitSync, worktreeSiblingPath } from './helpers.js';
 
 describe('WorktreeManager.defaultBaseBranch', () => {
   it('falls back to the current branch of the main checkout when there is no remote', () => {
@@ -66,7 +66,7 @@ describe('WorktreeManager.add / remove', () => {
   it('creates a real worktree on a new branch based on the given base', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-1');
+    const path = worktreeSiblingPath(repo, 'wt-1');
 
     worktrees.add(path, 'dispatch/t-abc123-fix', 'main');
 
@@ -85,7 +85,7 @@ describe('WorktreeManager.add / remove', () => {
   it('removes the worktree directory and deletes its branch', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-2');
+    const path = worktreeSiblingPath(repo, 'wt-2');
     worktrees.add(path, 'dispatch/t-def456-fix', 'main');
 
     worktrees.remove(path, 'dispatch/t-def456-fix');
@@ -98,7 +98,7 @@ describe('WorktreeManager.add / remove', () => {
   it('retries once after pruning when a stale worktree directory is left on disk', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-stale');
+    const path = worktreeSiblingPath(repo, 'wt-stale');
 
     // Simulate a crash between "worktree add" and cleanup: create the
     // worktree, then delete its directory out from under git without
@@ -109,7 +109,7 @@ describe('WorktreeManager.add / remove', () => {
     // A second add for a *different* run should still succeed by pruning
     // the stale metadata and retrying, exactly the hygiene the plan calls
     // for on `git worktree add`.
-    const path2 = join(repo, '..', 'wt-stale-2');
+    const path2 = worktreeSiblingPath(repo, 'wt-stale-2');
     worktrees.add(path2, 'dispatch/t-stale2-fix', 'main');
     expect(existsSync(join(path2, 'README.md'))).toBe(true);
 
@@ -134,7 +134,7 @@ describe('WorktreeManager.isMainDirty / mergeSquash', () => {
   it('squash-merges a worktree branch into the main checkout with one commit', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-merge');
+    const path = worktreeSiblingPath(repo, 'wt-merge');
     worktrees.add(path, 'dispatch/t-merge-fix', 'main');
     writeFileSync(join(path, 'feature.txt'), 'hello\n');
     runGitSync(path, ['add', '-A']);
@@ -160,7 +160,7 @@ describe('WorktreeManager.diff', () => {
   it('returns a real unified patch and name-status for a worktree branch', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-diff');
+    const path = worktreeSiblingPath(repo, 'wt-diff');
     worktrees.add(path, 'dispatch/t-diff-fix', 'main');
     writeFileSync(join(path, 'added.txt'), 'new content\n');
     runGitSync(path, ['add', '-A']);
@@ -182,7 +182,7 @@ describe('WorktreeManager.diff', () => {
   it('includes an uncommitted modification and an untracked file with no commits at all', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-live-diff');
+    const path = worktreeSiblingPath(repo, 'wt-live-diff');
     worktrees.add(path, 'dispatch/t-live-diff-fix', 'main');
 
     // Uncommitted edit to a file that already existed on `main` (README.md,
@@ -211,7 +211,7 @@ describe('WorktreeManager.diffCommittedOnly', () => {
   it('ignores uncommitted changes and untracked files entirely', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-committed-only');
+    const path = worktreeSiblingPath(repo, 'wt-committed-only');
     worktrees.add(path, 'dispatch/t-committed-only-fix', 'main');
 
     writeFileSync(join(path, 'README.md'), 'edited but never committed\n');
@@ -228,7 +228,7 @@ describe('WorktreeManager.diffCommittedOnly', () => {
   it('still reports committed changes on the branch', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const path = join(repo, '..', 'wt-committed-only-2');
+    const path = worktreeSiblingPath(repo, 'wt-committed-only-2');
     worktrees.add(path, 'dispatch/t-committed-only-fix-2', 'main');
     writeFileSync(join(path, 'added.txt'), 'new content\n');
     runGitSync(path, ['add', '-A']);
@@ -251,7 +251,7 @@ describe('WorktreeManager.pruneOrphans', () => {
   it('removes worktree directories that are not in the keep set', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const root = join(repo, '..', 'worktrees-root');
+    const root = worktreeSiblingPath(repo, 'worktrees-root');
     mkdirSync(root, { recursive: true });
     const kept = join(root, 'kept');
     const orphan = join(root, 'orphan');
@@ -269,7 +269,10 @@ describe('WorktreeManager.pruneOrphans', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     expect(() =>
-      worktrees.pruneOrphans(join(repo, '..', 'never-created'), new Set())
+      worktrees.pruneOrphans(
+        worktreeSiblingPath(repo, 'never-created'),
+        new Set()
+      )
     ).not.toThrow();
   });
 });
@@ -282,7 +285,7 @@ describe('WorktreeManager branch enumeration', () => {
   it('lists dispatch refs with their tip commit date, ignoring other branches', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    worktrees.add(join(repo, '..', 'wt-a'), 'dispatch/t-a-r1', 'main');
+    worktrees.add(worktreeSiblingPath(repo, 'wt-a'), 'dispatch/t-a-r1', 'main');
     runGitSync(repo, ['branch', 'feature/unrelated', 'main']);
 
     const refs = worktrees.listBranches('dispatch/');
@@ -299,7 +302,7 @@ describe('WorktreeManager branch enumeration', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     worktrees.add(
-      join(repo, '..', 'wt-slash'),
+      worktreeSiblingPath(repo, 'wt-slash'),
       'dispatch/t-a/nested-r1',
       'main'
     );
@@ -317,7 +320,7 @@ describe('WorktreeManager branch enumeration', () => {
   it('lists every worktree including the main checkout, with branch refs shortened', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const wtPath = join(repo, '..', 'wt-list');
+    const wtPath = worktreeSiblingPath(repo, 'wt-list');
     worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
 
     const listed = worktrees.listWorktrees();
@@ -335,14 +338,12 @@ describe('WorktreeManager branch enumeration', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     const head = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
-    // `join(repo, '..', …)` lands in the shared system temp dir, so a leftover
-    // directory from a previous run would make `worktree add` fail outright.
-    // The other cases here go through WorktreeManager.add(), which prunes and
-    // retries on exactly that; this one shells out directly, so it clears the
-    // path itself.
-    const detached = join(repo, '..', 'wt-detached');
-    rmSync(detached, { recursive: true, force: true });
-    worktrees.prune();
+    // Unlike every other case here, this one shells out to `git worktree add`
+    // directly rather than going through WorktreeManager.add() — so it gets no
+    // prune-and-retry, and a colliding leftover directory would fail it
+    // outright. `worktreeSiblingPath` is what makes that impossible: the path
+    // is unique per initGitRepo() call, so there is nothing to collide with.
+    const detached = worktreeSiblingPath(repo, 'wt-detached');
     runGitSync(repo, ['worktree', 'add', '--detach', detached, head]);
 
     const entry = worktrees
@@ -356,7 +357,7 @@ describe('WorktreeManager branch enumeration', () => {
   it('counts only the commits a branch has that its base does not', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const wtPath = join(repo, '..', 'wt-ahead');
+    const wtPath = worktreeSiblingPath(repo, 'wt-ahead');
     worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
     writeFileSync(join(wtPath, 'one.txt'), 'one\n');
     runGitSync(wtPath, ['add', '-A']);
@@ -371,7 +372,11 @@ describe('WorktreeManager branch enumeration', () => {
   it('reports zero ahead for a branch identical to its base', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    worktrees.add(join(repo, '..', 'wt-even'), 'dispatch/t-a-r1', 'main');
+    worktrees.add(
+      worktreeSiblingPath(repo, 'wt-even'),
+      'dispatch/t-a-r1',
+      'main'
+    );
 
     expect(worktrees.aheadCount('dispatch/t-a-r1', 'main')).toBe(0);
   });
@@ -379,7 +384,11 @@ describe('WorktreeManager branch enumeration', () => {
   it('reports zero ahead rather than throwing when the base ref is gone', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    worktrees.add(join(repo, '..', 'wt-nobase'), 'dispatch/t-a-r1', 'main');
+    worktrees.add(
+      worktreeSiblingPath(repo, 'wt-nobase'),
+      'dispatch/t-a-r1',
+      'main'
+    );
 
     expect(worktrees.aheadCount('dispatch/t-a-r1', 'no-such-branch')).toBe(0);
   });
@@ -387,7 +396,7 @@ describe('WorktreeManager branch enumeration', () => {
   it('detects a branch whose commits already landed on base as merged', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const wtPath = join(repo, '..', 'wt-merged');
+    const wtPath = worktreeSiblingPath(repo, 'wt-merged');
     worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
     writeFileSync(join(wtPath, 'landed.txt'), 'landed\n');
     runGitSync(wtPath, ['add', '-A']);
@@ -402,7 +411,11 @@ describe('WorktreeManager branch enumeration', () => {
   it('treats a branch with no commits of its own as merged', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    worktrees.add(join(repo, '..', 'wt-empty'), 'dispatch/t-a-r1', 'main');
+    worktrees.add(
+      worktreeSiblingPath(repo, 'wt-empty'),
+      'dispatch/t-a-r1',
+      'main'
+    );
 
     expect(worktrees.isMergedInto('dispatch/t-a-r1', 'main')).toBe(true);
   });
@@ -410,7 +423,7 @@ describe('WorktreeManager branch enumeration', () => {
   it('reports a worktree with uncommitted or untracked files as dirty', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const wtPath = join(repo, '..', 'wt-dirty');
+    const wtPath = worktreeSiblingPath(repo, 'wt-dirty');
     worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
     expect(worktrees.isWorktreeDirty(wtPath)).toBe(false);
 
@@ -423,9 +436,9 @@ describe('WorktreeManager branch enumeration', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
 
-    expect(worktrees.isWorktreeDirty(join(repo, '..', 'never-existed'))).toBe(
-      false
-    );
+    expect(
+      worktrees.isWorktreeDirty(worktreeSiblingPath(repo, 'never-existed'))
+    ).toBe(false);
   });
 });
 
@@ -433,7 +446,7 @@ describe('WorktreeManager.removeWorktreeOnly', () => {
   it('removes the directory but leaves the branch ref in place', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
-    const wtPath = join(repo, '..', 'wt-freed');
+    const wtPath = worktreeSiblingPath(repo, 'wt-freed');
     worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
     writeFileSync(join(wtPath, 'work.txt'), 'work\n');
     runGitSync(wtPath, ['add', '-A']);
