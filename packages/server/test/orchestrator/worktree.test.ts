@@ -375,25 +375,70 @@ describe('resyncToBranch', () => {
 });
 
 describe('isDirty', () => {
-  it('is false for a clean worktree and true for uncommitted content', () => {
+  // Deliberately TRACKED changes only. `git rebase --onto` rebases happily
+  // with untracked files present (measured), so counting them here would make
+  // the restack refuse work the plain-git path completes without complaint.
+  it('reports tracked changes and ignores untracked files', () => {
     const repo = initGitRepo('dispatch-wt-');
     const wt = new WorktreeManager(repo);
     const path = join(repo, '..', 'wt-dirty-test');
     wt.add(path, 'dispatch/t-dirty', 'main');
     expect(wt.isDirty(path)).toBe(false);
 
-    // Untracked counts: a hard reset would leave it, but a run holding
-    // uncommitted work is exactly what must not be restacked blindly.
     writeFileSync(join(path, 'scratch.txt'), 'wip\n');
+    expect(wt.isDirty(path)).toBe(false);
+
+    // Modifying a TRACKED file is what a rebase and a hard reset would
+    // destroy, so that is what this must catch.
+    writeFileSync(join(path, 'README.md'), '# edited\n');
     expect(wt.isDirty(path)).toBe(true);
 
-    runGitSync(path, ['add', '-A']);
+    runGitSync(path, ['add', 'README.md']);
     expect(wt.isDirty(path)).toBe(true);
 
     runGitSync(path, ['commit', '-m', 'wip']);
     expect(wt.isDirty(path)).toBe(false);
 
     wt.remove(path, 'dispatch/t-dirty');
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  // The narrow case isDirty deliberately does NOT cover, handled one level
+  // down instead: `git reset --hard` silently overwrites an untracked file
+  // whose path is tracked in the target tree (measured), and no commit holds
+  // that content, so resyncToBranch refuses rather than destroy it.
+  it('resyncToBranch refuses when an untracked file would be overwritten', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const path = join(repo, '..', 'wt-clobber-test');
+    wt.add(path, 'dispatch/t-clobber', 'main');
+
+    // The base gains a tracked file...
+    writeFileSync(join(repo, 'shared.txt'), 'from base\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'base adds shared.txt']);
+    const mainTip = runGitSync(repo, ['rev-parse', 'main']).trim();
+    runGitSync(repo, ['update-ref', 'refs/heads/dispatch/t-clobber', mainTip]);
+
+    // ...at a path the worktree happens to hold as untracked work.
+    writeFileSync(join(path, 'shared.txt'), 'irreplaceable local work\n');
+
+    expect(() => {
+      wt.resyncToBranch(path, 'dispatch/t-clobber');
+    }).toThrow('untracked file(s) would be overwritten');
+    expect(readFileSync(join(path, 'shared.txt'), 'utf8')).toBe(
+      'irreplaceable local work\n'
+    );
+
+    // A non-colliding untracked file is no obstacle at all — reset --hard
+    // leaves those alone.
+    rmSync(join(path, 'shared.txt'));
+    writeFileSync(join(path, 'unrelated.txt'), 'scratch\n');
+    wt.resyncToBranch(path, 'dispatch/t-clobber');
+    expect(readFileSync(join(path, 'shared.txt'), 'utf8')).toBe('from base\n');
+    expect(existsSync(join(path, 'unrelated.txt'))).toBe(true);
+
+    wt.remove(path, 'dispatch/t-clobber');
     rmSync(repo, { recursive: true, force: true });
   });
 });

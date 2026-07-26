@@ -206,15 +206,28 @@ export class WorktreeManager {
    *   and repairs nothing at all. `git reset --hard` is the only thing that
    *   actually rewrites the index and working tree here.
    *
-   * The hard reset is why callers must check `isDirty()` first: it discards
-   * uncommitted tracked changes. Callers MUST also only invoke this for runs
-   * in a terminal state — a live agent's worktree is never touched.
+   * The hard reset is what makes this destructive, and it is guarded twice:
+   * callers check `isDirty()` first (uncommitted TRACKED changes), and the
+   * untracked-collision check below covers the one case `isDirty` deliberately
+   * does not. Callers MUST also only invoke this for runs in a terminal state
+   * — a live agent's worktree is never touched.
+   *
+   * Note that both guards are checks-then-act: nothing locks the worktree, so
+   * content written between the check and the reset is still lost. Terminal
+   * runs have no agent writing to them, which is why that window is accepted
+   * rather than closed.
    */
   resyncToBranch(worktreePath: string, branch: string): void {
     const checkout = runGit(worktreePath, ['checkout', branch]);
     if (!checkout.ok) {
       throw new Error(
         `git checkout ${branch} failed: ${checkout.stderr.trim()}`
+      );
+    }
+    const clobbered = this.untrackedPathsInTree(worktreePath, branch);
+    if (clobbered.length > 0) {
+      throw new Error(
+        `refusing to resync ${branch}: untracked file(s) would be overwritten: ${clobbered.join(', ')}`
       );
     }
     const reset = runGit(worktreePath, ['reset', '--hard', branch]);
@@ -225,13 +238,48 @@ export class WorktreeManager {
     }
   }
 
-  // Whether a run's worktree has anything uncommitted (staged, unstaged, or
-  // untracked). Checked before a restack: `resyncToBranch`'s hard reset would
-  // throw such content away, and every normal finish path already ran
-  // `autoCommitIfDirty`, so a dirty worktree here means a cancelled run whose
-  // content was deliberately left alone. Refuse rather than destroy it.
+  // Untracked files in `worktreePath` whose path is also tracked in `branch`'s
+  // tree — precisely the ones `git reset --hard` overwrites without warning
+  // (measured; non-colliding untracked files survive it untouched). Nothing
+  // holds a copy of that content, so the restack refuses rather than destroy
+  // it. Returns early without listing the tree at all when there is nothing
+  // untracked to collide, which is the normal case: every finish path runs
+  // autoCommitIfDirty before a run becomes reviewable.
+  private untrackedPathsInTree(worktreePath: string, branch: string): string[] {
+    const untracked = runGit(worktreePath, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+    ])
+      .stdout.split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (untracked.length === 0) return [];
+    const tracked = new Set(
+      runGit(worktreePath, ['ls-tree', '-r', '--name-only', branch])
+        .stdout.split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+    );
+    return untracked.filter((path) => tracked.has(path));
+  }
+
+  // Whether a run's worktree has uncommitted TRACKED changes (staged or
+  // unstaged). Untracked files are deliberately not counted: this is the same
+  // gate `git rebase --onto` applies to itself — measured, it rebases happily
+  // with untracked files present — so counting them would refuse restacks the
+  // plain-git path completes without complaint. The narrower case where a
+  // hard reset really would destroy untracked content is handled by
+  // `resyncToBranch` above.
+  //
+  // Anything this reports at restack time is a cancelled run's content:
+  // every other finish path already ran `autoCommitIfDirty`.
   isDirty(worktreePath: string): boolean {
-    const status = runGit(worktreePath, ['status', '--porcelain']);
+    const status = runGit(worktreePath, [
+      'status',
+      '--porcelain',
+      '--untracked-files=no',
+    ]);
     return status.stdout.trim().length > 0;
   }
 

@@ -574,10 +574,13 @@ export class MergeQueue {
       // `git status` there reports the base's new files as staged deletions.
       // verify() runs in that same worktree and merge() squashes the rebased
       // branch, so without the resync below the queue would verify one tree
-      // and merge a different one. The resync hard-resets, so a worktree with
-      // uncommitted content is refused outright rather than silently wiped —
-      // the plain-git path below refuses the same case, since `git rebase`
-      // will not run on a dirty tree either.
+      // and merge a different one. The resync hard-resets, so uncommitted
+      // TRACKED changes are refused outright rather than silently wiped —
+      // exactly the case the plain-git path below refuses too, since
+      // `git rebase` will not run over them either. Untracked files are not
+      // counted, for the same reason: `git rebase` tolerates them (measured),
+      // so failing this entry over one would make the jj path refuse merges
+      // the git path completes.
       if (this.ctx.orchestrator.runWorktreeIsDirty(meta.id)) {
         throw new Error(
           'worktree has uncommitted changes; commit or discard them before merging'
@@ -700,14 +703,27 @@ export class MergeQueue {
         }
         continue;
       }
-      const staleRunId = this.pendingStaleRuns.shift();
-      if (staleRunId === undefined) return;
-      try {
-        await this.restackStaleRun(staleRunId);
-      } catch (err) {
-        console.error(
-          `dispatchd: failed to restack ${staleRunId}: ${(err as Error).message}`
-        );
+      if (this.pendingStaleRuns.length === 0) return;
+      // Drained as one batch against a SINGLE registry snapshot. Boot seeds
+      // every run at once, so re-listing per id would allocate a fresh list
+      // for each one before any cheap filter got to reject it. Deduped
+      // because a run can be both seeded at construction and pushed by its
+      // own terminal hook, and replaying a restack against a snapshot taken
+      // before the first one would rebase it a second time.
+      const batch = [
+        ...new Set(
+          this.pendingStaleRuns.splice(0, this.pendingStaleRuns.length)
+        ),
+      ];
+      const runs = this.ctx.orchestrator.list();
+      for (const staleRunId of batch) {
+        try {
+          await this.restackStaleRun(staleRunId, runs);
+        } catch (err) {
+          console.error(
+            `dispatchd: failed to restack ${staleRunId}: ${(err as Error).message}`
+          );
+        }
       }
     }
   }
@@ -737,8 +753,7 @@ export class MergeQueue {
    * been merged away in the meantime and bring it back onto the new base if
    * so.
    */
-  private async restackStaleRun(runId: string): Promise<void> {
-    const runs = this.ctx.orchestrator.list();
+  private async restackStaleRun(runId: string, runs: RunMeta[]): Promise<void> {
     const run = runs.find((r) => r.id === runId);
     if (run === undefined || !this.isRestackCandidate(run)) return;
     const parent = this.mergedStackParentOf(run, runs);
@@ -760,26 +775,51 @@ export class MergeQueue {
   }
 
   /**
-   * The run whose branch `run` is stacked on, IF that run has since been
-   * merged away — otherwise null.
+   * A blocker `run` was stacked on that has since been merged away, or null
+   * when nothing about this run's base has moved.
    *
-   * The detection is deliberately explicit rather than incidental. Two facts
-   * must both hold: `run.baseBranch` is still one of its own recorded
-   * `stackParents` (so it was branched off a blocker and has not already been
-   * repointed), and the run that OWNS that branch carries a `reviewedAt` with
-   * a `merge`/`pr` action. Checking the parent run's review marker — rather
-   * than whether the branch ref still resolves — is what distinguishes "the
-   * blocker landed" from "someone deleted a branch by hand" or "the ref is
-   * missing because this daemon has not reconciled yet", and it survives a
-   * restart because `reviewedAt` is persisted on the parent's transcript.
+   * BOTH stacked shapes have to be recognised here, because the caller's
+   * response differs but every one of them still needs a response:
+   *
+   * - One unmerged blocker: `baseBranch` IS that blocker's branch, and
+   *   restackRun moves the run onto the blocker's own base.
+   * - Two or more: `baseBranch` is a jj merge-base bookmark
+   *   (`dispatch/stack-base-<task>`) that is not any blocker's branch, while
+   *   `stackParents` lists them all. Such a run can NOT be restacked onto any
+   *   single blocker's base, but it must still be flagged the moment the first
+   *   blocker lands — restackRun does that, and returning the merged blocker
+   *   here is the only thing that gets it there. Keying solely on `baseBranch`
+   *   made this whole shape invisible to the terminal/boot path, so a
+   *   multi-parent dependent that was still live when its blocker merged was
+   *   left neither restacked nor flagged.
+   *
+   * Scanning `stackParents` (rather than `baseBranch` alone) is safe for the
+   * jj-unavailable fallback, which is the other way a task with 2+ blockers
+   * can be dispatched: resolveBase records NO stackParents at all there, so
+   * that path can never match and is never falsely flagged.
+   *
+   * Detection is deliberately the parent RUN's review marker rather than
+   * "the branch ref no longer resolves": a missing ref also means "a human
+   * deleted a branch" or "this daemon has not reconciled yet", whereas
+   * `reviewedAt` means exactly "this landed" and is persisted on the parent's
+   * own transcript, which is what lets the boot sweep re-derive it.
    */
   private mergedStackParentOf(run: RunMeta, runs: RunMeta[]): RunMeta | null {
-    if (run.stackParents?.includes(run.baseBranch) !== true) return null;
-    const parent = runs.find((r) => r.branch === run.baseBranch);
-    if (parent === undefined || parent.reviewedAt === undefined) return null;
-    return parent.reviewAction === 'merge' || parent.reviewAction === 'pr'
-      ? parent
-      : null;
+    const parents = run.stackParents ?? [];
+    if (parents.length === 0) return null;
+    // The run's own base is checked first so the single-blocker shape always
+    // resolves to the parent that actually determines its new base.
+    const ordered = parents.includes(run.baseBranch)
+      ? [run.baseBranch, ...parents.filter((b) => b !== run.baseBranch)]
+      : parents;
+    for (const branch of ordered) {
+      const parent = runs.find((r) => r.branch === branch);
+      if (parent === undefined || parent.reviewedAt === undefined) continue;
+      if (parent.reviewAction === 'merge' || parent.reviewAction === 'pr') {
+        return parent;
+      }
+    }
+    return null;
   }
 
   /**
@@ -829,10 +869,12 @@ export class MergeQueue {
       );
       return;
     }
-    // The resync below hard-resets the worktree, which would throw away
-    // uncommitted content. Every normal finish path auto-commits, so this is
-    // only ever true for a cancelled run whose worktree was deliberately left
-    // as-is — refuse rather than destroy it.
+    // Both steps below would throw away uncommitted TRACKED changes — the
+    // rebase refuses to run over them, the resync hard-resets past them.
+    // Every normal finish path auto-commits, so this is only ever true for a
+    // cancelled run whose worktree was deliberately left as-is; refuse rather
+    // than destroy it. (Untracked files are handled one level down, by
+    // resyncToBranch's own collision check — see WorktreeManager.isDirty.)
     if (this.ctx.orchestrator.runWorktreeIsDirty(dependent.id)) {
       this.flagDependent(
         dependent,
