@@ -768,3 +768,25 @@ describe('WorktreeManager.removeWorktreeOnly', () => {
     ).not.toThrow();
   });
 });
+
+describe('WorktreeManager origin ancestry', () => {
+  it('reports no origin remote in a bare-local repo', () => {
+    const repo = initGitRepo();
+    expect(new WorktreeManager(repo).hasOriginRemote()).toBe(false);
+  });
+
+  it('answers ancestry against the remote-tracking ref', () => {
+    const origin = initGitRepo();
+    const repo = initGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const pushed = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['fetch', 'origin', 'main']);
+    const wt = new WorktreeManager(repo);
+    expect(wt.hasOriginRemote()).toBe(true);
+    expect(wt.isOnOriginBase(pushed, 'main')).toBe(true);
+    runGitSync(repo, ['commit', '--allow-empty', '-m', 'local-only']);
+    const local = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    expect(wt.isOnOriginBase(local, 'main')).toBe(false);
+  });
+});

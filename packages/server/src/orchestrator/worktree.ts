@@ -256,6 +256,20 @@ export class WorktreeManager {
     ]).ok;
   }
 
+  hasOriginRemote(): boolean {
+    return runGit(this.mainRepoDir, ['remote', 'get-url', 'origin']).ok;
+  }
+
+  // False when origin/<base> doesn't exist locally — unpushed is the safe answer.
+  isOnOriginBase(commit: string, base: string): boolean {
+    return runGit(this.mainRepoDir, [
+      'merge-base',
+      '--is-ancestor',
+      commit,
+      `refs/remotes/origin/${base}`,
+    ]).ok;
+  }
+
   // Whether a run's worktree has uncommitted work sitting in it. Runs in the
   // worktree itself, not the main checkout — unlike `isMainDirty()` below,
   // which deliberately asks about the user's own checkout. A path that no
