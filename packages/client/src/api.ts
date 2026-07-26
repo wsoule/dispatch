@@ -69,6 +69,19 @@ export interface RunMeta {
   // PR — stays set (and `reviewedAt` stays unset) until the PR poller sees it
   // merged.
   prUrl?: string;
+  // Branches this run's worktree was stacked on at dispatch time (the
+  // in-review blockers whose unmerged work it needed). Empty/absent for an
+  // ordinary unblocked run based on the project's default branch. Mirrors
+  // RunMeta.stackParents in packages/server/src/orchestrator/types.ts —
+  // `stackBaseCommit` from that same type is internal bookkeeping and has no
+  // client-side use, so it isn't mirrored here.
+  stackParents?: string[];
+  // Set when the run this one was stacked on was discarded by a human (or an
+  // automatic restack failed): the base this work was written against was
+  // rejected, so a human needs to look at it. The merge queue refuses a run
+  // with this set until it's rebased onto a valid base; `error` carries the
+  // reason.
+  baseDiscarded?: boolean;
 }
 
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the
