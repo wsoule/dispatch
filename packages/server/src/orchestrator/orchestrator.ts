@@ -297,8 +297,12 @@ export class Orchestrator {
    *
    * Two or more unmerged blockers need a base containing all of their work,
    * which only jj can express (`jj new -r A -r B`). When jj isn't available
-   * the task falls back to the default base rather than silently picking one
-   * blocker and dropping the other's work.
+   * there is no correct base to pick, so the dispatch is REFUSED (spec §4.6):
+   * the task waits, exactly as it did before stacking existed, and is retried
+   * on the next fill. Dispatching it against the default base instead would be
+   * strictly worse than today's behavior — the agent would see neither
+   * blocker's work, and with no `stackParents` recorded the run would never be
+   * restacked and never be flagged.
    */
   private async resolveBase(
     task: TaskDoc
@@ -321,39 +325,34 @@ export class Orchestrator {
     // needs jj, so converting the user's repo never happens for a dispatch
     // that could have been served by plain git.
     //
-    // The whole section is wrapped because this is the only part of dispatch
-    // that shells out to a tool the user may not have, in a repo shape jj may
-    // refuse: no jj failure may turn a perfectly valid dispatch into a 500.
-    // Every failure degrades to the same default-base fallback the
-    // jj-unavailable case takes, and says so in the task's own Activity.
+    // The jj calls are wrapped because this is the only part of dispatch that
+    // shells out to a tool the user may not have, in a repo shape jj may
+    // refuse: no jj failure may turn this into an opaque 500. Every failure
+    // converges on the same outcome the jj-unavailable case takes — refuse,
+    // and say why on the task — so the task simply waits (fillQueue skips an
+    // OrchestratorConflictError and retries on the next pass; a manual
+    // dispatch 409s with the reason).
+    let base: string;
     try {
       const wasColocated = await this.jj.isColocated();
       if (!(await this.jj.ensureColocated())) {
-        // No jj: no way to build a multi-parent base. Fall back rather than
-        // dropping a blocker's work on the floor.
-        this.appendTaskActivity(
-          task.meta.id,
-          `stacked dispatch: ${parents.length} unmerged blockers need a multi-parent base, but jj is unavailable — using ${defaultBase}`
-        );
-        return { base: defaultBase, stackParents: [] };
+        throw new Error('jj is unavailable');
       }
       if (!wasColocated) {
         // Converting a user's repo is never silent — §4.2 of the spec.
-        this.appendTaskActivity(
+        this.noteTaskActivity(
           task.meta.id,
           'stacked dispatch: converted this repository to a colocated jj repo (reversible with `jj git colocation disable`)'
         );
       }
       const bookmark = `dispatch/stack-base-${task.meta.id}`;
-      const base = await this.jj.mergeBase(parents, bookmark);
-      return { base, stackParents: parents };
+      base = await this.jj.mergeBase(parents, bookmark);
     } catch (err) {
-      this.appendTaskActivity(
-        task.meta.id,
-        `stacked dispatch: building a multi-parent base over ${parents.length} unmerged blockers failed (${(err as Error).message}) — using ${defaultBase}`
-      );
-      return { base: defaultBase, stackParents: [] };
+      const reason = `${parents.length} unmerged blockers need a multi-parent base, which only jj can build (${(err as Error).message}) — waiting until they merge`;
+      this.noteTaskActivity(task.meta.id, `stacked dispatch: ${reason}`);
+      throw new OrchestratorConflictError(reason);
     }
+    return { base, stackParents: parents };
   }
 
   // Appends one Activity line to a task, mirroring EpicEngine's
@@ -364,6 +363,21 @@ export class Orchestrator {
     this.ctx.store.update(taskId, { appendActivity: `${now} ${text}` }, now);
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
+  }
+
+  // The best-effort form of the above, for the paths that are already
+  // reporting a failure: the note is context on something that went wrong, so
+  // a second failure while writing it (a locked/unwritable task file) must not
+  // replace the real error with an opaque 500. Same swallow-and-log rule
+  // EpicEngine.recordFillFailure applies to its own Activity append.
+  private noteTaskActivity(taskId: string, text: string): void {
+    try {
+      this.appendTaskActivity(taskId, text);
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to record activity on task ${taskId}: ${(err as Error).message}`
+      );
+    }
   }
 
   // The branch of a task's most recent terminal, unreviewed run — the branch
@@ -709,7 +723,7 @@ export class Orchestrator {
       this.mergeRun(meta, now);
     } else {
       this.persistDiffSnapshot(meta);
-      this.worktrees.remove(meta.worktreePath, meta.branch);
+      this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
       this.ctx.store.update(
         meta.taskId,
         {
@@ -784,7 +798,7 @@ export class Orchestrator {
       meta.baseBranch
     );
     this.persistDiffSnapshot(meta, mergedDiff);
-    this.worktrees.remove(meta.worktreePath, meta.branch);
+    this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
     this.ctx.store.update(
       meta.taskId,
       {
@@ -922,7 +936,7 @@ export class Orchestrator {
     Bun.spawnSync(['git', ...commitArgs], { cwd: this.ctx.rootDir });
 
     this.persistDiffSnapshot(meta, preMergeDiff);
-    this.worktrees.remove(meta.worktreePath, meta.branch);
+    this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
   }
 
   /**
@@ -1166,12 +1180,45 @@ export class Orchestrator {
     this.worktrees.rebaseOnto(meta.worktreePath, newBase, oldTip, meta.branch);
   }
 
+  /**
+   * Whether any run is currently ALIVE in the worktree `runId` occupies —
+   * including `runId` itself.
+   *
+   * This, not "is this run terminal?", is the invariant every rewrite of a
+   * worktree or its branch has to hold against. The two coincide for
+   * `dispatch()`, which gives every run its own branch and worktree, and come
+   * apart for `requestChanges()`, which starts a NEW run in the SAME worktree
+   * on the SAME branch: the old run stays terminal forever while its
+   * replacement's agent is actively writing there. Asking about the run
+   * therefore answers the wrong question — the thing being protected is the
+   * directory, and the directory can have more than one run's name on it.
+   */
+  worktreeIsBusy(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return false;
+    return this.registry
+      .list()
+      .some(
+        (r) =>
+          r.worktreePath === meta.worktreePath &&
+          !TERMINAL_RUN_STATES.has(r.state)
+      );
+  }
+
   // Reattaches a run's worktree to its branch after a restack moved that
-  // branch from the main checkout. Refuses while the run is still live — a
-  // working copy an agent is using is never rewritten underneath it.
+  // branch from the main checkout. Throws rather than silently skipping while
+  // anything is live in that worktree: a working copy an agent is using is
+  // never rewritten underneath it, and every caller either treats the failure
+  // as a reason to flag the run (MergeQueue.restackRun) or must not proceed to
+  // verify/merge a tree that no longer matches its branch (MergeQueue.rebase).
   resyncRunWorktree(runId: string): void {
     const meta = this.registry.get(runId);
-    if (meta === undefined || !TERMINAL_RUN_STATES.has(meta.state)) return;
+    if (meta === undefined) return;
+    if (this.worktreeIsBusy(runId)) {
+      throw new OrchestratorConflictError(
+        `refusing to resync ${meta.worktreePath}: another run is live in it`
+      );
+    }
     this.worktrees.resyncToBranch(meta.worktreePath, meta.branch);
   }
 
@@ -1185,30 +1232,45 @@ export class Orchestrator {
     return this.worktrees.isDirty(meta.worktreePath);
   }
 
-  // Moves a run off a base branch that has now been merged away (and deleted
-  // with its worktree), and drops that branch from its recorded stack
-  // parents. Without this the next merge attempt is refused outright by
-  // mergeRun's "merge target is X, expected Y" guard.
-  //
-  // The new base is appended to the run's transcript as a state line — the
-  // registry is in-memory only, so without that a restart would replay the
-  // run's meta straight back onto the merged-away branch, with nothing left
-  // to notice or re-run the restack (see TranscriptStateLine.baseBranch).
+  /**
+   * Moves a run off a base branch that has now been merged away (and deleted
+   * with its worktree), and drops that branch from its recorded stack parents.
+   * Without this the next merge attempt is refused outright by mergeRun's
+   * "merge target is X, expected Y" guard.
+   *
+   * Applied to EVERY unreviewed run sharing this branch, not just `runId`. A
+   * restack rewrites a BRANCH, and `requestChanges()` puts several runs on one
+   * branch; repointing only one of them would leave its siblings claiming a
+   * base that no longer exists and still naming the merged blocker as a stack
+   * parent — so the next sweep would rebase the same branch a second time,
+   * replaying commits that are already on the new base.
+   *
+   * The new base is appended to each run's transcript as a state line — the
+   * registry is in-memory only, so without that a restart would replay the
+   * run's meta straight back onto the merged-away branch, with nothing left
+   * to notice or re-run the restack (see TranscriptStateLine.baseBranch).
+   */
   repointRunBase(runId: string, newBase: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
-    const remaining = (meta.stackParents ?? []).filter(
-      (branch) => branch !== meta.baseBranch
-    );
+    const mergedAway = meta.baseBranch;
     const now = new Date().toISOString();
-    this.registry.updateMeta(runId, {
-      baseBranch: newBase,
-      stackParents: remaining.length > 0 ? remaining : undefined,
-      updatedAt: now,
-    });
-    this.transcriptFor(runId).appendState(meta.state, now, {
-      baseBranch: newBase,
-    });
+    for (const sibling of this.registry.list()) {
+      if (sibling.branch !== meta.branch) continue;
+      if (sibling.reviewedAt !== undefined) continue;
+      const remaining = (sibling.stackParents ?? []).filter(
+        (branch) => branch !== mergedAway
+      );
+      this.registry.updateMeta(sibling.id, {
+        baseBranch: newBase,
+        stackParents: remaining.length > 0 ? remaining : undefined,
+        updatedAt: now,
+      });
+      this.transcriptFor(sibling.id).appendState(sibling.state, now, {
+        baseBranch: newBase,
+        stackParents: remaining,
+      });
+    }
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
@@ -1234,6 +1296,13 @@ export class Orchestrator {
       if (dependent.stackParents?.includes(discarded.branch) !== true) {
         continue;
       }
+      // A live dependent is left completely alone, the same rule the restack
+      // path follows: flagging it would stamp an error chip and a mid-run
+      // state line onto a run whose agent is working perfectly happily. It is
+      // picked up instead the moment its worktree goes quiet — see
+      // MergeQueue.restackStaleRun, which flags a run whose stack parent was
+      // discarded rather than merged.
+      if (this.worktreeIsBusy(dependent.id)) continue;
       const reason = `the run this one was stacked on (${discarded.id}) was discarded — rebase onto a valid base before merging`;
       this.flagRunRestackFailure(dependent.id, reason);
       this.appendRunTaskActivity(dependent.id, `run ${dependent.id} ${reason}`);
@@ -1251,20 +1320,21 @@ export class Orchestrator {
   // is never retried on its own, so losing it across a restart would leave a
   // broken run looking perfectly healthy.
   //
-  // `reason` never overwrites an error the run already had. A `failed` run's
+  // `reason` never overwrites an `error` the run already had. A `failed` run's
   // own failure message is the more important one — it says why the work is
   // broken, where this only says why the base could not be moved — and since
-  // the write is now persisted, clobbering it would destroy it for good. The
-  // restack reason still reaches the user: every caller also writes it to the
-  // run's task Activity (see MergeQueue.flagDependent).
+  // the write is now persisted, clobbering it would destroy it for good.
+  // `baseDiscardedReason` is set unconditionally instead, so the flag always
+  // travels with the reason it was actually raised for and no surface has to
+  // fall back to fixed copy that is wrong for two of its three meanings.
   flagRunRestackFailure(runId: string, reason: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const now = new Date().toISOString();
     const patch =
       meta.error === undefined
-        ? { baseDiscarded: true, error: reason }
-        : { baseDiscarded: true };
+        ? { baseDiscarded: true, baseDiscardedReason: reason, error: reason }
+        : { baseDiscarded: true, baseDiscardedReason: reason };
     this.registry.updateMeta(runId, { ...patch, updatedAt: now });
     this.transcriptFor(runId).appendState(meta.state, now, patch);
     this.ctx.events.broadcast({ type: 'run.changed' });
@@ -1812,6 +1882,21 @@ export class Orchestrator {
       // to a different model mid-conversation.
       model: oldMeta.model,
       resumedFrom: oldMeta.id,
+      // The resumed run inherits the same worktree and the same BRANCH, so it
+      // inherits the branch's stacking facts too. Dropping them here was how a
+      // still-running resume ended up invisible to the merge queue: with no
+      // `stackParents` it was never restacked and never flagged when its
+      // blocker merged, and its stranded predecessor — still terminal, still
+      // carrying the parents — looked like a safe restack target even though
+      // this run's agent owns the worktree. `baseDiscarded` is deliberately
+      // NOT inherited: the human asking for changes is the review action that
+      // clears "a human needs to look at this".
+      ...(oldMeta.stackParents !== undefined
+        ? { stackParents: oldMeta.stackParents }
+        : {}),
+      ...(oldMeta.stackBaseCommit !== undefined
+        ? { stackBaseCommit: oldMeta.stackBaseCommit }
+        : {}),
     };
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);

@@ -102,9 +102,20 @@ function makeHarness(jj?: JjManager): Harness {
     events,
     jj,
   });
+  // Finishes with a `sessionId` because a real executor always reports one, and
+  // `sendMessage(..., { resume: true })` refuses a run without one — a resume
+  // with no session to resume into would start a brand new agent while
+  // pretending to continue the conversation.
   orchestrator.registerExecutor(
     'fake',
-    new FakeExecutor({ finish: { state: 'finished', costUsd: 0, turns: 1 } })
+    new FakeExecutor({
+      finish: {
+        state: 'finished',
+        costUsd: 0,
+        turns: 1,
+        sessionId: 'sess-fake',
+      },
+    })
   );
   return { rootDir: repo, orchestrator, store, cache, events };
 }
@@ -194,6 +205,32 @@ function makeJjStubRunner(): {
     return { ok: true, stdout: '', stderr: '' };
   };
   return { run, jjCalls };
+}
+
+// jj is not a build dependency of this repo, so the real-jj tests below skip
+// where the binary isn't installed — same convention stacked-dispatch.test.ts
+// already uses for its own real-jj coverage.
+function hasJj(): boolean {
+  return (
+    Bun.spawnSync(['jj', '--version'], { stdout: 'pipe', stderr: 'pipe' })
+      .exitCode === 0
+  );
+}
+
+// Converts the test repo in place to a colocated jj repo, so a MergeQueue
+// built with the REAL command runner takes the jj path for real instead of
+// against a stub that answers `ok` and moves nothing.
+function colocate(rootDir: string): void {
+  const result = Bun.spawnSync(['jj', 'git', 'init', '--colocate'], {
+    cwd: rootDir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `jj git init --colocate failed: ${result.stderr.toString('utf8')}`
+    );
+  }
 }
 
 function writeVerifyCommand(rootDir: string, cmd: string): void {
@@ -1062,15 +1099,19 @@ describe('MergeQueue restack of stacked dependents', () => {
       queue.snapshot().history.some((e) => e.state === 'merged')
     );
 
+    // Destinations are always plain commit ids, never ref names: jj cannot
+    // resolve git's `origin/<base>` spelling at all, so every jj destination
+    // goes through `git rev-parse` first (see MergeQueue.jjRevision). `main`
+    // has moved on by now (the blocker just squash-merged into it), so this is
+    // read after the merge.
+    const mainSha = runGitSync(harness.rootDir, ['rev-parse', 'main']).trim();
     // The entry's own rebase goes through jj too, so descendants follow it.
-    expect(jjCalls).toContainEqual([
-      'jj',
-      'rebase',
-      '-b',
-      blockerRun.branch,
-      '-d',
-      'main',
-    ]);
+    // That one runs BEFORE the merge, against the pre-merge tip.
+    expect(
+      jjCalls.filter(
+        (c) => c[1] === 'rebase' && c[2] === '-b' && c[3] === blockerRun.branch
+      )
+    ).toHaveLength(1);
     // The dependent is restacked with -s over ONLY its own commits, never -b
     // over the whole branch.
     expect(jjCalls).toContainEqual([
@@ -1079,9 +1120,16 @@ describe('MergeQueue restack of stacked dependents', () => {
       '-s',
       `roots(${dependentRun.stackBaseCommit ?? ''}..${dependentRun.branch})`,
       '-d',
-      'main',
+      mainSha,
       '--skip-emptied',
     ]);
+    // No jj destination may be a ref name — that is exactly the bug this
+    // guards: `jj rebase -d origin/main` fails outright on jj 0.43.
+    for (const call of jjCalls) {
+      const dIdx = call.indexOf('-d');
+      if (dIdx === -1) continue;
+      expect(call[dIdx + 1]).toMatch(/^[0-9a-f]{40}$/);
+    }
     // jj here is a stub that moves nothing, so an unchanged dependent tip is
     // proof the plain-git fallback did not also run.
     expect(
@@ -1589,4 +1637,500 @@ describe('MergeQueue refuses a run whose base was discarded', () => {
       .history.find((e) => e.runId === dependentRun.id)!;
     expect(entry.reason).toContain('base');
   });
+});
+
+// `requestChanges` starts a NEW run in the SAME worktree on the SAME branch as
+// the run it resumes. That is the one shape where "this run is terminal" and
+// "nothing is using this worktree" come apart, and every restack guard used to
+// be written in terms of the former.
+describe('MergeQueue and a request-changes run sharing a worktree', () => {
+  // Puts a live resumed run into the dependent's worktree: the original run
+  // stays `finished` forever while its replacement's agent works in the same
+  // directory, on the same branch.
+  async function resumeDependent(
+    harness: Harness,
+    dependentRun: RunMeta
+  ): Promise<RunMeta> {
+    // requestChanges resolves the ORIGINAL run's executor name, so replacing
+    // what 'fake' points at is what makes the resumed run stay live.
+    harness.orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const resumed = harness.orchestrator.sendMessage(
+      dependentRun.id,
+      'please tweak it',
+      { resume: true }
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.getRun(resumed.id)?.meta.state ===
+        'awaiting-approval'
+    );
+    return harness.orchestrator.list().find((r) => r.id === resumed.id)!;
+  }
+
+  it('carries the stacking facts onto the resumed run', async () => {
+    const harness = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    const resumed = await resumeDependent(harness, dependentRun);
+
+    // Without these the resumed run — the one that will actually be merged —
+    // is invisible to the merge queue: never restacked, never flagged, and
+    // stranded on a branch that gets deleted when the blocker lands.
+    expect(resumed.branch).toBe(dependentRun.branch);
+    expect(resumed.worktreePath).toBe(dependentRun.worktreePath);
+    expect(resumed.stackParents).toEqual([blockerRun.branch]);
+    expect(resumed.stackBaseCommit).toBe(dependentRun.stackBaseCommit);
+  });
+
+  it('never rewrites the shared worktree while the resumed run is live, and restacks both once it finishes', async () => {
+    const harness = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    const resumed = await resumeDependent(harness, dependentRun);
+    const tipBefore = runGitSync(harness.rootDir, [
+      'rev-parse',
+      dependentRun.branch,
+    ]).trim();
+    // Content the live agent is "working on", to prove nothing hard-reset the
+    // worktree out from under it.
+    writeFileSync(join(dependentRun.worktreePath, 'in-flight.txt'), 'wip\n');
+
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(blockerRun.id);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    // The blocker really merged, and the branch the live agent is on was left
+    // exactly alone — no rebase, no checkout, no hard reset.
+    expect(
+      runGitSync(harness.rootDir, ['rev-parse', dependentRun.branch]).trim()
+    ).toBe(tipBefore);
+    expect(
+      await Bun.file(join(dependentRun.worktreePath, 'in-flight.txt')).exists()
+    ).toBe(true);
+    // ...and neither run was flagged: nothing is wrong, it just isn't safe yet.
+    for (const id of [dependentRun.id, resumed.id]) {
+      expect(
+        harness.orchestrator.list().find((r) => r.id === id)?.baseDiscarded
+      ).toBeUndefined();
+    }
+
+    // Releasing the agent is what makes the worktree safe to touch.
+    runGitSync(dependentRun.worktreePath, ['add', 'in-flight.txt']);
+    runGitSync(dependentRun.worktreePath, ['commit', '-m', 'in flight']);
+    harness.orchestrator.approve(resumed.id, 'gate', true);
+    await waitFor(
+      () => harness.orchestrator.getRun(resumed.id)?.meta.state === 'finished'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === resumed.id)
+          ?.baseBranch === 'main'
+    );
+
+    // Both runs on that branch are repointed — leaving the sibling behind
+    // would have it name the merged blocker as a stack parent still, and the
+    // next sweep would rebase the same branch a second time.
+    for (const id of [dependentRun.id, resumed.id]) {
+      const meta = harness.orchestrator.list().find((r) => r.id === id)!;
+      expect(meta.baseBranch).toBe('main');
+      expect(meta.stackParents).toBeUndefined();
+      expect(meta.baseDiscarded).toBeUndefined();
+    }
+    // The blocker's squashed work arrived, and the agent's in-flight commit
+    // survived the restack.
+    expect(
+      await Bun.file(join(dependentRun.worktreePath, 'a.txt')).exists()
+    ).toBe(true);
+    expect(
+      await Bun.file(join(dependentRun.worktreePath, 'in-flight.txt')).exists()
+    ).toBe(true);
+  });
+});
+
+describe('MergeQueue and a dependent whose blocker was discarded mid-run', () => {
+  // Orchestrator.review's discard branch deliberately skips a dependent whose
+  // worktree still has a live run in it. Something has to come back to it, or
+  // the flag is simply lost: this is that something, and it is the same sweep
+  // that handles "your blocker merged".
+  it('flags it once its worktree goes quiet, not while its agent is working', async () => {
+    const harness = makeHarness();
+    const { runId: runA, taskId: taskA } = await dispatchAndFinish(
+      harness,
+      'Task A'
+    );
+    const blockerRun = harness.orchestrator.list().find((r) => r.id === runA)!;
+    commitFile(blockerRun.worktreePath, 'a.txt', 'A work');
+
+    harness.orchestrator.registerExecutor(
+      'gated',
+      new FakeExecutor({
+        steps: [
+          { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const taskB = harness.store.create({ title: 'Task B', blockedBy: [taskA] });
+    const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'gated');
+    await waitFor(
+      () =>
+        harness.orchestrator.getRun(metaB.id)?.meta.state ===
+        'awaiting-approval'
+    );
+
+    const queue = new MergeQueue(harness, noJjRunner);
+    harness.orchestrator.review(runA, 'discard');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(
+      harness.orchestrator.list().find((r) => r.id === metaB.id)?.baseDiscarded
+    ).toBeUndefined();
+
+    harness.orchestrator.approve(metaB.id, 'gate', true);
+    await waitFor(
+      () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === metaB.id)
+          ?.baseDiscarded === true
+    );
+    const flagged = harness.orchestrator.list().find((r) => r.id === metaB.id)!;
+    expect(flagged.baseDiscardedReason).toContain('was discarded');
+    expect(harness.store.get(taskB.meta.id)?.body ?? '').toContain(
+      'was discarded'
+    );
+    // And nothing was rewritten — the base was rejected, not moved.
+    expect(flagged.baseBranch).toBe(blockerRun.branch);
+    expect(queue.snapshot().entries).toHaveLength(0);
+  });
+});
+
+describe('MergeQueue restack persistence across a restart', () => {
+  // A restack narrows `stackParents` at the same moment it rewrites
+  // `baseBranch`. Persisting only the base means a replayed run pairs the NEW
+  // base with the ORIGINAL parent list — at which point the boot sweep
+  // re-derives an already-merged blocker, decides the run sits on an
+  // unrepairable multi-parent base, and flags a perfectly healthy run
+  // `baseDiscarded` forever (nothing ever clears it).
+  it('replays a restacked dependent as restacked, and a reboot does not flag it', async () => {
+    const harness = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(blockerRun.id);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    const replayed = replayTranscript(
+      transcriptPath(harness.rootDir, dependentRun.id)
+    );
+    expect(replayed?.meta.baseBranch).toBe('main');
+    expect(replayed?.meta.stackParents).toBeUndefined();
+
+    // The real restart: a fresh Orchestrator hydrated purely from transcripts,
+    // and a fresh MergeQueue whose constructor sweeps every inherited run.
+    const rebooted = new Orchestrator({
+      rootDir: harness.rootDir,
+      store: harness.store,
+      cache: harness.cache,
+      events: harness.events,
+    });
+    rebooted.reconcileOnBoot();
+    expect(
+      rebooted.list().find((r) => r.id === dependentRun.id)?.stackParents
+    ).toBeUndefined();
+    const bootQueue = new MergeQueue(
+      { ...harness, orchestrator: rebooted },
+      noJjRunner
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(bootQueue.snapshot().entries).toHaveLength(0);
+    const afterBoot = rebooted.list().find((r) => r.id === dependentRun.id)!;
+    expect(afterBoot.baseDiscarded).toBeUndefined();
+    expect(afterBoot.baseBranch).toBe('main');
+    expect(harness.store.get(dependentRun.taskId)?.body ?? '').not.toContain(
+      'multi-parent base'
+    );
+  });
+});
+
+describe('MergeQueue backup ref cleanup', () => {
+  // Every restack writes a backup ref. Merging or discarding deletes the
+  // branch and the worktree but used to leave the backup, pinning the
+  // pre-restack commit graph forever and growing the ref store without bound.
+  it('prunes a run backup refs when its worktree is removed', async () => {
+    const harness = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(blockerRun.id);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    const backupsAfterRestack = runGitSync(harness.rootDir, [
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/dispatch/backup',
+    ]);
+    expect(backupsAfterRestack).toContain(dependentRun.id);
+
+    harness.orchestrator.review(dependentRun.id, 'discard');
+    expect(
+      runGitSync(harness.rootDir, [
+        'for-each-ref',
+        '--format=%(refname)',
+        'refs/dispatch/backup',
+      ]).trim()
+    ).toBe('');
+  });
+});
+
+// The blind spot the stubbed jj tests have by construction: they answer every
+// jj command `ok` and move nothing, so "the dependent's tip is unchanged"
+// passes precisely because nothing happened. These run real jj against a real
+// colocated repo.
+describe('MergeQueue against real jj', () => {
+  it.skipIf(!hasJj())(
+    'restacks a dependent onto the new base, replaying only its own commits',
+    async () => {
+      const harness = makeHarness();
+      colocate(harness.rootDir);
+      const { blockerRun, dependentRun } = await makeStackedPair(harness);
+      const tipBefore = runGitSync(harness.rootDir, [
+        'rev-parse',
+        dependentRun.branch,
+      ]).trim();
+
+      const queue = new MergeQueue(harness, defaultCommandRunner);
+      queue.enqueue(blockerRun.id);
+      await waitFor(() =>
+        queue.snapshot().history.some((e) => e.state === 'merged')
+      );
+      expect(queue.snapshot().history[0].reason).toBeUndefined();
+
+      await waitFor(
+        () =>
+          harness.orchestrator.list().find((r) => r.id === dependentRun.id)
+            ?.baseBranch === 'main'
+      );
+      const updated = harness.orchestrator
+        .list()
+        .find((r) => r.id === dependentRun.id)!;
+      expect(updated.baseDiscarded).toBeUndefined();
+      expect(
+        runGitSync(harness.rootDir, ['rev-parse', dependentRun.branch]).trim()
+      ).not.toBe(tipBefore);
+
+      // The worktree must be back ON its branch — jj leaves a rewritten
+      // branch's worktree DETACHED at the old commit, with a clean
+      // `git status`, so nothing but this assertion notices.
+      expect(
+        runGitSync(dependentRun.worktreePath, [
+          'rev-parse',
+          '--abbrev-ref',
+          'HEAD',
+        ]).trim()
+      ).toBe(dependentRun.branch);
+      expect(
+        await Bun.file(join(dependentRun.worktreePath, 'a.txt')).exists()
+      ).toBe(true);
+      expect(
+        await Bun.file(join(dependentRun.worktreePath, 'b.txt')).exists()
+      ).toBe(true);
+      // The blocker's work arrives once, via the squash — never replayed on
+      // top of its own squashed copy.
+      expect(
+        runGitSync(dependentRun.worktreePath, [
+          'log',
+          '--oneline',
+          '--',
+          'a.txt',
+        ])
+          .split('\n')
+          .filter((l) => l.trim().length > 0)
+      ).toHaveLength(1);
+    }
+  );
+
+  // I2: `origin/<base>` is not a jj revset at all — measured on jj 0.43.0,
+  // `jj rebase -b feat -d origin/main` fails with "Revision `origin/main`
+  // doesn't exist". Both jj destinations in the PR flow are that exact shape,
+  // so before they were resolved to commit ids this threw every time: the
+  // entry failed permanently, and the dependent got a sticky `baseDiscarded`.
+  it.skipIf(!hasJj())(
+    'restacks onto a PR-merged base, whose jj destination is a remote-tracking ref',
+    async () => {
+      const harness = makeHarness();
+      const remote = mkdtempSync(join(tmpdir(), 'dispatch-remote-'));
+      runGitSync(remote, ['init', '--bare', '-b', 'main']);
+      runGitSync(harness.rootDir, ['remote', 'add', 'origin', remote]);
+      runGitSync(harness.rootDir, ['push', '-u', 'origin', 'main']);
+      colocate(harness.rootDir);
+
+      const { blockerRun, dependentRun } = await makeStackedPair(harness);
+      harness.orchestrator.setRunPrUrl(
+        blockerRun.id,
+        'https://github.com/example/repo/pull/1'
+      );
+
+      // Everything real except `gh`, which stands in for GitHub landing the
+      // PR: the blocker's work appears on the REMOTE main while the local main
+      // stays exactly where it was.
+      const runner: CommandRunner = async (cwd, cmd) => {
+        if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'merge') {
+          runGitSync(harness.rootDir, [
+            'push',
+            'origin',
+            `${blockerRun.branch}:main`,
+          ]);
+          runGitSync(harness.rootDir, [
+            'update-ref',
+            '-d',
+            'refs/remotes/origin/main',
+          ]);
+          return { ok: true, stdout: '', stderr: '' };
+        }
+        return defaultCommandRunner(cwd, cmd);
+      };
+      const queue = new MergeQueue(harness, runner);
+
+      queue.enqueue(blockerRun.id);
+      await waitFor(() =>
+        queue.snapshot().history.some((e) => e.state === 'merged')
+      );
+      expect(queue.snapshot().history[0].reason).toBeUndefined();
+
+      await waitFor(
+        () =>
+          harness.orchestrator.list().find((r) => r.id === dependentRun.id)
+            ?.baseBranch === 'main'
+      );
+      const updated = harness.orchestrator
+        .list()
+        .find((r) => r.id === dependentRun.id)!;
+      expect(updated.baseDiscarded).toBeUndefined();
+      // The blocker's work is present even though the LOCAL main knows nothing
+      // about it — proof the restack really targeted the remote base.
+      expect(
+        await Bun.file(join(dependentRun.worktreePath, 'a.txt')).exists()
+      ).toBe(true);
+      expect(await Bun.file(join(harness.rootDir, 'a.txt')).exists()).toBe(
+        false
+      );
+
+      rmSync(remote, { recursive: true, force: true });
+    }
+  );
+
+  // C2: `jj rebase -b` rewrites descendants and moves their bookmarks. A
+  // descendant branch checked out in a git worktree is left DETACHED at its old
+  // commit with a CLEAN `git status` (measured, jj 0.43.0) — the run's state
+  // hasn't changed, the worktree isn't dirty, and the restack paths correctly
+  // skip it as live, so absolutely nothing notices. Its agent then commits onto
+  // a detached HEAD and every one of those commits is silently dropped when the
+  // branch is later squash-merged.
+  it.skipIf(!hasJj())(
+    'rebases with plain git while a dependent is live, so jj never detaches its worktree',
+    async () => {
+      const harness = makeHarness();
+      colocate(harness.rootDir);
+      const { runId: runA, taskId: taskA } = await dispatchAndFinish(
+        harness,
+        'Task A'
+      );
+      const blockerRun = harness.orchestrator
+        .list()
+        .find((r) => r.id === runA)!;
+      commitFile(blockerRun.worktreePath, 'a.txt', 'A work');
+
+      harness.orchestrator.registerExecutor(
+        'gated',
+        new FakeExecutor({
+          steps: [
+            { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+          ],
+          finish: { state: 'finished', costUsd: 0, turns: 1 },
+        })
+      );
+      const taskB = harness.store.create({
+        title: 'Task B',
+        blockedBy: [taskA],
+      });
+      const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'gated');
+      await waitFor(
+        () =>
+          harness.orchestrator.getRun(metaB.id)?.meta.state ===
+          'awaiting-approval'
+      );
+      const dependent = harness.orchestrator
+        .list()
+        .find((r) => r.id === metaB.id)!;
+
+      // main has to have moved, or the blocker's rebase is a no-op and jj
+      // would rewrite nothing whichever path ran.
+      writeFileSync(join(harness.rootDir, 'late.txt'), 'landed on main\n');
+      runGitSync(harness.rootDir, ['add', 'late.txt']);
+      runGitSync(harness.rootDir, ['commit', '-m', 'late main commit']);
+
+      const dependentTip = runGitSync(harness.rootDir, [
+        'rev-parse',
+        dependent.branch,
+      ]).trim();
+
+      const queue = new MergeQueue(harness, defaultCommandRunner);
+      queue.enqueue(runA);
+      await waitFor(() =>
+        queue.snapshot().history.some((e) => e.state === 'merged')
+      );
+
+      // The live dependent is untouched: same tip, still ATTACHED to its own
+      // branch. Under the jj path both of those would be false.
+      expect(
+        runGitSync(harness.rootDir, ['rev-parse', dependent.branch]).trim()
+      ).toBe(dependentTip);
+      expect(
+        runGitSync(dependent.worktreePath, [
+          'rev-parse',
+          '--abbrev-ref',
+          'HEAD',
+        ]).trim()
+      ).toBe(dependent.branch);
+      // A commit the agent makes now must land on the branch, not on a
+      // detached HEAD.
+      commitFile(dependent.worktreePath, 'b.txt', 'B work');
+      expect(
+        runGitSync(harness.rootDir, ['rev-parse', dependent.branch]).trim()
+      ).toBe(runGitSync(dependent.worktreePath, ['rev-parse', 'HEAD']).trim());
+      // ...and the choice of path is on the record, not just in a comment.
+      expect(harness.store.get(taskA)?.body ?? '').toContain(
+        'rebased with plain git rather than jj'
+      );
+
+      // The dependent is then restacked normally once it goes terminal.
+      harness.orchestrator.approve(metaB.id, 'gate', true);
+      await waitFor(
+        () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
+      );
+      await waitFor(
+        () =>
+          harness.orchestrator.list().find((r) => r.id === metaB.id)
+            ?.baseBranch === 'main'
+      );
+      expect(
+        await Bun.file(join(dependent.worktreePath, 'a.txt')).exists()
+      ).toBe(true);
+      expect(
+        await Bun.file(join(dependent.worktreePath, 'b.txt')).exists()
+      ).toBe(true);
+    }
+  );
 });

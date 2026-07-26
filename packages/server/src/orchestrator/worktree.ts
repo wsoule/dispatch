@@ -130,10 +130,12 @@ export class WorktreeManager {
   // Removes a run's worktree directory and its branch. Idempotent-ish: git
   // errors from either step (e.g. the directory was already gone) are
   // swallowed since the caller's goal — no worktree, no branch — is already
-  // satisfied by the time `prune()` runs. `runId` is optional: when passed,
-  // any backup refs stashed for this run are dropped too so they don't
-  // accumulate; existing call sites that don't have a run id in hand keep
-  // compiling unchanged.
+  // satisfied by the time `prune()` runs. Passing `runId` also drops any
+  // backup refs stashed for that run: every restack writes one, and merging or
+  // discarding deletes the branch they pin, so without this they would keep
+  // the pre-restack commit graph alive forever and grow the ref store without
+  // bound. Every production caller passes it; it stays optional only so
+  // teardown helpers in tests can skip it.
   remove(path: string, branch: string, runId?: string): void {
     runGit(this.mainRepoDir, ['worktree', 'remove', '--force', path]);
     runGit(this.mainRepoDir, ['branch', '-D', branch]);
@@ -328,12 +330,16 @@ export class WorktreeManager {
   /**
    * Brings a worktree back in line with `branch` after a restack rewrote that
    * branch from the main checkout. Two different broken states have to be
-   * repaired, which is why this is two commands and not one:
+   * repaired, which is why this is two commands and not one. Which one you get
+   * depends on WHO moved the ref — both were measured against jj 0.43.0:
    *
-   * - Detached HEAD, when the rewrite left the worktree behind entirely.
-   *   `git checkout` reattaches it.
-   * - HEAD still on `branch` but the REF moved underneath the worktree. jj's
-   *   `git export` (and plain `git update-ref`) write a branch ref that is
+   * - Detached HEAD at the pre-restack commit, with a CLEAN `git status`. This
+   *   is what **jj** produces: rewriting a commit whose bookmark is checked out
+   *   in a git worktree detaches that worktree rather than moving it. `git
+   *   checkout <branch>` reattaches it and brings the content across, and the
+   *   hard reset that follows is then a no-op.
+   * - HEAD still on `branch` but the REF moved underneath the worktree. This is
+   *   what a raw **`git update-ref`** produces: git writes a branch ref that is
    *   checked out elsewhere without complaint — only `git branch -f` refuses.
    *   The worktree's HEAD symref then resolves to the new commit while its
    *   index and working tree still hold the pre-restack content. Measured: in
@@ -345,8 +351,10 @@ export class WorktreeManager {
    * The hard reset is what makes this destructive, and it is guarded twice:
    * callers check `isDirty()` first (uncommitted TRACKED changes), and the
    * untracked-collision check below covers the one case `isDirty` deliberately
-   * does not. Callers MUST also only invoke this for runs in a terminal state
-   * — a live agent's worktree is never touched.
+   * does not. Callers MUST also only invoke this for a worktree NO live run
+   * occupies — see Orchestrator.worktreeIsBusy, which is the check that
+   * actually holds that line (a run's own terminal state does not, since
+   * request-changes starts a fresh run in the same worktree).
    *
    * Note that both guards are checks-then-act: nothing locks the worktree, so
    * content written between the check and the reset is still lost. Terminal

@@ -169,11 +169,24 @@ export interface RunMeta {
   // and jj's `roots(<this>..<branch>)`. Only set for stacked runs — an
   // unblocked run has nothing above its base to preserve.
   stackBaseCommit?: string;
-  // Set when a run this one was stacked on gets discarded: the base this work
-  // was written against was rejected by a human. Nothing is rewritten or
-  // deleted — the run is flagged so the UI can surface it and the merge queue
-  // can refuse it, and the human decides what to do.
+  // Set when the base this run was stacked on can no longer be repaired
+  // automatically. Nothing is rewritten or deleted — the run is flagged so the
+  // UI can surface it and the merge queue can refuse it, and the human decides
+  // what to do.
+  //
+  // The flag is deliberately one boolean covering three distinct situations
+  // (the blocker's run was discarded; a restack was attempted and failed; the
+  // run sits on a multi-parent base no single blocker's merge can repair)
+  // because the required response is identical in all three: stop, and ask a
+  // human. Which one it actually was lives in `baseDiscardedReason` below, so
+  // no surface has to guess.
   baseDiscarded?: boolean;
+  // Why `baseDiscarded` was set, in the words the flagging site used. Separate
+  // from `error` because `error` may already hold the run's OWN failure message
+  // (which must never be clobbered — see flagRunRestackFailure), and because a
+  // fixed "base discarded" label is wrong for the two restack cases, where the
+  // base merged perfectly well.
+  baseDiscardedReason?: string;
 }
 
 // How a branch ref relates to the run registry, derived fresh on every
