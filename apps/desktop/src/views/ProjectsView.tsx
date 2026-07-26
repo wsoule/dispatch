@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, FolderGit2, OctagonAlert } from 'lucide-react';
 import { useState } from 'react';
 
+import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
 import { listProjects } from '../lib/tauri';
 import { ProjectCard } from './ProjectCard';
 import { ProjectDetail } from './ProjectDetail';
-import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 
 export function ProjectsView() {
@@ -30,27 +30,21 @@ export function ProjectsView() {
 
   if (isError) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 pt-24 text-center">
-        <OctagonAlert className="text-destructive size-5" />
-        <p className="text-muted-foreground text-[13px]">
-          Couldn&rsquo;t load projects. Is the backend running?
-        </p>
-        <Button variant="secondary" size="sm" onClick={() => void refetch()}>
-          Retry
-        </Button>
-      </div>
+      <SessionsEmptyState
+        icon={<OctagonAlert className="size-5" />}
+        message="Couldn’t load projects. Is the backend running?"
+        tone="destructive"
+        onRetry={() => void refetch()}
+      />
     );
   }
 
   if (!data || data.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 pt-24 text-center">
-        <FolderGit2 className="text-muted-foreground size-5" />
-        <p className="text-muted-foreground max-w-sm text-[13px]">
-          No projects yet — start a Claude Code session in any repo and it will
-          appear here.
-        </p>
-      </div>
+      <SessionsEmptyState
+        icon={<FolderGit2 className="size-5" />}
+        message="No projects yet — start a Claude Code session in any repo and it will appear here."
+      />
     );
   }
 

@@ -1,29 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
-import {
-  AlertCircle,
-  Asterisk,
-  Bot,
-  Diamond,
-  Download,
-  FolderOpen,
-  Gem,
-  GitCompare,
-  SquareArrowOutUpRight,
-  Triangle,
-} from 'lucide-react';
+import { GitCompare, OctagonAlert, SquareArrowOutUpRight } from 'lucide-react';
 import { useState } from 'react';
 
-import { StatTile } from '../components/ui/StatTile';
-import { agentMeta } from '../lib/agents';
-import { sessionDisplayName } from '../lib/format';
+import { agentMeta } from '../../lib/agents';
+import { sessionDisplayName } from '../../lib/format';
 import {
   exportTranscript,
   getSessionDetail,
   openInEditor,
-  revealInFinder,
-} from '../lib/tauri';
-import type { FileChanged, Session } from '../lib/types';
-import { DiffModal } from './DiffModal';
+} from '../../lib/tauri';
+import type { FileChanged } from '../../lib/types';
+import { DiffModal } from '../../views/DiffModal';
+import { StatTile } from '../ui/StatTile';
+import { AgentIcon } from './AgentIcon';
+import { ExportControl } from './ExportControl';
+import { parseTags, statusDotClass } from './sessionDisplay';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
@@ -70,57 +61,19 @@ interface SessionDetailModalProps {
   onClose: () => void;
 }
 
-/** `tags` is stored as a JSON array string (e.g. `["bugfix","refactor"]`); fall back to
- * treating the raw string as a single tag if it doesn't parse, rather than hiding it. */
-function parseTags(tags: string | null): string[] {
-  if (!tags) return [];
-  try {
-    const parsed = JSON.parse(tags);
-    if (Array.isArray(parsed)) {
-      return parsed.filter((t): t is string => typeof t === 'string');
-    }
-    return [tags];
-  } catch {
-    return [tags];
-  }
-}
-
-/** Maps an agent id to a lucide icon — the legacy `agentMeta().icon` is a unicode glyph
- * (`✳`/`◆`/`◈`/`▲`) which this view replaces with an equivalent lucide icon rather than
- * rendering raw unicode, per the redesign's "no unicode glyphs" rule. Kept local to this
- * file (and duplicated in `ReportView`) rather than added to `lib/agents.ts`, which is out
- * of scope for this pass. */
-function AgentIcon({
-  agentId,
-  className,
-}: {
-  agentId: string;
-  className?: string;
-}) {
-  switch (agentId) {
-    case 'claude':
-      return <Asterisk className={className} />;
-    case 'codex':
-      return <Diamond className={className} />;
-    case 'gemini':
-      return <Gem className={className} />;
-    case 'cursor':
-      return <Triangle className={className} />;
-    default:
-      return <Bot className={className} />;
-  }
-}
-
-function statusDotClass(status: Session['status']): string {
-  return status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50';
-}
-
 function handleOpenInEditor(path: string) {
   openInEditor(path).catch((err) => {
     console.error(`Failed to open ${path} in editor:`, err);
   });
 }
 
+/**
+ * Full session detail dialog — status/agent/model, an export-transcript action, the stat
+ * grid (duration/cost/tokens/lines), tags, summary, and the per-file change list (each file
+ * openable in the editor or as a diff via `DiffModal`). Shared between `SessionsView`,
+ * `TimelineView`, and `ProjectDetail`, all of which just pass through a `sessionId` and let
+ * this own the fetch/loading/error states.
+ */
 export function SessionDetailModal({
   sessionId,
   onClose,
@@ -156,7 +109,7 @@ export function SessionDetailModal({
         )}
         {isError && (
           <div className="flex flex-col items-center gap-2 py-6 text-center">
-            <AlertCircle className="text-destructive size-5" />
+            <OctagonAlert className="text-destructive size-5" />
             <p className="text-muted-foreground text-[13px]">
               Couldn&rsquo;t load this session.
             </p>
@@ -182,24 +135,8 @@ function SessionDetailContent({
   const tags = parseTags(session.tags);
   const groupedFiles = groupFilesChanged(files_changed);
   const [diffPath, setDiffPath] = useState<string | null>(null);
-  const [exportState, setExportState] = useState<
-    | { status: 'idle' }
-    | { status: 'saving' }
-    | { status: 'saved'; path: string }
-    | { status: 'error'; message: string }
-  >({ status: 'idle' });
   const agent = agentMeta(session.agent);
   const sessionLabel = `${agent.label} · ${session.id.slice(0, 8)}`;
-
-  async function handleExportTranscript() {
-    setExportState({ status: 'saving' });
-    try {
-      const path = await exportTranscript(session.id);
-      setExportState({ status: 'saved', path });
-    } catch (e) {
-      setExportState({ status: 'error', message: String(e) });
-    }
-  }
 
   const durationDisplay =
     session.status === 'ended' && session.duration_seconds !== null
@@ -225,34 +162,10 @@ function SessionDetailContent({
         </span>
       </div>
 
-      <div className="flex items-center gap-3">
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => void handleExportTranscript()}
-          disabled={exportState.status === 'saving'}
-        >
-          <Download className="size-3.5" />
-          {exportState.status === 'saving' ? 'Exporting…' : 'Export transcript'}
-        </Button>
-        {exportState.status === 'saved' && (
-          <span className="text-muted-foreground inline-flex items-center gap-2 text-[13px]">
-            Saved to {exportState.path}
-            <button
-              className="text-primary inline-flex items-center gap-1 text-[11px] hover:underline"
-              onClick={() => void revealInFinder(exportState.path)}
-            >
-              <FolderOpen className="size-3" />
-              Reveal in Finder
-            </button>
-          </span>
-        )}
-        {exportState.status === 'error' && (
-          <span className="text-destructive text-[13px]">
-            {exportState.message}
-          </span>
-        )}
-      </div>
+      <ExportControl
+        label="Export transcript"
+        onExport={() => exportTranscript(session.id)}
+      />
 
       <div className="grid grid-cols-4 gap-3">
         <StatTile value={durationDisplay} label="Duration" />

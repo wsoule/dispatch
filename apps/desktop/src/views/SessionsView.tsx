@@ -1,19 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, Inbox } from 'lucide-react';
+import { Inbox, OctagonAlert } from 'lucide-react';
 import { useState } from 'react';
 
+import { SessionDetailModal } from '../components/sessions/SessionDetailModal';
+import { projectNameFor } from '../components/sessions/sessionDisplay';
+import { SessionRow } from '../components/sessions/SessionRow';
+import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
 import { listProjects, listSessions } from '../lib/tauri';
-import type { ProjectSummary } from '../lib/types';
-import { SessionDetailModal } from './SessionDetailModal';
-import { SessionRow } from './SessionRow';
 import { Skeleton } from '@/ui/skeleton';
-
-function projectNameFor(
-  projects: ProjectSummary[] | undefined,
-  projectId: string
-): string {
-  return projects?.find((p) => p.id === projectId)?.name ?? projectId;
-}
 
 export function SessionsView() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
@@ -24,6 +18,7 @@ export function SessionsView() {
     data: sessions,
     isLoading,
     isError,
+    refetch,
   } = useQuery({ queryKey: ['sessions'], queryFn: listSessions });
 
   const { data: projects } = useQuery({
@@ -32,9 +27,7 @@ export function SessionsView() {
   });
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-foreground text-[15px] font-medium">Sessions</h1>
-
+    <div className="flex h-full flex-col gap-4">
       {isLoading && (
         <div className="flex flex-col gap-2">
           <Skeleton className="h-16 w-full" />
@@ -44,22 +37,19 @@ export function SessionsView() {
       )}
 
       {isError && (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-          <AlertCircle className="text-destructive size-5" />
-          <p className="text-muted-foreground text-[13px]">
-            Couldn&rsquo;t load sessions. Is the backend running?
-          </p>
-        </div>
+        <SessionsEmptyState
+          icon={<OctagonAlert className="size-5" />}
+          message="Couldn’t load sessions. Is the backend running?"
+          tone="destructive"
+          onRetry={() => void refetch()}
+        />
       )}
 
       {!isLoading && !isError && (!sessions || sessions.length === 0) && (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-          <Inbox className="text-muted-foreground size-5" />
-          <p className="text-muted-foreground max-w-sm text-[13px]">
-            No sessions yet — start a Claude Code session in any repo and it
-            will appear here.
-          </p>
-        </div>
+        <SessionsEmptyState
+          icon={<Inbox className="size-5" />}
+          message="No sessions yet — start a Claude Code session in any repo and it will appear here."
+        />
       )}
 
       {!isLoading && !isError && sessions && sessions.length > 0 && (

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { OctagonAlert } from 'lucide-react';
 
+import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
 import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { ProjectDot } from '../components/ui/ProjectDot';
 import { StatTile } from '../components/ui/StatTile';
@@ -9,7 +10,6 @@ import { sessionDisplayName } from '../lib/format';
 import { colorForProject } from '../lib/projectColor';
 import { getDashboardStats } from '../lib/tauri';
 import type { AgentUsage } from '../lib/types';
-import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 
 export function DashboardView() {
@@ -34,15 +34,12 @@ export function DashboardView() {
 
   if (isError || !data) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 pt-24 text-center">
-        <OctagonAlert className="text-destructive size-5" />
-        <p className="text-muted-foreground text-[13px]">
-          Couldn&rsquo;t load dashboard stats. Is the backend running?
-        </p>
-        <Button variant="secondary" size="sm" onClick={() => void refetch()}>
-          Retry
-        </Button>
-      </div>
+      <SessionsEmptyState
+        icon={<OctagonAlert className="size-5" />}
+        message="Couldn’t load dashboard stats. Is the backend running?"
+        tone="destructive"
+        onRetry={() => void refetch()}
+      />
     );
   }
 
@@ -53,8 +50,6 @@ export function DashboardView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <h1 className="text-foreground text-[15px] font-medium">Dashboard</h1>
-
       <div className="grid grid-cols-4 gap-3">
         <StatTile
           value={`$${data.total_cost_usd.toFixed(2)}`}
