@@ -86,10 +86,17 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   // The dag modal always graphs an epic's *full* child set, independent of the list's own
   // search filter — narrowing the filter shouldn't make edges disappear from the graph.
   const dagEpic = dagEpicId !== null ? (epicById.get(dagEpicId) ?? null) : null;
-  const dagTasks =
-    dagEpicId !== null
-      ? data.tasks.filter((t) => t.meta.parent === dagEpicId)
-      : [];
+  // Memoized so this array is referentially stable across re-renders while the modal is open —
+  // otherwise a new array every render would bust EpicDagView's own `[tasks]` memo on every
+  // parent re-render (mirrors TaskDetailDialog's `epicChildren` memo for the same shape of
+  // derivation).
+  const dagTasks = useMemo(
+    () =>
+      dagEpicId !== null
+        ? data.tasks.filter((t) => t.meta.parent === dagEpicId)
+        : [],
+    [data.tasks, dagEpicId]
+  );
 
   // Buckets every filtered task under its `parent` epic id in one pass, then orders the
   // resulting groups: known epics first (in the project's own epic order, skipping any epic
