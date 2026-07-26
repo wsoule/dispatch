@@ -624,6 +624,26 @@ async function startPlan(req: Request, ctx: ApiContext): Promise<Response> {
   return jsonResponse({ planId: record.id }, 202);
 }
 
+// POST /api/plan/:id/message — send a follow-up user message on an existing
+// plan conversation. Returns 202 with the record already flipped back to
+// `running`; the assistant's reply + refined proposal land asynchronously via
+// the same `plan.changed` broadcast startPlan uses. 404s an unknown plan, and
+// 409s a plan mid-turn or already confirmed (both raised by sendMessage).
+async function sendPlanMessage(
+  req: Request,
+  ctx: ApiContext,
+  planId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const record = ctx.planManager.sendMessage(planId, body.text);
+  return jsonResponse(record, 202);
+}
+
 async function confirmPlan(
   req: Request,
   ctx: ApiContext,
@@ -1042,6 +1062,13 @@ export async function handleApi(
       }
       if (segments.length === 2 && method === 'GET') {
         return jsonResponse(ctx.planManager.get(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'message' &&
+        method === 'POST'
+      ) {
+        return await sendPlanMessage(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&

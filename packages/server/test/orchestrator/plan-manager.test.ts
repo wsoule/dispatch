@@ -457,6 +457,138 @@ describe('PlanManager.confirm', () => {
   });
 });
 
+// A plan is a durable conversation, not a single prompt-in/proposal-out call.
+// PlanManager records the message history, threads the planner's session id
+// across turns, and keeps the *latest* working proposal as the confirm target.
+describe('PlanManager multi-turn conversation', () => {
+  const DRAFT_ONE: PlanProposal = {
+    tasks: [
+      {
+        title: 'First task',
+        description: 'The opening draft.',
+        acceptanceCriteria: [],
+        blockedByIndices: [],
+        priority: 'medium',
+      },
+    ],
+  };
+  const DRAFT_TWO: PlanProposal = {
+    tasks: [
+      {
+        title: 'First task',
+        description: 'The opening draft.',
+        acceptanceCriteria: [],
+        blockedByIndices: [],
+        priority: 'medium',
+      },
+      {
+        title: 'Second task',
+        description: 'Added on the follow-up turn.',
+        acceptanceCriteria: [],
+        blockedByIndices: [0],
+        priority: 'low',
+      },
+    ],
+  };
+
+  function conversationalManager(): PlanManager {
+    return makeManager(
+      new FakePlanner({
+        ok: true,
+        turns: [
+          { reply: 'here is a first draft', proposal: DRAFT_ONE },
+          { reply: 'added the second task', proposal: DRAFT_TWO },
+        ],
+      })
+    );
+  }
+
+  it('records the opening turn as a user prompt + assistant reply', async () => {
+    const manager = conversationalManager();
+    const started = await startAndSettle(manager, 'build a widget');
+    expect(started.state).toBe('ready');
+    expect(started.proposal).toEqual(DRAFT_ONE);
+    expect(started.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(started.messages[0].text).toBe('build a widget');
+    expect(started.messages[1].text).toBe('here is a first draft');
+  });
+
+  it('refines the working proposal on a follow-up message and grows the history', async () => {
+    const manager = conversationalManager();
+    const started = await startAndSettle(manager, 'build a widget');
+
+    manager.sendMessage(started.id, 'add a second task');
+    await waitFor(
+      () =>
+        manager.get(started.id).state === 'ready' &&
+        manager.get(started.id).proposal?.tasks.length === 2
+    );
+
+    const record = manager.get(started.id);
+    expect(record.proposal).toEqual(DRAFT_TWO);
+    expect(record.messages.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(record.messages[2].text).toBe('add a second task');
+    expect(record.messages[3].text).toBe('added the second task');
+  });
+
+  it('confirms the latest working proposal after a refinement', async () => {
+    const manager = conversationalManager();
+    const started = await startAndSettle(manager, 'build a widget');
+    manager.sendMessage(started.id, 'add a second task');
+    await waitFor(() => manager.get(started.id).proposal?.tasks.length === 2);
+
+    const record = manager.get(started.id);
+    const result = manager.confirm(record.id, record.proposal);
+    expect(result.taskIds).toHaveLength(2);
+    const [firstId, secondId] = result.taskIds;
+    expect(store.get(secondId)?.meta.blockedBy).toEqual([firstId]);
+  });
+
+  it('broadcasts plan.changed for each conversational turn', async () => {
+    const received: unknown[] = [];
+    events.add({ send: (data: string) => received.push(JSON.parse(data)) });
+    const manager = conversationalManager();
+    const started = await startAndSettle(manager, 'build a widget');
+    const afterStart = received.length;
+
+    manager.sendMessage(started.id, 'add a second task');
+    await waitFor(() => manager.get(started.id).proposal?.tasks.length === 2);
+    // The follow-up produces at least the running -> ready broadcast on top of
+    // whatever the opening turn already sent.
+    expect(received.length).toBeGreaterThan(afterStart);
+  });
+
+  it('404s a follow-up message to an unknown plan', () => {
+    const manager = conversationalManager();
+    expect(() => manager.sendMessage('plan-000000', 'hello')).toThrow(
+      OrchestratorNotFoundError
+    );
+  });
+
+  it('409s a follow-up message while a turn is still running', () => {
+    const manager = conversationalManager();
+    const started = manager.startPlan('build a widget');
+    expect(manager.get(started.id).state).toBe('running');
+    expect(() => manager.sendMessage(started.id, 'too soon')).toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  it('409s a follow-up message after the plan is confirmed', async () => {
+    const manager = conversationalManager();
+    const started = await startAndSettle(manager, 'build a widget');
+    manager.confirm(started.id, started.proposal);
+    expect(() => manager.sendMessage(started.id, 'one more thing')).toThrow(
+      OrchestratorConflictError
+    );
+  });
+});
+
 // Phase 7: PlanManager's own executor-style registry — registerPlanner/
 // registeredPlannerNames — is what lets `POST /api/plan` accept a `planner`
 // field with the same "unknown name is a 400 naming every valid option"

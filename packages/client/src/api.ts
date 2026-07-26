@@ -269,13 +269,27 @@ export interface PlanProposal {
 
 export type PlanState = 'running' | 'ready' | 'failed';
 
+// Mirrors PlanMessage in packages/server/src/orchestrator/plan.ts — one entry
+// in a plan conversation's transcript.
+export interface PlanMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  at: string;
+}
+
 // Mirrors PlanRecord in packages/server/src/orchestrator/plan.ts — the body
-// of `GET /api/plan/:id`.
+// of `GET /api/plan/:id`. A plan is a multi-turn conversation: `messages` is
+// the running transcript, `proposal` the latest working proposal, and
+// `sessionId` the planner's opaque resume handle (an internal detail clients
+// never need to read).
 export interface PlanRecord {
   id: string;
   prompt: string;
+  plannerName: string;
   state: PlanState;
+  messages: PlanMessage[];
   proposal?: PlanProposal;
+  sessionId?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -578,6 +592,10 @@ export interface ApiClient {
   // scratch and is the only place that actually writes the epic/tasks.
   startPlan(prompt: string): Promise<{ planId: string }>;
   fetchPlan(planId: string): Promise<PlanRecord>;
+  // Send a follow-up message on an existing plan conversation. Resolves (202)
+  // with the record already back in `running` — poll `fetchPlan`/watch
+  // `plan.changed` for the assistant's reply + refined proposal to land.
+  sendPlanMessage(planId: string, text: string): Promise<PlanRecord>;
   confirmPlan(planId: string, proposal: PlanProposal): Promise<ConfirmResult>;
   // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
   // server-side to the project's `orchestrator.epicConcurrency` config.
@@ -731,6 +749,11 @@ export function createApiClient(baseUrl: string): ApiClient {
         ...jsonBody({ prompt }),
       }),
     fetchPlan: (planId) => request(baseUrl, `/api/plan/${planId}`),
+    sendPlanMessage: (planId, text) =>
+      request(baseUrl, `/api/plan/${planId}/message`, {
+        method: 'POST',
+        ...jsonBody({ text }),
+      }),
     confirmPlan: (planId, proposal) =>
       request(baseUrl, `/api/plan/${planId}/confirm`, {
         method: 'POST',

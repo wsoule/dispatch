@@ -256,6 +256,108 @@ describe('POST /api/plan/:id/confirm', () => {
   });
 });
 
+describe('POST /api/plan/:id/message', () => {
+  const DRAFT_ONE: PlanProposal = {
+    tasks: [
+      {
+        title: 'Only task',
+        description: 'The opening draft.',
+        acceptanceCriteria: [],
+        blockedByIndices: [],
+        priority: 'medium',
+      },
+    ],
+  };
+  const DRAFT_TWO: PlanProposal = {
+    tasks: [
+      {
+        title: 'Only task',
+        description: 'The opening draft.',
+        acceptanceCriteria: [],
+        blockedByIndices: [],
+        priority: 'medium',
+      },
+      {
+        title: 'Added task',
+        description: 'Requested on the follow-up.',
+        acceptanceCriteria: [],
+        blockedByIndices: [0],
+        priority: 'low',
+      },
+    ],
+  };
+
+  async function startedConversationPlanId(): Promise<string> {
+    await startWithPlanner(
+      new FakePlanner({
+        ok: true,
+        turns: [
+          { reply: 'first draft', proposal: DRAFT_ONE },
+          { reply: 'added the task', proposal: DRAFT_TWO },
+        ],
+      })
+    );
+    const { planId } = await json(
+      await fetch(`${baseUrl}/api/plan`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'build a widget' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(await fetch(`${baseUrl}/api/plan/${planId}`));
+      return r.state === 'ready';
+    });
+    return planId;
+  }
+
+  it('202s a follow-up and refines the working proposal + grows the transcript', async () => {
+    const planId = await startedConversationPlanId();
+
+    const res = await fetch(`${baseUrl}/api/plan/${planId}/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'add a second task' }),
+    });
+    expect(res.status).toBe(202);
+
+    await waitFor(async () => {
+      const r = await json(await fetch(`${baseUrl}/api/plan/${planId}`));
+      return r.state === 'ready' && r.proposal?.tasks.length === 2;
+    });
+    const record = await json(await fetch(`${baseUrl}/api/plan/${planId}`));
+    expect(record.proposal).toEqual(DRAFT_TWO);
+    expect(record.messages.map((m: { role: string }) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+  });
+
+  it('400s an empty message text', async () => {
+    const planId = await startedConversationPlanId();
+    const res = await fetch(`${baseUrl}/api/plan/${planId}/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: '   ' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('404s a follow-up to an unknown plan', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const res = await fetch(`${baseUrl}/api/plan/plan-000000/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hello' }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('POST /api/epics/:id/dispatch, /stop, GET /progress', () => {
   async function createEpicWithChildren(count: number): Promise<{
     epicId: string;
