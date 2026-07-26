@@ -263,7 +263,7 @@ async function dispatchAndFinish(harness: Harness): Promise<{
   taskId: string;
 }> {
   const task = harness.store.create({ title: 'PR me' });
-  const meta = harness.orchestrator.dispatch(task.meta.id, 'fake');
+  const meta = await harness.orchestrator.dispatch(task.meta.id, 'fake');
   await waitFor(
     () => harness.orchestrator.getRun(meta.id)?.meta.state === 'finished'
   );
@@ -299,7 +299,7 @@ describe('PrManager.openPr', () => {
       })
     );
     const task = harness.store.create({ title: 'Still running' });
-    const meta = harness.orchestrator.dispatch(task.meta.id, 'stuck');
+    const meta = await harness.orchestrator.dispatch(task.meta.id, 'stuck');
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
     await expect(pr.openPr(meta.id)).rejects.toThrow(OrchestratorConflictError);
@@ -449,7 +449,7 @@ describe('PrManager polling', () => {
       })
     );
     const task = harness.store.create({ title: 'PR me with stray files' });
-    const dispatched = harness.orchestrator.dispatch(
+    const dispatched = await harness.orchestrator.dispatch(
       task.meta.id,
       'fake-committed-change'
     );

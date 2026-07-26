@@ -102,7 +102,7 @@ async function dispatchAndFinish(
   title = 'Ship it'
 ): Promise<{ runId: string; taskId: string }> {
   const task = harness.store.create({ title });
-  const meta = harness.orchestrator.dispatch(task.meta.id, 'fake');
+  const meta = await harness.orchestrator.dispatch(task.meta.id, 'fake');
   await waitFor(
     () => harness.orchestrator.getRun(meta.id)?.meta.state === 'finished'
   );
@@ -165,7 +165,7 @@ describe('MergeQueue.enqueue', () => {
       })
     );
     const task = harness.store.create({ title: 'Still running' });
-    const meta = harness.orchestrator.dispatch(task.meta.id, 'stuck');
+    const meta = await harness.orchestrator.dispatch(task.meta.id, 'stuck');
     const stub = new StubRunner();
     const queue = new MergeQueue(harness, stub.run);
     expect(() => queue.enqueue(meta.id)).toThrow(OrchestratorConflictError);
@@ -352,7 +352,7 @@ describe('MergeQueue dependency gating', () => {
       title: 'Task B',
       blockedBy: [taskA],
     });
-    const metaB = harness.orchestrator.dispatch(taskB.meta.id, 'fake');
+    const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'fake');
     await waitFor(
       () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
     );
@@ -403,7 +403,7 @@ describe('MergeQueue.enqueueStack', () => {
     harness.orchestrator.review(runA, 'merge');
 
     const taskB = harness.store.create({ title: 'B', blockedBy: [taskA] });
-    const metaB = harness.orchestrator.dispatch(taskB.meta.id, 'fake');
+    const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'fake');
     await waitFor(
       () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
     );
@@ -412,7 +412,7 @@ describe('MergeQueue.enqueueStack', () => {
       title: 'C',
       blockedBy: [taskB.meta.id],
     });
-    const metaC = harness.orchestrator.dispatch(taskC.meta.id, 'fake');
+    const metaC = await harness.orchestrator.dispatch(taskC.meta.id, 'fake');
     await waitFor(
       () => harness.orchestrator.getRun(metaC.id)?.meta.state === 'finished'
     );
@@ -512,7 +512,7 @@ describe('MergeQueue.remove', () => {
       title: 'B',
       blockedBy: [taskBlockerId],
     });
-    const metaB = harness.orchestrator.dispatch(taskB.meta.id, 'fake');
+    const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'fake');
     await waitFor(
       () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
     );
