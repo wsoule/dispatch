@@ -111,46 +111,50 @@ function createEpicWithChildren(
 }
 
 describe('EpicEngine.start', () => {
-  it('404s starting an unknown epic', () => {
+  it('404s starting an unknown epic', async () => {
     const { epics } = makeHarness();
-    expect(() => epics.start('e-000000')).toThrow(OrchestratorNotFoundError);
+    await expect(epics.start('e-000000')).rejects.toThrow(
+      OrchestratorNotFoundError
+    );
   });
 
-  it('400s starting a task id that is not an epic', () => {
+  it('400s starting a task id that is not an epic', async () => {
     const { epics, store } = makeHarness();
     const task = store.create({ title: 'Not an epic', kind: 'task' });
-    expect(() => epics.start(task.meta.id)).toThrow(OrchestratorClientError);
-  });
-
-  it('400s an invalid explicit concurrency', () => {
-    const { epics, store } = makeHarness();
-    const epic = store.create({ title: 'Epic', kind: 'epic' });
-    expect(() => epics.start(epic.meta.id, { concurrency: 0 })).toThrow(
+    await expect(epics.start(task.meta.id)).rejects.toThrow(
       OrchestratorClientError
     );
   });
 
-  it('409s starting an epic that already has an active session', () => {
+  it('400s an invalid explicit concurrency', async () => {
     const { epics, store } = makeHarness();
     const epic = store.create({ title: 'Epic', kind: 'epic' });
-    epics.start(epic.meta.id, { executor: 'fake' });
-    expect(() => epics.start(epic.meta.id, { executor: 'fake' })).toThrow(
-      OrchestratorConflictError
+    await expect(epics.start(epic.meta.id, { concurrency: 0 })).rejects.toThrow(
+      OrchestratorClientError
     );
+  });
+
+  it('409s starting an epic that already has an active session', async () => {
+    const { epics, store } = makeHarness();
+    const epic = store.create({ title: 'Epic', kind: 'epic' });
+    await epics.start(epic.meta.id, { executor: 'fake' });
+    await expect(
+      epics.start(epic.meta.id, { executor: 'fake' })
+    ).rejects.toThrow(OrchestratorConflictError);
   });
 
   // C2(a): a bogus executor must 400 before any session is ever created —
   // and, critically, must NOT leave a half-created session wedged in place
   // that would 409 a subsequent, correctly-specified retry.
-  it('400s a bogus executor without wedging the session for a later valid retry', () => {
+  it('400s a bogus executor without wedging the session for a later valid retry', async () => {
     const { epics, store } = makeHarness();
     const epic = store.create({ title: 'Epic', kind: 'epic' });
-    expect(() =>
+    await expect(
       epics.start(epic.meta.id, { executor: 'not-a-real-executor' })
-    ).toThrow(OrchestratorClientError);
+    ).rejects.toThrow(OrchestratorClientError);
 
     // No wedge: retrying with a real executor must succeed, not 409.
-    const session = epics.start(epic.meta.id, { executor: 'fake' });
+    const session = await epics.start(epic.meta.id, { executor: 'fake' });
     expect(session.active).toBe(true);
   });
 
@@ -161,18 +165,18 @@ describe('EpicEngine.start', () => {
   // dispatch()-path failure (git worktree creation) by stripping all
   // permissions off `.git` — a plain Error `WorktreeManager.add()` throws,
   // uncaught by fillQueue's own (narrower) OrchestratorConflictError catch.
-  it('rolls back the session when the initial fillQueue throws, so a retry can succeed', () => {
+  it('rolls back the session when the initial fillQueue throws, so a retry can succeed', async () => {
     const { epics, store } = makeHarness();
     const { epicId } = createEpicWithChildren(store, 1);
     const gitDir = join(repo, '.git');
     Bun.spawnSync(['chmod', '-R', '000', gitDir]);
     try {
-      expect(() => epics.start(epicId, { executor: 'fake' })).toThrow();
+      await expect(epics.start(epicId, { executor: 'fake' })).rejects.toThrow();
     } finally {
       Bun.spawnSync(['chmod', '-R', '755', gitDir]);
     }
 
-    const session = epics.start(epicId, { executor: 'fake' });
+    const session = await epics.start(epicId, { executor: 'fake' });
     expect(session.active).toBe(true);
   });
 
@@ -181,7 +185,7 @@ describe('EpicEngine.start', () => {
     const { epicId, childIds } = createEpicWithChildren(harness.store, 5);
     const childSet = new Set(childIds);
 
-    harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
+    await harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
 
     await waitFor(
       () =>
@@ -239,7 +243,7 @@ describe('EpicEngine.start', () => {
     );
     const [blockerId, blockedId] = childIds;
 
-    harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
+    await harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
 
     // Only the blocker is ready at first — the blocked sibling must not be
     // dispatched yet.
@@ -301,7 +305,7 @@ describe('EpicEngine.start', () => {
     const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
     const [aId] = childIds;
 
-    harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
+    await harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
     await waitFor(() => harness.orchestrator.list().length === 2);
     const runA = harness.orchestrator.list().find((r) => r.taskId === aId)!;
     harness.orchestrator.approve(runA.id, 'go', true);
@@ -349,7 +353,7 @@ describe('EpicEngine.start', () => {
     );
     harness.cache.rebuild(harness.store);
 
-    harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
+    await harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
     await sleep(60);
     expect(harness.orchestrator.list()).toHaveLength(0);
     expect(harness.store.get(childIds[0])?.meta.status).toBe('todo');
@@ -357,7 +361,10 @@ describe('EpicEngine.start', () => {
     // Drive the outside blocker (unrelated to any epic) to a terminal run
     // state -> its task becomes `in-review`. That alone must cascade-dispatch
     // the now-unblocked child.
-    const outsideRun = harness.orchestrator.dispatch(outside.meta.id, 'fake');
+    const outsideRun = await harness.orchestrator.dispatch(
+      outside.meta.id,
+      'fake'
+    );
     await waitFor(() =>
       harness.orchestrator
         .list()
@@ -394,7 +401,7 @@ describe('EpicEngine.start', () => {
     });
     h.cache.rebuild(h.store);
 
-    h.epics.start(epic.meta.id, { concurrency: 2, executor: 'fake' });
+    await h.epics.start(epic.meta.id, { concurrency: 2, executor: 'fake' });
 
     // Only the blocker is dispatchable at first.
     await waitFor(() => h.orchestrator.list().length === 1);
@@ -428,7 +435,7 @@ describe('EpicEngine.start', () => {
     });
     h.cache.rebuild(h.store);
 
-    h.epics.start(epic.meta.id, { concurrency: 2, executor: 'fake' });
+    await h.epics.start(epic.meta.id, { concurrency: 2, executor: 'fake' });
     await waitFor(() => h.orchestrator.list().length === 1);
     await sleep(50); // give a wrong implementation time to dispatch the dependent
 
@@ -443,7 +450,7 @@ describe('EpicEngine.start', () => {
     const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
     const [firstId, secondId] = childIds;
 
-    harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
+    await harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
     await waitFor(() => harness.orchestrator.list().length === 1);
 
     const stopped = harness.epics.stop(epicId);
@@ -473,7 +480,7 @@ describe('EpicEngine.start', () => {
     const harness = makeHarness();
     const { epicId, childIds } = createEpicWithChildren(harness.store, 1);
 
-    harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
+    await harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
     await waitFor(() => harness.orchestrator.list().length === 1);
     const run = harness.orchestrator.list()[0];
     harness.orchestrator.approve(run.id, 'go', true);
@@ -498,7 +505,7 @@ describe('EpicEngine.start', () => {
     const harness = makeHarness();
     const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
 
-    harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
+    await harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
     await waitFor(() => harness.orchestrator.list().length === 1);
 
     const progress = harness.epics.progress(epicId);

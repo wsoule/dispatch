@@ -68,6 +68,9 @@ export interface EpicEngineContext {
  */
 export class EpicEngine {
   private readonly sessions = new Map<string, EpicSessionRecord>();
+  // One serialization chain per epic — see scheduleFill() for why fillQueue
+  // can no longer simply be called from the run-lifecycle hooks.
+  private readonly fillChains = new Map<string, Promise<void>>();
 
   constructor(private readonly ctx: EpicEngineContext) {
     // Two distinct triggers can make an epic's next dispatch decision stale:
@@ -88,10 +91,13 @@ export class EpicEngine {
   // `orchestrator.epicConcurrency` config; `executor` defaults to 'claude'
   // but tests override it (see the Global Constraints note on honoring a
   // body override) to dispatch through FakeExecutor instead.
-  start(
+  // Async only because the initial fillQueue is awaited: start() must still
+  // be able to tear its own session down when that very first dispatch
+  // throws (see the catch below), which a fire-and-forget `void` could not.
+  async start(
     epicId: string,
     opts: { concurrency?: number; executor?: string } = {}
-  ): EpicSession {
+  ): Promise<EpicSession> {
     const epic = this.requireEpic(epicId);
     const existing = this.sessions.get(epicId);
     if (existing !== undefined && existing.active) {
@@ -128,7 +134,7 @@ export class EpicEngine {
         epicId,
         `epic dispatch started (concurrency ${concurrency})`
       );
-      this.fillQueue(epicId);
+      await this.fillQueue(epicId);
     } catch (err) {
       // C2(a): never leave a wedged session behind a failed initial
       // dispatch — a retry (even with identical args) must start clean,
@@ -218,9 +224,38 @@ export class EpicEngine {
       if (this.isEpicComplete(epicId)) {
         this.completeEpic(epicId);
       } else {
-        this.fillQueue(epicId);
+        this.scheduleFill(epicId);
       }
     }
+  }
+
+  /**
+   * Queues a fillQueue pass for `epicId` behind any pass already in flight
+   * for that same epic, and swallows (logging) whatever it throws.
+   *
+   * Both halves matter now that fillQueue is async — Orchestrator.dispatch
+   * awaits base resolution before it registers anything in the run registry:
+   *
+   * - Serialization: the run-lifecycle hooks that trigger a fill are
+   *   synchronous and two runs can finish in the same tick. Two overlapping
+   *   passes would each read the same live-run count *before* either had
+   *   registered its dispatch, and between them hand out more slots than the
+   *   session's concurrency cap allows. Chaining keeps that count honest.
+   * - Catching: a hook has no caller left to receive a rejection, so an
+   *   unhandled one would take the daemon down. This mirrors
+   *   invokeHooksSafely's rule that a subscriber's failure is logged, never
+   *   propagated.
+   */
+  private scheduleFill(epicId: string): void {
+    const previous = this.fillChains.get(epicId) ?? Promise.resolve();
+    const next = previous
+      .then(() => this.fillQueue(epicId))
+      .catch((err: unknown) => {
+        console.error(
+          `dispatchd: epic dispatch fill failed for ${epicId}: ${(err as Error).message}`
+        );
+      });
+    this.fillChains.set(epicId, next);
   }
 
   // Dispatches ready children up to the session's concurrency cap. Reads a
@@ -237,7 +272,7 @@ export class EpicEngine {
   // would silently ignore a blocker that genuinely exists elsewhere in the
   // project (a different epic, or no epic at all) simply because it isn't a
   // sibling.
-  private fillQueue(epicId: string): void {
+  private async fillQueue(epicId: string): Promise<void> {
     const session = this.sessions.get(epicId);
     if (session === undefined || !session.active) return;
 
@@ -257,7 +292,7 @@ export class EpicEngine {
     for (const task of ready) {
       if (slots <= 0) break;
       try {
-        this.ctx.orchestrator.dispatch(task.meta.id, session.executor);
+        await this.ctx.orchestrator.dispatch(task.meta.id, session.executor);
         slots--;
       } catch (err) {
         // A task that already picked up a live run between the readiness

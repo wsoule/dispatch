@@ -98,7 +98,7 @@ describe('Orchestrator.dispatch full lifecycle', () => {
     );
     const task = store.create({ title: 'Add feature' });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     // A no-approval FakeExecutor script runs synchronously to completion
     // inside `start()` (no `await` point until an approval gate), so by the
     // time `dispatch()` returns the run may already be 'finished' — only a
@@ -144,7 +144,7 @@ describe('Orchestrator approval round-trip', () => {
       })
     );
     const task = store.create({ title: 'Needs approval' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
@@ -169,7 +169,7 @@ describe('Orchestrator.cancel', () => {
       })
     );
     const task = store.create({ title: 'Cancel me' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
@@ -207,12 +207,12 @@ function controllableExecutor(sent: string[]): Executor {
 }
 
 describe('Orchestrator.sendMessage (mid-run message)', () => {
-  it('records a from:user message entry and forwards the raw text to the executor', () => {
+  it('records a from:user message entry and forwards the raw text to the executor', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const sent: string[] = [];
     orchestrator.registerExecutor('fake', controllableExecutor(sent));
     const task = store.create({ title: 'Talk to me' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
     orchestrator.sendMessage(meta.id, 'hello agent');
 
@@ -230,15 +230,15 @@ describe('Orchestrator.sendMessage (mid-run message)', () => {
 });
 
 describe('Orchestrator.inject sender identity', () => {
-  it("resolves fromRunId to the sender run's task title + id label", () => {
+  it("resolves fromRunId to the sender run's task title + id label", async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const sent: string[] = [];
     orchestrator.registerExecutor('fake', controllableExecutor(sent));
 
     const senderTask = store.create({ title: 'Sender task' });
-    const senderMeta = orchestrator.dispatch(senderTask.meta.id, 'fake');
+    const senderMeta = await orchestrator.dispatch(senderTask.meta.id, 'fake');
     const targetTask = store.create({ title: 'Target task' });
-    const targetMeta = orchestrator.dispatch(targetTask.meta.id, 'fake');
+    const targetMeta = await orchestrator.dispatch(targetTask.meta.id, 'fake');
 
     orchestrator.inject(targetMeta.id, 'need a hand', {
       runId: senderMeta.id,
@@ -261,12 +261,12 @@ describe('Orchestrator.inject sender identity', () => {
     ]);
   });
 
-  it('falls back to the generic "another agent" label when fromRunId is omitted', () => {
+  it('falls back to the generic "another agent" label when fromRunId is omitted', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const sent: string[] = [];
     orchestrator.registerExecutor('fake', controllableExecutor(sent));
     const task = store.create({ title: 'Target task' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
     orchestrator.inject(meta.id, 'hello');
 
@@ -281,12 +281,12 @@ describe('Orchestrator.inject sender identity', () => {
     expect(sent).toEqual(['[message from another agent] hello']);
   });
 
-  it('falls back to the generic label when fromRunId does not match a known run', () => {
+  it('falls back to the generic label when fromRunId does not match a known run', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const sent: string[] = [];
     orchestrator.registerExecutor('fake', controllableExecutor(sent));
     const task = store.create({ title: 'Target task' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
     orchestrator.inject(meta.id, 'hello', { runId: 'r-nonexistent' });
 
@@ -297,12 +297,12 @@ describe('Orchestrator.inject sender identity', () => {
 });
 
 describe('Orchestrator.messageUser', () => {
-  it("records a from:agent entry on the run's own transcript labeled with its own task", () => {
+  it("records a from:agent entry on the run's own transcript labeled with its own task", async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const sent: string[] = [];
     orchestrator.registerExecutor('fake', controllableExecutor(sent));
     const task = store.create({ title: 'Flag something' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
     orchestrator.messageUser(meta.id, 'need clarification on X');
 
@@ -329,7 +329,7 @@ describe('Orchestrator.messageUser', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Already finished' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -348,7 +348,7 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
       new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
     );
     const task = store.create({ title: 'Resume me' });
-    const first = orchestrator.dispatch(task.meta.id, 'fake');
+    const first = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(first.id)?.meta.state === 'finished'
     );
@@ -392,7 +392,7 @@ describe('Orchestrator.review merge', () => {
       })
     );
     const task = store.create({ title: 'Merge me' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -413,7 +413,7 @@ describe('Orchestrator.review merge', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Dirty main' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -437,7 +437,7 @@ describe('Orchestrator.review merge', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Staged index' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -479,7 +479,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
       })
     );
     const task = store.create({ title: 'Wrong branch checked out' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -530,7 +530,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     runGitSync(repo, ['add', '-A']);
     runGitSync(repo, ['commit', '-m', 'add shared.txt']);
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -577,7 +577,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
       })
     );
     const task = store.create({ title: 'Unrelated config edit' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -646,8 +646,8 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     );
     const taskA = store.create({ title: 'First run to merge' });
     const taskB = store.create({ title: 'Second run to merge' });
-    const metaA = orchestrator.dispatch(taskA.meta.id, 'fake');
-    const metaB = orchestrator.dispatch(taskB.meta.id, 'fake2');
+    const metaA = await orchestrator.dispatch(taskA.meta.id, 'fake');
+    const metaB = await orchestrator.dispatch(taskB.meta.id, 'fake2');
     await waitFor(
       () =>
         orchestrator.getRun(metaA.id)?.meta.state === 'finished' &&
@@ -683,7 +683,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     // Commit the task file (and its own dispatched-Activity edit) so it's
     // tracked in git, matching real project usage where `.dispatch/tasks`
     // is committed alongside code.
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     runGitSync(repo, ['add', '-A']);
     runGitSync(repo, ['commit', '-m', 'track dispatched task']);
     await waitFor(
@@ -714,7 +714,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'No-op run' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -734,7 +734,7 @@ describe('Orchestrator.review discard', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Discard me' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -760,7 +760,7 @@ describe('Orchestrator review-state guard', () => {
       })
     );
     const task = store.create({ title: 'Not terminal yet' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
     );
@@ -791,7 +791,7 @@ describe('Orchestrator review-state guard', () => {
       })
     );
     const task = store.create({ title: 'Double merge' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -813,7 +813,7 @@ describe('Orchestrator review-state guard', () => {
       new FakeExecutor({ finish: { state: 'finished', sessionId: 's-1' } })
     );
     const task = store.create({ title: 'Resume after review' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -832,7 +832,7 @@ describe('Orchestrator review-state guard', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Records review marker' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -861,7 +861,7 @@ describe('Orchestrator PR guards', () => {
       new FakeExecutor({ finish: { state: 'finished', sessionId: 's-1' } })
     );
     const task = store.create({ title: 'Has an open PR' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -917,7 +917,7 @@ describe('Orchestrator hook isolation', () => {
       throw new Error('boom terminal hook');
     });
     const task = store.create({ title: 'Poisoned terminal hook' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -938,7 +938,7 @@ describe('Orchestrator hook isolation', () => {
       throw new Error('boom reviewed hook');
     });
     const task = store.create({ title: 'Poisoned reviewed hook' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -963,7 +963,7 @@ describe('Orchestrator.diff on a reviewed run', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Diff after review' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1002,7 +1002,7 @@ describe('Orchestrator.diff survives worktree removal via a snapshot', () => {
       })
     );
     const task = store.create({ title: 'Diff survives merge' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1038,7 +1038,7 @@ describe('Orchestrator.diff survives worktree removal via a snapshot', () => {
       })
     );
     const task = store.create({ title: 'Diff survives discard' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1061,7 +1061,7 @@ describe('Orchestrator.diff survives worktree removal via a snapshot', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Worktree vanished without review' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1085,7 +1085,7 @@ describe('Orchestrator.diff survives worktree removal via a snapshot', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Corrupt snapshot' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1119,7 +1119,7 @@ describe('Orchestrator.diff', () => {
       })
     );
     const task = store.create({ title: 'Diff me' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1131,7 +1131,7 @@ describe('Orchestrator.diff', () => {
 });
 
 describe('Orchestrator concurrency', () => {
-  it('rejects a second dispatch for the same task with a conflict error', () => {
+  it('rejects a second dispatch for the same task with a conflict error', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
       'fake',
@@ -1141,28 +1141,28 @@ describe('Orchestrator concurrency', () => {
       })
     );
     const task = store.create({ title: 'Only one live run' });
-    orchestrator.dispatch(task.meta.id, 'fake');
+    await orchestrator.dispatch(task.meta.id, 'fake');
 
-    expect(() => orchestrator.dispatch(task.meta.id, 'fake')).toThrow(
+    await expect(orchestrator.dispatch(task.meta.id, 'fake')).rejects.toThrow(
       OrchestratorConflictError
     );
   });
 
-  it('404s dispatching an unknown task', () => {
+  it('404s dispatching an unknown task', async () => {
     const { orchestrator } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
       'fake',
       new FakeExecutor({ finish: { state: 'finished' } })
     );
-    expect(() => orchestrator.dispatch('t-000000', 'fake')).toThrow(
+    await expect(orchestrator.dispatch('t-000000', 'fake')).rejects.toThrow(
       OrchestratorNotFoundError
     );
   });
 
-  it('rejects dispatch to an unregistered executor', () => {
+  it('rejects dispatch to an unregistered executor', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const task = store.create({ title: 'No such executor' });
-    expect(() => orchestrator.dispatch(task.meta.id, 'claude')).toThrow(
+    await expect(orchestrator.dispatch(task.meta.id, 'claude')).rejects.toThrow(
       OrchestratorClientError
     );
   });
@@ -1200,8 +1200,8 @@ describe('Orchestrator concurrency', () => {
     const taskA = store.create({ title: 'Task A' });
     const taskB = store.create({ title: 'Task B' });
 
-    const metaA = orchestrator.dispatch(taskA.meta.id, 'fake');
-    const metaB = orchestrator.dispatch(taskB.meta.id, 'fake2');
+    const metaA = await orchestrator.dispatch(taskA.meta.id, 'fake');
+    const metaB = await orchestrator.dispatch(taskB.meta.id, 'fake2');
 
     await waitFor(
       () =>
@@ -1227,7 +1227,7 @@ describe('Orchestrator.reconcileOnBoot', () => {
       })
     );
     const task = store.create({ title: 'Interrupted by crash' });
-    const meta = first.dispatch(task.meta.id, 'fake');
+    const meta = await first.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => first.getRun(meta.id)?.meta.state === 'awaiting-approval'
     );
@@ -1348,7 +1348,7 @@ describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
     );
     const task = store.create({ title: 'Executor forgets to commit' });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1380,7 +1380,7 @@ describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
     );
     const task = store.create({ title: 'Executor commits its own work' });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1407,7 +1407,7 @@ describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
       })
     );
     const task = store.create({ title: 'Worktree deleted mid-run' });
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
     );
@@ -1436,7 +1436,7 @@ describe('Orchestrator request-changes executor fallback', () => {
       new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
     );
     const task = store.create({ title: 'Resume under a different daemon' });
-    const meta = first.dispatch(task.meta.id, 'fake');
+    const meta = await first.dispatch(task.meta.id, 'fake');
     await waitFor(() => first.getRun(meta.id)?.meta.state === 'finished');
 
     // A fresh Orchestrator sharing the same on-disk project — simulating a
@@ -1475,7 +1475,7 @@ describe('Orchestrator request-changes executor fallback', () => {
     const task = store.create({
       title: 'Resume onto a single-executor daemon',
     });
-    const meta = first.dispatch(task.meta.id, 'fake');
+    const meta = await first.dispatch(task.meta.id, 'fake');
     await waitFor(() => first.getRun(meta.id)?.meta.state === 'finished');
 
     const cache2 = new TaskCache();
@@ -1505,7 +1505,7 @@ describe('Orchestrator request-changes executor fallback', () => {
       new FakeExecutor({ finish: { state: 'finished' } })
     );
     const task = store.create({ title: 'Resume with no viable fallback' });
-    const meta = first.dispatch(task.meta.id, 'fake');
+    const meta = await first.dispatch(task.meta.id, 'fake');
     await waitFor(() => first.getRun(meta.id)?.meta.state === 'finished');
 
     const cache2 = new TaskCache();
@@ -1554,14 +1554,14 @@ describe('Orchestrator eager fail on executor start failure (no zombie)', () => 
     }
   }
 
-  it('a synchronous start() failure marks the run failed immediately instead of stranding it running', () => {
+  it('a synchronous start() failure marks the run failed immediately instead of stranding it running', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor('fake', new ThrowingStartExecutor());
     const task = store.create({ title: 'Failed executor start' });
 
     // dispatch() no longer lets the start() error escape — it returns a run
     // that is already terminally failed.
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     expect(meta.state).toBe('failed');
     expect(meta.error).toMatch(/failed to start/);
     expect(meta.error).toContain('boom: executor process failed to start');
@@ -1576,12 +1576,12 @@ describe('Orchestrator eager fail on executor start failure (no zombie)', () => 
     );
   });
 
-  it('a follow-up message to a run whose start failed reports it terminal, not "running"', () => {
+  it('a follow-up message to a run whose start failed reports it terminal, not "running"', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor('fake', new ThrowingStartExecutor());
     const task = store.create({ title: 'Follow-up after failed start' });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     expect(meta.state).toBe('failed');
 
     // Because the run is already terminal, a follow-up hits the normal
@@ -1596,7 +1596,7 @@ describe('Orchestrator eager fail on executor start failure (no zombie)', () => 
     );
   });
 
-  it('an approval request fired right before start() throws still ends failed, not stuck awaiting-approval', () => {
+  it('an approval request fired right before start() throws still ends failed, not stuck awaiting-approval', async () => {
     // A synchronous approval request fired from inside start() itself, right
     // before start() throws: the run momentarily transitions to
     // 'awaiting-approval', but the start() failure must still drive it to a
@@ -1616,7 +1616,7 @@ describe('Orchestrator eager fail on executor start failure (no zombie)', () => 
     orchestrator.registerExecutor('fake', new SyncApprovalThenCrashExecutor());
     const task = store.create({ title: 'Approval then failed start' });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     expect(meta.state).toBe('failed');
     expect(meta.error).toContain('crashed right after requesting approval');
 
@@ -1657,7 +1657,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     orchestrator.registerExecutor('fake', executor);
     const task = store.create({ title: 'Respect config caps' });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1673,7 +1673,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     orchestrator.registerExecutor('fake', executor);
     const task = store.create({ title: 'Default caps' });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
@@ -1697,7 +1697,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
       parent: epic.meta.id,
     });
 
-    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );

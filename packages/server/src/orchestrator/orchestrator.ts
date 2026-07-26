@@ -18,6 +18,7 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { JjManager } from './jj.js';
 import {
   diffSnapshotPath,
   runsDir,
@@ -74,6 +75,10 @@ const DEFAULT_EXECUTOR_NAME = 'claude';
 export class Orchestrator {
   private readonly registry = new RunRegistry();
   private readonly worktrees: WorktreeManager;
+  // Only ever used on the multi-blocker dispatch path (see resolveBase):
+  // constructing it is inert — it shells out to jj lazily, per call — so an
+  // unblocked dispatch never touches jj at all.
+  private readonly jj: JjManager;
   private readonly executors = new Map<string, Executor>();
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
@@ -93,6 +98,7 @@ export class Orchestrator {
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
+    this.jj = new JjManager(ctx.rootDir);
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -154,11 +160,11 @@ export class Orchestrator {
   // Starts a new run for `taskId` on `executorName`. Refuses (409) if the
   // task already has a live run, and (400) if the executor name isn't
   // registered — O1 only ever registers 'fake'; 'claude' arrives in O2.
-  dispatch(
+  async dispatch(
     taskId: string,
     executorName: string,
     opts: { model?: string } = {}
-  ): RunMeta {
+  ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
@@ -174,7 +180,7 @@ export class Orchestrator {
       throw new OrchestratorClientError(`unknown executor: ${executorName}`);
     }
 
-    const baseBranch = this.worktrees.defaultBaseBranch();
+    const { base: baseBranch, stackParents } = await this.resolveBase(task);
     const now = new Date().toISOString();
     const runId = generateRunId(now);
     // Suffixed with the run's own hex tag (stripping its `r-` prefix) so two
@@ -200,6 +206,15 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      // Spread in only for a genuinely stacked run, so an unblocked run's
+      // RunMeta keeps exactly the shape (and transcript header) it had
+      // before stacking existed.
+      ...(stackParents.length > 0
+        ? {
+            stackParents,
+            stackBaseCommit: this.worktrees.resolveCommit(baseBranch),
+          }
+        : {}),
     };
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
@@ -233,6 +248,91 @@ export class Orchestrator {
     );
 
     return this.registry.get(runId)!;
+  }
+
+  /**
+   * The ref a task's worktree should be branched from. An unblocked task uses
+   * the project's default base, exactly as before. A task whose blockers are
+   * still unmerged is branched off *their* branches instead, so the agent can
+   * see the work it depends on — that is the whole point of letting a
+   * dependent start while its blocker is only `in-review`.
+   *
+   * Only `in-review` blockers matter here: a done/cancelled blocker's work is
+   * already in the base branch, and an `in-progress` blocker means the task
+   * isn't dispatchable at all (see core's dispatchableTasks).
+   *
+   * Two or more unmerged blockers need a base containing all of their work,
+   * which only jj can express (`jj new -r A -r B`). When jj isn't available
+   * the task falls back to the default base rather than silently picking one
+   * blocker and dropping the other's work.
+   */
+  private async resolveBase(
+    task: TaskDoc
+  ): Promise<{ base: string; stackParents: string[] }> {
+    const defaultBase = this.worktrees.defaultBaseBranch();
+    const parents: string[] = [];
+    for (const blockerId of task.meta.blockedBy) {
+      const blocker = this.ctx.store.get(blockerId);
+      if (blocker === null || blocker.meta.status !== 'in-review') continue;
+      const branch = this.branchForTask(blockerId);
+      if (branch !== null) parents.push(branch);
+    }
+
+    if (parents.length === 0) return { base: defaultBase, stackParents: [] };
+    if (parents.length === 1) {
+      return { base: parents[0], stackParents: parents };
+    }
+
+    // Only reached with 2+ unmerged blockers — the one case that genuinely
+    // needs jj, so converting the user's repo never happens for a dispatch
+    // that could have been served by plain git.
+    const wasColocated = await this.jj.isColocated();
+    if (!(await this.jj.ensureColocated())) {
+      // No jj: no way to build a multi-parent base. Fall back rather than
+      // dropping a blocker's work on the floor.
+      this.appendTaskActivity(
+        task.meta.id,
+        `stacked dispatch: ${parents.length} unmerged blockers need a multi-parent base, but jj is unavailable — using ${defaultBase}`
+      );
+      return { base: defaultBase, stackParents: [] };
+    }
+    if (!wasColocated) {
+      // Converting a user's repo is never silent — §4.2 of the spec.
+      this.appendTaskActivity(
+        task.meta.id,
+        'stacked dispatch: converted this repository to a colocated jj repo (reversible with `jj git colocation disable`)'
+      );
+    }
+    const bookmark = `dispatch/stack-base-${task.meta.id}`;
+    const base = await this.jj.mergeBase(parents, bookmark);
+    return { base, stackParents: parents };
+  }
+
+  // Appends one Activity line to a task, mirroring EpicEngine's
+  // appendEpicActivity (epic.ts) so stack decisions leave the same durable
+  // trail every other orchestrator lifecycle event does.
+  private appendTaskActivity(taskId: string, text: string): void {
+    const now = new Date().toISOString();
+    this.ctx.store.update(taskId, { appendActivity: `${now} ${text}` }, now);
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+  }
+
+  // The branch of a task's most recent terminal, unreviewed run — the branch
+  // that actually holds its unmerged work. Returns null when the task has no
+  // such run (never dispatched, or already merged/discarded), in which case
+  // there is nothing to stack on.
+  private branchForTask(taskId: string): string | null {
+    const candidates = this.registry
+      .list()
+      .filter(
+        (r) =>
+          r.taskId === taskId &&
+          TERMINAL_RUN_STATES.has(r.state) &&
+          r.reviewedAt === undefined
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return candidates[0]?.branch ?? null;
   }
 
   // Answers a pending approval request. Only valid while the run is
