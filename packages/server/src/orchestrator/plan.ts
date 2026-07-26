@@ -75,6 +75,12 @@ export interface PlanRecord {
   // — the one-way marker double-confirm's 409 check reads (mirrors RunMeta's
   // own reviewedAt marker in orchestrator/types.ts).
   confirmedAt?: string;
+  // Set when this plan was started from a note (POST /api/notes/:id/enrich)
+  // rather than a free-form prompt: the note whose one-liner the planner was
+  // asked to expand into a real task. PlanManager itself never reads it —
+  // it exists so api.ts can link that note to the task confirm() creates,
+  // the same linkage the plain promote path writes.
+  sourceNoteId?: string;
 }
 
 export interface ConfirmResult {
@@ -150,8 +156,14 @@ export class PlanManager {
   // to 'claude') and returns its id immediately — the actual Planner call
   // happens fire-and-forget (mirrors Orchestrator.dispatch()'s
   // executor.start() pattern), with the opening turn landing via runTurn()'s
-  // state update + `plan.changed` broadcast.
-  startPlan(prompt: string, plannerName = 'claude'): PlanRecord {
+  // state update + `plan.changed` broadcast. `sourceNoteId` is carried
+  // through onto the record untouched for note-derived plans (see the field's
+  // comment) — it changes nothing about how the plan itself runs.
+  startPlan(
+    prompt: string,
+    plannerName = 'claude',
+    sourceNoteId?: string
+  ): PlanRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
       throw new OrchestratorClientError(`unknown planner: ${plannerName}`);
@@ -165,6 +177,7 @@ export class PlanManager {
       messages: [{ role: 'user', text: prompt, at: now }],
       createdAt: now,
       updatedAt: now,
+      sourceNoteId,
     };
     this.plans.set(record.id, record);
     void this.runTurn(record.id, () => planner.start(prompt));

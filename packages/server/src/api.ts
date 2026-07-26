@@ -11,7 +11,7 @@ import type { CreateInput, DispatchConfig, UpdatePatch } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
-import type { NoteKind } from './notes.js';
+import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import type { EpicEngine } from './orchestrator/epic.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -685,7 +685,16 @@ async function confirmPlan(
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { proposal?: unknown };
+  // Read the record before confirming: a plan started from a note (POST
+  // /api/notes/:id/enrich) carries that note's id, and once confirm has
+  // written the task the note has to be linked and closed out exactly the way
+  // the plain promote path does — otherwise the hub would keep offering to
+  // promote a note whose task already exists.
+  const sourceNoteId = ctx.planManager.get(planId).sourceNoteId;
   const result = ctx.planManager.confirm(planId, body.proposal);
+  if (sourceNoteId !== undefined && result.taskIds.length > 0) {
+    linkNoteToTask(ctx, sourceNoteId, result.taskIds[0]);
+  }
   return jsonResponse(result);
 }
 
@@ -831,6 +840,21 @@ function deleteNote(ctx: ApiContext, id: string): Response {
   }
 }
 
+// Marks a note as promoted: points it at the task that now carries its work
+// and ticks it done, so the hub shows "→ t-xxxxxx" instead of offering to
+// promote it again. Shared by the plain promote path and the AI-drafted one
+// (confirmPlan), which reach this point at different times — hence the
+// tolerance for the note having been deleted while its plan was in flight:
+// the task stands on its own, there is just nothing left to link back to.
+function linkNoteToTask(ctx: ApiContext, noteId: string, taskId: string): void {
+  try {
+    ctx.noteStore.update(noteId, { linkedTaskId: taskId, done: true });
+  } catch {
+    return;
+  }
+  ctx.events.broadcast({ type: 'note.changed' });
+}
+
 // POST /api/notes/:id/promote — turn a note into a real task (its title +
 // body become the task's title + description), and link the note to the new
 // task so the hub can show "promoted → t-xxxxxx" instead of offering it again.
@@ -847,11 +871,61 @@ function promoteNote(ctx: ApiContext, id: string): Response {
     // else (a follow-up/note/todo) becomes a task too, all in the backlog.
     kind: 'task',
   });
-  ctx.noteStore.update(id, { linkedTaskId: task.meta.id, done: true });
+  // Cache first, link second: the note's `note.changed` broadcast is what
+  // makes the hub render "→ t-xxxxxx", and that id has to already resolve in
+  // the task cache by the time a client follows it.
   ctx.cache.rebuild(ctx.store);
   ctx.events.broadcast({ type: 'task.changed' });
-  ctx.events.broadcast({ type: 'note.changed' });
+  linkNoteToTask(ctx, id, task.meta.id);
   return jsonResponse(task, 201);
+}
+
+// The planning prompt behind "draft with AI": what a note is missing is
+// context — which files it touches, what the code does today, what "done"
+// means — so this asks the planner to go read the repo and spend that
+// research on ONE task that keeps the note's original intent, rather than the
+// epic-plus-breakdown a free-form plan prompt invites. The surrounding
+// planner wrapper (planners/claude.ts) supplies the read-only framing and the
+// output schema; this only supplies the request.
+function buildNoteEnrichPrompt(note: Note): string {
+  const kindLabel = note.kind === 'followup' ? 'follow-up' : note.kind;
+  return [
+    `Someone captured this one-line ${kindLabel} in a task tracker and wants ` +
+      'it turned into a properly specified task before an agent picks it up.',
+    `Title: ${note.title}`,
+    note.body.trim() === '' ? null : `Notes: ${note.body.trim()}`,
+    'Read enough of this repository to ground it: which files and functions ' +
+      'are actually involved, what the code does today, and what would have ' +
+      'to change. Then propose exactly ONE task, and no epic. Keep the ' +
+      "original intent — sharpen the title, don't replace the request — and " +
+      'write a description that gives an implementing agent the context this ' +
+      'one-liner is missing, naming concrete paths where you found them. ' +
+      'Acceptance criteria should be checkable statements about the finished ' +
+      'work. Do not invent scope the note never asked for; if the repo ' +
+      'contradicts the note, say so in the description rather than silently ' +
+      'redesigning the work.',
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n\n');
+}
+
+// POST /api/notes/:id/enrich — start an AI draft of the task this note should
+// become. Returns the plan's id immediately (202, same async contract as
+// POST /api/plan): the client polls GET /api/plan/:id for the proposal and
+// confirms it through POST /api/plan/:id/confirm, which is still the only
+// place a task actually gets written.
+function enrichNote(ctx: ApiContext, id: string): Response {
+  const note = ctx.noteStore.get(id);
+  if (note === null) return errorResponse(404, `note not found: ${id}`);
+  if (note.linkedTaskId !== null) {
+    return errorResponse(409, `note already promoted: ${note.linkedTaskId}`);
+  }
+  const record = ctx.planManager.startPlan(
+    buildNoteEnrichPrompt(note),
+    'claude',
+    note.id
+  );
+  return jsonResponse({ planId: record.id }, 202);
 }
 
 export async function handleApi(
@@ -1093,6 +1167,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return promoteNote(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'enrich' &&
+        method === 'POST'
+      ) {
+        return enrichNote(ctx, segments[1]);
       }
     }
 
