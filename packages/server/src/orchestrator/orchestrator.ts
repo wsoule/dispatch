@@ -861,6 +861,74 @@ export class Orchestrator {
     this.worktrees.remove(meta.worktreePath, meta.branch);
   }
 
+  // ---------------------------------------------------------------------
+  // Restack seam (MergeQueue.restackDependents). These five live here rather
+  // than on the queue because the Orchestrator owns both the run registry and
+  // the WorktreeManager — the queue must not reach into either directly.
+  // ---------------------------------------------------------------------
+
+  // Backs up a run's branch tip before something rewrites it, returning the
+  // saved sha (or null when there's nothing to back up). This is the undo
+  // path for a restack, never its rebase boundary — see
+  // MergeQueue.restackDependents.
+  backupRunBranch(runId: string): string | null {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return null;
+    return this.worktrees.writeBackupRef(meta.branch, runId);
+  }
+
+  // Replays a run's OWN commits (everything after `oldTip`, the commit it was
+  // branched from) onto `newBase`, leaving behind the blocker commits the new
+  // base already contains in squashed form.
+  rebaseRunOnto(runId: string, newBase: string, oldTip: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    this.worktrees.rebaseOnto(meta.worktreePath, newBase, oldTip, meta.branch);
+  }
+
+  // Reattaches a run's worktree to its branch after a restack moved that
+  // branch from the main checkout. Refuses while the run is still live — a
+  // working copy an agent is using is never rewritten underneath it.
+  resyncRunWorktree(runId: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || !TERMINAL_RUN_STATES.has(meta.state)) return;
+    this.worktrees.resyncToBranch(meta.worktreePath, meta.branch);
+  }
+
+  // Moves a run off a base branch that has now been merged away (and deleted
+  // with its worktree), and drops that branch from its recorded stack
+  // parents. Without this the next merge attempt is refused outright by
+  // mergeRun's "merge target is X, expected Y" guard.
+  repointRunBase(runId: string, newBase: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    const remaining = (meta.stackParents ?? []).filter(
+      (branch) => branch !== meta.baseBranch
+    );
+    this.registry.updateMeta(runId, {
+      baseBranch: newBase,
+      stackParents: remaining.length > 0 ? remaining : undefined,
+      updatedAt: new Date().toISOString(),
+    });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // Records that a dependent could not be restacked after its base merged.
+  // Reuses the `baseDiscarded` flag's "a human needs to look at this" meaning
+  // rather than inventing a second flag for the same UI treatment: either way
+  // the base this work was written against is no longer something the queue
+  // can merge it onto by itself.
+  flagRunRestackFailure(runId: string, reason: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    this.registry.updateMeta(runId, {
+      baseDiscarded: true,
+      error: reason,
+      updatedAt: new Date().toISOString(),
+    });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
   // Boot-time hygiene: any transcript whose last recorded state isn't
   // terminal represents a run dispatchd crashed mid-flight on — mark it
   // `failed` (both on disk and in the freshly-hydrated registry) so clients
