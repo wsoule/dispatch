@@ -8,3 +8,9 @@ autoCommit: false
 # anything real. Mirrors what CI gates on (build -> lint -> test); takes ~2 min
 # per entry.
 verifyCommand: "bun install --frozen-lockfile && bun run build && bun run lint && bun run test"
+
+# maxTurns is a runaway backstop, not a work budget — 100 killed a healthy
+# run mid-task at turn 101. Config reloads per dispatch, so this takes
+# effect on the next run without a daemon restart.
+orchestrator:
+  maxTurns: 500

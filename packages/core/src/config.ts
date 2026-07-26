@@ -57,7 +57,12 @@ export interface DispatchConfig {
 }
 
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
-  maxTurns: 100,
+  // 500, not 100: real tasks blew through 100 turns mid-implementation (a
+  // run died at turn 101 with $9+ of finished-but-uncommitted work), and
+  // cost is the meaningful guard anyway — `maxBudgetUsd` exists for that.
+  // The cap is a runaway backstop, so it should only trip on runs that are
+  // genuinely stuck in a loop, not on large-but-healthy ones.
+  maxTurns: 500,
   permissionMode: 'auto',
   epicConcurrency: 3,
 };
