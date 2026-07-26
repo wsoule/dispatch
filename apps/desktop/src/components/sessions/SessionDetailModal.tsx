@@ -75,9 +75,9 @@ function handleOpenInEditor(path: string) {
 /**
  * Full session detail dialog — status/agent/model, an export-transcript action, the stat
  * grid (duration/cost/tokens/lines), tags, summary, and the per-file change list (each file
- * openable in the editor or as a diff via `DiffModal`). Shared between `SessionsView`,
- * `TimelineView`, and `ProjectDetail`, all of which just pass through a `sessionId` and let
- * this own the fetch/loading/error states.
+ * openable in the editor or as a diff via `DiffModal`). Used by the Sessions hub
+ * (`SessionsHubView`), which just passes through a `sessionId` and lets this own the
+ * fetch/loading/error states.
  */
 export function SessionDetailModal({
   sessionId,

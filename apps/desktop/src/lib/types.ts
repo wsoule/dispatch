@@ -58,21 +58,6 @@ export interface DailyActivity {
   count: number;
 }
 
-export interface CommitInfo {
-  hash: string;
-  message: string;
-  author: string;
-  timestamp: number;
-}
-
-export interface GitInsights {
-  /** Oldest first, one entry per day, 365 days long (today inclusive) — commit counts, not
-   * session/usage activity. */
-  commit_heatmap: DailyActivity[];
-  /** Newest first. Empty if the project isn't a git repo (or `git` isn't on `PATH`). */
-  recent_commits: CommitInfo[];
-}
-
 export interface AgentUsage {
   agent: string;
   session_count: number;
@@ -156,41 +141,4 @@ export interface ReportData {
    * `totals.total_cost_usd`, see `report_by_tag` on the backend. */
   by_tag: ReportTagRow[];
   by_agent: AgentUsage[];
-}
-
-export interface Board {
-  id: string;
-  project_id: string;
-  created_at: number;
-}
-
-export type ColumnRole = 'todo' | 'in_progress' | 'review' | 'done';
-
-export interface BoardColumn {
-  id: string;
-  board_id: string;
-  name: string;
-  /** Only the four seeded columns carry a role; user-added columns are always null. */
-  role: ColumnRole | null;
-  position: number;
-  created_at: number;
-}
-
-export interface Card {
-  id: string;
-  board_id: string;
-  column_id: string;
-  /** Set once a session is linked; auto-sync only ever moves cards that have this. */
-  session_id: string | null;
-  title: string;
-  description: string | null;
-  position: number;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface BoardData {
-  board: Board;
-  columns: BoardColumn[];
-  cards: Card[];
 }

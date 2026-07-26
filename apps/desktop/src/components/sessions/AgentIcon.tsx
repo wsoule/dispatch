@@ -6,9 +6,8 @@ interface AgentIconProps {
 }
 
 /** Maps an agent id to a lucide icon — `agentMeta().icon` is a unicode glyph
- * (`✳`/`◆`/`◈`/`▲`), which the Sessions hub's detail/report surfaces render as an equivalent
- * lucide icon instead of raw unicode. Shared by `SessionDetailModal` and `ReportView` so the
- * two can never drift on which icon maps to which agent id. */
+ * (`✳`/`◆`/`◈`/`▲`), which `SessionDetailModal` renders as an equivalent lucide icon instead
+ * of raw unicode. */
 export function AgentIcon({ agentId, className }: AgentIconProps) {
   switch (agentId) {
     case 'claude':
