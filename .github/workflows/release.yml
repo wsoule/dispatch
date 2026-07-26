@@ -60,16 +60,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `updater_platform` (macOS only) is the tauri updater platform key for
+        # this runner's arch — used both to rename the arch-agnostic
+        # `Dispatch.app.tar.gz` per-arch (the two macOS builds otherwise produce
+        # identically-named tarballs that would clobber each other on the shared
+        # release) and as the platform key the publish-updater-manifest job emits
+        # in latest.json. Each `bundles` glob now also captures the signed
+        # updater artifacts (`*.app.tar.gz`+`.sig` on macOS, `*.AppImage.sig` on
+        # Linux) produced by `createUpdaterArtifacts` so they reach the release.
         include:
           - os: macos-latest
-            bundles: src-tauri/target/release/bundle/dmg/*.dmg
+            updater_platform: darwin-aarch64
+            bundles: >-
+              src-tauri/target/release/bundle/dmg/*.dmg
+              src-tauri/target/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           - os: macos-15-intel
-            bundles: src-tauri/target/release/bundle/dmg/*.dmg
+            updater_platform: darwin-x86_64
+            bundles: >-
+              src-tauri/target/release/bundle/dmg/*.dmg
+              src-tauri/target/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           - os: ubuntu-latest
             bundles: >-
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/rpm/*.rpm
               src-tauri/target/release/bundle/appimage/*.AppImage
+              src-tauri/target/release/bundle/appimage/*.AppImage.sig
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
@@ -155,11 +172,36 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Signs the updater artifacts `createUpdaterArtifacts` produces
+          # (`*.app.tar.gz`/`*.AppImage` + `.sig`) with the minisign key whose
+          # public half is pinned in tauri.conf.json's `plugins.updater.pubkey`.
+          # The key was generated with an empty passphrase, so the PASSWORD var
+          # is set to an explicit empty string — the tauri CLI still expects the
+          # variable to exist rather than prompting for it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: |
           for var in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             if [ -z "$(printenv "$var")" ]; then unset "$var"; fi
           done
           bun ws desktop tauri build
+
+      # Both macOS arch builds emit an identically-named `Dispatch.app.tar.gz`
+      # (+`.sig`) — the updater tarball carries no arch in its name the way the
+      # DMG does. Rename them per-arch before upload so the aarch64 and x86_64
+      # artifacts don't clobber each other on the shared release, and so
+      # publish-updater-manifest can reference predictable per-platform names.
+      - name: Rename macOS updater artifacts per-arch
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop/src-tauri/target/release/bundle/macos
+        run: |
+          set -euo pipefail
+          for f in *.app.tar.gz.sig; do
+            mv "$f" "Dispatch_${{ matrix.updater_platform }}.app.tar.gz.sig"
+          done
+          for f in *.app.tar.gz; do
+            mv "$f" "Dispatch_${{ matrix.updater_platform }}.app.tar.gz"
+          done
 
       - name: Upload bundles to the release
         working-directory: apps/desktop
@@ -170,6 +212,80 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --clobber \
             ${{ matrix.bundles }}
+
+  # Assembles the tauri updater manifest (`latest.json`) from the signed
+  # updater artifacts the build jobs uploaded and attaches it to the release.
+  # The app's updater endpoint points at `releases/latest/download/latest.json`
+  # (see tauri.conf.json), so uploading this to each tag's release makes the
+  # newest release auto-serve its own manifest. Push-only: on workflow_dispatch
+  # the build job is skipped and the sigs this needs never get produced. Shell
+  # + preinstalled `gh`/`jq` only — no external actions, no checkout needed.
+  publish-updater-manifest:
+    name: Publish updater manifest (latest.json)
+    needs: build
+    if: github.event_name == 'push' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assemble and upload latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          VERSION="${TAG#v}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          # Pull down just the signature files (and the AppImage, whose exact
+          # name carries the arch we can't predict up front). The macOS tarball
+          # sigs are the per-arch-renamed `Dispatch_<platform>.app.tar.gz.sig`.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.app.tar.gz.sig' \
+            --pattern '*.AppImage' \
+            --pattern '*.AppImage.sig'
+
+          # Build the platforms map incrementally so a platform whose artifacts
+          # are missing (e.g. a skipped/failed arch) is simply omitted rather
+          # than failing the whole manifest.
+          PLATFORMS='{}'
+          add_platform() {
+            local key="$1" sig_file="$2" url="$3"
+            if [ -f "$sig_file" ]; then
+              PLATFORMS=$(jq \
+                --arg k "$key" \
+                --arg sig "$(cat "$sig_file")" \
+                --arg url "$url" \
+                '. + {($k): {signature: $sig, url: $url}}' <<<"$PLATFORMS")
+            else
+              echo "note: $sig_file not found — omitting $key from latest.json"
+            fi
+          }
+
+          add_platform darwin-aarch64 \
+            "Dispatch_darwin-aarch64.app.tar.gz.sig" \
+            "${BASE}/Dispatch_darwin-aarch64.app.tar.gz"
+          add_platform darwin-x86_64 \
+            "Dispatch_darwin-x86_64.app.tar.gz.sig" \
+            "${BASE}/Dispatch_darwin-x86_64.app.tar.gz"
+
+          # Linux AppImage name embeds version+arch, so discover it rather than
+          # hardcode it; its signature sits beside it as `<name>.sig`.
+          APPIMAGE="$(ls ./*.AppImage 2>/dev/null | head -n1 | sed 's|^\./||' || true)"
+          if [ -n "$APPIMAGE" ]; then
+            add_platform linux-x86_64 "${APPIMAGE}.sig" "${BASE}/${APPIMAGE}"
+          else
+            echo "note: no AppImage found — omitting linux-x86_64 from latest.json"
+          fi
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson platforms "$PLATFORMS" \
+            '{version: $version, pub_date: $pub_date, platforms: $platforms}' \
+            > latest.json
+
+          echo "Assembled latest.json:"
+          cat latest.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber latest.json
 
   # Publishes the release to the Homebrew tap: downloads the two DMGs the
   # build jobs uploaded, computes their sha256s, and pushes a version+hash
@@ -210,19 +326,61 @@ jobs:
           echo "ARM_SHA=$ARM_SHA" >> "$GITHUB_ENV"
           echo "X64_SHA=$X64_SHA" >> "$GITHUB_ENV"
 
-      - name: Push cask bump to the tap
+      # Regenerates the WHOLE cask from the template below rather than sed-ing
+      # individual lines: the cask now carries a static `binary` stanza (exposing
+      # the bundled `dispatch` CLI on PATH) that a line-oriented bump can't
+      # introduce, so the workflow owns the canonical cask shape. Only `version`
+      # and the two shas vary per release; the `#{version}`/`#{arch}` tokens are
+      # Ruby interpolation (no `$`, so the bash heredoc leaves them untouched)
+      # while `${VERSION}`/`${ARM_SHA}`/`${X64_SHA}` are substituted from the
+      # env computed above. The Resources path in the `binary` stanza is where
+      # tauri places `bundle.resources` entries inside the .app
+      # (Contents/Resources/resources/<name>). zap/livecheck are preserved
+      # verbatim from the previous cask.
+      - name: Regenerate the cask and push to the tap
         env:
           TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
           printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap_deploy_key
           chmod 600 ~/.ssh/tap_deploy_key
           export GIT_SSH_COMMAND='ssh -i ~/.ssh/tap_deploy_key -o StrictHostKeyChecking=accept-new'
           git clone --depth 1 git@github.com:wsoule/homebrew-tap.git tap
           cd tap
-          sed -i -E "s|^  version \"[^\"]*\"|  version \"${VERSION}\"|" Casks/dispatch.rb
-          sed -i -E "s|^  sha256 arm:   \"[0-9a-f]*\",|  sha256 arm:   \"${ARM_SHA}\",|" Casks/dispatch.rb
-          sed -i -E "s|^         intel: \"[0-9a-f]*\"|         intel: \"${X64_SHA}\"|" Casks/dispatch.rb
+          cat > Casks/dispatch.rb <<EOF
+          cask "dispatch" do
+            arch arm: "aarch64", intel: "x64"
+
+            version "${VERSION}"
+            sha256 arm:   "${ARM_SHA}",
+                   intel: "${X64_SHA}"
+
+            url "https://github.com/wsoule/dispatch/releases/download/v#{version}/Dispatch_#{version}_#{arch}.dmg",
+                verified: "github.com/wsoule/dispatch/"
+            name "Dispatch"
+            desc "Git-native task tracking and AI-agent orchestration desktop app"
+            homepage "https://github.com/wsoule/dispatch"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+            end
+
+            depends_on :macos
+
+            app "Dispatch.app"
+            binary "#{appdir}/Dispatch.app/Contents/Resources/resources/dispatch-cli", target: "dispatch"
+
+            zap trash: [
+              "~/Library/Application Support/dev.dispatch.app",
+              "~/Library/Caches/dev.dispatch.app",
+              "~/Library/Preferences/dev.dispatch.app.plist",
+              "~/Library/Saved Application State/dev.dispatch.app.savedState",
+              "~/Library/WebKit/dev.dispatch.app",
+            ]
+          end
+          EOF
           if git diff --quiet; then
             echo "cask already at ${VERSION} — nothing to push"
             exit 0
