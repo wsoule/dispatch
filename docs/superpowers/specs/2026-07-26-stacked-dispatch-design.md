@@ -76,7 +76,8 @@ a working copy an agent is actively editing.
 | 2+ unmerged blockers        | jj merge-base commit                           | `jj new -r A -r B` gives a real multi-parent base                                |
 | Blocker's run discarded     | Flag the dependent, change nothing             | Never destroy agent work automatically                                           |
 | jj missing or failing       | Plain-git fallback (§4.6)                      | Stacking works on every repo; jj is an optimization, not a hard requirement      |
-| Before any restack          | Backup ref of the pre-restack tip (§4.6)       | Agent work stays recoverable; doubles as the git fallback's `<old-tip>` argument |
+| Before any restack          | Backup ref of the pre-restack tip (§4.6)       | Agent work stays recoverable — the undo path, not the rebase boundary            |
+| Rebase boundary             | `RunMeta.stackBaseCommit`, set at dispatch     | The one fact both restack paths need: where the dependent's own commits begin    |
 
 ## 4. Components
 
@@ -106,14 +107,15 @@ blocker becomes dispatch-satisfying, against a fresh cache.
 injectable `CommandRunner` seam `pr.ts` and `mergeQueue.ts` use so it is
 testable with a fake runner.
 
-| Method                         | Command                                                                                      |
-| ------------------------------ | -------------------------------------------------------------------------------------------- |
-| `isAvailable()`                | `jj --version`                                                                               |
-| `isColocated()`                | `jj git colocation status`                                                                   |
-| `ensureColocated()`            | `jj git init --colocate`, or `jj git colocation enable` on an existing non-colocated jj repo |
-| `importGit()` / `exportGit()`  | `jj git import` / `jj git export`                                                            |
-| `restack(branch, onto)`        | `jj rebase -b <branch> -d <onto>` then export                                                |
-| `mergeBase(parents, bookmark)` | `jj new -r A -r B …` then `jj bookmark create`                                               |
+| Method                            | Command                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| `isAvailable()`                   | `jj --version`                                                                               |
+| `isColocated()`                   | `jj git colocation status`                                                                   |
+| `ensureColocated()`               | `jj git init --colocate`, or `jj git colocation enable` on an existing non-colocated jj repo |
+| `importGit()` / `exportGit()`     | `jj git import` / `jj git export`                                                            |
+| `restack(branch, onto)`           | `jj rebase -b <branch> -d <onto>` then export                                                |
+| `restackOnto(branch, base, onto)` | `jj rebase -s roots(<base>..<branch>) -d <onto> --skip-emptied` — the post-merge form        |
+| `mergeBase(parents, bookmark)`    | `jj new -r A -r B …` then `jj bookmark create`                                               |
 
 `ensureColocated()` runs lazily on the **first stacked dispatch only** — never
 on an unblocked dispatch — is idempotent, and appends a task Activity line
