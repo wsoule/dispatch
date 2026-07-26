@@ -195,9 +195,17 @@ automatic:
 git rebase --onto <new-base> <old-tip> <dependent-branch>
 ```
 
-`<old-tip>` is exactly the backup ref written above, which is why these two
-safety nets compose: the backup is not merely a recovery artifact, it is the
-input the git restack needs to know where the dependent's own commits begin.
+`<old-tip>` is the commit the dependent was branched from — recorded as
+`RunMeta.stackBaseCommit` at dispatch time, when it is known exactly. It is
+**not** the backup ref: that holds the dependent's own tip, and using it here
+would make the replay range empty. The jj path needs the same fact, expressed as
+a revset:
+`jj rebase -s 'roots(<stackBaseCommit>..<branch>)' -d <newBase> --skip-emptied`.
+
+Verified by spike 4 (`.agents/ignore/spikes/jj-spike4.sh`): rebasing the whole
+branch (`jj rebase -b`) after the blocker squash-merges replays the blocker's
+commits on top of a base that already contains them — "Rebased 2 commits" where
+only one is the dependent's own. The `-s` form rebases exactly one.
 
 The 2+ blocker case has no git equivalent for `jj new -r A -r B`, so under the
 git path a task with two or more unmerged blockers waits (today's behavior)

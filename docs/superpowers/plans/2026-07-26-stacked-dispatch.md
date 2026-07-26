@@ -404,6 +404,7 @@ right moment."
   - `isColocated(): Promise<boolean>`
   - `ensureColocated(): Promise<boolean>`
   - `restack(branch: string, onto: string): Promise<void>`
+  - `restackOnto(branch: string, stackBaseCommit: string, onto: string): Promise<void>`
   - `mergeBase(parents: string[], bookmark: string): Promise<string>`
   - `exportGit(): Promise<void>`
 
@@ -491,6 +492,19 @@ describe('JjManager', () => {
     });
     expect(await new JjManager('/repo', f.run).ensureColocated()).toBe(false);
     expect(f.calls).toHaveLength(1);
+  });
+
+  it('restackOnto moves only the dependent commits and skips emptied ones', async () => {
+    const f = fakeRunner({});
+    await new JjManager('/repo', f.run).restackOnto(
+      'dispatch/t-b',
+      'abc1234',
+      'main'
+    );
+    expect(f.calls.map((c) => c.join(' '))).toEqual([
+      'jj rebase -s roots(abc1234..dispatch/t-b) -d main --skip-emptied',
+      'jj git export',
+    ]);
   });
 
   it('restack rebases the branch and exports refs back to git', async () => {
@@ -649,6 +663,38 @@ export class JjManager {
     ]);
     if (!rebase.ok) {
       throw new Error(`jj rebase failed: ${commandErrorText(rebase)}`);
+    }
+    await this.exportGit();
+  }
+
+  /**
+   * Moves ONLY the commits a dependent added on top of `stackBaseCommit` onto
+   * `onto`, dropping any that `onto` already contains.
+   *
+   * This is the post-merge case and it needs `-s`, not `-b`. Once a blocker
+   * has been squash-merged, `restack()` above would replay the blocker's own
+   * commits on top of a base that already holds that work in squashed form —
+   * measured: "Rebased 2 commits" where only one belongs to the dependent
+   * (`.agents/ignore/spikes/jj-spike4.sh`). `roots(base..branch)` names the
+   * first commit the dependent actually authored, and `--skip-emptied` drops
+   * anything whose content already landed.
+   */
+  async restackOnto(
+    branch: string,
+    stackBaseCommit: string,
+    onto: string
+  ): Promise<void> {
+    const rebase = await this.run(this.rootDir, [
+      'jj',
+      'rebase',
+      '-s',
+      `roots(${stackBaseCommit}..${branch})`,
+      '-d',
+      onto,
+      '--skip-emptied',
+    ]);
+    if (!rebase.ok) {
+      throw new Error(`jj rebase -s failed: ${commandErrorText(rebase)}`);
     }
     await this.exportGit();
   }
@@ -1136,6 +1182,13 @@ In `packages/server/src/orchestrator/types.ts`, inside `RunMeta` (after
   // The merge queue reads this to know which dependents to restack after a
   // blocker lands.
   stackParents?: string[];
+  // The exact commit this run's worktree was branched from, resolved at
+  // dispatch time. This is what says where the run's OWN commits begin, which
+  // is the one fact both restack paths need once the base branch has been
+  // rewritten out from under it: `git rebase --onto <newBase> <this> <branch>`
+  // and jj's `roots(<this>..<branch>)`. Only set for stacked runs — an
+  // unblocked run has nothing above its base to preserve.
+  stackBaseCommit?: string;
   // Set when a run this one was stacked on gets discarded: the base this work
   // was written against was rejected by a human. Nothing is rewritten or
   // deleted — the run is flagged so the UI can surface it and the merge queue
@@ -1262,7 +1315,28 @@ non-empty so unblocked runs keep an identical shape:
 
 ```typescript
       model: opts.model,
-      ...(stackParents.length > 0 ? { stackParents } : {}),
+      ...(stackParents.length > 0
+        ? {
+            stackParents,
+            stackBaseCommit: this.worktrees.resolveCommit(baseBranch),
+          }
+        : {}),
+```
+
+`resolveCommit` is a small addition to `WorktreeManager` (add it in Task 4
+alongside the other new methods):
+
+```typescript
+  // The commit a ref currently points at, in the main checkout. Used to pin
+  // down what a stacked run was branched from at the moment it was created —
+  // branch refs move, commit shas don't.
+  resolveCommit(ref: string): string {
+    const result = runGit(this.mainRepoDir, ['rev-parse', '--verify', ref]);
+    if (!result.ok) {
+      throw new Error(`unable to resolve ${ref}: ${result.stderr.trim()}`);
+    }
+    return result.stdout.trim();
+  }
 ```
 
 Change the signature to:
@@ -1359,9 +1433,9 @@ silently dropping a blocker's work."
 
 **Interfaces:**
 
-- Consumes: `JjManager.ensureColocated/restack` (Task 3);
+- Consumes: `JjManager.isColocated/restack/restackOnto` (Task 3);
   `WorktreeManager.writeBackupRef/resyncToBranch/rebaseOnto` (Task 4);
-  `RunMeta.stackParents` (Task 5)
+  `RunMeta.stackBaseCommit` (Task 5); `RunMeta.stackParents` (Task 5)
 - Produces: `MergeQueue.restackDependents(merged: RunMeta): Promise<void>`
   (private)
 
@@ -1524,17 +1598,20 @@ Add the restack method:
    * After `mergedBranch` lands, brings every run stacked on it back onto
    * `newBase`. Two paths, same outcome:
    *
-   * - jj (preferred): rewriting the blocker's commits already restacked every
-   *   descendant and moved their bookmarks, so there is nothing to rebase —
-   *   only the worktrees need reattaching, since jj leaves them detached.
-   * - plain git: replays each dependent's own commits (`oldTip..branch`) onto
-   *   the new base explicitly. A bare `git rebase newBase` would try to replay
-   *   the blocker's commits too and conflict against their squashed copies.
+   * Both paths replay ONLY the commits the dependent itself added — the range
+   * above `stackBaseCommit`, the commit it was branched from. Neither may
+   * replay the whole branch: by this point the blocker has been squash-merged,
+   * so its commits are already in the new base in squashed form, and replaying
+   * them duplicates the work (measured: `jj rebase -b` reports "Rebased 2
+   * commits" where only one is the dependent's — see
+   * `.agents/ignore/spikes/jj-spike4.sh`).
+   *
+   * - jj: `jj rebase -s roots(base..branch) -d <newBase> --skip-emptied`
+   * - plain git: `git rebase --onto <newBase> <stackBaseCommit> <branch>`
    *
    * Only runs in a terminal state are touched — a live agent's worktree is
-   * never rewritten underneath it. Every dependent's tip is backed up first,
-   * which is both the undo path and (for the git path) the `oldTip` that says
-   * where the dependent's own commits begin.
+   * never rewritten underneath it. Every dependent's tip is backed up first as
+   * the undo path.
    */
   private async restackDependents(merged: RunMeta): Promise<void> {
     const mergedBranch = merged.branch;
@@ -1561,15 +1638,24 @@ Add the restack method:
       now
     );
     for (const dependent of dependents) {
-      const oldTip = this.ctx.orchestrator.backupRunBranch(dependent.id);
+      // Backup first — this is the undo path if the restack goes wrong. It is
+      // NOT the rebase boundary: that is stackBaseCommit, recorded at dispatch.
+      this.ctx.orchestrator.backupRunBranch(dependent.id);
+      const stackBase = dependent.stackBaseCommit;
+      if (stackBase === undefined) {
+        // Nothing records where this run's own commits begin, so neither path
+        // can safely replay them. Flag rather than guess.
+        this.ctx.orchestrator.flagRunRestackFailure(
+          dependent.id,
+          'cannot restack: no stackBaseCommit recorded for this run'
+        );
+        continue;
+      }
       try {
         if (viaJj) {
-          // jj already restacked descendants when the blocker was rewritten;
-          // this is a no-op safety net for a dependent that somehow didn't
-          // follow (e.g. its branch was created outside jj's view).
-          await this.jj.restack(dependent.branch, newBase);
-        } else if (oldTip !== null) {
-          this.ctx.orchestrator.rebaseRunOnto(dependent.id, newBase, oldTip);
+          await this.jj.restackOnto(dependent.branch, stackBase, newBase);
+        } else {
+          this.ctx.orchestrator.rebaseRunOnto(dependent.id, newBase, stackBase);
         }
         this.ctx.orchestrator.resyncRunWorktree(dependent.id);
         this.ctx.orchestrator.repointRunBase(dependent.id, newBase);
