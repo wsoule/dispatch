@@ -12,6 +12,7 @@ import {
 } from '../../lib/tauri';
 import type { FileChanged } from '../../lib/types';
 import { DiffModal } from '../../views/DiffModal';
+import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { StatTile } from '../ui/StatTile';
 import { AgentIcon } from './AgentIcon';
 import { ExportControl } from './ExportControl';
@@ -101,31 +102,35 @@ export function SessionDetailModal({
       }}
     >
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="text-[15px] font-medium">{title}</DialogTitle>
-        </DialogHeader>
+        <ErrorBoundary label="this dialog">
+          <DialogHeader>
+            <DialogTitle className="text-[15px] font-medium">
+              {title}
+            </DialogTitle>
+          </DialogHeader>
 
-        {isLoading && (
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-6 w-1/3" />
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-20 w-full" />
-          </div>
-        )}
-        {isError && (
-          <div className="flex flex-col items-center gap-2 py-6 text-center">
-            <OctagonAlert className="text-destructive size-5" />
+          {isLoading && (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-6 w-1/3" />
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-20 w-full" />
+            </div>
+          )}
+          {isError && (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <OctagonAlert className="text-destructive size-5" />
+              <p className="text-muted-foreground text-[13px]">
+                Couldn&rsquo;t load this session.
+              </p>
+            </div>
+          )}
+          {!isLoading && !isError && !data && (
             <p className="text-muted-foreground text-[13px]">
-              Couldn&rsquo;t load this session.
+              This session no longer exists.
             </p>
-          </div>
-        )}
-        {!isLoading && !isError && !data && (
-          <p className="text-muted-foreground text-[13px]">
-            This session no longer exists.
-          </p>
-        )}
-        {data && <SessionDetailContent detail={data} />}
+          )}
+          {data && <SessionDetailContent detail={data} />}
+        </ErrorBoundary>
       </DialogContent>
     </Dialog>
   );
