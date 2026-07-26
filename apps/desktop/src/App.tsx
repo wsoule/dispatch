@@ -201,9 +201,9 @@ function App() {
   }, []);
 
   // Opens `CreateTaskModal`, optionally pre-set to a status — the single entry point every
-  // "New task"/"+" affordance (the header button, a board column's or list group's hover "+",
-  // the palette action, the global "c" shortcut) calls through, so the modal's initial status
-  // is always explicit rather than a leftover from whichever column's "+" was clicked last.
+  // "New task"/"+" affordance (the header button, a board column's hover "+", the palette
+  // action) calls through, so the modal's initial status is always explicit rather than a
+  // leftover from whichever column's "+" was clicked last.
   const openCreateTask = useCallback((status?: string) => {
     setCreateStatus(status ?? null);
     setShowCreate(true);
