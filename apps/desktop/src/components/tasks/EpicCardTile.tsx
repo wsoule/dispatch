@@ -4,11 +4,12 @@ import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from '@dnd-kit/core';
-import { AlertCircle, Play, Square } from 'lucide-react';
+import { AlertCircle, Play, Square, Waypoints } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { clampConcurrencyInput } from '../../lib/epicConcurrency';
 import { formatRelativeTimeFromIso } from '../../lib/format';
+import { EpicDagModal } from './EpicDagModal';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
@@ -36,9 +37,20 @@ interface EpicCardTileProps {
   /** Default concurrency for a fresh dispatch session — `orchestrator.epicConcurrency` from the
    * project's config (see TasksPanel), which is itself defaulted to 3 by @dispatch/core. */
   concurrencyDefault: number;
+  /** This epic's children (tasks whose `parent` is `doc.meta.id`) — the only extra data the
+   * graph button's modal needs; the caller (`TaskBoard`) already has the full project task
+   * list in scope to derive it once. Named `childTasks` rather than `children` so it can't be
+   * mistaken for React's own `children` prop — this component never renders arbitrary nested
+   * content. Defaults to empty so the drag-overlay ghost copy of this card (which has no
+   * meaningful "open the graph" affordance anyway) doesn't need to pass it. */
+  childTasks?: TaskDoc[];
   onSelect: () => void;
   onWork: (epicId: string, concurrency: number) => Promise<void>;
   onStop: (epicId: string) => Promise<void>;
+  /** Opens a task (including one of this epic's children, from the graph modal) in the peek/
+   * detail dialog — reuses whatever handler the board already wires its own card clicks to,
+   * rather than this component inventing a second navigation path. */
+  onOpenTask?: (taskId: string) => void;
   /** Same meaning as `TaskCardTile`'s `focused` — the Board's j/k roving-focus cursor. */
   focused?: boolean;
   /** Same meaning as `TaskCardTile`'s `onFocus` — syncs `BoardView`'s `focusedTaskId` cursor
@@ -62,9 +74,11 @@ export function EpicCardTile({
   doc,
   progress,
   concurrencyDefault,
+  childTasks = [],
   onSelect,
   onWork,
   onStop,
+  onOpenTask,
   focused = false,
   onFocus,
   drag,
@@ -72,6 +86,9 @@ export function EpicCardTile({
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // View-local modal state for the epic's dependency graph — not lifted to App-level nav state
+  // since nothing outside this card needs to know the graph is open.
+  const [showGraph, setShowGraph] = useState(false);
   const active = progress?.active ?? false;
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -99,141 +116,164 @@ export function EpicCardTile({
   const liveCount = progress?.liveRuns.length ?? 0;
 
   return (
-    <div
-      ref={(node) => {
-        cardRef.current = node;
-        drag?.setNodeRef(node);
-      }}
-      style={drag?.style}
-      {...drag?.attributes}
-      {...drag?.listeners}
-      role="button"
-      tabIndex={0}
-      data-focused={focused}
-      className={cn(
-        'group border-border/60 bg-card flex w-full cursor-pointer flex-col gap-2 rounded-lg border p-3 text-left shadow-sm transition-colors duration-150',
-        'hover:border-border hover:bg-card/80',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
-        drag?.isDragging === true && 'opacity-40'
-      )}
-      onClick={onSelect}
-      onFocus={onFocus}
-      onKeyDown={(e) => {
-        const isDirectTarget = e.target === e.currentTarget;
-        if (drag !== undefined && e.key === ' ' && isDirectTarget) {
-          drag.listeners?.onKeyDown?.(e);
-          return;
-        }
-        if (isDirectTarget && (e.key === 'Enter' || e.key === ' ')) {
-          e.preventDefault();
-          onSelect();
-          return;
-        }
-        if (!isDirectTarget) {
-          // A keydown bubbled from the concurrency input or the Work/Stop button below —
-          // those own their own Enter/Space handling, so it must not also reach the Board's
-          // roving-focus track.
-          e.stopPropagation();
-        }
-      }}
-    >
-      <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
-        <span className="text-muted-foreground/70 shrink-0 font-mono">
-          {doc.meta.id}
-        </span>
-        <Badge
-          variant="outline"
-          className="bg-accent text-accent-foreground h-4 rounded border-transparent px-1.5 py-0 text-[10px] font-medium"
-        >
-          Epic
-        </Badge>
-      </div>
-
-      <div className="flex items-start gap-1.5">
-        <span className="mt-0.5">
-          <StatusIcon status={doc.meta.status} />
-        </span>
-        <span className="text-foreground line-clamp-2 text-[13px] leading-snug font-medium">
-          {doc.meta.title}
-        </span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5">
-        <PriorityIcon priority={doc.meta.priority} />
-        {totalCount > 0 && (
-          <span className="text-muted-foreground flex items-center gap-1 font-mono text-[11px]">
-            {liveCount > 0 && (
-              <span className="bg-primary size-1.5 shrink-0 animate-pulse rounded-full motion-reduce:animate-none" />
-            )}
-            {doneCount}/{totalCount} done
-            {liveCount > 0 && ` · ${liveCount} running`}
-          </span>
+    <>
+      <div
+        ref={(node) => {
+          cardRef.current = node;
+          drag?.setNodeRef(node);
+        }}
+        style={drag?.style}
+        {...drag?.attributes}
+        {...drag?.listeners}
+        role="button"
+        tabIndex={0}
+        data-focused={focused}
+        className={cn(
+          'group border-border/60 bg-card flex w-full cursor-pointer flex-col gap-2 rounded-lg border p-3 text-left shadow-sm transition-colors duration-150',
+          'hover:border-border hover:bg-card/80',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+          'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
+          drag?.isDragging === true && 'opacity-40'
         )}
-      </div>
-
-      {error !== null && (
-        <div className="bg-destructive/10 text-destructive flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]">
-          <AlertCircle className="size-3 shrink-0" />
-          <span className="truncate">{error}</span>
+        onClick={onSelect}
+        onFocus={onFocus}
+        onKeyDown={(e) => {
+          const isDirectTarget = e.target === e.currentTarget;
+          if (drag !== undefined && e.key === ' ' && isDirectTarget) {
+            drag.listeners?.onKeyDown?.(e);
+            return;
+          }
+          if (isDirectTarget && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            onSelect();
+            return;
+          }
+          if (!isDirectTarget) {
+            // A keydown bubbled from the concurrency input or the Work/Stop button below —
+            // those own their own Enter/Space handling, so it must not also reach the Board's
+            // roving-focus track.
+            e.stopPropagation();
+          }
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
+          <span className="text-muted-foreground/70 shrink-0 font-mono">
+            {doc.meta.id}
+          </span>
+          <Badge
+            variant="outline"
+            className="bg-accent text-accent-foreground h-4 rounded border-transparent px-1.5 py-0 text-[10px] font-medium"
+          >
+            Epic
+          </Badge>
+          <button
+            type="button"
+            aria-label="View dependency graph"
+            title="View dependency graph"
+            // Nested inside the card's own click-to-open-detail root, so — same bug class as the
+            // Work/Stop buttons and the concurrency input below — a click here must not also
+            // bubble up into `onSelect`.
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowGraph(true);
+            }}
+            className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto shrink-0 rounded-md p-0.5 transition-colors duration-150"
+          >
+            <Waypoints className="size-3" />
+          </button>
         </div>
-      )}
 
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
-          {formatRelativeTimeFromIso(doc.meta.updated)}
-        </span>
-        <div
-          className={cn(
-            'flex items-center gap-1.5 opacity-0 transition-opacity duration-150',
-            'group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100',
-            active && 'opacity-100'
-          )}
-        >
-          <Input
-            type="number"
-            min={1}
-            value={concurrency}
-            disabled={active || busy}
-            onChange={(e) =>
-              setConcurrency(clampConcurrencyInput(e.target.value))
-            }
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            aria-label="Epic dispatch concurrency"
-            className="h-6 w-11 rounded px-1.5 py-0 text-[11px]"
-          />
-          {active ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                void run(() => onStop(doc.meta.id));
-              }}
-              className="hover:bg-destructive/10 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
-            >
-              <Square className="size-3" />
-              Stop
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                void run(() => onWork(doc.meta.id, concurrency));
-              }}
-              className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
-            >
-              <Play className="size-3" />
-              Work
-            </Button>
+        <div className="flex items-start gap-1.5">
+          <span className="mt-0.5">
+            <StatusIcon status={doc.meta.status} />
+          </span>
+          <span className="text-foreground line-clamp-2 text-[13px] leading-snug font-medium">
+            {doc.meta.title}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <PriorityIcon priority={doc.meta.priority} />
+          {totalCount > 0 && (
+            <span className="text-muted-foreground flex items-center gap-1 font-mono text-[11px]">
+              {liveCount > 0 && (
+                <span className="bg-primary size-1.5 shrink-0 animate-pulse rounded-full motion-reduce:animate-none" />
+              )}
+              {doneCount}/{totalCount} done
+              {liveCount > 0 && ` · ${liveCount} running`}
+            </span>
           )}
         </div>
+
+        {error !== null && (
+          <div className="bg-destructive/10 text-destructive flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]">
+            <AlertCircle className="size-3 shrink-0" />
+            <span className="truncate">{error}</span>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
+            {formatRelativeTimeFromIso(doc.meta.updated)}
+          </span>
+          <div
+            className={cn(
+              'flex items-center gap-1.5 opacity-0 transition-opacity duration-150',
+              'group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100',
+              active && 'opacity-100'
+            )}
+          >
+            <Input
+              type="number"
+              min={1}
+              value={concurrency}
+              disabled={active || busy}
+              onChange={(e) =>
+                setConcurrency(clampConcurrencyInput(e.target.value))
+              }
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              aria-label="Epic dispatch concurrency"
+              className="h-6 w-11 rounded px-1.5 py-0 text-[11px]"
+            />
+            {active ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void run(() => onStop(doc.meta.id));
+                }}
+                className="hover:bg-destructive/10 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
+              >
+                <Square className="size-3" />
+                Stop
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void run(() => onWork(doc.meta.id, concurrency));
+                }}
+                className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
+              >
+                <Play className="size-3" />
+                Work
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+      <EpicDagModal
+        epic={showGraph ? doc : null}
+        tasks={childTasks}
+        onOpenTask={onOpenTask}
+        onClose={() => setShowGraph(false)}
+      />
+    </>
   );
 }

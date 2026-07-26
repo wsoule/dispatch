@@ -1,8 +1,9 @@
 import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
-import { ChevronDown, ChevronRight, SearchX } from 'lucide-react';
+import { ChevronDown, ChevronRight, SearchX, Waypoints } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { EpicDagModal } from '../components/tasks/EpicDagModal';
 import {
   AssigneeControl,
   PriorityControl,
@@ -64,13 +65,31 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set()
   );
+  // View-local modal state for the epic dependency-graph view — which epic's graph is open, or
+  // `null` when closed. Not lifted to App-level nav state since nothing outside this list needs
+  // to know the graph is open.
+  const [dagEpicId, setDagEpicId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const epicById = useMemo(() => {
+    const map = new Map<string, TaskDoc>();
+    for (const epic of data.epics) map.set(epic.meta.id, epic);
+    return map;
+  }, [data.epics]);
 
   const epicTitleById = useMemo(() => {
     const map = new Map<string, string>();
     for (const epic of data.epics) map.set(epic.meta.id, epic.meta.title);
     return map;
   }, [data.epics]);
+
+  // The dag modal always graphs an epic's *full* child set, independent of the list's own
+  // search filter — narrowing the filter shouldn't make edges disappear from the graph.
+  const dagEpic = dagEpicId !== null ? (epicById.get(dagEpicId) ?? null) : null;
+  const dagTasks =
+    dagEpicId !== null
+      ? data.tasks.filter((t) => t.meta.parent === dagEpicId)
+      : [];
 
   // Buckets every filtered task under its `parent` epic id in one pass, then orders the
   // resulting groups: known epics first (in the project's own epic order, skipping any epic
@@ -222,29 +241,47 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
             const totalCount = group.progress?.children.length ?? 0;
             return (
               <div key={key} className="mb-1">
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(key)}
-                  aria-expanded={!collapsed}
-                  className="bg-background sticky top-0 z-10 flex w-full items-center gap-1.5 px-1 py-1.5 text-left"
-                >
-                  {collapsed ? (
-                    <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
-                  ) : (
-                    <ChevronDown className="text-muted-foreground size-3.5 shrink-0" />
-                  )}
-                  <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
-                    {group.title}
-                  </span>
-                  <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
-                    {group.tasks.length}
-                  </span>
-                  {totalCount > 0 && (
-                    <span className="text-muted-foreground/70 shrink-0 text-[11px]">
-                      {doneCount}/{totalCount} done
+                <div className="bg-background sticky top-0 z-10 flex w-full items-center gap-1.5 px-1 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(key)}
+                    aria-expanded={!collapsed}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                  >
+                    {collapsed ? (
+                      <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
+                    ) : (
+                      <ChevronDown className="text-muted-foreground size-3.5 shrink-0" />
+                    )}
+                    <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
+                      {group.title}
                     </span>
+                    <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
+                      {group.tasks.length}
+                    </span>
+                    {totalCount > 0 && (
+                      <span className="text-muted-foreground/70 shrink-0 text-[11px]">
+                        {doneCount}/{totalCount} done
+                      </span>
+                    )}
+                  </button>
+                  {/* Only for a group keyed by a real, known epic (not the dangling-parent or
+                      "No epic" buckets) — there's no epic to graph otherwise. A sibling of the
+                      toggle button above, not nested inside it (button-in-button isn't valid
+                      HTML), so no stopPropagation is needed here the way the card entry points
+                      below need it. */}
+                  {group.epicId !== null && epicTitleById.has(group.epicId) && (
+                    <button
+                      type="button"
+                      onClick={() => setDagEpicId(group.epicId)}
+                      aria-label={`View dependency graph for ${group.title}`}
+                      title="View dependency graph"
+                      className="text-muted-foreground hover:bg-accent hover:text-foreground shrink-0 rounded-md p-1 transition-colors duration-150"
+                    >
+                      <Waypoints className="size-3.5" />
+                    </button>
                   )}
-                </button>
+                </div>
                 {!collapsed && (
                   <div className="flex flex-col">
                     {group.tasks.map((doc) => (
@@ -276,6 +313,13 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
           })}
         </div>
       )}
+
+      <EpicDagModal
+        epic={dagEpic}
+        tasks={dagTasks}
+        onOpenTask={onSelectTask}
+        onClose={() => setDagEpicId(null)}
+      />
     </div>
   );
 }

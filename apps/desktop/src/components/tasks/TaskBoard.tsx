@@ -165,6 +165,19 @@ export function TaskBoard({
     return map;
   }, [tasks]);
 
+  // Every epic's children, bucketed in one pass — feeds `EpicCardTile`'s dependency-graph
+  // modal, which needs the epic's own children (not the whole project's tasks) to lay out.
+  const childrenByEpicId = useMemo(() => {
+    const map = new Map<string, TaskDoc[]>();
+    for (const doc of tasks) {
+      if (doc.meta.parent === null) continue;
+      const bucket = map.get(doc.meta.parent);
+      if (bucket !== undefined) bucket.push(doc);
+      else map.set(doc.meta.parent, [doc]);
+    }
+    return map;
+  }, [tasks]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor)
@@ -231,9 +244,11 @@ export function TaskBoard({
                         doc={doc}
                         progress={epicProgressById.get(doc.meta.id)}
                         concurrencyDefault={epicConcurrencyDefault}
+                        childTasks={childrenByEpicId.get(doc.meta.id) ?? []}
                         onSelect={() => onSelect(doc.meta.id)}
                         onWork={onWorkEpic}
                         onStop={onStopEpic}
+                        onOpenTask={onSelect}
                         focused={doc.meta.id === focusedTaskId}
                         onFocus={() => onCardFocus?.(doc.meta.id)}
                         drag={drag}
