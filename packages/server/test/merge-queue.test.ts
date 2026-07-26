@@ -636,6 +636,41 @@ describe('MergeQueue persistence', () => {
     expect(queue.snapshot()).toEqual({ entries: [], history: [] });
   });
 
+  it('loads only one entry when the persisted file has two entries sharing a runId', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    const persistedEntry = {
+      runId,
+      taskId,
+      taskTitle: 'Ship it',
+      state: 'queued',
+      enqueuedAt: new Date().toISOString(),
+    };
+    // The persisted file is untrusted input — a bug or a manual edit could
+    // duplicate the JSON entry for one run. hydrate() must reload the first
+    // occurrence and file the second straight to failed history rather than
+    // ending up with the same run queued twice.
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [persistedEntry, { ...persistedEntry }],
+        history: [],
+      })
+    );
+
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const loaded = queue.snapshot().entries.filter((e) => e.runId === runId);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.state).toBe('queued');
+
+    const filed = queue.snapshot().history.filter((e) => e.runId === runId);
+    expect(filed).toHaveLength(1);
+    expect(filed[0]?.reason).toContain('duplicate entry for run');
+  });
+
   it('drops a reloaded entry to failed history when its run was reviewed while the daemon was down', async () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);

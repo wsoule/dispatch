@@ -139,6 +139,7 @@ function MergeQueuePanel({
                     type="button"
                     onClick={() => onDequeue(entry.runId)}
                     title="Remove from merge queue"
+                    aria-label="Remove from merge queue"
                     className="text-muted-foreground hover:text-destructive shrink-0"
                   >
                     <X className="size-3.5" />
@@ -243,6 +244,8 @@ function OtherOpenPrRow({
         target="_blank"
         rel="noreferrer"
         onClick={(e) => e.stopPropagation()}
+        aria-label="Open PR on GitHub"
+        title="Open PR on GitHub"
         className="text-muted-foreground hover:text-foreground shrink-0"
       >
         <ExternalLink className="size-3.5" />

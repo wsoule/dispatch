@@ -1,5 +1,6 @@
 import type { DiffResult, MergeQueueSnapshot, RunMeta } from '@dispatch/client';
-import { computeStack, isDone, type TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core';
+import { computeStack, isDone } from '@dispatch/core/graph';
 import {
   ExternalLink,
   GitMerge,

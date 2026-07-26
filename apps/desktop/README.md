@@ -105,10 +105,11 @@ Other useful commands, run from the repo root:
   `typescript/prefer-nullish-coalescing` are disabled for `apps/desktop/**`
   only, via a documented override in the root `.oxlintrc.json` — see the comment
   there for why (same `strictNullChecks` mismatch as above).
-- **Rebranding scope:** only `src-tauri/tauri.conf.json` (`productName`, window
+- **Rebranding scope:** `src-tauri/tauri.conf.json` (`productName`, window
   `title`, `identifier`) and `src-tauri/Cargo.toml` (`package.name`) were
   changed, to `Dispatch` / `dev.dispatch.app` / `dispatch-desktop` respectively
   — the minimum needed to build and launch this app as "Dispatch" rather than
-  "Relay". In-app UI copy (sidebar brand text, footer version string, etc.)
-  still reads "Relay"; full UI rebranding is out of scope for R1 and is expected
-  to land alongside R2/R3's Dispatch-specific views.
+  "Relay". In-app UI copy (sidebar brand text, footer version string, exported
+  report/transcript filenames and headings, etc.) has since been updated to read
+  "Dispatch" as well; any remaining "Relay" mentions in this codebase are
+  historical references to the vendored-from project, not user-visible copy.
