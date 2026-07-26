@@ -2249,3 +2249,87 @@ describe('Orchestrator.deleteBranch guards', () => {
     );
   });
 });
+
+// review(id, 'discard') removes a branch just like the Branches surface's own
+// delete does, so it needs the same stacked-dependent guard — otherwise
+// discarding a blocker silently repoints every dependent's merge base.
+describe('Orchestrator.review discard stacked guard', () => {
+  // Dispatches a blocker run to completion, then hand-builds a dependent whose
+  // recorded baseBranch is the blocker's branch. Hand-built because
+  // base-resolution for dependents is the stacked-dispatch work, not this one —
+  // dispatch() still always bases new worktrees on the default branch.
+  async function blockerWithDependent(): Promise<{
+    orchestrator: Orchestrator;
+    store: TaskStore;
+    blocker: RunMeta;
+    dependent: string;
+  }> {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ steps: [], finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Blocker' });
+    const blocker = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(blocker.id)?.meta.state === 'finished'
+    );
+    const dependent = 'dispatch/t-dep-r111111';
+    runGitSync(repo, ['branch', dependent, 'main']);
+    const runsPath = runsDir(repo);
+    mkdirSync(runsPath, { recursive: true });
+    new Transcript(join(runsPath, 'r-111111.jsonl')).writeHeader({
+      ...blocker,
+      id: 'r-111111',
+      branch: dependent,
+      baseBranch: blocker.branch,
+      state: 'finished',
+      worktreePath: join(worktreesDir(repo), 'r-111111'),
+    });
+    orchestrator.reconcileOnBoot();
+    return { orchestrator, store, blocker, dependent };
+  }
+
+  it('refuses to discard a run whose branch another branch is stacked on', async () => {
+    const { orchestrator, blocker, dependent } = await blockerWithDependent();
+
+    expect(() => orchestrator.review(blocker.id, 'discard')).toThrow(
+      new RegExp(`is the base of ${dependent}`)
+    );
+  });
+
+  it('leaves the run un-reviewed and its worktree intact when it refuses', async () => {
+    const { orchestrator, store, blocker } = await blockerWithDependent();
+    const taskBefore = store.get(blocker.taskId)!.meta.status;
+
+    expect(() => orchestrator.review(blocker.id, 'discard')).toThrow();
+
+    // The guard runs before any mutation, so nothing about the run, its
+    // worktree, or its task may have moved.
+    expect(orchestrator.getRun(blocker.id)!.meta.reviewedAt).toBeUndefined();
+    expect(existsSync(blocker.worktreePath)).toBe(true);
+    expect(store.get(blocker.taskId)!.meta.status).toBe(taskBefore);
+  });
+
+  it('discards normally once the dependent is cleaned up first', async () => {
+    const { orchestrator, blocker, dependent } = await blockerWithDependent();
+
+    // A dependent is always a leaf of the stack DAG, so it is cleanable right
+    // now — which is why the guard needs no force escape hatch.
+    orchestrator.deleteBranch(dependent, { force: true });
+    orchestrator.review(blocker.id, 'discard');
+
+    expect(orchestrator.getRun(blocker.id)!.meta.reviewAction).toBe('discard');
+    expect(existsSync(blocker.worktreePath)).toBe(false);
+  });
+
+  it('still allows merge, which is the intended end of a stack', async () => {
+    const { orchestrator, blocker } = await blockerWithDependent();
+
+    // Merging a blocker legitimately removes its branch — the work landed, and
+    // the merge queue restacks dependents onto the new base itself. The guard
+    // must not block that.
+    expect(() => orchestrator.review(blocker.id, 'merge')).not.toThrow();
+    expect(orchestrator.getRun(blocker.id)!.meta.reviewAction).toBe('merge');
+  });
+});

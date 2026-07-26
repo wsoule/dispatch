@@ -190,13 +190,21 @@ click.
 Guard 4 is evaluated against the same `listBranches()` result the caller saw, so
 the check and the display cannot disagree about what depends on what.
 
-**Known limitation, deliberately out of scope:** guard 4 protects the two new
-routes only. `review(runId, 'discard')` also removes a branch and does _not_
-check for dependents, so discarding a blocker's run can still break a
-dependent's merge base. That is pre-existing behavior on a pre-existing path;
-extending the guard into `review()` changes the semantics of an action other
-callers (CLI, MCP, merge queue) already depend on, and belongs in the stacked-
-dispatch work rather than here.
+Guard 4 also applies to `review(runId, 'discard')`, which removes a branch
+exactly the way `DELETE` does and would otherwise repoint every dependent's
+merge base. It is extracted as `Orchestrator.requireNoStackedDependent` and
+called from both places.
+
+It is deliberately **not** applied to `review(runId, 'merge')`: a blocker's
+branch disappearing after its work actually lands is the normal, intended end of
+a stack, and the merge queue restacks the dependents onto the new base itself.
+The only two `review()` callers are `api.ts` and `MergeQueue`, and the queue
+only ever passes `'merge'` — so this narrows nothing the queue depends on.
+
+The guard has **no force escape hatch**, on purpose. Dependents form a DAG, so
+its leaves are always cleanable right now, which means "clean up the dependent
+first" always terminates. There is no legitimate case that needs to override it,
+and every case that would override it corrupts a diff.
 
 ## 5. UI
 

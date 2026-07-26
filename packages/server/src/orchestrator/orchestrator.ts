@@ -588,6 +588,14 @@ export class Orchestrator {
     if (action === 'merge') {
       this.mergeRun(meta, now);
     } else {
+      // Discarding removes this run's branch, which breaks the merge base of
+      // any dependent stacked on it — the same corruption the Branches
+      // surface's delete/free-disk actions refuse (see
+      // requireNoStackedDependent). Deliberately NOT applied to 'merge' above:
+      // a blocker's branch disappearing after its work actually lands is the
+      // normal, intended end of a stack, and the merge queue restacks the
+      // dependents onto the new base itself.
+      this.requireNoStackedDependent(meta.branch);
       this.persistDiffSnapshot(meta);
       this.worktrees.remove(meta.worktreePath, meta.branch);
       this.ctx.store.update(
@@ -978,10 +986,30 @@ export class Orchestrator {
         `branch is checked out in the main repo: ${branch}`
       );
     }
-    // The stacked case: a dependent's worktree was branched off this ref, so
-    // removing it destroys that dependent's merge base and silently corrupts
-    // its diff.
-    const dependent = all.find(
+    this.requireNoStackedDependent(branch, all);
+    return entry;
+  }
+
+  /**
+   * Refuses when another dispatch branch was cut from `branch` — the stacked
+   * case. A dependent's diff and eventual merge are both anchored on its merge
+   * base with this ref, so deleting it doesn't fail loudly, it silently
+   * repoints that dependent at whatever unrelated commit git falls back to.
+   *
+   * Deliberately has NO force escape hatch. Dependents form a DAG, so its
+   * leaves are always cleanable right now — "clean up the dependent first"
+   * always terminates, which means there is no legitimate case that needs to
+   * override this, and every case that would override it corrupts a diff.
+   *
+   * `entries` is passed in by callers that already computed listBranches() so
+   * the guard and the rows the user is looking at can never disagree about what
+   * depends on what.
+   */
+  private requireNoStackedDependent(
+    branch: string,
+    entries = this.listBranches()
+  ): void {
+    const dependent = entries.find(
       (e) => e.branch !== branch && e.baseBranch === branch
     );
     if (dependent !== undefined) {
@@ -989,7 +1017,6 @@ export class Orchestrator {
         `branch is the base of ${dependent.branch} — clean that up first`
       );
     }
-    return entry;
   }
 
   // Boot-time hygiene: any transcript whose last recorded state isn't
