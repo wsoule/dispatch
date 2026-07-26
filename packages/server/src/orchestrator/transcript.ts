@@ -37,6 +37,9 @@ export interface TranscriptStateLine {
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';
   // Rides along on a state line exactly like reviewedAt/reviewAction — see
+  // RunMeta.mergeCommit's comment for what sets this and when.
+  mergeCommit?: string;
+  // Rides along on a state line exactly like reviewedAt/reviewAction — see
   // RunMeta.prUrl's comment for what sets this and when.
   prUrl?: string;
   // Restack bookkeeping (MergeQueue.restackDependents, via
@@ -104,6 +107,7 @@ export class Transcript {
       error?: string;
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
+      mergeCommit?: string;
       prUrl?: string;
       baseBranch?: string;
       stackParents?: string[];
@@ -190,6 +194,7 @@ export function replayTranscript(
         error: line.error ?? meta.error,
         reviewedAt: line.reviewedAt ?? meta.reviewedAt,
         reviewAction: line.reviewAction ?? meta.reviewAction,
+        mergeCommit: line.mergeCommit ?? meta.mergeCommit,
         prUrl: line.prUrl ?? meta.prUrl,
         baseBranch: line.baseBranch ?? meta.baseBranch,
         stackParents: narrowedStackParents(line, meta),

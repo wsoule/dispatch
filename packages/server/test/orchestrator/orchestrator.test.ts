@@ -21,7 +21,10 @@ import {
   transcriptPath,
   worktreesDir,
 } from '../../src/orchestrator/paths.js';
-import { Transcript } from '../../src/orchestrator/transcript.js';
+import {
+  replayTranscript,
+  Transcript,
+} from '../../src/orchestrator/transcript.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -558,6 +561,36 @@ describe('Orchestrator.review merge', () => {
     expect(log).toBe(`dispatch: Merge me (run ${meta.id})`);
     expect(store.get(task.meta.id)!.meta.status).toBe('done');
     expect(existsSync(meta.worktreePath)).toBe(false);
+  });
+
+  it('stamps mergeCommit with the squash sha on merge and rehydrates it', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'x.txt'), 'work\n');
+            },
+            commitMessage: 'agent: add x.txt',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Stamp mergeCommit' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const reviewed = orchestrator.review(meta.id, 'merge');
+    const head = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    expect(reviewed.mergeCommit).toBe(head);
+
+    const replayed = replayTranscript(transcriptPath(repo, meta.id))!.meta;
+    expect(replayed.mergeCommit).toBe(head);
   });
 
   it('refuses with a conflict error when the main checkout is dirty', async () => {

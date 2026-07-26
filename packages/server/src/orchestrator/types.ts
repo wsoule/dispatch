@@ -144,6 +144,9 @@ export interface RunMeta {
   // its RunState, it only records that the review happened.
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';
+  // The squash-merge commit sha, set only when review()'s 'merge' action
+  // actually produced one (a no-op merge leaves this unset).
+  mergeCommit?: string;
   // Phase 5 P1: set once a run's PR review action has pushed the branch and
   // opened a GitHub PR (see PrManager.openPr) — the run stays un-reviewed
   // (reviewedAt unset) until PrManager's poller sees the PR merged and calls
