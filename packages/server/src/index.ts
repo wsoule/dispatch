@@ -11,6 +11,7 @@ import { EventBus } from './events.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
 import { PlanManager } from './orchestrator/plan.js';
@@ -212,7 +213,14 @@ export async function startServer(
   // Tests override this default entirely via `registerExecutors` (see its
   // doc comment) to register a FakeExecutor without going through bin.ts at
   // all.
-  const orchestrator = new Orchestrator({ rootDir, store, cache, events });
+  // One jj manager shared by the orchestrator's stacked-dispatch path and the
+  // merge queue's restack path, deliberately on the DEFAULT command runner
+  // rather than `opts.prCommandRunner`. The gh/git fake behind
+  // DISPATCH_FAKE_GH answers every unrecognized command `ok`, so a queue that
+  // probed jj through that seam would decide a demo repo was jj-colocated and
+  // take the jj rebase path against a repo with no jj at all.
+  const jj = new JjManager(rootDir);
+  const orchestrator = new Orchestrator({ rootDir, store, cache, events, jj });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
@@ -258,7 +266,7 @@ export async function startServer(
   // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
   // stub) fakes the merge queue's own gh/git calls too, not just PrManager's.
   const mergeQueue = new MergeQueue(
-    { rootDir, store, cache, events, orchestrator },
+    { rootDir, store, cache, events, orchestrator, jj },
     opts.prCommandRunner
   );
 

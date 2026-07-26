@@ -131,7 +131,7 @@ describe('plan -> confirm -> startEpic integration', () => {
     const childSet = new Set(taskIds);
 
     // --- startEpic + concurrency-sampled dispatch ----------------------
-    const session = epicEngine.start(epicId!, {
+    const session = await epicEngine.start(epicId!, {
       concurrency: CONCURRENCY,
       executor: 'fake',
     });

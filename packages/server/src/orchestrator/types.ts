@@ -156,6 +156,24 @@ export interface RunMeta {
   // chat history was wiped. Optional so pre-existing transcripts (which
   // never wrote it) hydrate unchanged.
   resumedFrom?: string;
+  // Branches this run's worktree was stacked on at dispatch time — the
+  // in-review blockers whose unmerged work it needs. Empty/absent for an
+  // unblocked run, which is based on the project's default branch as before.
+  // The merge queue reads this to know which dependents to restack after a
+  // blocker lands.
+  stackParents?: string[];
+  // The exact commit this run's worktree was branched from, resolved at
+  // dispatch time. This is what says where the run's OWN commits begin, which
+  // is the one fact both restack paths need once the base branch has been
+  // rewritten out from under it: `git rebase --onto <newBase> <this> <branch>`
+  // and jj's `roots(<this>..<branch>)`. Only set for stacked runs — an
+  // unblocked run has nothing above its base to preserve.
+  stackBaseCommit?: string;
+  // Set when a run this one was stacked on gets discarded: the base this work
+  // was written against was rejected by a human. Nothing is rewritten or
+  // deleted — the run is flagged so the UI can surface it and the merge queue
+  // can refuse it, and the human decides what to do.
+  baseDiscarded?: boolean;
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

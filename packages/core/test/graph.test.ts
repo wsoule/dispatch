@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 
-import { findDependencyCycles, isDone, readyTasks } from '../src/graph.js';
+import {
+  dispatchableTasks,
+  findDependencyCycles,
+  isDone,
+  isSatisfiedForDispatch,
+  readyTasks,
+} from '../src/graph.js';
 import type { TaskDoc, TaskMeta } from '../src/types.js';
 
 function make(partial: Partial<TaskMeta>): TaskDoc {
@@ -142,5 +148,73 @@ describe('findDependencyCycles', () => {
     const c = make({ id: 't-c00000', blockedBy: ['t-a00000'] });
     const d = make({ id: 't-d00000', blockedBy: ['t-b00000', 't-c00000'] });
     expect(findDependencyCycles([a, b, c, d])).toEqual([]);
+  });
+});
+
+describe('dispatchableTasks', () => {
+  it('treats an in-review blocker as satisfied, unlike readyTasks', () => {
+    const blocker = make({ id: 't-a00000', status: 'in-review' });
+    const dependent = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
+    expect(
+      dispatchableTasks([blocker, dependent]).map((t) => t.meta.id)
+    ).toEqual(['t-b00000']);
+    expect(readyTasks([blocker, dependent]).map((t) => t.meta.id)).toEqual([]);
+  });
+
+  it('still blocks on an in-progress or todo blocker', () => {
+    const running = make({ id: 't-a00000', status: 'in-progress' });
+    const waiting = make({ id: 't-c00000', status: 'todo' });
+    const onRunning = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
+    const onWaiting = make({ id: 't-d00000', blockedBy: ['t-c00000'] });
+    const ids = dispatchableTasks([running, waiting, onRunning, onWaiting]).map(
+      (t) => t.meta.id
+    );
+    expect(ids).not.toContain('t-b00000');
+    expect(ids).not.toContain('t-d00000');
+  });
+
+  it('still accepts done and cancelled blockers', () => {
+    const done = make({ id: 't-a00000', status: 'done' });
+    const cancelled = make({ id: 't-c00000', status: 'cancelled' });
+    const dependent = make({
+      id: 't-b00000',
+      blockedBy: ['t-a00000', 't-c00000'],
+    });
+    expect(
+      dispatchableTasks([done, cancelled, dependent]).map((t) => t.meta.id)
+    ).toEqual(['t-b00000']);
+  });
+
+  it('sorts by priority then created date, like readyTasks', () => {
+    const low = make({
+      id: 't-100000',
+      priority: 'low',
+      created: '2026-01-01T00:00:00Z',
+    });
+    const urgent = make({
+      id: 't-200000',
+      priority: 'urgent',
+      created: '2026-01-02T00:00:00Z',
+    });
+    expect(dispatchableTasks([low, urgent]).map((t) => t.meta.id)).toEqual([
+      't-200000',
+      't-100000',
+    ]);
+  });
+
+  it('ignores dangling blocker ids, like readyTasks', () => {
+    const dependent = make({ id: 't-b00000', blockedBy: ['t-missing'] });
+    expect(dispatchableTasks([dependent])).toHaveLength(1);
+  });
+});
+
+describe('isSatisfiedForDispatch', () => {
+  it('is true for done, cancelled and in-review; false otherwise', () => {
+    expect(isSatisfiedForDispatch(make({ status: 'done' }))).toBe(true);
+    expect(isSatisfiedForDispatch(make({ status: 'cancelled' }))).toBe(true);
+    expect(isSatisfiedForDispatch(make({ status: 'in-review' }))).toBe(true);
+    expect(isSatisfiedForDispatch(make({ status: 'in-progress' }))).toBe(false);
+    expect(isSatisfiedForDispatch(make({ status: 'todo' }))).toBe(false);
+    expect(isSatisfiedForDispatch(make({ status: 'backlog' }))).toBe(false);
   });
 });

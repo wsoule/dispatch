@@ -19,7 +19,9 @@ export type {
 } from './store.js';
 export {
   readyTasks,
+  dispatchableTasks,
   isDone,
+  isSatisfiedForDispatch,
   PRIORITY_ORDER,
   findDependencyCycles,
   computeStack,

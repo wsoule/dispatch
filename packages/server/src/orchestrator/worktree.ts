@@ -130,10 +130,14 @@ export class WorktreeManager {
   // Removes a run's worktree directory and its branch. Idempotent-ish: git
   // errors from either step (e.g. the directory was already gone) are
   // swallowed since the caller's goal — no worktree, no branch — is already
-  // satisfied by the time `prune()` runs.
-  remove(path: string, branch: string): void {
+  // satisfied by the time `prune()` runs. `runId` is optional: when passed,
+  // any backup refs stashed for this run are dropped too so they don't
+  // accumulate; existing call sites that don't have a run id in hand keep
+  // compiling unchanged.
+  remove(path: string, branch: string, runId?: string): void {
     runGit(this.mainRepoDir, ['worktree', 'remove', '--force', path]);
     runGit(this.mainRepoDir, ['branch', '-D', branch]);
+    if (runId !== undefined) this.pruneBackupRefs(runId);
     this.prune();
   }
 
@@ -259,6 +263,209 @@ export class WorktreeManager {
     if (!existsSync(path)) return false;
     const status = runGit(path, ['status', '--porcelain']);
     return status.ok && status.stdout.trim().length > 0;
+  }
+
+  /**
+   * Where a branch's pre-restack tip is parked. Lives under `refs/dispatch/`
+   * rather than `refs/heads/` so it never shows up in `git branch`, never gets
+   * pushed, and can't be confused for a real branch — it is recovery state,
+   * not something anyone checks out. Scoped by runId so two runs on the same
+   * branch never clobber each other's backup.
+   */
+  backupRefName(branch: string, runId: string): string {
+    return `refs/dispatch/backup/${branch}/${runId}`;
+  }
+
+  /**
+   * Saves `branch`'s current tip before something rewrites it. Returns the
+   * saved sha, or null when the branch has no tip yet (nothing to protect).
+   *
+   * This exists for two reasons at once: it makes every restack reversible,
+   * and the sha it returns is exactly the `<oldTip>` argument `rebaseOnto`
+   * needs to know where a dependent's own commits begin.
+   */
+  writeBackupRef(branch: string, runId: string): string | null {
+    const tip = runGit(this.mainRepoDir, ['rev-parse', '--verify', branch]);
+    if (!tip.ok) return null;
+    const sha = tip.stdout.trim();
+    runGit(this.mainRepoDir, [
+      'update-ref',
+      this.backupRefName(branch, runId),
+      sha,
+    ]);
+    return sha;
+  }
+
+  // Points `branch` back at whatever `writeBackupRef` saved for this run.
+  restoreFromBackup(branch: string, runId: string): void {
+    const ref = this.backupRefName(branch, runId);
+    const saved = runGit(this.mainRepoDir, ['rev-parse', '--verify', ref]);
+    if (!saved.ok) return;
+    runGit(this.mainRepoDir, [
+      'update-ref',
+      `refs/heads/${branch}`,
+      saved.stdout.trim(),
+    ]);
+  }
+
+  // Drops every backup ref belonging to a run — called from the same cleanup
+  // path that removes its worktree and branch, so backups don't accumulate.
+  pruneBackupRefs(runId: string): void {
+    const refs = runGit(this.mainRepoDir, [
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/dispatch/backup',
+    ]);
+    if (!refs.ok) return;
+    for (const ref of refs.stdout.split('\n')) {
+      const trimmed = ref.trim();
+      if (trimmed.endsWith(`/${runId}`)) {
+        runGit(this.mainRepoDir, ['update-ref', '-d', trimmed]);
+      }
+    }
+  }
+
+  /**
+   * Brings a worktree back in line with `branch` after a restack rewrote that
+   * branch from the main checkout. Two different broken states have to be
+   * repaired, which is why this is two commands and not one:
+   *
+   * - Detached HEAD, when the rewrite left the worktree behind entirely.
+   *   `git checkout` reattaches it.
+   * - HEAD still on `branch` but the REF moved underneath the worktree. jj's
+   *   `git export` (and plain `git update-ref`) write a branch ref that is
+   *   checked out elsewhere without complaint — only `git branch -f` refuses.
+   *   The worktree's HEAD symref then resolves to the new commit while its
+   *   index and working tree still hold the pre-restack content. Measured: in
+   *   that state `git status` reports the new base's files as staged
+   *   DELETIONS, and `git checkout <branch>` prints "Already on '<branch>'"
+   *   and repairs nothing at all. `git reset --hard` is the only thing that
+   *   actually rewrites the index and working tree here.
+   *
+   * The hard reset is what makes this destructive, and it is guarded twice:
+   * callers check `isDirty()` first (uncommitted TRACKED changes), and the
+   * untracked-collision check below covers the one case `isDirty` deliberately
+   * does not. Callers MUST also only invoke this for runs in a terminal state
+   * — a live agent's worktree is never touched.
+   *
+   * Note that both guards are checks-then-act: nothing locks the worktree, so
+   * content written between the check and the reset is still lost. Terminal
+   * runs have no agent writing to them, which is why that window is accepted
+   * rather than closed.
+   */
+  resyncToBranch(worktreePath: string, branch: string): void {
+    const checkout = runGit(worktreePath, ['checkout', branch]);
+    if (!checkout.ok) {
+      throw new Error(
+        `git checkout ${branch} failed: ${checkout.stderr.trim()}`
+      );
+    }
+    const clobbered = this.untrackedPathsInTree(worktreePath, branch);
+    if (clobbered.length > 0) {
+      throw new Error(
+        `refusing to resync ${branch}: untracked file(s) would be overwritten: ${clobbered.join(', ')}`
+      );
+    }
+    const reset = runGit(worktreePath, ['reset', '--hard', branch]);
+    if (!reset.ok) {
+      throw new Error(
+        `git reset --hard ${branch} failed: ${reset.stderr.trim()}`
+      );
+    }
+  }
+
+  // Untracked files in `worktreePath` whose path is also tracked in `branch`'s
+  // tree — precisely the ones `git reset --hard` overwrites without warning
+  // (measured; non-colliding untracked files survive it untouched). Nothing
+  // holds a copy of that content, so the restack refuses rather than destroy
+  // it. Returns early without listing the tree at all when there is nothing
+  // untracked to collide, which is the normal case: every finish path runs
+  // autoCommitIfDirty before a run becomes reviewable.
+  private untrackedPathsInTree(worktreePath: string, branch: string): string[] {
+    const untracked = runGit(worktreePath, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+    ])
+      .stdout.split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (untracked.length === 0) return [];
+    const tracked = new Set(
+      runGit(worktreePath, ['ls-tree', '-r', '--name-only', branch])
+        .stdout.split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+    );
+    return untracked.filter((path) => tracked.has(path));
+  }
+
+  // Whether a run's worktree has uncommitted TRACKED changes (staged or
+  // unstaged). Untracked files are deliberately not counted: this is the same
+  // gate `git rebase --onto` applies to itself — measured, it rebases happily
+  // with untracked files present — so counting them would refuse restacks the
+  // plain-git path completes without complaint. The narrower case where a
+  // hard reset really would destroy untracked content is handled by
+  // `resyncToBranch` above.
+  //
+  // Anything this reports at restack time is a cancelled run's content:
+  // every other finish path already ran `autoCommitIfDirty`.
+  isDirty(worktreePath: string): boolean {
+    const status = runGit(worktreePath, [
+      'status',
+      '--porcelain',
+      '--untracked-files=no',
+    ]);
+    return status.stdout.trim().length > 0;
+  }
+
+  /**
+   * The plain-git restack, used when jj isn't available: replays exactly the
+   * commits in `oldTip..branch` (a dependent's own work) onto `newBase`,
+   * dropping the blocker commits that `newBase` now already contains in
+   * squashed form. Without the explicit `--onto`, a plain `git rebase newBase`
+   * would try to replay the blocker's commits too and conflict against their
+   * own squashed copies.
+   *
+   * `oldTip` is the commit the dependent branch was ORIGINALLY branched from
+   * — not the dependent's own current tip, and not a backup ref. Passing the
+   * dependent's own tip here would make `oldTip..branch` empty and silently
+   * rebase nothing.
+   *
+   * Aborts and throws on conflict, leaving the worktree clean for a retry —
+   * the same contract MergeQueue.rebase() already has.
+   */
+  rebaseOnto(
+    worktreePath: string,
+    newBase: string,
+    oldTip: string,
+    branch: string
+  ): void {
+    const rebase = runGit(worktreePath, [
+      'rebase',
+      '--onto',
+      newBase,
+      oldTip,
+      branch,
+    ]);
+    if (!rebase.ok) {
+      runGit(worktreePath, ['rebase', '--abort']);
+      const reason = [rebase.stdout.trim(), rebase.stderr.trim()]
+        .filter((s) => s.length > 0)
+        .join(' | ');
+      throw new Error(`git rebase --onto failed: ${reason}`);
+    }
+  }
+
+  // The commit a ref currently points at, in the main checkout. Used to pin
+  // down what a stacked run was branched from at the moment it was created —
+  // branch refs move, commit shas don't.
+  resolveCommit(ref: string): string {
+    const result = runGit(this.mainRepoDir, ['rev-parse', '--verify', ref]);
+    if (!result.ok) {
+      throw new Error(`unable to resolve ${ref}: ${result.stderr.trim()}`);
+    }
+    return result.stdout.trim();
   }
 
   // Boot-time hygiene: any directory directly under `worktreesRoot` that

@@ -1,4 +1,4 @@
-import { loadConfig, readyTasks } from '@dispatch/core';
+import { dispatchableTasks, loadConfig } from '@dispatch/core';
 import type { TaskDoc, TaskStore } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
@@ -68,16 +68,21 @@ export interface EpicEngineContext {
  */
 export class EpicEngine {
   private readonly sessions = new Map<string, EpicSessionRecord>();
+  // One serialization chain per epic — see scheduleFill() for why fillQueue
+  // can no longer simply be called from the run-lifecycle hooks.
+  private readonly fillChains = new Map<string, Promise<void>>();
 
   constructor(private readonly ctx: EpicEngineContext) {
     // Two distinct triggers can make an epic's next dispatch decision stale:
-    // a run reaching a terminal state (frees a concurrency slot) and a run
-    // being reviewed (can flip a blocker all the way to `done`, which is
-    // what core's readyTasks() actually gates a dependent task on — see
-    // Orchestrator's onRunReviewed doc comment). They are handled by two
-    // *distinct* methods below (not funneled into one), because a discard
-    // review must NOT trigger the same re-dispatch a merge/PR-merge should
-    // (see I3 in onRunReviewed's own doc comment).
+    // a run reaching a terminal state (frees a concurrency slot, and — since
+    // Orchestrator.handleFinish moves the task to `in-review` before firing
+    // terminal hooks — is also the exact moment a blocker becomes
+    // dispatch-satisfying; see core's isSatisfiedForDispatch) and a run
+    // being reviewed (a discard sends the task back to `todo`, undoing that
+    // satisfaction for any dependent not yet dispatched). They are handled
+    // by two *distinct* methods below (not funneled into one), because a
+    // discard review must NOT trigger the same re-dispatch a merge/PR-merge
+    // would (see I3 in onRunReviewed's own doc comment).
     ctx.orchestrator.onRunTerminal((meta) => this.onRunTerminal(meta));
     ctx.orchestrator.onRunReviewed((meta) => this.onRunReviewed(meta));
   }
@@ -86,10 +91,13 @@ export class EpicEngine {
   // `orchestrator.epicConcurrency` config; `executor` defaults to 'claude'
   // but tests override it (see the Global Constraints note on honoring a
   // body override) to dispatch through FakeExecutor instead.
-  start(
+  // Async only because the initial fillQueue is awaited: start() must still
+  // be able to tear its own session down when that very first dispatch
+  // throws (see the catch below), which a fire-and-forget `void` could not.
+  async start(
     epicId: string,
     opts: { concurrency?: number; executor?: string } = {}
-  ): EpicSession {
+  ): Promise<EpicSession> {
     const epic = this.requireEpic(epicId);
     const existing = this.sessions.get(epicId);
     if (existing !== undefined && existing.active) {
@@ -126,7 +134,12 @@ export class EpicEngine {
         epicId,
         `epic dispatch started (concurrency ${concurrency})`
       );
-      this.fillQueue(epicId);
+      // Chained like every other fill (see enqueueFill) — a run reaching a
+      // terminal state *inside* this very dispatch fires the lifecycle hooks
+      // synchronously, so a hook-driven fill can otherwise interleave with
+      // this one. Rejections still propagate here, which is what keeps the
+      // session rollback below working.
+      await this.enqueueFill(epicId);
     } catch (err) {
       // C2(a): never leave a wedged session behind a failed initial
       // dispatch — a retry (even with identical args) must start clean,
@@ -200,8 +213,12 @@ export class EpicEngine {
   // wrong, and auto-re-dispatching the identical prompt would just burn
   // budget repeating the same mistake. The task simply stays in the ready
   // queue for a human (or a future session) to explicitly pick up again.
-  // Only merge/PR-merge (task -> `done`) can actually unblock a sibling
-  // under core's readyTasks() semantics, so only those cascade here.
+  // Merge/PR-merge (task -> `done`) is no longer the trigger that unblocks a
+  // sibling: fillQueue's dispatchableTasks() already counts a blocker as
+  // satisfied the moment it reaches `in-review`, which onRunTerminal already
+  // reacted to. The non-discard branch here still re-checks readiness
+  // (cheap, and a no-op if nothing changed) so nothing is missed if a review
+  // action is ever the first signal an active session sees.
   private onRunReviewed(meta: RunMeta): void {
     if (meta.reviewAction === 'discard') return;
     this.reactAcrossSessions();
@@ -212,8 +229,68 @@ export class EpicEngine {
       if (this.isEpicComplete(epicId)) {
         this.completeEpic(epicId);
       } else {
-        this.fillQueue(epicId);
+        this.scheduleFill(epicId);
       }
+    }
+  }
+
+  /**
+   * Appends a fillQueue pass for `epicId` to that epic's serialization chain
+   * and returns a promise for THIS pass.
+   *
+   * Serializing matters now that fillQueue is async — Orchestrator.dispatch
+   * awaits base resolution before it registers anything in the run registry,
+   * so a fill that is mid-`await` has dispatches in flight that the registry
+   * cannot see yet. The run-lifecycle hooks that trigger a fill are
+   * synchronous and can fire during another fill's await (including during
+   * start()'s own initial fill, which is why that one is chained too). Two
+   * overlapping passes would each read the same live-run count and between
+   * them hand out more slots than the session's concurrency cap allows.
+   * Chaining is what keeps that count honest — EVERY fill must go through
+   * here, never `fillQueue` directly.
+   *
+   * The stored chain link deliberately never rejects, so one failed pass
+   * cannot poison every later one; the returned promise does reject, so
+   * start() can still roll its session back.
+   */
+  private enqueueFill(epicId: string): Promise<void> {
+    const previous = this.fillChains.get(epicId) ?? Promise.resolve();
+    const pass = previous.then(() => this.fillQueue(epicId));
+    this.fillChains.set(
+      epicId,
+      pass.catch(() => {})
+    );
+    return pass;
+  }
+
+  // Fire-and-forget fill for the run-lifecycle hooks, which have no caller
+  // left to receive a rejection — an unhandled one would take the daemon
+  // down. Failures are recorded rather than propagated, matching
+  // invokeHooksSafely's rule for a throwing subscriber.
+  private scheduleFill(epicId: string): void {
+    void this.enqueueFill(epicId).catch((err: unknown) => {
+      this.recordFillFailure(epicId, err);
+    });
+  }
+
+  // The durable half of that rule: invokeHooksSafely doesn't just log a
+  // failed hook, it appends an Activity line, rebuilds the cache and
+  // broadcasts, so the failure is visible in the UI rather than only in the
+  // daemon's stderr. An auto-dispatch that silently stops filling is exactly
+  // the kind of thing a user needs told about, so this mirrors both halves.
+  private recordFillFailure(epicId: string, err: unknown): void {
+    const message = (err as Error).message;
+    console.error(
+      `dispatchd: epic dispatch fill failed for ${epicId}: ${message}`
+    );
+    try {
+      this.appendEpicActivity(
+        epicId,
+        `[hook error] auto-dispatch failed: ${message}`
+      );
+    } catch {
+      // Even the Activity append failing must not propagate — same rule
+      // invokeHooksSafely applies to its own bookkeeping.
     }
   }
 
@@ -223,14 +300,15 @@ export class EpicEngine {
   // the actual registry, not a shadow copy, that the concurrency guarantee
   // has to hold against.
   //
-  // C1: readiness is computed over the FULL task set (`readyTasks` gates a
-  // blocker on being done/cancelled, but treats a blocker id that isn't in
-  // the array it's given as automatically satisfied — see core's own
-  // readyTasks doc comment) and only *then* intersected with this epic's
-  // children. Passing just `children` here would silently ignore a blocker
-  // that genuinely exists elsewhere in the project (a different epic, or no
-  // epic at all) simply because it isn't a sibling.
-  private fillQueue(epicId: string): void {
+  // C1: readiness is computed over the FULL task set (`dispatchableTasks`
+  // gates a blocker on being in-review/done/cancelled, but treats a blocker
+  // id that isn't in the array it's given as automatically satisfied — see
+  // core's own dispatchableTasks/readyTasks doc comments) and only *then*
+  // intersected with this epic's children. Passing just `children` here
+  // would silently ignore a blocker that genuinely exists elsewhere in the
+  // project (a different epic, or no epic at all) simply because it isn't a
+  // sibling.
+  private async fillQueue(epicId: string): Promise<void> {
     const session = this.sessions.get(epicId);
     if (session === undefined || !session.active) return;
 
@@ -244,13 +322,13 @@ export class EpicEngine {
     let slots = session.concurrency - liveCount;
     if (slots <= 0) return;
 
-    const ready = readyTasks(this.ctx.cache.query()).filter((t) =>
+    const ready = dispatchableTasks(this.ctx.cache.query()).filter((t) =>
       childIds.has(t.meta.id)
     );
     for (const task of ready) {
       if (slots <= 0) break;
       try {
-        this.ctx.orchestrator.dispatch(task.meta.id, session.executor);
+        await this.ctx.orchestrator.dispatch(task.meta.id, session.executor);
         slots--;
       } catch (err) {
         // A task that already picked up a live run between the readiness
