@@ -19,9 +19,11 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { readDefaultModel } from '../lib/models';
+import { notify } from '../lib/notifications';
 import { isTerminalRunState } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd } from '../lib/tauri';
+import { useTransitionNotifications } from './useTransitionNotifications';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
@@ -460,6 +462,15 @@ export function useDispatchProject(
               });
               return next;
             });
+            // Read the run list straight from the query cache rather than this
+            // effect's own `runs` variable — that variable is captured once when
+            // this effect's dependency array last changed, so it would otherwise
+            // go stale between reconnects and name the wrong task (or none).
+            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+            const taskTitle =
+              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+              event.runId;
+            void notify('Approval needed', `${event.toolName} — ${taskTitle}`);
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
@@ -826,6 +837,11 @@ export function useDispatchProject(
     },
     [client, queryClient, mergeQueueQueryKey]
   );
+
+  // Notifies on run finished/failed and merge-queue merged/failed transitions —
+  // see useTransitionNotifications's own comment for why it needs the *lists*
+  // (not just this render's counts) to diff against what it last saw.
+  useTransitionNotifications(runs ?? [], mergeQueue ?? null);
 
   return {
     client,
