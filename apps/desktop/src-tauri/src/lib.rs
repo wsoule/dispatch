@@ -1,4 +1,3 @@
-mod activity;
 mod commands;
 mod cost;
 mod db;
@@ -7,7 +6,6 @@ mod registry;
 mod sidecar;
 mod summarize;
 mod tags;
-mod terminal;
 mod watcher;
 
 use std::sync::Mutex;
@@ -67,7 +65,6 @@ pub fn run() {
       app.manage(summarize::ApiKeyState(api_key));
       app.manage(summarize::InFlight(Mutex::new(std::collections::HashSet::new())));
       app.manage(summarize::HttpClient(reqwest::Client::new()));
-      app.manage(activity::ActivityCache::new());
       app.manage(sidecar::DispatchdChildren::new());
 
       watcher::start(app.handle().clone());
@@ -80,23 +77,12 @@ pub fn run() {
       commands::list_sessions,
       commands::get_session_detail,
       commands::open_in_editor,
-      commands::project_activity,
-      commands::project_git_insights,
       commands::dashboard_stats,
       commands::generate_report,
       commands::export_report,
       commands::export_transcript,
       commands::reveal_in_finder,
       commands::get_file_diff_for_session_file,
-      commands::get_board,
-      commands::create_card,
-      commands::move_card,
-      commands::update_card,
-      commands::delete_card,
-      commands::link_session_to_card,
-      commands::create_column,
-      commands::rename_column,
-      commands::launch_or_attach_session,
       commands::open_url,
       commands::ensure_dispatchd,
       commands::has_dispatch,

@@ -788,22 +788,6 @@ pub fn most_recent_active_session(
     .optional()
 }
 
-/// Project-scoped variant of `most_recent_active_session`, returning just the session id —
-/// used by `commands::launch_or_attach_session` to decide whether to resume an existing
-/// session for a project or start a fresh one.
-pub fn most_recent_active_session_id_for_project(
-    conn: &Connection,
-    project_id: &str,
-) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT id FROM sessions WHERE project_id = ?1 AND status = 'active'
-         ORDER BY last_activity_at DESC LIMIT 1",
-        params![project_id],
-        |row| row.get(0),
-    )
-    .optional()
-}
-
 /// Daily activity counts since `since_epoch` (unix seconds), keyed by `YYYY-MM-DD` (local
 /// SQLite `date()` output, which is UTC since these timestamps are UTC). A day's count is
 /// "sessions started that day" plus "file edits made that day" — two different event kinds
@@ -837,36 +821,18 @@ pub fn daily_activity_counts(
 }
 
 // --- Kanban board ---
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Board {
-    pub id: String,
-    pub project_id: String,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Column {
-    pub id: String,
-    pub board_id: String,
-    pub name: String,
-    pub role: Option<String>,
-    pub position: i64,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Card {
-    pub id: String,
-    pub board_id: String,
-    pub column_id: String,
-    pub session_id: Option<String>,
-    pub title: String,
-    pub description: Option<String>,
-    pub position: i64,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
+//
+// The board/card feature's own UI (a per-project kanban board embedded in the old
+// `ProjectDetail`'s "Board" tab) was cut along with the rest of the Sessions-hub tab
+// consolidation, and with it every command/query that only that UI called (`get_board`,
+// `create_card`, `move_card`, `update_card`, `delete_card`, `link_session_to_card`,
+// `create_column`, `rename_column`, `most_recent_active_session_id_for_project`,
+// `set_card_pending_launch`, plus their `Board`/`Column`/`Card`/`CardLaunchContext` types).
+// What's left below is only what session ingestion itself still depends on: every ingested
+// session still gets a board (`ensure_board_for_project`) and an auto-created card
+// (`auto_create_card_for_session`), and the idle sweep still moves that card between role
+// columns as the session progresses (`sync_card_for_session`) — none of that reads from or
+// writes to a UI, so it stays untouched.
 
 /// The four columns every new board is seeded with, in display order. Roles are fixed at
 /// creation time and never reassigned in v1 — auto-sync (`sync_card_for_session`) depends on
@@ -912,68 +878,6 @@ pub fn ensure_board_for_project(conn: &Connection, project_id: &str) -> rusqlite
     Ok(board_id)
 }
 
-/// Full board state for the board view: the board row, its columns in display order, and
-/// every card on it. Calls `ensure_board_for_project` first so a project with sessions but no
-/// prior board access still renders a real (empty) board rather than the frontend having to
-/// handle a "no board yet" state.
-pub fn get_board(
-    conn: &Connection,
-    project_id: &str,
-) -> rusqlite::Result<(Board, Vec<Column>, Vec<Card>)> {
-    let board_id = ensure_board_for_project(conn, project_id)?;
-
-    let board = conn.query_row(
-        "SELECT id, project_id, created_at FROM boards WHERE id = ?1",
-        params![board_id],
-        |row| {
-            Ok(Board {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                created_at: row.get(2)?,
-            })
-        },
-    )?;
-
-    let mut col_stmt = conn.prepare(
-        "SELECT id, board_id, name, role, position, created_at FROM columns
-         WHERE board_id = ?1 ORDER BY position ASC",
-    )?;
-    let columns = col_stmt
-        .query_map(params![board_id], |row| {
-            Ok(Column {
-                id: row.get(0)?,
-                board_id: row.get(1)?,
-                name: row.get(2)?,
-                role: row.get(3)?,
-                position: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
-    let mut card_stmt = conn.prepare(
-        "SELECT id, board_id, column_id, session_id, title, description, position, created_at, updated_at
-         FROM cards WHERE board_id = ?1 ORDER BY position ASC",
-    )?;
-    let cards = card_stmt
-        .query_map(params![board_id], |row| {
-            Ok(Card {
-                id: row.get(0)?,
-                board_id: row.get(1)?,
-                column_id: row.get(2)?,
-                session_id: row.get(3)?,
-                title: row.get(4)?,
-                description: row.get(5)?,
-                position: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
-    Ok((board, columns, cards))
-}
-
 fn next_position_in_column(conn: &Connection, column_id: &str) -> rusqlite::Result<i64> {
     conn.query_row(
         "SELECT COALESCE(MAX(position), -1) + 1 FROM cards WHERE column_id = ?1",
@@ -982,57 +886,20 @@ fn next_position_in_column(conn: &Connection, column_id: &str) -> rusqlite::Resu
     )
 }
 
-/// Manual card creation — used both for the "+ Add card" affordance on unlinked columns and,
-/// with `session_id = None`, for pre-session planning cards a user later attaches to a real
-/// session via `link_session_to_card`.
-pub fn create_card(
-    conn: &Connection,
-    board_id: &str,
-    column_id: &str,
-    title: &str,
-    description: Option<&str>,
-) -> rusqlite::Result<Card> {
-    let id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
-    let position = next_position_in_column(conn, column_id)?;
-
-    conn.execute(
-        "INSERT INTO cards (id, board_id, column_id, session_id, title, description, position, created_at, updated_at)
-         VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?7)",
-        params![id, board_id, column_id, title, description, position, now],
-    )?;
-
-    Ok(Card {
-        id,
-        board_id: board_id.to_string(),
-        column_id: column_id.to_string(),
-        session_id: None,
-        title: title.to_string(),
-        description: description.map(str::to_string),
-        position,
-        created_at: now,
-        updated_at: now,
-    })
-}
-
-/// How long a card stays eligible to adopt a freshly-spawned session after
-/// `commands::launch_or_attach_session` stamps it (see `adopt_pending_card_for_session`).
-/// Long enough to cover a cold `claude` boot writing its first log line, short enough that an
-/// unrelated session started minutes later in the same project won't get misattributed.
+/// How long a card stays eligible to adopt a freshly-spawned session after being stamped
+/// pending (see `adopt_pending_card_for_session`). Long enough to cover a cold `claude` boot
+/// writing its first log line, short enough that an unrelated session started minutes later in
+/// the same project won't get misattributed.
+///
+/// Nothing in the app currently stamps a card's `pending_launch_at` — the one caller that did
+/// (a "launch/attach a terminal session from this card" command) was removed along with the
+/// rest of the per-project kanban board UI it belonged to (see this module's "Kanban board"
+/// section comment) — so `adopt_pending_card_for_session` below always takes its `false`
+/// (auto-create) branch in practice today. It's kept rather than inlined to `false` because the
+/// ingestion path that calls it (`session_builder::ingest_record`) is intentionally left
+/// untouched by that UI cut, and the SQL itself is a harmless, cheap no-op query when no card is
+/// ever stamped.
 const PENDING_LAUNCH_WINDOW_SECS: i64 = 120;
-
-/// Marks `card_id` as awaiting the session a just-launched terminal will create. The card's
-/// session id can't be known at launch time (Claude Code generates it), so the ingest path
-/// reconciles later via `adopt_pending_card_for_session`. Idempotent — re-stamping just
-/// refreshes the window.
-pub fn set_card_pending_launch(conn: &Connection, card_id: &str) -> rusqlite::Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "UPDATE cards SET pending_launch_at = ?2 WHERE id = ?1",
-        params![card_id, now],
-    )?;
-    Ok(())
-}
 
 /// Reconciles a brand-new session against a card that spawned it. If `project_id` has an
 /// unlinked card stamped with a recent `pending_launch_at` (within `PENDING_LAUNCH_WINDOW_SECS`,
@@ -1040,7 +907,8 @@ pub fn set_card_pending_launch(conn: &Connection, card_id: &str) -> rusqlite::Re
 /// to the `in_progress` column — then returns `true` so the caller skips auto-creating a
 /// duplicate. Returns `false` (leaving the normal `auto_create_card_for_session` path to run)
 /// when no eligible card exists. The card keeps its user-authored title; only the linkage
-/// changes. See `commands::launch_or_attach_session` for the launch-side stamp.
+/// changes. See `PENDING_LAUNCH_WINDOW_SECS`'s doc comment for why the `true` branch is
+/// currently unreachable in practice.
 pub fn adopt_pending_card_for_session(
     conn: &Connection,
     project_id: &str,
@@ -1161,138 +1029,6 @@ pub fn sync_card_for_session(conn: &Connection, session_id: &str, role: &str) ->
     Ok(())
 }
 
-pub fn move_card(conn: &Connection, card_id: &str, column_id: &str, position: i64) -> rusqlite::Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "UPDATE cards SET column_id = ?2, position = ?3, updated_at = ?4 WHERE id = ?1",
-        params![card_id, column_id, position, now],
-    )?;
-    Ok(())
-}
-
-/// Everything `commands::launch_or_attach_session` needs about one card in a single query:
-/// its own title/description/session_id, its column's role (to check it landed on the
-/// seeded "in_progress" column), and its project's id + filesystem path (to know where to
-/// launch/attach a terminal session).
-#[derive(Debug, Clone)]
-pub struct CardLaunchContext {
-    pub title: String,
-    pub description: Option<String>,
-    pub session_id: Option<String>,
-    pub column_role: Option<String>,
-    pub project_id: String,
-    pub project_path: String,
-}
-
-pub fn card_launch_context(
-    conn: &Connection,
-    card_id: &str,
-) -> rusqlite::Result<Option<CardLaunchContext>> {
-    conn.query_row(
-        "SELECT c.title, c.description, c.session_id, col.role, p.id, p.path
-         FROM cards c
-         JOIN columns col ON col.id = c.column_id
-         JOIN boards b ON b.id = c.board_id
-         JOIN projects p ON p.id = b.project_id
-         WHERE c.id = ?1",
-        params![card_id],
-        |row| {
-            Ok(CardLaunchContext {
-                title: row.get(0)?,
-                description: row.get(1)?,
-                session_id: row.get(2)?,
-                column_role: row.get(3)?,
-                project_id: row.get(4)?,
-                project_path: row.get(5)?,
-            })
-        },
-    )
-    .optional()
-}
-
-pub fn update_card(
-    conn: &Connection,
-    card_id: &str,
-    title: &str,
-    description: Option<&str>,
-) -> rusqlite::Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "UPDATE cards SET title = ?2, description = ?3, updated_at = ?4 WHERE id = ?1",
-        params![card_id, title, description, now],
-    )?;
-    Ok(())
-}
-
-pub fn delete_card(conn: &Connection, card_id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM cards WHERE id = ?1", params![card_id])?;
-    Ok(())
-}
-
-/// Attaches an existing session to a manually-created planning card — the escape hatch from
-/// the design's "user can link a pre-existing Todo card instead of getting a duplicate
-/// auto-created one" rule. If `session_id` already backs a different (auto-created) card,
-/// that duplicate is deleted first, since `cards.session_id` is UNIQUE. Immediately syncs the
-/// card to whichever column matches the session's *current* status, so linking a card to an
-/// already-active or already-ended session doesn't leave it stranded wherever it was created.
-pub fn link_session_to_card(conn: &Connection, card_id: &str, session_id: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM cards WHERE session_id = ?1 AND id != ?2",
-        params![session_id, card_id],
-    )?;
-
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "UPDATE cards SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-        params![card_id, session_id, now],
-    )?;
-
-    let status: Option<String> = conn
-        .query_row(
-            "SELECT status FROM sessions WHERE id = ?1",
-            params![session_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let role = match status.as_deref() {
-        Some("ended") => "review",
-        _ => "in_progress",
-    };
-    sync_card_for_session(conn, session_id, role)
-}
-
-pub fn create_column(conn: &Connection, board_id: &str, name: &str) -> rusqlite::Result<Column> {
-    let id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
-    let position: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(position), -1) + 1 FROM columns WHERE board_id = ?1",
-        params![board_id],
-        |row| row.get(0),
-    )?;
-
-    conn.execute(
-        "INSERT INTO columns (id, board_id, name, role, position, created_at)
-         VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
-        params![id, board_id, name, position, now],
-    )?;
-
-    Ok(Column {
-        id,
-        board_id: board_id.to_string(),
-        name: name.to_string(),
-        role: None,
-        position,
-        created_at: now,
-    })
-}
-
-pub fn rename_column(conn: &Connection, column_id: &str, name: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE columns SET name = ?2 WHERE id = ?1",
-        params![column_id, name],
-    )?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod file_diff_span_tests {
@@ -1582,175 +1318,6 @@ mod kanban_tests {
 
         let card_count: i64 = conn.query_row("SELECT COUNT(*) FROM cards", [], |r| r.get(0)).unwrap();
         assert_eq!(card_count, 0);
-    }
-
-    #[test]
-    fn link_session_to_card_replaces_any_prior_auto_created_card_for_that_session() {
-        let conn = in_memory_db();
-        seed_project_and_session(&conn, "p1", "s1");
-        let board_id = ensure_board_for_project(&conn, "p1").unwrap();
-
-        // Simulates the session starting first (auto-creates a card)...
-        auto_create_card_for_session(&conn, &board_id, "s1", "New session").unwrap();
-        let auto_card_id: String = conn.query_row("SELECT id FROM cards", [], |r| r.get(0)).unwrap();
-
-        // ...then the user retroactively linking it to a manual planning card instead.
-        let todo_column_id: String = conn
-            .query_row("SELECT id FROM columns WHERE board_id = ?1 AND role = 'todo'", params![board_id], |r| r.get(0))
-            .unwrap();
-        let manual_card = create_card(&conn, &board_id, &todo_column_id, "Plan the thing", None).unwrap();
-
-        link_session_to_card(&conn, &manual_card.id, "s1").unwrap();
-
-        let card_count: i64 = conn.query_row("SELECT COUNT(*) FROM cards", [], |r| r.get(0)).unwrap();
-        assert_eq!(card_count, 1, "the duplicate auto-created card must be gone");
-
-        let remaining_id: String = conn.query_row("SELECT id FROM cards", [], |r| r.get(0)).unwrap();
-        assert_eq!(remaining_id, manual_card.id);
-        assert_ne!(remaining_id, auto_card_id);
-
-        // Session "s1" is still 'active', so linking must place the card in 'in_progress'.
-        assert_eq!(column_role_for_card(&conn, &manual_card.id).as_deref(), Some("in_progress"));
-    }
-
-    #[test]
-    fn link_session_to_card_places_card_in_review_for_an_already_ended_session() {
-        let conn = in_memory_db();
-        seed_project_and_session(&conn, "p1", "s1");
-        conn.execute("UPDATE sessions SET status = 'ended' WHERE id = 's1'", []).unwrap();
-        let board_id = ensure_board_for_project(&conn, "p1").unwrap();
-
-        let todo_column_id: String = conn
-            .query_row("SELECT id FROM columns WHERE board_id = ?1 AND role = 'todo'", params![board_id], |r| r.get(0))
-            .unwrap();
-        let manual_card = create_card(&conn, &board_id, &todo_column_id, "Plan the thing", None).unwrap();
-
-        link_session_to_card(&conn, &manual_card.id, "s1").unwrap();
-
-        assert_eq!(column_role_for_card(&conn, &manual_card.id).as_deref(), Some("review"));
-    }
-
-    #[test]
-    fn adopt_pending_card_for_session_links_stamped_card_and_skips_auto_create() {
-        let conn = in_memory_db();
-        upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
-        let board_id = ensure_board_for_project(&conn, "p1").unwrap();
-        let in_progress_id: String = conn
-            .query_row("SELECT id FROM columns WHERE board_id = ?1 AND role = 'in_progress'", params![board_id], |r| r.get(0))
-            .unwrap();
-
-        // A user-authored planning card that was just used to spawn a terminal session.
-        let card = create_card(&conn, &board_id, &in_progress_id, "Fix the linkedin section", None).unwrap();
-        set_card_pending_launch(&conn, &card.id).unwrap();
-
-        // The session Claude Code creates then gets ingested.
-        seed_session_only(&conn, "p1", "s1");
-        let adopted = adopt_pending_card_for_session(&conn, "p1", "s1").unwrap();
-        assert!(adopted, "the stamped card should have adopted the new session");
-
-        // Exactly one card, still the user's card and title, now linked and with the stamp cleared.
-        let card_count: i64 = conn.query_row("SELECT COUNT(*) FROM cards", [], |r| r.get(0)).unwrap();
-        assert_eq!(card_count, 1, "no duplicate card should have been created");
-        let (title, session_id, pending): (String, Option<String>, Option<i64>) = conn
-            .query_row(
-                "SELECT title, session_id, pending_launch_at FROM cards WHERE id = ?1",
-                params![card.id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(title, "Fix the linkedin section");
-        assert_eq!(session_id.as_deref(), Some("s1"));
-        assert_eq!(pending, None);
-    }
-
-    #[test]
-    fn adopt_pending_card_for_session_ignores_expired_stamp() {
-        let conn = in_memory_db();
-        upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
-        let board_id = ensure_board_for_project(&conn, "p1").unwrap();
-        let in_progress_id: String = conn
-            .query_row("SELECT id FROM columns WHERE board_id = ?1 AND role = 'in_progress'", params![board_id], |r| r.get(0))
-            .unwrap();
-        let card = create_card(&conn, &board_id, &in_progress_id, "Stale plan", None).unwrap();
-        // Stamp far outside the adoption window.
-        let stale = chrono::Utc::now().timestamp() - PENDING_LAUNCH_WINDOW_SECS - 60;
-        conn.execute("UPDATE cards SET pending_launch_at = ?2 WHERE id = ?1", params![card.id, stale]).unwrap();
-
-        seed_session_only(&conn, "p1", "s1");
-        let adopted = adopt_pending_card_for_session(&conn, "p1", "s1").unwrap();
-        assert!(!adopted, "an expired stamp must fall through to the auto-create path");
-        // Card is untouched (still unlinked) so the caller will auto-create as normal.
-        let session_id: Option<String> = conn
-            .query_row("SELECT session_id FROM cards WHERE id = ?1", params![card.id], |r| r.get(0))
-            .unwrap();
-        assert_eq!(session_id, None);
-    }
-
-    #[test]
-    fn card_launch_context_reports_project_path_and_column_role_for_an_unlinked_card() {
-        let conn = in_memory_db();
-        upsert_project(&conn, "p1", "fixture", "/Users/testuser/fixture", 1000).unwrap();
-        let board_id = ensure_board_for_project(&conn, "p1").unwrap();
-        let in_progress_column_id: String = conn
-            .query_row(
-                "SELECT id FROM columns WHERE board_id = ?1 AND role = 'in_progress'",
-                params![board_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        let card = create_card(
-            &conn,
-            &board_id,
-            &in_progress_column_id,
-            "Fix the login bug",
-            Some("Repros on SSO cookie expiry"),
-        )
-        .unwrap();
-
-        let context = card_launch_context(&conn, &card.id).unwrap().unwrap();
-        assert_eq!(context.title, "Fix the login bug");
-        assert_eq!(context.description.as_deref(), Some("Repros on SSO cookie expiry"));
-        assert_eq!(context.session_id, None);
-        assert_eq!(context.column_role.as_deref(), Some("in_progress"));
-        assert_eq!(context.project_id, "p1");
-        assert_eq!(context.project_path, "/Users/testuser/fixture");
-    }
-
-    #[test]
-    fn card_launch_context_returns_none_for_an_unknown_card_id() {
-        let conn = in_memory_db();
-        assert!(card_launch_context(&conn, "does-not-exist").unwrap().is_none());
-    }
-
-    #[test]
-    fn most_recent_active_session_id_for_project_picks_the_active_one_and_ignores_other_projects() {
-        let conn = in_memory_db();
-        seed_project_and_session(&conn, "p1", "s1");
-        // An ended session for the same project must not be picked...
-        conn.execute(
-            "INSERT INTO sessions (id, project_id, agent, started_at, last_activity_at, status, raw_log_path)
-             VALUES ('s0', 'p1', 'claude', 900, 900, 'ended', '')",
-            [],
-        )
-        .unwrap();
-        // ...nor an active session belonging to a different project.
-        upsert_project(&conn, "p2", "fixture2", "/fixture2", 1000).unwrap();
-        conn.execute(
-            "INSERT INTO sessions (id, project_id, agent, started_at, last_activity_at, status, raw_log_path)
-             VALUES ('s2', 'p2', 'claude', 1000, 1000, 'active', '')",
-            [],
-        )
-        .unwrap();
-
-        let result = most_recent_active_session_id_for_project(&conn, "p1").unwrap();
-        assert_eq!(result.as_deref(), Some("s1"));
-    }
-
-    #[test]
-    fn most_recent_active_session_id_for_project_returns_none_when_nothing_is_active() {
-        let conn = in_memory_db();
-        upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
-        assert_eq!(most_recent_active_session_id_for_project(&conn, "p1").unwrap(), None);
     }
 }
 

@@ -1,14 +1,12 @@
-use crate::activity;
 use crate::db::{queries, Db};
 use crate::parser;
 use crate::registry;
 use crate::sidecar;
-use crate::terminal;
 use chrono::{Duration, NaiveDate, Utc};
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
-use tauri::{Emitter, State};
+use tauri::State;
 
 /// Width of the Dashboard's GitHub-style activity heatmap, in days.
 const HEATMAP_DAYS: i64 = 365;
@@ -66,59 +64,6 @@ pub fn open_in_editor(path: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("failed to launch editor: $EDITOR is not set and `code` failed to start: {e}"))
-}
-
-/// Returns a 14-day daily git-commit-count sparkline for the project at `project_path`, for
-/// the decorative `ActivityBars` component on each project card. Returns `Vec<i64>` directly,
-/// not `Result` — see `activity`'s module doc comment for why: every failure mode (not a git
-/// repo, no `git` on `PATH`, shellout failure) already degrades to `vec![0; 14]` inside
-/// `activity::project_activity`, so there's no error state left for the frontend to handle.
-#[tauri::command]
-pub fn project_activity(project_path: String, cache: State<'_, activity::ActivityCache>) -> Vec<i64> {
-    activity::project_activity(&project_path, &cache)
-}
-
-/// Width of a project's Overview-tab commit heatmap, in days — same window as the
-/// Dashboard's heatmap, for visual consistency between the two.
-const GIT_HEATMAP_DAYS: i64 = 365;
-
-/// How many recent commits the Overview tab's "Recent commits" list shows.
-const RECENT_COMMITS_LIMIT: usize = 8;
-
-/// Richer git-derived context for a single project's Overview tab: a full-year commit
-/// heatmap (reusing the Dashboard's `ActivityHeatmap` component on the frontend) plus a
-/// short list of the most recent commits. Unlike `project_activity`'s 14-day sparkline,
-/// this isn't cached — it's only fetched once per Overview-tab visit, and react-query's
-/// own 30s `staleTime` already absorbs repeat mounts.
-#[derive(Debug, Clone, Serialize)]
-pub struct GitInsights {
-    /// Oldest first, one entry per day, `GIT_HEATMAP_DAYS` long (today inclusive) — commit
-    /// counts, not session/usage activity.
-    pub commit_heatmap: Vec<DailyActivity>,
-    /// Newest first, capped at `RECENT_COMMITS_LIMIT`. Empty if `project_path` isn't a git
-    /// repo, `git` isn't on `PATH`, or the shellout otherwise fails — same "degrade
-    /// silently" contract as `project_activity`.
-    pub recent_commits: Vec<activity::CommitInfo>,
-}
-
-#[tauri::command]
-pub fn project_git_insights(project_path: String) -> GitInsights {
-    let timestamps = activity::git_log_timestamps(&project_path, GIT_HEATMAP_DAYS);
-
-    let mut counts_by_day: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for ts in &timestamps {
-        if let Some(dt) = chrono::DateTime::from_timestamp(*ts, 0) {
-            *counts_by_day.entry(dt.format("%Y-%m-%d").to_string()).or_insert(0) += 1;
-        }
-    }
-
-    let today = Utc::now().date_naive();
-    let window_start = today - Duration::days(GIT_HEATMAP_DAYS - 1);
-    let commit_heatmap = dense_daily_activity(window_start, today, &counts_by_day);
-
-    let recent_commits = activity::git_recent_commits(&project_path, RECENT_COMMITS_LIMIT);
-
-    GitInsights { commit_heatmap, recent_commits }
 }
 
 /// Caps how many diff lines `get_file_diff_for_session_file` will ever serialize over IPC —
@@ -482,184 +427,6 @@ fn render_transcript_header(session: &queries::Session) -> String {
         session.status,
         session.cost_usd,
     )
-}
-
-// --- Kanban board ---
-
-/// Emits the same coarse `data-changed` event every other mutation path uses — the frontend
-/// hook invalidates by query key, not by payload, so a new event *kind* isn't needed here.
-fn emit_data_changed(app: &tauri::AppHandle) {
-    let _ = app.emit("data-changed", serde_json::json!({ "entity": "board", "kind": "updated" }));
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct BoardData {
-    pub board: queries::Board,
-    pub columns: Vec<queries::Column>,
-    pub cards: Vec<queries::Card>,
-}
-
-#[tauri::command]
-pub fn get_board(db: State<'_, Db>, project_id: String) -> Result<BoardData, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::get_board(&conn, &project_id)
-        .map(|(board, columns, cards)| BoardData { board, columns, cards })
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn create_card(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    board_id: String,
-    column_id: String,
-    title: String,
-    description: Option<String>,
-) -> Result<queries::Card, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let card = queries::create_card(&conn, &board_id, &column_id, &title, description.as_deref())
-        .map_err(|e| e.to_string())?;
-    drop(conn);
-    emit_data_changed(&app);
-    Ok(card)
-}
-
-#[tauri::command]
-pub fn move_card(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    card_id: String,
-    column_id: String,
-    position: i64,
-) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::move_card(&conn, &card_id, &column_id, position).map_err(|e| e.to_string())?;
-    drop(conn);
-    emit_data_changed(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn update_card(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    card_id: String,
-    title: String,
-    description: Option<String>,
-) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::update_card(&conn, &card_id, &title, description.as_deref()).map_err(|e| e.to_string())?;
-    drop(conn);
-    emit_data_changed(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn delete_card(app: tauri::AppHandle, db: State<'_, Db>, card_id: String) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::delete_card(&conn, &card_id).map_err(|e| e.to_string())?;
-    drop(conn);
-    emit_data_changed(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn link_session_to_card(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    card_id: String,
-    session_id: String,
-) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::link_session_to_card(&conn, &card_id, &session_id).map_err(|e| e.to_string())?;
-    drop(conn);
-    emit_data_changed(&app);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn create_column(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    board_id: String,
-    name: String,
-) -> Result<queries::Column, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let column = queries::create_column(&conn, &board_id, &name).map_err(|e| e.to_string())?;
-    drop(conn);
-    emit_data_changed(&app);
-    Ok(column)
-}
-
-#[tauri::command]
-pub fn rename_column(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    column_id: String,
-    name: String,
-) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::rename_column(&conn, &column_id, &name).map_err(|e| e.to_string())?;
-    drop(conn);
-    emit_data_changed(&app);
-    Ok(())
-}
-
-/// Called when a card with no linked session is dropped onto a board's seeded "in_progress"
-/// column: attaches the card's title/description as a prompt to a live `claude` CLI session
-/// already running for that project (if one's open in a Terminal.app tab), resumes the most
-/// recently active session for that project in a new Terminal window (if Relay's own DB
-/// shows one active but no matching tab was found), or starts a brand new session otherwise.
-///
-/// Returns a short outcome string (`"attached_existing_tab"`, `"resumed_in_new_window"`,
-/// `"started_new_window"`, or a `"skipped: ..."` reason) rather than `()` — purely for the
-/// frontend to log, not surfaced as an error, since "the card wasn't actually eligible" is
-/// an expected outcome (e.g. a card already linked to a session, or the frontend racing a
-/// second drop event) rather than a failure.
-///
-/// Deliberately releases the DB lock before calling `terminal::attach_or_launch` — that call
-/// blocks for a couple of seconds (AppleScript delays while a new Terminal window's `claude`
-/// boots up), and holding the single shared connection mutex across that would stall every
-/// other DB access for the duration, the same lock-discipline concern documented on
-/// `lib.rs`'s idle sweep.
-#[tauri::command]
-pub fn launch_or_attach_session(db: State<'_, Db>, card_id: String) -> Result<String, String> {
-    let prepared = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-
-        let Some(context) = queries::card_launch_context(&conn, &card_id).map_err(|e| e.to_string())?
-        else {
-            return Ok("skipped: card not found".to_string());
-        };
-        if context.session_id.is_some() {
-            return Ok("skipped: card is already linked to a session".to_string());
-        }
-        if context.column_role.as_deref() != Some("in_progress") {
-            return Ok("skipped: card is not on the in_progress column".to_string());
-        }
-
-        let resume_id =
-            queries::most_recent_active_session_id_for_project(&conn, &context.project_id)
-                .map_err(|e| e.to_string())?;
-
-        // Stamp the card so the session Claude Code is about to create gets adopted into it by
-        // the ingest path (queries::adopt_pending_card_for_session), rather than spawning a
-        // duplicate auto-created card. Done here, before the lock is released and the terminal
-        // opens, so the stamp is durable well before the first log line lands.
-        queries::set_card_pending_launch(&conn, &card_id).map_err(|e| e.to_string())?;
-
-        (context, resume_id)
-    };
-    let (context, resume_id) = prepared;
-
-    let mut prompt = context.title;
-    if let Some(description) = context.description.filter(|d| !d.trim().is_empty()) {
-        prompt.push_str("\n\n");
-        prompt.push_str(&description);
-    }
-
-    terminal::attach_or_launch(&context.project_path, resume_id.as_deref(), &prompt)
-        .map_err(|e| e.to_string())
 }
 
 // --- Dispatch task sidecar (Phase 2R, Slice R2) ---

@@ -12,9 +12,9 @@ interface SessionRowProps {
 
 /**
  * Single-session summary row: project + status + model on top, summary below, stats
- * (relative time / cost / tokens) on the right. Shared between `SessionsView` (flat list of
- * all sessions) and `ProjectDetail` (sessions scoped to one project) so this rendering logic
- * lives in exactly one place.
+ * (relative time / cost / tokens) on the right. Used by the Sessions hub's session list
+ * (`SessionsHubView`), optionally filtered to one project, so this rendering logic lives in
+ * exactly one place.
  */
 export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
   return (

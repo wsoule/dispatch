@@ -2,12 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type {
-  BoardColumn,
-  BoardData,
-  Card,
   DashboardStats,
   FileDiff,
-  GitInsights,
   ProjectSummary,
   ReportData,
   Session,
@@ -51,16 +47,6 @@ export function openInEditor(path: string): Promise<void> {
   return invoke('open_in_editor', { path });
 }
 
-export function getProjectActivity(projectPath: string): Promise<number[]> {
-  return invoke('project_activity', { projectPath });
-}
-
-export function getProjectGitInsights(
-  projectPath: string
-): Promise<GitInsights> {
-  return invoke('project_git_insights', { projectPath });
-}
-
 export function getDashboardStats(): Promise<DashboardStats> {
   return invoke('dashboard_stats');
 }
@@ -96,78 +82,9 @@ export function getFileDiffForSessionFile(
   return invoke('get_file_diff_for_session_file', { sessionId, filePath });
 }
 
-export function getBoard(projectId: string): Promise<BoardData> {
-  return invoke('get_board', { projectId });
-}
-
-export function createCard(
-  boardId: string,
-  columnId: string,
-  title: string,
-  description?: string
-): Promise<Card> {
-  return invoke('create_card', {
-    boardId,
-    columnId,
-    title,
-    description: description ?? null,
-  });
-}
-
-export function moveCard(
-  cardId: string,
-  columnId: string,
-  position: number
-): Promise<void> {
-  return invoke('move_card', { cardId, columnId, position });
-}
-
-export function updateCard(
-  cardId: string,
-  title: string,
-  description?: string
-): Promise<void> {
-  return invoke('update_card', {
-    cardId,
-    title,
-    description: description ?? null,
-  });
-}
-
-export function deleteCard(cardId: string): Promise<void> {
-  return invoke('delete_card', { cardId });
-}
-
-export function linkSessionToCard(
-  cardId: string,
-  sessionId: string
-): Promise<void> {
-  return invoke('link_session_to_card', { cardId, sessionId });
-}
-
-export function createColumn(
-  boardId: string,
-  name: string
-): Promise<BoardColumn> {
-  return invoke('create_column', { boardId, name });
-}
-
-export function renameColumn(columnId: string, name: string): Promise<void> {
-  return invoke('rename_column', { columnId, name });
-}
-
-/** Attaches the card's title/description to a live `claude` terminal session for its
- * project (or opens a new one) — see `terminal::attach_or_launch` on the backend for the
- * full behavior. Resolves to a short outcome string (or a "skipped: ..." reason if the card
- * wasn't eligible), never rejects for an ineligible card — only for an actual failure to
- * reach/drive Terminal.app. */
-export function launchOrAttachSession(cardId: string): Promise<string> {
-  return invoke('launch_or_attach_session', { cardId });
-}
-
 /** True if `root` (a project's absolute path) has a `.dispatch/` directory — gates whether
- * `ProjectDetail` offers a Tasks tab at all. Pure filesystem check on the backend, no daemon
- * involved. */
+ * dispatch's own task/board/plan surfaces are offered for it at all. Pure filesystem check on
+ * the backend, no daemon involved. */
 export function hasDispatch(root: string): Promise<boolean> {
   // Browser-dev fallback: if a `port` param is present the caller has already
   // pointed us at a running daemon, so the project is dispatch-enabled by

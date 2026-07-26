@@ -21,10 +21,10 @@ interface ExportControlProps {
 
 /**
  * "Export … / Exporting… / Saved to &lt;path&gt; [Reveal in Finder] / &lt;error&gt;" control
- * shared by `SessionDetailModal` (exports one session's transcript) and `ReportView` (exports
- * the current spend report) — both called the same async export fn and re-implemented the
- * same idle/saving/saved/error state machine around it. Owns that state itself so neither
- * caller has to.
+ * shared by `SessionDetailModal` (exports one session's transcript) and `SessionsHubView`
+ * (exports the aggregate spend report from its header) — both call an async export fn and
+ * would otherwise re-implement the same idle/saving/saved/error state machine around it. Owns
+ * that state itself so neither caller has to.
  */
 export function ExportControl({
   label,

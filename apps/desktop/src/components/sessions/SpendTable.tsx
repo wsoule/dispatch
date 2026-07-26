@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { cn } from '@/lib/utils';
+
 export interface SpendRow {
   key: string;
   label: ReactNode;
@@ -8,21 +10,31 @@ export interface SpendRow {
 }
 
 interface SpendTableProps {
-  /** Header for the row-identity column, e.g. "Project" / "Tag" / "Agent". */
+  /** Header for the row-identity column, e.g. "Project" / "Model". */
   columnLabel: string;
   rows: SpendRow[];
   emptyMessage: string;
+  /** When set, each row becomes clickable and calls back with its `key` — the Sessions hub's
+   * "spend by project" table uses this to toggle the session list below to that project. Rows
+   * render as plain (non-interactive) text when omitted, e.g. the "spend by model" table. */
+  onRowClick?: (key: string) => void;
+  /** The `key` of the row to render in an active/selected state — set together with
+   * `onRowClick` so the currently-filtered project stays visually highlighted. */
+  activeKey?: string;
 }
 
 /**
- * The "sessions + spend, grouped by X" table `ReportView` rendered three times (by project, by
- * tag, by agent) as three near-identical `<table>` blocks. One shared component now owns the
- * markup; each caller only supplies its own rows and the label for the grouping column.
+ * The "sessions + spend, grouped by X" table the Sessions hub renders for both its "spend by
+ * model" and "spend by project" sections — one shared component owns the markup, each caller
+ * only supplies its own rows and the label for the grouping column. Optionally clickable (see
+ * `onRowClick`) so the same table doubles as the project filter control.
  */
 export function SpendTable({
   columnLabel,
   rows,
   emptyMessage,
+  onRowClick,
+  activeKey,
 }: SpendTableProps) {
   if (rows.length === 0) {
     return <p className="text-muted-foreground text-[13px]">{emptyMessage}</p>;
@@ -45,7 +57,15 @@ export function SpendTable({
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={row.key}>
+          <tr
+            key={row.key}
+            onClick={onRowClick ? () => onRowClick(row.key) : undefined}
+            className={cn(
+              onRowClick &&
+                'hover:bg-accent/40 cursor-pointer transition-colors',
+              activeKey === row.key && 'bg-accent/50'
+            )}
+          >
             <td className="border-border text-foreground border-b py-2 last:border-b-0">
               {row.label}
             </td>
