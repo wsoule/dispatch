@@ -29,6 +29,7 @@ import {
 import { checkForUpdate } from './lib/updater';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
+import { BranchesView } from './views/BranchesView';
 import { GetStartedView } from './views/GetStartedView';
 import { MilestonesView } from './views/MilestonesView';
 import { NotesView } from './views/NotesView';
@@ -552,6 +553,15 @@ function App() {
                       onViewPr={(runId) => {
                         dispatchNav({ type: 'openRun', runId });
                         selectProjectView('pull-requests');
+                      }}
+                    />
+                  )}
+                  {navState.projectView === 'branches' && (
+                    <BranchesView
+                      data={data}
+                      onOpenRun={(runId) => {
+                        dispatchNav({ type: 'openRun', runId });
+                        selectProjectView('runs');
                       }}
                     />
                   )}

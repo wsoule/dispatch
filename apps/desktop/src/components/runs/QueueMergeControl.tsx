@@ -12,6 +12,10 @@ import { Button } from '@/ui/button';
 // state maps to a short present-progressive label straight off the snapshot.
 const QUEUE_STATE_LABEL: Partial<Record<MergeQueueEntryState, string>> = {
   'waiting-blockers': 'Waiting on blockers…',
+  // Not present-progressive like the others because nothing is progressing:
+  // the queue is waiting on the person, and the entry's `reason` names the
+  // file or branch to deal with.
+  'blocked-environment': 'Blocked on your checkout',
   rebasing: 'Rebasing…',
   verifying: 'Verifying…',
   merging: 'Merging…',
