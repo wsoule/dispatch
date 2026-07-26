@@ -4,13 +4,15 @@ import { useMemo } from 'react';
 
 import { type DagEdge, dagLayout, type DagNode } from '../../lib/dagLayout';
 import { statusTone } from '../../lib/taskDisplay';
+import { resolveStatusVisual } from './StatusIcon';
 import { cn } from '@/lib/utils';
 
-// Reuses statusTone's six-tone vocabulary (the same one StatusIcon falls back to for a
-// project's custom statuses) rather than inventing a second status->color map — a node's
-// border/fill and its status dot always agree with how the rest of the app already paints
-// this status. `ReturnType` avoids needing taskDisplay.ts to export its otherwise-private
-// `Tone` type just for this one Record key.
+// Reuses statusTone's six-tone vocabulary rather than inventing a second status->color map for
+// the SVG rect/dot below. The actual status->tone *resolution* comes from `resolveStatusVisual`
+// (StatusIcon's own logic) so a node's border/fill/dot always agree with the StatusIcon glyph
+// shown everywhere else in the app for that status — `statusTone` alone is only the fallback
+// `resolveStatusVisual` uses for custom, non-built-in statuses. `ReturnType` avoids needing
+// taskDisplay.ts to export its otherwise-private `Tone` type just for this one Record key.
 type Tone = ReturnType<typeof statusTone>;
 
 const TONE_NODE_CLASSES: Record<
@@ -54,11 +56,13 @@ const TONE_NODE_CLASSES: Record<
 // the font size used below and just slices, rather than pulling in canvas text measurement for
 // a label that only ever needs to read "roughly right", not pixel-exact.
 const MAX_TITLE_CHARS = 24;
+// The status line sits below the title at a smaller font size but sees the same fixed node
+// width, so it gets its own (shorter) budget rather than reusing MAX_TITLE_CHARS — a custom
+// project status can be an arbitrarily long word with no natural break point, unlike a title.
+const MAX_STATUS_CHARS = 16;
 
-function truncate(title: string): string {
-  return title.length > MAX_TITLE_CHARS
-    ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…`
-    : title;
+function truncate(text: string, maxChars: number = MAX_TITLE_CHARS): string {
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
 }
 
 interface DagNodeShapeProps {
@@ -72,7 +76,7 @@ interface DagNodeShapeProps {
 // a real DOM button (SVG has no button element) so it can still be keyboard-activated when
 // `onOpenTask` is given.
 function DagNodeShape({ node, onOpenTask }: DagNodeShapeProps) {
-  const tone = TONE_NODE_CLASSES[statusTone(node.status)];
+  const tone = TONE_NODE_CLASSES[resolveStatusVisual(node.status).tone];
   const clickable = onOpenTask !== undefined;
 
   return (
@@ -119,7 +123,8 @@ function DagNodeShape({ node, onOpenTask }: DagNodeShapeProps) {
         y={38}
         className="fill-muted-foreground font-sans text-[10px]"
       >
-        {node.status}
+        <title>{node.status}</title>
+        {truncate(node.status, MAX_STATUS_CHARS)}
       </text>
     </g>
   );

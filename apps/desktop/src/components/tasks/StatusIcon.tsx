@@ -12,11 +12,21 @@ const STROKE_WIDTH = 1.4;
 
 type StatusShape = 'dashed' | 'empty' | 'pie' | 'check' | 'x';
 
+// The same six-tone vocabulary `statusTone` returns — reused here (not redeclared) so a
+// status's `tone` field below and its `statusTone()` fallback always speak the same language.
+type Tone = ReturnType<typeof statusTone>;
+
 interface StatusVisual {
   shape: StatusShape;
   /** Tailwind text-color class — drives both `stroke="currentColor"` and
    * `fill="currentColor"` below. */
   colorClass: string;
+  /** Which of `statusTone`'s six tones this status's `colorClass` corresponds to. Callers that
+   * need a status's color in a context other than `currentColor` text (e.g. EpicDagView's SVG
+   * rect stroke/fill, which can't reuse `colorClass` directly) key off this instead of
+   * re-deriving a color from `statusTone()` alone, which would drift from `colorClass` above
+   * for the built-ins (e.g. in-progress is amber here but blue under plain `statusTone`). */
+  tone: Tone;
   /** Pie fill fraction (0..1), only meaningful when `shape === 'pie'`. */
   fraction?: number;
 }
@@ -26,23 +36,37 @@ interface StatusVisual {
 // color, independent of `statusTone`'s badge-oriented palette (see the fallback below for why
 // those two mappings intentionally differ).
 const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
-  backlog: { shape: 'dashed', colorClass: 'text-muted-foreground/50' },
-  todo: { shape: 'empty', colorClass: 'text-muted-foreground' },
+  backlog: {
+    shape: 'dashed',
+    colorClass: 'text-muted-foreground/50',
+    tone: 'gray',
+  },
+  todo: { shape: 'empty', colorClass: 'text-muted-foreground', tone: 'gray' },
   'in-progress': {
     shape: 'pie',
     fraction: 0.5,
     colorClass: 'text-amber-500 dark:text-amber-400',
+    tone: 'amber',
   },
-  'in-review': { shape: 'pie', fraction: 0.75, colorClass: 'text-primary' },
-  done: { shape: 'check', colorClass: 'text-primary' },
-  cancelled: { shape: 'x', colorClass: 'text-muted-foreground' },
+  'in-review': {
+    shape: 'pie',
+    fraction: 0.75,
+    colorClass: 'text-primary',
+    tone: 'accent',
+  },
+  done: { shape: 'check', colorClass: 'text-primary', tone: 'accent' },
+  cancelled: {
+    shape: 'x',
+    colorClass: 'text-muted-foreground',
+    tone: 'gray',
+  },
 };
 
 // Fallback palette for a custom tracker status (anything not in the six built-ins above) —
 // keyed by the same six-tone vocabulary `statusTone` already returns for the rest of the app,
 // so a project's own `.dispatch/config.yml` status list always renders *something* sensible
 // (an empty ring in a deliberate color) rather than an unstyled shape.
-const FALLBACK_TONE_COLOR_CLASS: Record<string, string> = {
+const FALLBACK_TONE_COLOR_CLASS: Record<Tone, string> = {
   green: 'text-emerald-500 dark:text-emerald-400',
   blue: 'text-blue-500 dark:text-blue-400',
   amber: 'text-amber-500 dark:text-amber-400',
@@ -51,13 +75,21 @@ const FALLBACK_TONE_COLOR_CLASS: Record<string, string> = {
   accent: 'text-primary',
 };
 
-function resolveStatusVisual(status: string): StatusVisual {
+/**
+ * Resolves a status string to its full visual treatment — shape, color, and (for custom
+ * statuses) which of `statusTone`'s six tones it maps to. Exported so other call sites that
+ * need a status's *color* outside of this component's own `currentColor`-text rendering (e.g.
+ * EpicDagView's SVG node fill/stroke) can key off the same resolution instead of maintaining a
+ * second status->color map that would silently drift from this one.
+ */
+export function resolveStatusVisual(status: string): StatusVisual {
   const known = KNOWN_STATUS_VISUALS[status];
   if (known !== undefined) return known;
+  const tone = statusTone(status);
   return {
     shape: 'empty',
-    colorClass:
-      FALLBACK_TONE_COLOR_CLASS[statusTone(status)] ?? 'text-muted-foreground',
+    colorClass: FALLBACK_TONE_COLOR_CLASS[tone] ?? 'text-muted-foreground',
+    tone,
   };
 }
 
