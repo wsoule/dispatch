@@ -1,5 +1,5 @@
 import type { DiffResult, MergeQueueSnapshot, RunMeta } from '@dispatch/client';
-import { computeStack, type TaskDoc } from '@dispatch/core';
+import { computeStack, isDone, type TaskDoc } from '@dispatch/core';
 import {
   ExternalLink,
   GitMerge,
@@ -83,11 +83,19 @@ export function RunReviewView({
   // The button only shows once this is >1 — a stack where this run is the
   // only reviewable member has nothing extra for the stack action to do
   // beyond the plain "Queue merge" button already sitting next to it.
+  //
+  // Mirrors the server's own `enqueueStack` skip rule: a stack member whose
+  // task is already done/cancelled is excluded up front, same as there —
+  // otherwise this count (and the button it gates) could promise more work
+  // than `enqueueStack` would actually enqueue.
   const stackQueueableCount = useMemo(() => {
     const stack = computeStack(tasks, meta.taskId);
     if (stack === null) return 0;
+    const taskById = new Map(tasks.map((t) => [t.meta.id, t]));
     let count = 0;
     for (const id of stack.order) {
+      const task = taskById.get(id);
+      if (task !== undefined && isDone(task)) continue;
       const run = id === meta.taskId ? meta : latestRunByTaskId.get(id);
       if (run === undefined) continue;
       const reviewable =

@@ -133,13 +133,22 @@ export class MergeQueue {
   //     still unreviewed and re-enqueueable; what's NOT safe is resuming
   //     *this* attempt's half-finished rebase/verify/merge, so the entry is
   //     filed to history as failed instead, with a reason that tells the
-  //     user to re-enqueue.
+  //     user to re-enqueue. Re-enqueueing is only actually safe here because
+  //     the downstream steps are themselves idempotent against a half-done
+  //     prior attempt — merge()'s local-review path is a no-op the second
+  //     time via review()/mergeRun's hasChanges skip, and its PR path either
+  //     force-pushes again harmlessly or hits `gh pr merge`'s "already
+  //     merged" error — not because `reviewedAt` being unset is on its own
+  //     proof that nothing landed.
   //   - A `queued`/`waiting-blockers` entry never got touched — reload it as
   //     `queued` (nextEligible() re-derives waiting-blockers on the first
   //     pump) — but only if it still points at a run that's terminal and
-  //     unreviewed per the orchestrator's live registry. A run that was
-  //     reviewed, discarded, or vanished entirely while the daemon was down
-  //     is dropped to failed history instead of kept around forever.
+  //     unreviewed per the orchestrator's live registry, and isn't a
+  //     duplicate of an entry this same hydrate() pass already reloaded (the
+  //     persisted file is untrusted input — a bug or a manual edit could
+  //     have written the same runId twice). A run that was reviewed,
+  //     discarded, or vanished entirely while the daemon was down is dropped
+  //     to failed history instead of kept around forever.
   private hydrate(): void {
     const persisted = this.loadPersistedFile();
     this.history.push(...persisted.history);
@@ -153,6 +162,13 @@ export class MergeQueue {
         this.fileStaleEntry(
           entry,
           'daemon restarted mid-merge; re-enqueue to retry'
+        );
+        continue;
+      }
+      if (this.entries.some((e) => e.runId === entry.runId)) {
+        this.fileStaleEntry(
+          entry,
+          `duplicate entry for run in persisted merge queue state: ${entry.runId}`
         );
         continue;
       }
@@ -268,6 +284,32 @@ export class MergeQueue {
     });
   }
 
+  // Shared eligibility rules for enqueue()/enqueueStack(): a run must be in
+  // a terminal state, not yet reviewed, and not already sitting in this
+  // queue (active or pending). Split into a reason-returning helper and a
+  // boolean wrapper so the two call sites can react differently to an
+  // ineligible run — enqueue() throws with the specific reason (it's acting
+  // on a single run the caller explicitly asked for), while enqueueStack()
+  // just skips a member that fails any check (skipping is the expected,
+  // normal outcome for most of a stack — only an all-skipped call is an
+  // error there). Neither call site duplicates these checks anymore.
+  private whyNotEnqueueable(meta: RunMeta): string | null {
+    if (!TERMINAL_RUN_STATES.has(meta.state)) {
+      return `run is not in a terminal state: ${meta.id} (state: ${meta.state})`;
+    }
+    if (meta.reviewedAt !== undefined) {
+      return `run has already been reviewed: ${meta.id}`;
+    }
+    if (this.entries.some((e) => e.runId === meta.id)) {
+      return `run is already in the merge queue: ${meta.id}`;
+    }
+    return null;
+  }
+
+  private isEnqueueable(meta: RunMeta): boolean {
+    return this.whyNotEnqueueable(meta) === null;
+  }
+
   // POST /api/merge-queue. Validates against the orchestrator's live
   // registry: 404 for an id it's never heard of, 409 for a run that hasn't
   // reached a terminal state yet, one that's already been reviewed (nothing
@@ -278,20 +320,9 @@ export class MergeQueue {
     if (meta === undefined) {
       throw new OrchestratorNotFoundError(`run not found: ${runId}`);
     }
-    if (!TERMINAL_RUN_STATES.has(meta.state)) {
-      throw new OrchestratorConflictError(
-        `run is not in a terminal state: ${runId} (state: ${meta.state})`
-      );
-    }
-    if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(
-        `run has already been reviewed: ${runId}`
-      );
-    }
-    if (this.entries.some((e) => e.runId === runId)) {
-      throw new OrchestratorConflictError(
-        `run is already in the merge queue: ${runId}`
-      );
+    const reason = this.whyNotEnqueueable(meta);
+    if (reason !== null) {
+      throw new OrchestratorConflictError(reason);
     }
 
     const entry: MergeQueueEntry = {
@@ -343,9 +374,7 @@ export class MergeQueue {
       if (task !== undefined && isDone(task)) continue;
       const meta = runs.find((r) => r.taskId === id);
       if (meta === undefined) continue;
-      if (!TERMINAL_RUN_STATES.has(meta.state)) continue;
-      if (meta.reviewedAt !== undefined) continue;
-      if (this.entries.some((e) => e.runId === meta.id)) continue;
+      if (!this.isEnqueueable(meta)) continue;
 
       const entry: MergeQueueEntry = {
         runId: meta.id,
@@ -521,6 +550,13 @@ export class MergeQueue {
   // worktree after a clean rebase — a failing verify fails the entry without
   // ever touching the merge step, so a broken rebase result never lands.
   // Absent `verifyCommand` (the common case in O1) skips this entirely.
+  // Undocumented, flagged in review: a failed verify intentionally leaves
+  // the worktree rebased rather than rolling the rebase back — process()'s
+  // catch only files the entry to failed history, it never un-rebases. This
+  // is retry-friendly (re-enqueueing the same run resumes from an already
+  // up-to-date base instead of redoing the rebase), but it does mean the
+  // worktree sits mid-way — rebased onto the latest base, not yet
+  // verified/merged — until the next enqueue attempt touches it again.
   private async verify(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
     const verifyCommand = loadConfig(this.ctx.rootDir).verifyCommand;
     if (verifyCommand === undefined) return;
