@@ -162,4 +162,38 @@ describe('diffQueueNotifications', () => {
     ]);
     expect(notifications).toEqual([]);
   });
+
+  test('re-enqueued run (appears in both entries and history) keeps current state and does not notify', () => {
+    // Simulates: prev {r1: merged}, next {r1 merged in entries + r1 failed in history}.
+    // The entries version is current (merged after re-enqueue), history is stale (older failure).
+    // First-wins means next should be {r1: merged}, and no notification fires.
+    const previous = new Map([['r1', 'merged' as const]]);
+    const nextEntries: MergeQueueEntry[] = [entry('r1', 'merged')];
+    const nextHistory: MergeQueueEntry[] = [
+      entry('r1', 'failed', { reason: 'older failure' }),
+    ];
+    const { notifications, next } = diffQueueNotifications(previous, [
+      ...nextEntries,
+      ...nextHistory,
+    ]);
+    expect(notifications).toEqual([]);
+    expect(next.get('r1')).toBe('merged');
+  });
+
+  test('re-enqueued run re-appearing in same state does not spuriously re-fire notification', () => {
+    // Simulates the spurious-refire bug: prev {r1: merged from entries}, next {same lists again}.
+    // With the bug, older history entry overwrites next.set() and a stale state causes a spurious
+    // "state changed" notification. With first-wins, next stays {r1: merged} and no notification fires.
+    const previous = new Map([['r1', 'merged' as const]]);
+    const entries: MergeQueueEntry[] = [entry('r1', 'merged')];
+    const history: MergeQueueEntry[] = [
+      entry('r1', 'failed', { reason: 'old attempt' }),
+    ];
+    const { notifications, next } = diffQueueNotifications(previous, [
+      ...entries,
+      ...history,
+    ]);
+    expect(notifications).toEqual([]);
+    expect(next.get('r1')).toBe('merged');
+  });
 });
