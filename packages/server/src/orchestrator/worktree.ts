@@ -190,13 +190,25 @@ export class WorktreeManager {
   }
 
   /**
-   * Reattaches a worktree to `branch`. A restack rewrites branch refs from the
-   * main checkout, and git refuses to move a branch that is checked out in
-   * another worktree — so the worktree is left in detached HEAD at the old
-   * commit. This is the one command that brings it back in line.
+   * Brings a worktree back in line with `branch` after a restack rewrote that
+   * branch from the main checkout. Two different broken states have to be
+   * repaired, which is why this is two commands and not one:
    *
-   * Callers MUST only invoke this for runs in a terminal state; a live agent's
-   * worktree is never touched.
+   * - Detached HEAD, when the rewrite left the worktree behind entirely.
+   *   `git checkout` reattaches it.
+   * - HEAD still on `branch` but the REF moved underneath the worktree. jj's
+   *   `git export` (and plain `git update-ref`) write a branch ref that is
+   *   checked out elsewhere without complaint — only `git branch -f` refuses.
+   *   The worktree's HEAD symref then resolves to the new commit while its
+   *   index and working tree still hold the pre-restack content. Measured: in
+   *   that state `git status` reports the new base's files as staged
+   *   DELETIONS, and `git checkout <branch>` prints "Already on '<branch>'"
+   *   and repairs nothing at all. `git reset --hard` is the only thing that
+   *   actually rewrites the index and working tree here.
+   *
+   * The hard reset is why callers must check `isDirty()` first: it discards
+   * uncommitted tracked changes. Callers MUST also only invoke this for runs
+   * in a terminal state — a live agent's worktree is never touched.
    */
   resyncToBranch(worktreePath: string, branch: string): void {
     const checkout = runGit(worktreePath, ['checkout', branch]);
@@ -205,6 +217,22 @@ export class WorktreeManager {
         `git checkout ${branch} failed: ${checkout.stderr.trim()}`
       );
     }
+    const reset = runGit(worktreePath, ['reset', '--hard', branch]);
+    if (!reset.ok) {
+      throw new Error(
+        `git reset --hard ${branch} failed: ${reset.stderr.trim()}`
+      );
+    }
+  }
+
+  // Whether a run's worktree has anything uncommitted (staged, unstaged, or
+  // untracked). Checked before a restack: `resyncToBranch`'s hard reset would
+  // throw such content away, and every normal finish path already ran
+  // `autoCommitIfDirty`, so a dirty worktree here means a cancelled run whose
+  // content was deliberately left alone. Refuse rather than destroy it.
+  isDirty(worktreePath: string): boolean {
+    const status = runGit(worktreePath, ['status', '--porcelain']);
+    return status.stdout.trim().length > 0;
   }
 
   /**

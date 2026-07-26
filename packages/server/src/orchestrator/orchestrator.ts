@@ -895,20 +895,39 @@ export class Orchestrator {
     this.worktrees.resyncToBranch(meta.worktreePath, meta.branch);
   }
 
+  // Whether a run's worktree still holds uncommitted content. Checked before
+  // a restack: `resyncToBranch`'s hard reset would discard it, and every
+  // normal finish path auto-commits, so this is only ever true for a
+  // cancelled run whose worktree was deliberately left as-is.
+  runWorktreeIsDirty(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return false;
+    return this.worktrees.isDirty(meta.worktreePath);
+  }
+
   // Moves a run off a base branch that has now been merged away (and deleted
   // with its worktree), and drops that branch from its recorded stack
   // parents. Without this the next merge attempt is refused outright by
   // mergeRun's "merge target is X, expected Y" guard.
+  //
+  // The new base is appended to the run's transcript as a state line — the
+  // registry is in-memory only, so without that a restart would replay the
+  // run's meta straight back onto the merged-away branch, with nothing left
+  // to notice or re-run the restack (see TranscriptStateLine.baseBranch).
   repointRunBase(runId: string, newBase: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const remaining = (meta.stackParents ?? []).filter(
       (branch) => branch !== meta.baseBranch
     );
+    const now = new Date().toISOString();
     this.registry.updateMeta(runId, {
       baseBranch: newBase,
       stackParents: remaining.length > 0 ? remaining : undefined,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+    });
+    this.transcriptFor(runId).appendState(meta.state, now, {
+      baseBranch: newBase,
     });
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
@@ -918,15 +937,34 @@ export class Orchestrator {
   // rather than inventing a second flag for the same UI treatment: either way
   // the base this work was written against is no longer something the queue
   // can merge it onto by itself.
+  //
+  // Persisted to the transcript for the same reason repointRunBase is: this
+  // flag is the ONLY record that a run needs human attention, and the restack
+  // is never retried on its own, so losing it across a restart would leave a
+  // broken run looking perfectly healthy.
   flagRunRestackFailure(runId: string, reason: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
+    const now = new Date().toISOString();
     this.registry.updateMeta(runId, {
       baseDiscarded: true,
       error: reason,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+    });
+    this.transcriptFor(runId).appendState(meta.state, now, {
+      baseDiscarded: true,
+      error: reason,
     });
     this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // One Activity line on a run's own task, used by the merge queue to leave a
+  // durable record of a restack (or a refusal to restack) on the run the user
+  // is actually looking at, not just on the blocker that triggered it.
+  appendRunTaskActivity(runId: string, text: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    this.appendTaskActivity(meta.taskId, text);
   }
 
   // Boot-time hygiene: any transcript whose last recorded state isn't
