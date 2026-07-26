@@ -108,7 +108,11 @@ describe('JjManager', () => {
     ).rejects.toThrow('no such revision');
   });
 
-  it('mergeBase creates a multi-parent commit and bookmarks it', async () => {
+  // The exact argument vector is the contract here — see mergeBase's own doc
+  // comment for why every flag is load-bearing. `--no-edit` in particular is
+  // what keeps the user's main checkout from being relocated onto the merge
+  // commit, which is why it is asserted rather than left to inspection.
+  it('mergeBase creates a multi-parent commit without moving the working copy, and bookmarks it by revset', async () => {
     const f = fakeRunner({});
     const ref = await new JjManager('/repo', f.run).mergeBase(
       ['dispatch/a', 'dispatch/c'],
@@ -116,10 +120,27 @@ describe('JjManager', () => {
     );
     expect(ref).toBe('dispatch/stack-base-t-d00000');
     expect(f.calls.map((c) => c.join(' '))).toEqual([
-      'jj new -r dispatch/a -r dispatch/c',
-      'jj bookmark create dispatch/stack-base-t-d00000 -r @',
+      'jj new -r dispatch/a -r dispatch/c --no-edit',
+      'jj bookmark set dispatch/stack-base-t-d00000 -r latest(children(dispatch/a) & children(dispatch/c)) --allow-backwards',
       'jj git export',
     ]);
+  });
+
+  it('mergeBase throws with jj stderr when the bookmark cannot be placed', async () => {
+    const f = fakeRunner({
+      'jj bookmark set dispatch/b -r latest(children(dispatch/a) & children(dispatch/c)) --allow-backwards':
+        {
+          ok: false,
+          stdout: '',
+          stderr: 'Error: Bookmark already exists: dispatch/b',
+        },
+    });
+    await expect(
+      new JjManager('/repo', f.run).mergeBase(
+        ['dispatch/a', 'dispatch/c'],
+        'dispatch/b'
+      )
+    ).rejects.toThrow('Bookmark already exists');
   });
 
   it('mergeBase rejects fewer than two parents', async () => {

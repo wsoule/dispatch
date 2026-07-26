@@ -342,6 +342,15 @@ describe('MergeQueue PR-run happy path', () => {
 });
 
 describe('MergeQueue dependency gating', () => {
+  // KNOWN RED, deliberately not skipped: task B is now dispatched off task
+  // A's branch (A is `in-review` with an unmerged run, which is exactly the
+  // stacking trigger), so once A is merged and its branch removed, B's
+  // `baseBranch` no longer exists and the merge is refused with "merge target
+  // is main, expected dispatch/…-task-a-…". Fixing it is Task 6's
+  // MergeQueue.restackDependents, which must rebase a stacked dependent off
+  // its merged blocker (using RunMeta.stackBaseCommit) and update its
+  // baseBranch before the queue tries to merge it. Leaving this failing is
+  // the marker for that work — do not skip or weaken it.
   it('shows waiting-blockers for a task blocked on an undone task, then processes once the blocker is done', async () => {
     const harness = makeHarness();
     const { runId: runA, taskId: taskA } = await dispatchAndFinish(

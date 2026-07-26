@@ -134,7 +134,12 @@ export class EpicEngine {
         epicId,
         `epic dispatch started (concurrency ${concurrency})`
       );
-      await this.fillQueue(epicId);
+      // Chained like every other fill (see enqueueFill) — a run reaching a
+      // terminal state *inside* this very dispatch fires the lifecycle hooks
+      // synchronously, so a hook-driven fill can otherwise interleave with
+      // this one. Rejections still propagate here, which is what keeps the
+      // session rollback below working.
+      await this.enqueueFill(epicId);
     } catch (err) {
       // C2(a): never leave a wedged session behind a failed initial
       // dispatch — a retry (even with identical args) must start clean,
@@ -230,32 +235,63 @@ export class EpicEngine {
   }
 
   /**
-   * Queues a fillQueue pass for `epicId` behind any pass already in flight
-   * for that same epic, and swallows (logging) whatever it throws.
+   * Appends a fillQueue pass for `epicId` to that epic's serialization chain
+   * and returns a promise for THIS pass.
    *
-   * Both halves matter now that fillQueue is async — Orchestrator.dispatch
-   * awaits base resolution before it registers anything in the run registry:
+   * Serializing matters now that fillQueue is async — Orchestrator.dispatch
+   * awaits base resolution before it registers anything in the run registry,
+   * so a fill that is mid-`await` has dispatches in flight that the registry
+   * cannot see yet. The run-lifecycle hooks that trigger a fill are
+   * synchronous and can fire during another fill's await (including during
+   * start()'s own initial fill, which is why that one is chained too). Two
+   * overlapping passes would each read the same live-run count and between
+   * them hand out more slots than the session's concurrency cap allows.
+   * Chaining is what keeps that count honest — EVERY fill must go through
+   * here, never `fillQueue` directly.
    *
-   * - Serialization: the run-lifecycle hooks that trigger a fill are
-   *   synchronous and two runs can finish in the same tick. Two overlapping
-   *   passes would each read the same live-run count *before* either had
-   *   registered its dispatch, and between them hand out more slots than the
-   *   session's concurrency cap allows. Chaining keeps that count honest.
-   * - Catching: a hook has no caller left to receive a rejection, so an
-   *   unhandled one would take the daemon down. This mirrors
-   *   invokeHooksSafely's rule that a subscriber's failure is logged, never
-   *   propagated.
+   * The stored chain link deliberately never rejects, so one failed pass
+   * cannot poison every later one; the returned promise does reject, so
+   * start() can still roll its session back.
    */
-  private scheduleFill(epicId: string): void {
+  private enqueueFill(epicId: string): Promise<void> {
     const previous = this.fillChains.get(epicId) ?? Promise.resolve();
-    const next = previous
-      .then(() => this.fillQueue(epicId))
-      .catch((err: unknown) => {
-        console.error(
-          `dispatchd: epic dispatch fill failed for ${epicId}: ${(err as Error).message}`
-        );
-      });
-    this.fillChains.set(epicId, next);
+    const pass = previous.then(() => this.fillQueue(epicId));
+    this.fillChains.set(
+      epicId,
+      pass.catch(() => {})
+    );
+    return pass;
+  }
+
+  // Fire-and-forget fill for the run-lifecycle hooks, which have no caller
+  // left to receive a rejection — an unhandled one would take the daemon
+  // down. Failures are recorded rather than propagated, matching
+  // invokeHooksSafely's rule for a throwing subscriber.
+  private scheduleFill(epicId: string): void {
+    void this.enqueueFill(epicId).catch((err: unknown) => {
+      this.recordFillFailure(epicId, err);
+    });
+  }
+
+  // The durable half of that rule: invokeHooksSafely doesn't just log a
+  // failed hook, it appends an Activity line, rebuilds the cache and
+  // broadcasts, so the failure is visible in the UI rather than only in the
+  // daemon's stderr. An auto-dispatch that silently stops filling is exactly
+  // the kind of thing a user needs told about, so this mirrors both halves.
+  private recordFillFailure(epicId: string, err: unknown): void {
+    const message = (err as Error).message;
+    console.error(
+      `dispatchd: epic dispatch fill failed for ${epicId}: ${message}`
+    );
+    try {
+      this.appendEpicActivity(
+        epicId,
+        `[hook error] auto-dispatch failed: ${message}`
+      );
+    } catch {
+      // Even the Activity append failing must not propagate — same rule
+      // invokeHooksSafely applies to its own bookkeeping.
+    }
   }
 
   // Dispatches ready children up to the session's concurrency cap. Reads a
