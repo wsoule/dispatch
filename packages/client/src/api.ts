@@ -76,12 +76,17 @@ export interface RunMeta {
   // `stackBaseCommit` from that same type is internal bookkeeping and has no
   // client-side use, so it isn't mirrored here.
   stackParents?: string[];
-  // Set when the run this one was stacked on was discarded by a human (or an
-  // automatic restack failed): the base this work was written against was
-  // rejected, so a human needs to look at it. The merge queue refuses a run
-  // with this set until it's rebased onto a valid base; `error` carries the
-  // reason.
+  // Set when the base this run was stacked on can no longer be repaired
+  // automatically, so a human has to look at it. The merge queue refuses a run
+  // with this set until it's rebased onto a valid base.
+  //
+  // It covers three different situations (a blocker's run was discarded; a
+  // restack was attempted and failed; the run sits on a multi-parent base no
+  // single merge can repair), so the flag alone is not enough to render — only
+  // one of the three is actually a discarded base. Always surface
+  // `baseDiscardedReason`, which says which it was.
   baseDiscarded?: boolean;
+  baseDiscardedReason?: string;
 }
 
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the

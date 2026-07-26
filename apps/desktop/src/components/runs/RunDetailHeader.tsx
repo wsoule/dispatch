@@ -103,10 +103,23 @@ export function RunDetailHeader({
             </span>
           </span>
         )}
+        {/* `baseDiscarded` is raised for three different reasons and only one
+            of them is an actually-discarded base — the other two are a failed
+            restack and an unrepairable multi-parent base, where the base
+            merged perfectly well. Show the reason the server recorded rather
+            than fixed copy that is wrong two times out of three; the generic
+            fallback only applies to a run flagged before the reason was
+            persisted. */}
         {meta.baseDiscarded === true && (
-          <span className="border-destructive/30 bg-destructive/10 text-destructive inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium">
+          <span
+            className="border-destructive/30 bg-destructive/10 text-destructive inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+            title={meta.baseDiscardedReason}
+          >
             <TriangleAlert className="size-3 shrink-0" />
-            base discarded — rebase before merging
+            <span className="truncate">
+              {meta.baseDiscardedReason ??
+                'base discarded — rebase before merging'}
+            </span>
           </span>
         )}
         <div className="flex-1" />
