@@ -346,6 +346,10 @@ export interface PlanRecord {
   createdAt: string;
   updatedAt: string;
   confirmedAt?: string;
+  /** Set when the plan was started from a note via `enrichNote` — the note
+   * whose one-liner the planner was asked to expand into a task. Confirming
+   * such a plan links that note to the task it creates. */
+  sourceNoteId?: string;
 }
 
 // The body of `POST /api/plan/:id/confirm`.
@@ -632,6 +636,10 @@ export interface ApiClient {
   deleteNote(id: string): Promise<void>;
   /** Promote a note into a task; returns the new task. */
   promoteNote(id: string): Promise<{ meta: { id: string } }>;
+  /** Start an AI draft of the task a note should become: returns a plan id to
+   * poll with `fetchPlan`, whose proposal is confirmed through the ordinary
+   * `confirmPlan` (which also links the note to the task it writes). */
+  enrichNote(id: string): Promise<{ planId: string }>;
   // Phase 5 P2: the messaging half (`agent_message`'s daemon-side landing
   // spot) — injects a message into a *running* run, prefixed
   // `[message from <sender>]` server-side (a generic "another agent" label
@@ -796,6 +804,8 @@ export function createApiClient(baseUrl: string): ApiClient {
     },
     promoteNote: (id) =>
       request(baseUrl, `/api/notes/${id}/promote`, { method: 'POST' }),
+    enrichNote: (id) =>
+      request(baseUrl, `/api/notes/${id}/enrich`, { method: 'POST' }),
     injectRun: (runId, text, fromRunId) =>
       request(baseUrl, `/api/runs/${runId}/inject`, {
         method: 'POST',

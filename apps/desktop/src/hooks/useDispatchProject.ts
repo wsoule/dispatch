@@ -3,6 +3,7 @@ import type {
   EpicProgress,
   MergeQueueSnapshot,
   PlanProposal,
+  PlanRecord,
   RepoPr,
   RunDetail,
   RunMeta,
@@ -30,6 +31,40 @@ import { useTransitionNotifications } from './useTransitionNotifications';
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
 // only the live event carries it (see the WS effect below).
 type PendingApproval = { requestId: string; toolName: string };
+
+/**
+ * `GET /api/plan/:id` as a reusable query, because this hook exposes two independent plan
+ * slots: the Plans view's own plan, and the AI task draft the Notes hub starts off a note.
+ * They must not share one `planId` — starting a note draft would otherwise replace whatever
+ * proposal the Plans view had open — but they poll identically, so the query itself is
+ * written once here and instantiated per slot.
+ *
+ * `retry: false`: a stale `planId` mid project-switch (cleared by an effect below, but not
+ * instantly re-rendered) should never retry against the wrong daemon — see I5.
+ */
+function usePlanRecord(
+  client: ApiClient | null,
+  port: number | undefined,
+  planId: string | null
+): PlanRecord | undefined {
+  const { data } = useQuery({
+    queryKey: ['dispatch-plan', port, planId],
+    queryFn: () => {
+      if (client === null || planId === null) {
+        throw new Error('no plan in progress');
+      }
+      return client.fetchPlan(planId);
+    },
+    enabled: client !== null && planId !== null,
+    retry: false,
+    // A running plan is worth polling — nothing on the WS event stream tells us when the
+    // planner call itself finishes (only `plan.changed`, which fires once it's already
+    // done), so a short poll while `state === 'running'` is the simplest way to notice.
+    refetchInterval: (query) =>
+      query.state.data?.state === 'running' ? 2000 : false,
+  });
+  return data;
+}
 
 export interface UseDispatchProjectOptions {
   /** Which run's detail/diff to fetch, if any — the *single* source of truth for "which run
@@ -103,11 +138,18 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   handleDeleteNote: (id: string) => Promise<void>;
   handlePromoteNote: (id: string) => Promise<void>;
+  /** Starts an AI draft of the task a note should become; the proposal lands on
+   * `notePlanRecord`, and nothing is written until `handleConfirmNotePlan`. */
+  handleEnrichNote: (id: string) => Promise<void>;
+  handleConfirmNotePlan: (proposal: PlanProposal) => Promise<void>;
+  notePlanId: string | null;
+  setNotePlanId: (planId: string | null) => void;
+  notePlanRecord: PlanRecord | undefined;
   pendingApprovals: Map<string, PendingApproval>;
 
   planId: string | null;
   setPlanId: (planId: string | null) => void;
-  planRecord: import('@dispatch/client').PlanRecord | undefined;
+  planRecord: PlanRecord | undefined;
 
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
@@ -185,6 +227,9 @@ export function useDispatchProject(
     Map<string, PendingApproval>
   >(new Map());
   const [planId, setPlanId] = useState<string | null>(null);
+  // The Notes hub's own plan slot: the AI task draft started off a single note, kept apart
+  // from `planId` so the two views never overwrite each other's in-flight proposal.
+  const [notePlanId, setNotePlanId] = useState<string | null>(null);
 
   // A plan started against one project's dispatchd must never leak into another project's
   // Plans view — without this, switching projects while a plan was mid-flight (or just left
@@ -192,6 +237,7 @@ export function useDispatchProject(
   // the *new* project's port, 404ing (see I5 in the phase-8 fix report).
   useEffect(() => {
     setPlanId(null);
+    setNotePlanId(null);
   }, [projectPath]);
 
   const {
@@ -238,10 +284,6 @@ export function useDispatchProject(
   const epicProgressKeyPrefix = useMemo(
     () => ['dispatch-epic-progress', port],
     [port]
-  );
-  const planQueryKey = useMemo(
-    () => ['dispatch-plan', port, planId],
-    [port, planId]
   );
   const mergeQueueQueryKey = useMemo(
     () => ['dispatch-merge-queue', port],
@@ -391,24 +433,8 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
-  // `retry: false`: a stale `planId` mid project-switch (cleared by the effect above, but not
-  // instantly re-rendered) should never retry against the wrong daemon — see I5.
-  const { data: planRecord } = useQuery({
-    queryKey: planQueryKey,
-    queryFn: () => {
-      if (client === null || planId === null) {
-        throw new Error('no plan in progress');
-      }
-      return client.fetchPlan(planId);
-    },
-    enabled: client !== null && planId !== null,
-    retry: false,
-    // A running plan is worth polling — nothing on the WS event stream tells us when the
-    // planner call itself finishes (only `plan.changed`, which fires once it's already
-    // done), so a short poll while `state === 'running'` is the simplest way to notice.
-    refetchInterval: (query) =>
-      query.state.data?.state === 'running' ? 2000 : false,
-  });
+  const planRecord = usePlanRecord(client, port, planId);
+  const notePlanRecord = usePlanRecord(client, port, notePlanId);
 
   // Task 6: the merge queue snapshot — same "poll on mount, refetch on the
   // matching WS event" shape as every other query here (see the
@@ -718,6 +744,40 @@ export function useDispatchProject(
     [client, queryClient, notesQueryKey, tasksQueryKey, readyQueryKey]
   );
 
+  // The AI half of promoting: asks the daemon to draft the task this note should become and
+  // parks the resulting plan in the notes slot, where `notePlanRecord` polls it to `ready`.
+  // Nothing is written until the draft is confirmed — see `handleConfirmNotePlan`.
+  const handleEnrichNote = useCallback(
+    async (id: string): Promise<void> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const { planId: newPlanId } = await client.enrichNote(id);
+      setNotePlanId(newPlanId);
+    },
+    [client]
+  );
+
+  // Confirms the note draft: the same confirm endpoint the Plans view uses, so the proposal
+  // is re-validated server-side before any task exists. The note itself is refetched too —
+  // confirming links it to the task that was just created and ticks it done.
+  const handleConfirmNotePlan = useCallback(
+    async (proposal: PlanProposal): Promise<void> => {
+      if (client === null || notePlanId === null) return;
+      await client.confirmPlan(notePlanId, proposal);
+      setNotePlanId(null);
+      void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: readyQueryKey });
+    },
+    [
+      client,
+      notePlanId,
+      queryClient,
+      notesQueryKey,
+      tasksQueryKey,
+      readyQueryKey,
+    ]
+  );
+
   const handleDispatch = useCallback(
     async (
       taskId: string,
@@ -888,10 +948,15 @@ export function useDispatchProject(
         throw new Error('no plan in progress');
       }
       const record = await client.sendPlanMessage(planId, text);
-      void queryClient.invalidateQueries({ queryKey: planQueryKey });
+      // usePlanRecord keys the plan query as ['dispatch-plan', port, planId]
+      // (see the helper above) — invalidate that same key so the thread
+      // re-renders with the user's turn immediately.
+      void queryClient.invalidateQueries({
+        queryKey: ['dispatch-plan', port, planId],
+      });
       return record;
     },
-    [client, planId, queryClient, planQueryKey]
+    [client, planId, queryClient, port]
   );
 
   const handleConfirmPlan = useCallback(
@@ -991,6 +1056,11 @@ export function useDispatchProject(
     handleUpdateNote,
     handleDeleteNote,
     handlePromoteNote,
+    handleEnrichNote,
+    handleConfirmNotePlan,
+    notePlanId,
+    setNotePlanId,
+    notePlanRecord,
     pendingApprovals,
 
     planId,
