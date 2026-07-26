@@ -1360,29 +1360,19 @@ describe('MergeQueue multi-parent dependent that was live when its blocker merge
 });
 
 describe('MergeQueue refuses a run whose base was discarded', () => {
-  // A human discarding the blocker rejected the work the dependent was
-  // written against. process() must not merge it — that would land content
-  // built on top of code that no longer exists in the target history.
-  //
-  // Discarding blockerRun reopens task A to 'todo' (Orchestrator.review's
-  // discard branch), so task B's own task-level `blockedBy` gate (a separate,
-  // correctly-behaving mechanism — see "MergeQueue dependency gating" above)
-  // would otherwise park this entry at 'waiting-blockers' forever and it
-  // would never reach process() at all. That gate is a real, independent
-  // guard this task isn't touching; clearing `blockedBy` here simulates a
-  // human resolving that edge some other way (e.g. re-pointing or removing
-  // the dependency) so the test can isolate and exercise the run-level
-  // `baseDiscarded` guard process() gains in this task.
-  it('refuses to merge a run whose base was discarded', async () => {
+  // The plain discard flow, with NO manual state tampering: discarding
+  // blockerRun reopens task A to 'todo' (Orchestrator.review's discard
+  // branch), which is exactly the task id stacked dispatch put in task B's
+  // `blockedBy` — so B's task-level dependency gate (nextEligible's `unmet`
+  // check, a separate and correctly-behaving mechanism; see "MergeQueue
+  // dependency gating" above) would be unmet forever. A `baseDiscarded` run
+  // is broken, not merely waiting, so nextEligible has to let it through
+  // regardless and fail it fast with a reason the user can act on, rather
+  // than leaving it silently parked at 'waiting-blockers'.
+  it('fails fast with a reason naming the base, never parking at waiting-blockers', async () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
     harness.orchestrator.review(blockerRun.id, 'discard');
-    harness.store.update(
-      dependentRun.taskId,
-      { blockedBy: [] },
-      new Date().toISOString()
-    );
-    harness.cache.rebuild(harness.store);
 
     const queue = new MergeQueue(harness, noJjRunner);
     queue.enqueue(dependentRun.id);
@@ -1390,6 +1380,55 @@ describe('MergeQueue refuses a run whose base was discarded', () => {
       queue.snapshot().history.some((e) => e.state === 'failed')
     );
 
+    const entry = queue
+      .snapshot()
+      .history.find((e) => e.runId === dependentRun.id)!;
+    expect(entry.reason).toContain('base');
+    // It must never have been left waiting — that state would mean the
+    // failure (and its reason) never actually reached the user.
+    expect(
+      queue.snapshot().entries.find((e) => e.runId === dependentRun.id)
+    ).toBeUndefined();
+  });
+
+  // A second, independent way to reach a `baseDiscarded` run: the blocker
+  // genuinely MERGES (not discarded), but the restack that runs right after
+  // fails for its own reason (here, an uncommitted change in the dependent's
+  // worktree) and flags the dependent via flagRunRestackFailure. Here the
+  // blocker's task really is 'done', so `blockedBy` is already satisfied on
+  // its own — this exercises process()'s guard without any help from
+  // nextEligible's baseDiscarded bypass above, confirming that guard is not
+  // dead code for this path either.
+  it('refuses a dependent flagged by a failed restack after its blocker actually merged', async () => {
+    const harness = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    // Leave the dependent's worktree dirty (an uncommitted tracked change) —
+    // restackRun refuses to rewrite it out from under whatever is pending,
+    // and flags it instead of guessing.
+    writeFileSync(
+      join(dependentRun.worktreePath, 'b.txt'),
+      'B work, uncommitted\n'
+    );
+
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(blockerRun.id);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    const flagged = harness.orchestrator
+      .list()
+      .find((r) => r.id === dependentRun.id)!;
+    expect(flagged.baseDiscarded).toBe(true);
+
+    queue.enqueue(dependentRun.id);
+    await waitFor(() =>
+      queue
+        .snapshot()
+        .history.some(
+          (e) => e.runId === dependentRun.id && e.state === 'failed'
+        )
+    );
     const entry = queue
       .snapshot()
       .history.find((e) => e.runId === dependentRun.id)!;

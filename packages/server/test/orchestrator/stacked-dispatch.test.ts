@@ -9,7 +9,9 @@ import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { JjManager } from '../../src/orchestrator/jj.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import { transcriptPath } from '../../src/orchestrator/paths.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
+import { replayTranscript } from '../../src/orchestrator/transcript.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
 let fakeHome: string;
@@ -474,5 +476,14 @@ describe('discarding a stacked-on run', () => {
       runGitSync(repo, ['rev-parse', '--verify', dependentRun.branch]).trim()
         .length
     ).toBeGreaterThan(0);
+    // The reason reaches the user on the dependent's OWN task, not just its
+    // (in-memory) run metadata.
+    expect(activityFor(h, dependentRun.taskId)).toContain('discarded');
+    // Restart-equivalent: the flag survives a transcript replay, the same
+    // guarantee flagRunRestackFailure's other call site already has.
+    expect(
+      replayTranscript(transcriptPath(repo, dependentRun.id))?.meta
+        .baseDiscarded
+    ).toBe(true);
   });
 });

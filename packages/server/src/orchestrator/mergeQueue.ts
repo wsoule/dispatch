@@ -492,6 +492,11 @@ export class MergeQueue {
     const byId = new Map(
       this.ctx.cache.query().map((task) => [task.meta.id, task])
     );
+    // Looked up once per pass, same rationale as the task map above: a
+    // per-entry registry scan would be O(entries * runs) every pump tick.
+    const runsById = new Map(
+      this.ctx.orchestrator.list().map((run) => [run.id, run])
+    );
     let changed = false;
     let eligible: MergeQueueEntry | null = null;
     for (const entry of this.entries) {
@@ -501,14 +506,24 @@ export class MergeQueue {
         const blocker = byId.get(id);
         return blocker !== undefined && !isDone(blocker);
       });
-      const nextState: MergeQueueEntryState = unmet
-        ? 'waiting-blockers'
-        : 'queued';
+      // A run whose base was discarded is broken, not merely waiting on a
+      // blocker. Discarding a blocker resets ITS OWN task to 'todo' (never
+      // 'done'), and that blocker's task id is exactly what stacked dispatch
+      // put in this dependent's `blockedBy` — so `unmet` above would be true
+      // forever, and this entry would sit at 'waiting-blockers' with no way
+      // out and no reason ever shown to the user. Treat it as eligible
+      // regardless of `unmet` so it reaches process() (which already checks
+      // `baseDiscarded`) and fails fast with a reason instead. This does NOT
+      // loosen the blockedBy gate for anything else: every other entry's
+      // `unmet` classification is unchanged.
+      const baseDiscarded = runsById.get(entry.runId)?.baseDiscarded === true;
+      const nextState: MergeQueueEntryState =
+        unmet && !baseDiscarded ? 'waiting-blockers' : 'queued';
       if (entry.state !== nextState) {
         entry.state = nextState;
         changed = true;
       }
-      if (!unmet && eligible === null) eligible = entry;
+      if ((!unmet || baseDiscarded) && eligible === null) eligible = entry;
     }
     if (changed) this.broadcast();
     return eligible;
