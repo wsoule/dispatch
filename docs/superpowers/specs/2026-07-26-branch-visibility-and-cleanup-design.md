@@ -190,16 +190,19 @@ click.
 Guard 4 is evaluated against the same `listBranches()` result the caller saw, so
 the check and the display cannot disagree about what depends on what.
 
-Guard 4 also applies to `review(runId, 'discard')`, which removes a branch
-exactly the way `DELETE` does and would otherwise repoint every dependent's
-merge base. It is extracted as `Orchestrator.requireNoStackedDependent` and
-called from both places.
+Guard 4 is extracted as `Orchestrator.requireNoStackedDependent` and scoped to
+the two raw branch actions here — **not** to `review(runId, 'discard')`, which
+also removes a branch.
 
-It is deliberately **not** applied to `review(runId, 'merge')`: a blocker's
-branch disappearing after its work actually lands is the normal, intended end of
-a stack, and the merge queue restacks the dependents onto the new base itself.
-The only two `review()` callers are `api.ts` and `MergeQueue`, and the queue
-only ever passes `'merge'` — so this narrows nothing the queue depends on.
+That split is by layer, and it is the point rather than an oversight. `DELETE`
+and `free-disk` are pure git operations with no run bookkeeping to hang a marker
+on, so refusing is the only way they can avoid corrupting a dependent.
+`review()` does have that bookkeeping: discarding a blocker flags every
+dependent with `baseDiscarded` (see the stacked-dispatch work) and the merge
+queue refuses it later with a specific reason. That keeps a human free to reject
+work without first dismantling everything stacked above it — and auto-rebasing a
+dependent onto the default branch instead would silently strip the code it was
+written against.
 
 The guard has **no force escape hatch**, on purpose. Dependents form a DAG, so
 its leaves are always cleanable right now, which means "clean up the dependent
