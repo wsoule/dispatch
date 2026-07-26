@@ -56,6 +56,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw.assignee != null && !ASSIGNEES.includes(raw.assignee as Assignee)) {
     throw new TaskParseError(`invalid assignee: ${String(raw.assignee)}`, file);
   }
+  if (raw['self-review'] != null && typeof raw['self-review'] !== 'boolean') {
+    throw new TaskParseError(`invalid self-review: expected a boolean`, file);
+  }
   for (const key of ['blocked-by', 'labels'] as const) {
     const value = raw[key];
     if (
@@ -82,6 +85,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     created: String(raw.created),
     updated: String(raw.updated),
     external: (raw.external as string | null) ?? null,
+    selfReview: (raw['self-review'] as boolean | undefined) ?? false,
   };
   return { meta, body: content.slice(m[0].length) };
 }
@@ -102,6 +106,10 @@ export function serializeTaskFile(doc: TaskDoc): string {
     created: meta.created,
     updated: meta.updated,
     external: meta.external,
+    // Omitted entirely when false (the common case) rather than always written as
+    // `self-review: false` — keeps a plain task's frontmatter identical to how it looked
+    // before this field existed.
+    ...(meta.selfReview ? { 'self-review': true } : {}),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }

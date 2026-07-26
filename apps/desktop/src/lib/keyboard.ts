@@ -19,10 +19,10 @@ export interface KeyInput {
 }
 
 export interface GlobalKeyboardContext {
-  /** True while focus is inside a text input/textarea/contenteditable — single-letter
-   * shortcuts (c) must not fire while someone is typing a task title. Escape and cmd/ctrl+k
-   * still fire regardless, since those are the two shortcuts a person expects to work from
-   * inside a text field too (bail out of an edit, or jump to the palette). */
+  /** True while focus is inside a text input/textarea/contenteditable — bare-symbol shortcuts
+   * (`/`) must not fire while someone is typing a task title. Escape and cmd/ctrl+k still fire
+   * regardless, since those are the two shortcuts a person expects to work from inside a text
+   * field too (bail out of an edit, or jump to the palette). */
   isTyping: boolean;
   /** True while a `Modal`-based dialog (CreateTaskModal, SessionDetailModal, DiffModal, …) is
    * open. `Modal` owns its own Escape listener; the global layer must stay out of the way
@@ -32,7 +32,7 @@ export interface GlobalKeyboardContext {
   modalOpen: boolean;
 }
 
-export type GlobalKeyCommand = 'open-palette' | 'new-task' | 'escape';
+export type GlobalKeyCommand = 'open-palette' | 'escape';
 
 /** Maps one keydown to the app-root command it should trigger, or `null` if this keystroke
  * isn't a global shortcut right now. Never resolves a list-navigation command — those are
@@ -50,7 +50,6 @@ export function resolveGlobalKeyCommand(
   if (ctx.isTyping) return null;
 
   if (input.key === '/') return 'open-palette';
-  if (input.key === 'c') return 'new-task';
   return null;
 }
 

@@ -23,6 +23,7 @@ function mkTask(
       created,
       updated: created,
       external: null,
+      selfReview: false,
     },
     body: '',
   };

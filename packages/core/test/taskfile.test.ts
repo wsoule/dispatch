@@ -69,6 +69,7 @@ const doc: TaskDoc = {
     created: '2026-07-13T18:04:00Z',
     updated: '2026-07-13T18:04:00Z',
     external: null,
+    selfReview: false,
   },
   body: '\n## Description\n\nStuff.\n\n## Acceptance Criteria\n\n## Activity\n',
 };
@@ -101,12 +102,58 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(parsed.meta.priority).toBe('none');
     expect(parsed.meta.assignee).toBe('none');
     expect(parsed.meta.external).toBeNull();
+    expect(parsed.meta.selfReview).toBe(false);
     expect(parsed.body).toBe('body');
   });
   it('throws TaskParseError on missing frontmatter or required field', () => {
     expect(() => parseTaskFile('no frontmatter')).toThrow(TaskParseError);
     expect(() => parseTaskFile('---\ntitle: X\n---\n')).toThrow(
       /missing frontmatter field: id/
+    );
+  });
+});
+
+describe('selfReview / self-review frontmatter', () => {
+  it('parses self-review: true', () => {
+    const withSelfReview: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, selfReview: true },
+    };
+    const text = serializeTaskFile(withSelfReview);
+    expect(text).toContain('self-review: true');
+    expect(parseTaskFile(text).meta.selfReview).toBe(true);
+  });
+
+  it('omits the self-review key entirely when false, to keep files clean', () => {
+    expect(serializeTaskFile(doc)).not.toContain('self-review');
+  });
+
+  it('round-trips true through serialize + parse', () => {
+    const withSelfReview: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, selfReview: true },
+    };
+    const text = serializeTaskFile(withSelfReview);
+    expect(parseTaskFile(text)).toEqual(withSelfReview);
+    expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
+  });
+
+  it('throws on non-boolean self-review', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'self-review: yes-please',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid self-review: expected a boolean/
     );
   });
 });

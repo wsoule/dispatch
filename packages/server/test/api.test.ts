@@ -389,6 +389,49 @@ describe('error paths', () => {
     expect(taskFileNames(root)).toHaveLength(1);
   });
 
+  it('400s creating a task with a non-boolean selfReview, and writes no file', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'X', selfReview: 'yes' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe(
+      'invalid selfReview: expected a boolean'
+    );
+    expect(taskFileNames(root)).toEqual([]);
+  });
+
+  it('creates a task with selfReview: true (201)', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'X', selfReview: true }),
+    });
+    expect(res.status).toBe(201);
+    const body = await json(res);
+    expect(body.meta.selfReview).toBe(true);
+  });
+
+  it('400s patching a task with a non-boolean selfReview', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'X' }),
+      })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ selfReview: 'yes' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe(
+      'invalid selfReview: expected a boolean'
+    );
+  });
+
   it('400s patching a task with an invalid priority, and leaves the file untouched', async () => {
     const created = await json(
       await fetch(`${baseUrl}/api/tasks`, {
