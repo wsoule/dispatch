@@ -1,9 +1,10 @@
 import type { DiffFile, DiffResult } from '@dispatch/client';
-import { PatchDiff } from '@pierre/diffs/react';
+import { FileDiff } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { CircleAlert, FileX } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { splitPatchFiles } from '../../lib/patchFiles';
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
@@ -14,7 +15,13 @@ import { Skeleton } from '@/ui/skeleton';
 // constructed once from its first-render options, so this only mounts once `files` is known and
 // re-syncs imperatively if the diff is refetched while the view stays open. The tree/diff
 // widgets themselves are @pierre internals, themed globally via styles/pierreTheme.css.
-function ChangedFilesTree({ files }: { files: DiffFile[] }) {
+function ChangedFilesTree({
+  files,
+  onFileFocus,
+}: {
+  files: DiffFile[];
+  onFileFocus?: (path: string) => void;
+}) {
   const paths = useMemo(
     () => files.map((f) => normalizeDiffFilePath(f.path)),
     [files]
@@ -47,6 +54,24 @@ function ChangedFilesTree({ files }: { files: DiffFile[] }) {
     }
   }, [model, paths, gitStatus]);
 
+  // Surfaces tree focus changes (clicks and keyboard moves both go through
+  // `focusPath`) to the caller so it can scroll the matching file's diff into
+  // view. `FileTree` has no click callback prop, but the model notifies its
+  // subscribers on every state change, so diffing the focused path across
+  // notifications is the supported way to observe row activation. Directory
+  // rows report their path too — callers just won't find a diff for them.
+  useEffect(() => {
+    if (onFileFocus === undefined) return;
+    let lastFocused = model.getFocusedPath();
+    return model.subscribe(() => {
+      const focused = model.getFocusedPath();
+      if (focused !== null && focused !== lastFocused) {
+        onFileFocus(focused);
+      }
+      lastFocused = focused;
+    });
+  }, [model, onFileFocus]);
+
   return (
     <FileTree
       model={model}
@@ -61,10 +86,13 @@ function ChangedFilesTree({ files }: { files: DiffFile[] }) {
 }
 
 /**
- * The shared unified-diff view: the @pierre/diffs PatchDiff beside a git-status-decorated
- * @pierre/trees changed-files tree. Used by both the run Review surface and the Pull Requests
- * view so the code renders identically wherever it's shown. Purely presentational — the
- * `diff`/loading/error are owned by the caller.
+ * The shared unified-diff view: one @pierre/diffs `FileDiff` per changed file beside a
+ * git-status-decorated @pierre/trees changed-files tree. The run patch is multi-file, and
+ * `PatchDiff` is single-file by contract (it throws on patches with more than one file diff),
+ * so the patch is split up front with `splitPatchFiles` and rendered as a vertical stack —
+ * clicking a file in the tree scrolls its diff into view. Used by both the run Review surface
+ * and the Pull Requests view so the code renders identically wherever it's shown. Purely
+ * presentational — the `diff`/loading/error are owned by the caller.
  */
 export function RunDiffView({
   diff,
@@ -75,6 +103,25 @@ export function RunDiffView({
   diffLoading: boolean;
   diffError: string | null;
 }) {
+  const patch = diff?.patch;
+  // Parsed once per patch: either the per-file diff metadata or an inline-able
+  // error. `null` while there's nothing to parse (no diff yet, or empty patch).
+  const parsed = useMemo(
+    () =>
+      patch === undefined || patch.trim() === ''
+        ? null
+        : splitPatchFiles(patch),
+    [patch]
+  );
+
+  // Maps each file's normalized path to its rendered diff section so a tree
+  // click can scroll the right section into view. Ref callbacks keep the map
+  // in sync as sections mount/unmount across diff refetches.
+  const fileSectionRefs = useRef(new Map<string, HTMLDivElement>());
+  const handleFileFocus = useCallback((path: string) => {
+    fileSectionRefs.current.get(path)?.scrollIntoView({ block: 'start' });
+  }, []);
+
   if (diffLoading) {
     return (
       <div className="grid grid-cols-[14rem_1fr] gap-3">
@@ -102,19 +149,44 @@ export function RunDiffView({
             <p className="text-[12px]">No file changes recorded.</p>
           </div>
         ) : (
-          <ChangedFilesTree files={diff.files} />
+          <ChangedFilesTree files={diff.files} onFileFocus={handleFileFocus} />
         )}
       </div>
       <div className="border-border overflow-auto rounded-md border">
-        {diff.patch.trim() === '' ? (
+        {parsed === null ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
             <FileX className="size-4" />
             <p className="text-[12px]">No changes to show for this run.</p>
           </div>
+        ) : parsed.error !== null ? (
+          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+            <CircleAlert className="size-5" />
+            <p className="text-[13px]">
+              Couldn&rsquo;t load the diff: {parsed.error}
+            </p>
+          </div>
         ) : (
           <ErrorBoundary label="the diff">
             <PierreWorkerPool>
-              <PatchDiff patch={diff.patch} />
+              <div className="flex flex-col">
+                {parsed.files.map((file) => {
+                  const path = normalizeDiffFilePath(file.name);
+                  return (
+                    <div
+                      key={path}
+                      ref={(node) => {
+                        if (node === null) {
+                          fileSectionRefs.current.delete(path);
+                        } else {
+                          fileSectionRefs.current.set(path, node);
+                        }
+                      }}
+                    >
+                      <FileDiff fileDiff={file} />
+                    </div>
+                  );
+                })}
+              </div>
             </PierreWorkerPool>
           </ErrorBoundary>
         )}
