@@ -435,6 +435,83 @@ async function commentPr(
   return jsonResponse(detail);
 }
 
+// Resolves a PR number to its RepoPr entry via listRepoPrs() — shared by the
+// three /api/prs/:number/* handlers below. Returns `null` (caller 404s) when
+// the number isn't among the repo's currently-open PRs, so this can never be
+// used to review/comment on an arbitrary PR url a client supplies directly;
+// listRepoPrs() itself is what 409s when the project lacks pr capability.
+async function resolveRepoPrByNumber(
+  ctx: ApiContext,
+  numberParam: string
+): Promise<{ number: number; url: string } | null> {
+  const number = Number(numberParam);
+  const prs = await ctx.prManager.listRepoPrs();
+  const pr = prs.find((p) => p.number === number);
+  return pr ?? null;
+}
+
+// GET /api/prs/:number/detail — the in-app detail view for a repo PR
+// dispatch never opened itself ("Other open PRs"). Mirrors GET
+// /api/runs/:id/pr, but keyed by PR number instead of a run id.
+async function getRepoPrDetail(
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const detail = await ctx.prManager.getPrDetailByUrl(pr.url);
+  return jsonResponse(detail);
+}
+
+// POST /api/prs/:number/review — submit a GitHub review on a repo PR by
+// number. Body validation mirrors POST /api/runs/:id/pr/review exactly.
+async function reviewRepoPr(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { event?: unknown; body?: unknown };
+  if (
+    body.event !== 'approve' &&
+    body.event !== 'request-changes' &&
+    body.event !== 'comment'
+  ) {
+    return errorResponse(
+      400,
+      `invalid event: ${String(body.event)} (expected approve|request-changes|comment)`
+    );
+  }
+  const text = typeof body.body === 'string' ? body.body : '';
+  if (body.event !== 'approve' && text.trim() === '') {
+    return errorResponse(400, `a ${body.event} review requires a body`);
+  }
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const detail = await ctx.prManager.reviewPrByUrl(pr.url, body.event, text);
+  return jsonResponse(detail);
+}
+
+// POST /api/prs/:number/comment — add a PR-level comment on a repo PR by
+// number. Body validation mirrors POST /api/runs/:id/pr/comment exactly.
+async function commentRepoPr(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { body?: unknown };
+  if (typeof body.body !== 'string' || body.body.trim() === '') {
+    return errorResponse(400, 'invalid body: body is required');
+  }
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const detail = await ctx.prManager.commentPrByUrl(pr.url, body.body);
+  return jsonResponse(detail);
+}
+
 // `fromRunId` is optional and identifies the SENDER (a different run than
 // `runId`, the recipient) — the MCP `agent_message` tool passes its own
 // `DISPATCH_RUN_ID` here so Orchestrator.inject can resolve a real sender
@@ -849,8 +926,40 @@ export async function handleApi(
     // PrManager.listRepoPrs for the gh call + parsing, and its 409 when this
     // project lacks the `pr` capability (mapped by the typed-error catch
     // below, same as every other PR route).
-    if (segments[0] === 'prs' && segments.length === 1 && method === 'GET') {
-      return jsonResponse(await ctx.prManager.listRepoPrs());
+    if (segments[0] === 'prs') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(await ctx.prManager.listRepoPrs());
+      }
+      // GET /api/prs/:number/detail, POST /api/prs/:number/review, POST
+      // /api/prs/:number/comment — the in-app review surface for "Other open
+      // PRs" (repo PRs dispatch never opened itself, so there's no run to key
+      // off). Each resolves `number` to its url via listRepoPrs() (404 when
+      // it isn't among the repo's open PRs), then delegates to the same
+      // URL-driven PrManager cores the run-keyed routes above use — this is
+      // what keeps dispatch from becoming an open proxy for reviewing/
+      // commenting on an arbitrary PR url a client might otherwise supply
+      // directly.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'detail' &&
+        method === 'GET'
+      ) {
+        return await getRepoPrDetail(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review' &&
+        method === 'POST'
+      ) {
+        return await reviewRepoPr(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'comment' &&
+        method === 'POST'
+      ) {
+        return await commentRepoPr(req, ctx, segments[1]);
+      }
     }
 
     if (segments[0] === 'notes') {

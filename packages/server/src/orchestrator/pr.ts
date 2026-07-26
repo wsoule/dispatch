@@ -423,13 +423,26 @@ export class PrManager {
   }
 
   // GET /api/runs/:id/pr. The PR's current status plus its full conversation,
-  // read live from GitHub via gh. The status (state, checks, review verdict,
-  // diffstat) comes from one `gh pr view --json` call; the conversation folds
-  // together submitted reviews, PR-level comments, and — via a REST call gh's
-  // `pr view` can't cover — code-line comments, all sorted oldest-first.
+  // read live from GitHub via gh. Delegates to the URL-driven core below —
+  // this method's only job is resolving which run's PR to look at.
   async getPrDetail(runId: string): Promise<PrDetail> {
     const meta = this.requireRunWithPr(runId);
-    const url = meta.prUrl!;
+    return this.getPrDetailByUrl(meta.prUrl!, meta.taskTitle);
+  }
+
+  // The URL-driven core of getPrDetail — everything above resolves a run to
+  // its PR's url and delegates here; GET /api/prs/:number/detail (item B's
+  // in-app review for a repo PR dispatch never opened) calls this directly
+  // with a url resolved from listRepoPrs(), since a repo PR has no run/meta
+  // to read a url from. `fallbackTitle` mirrors the run path's own
+  // `meta.taskTitle` fallback (used only on the rare gh payload with no
+  // `title`); callers with no such fallback (the by-number path) pass none.
+  //
+  // The status (state, checks, review verdict, diffstat) comes from one
+  // `gh pr view --json` call; the conversation folds together submitted
+  // reviews, PR-level comments, and — via a REST call gh's `pr view` can't
+  // cover — code-line comments, all sorted oldest-first.
+  async getPrDetailByUrl(url: string, fallbackTitle = ''): Promise<PrDetail> {
     const view = await this.run(this.ctx.rootDir, [
       'gh',
       'pr',
@@ -453,7 +466,7 @@ export class PrManager {
     const status: PrStatus = {
       number: Number(raw.number ?? 0),
       url: String(raw.url ?? url),
-      title: String(raw.title ?? meta.taskTitle),
+      title: String(raw.title ?? fallbackTitle),
       state: (raw.state as PrStatus['state']) ?? 'OPEN',
       isDraft: raw.isDraft === true,
       reviewDecision:
@@ -533,21 +546,33 @@ export class PrManager {
 
   // POST /api/runs/:id/pr/review. Submits a GitHub review on the run's PR —
   // approve (body optional), request-changes, or comment (both require a
-  // body, enforced by the API layer). Returns the refreshed PrDetail so the
-  // client re-renders with the new verdict/conversation in one round trip.
+  // body, enforced by the API layer). Delegates to the URL-driven core below,
+  // same "resolve run -> url, then act on the url" split as getPrDetail.
   async reviewPr(
     runId: string,
     event: PrReviewEvent,
     body: string
   ): Promise<PrDetail> {
     const meta = this.requireRunWithPr(runId);
+    return this.reviewPrByUrl(meta.prUrl!, event, body);
+  }
+
+  // The URL-driven core of reviewPr — GET/POST /api/prs/:number/review (item
+  // B's in-app review for a repo PR) calls this directly with a url resolved
+  // from listRepoPrs(). Returns the refreshed PrDetail so the client
+  // re-renders with the new verdict/conversation in one round trip.
+  async reviewPrByUrl(
+    url: string,
+    event: PrReviewEvent,
+    body: string
+  ): Promise<PrDetail> {
     const flag =
       event === 'approve'
         ? '--approve'
         : event === 'request-changes'
           ? '--request-changes'
           : '--comment';
-    const cmd = ['gh', 'pr', 'review', meta.prUrl!, flag];
+    const cmd = ['gh', 'pr', 'review', url, flag];
     if (body.trim() !== '') cmd.push('--body', body);
     const result = await this.run(this.ctx.rootDir, cmd);
     if (!result.ok) {
@@ -555,18 +580,26 @@ export class PrManager {
         `gh pr review failed: ${commandErrorText(result)}`
       );
     }
-    return this.getPrDetail(runId);
+    return this.getPrDetailByUrl(url);
   }
 
   // POST /api/runs/:id/pr/comment. Adds a PR-level comment (not a review) via
-  // `gh pr comment`, then returns the refreshed detail.
+  // `gh pr comment`, then returns the refreshed detail. Delegates to the
+  // URL-driven core below, same split as getPrDetail/reviewPr.
   async commentPr(runId: string, body: string): Promise<PrDetail> {
     const meta = this.requireRunWithPr(runId);
+    return this.commentPrByUrl(meta.prUrl!, body);
+  }
+
+  // The URL-driven core of commentPr — POST /api/prs/:number/comment (item
+  // B's in-app review for a repo PR) calls this directly with a url resolved
+  // from listRepoPrs().
+  async commentPrByUrl(url: string, body: string): Promise<PrDetail> {
     const result = await this.run(this.ctx.rootDir, [
       'gh',
       'pr',
       'comment',
-      meta.prUrl!,
+      url,
       '--body',
       body,
     ]);
@@ -575,7 +608,7 @@ export class PrManager {
         `gh pr comment failed: ${commandErrorText(result)}`
       );
     }
-    return this.getPrDetail(runId);
+    return this.getPrDetailByUrl(url);
   }
 }
 

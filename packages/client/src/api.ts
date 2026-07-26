@@ -492,6 +492,20 @@ export interface ApiClient {
   // "Other open PRs" section. 409s the same way every other PR route does
   // when this project lacks the `pr` capability.
   fetchRepoPrs(): Promise<RepoPr[]>;
+  // Item B's in-app review for those "Other open PRs" — the same status/
+  // conversation/review/comment surface as fetchPrDetail/reviewPr/commentPr
+  // above, but keyed by PR number (server resolves it to a url via
+  // listRepoPrs()) instead of a run id, since these rows have no run at all.
+  // 404s a number that isn't among the repo's currently-open PRs; 409s the
+  // same way every other PR route does when this project lacks the `pr`
+  // capability.
+  fetchRepoPrDetail(number: number): Promise<PrDetail>;
+  reviewRepoPr(
+    number: number,
+    event: PrReviewEvent,
+    body?: string
+  ): Promise<PrDetail>;
+  commentRepoPr(number: number, body: string): Promise<PrDetail>;
   // The notes/triage hub.
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
@@ -607,6 +621,18 @@ export function createApiClient(baseUrl: string): ApiClient {
         ...jsonBody({ body }),
       }),
     fetchRepoPrs: () => request(baseUrl, '/api/prs'),
+    fetchRepoPrDetail: (number) =>
+      request(baseUrl, `/api/prs/${number}/detail`),
+    reviewRepoPr: (number, event, body) =>
+      request(baseUrl, `/api/prs/${number}/review`, {
+        method: 'POST',
+        ...jsonBody({ event, body: body ?? '' }),
+      }),
+    commentRepoPr: (number, body) =>
+      request(baseUrl, `/api/prs/${number}/comment`, {
+        method: 'POST',
+        ...jsonBody({ body }),
+      }),
     fetchNotes: () => request(baseUrl, '/api/notes'),
     createNote: (input) =>
       request(baseUrl, '/api/notes', { method: 'POST', ...jsonBody(input) }),
