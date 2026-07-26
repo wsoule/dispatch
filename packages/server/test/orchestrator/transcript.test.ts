@@ -164,3 +164,59 @@ describe('replayTranscript', () => {
     expect(replay?.meta.state).toBe('running');
   });
 });
+
+// A restack rewrites two facts about a run that must outlive the process
+// that decided them: the base it now sits on, and the "this one could not be
+// restacked" flag. The registry is in-memory only, so the transcript is the
+// only thing a restart replays them from.
+describe('replayTranscript restack bookkeeping', () => {
+  it('recovers a repointed baseBranch from a state line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000010.jsonl');
+    const meta = makeMeta({
+      id: 'r-000010',
+      state: 'finished',
+      baseBranch: 'dispatch/t-blocker-abc',
+      stackParents: ['dispatch/t-blocker-abc'],
+      stackBaseCommit: 'deadbeef',
+    });
+    const transcript = new Transcript(path);
+    transcript.writeHeader(meta);
+    transcript.appendState('finished', '2026-07-21T00:00:00.000Z', {
+      baseBranch: 'main',
+    });
+
+    const replay = replayTranscript(path);
+    expect(replay?.meta.baseBranch).toBe('main');
+    // Untouched facts still come from the header.
+    expect(replay?.meta.stackBaseCommit).toBe('deadbeef');
+  });
+
+  it('recovers the baseDiscarded flag and its reason from a state line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000011.jsonl');
+    const meta = makeMeta({ id: 'r-000011', state: 'finished' });
+    const transcript = new Transcript(path);
+    transcript.writeHeader(meta);
+    transcript.appendState('finished', '2026-07-21T00:00:00.000Z', {
+      baseDiscarded: true,
+      error: 'cannot restack: no stackBaseCommit recorded for this run',
+    });
+
+    const replay = replayTranscript(path);
+    expect(replay?.meta.baseDiscarded).toBe(true);
+    expect(replay?.meta.error).toContain('no stackBaseCommit');
+  });
+
+  it('leaves both undefined for a run that was never restacked', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000012.jsonl');
+    const transcript = new Transcript(path);
+    transcript.writeHeader(makeMeta({ id: 'r-000012' }));
+    transcript.appendState('finished', '2026-07-21T00:00:00.000Z');
+
+    const replay = replayTranscript(path);
+    expect(replay?.meta.baseBranch).toBe('main');
+    expect(replay?.meta.baseDiscarded).toBeUndefined();
+  });
+});

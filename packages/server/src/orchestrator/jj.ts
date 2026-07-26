@@ -143,6 +143,31 @@ export class JjManager {
    * is how a task with two or more unmerged blockers gets a base containing
    * all of their work — git has no equivalent, which is why the plain-git
    * fallback makes such a task wait instead.
+   *
+   * Every flag below is load-bearing and was measured against jj 0.43; none of
+   * them may be "simplified" away:
+   *
+   * - `--no-edit` is MANDATORY. In a colocated repo jj's working copy IS the
+   *   git working tree, so a bare `jj new` moves the user's MAIN CHECKOUT onto
+   *   the new merge commit — measured, that leaves it detached with every
+   *   blocker's files materialized and one staged, which then makes
+   *   `mergeRun`'s dirty gate and its "merge target is X, expected Y" guard
+   *   refuse every subsequent merge in the whole project. With `--no-edit` the
+   *   checkout stays put (measured: HEAD unmoved, `git status` clean).
+   * - Because the working copy deliberately does NOT move, `@` is no longer
+   *   the new commit, so the bookmark is placed by a revset that names it
+   *   structurally: the commit that is a child of every parent.
+   * - `latest(...)` and `--allow-backwards` exist for re-dispatch. A task
+   *   dispatched again while the same blockers are still unmerged creates a
+   *   SECOND merge child, at which point the bare intersection resolves to two
+   *   revisions and jj fails with "resolved to more than one revision";
+   *   `latest()` picks the one just created, and jj then refuses that as a
+   *   sideways bookmark move without `--allow-backwards`.
+   * - `bookmark set`, not `create`, for the same reason: `create` errors
+   *   outright with "Bookmark already exists" on a re-dispatch.
+   *
+   * jj warns "Target revision is empty" on the bookmark — expected and
+   * harmless, since a merge commit adds no changes of its own.
    */
   async mergeBase(parents: string[], bookmark: string): Promise<string> {
     if (parents.length < 2) {
@@ -151,20 +176,27 @@ export class JjManager {
       );
     }
     const revArgs = parents.flatMap((p) => ['-r', p]);
-    const create = await this.run(this.rootDir, ['jj', 'new', ...revArgs]);
+    const create = await this.run(this.rootDir, [
+      'jj',
+      'new',
+      ...revArgs,
+      '--no-edit',
+    ]);
     if (!create.ok) {
       throw new Error(`jj new failed: ${commandErrorText(create)}`);
     }
+    const mergeRevset = `latest(${parents.map((p) => `children(${p})`).join(' & ')})`;
     const mark = await this.run(this.rootDir, [
       'jj',
       'bookmark',
-      'create',
+      'set',
       bookmark,
       '-r',
-      '@',
+      mergeRevset,
+      '--allow-backwards',
     ]);
     if (!mark.ok) {
-      throw new Error(`jj bookmark create failed: ${commandErrorText(mark)}`);
+      throw new Error(`jj bookmark set failed: ${commandErrorText(mark)}`);
     }
     await this.exportGit();
     return bookmark;

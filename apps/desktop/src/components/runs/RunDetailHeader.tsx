@@ -1,5 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Layers2, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
 import { modelLabel } from '../../lib/models';
@@ -22,10 +22,11 @@ interface RunDetailHeaderProps {
 /**
  * One header row shared by both the Session and Diff tabs (rendered once, above the `Tabs`,
  * per the redesign brief's "keep the live cost/state header row above the tabs") — state pill,
- * branch, running cost/turns, a terminal run's error or PR-opened chip, and Cancel while the
- * run is still live. Replaces the near-duplicate header rows `RunLogView` and `RunReviewView`
- * used to render independently, which disagreed on layout and went out of sync with whichever
- * tab happened to be selected.
+ * branch, running cost/turns, a terminal run's error or PR-opened chip, a "stacked on" chip
+ * naming the blocker branch(es) this run's worktree was branched from, a discarded-base warning
+ * once that blocker gets rejected, and Cancel while the run is still live. Replaces the
+ * near-duplicate header rows `RunLogView` and `RunReviewView` used to render independently,
+ * which disagreed on layout and went out of sync with whichever tab happened to be selected.
  */
 export function RunDetailHeader({
   meta,
@@ -87,6 +88,26 @@ export function RunDetailHeader({
             PR opened
             <ExternalLink className="size-3" />
           </a>
+        )}
+        {meta.stackParents !== undefined && meta.stackParents.length > 0 && (
+          <span
+            className="border-border text-muted-foreground inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]"
+            title={meta.stackParents.join(', ')}
+          >
+            <Layers2 className="size-3 shrink-0" />
+            <span className="truncate">
+              stacked on{' '}
+              {meta.stackParents.length === 1
+                ? meta.stackParents[0]
+                : `${meta.stackParents.length} branches`}
+            </span>
+          </span>
+        )}
+        {meta.baseDiscarded === true && (
+          <span className="border-destructive/30 bg-destructive/10 text-destructive inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium">
+            <TriangleAlert className="size-3 shrink-0" />
+            base discarded — rebase before merging
+          </span>
         )}
         <div className="flex-1" />
         {live && (

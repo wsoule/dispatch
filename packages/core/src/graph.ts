@@ -15,17 +15,40 @@ export function isDone(t: TaskDoc): boolean {
 }
 
 /**
- * Tasks safe to start now: kind=task, status=todo, all blockers done.
- * Dangling blocker ids (no task in the set) do not block; `doctor` reports them.
+ * Whether a blocker no longer holds up *dispatching* its dependents. Looser
+ * than `isDone`: a run that finishes leaves its task at `in-review` and only
+ * reaches `done` once a human merges it, so gating dispatch on `isDone` keeps
+ * a dependent idle for the whole review window. Dispatch can start as soon as
+ * the blocker's code exists on a branch, which is exactly `in-review`.
+ *
+ * `'in-review'` is hardcoded for the same reason `isDone` hardcodes
+ * `'done'`/`'cancelled'` — the built-in statuses are the contract the
+ * orchestrator's own transitions are written against, even though
+ * `.dispatch/config.yml` lets a project add custom status names.
  */
-export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
+export function isSatisfiedForDispatch(t: TaskDoc): boolean {
+  return isDone(t) || t.meta.status === 'in-review';
+}
+
+/**
+ * Shared filtering and sorting logic for tasks ready to be started or dispatched.
+ * Extracted as a private helper to prevent drift between readyTasks and
+ * dispatchableTasks — both apply the same kind/status filter and priority/created
+ * sort, differing only in their blocker-satisfaction predicate (isDone vs
+ * isSatisfiedForDispatch). A single source of truth here ensures that future
+ * changes to sort order or filtering strategy apply to both consistently.
+ */
+function filterAndSortByReadiness(
+  tasks: TaskDoc[],
+  isSatisfied: (t: TaskDoc) => boolean
+): TaskDoc[] {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
   return tasks
     .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
     .filter((t) =>
       t.meta.blockedBy.every((dep) => {
         const d = byId.get(dep);
-        return d === undefined || isDone(d);
+        return d === undefined || isSatisfied(d);
       })
     )
     .sort((a, b) => {
@@ -35,6 +58,28 @@ export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
         ? byPriority
         : a.meta.created.localeCompare(b.meta.created);
     });
+}
+
+/**
+ * Tasks the orchestrator may start *now*: same filter and ordering as
+ * `readyTasks`, but blockers only need to be dispatch-satisfied (see
+ * `isSatisfiedForDispatch`) rather than done.
+ *
+ * Deliberately a separate function rather than an option on `readyTasks`:
+ * `readyTasks` is what the CLI, the MCP `ready` tool, the board's Blocked
+ * badge, and merge-queue ordering all mean by "ready", and none of those
+ * should start calling a task with an unmerged blocker ready.
+ */
+export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
+  return filterAndSortByReadiness(tasks, isSatisfiedForDispatch);
+}
+
+/**
+ * Tasks safe to start now: kind=task, status=todo, all blockers done.
+ * Dangling blocker ids (no task in the set) do not block; `doctor` reports them.
+ */
+export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
+  return filterAndSortByReadiness(tasks, isDone);
 }
 
 /**

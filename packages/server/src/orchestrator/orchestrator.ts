@@ -19,6 +19,7 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { JjManager } from './jj.js';
 import {
   diffSnapshotPath,
   runsDir,
@@ -54,6 +55,12 @@ export interface OrchestratorContext {
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
+  // Optional override for the 2+-blocker stacked-dispatch path — the only
+  // path that mutates the user's actual repository. Production never passes
+  // it (a real JjManager is built below); tests inject one wired to a stub
+  // CommandRunner so that path can be exercised without a jj binary, which is
+  // otherwise structurally untestable.
+  jj?: JjManager;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -102,6 +109,10 @@ function branchEntryStatus(meta: RunMeta | undefined): BranchEntryStatus {
 export class Orchestrator {
   private readonly registry = new RunRegistry();
   private readonly worktrees: WorktreeManager;
+  // Only ever used on the multi-blocker dispatch path (see resolveBase):
+  // constructing it is inert — it shells out to jj lazily, per call — so an
+  // unblocked dispatch never touches jj at all.
+  private readonly jj: JjManager;
   private readonly executors = new Map<string, Executor>();
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
@@ -121,6 +132,7 @@ export class Orchestrator {
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
+    this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -182,11 +194,11 @@ export class Orchestrator {
   // Starts a new run for `taskId` on `executorName`. Refuses (409) if the
   // task already has a live run, and (400) if the executor name isn't
   // registered — O1 only ever registers 'fake'; 'claude' arrives in O2.
-  dispatch(
+  async dispatch(
     taskId: string,
     executorName: string,
     opts: { model?: string } = {}
-  ): RunMeta {
+  ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
@@ -202,7 +214,7 @@ export class Orchestrator {
       throw new OrchestratorClientError(`unknown executor: ${executorName}`);
     }
 
-    const baseBranch = this.worktrees.defaultBaseBranch();
+    const { base: baseBranch, stackParents } = await this.resolveBase(task);
     const now = new Date().toISOString();
     const runId = generateRunId(now);
     // Suffixed with the run's own hex tag (stripping its `r-` prefix) so two
@@ -228,6 +240,15 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      // Spread in only for a genuinely stacked run, so an unblocked run's
+      // RunMeta keeps exactly the shape (and transcript header) it had
+      // before stacking existed.
+      ...(stackParents.length > 0
+        ? {
+            stackParents,
+            stackBaseCommit: this.worktrees.resolveCommit(baseBranch),
+          }
+        : {}),
     };
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
@@ -261,6 +282,105 @@ export class Orchestrator {
     );
 
     return this.registry.get(runId)!;
+  }
+
+  /**
+   * The ref a task's worktree should be branched from. An unblocked task uses
+   * the project's default base, exactly as before. A task whose blockers are
+   * still unmerged is branched off *their* branches instead, so the agent can
+   * see the work it depends on — that is the whole point of letting a
+   * dependent start while its blocker is only `in-review`.
+   *
+   * Only `in-review` blockers matter here: a done/cancelled blocker's work is
+   * already in the base branch, and an `in-progress` blocker means the task
+   * isn't dispatchable at all (see core's dispatchableTasks).
+   *
+   * Two or more unmerged blockers need a base containing all of their work,
+   * which only jj can express (`jj new -r A -r B`). When jj isn't available
+   * the task falls back to the default base rather than silently picking one
+   * blocker and dropping the other's work.
+   */
+  private async resolveBase(
+    task: TaskDoc
+  ): Promise<{ base: string; stackParents: string[] }> {
+    const defaultBase = this.worktrees.defaultBaseBranch();
+    const parents: string[] = [];
+    for (const blockerId of task.meta.blockedBy) {
+      const blocker = this.ctx.store.get(blockerId);
+      if (blocker === null || blocker.meta.status !== 'in-review') continue;
+      const branch = this.branchForTask(blockerId);
+      if (branch !== null) parents.push(branch);
+    }
+
+    if (parents.length === 0) return { base: defaultBase, stackParents: [] };
+    if (parents.length === 1) {
+      return { base: parents[0], stackParents: parents };
+    }
+
+    // Only reached with 2+ unmerged blockers — the one case that genuinely
+    // needs jj, so converting the user's repo never happens for a dispatch
+    // that could have been served by plain git.
+    //
+    // The whole section is wrapped because this is the only part of dispatch
+    // that shells out to a tool the user may not have, in a repo shape jj may
+    // refuse: no jj failure may turn a perfectly valid dispatch into a 500.
+    // Every failure degrades to the same default-base fallback the
+    // jj-unavailable case takes, and says so in the task's own Activity.
+    try {
+      const wasColocated = await this.jj.isColocated();
+      if (!(await this.jj.ensureColocated())) {
+        // No jj: no way to build a multi-parent base. Fall back rather than
+        // dropping a blocker's work on the floor.
+        this.appendTaskActivity(
+          task.meta.id,
+          `stacked dispatch: ${parents.length} unmerged blockers need a multi-parent base, but jj is unavailable — using ${defaultBase}`
+        );
+        return { base: defaultBase, stackParents: [] };
+      }
+      if (!wasColocated) {
+        // Converting a user's repo is never silent — §4.2 of the spec.
+        this.appendTaskActivity(
+          task.meta.id,
+          'stacked dispatch: converted this repository to a colocated jj repo (reversible with `jj git colocation disable`)'
+        );
+      }
+      const bookmark = `dispatch/stack-base-${task.meta.id}`;
+      const base = await this.jj.mergeBase(parents, bookmark);
+      return { base, stackParents: parents };
+    } catch (err) {
+      this.appendTaskActivity(
+        task.meta.id,
+        `stacked dispatch: building a multi-parent base over ${parents.length} unmerged blockers failed (${(err as Error).message}) — using ${defaultBase}`
+      );
+      return { base: defaultBase, stackParents: [] };
+    }
+  }
+
+  // Appends one Activity line to a task, mirroring EpicEngine's
+  // appendEpicActivity (epic.ts) so stack decisions leave the same durable
+  // trail every other orchestrator lifecycle event does.
+  private appendTaskActivity(taskId: string, text: string): void {
+    const now = new Date().toISOString();
+    this.ctx.store.update(taskId, { appendActivity: `${now} ${text}` }, now);
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+  }
+
+  // The branch of a task's most recent terminal, unreviewed run — the branch
+  // that actually holds its unmerged work. Returns null when the task has no
+  // such run (never dispatched, or already merged/discarded), in which case
+  // there is nothing to stack on.
+  private branchForTask(taskId: string): string | null {
+    const candidates = this.registry
+      .list()
+      .filter(
+        (r) =>
+          r.taskId === taskId &&
+          TERMINAL_RUN_STATES.has(r.state) &&
+          r.reviewedAt === undefined
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return candidates[0]?.branch ?? null;
   }
 
   // Answers a pending approval request. Only valid while the run is
@@ -598,6 +718,7 @@ export class Orchestrator {
         },
         now
       );
+      this.flagStackedDependents(meta);
     }
 
     // Record the review marker as its own state-line append (transition()
@@ -1018,6 +1139,144 @@ export class Orchestrator {
         `branch is the base of ${dependent.branch} — clean that up first`
       );
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Restack seam (MergeQueue.restackDependents). These five live here rather
+  // than on the queue because the Orchestrator owns both the run registry and
+  // the WorktreeManager — the queue must not reach into either directly.
+  // ---------------------------------------------------------------------
+
+  // Backs up a run's branch tip before something rewrites it, returning the
+  // saved sha (or null when there's nothing to back up). This is the undo
+  // path for a restack, never its rebase boundary — see
+  // MergeQueue.restackDependents.
+  backupRunBranch(runId: string): string | null {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return null;
+    return this.worktrees.writeBackupRef(meta.branch, runId);
+  }
+
+  // Replays a run's OWN commits (everything after `oldTip`, the commit it was
+  // branched from) onto `newBase`, leaving behind the blocker commits the new
+  // base already contains in squashed form.
+  rebaseRunOnto(runId: string, newBase: string, oldTip: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    this.worktrees.rebaseOnto(meta.worktreePath, newBase, oldTip, meta.branch);
+  }
+
+  // Reattaches a run's worktree to its branch after a restack moved that
+  // branch from the main checkout. Refuses while the run is still live — a
+  // working copy an agent is using is never rewritten underneath it.
+  resyncRunWorktree(runId: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || !TERMINAL_RUN_STATES.has(meta.state)) return;
+    this.worktrees.resyncToBranch(meta.worktreePath, meta.branch);
+  }
+
+  // Whether a run's worktree still holds uncommitted content. Checked before
+  // a restack: `resyncToBranch`'s hard reset would discard it, and every
+  // normal finish path auto-commits, so this is only ever true for a
+  // cancelled run whose worktree was deliberately left as-is.
+  runWorktreeIsDirty(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return false;
+    return this.worktrees.isDirty(meta.worktreePath);
+  }
+
+  // Moves a run off a base branch that has now been merged away (and deleted
+  // with its worktree), and drops that branch from its recorded stack
+  // parents. Without this the next merge attempt is refused outright by
+  // mergeRun's "merge target is X, expected Y" guard.
+  //
+  // The new base is appended to the run's transcript as a state line — the
+  // registry is in-memory only, so without that a restart would replay the
+  // run's meta straight back onto the merged-away branch, with nothing left
+  // to notice or re-run the restack (see TranscriptStateLine.baseBranch).
+  repointRunBase(runId: string, newBase: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    const remaining = (meta.stackParents ?? []).filter(
+      (branch) => branch !== meta.baseBranch
+    );
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, {
+      baseBranch: newBase,
+      stackParents: remaining.length > 0 ? remaining : undefined,
+      updatedAt: now,
+    });
+    this.transcriptFor(runId).appendState(meta.state, now, {
+      baseBranch: newBase,
+    });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // Called from review()'s discard branch: everything stacked on the
+  // just-discarded run's branch was written against a base a human just
+  // rejected. Flag every un-reviewed dependent for human attention and
+  // change NOTHING else — the dependent's own worktree, branch, and any
+  // in-flight work are left completely intact. Auto-rebasing it onto the
+  // default base would silently strip the code it was written against, and
+  // cascading the discard would throw away work a human never rejected;
+  // only a human gets to make that call. Reuses flagRunRestackFailure's
+  // `baseDiscarded` flag and its persistence/Activity shape rather than
+  // inventing a second one for the same "needs a human" meaning — the two
+  // uses are compatible: MergeQueue.isRestackCandidate already treats
+  // `baseDiscarded` as "do not touch this automatically" regardless of which
+  // path set it.
+  private flagStackedDependents(discarded: RunMeta): void {
+    for (const dependent of this.registry.list()) {
+      // Already merged or discarded runs are done; they must never be
+      // touched again, and a run without this branch in its stack simply
+      // wasn't built on top of it.
+      if (dependent.reviewedAt !== undefined) continue;
+      if (dependent.stackParents?.includes(discarded.branch) !== true) {
+        continue;
+      }
+      const reason = `the run this one was stacked on (${discarded.id}) was discarded — rebase onto a valid base before merging`;
+      this.flagRunRestackFailure(dependent.id, reason);
+      this.appendRunTaskActivity(dependent.id, `run ${dependent.id} ${reason}`);
+    }
+  }
+
+  // Records that a dependent could not be restacked after its base merged.
+  // Reuses the `baseDiscarded` flag's "a human needs to look at this" meaning
+  // rather than inventing a second flag for the same UI treatment: either way
+  // the base this work was written against is no longer something the queue
+  // can merge it onto by itself.
+  //
+  // Persisted to the transcript for the same reason repointRunBase is: this
+  // flag is the ONLY record that a run needs human attention, and the restack
+  // is never retried on its own, so losing it across a restart would leave a
+  // broken run looking perfectly healthy.
+  //
+  // `reason` never overwrites an error the run already had. A `failed` run's
+  // own failure message is the more important one — it says why the work is
+  // broken, where this only says why the base could not be moved — and since
+  // the write is now persisted, clobbering it would destroy it for good. The
+  // restack reason still reaches the user: every caller also writes it to the
+  // run's task Activity (see MergeQueue.flagDependent).
+  flagRunRestackFailure(runId: string, reason: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    const now = new Date().toISOString();
+    const patch =
+      meta.error === undefined
+        ? { baseDiscarded: true, error: reason }
+        : { baseDiscarded: true };
+    this.registry.updateMeta(runId, { ...patch, updatedAt: now });
+    this.transcriptFor(runId).appendState(meta.state, now, patch);
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // One Activity line on a run's own task, used by the merge queue to leave a
+  // durable record of a restack (or a refusal to restack) on the run the user
+  // is actually looking at, not just on the blocker that triggered it.
+  appendRunTaskActivity(runId: string, text: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    this.appendTaskActivity(meta.taskId, text);
   }
 
   // Boot-time hygiene: any transcript whose last recorded state isn't

@@ -76,7 +76,8 @@ a working copy an agent is actively editing.
 | 2+ unmerged blockers        | jj merge-base commit                           | `jj new -r A -r B` gives a real multi-parent base                                |
 | Blocker's run discarded     | Flag the dependent, change nothing             | Never destroy agent work automatically                                           |
 | jj missing or failing       | Plain-git fallback (§4.6)                      | Stacking works on every repo; jj is an optimization, not a hard requirement      |
-| Before any restack          | Backup ref of the pre-restack tip (§4.6)       | Agent work stays recoverable; doubles as the git fallback's `<old-tip>` argument |
+| Before any restack          | Backup ref of the pre-restack tip (§4.6)       | Agent work stays recoverable — the undo path, not the rebase boundary            |
+| Rebase boundary             | `RunMeta.stackBaseCommit`, set at dispatch     | The one fact both restack paths need: where the dependent's own commits begin    |
 
 ## 4. Components
 
@@ -106,14 +107,15 @@ blocker becomes dispatch-satisfying, against a fresh cache.
 injectable `CommandRunner` seam `pr.ts` and `mergeQueue.ts` use so it is
 testable with a fake runner.
 
-| Method                         | Command                                                                                      |
-| ------------------------------ | -------------------------------------------------------------------------------------------- |
-| `isAvailable()`                | `jj --version`                                                                               |
-| `isColocated()`                | `jj git colocation status`                                                                   |
-| `ensureColocated()`            | `jj git init --colocate`, or `jj git colocation enable` on an existing non-colocated jj repo |
-| `importGit()` / `exportGit()`  | `jj git import` / `jj git export`                                                            |
-| `restack(branch, onto)`        | `jj rebase -b <branch> -d <onto>` then export                                                |
-| `mergeBase(parents, bookmark)` | `jj new -r A -r B …` then `jj bookmark create`                                               |
+| Method                            | Command                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| `isAvailable()`                   | `jj --version`                                                                               |
+| `isColocated()`                   | `jj git colocation status`                                                                   |
+| `ensureColocated()`               | `jj git init --colocate`, or `jj git colocation enable` on an existing non-colocated jj repo |
+| `importGit()` / `exportGit()`     | `jj git import` / `jj git export`                                                            |
+| `restack(branch, onto)`           | `jj rebase -b <branch> -d <onto>` then export                                                |
+| `restackOnto(branch, base, onto)` | `jj rebase -s roots(<base>..<branch>) -d <onto> --skip-emptied` — the post-merge form        |
+| `mergeBase(parents, bookmark)`    | `jj new -r A -r B …` then `jj bookmark create`                                               |
 
 `ensureColocated()` runs lazily on the **first stacked dispatch only** — never
 on an unblocked dispatch — is idempotent, and appends a task Activity line
@@ -195,9 +197,17 @@ automatic:
 git rebase --onto <new-base> <old-tip> <dependent-branch>
 ```
 
-`<old-tip>` is exactly the backup ref written above, which is why these two
-safety nets compose: the backup is not merely a recovery artifact, it is the
-input the git restack needs to know where the dependent's own commits begin.
+`<old-tip>` is the commit the dependent was branched from — recorded as
+`RunMeta.stackBaseCommit` at dispatch time, when it is known exactly. It is
+**not** the backup ref: that holds the dependent's own tip, and using it here
+would make the replay range empty. The jj path needs the same fact, expressed as
+a revset:
+`jj rebase -s 'roots(<stackBaseCommit>..<branch>)' -d <newBase> --skip-emptied`.
+
+Verified by spike 4 (`.agents/ignore/spikes/jj-spike4.sh`): rebasing the whole
+branch (`jj rebase -b`) after the blocker squash-merges replays the blocker's
+commits on top of a base that already contains them — "Rebased 2 commits" where
+only one is the dependent's own. The `-s` form rebases exactly one.
 
 The 2+ blocker case has no git equivalent for `jj new -r A -r B`, so under the
 git path a task with two or more unmerged blockers waits (today's behavior)

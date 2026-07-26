@@ -302,7 +302,7 @@ async function createRun(
 
   const executorName =
     typeof executorField === 'string' ? executorField : 'claude';
-  const meta = ctx.orchestrator.dispatch(taskId, executorName, {
+  const meta = await ctx.orchestrator.dispatch(taskId, executorName, {
     model: modelField,
   });
   return jsonResponse(meta, 201);
@@ -670,7 +670,7 @@ async function startEpic(
   if (body.executor !== undefined && typeof body.executor !== 'string') {
     return errorResponse(400, 'invalid executor: expected a string');
   }
-  const session = ctx.epicEngine.start(epicId, {
+  const session = await ctx.epicEngine.start(epicId, {
     concurrency: body.concurrency,
     executor: body.executor,
   });
