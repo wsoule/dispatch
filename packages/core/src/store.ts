@@ -120,7 +120,7 @@ export class TaskStore {
       created: now,
       updated: now,
       external: null,
-      selfReview: input.selfReview ?? false,
+      selfReview: input.selfReview ?? true,
     };
     const body = `\n## Description\n\n${input.description ?? ''}\n\n## Acceptance Criteria\n\n## Activity\n`;
     const doc: TaskDoc = { meta, body };

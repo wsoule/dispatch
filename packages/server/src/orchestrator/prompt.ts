@@ -46,8 +46,9 @@ export function buildTaskPrompt(
       'uncommitted worktree cannot be reviewed or merged.'
   );
 
-  // Opt-in (per-task `self-review: true` in frontmatter) — an explicit instruction to spend
-  // one more pass checking its own work rather than stopping the moment tests go green.
+  // On by default, opted out per-task with `self-review: false` in frontmatter — an explicit
+  // instruction to spend one more pass checking its own work rather than stopping the moment
+  // tests go green.
   if (task.meta.selfReview) {
     sections.push(
       'Before finishing: self-review your work. Re-read the full diff of your changes, ' +

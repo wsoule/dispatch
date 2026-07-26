@@ -74,6 +74,13 @@ const doc: TaskDoc = {
   body: '\n## Description\n\nStuff.\n\n## Acceptance Criteria\n\n## Activity\n',
 };
 
+// The same task left at the self-review default (on), which is the case that writes no
+// `self-review` key at all — `doc` above is the explicit opt-out.
+const selfReviewing: TaskDoc = {
+  ...doc,
+  meta: { ...doc.meta, selfReview: true },
+};
+
 describe('serializeTaskFile / parseTaskFile', () => {
   it('round-trips exactly', () => {
     const text = serializeTaskFile(doc);
@@ -102,7 +109,7 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(parsed.meta.priority).toBe('none');
     expect(parsed.meta.assignee).toBe('none');
     expect(parsed.meta.external).toBeNull();
-    expect(parsed.meta.selfReview).toBe(false);
+    expect(parsed.meta.selfReview).toBe(true);
     expect(parsed.body).toBe('body');
   });
   it('throws TaskParseError on missing frontmatter or required field', () => {
@@ -114,27 +121,25 @@ describe('serializeTaskFile / parseTaskFile', () => {
 });
 
 describe('selfReview / self-review frontmatter', () => {
-  it('parses self-review: true', () => {
-    const withSelfReview: TaskDoc = {
-      ...doc,
-      meta: { ...doc.meta, selfReview: true },
-    };
-    const text = serializeTaskFile(withSelfReview);
-    expect(text).toContain('self-review: true');
-    expect(parseTaskFile(text).meta.selfReview).toBe(true);
+  it('treats an absent self-review key as on', () => {
+    expect(
+      parseTaskFile(serializeTaskFile(selfReviewing)).meta.selfReview
+    ).toBe(true);
   });
 
-  it('omits the self-review key entirely when false, to keep files clean', () => {
-    expect(serializeTaskFile(doc)).not.toContain('self-review');
+  it('parses self-review: false', () => {
+    const text = serializeTaskFile(doc);
+    expect(text).toContain('self-review: false');
+    expect(parseTaskFile(text).meta.selfReview).toBe(false);
   });
 
-  it('round-trips true through serialize + parse', () => {
-    const withSelfReview: TaskDoc = {
-      ...doc,
-      meta: { ...doc.meta, selfReview: true },
-    };
-    const text = serializeTaskFile(withSelfReview);
-    expect(parseTaskFile(text)).toEqual(withSelfReview);
+  it('omits the self-review key entirely when on, to keep files clean', () => {
+    expect(serializeTaskFile(selfReviewing)).not.toContain('self-review');
+  });
+
+  it('round-trips the opt-out through serialize + parse', () => {
+    const text = serializeTaskFile(doc);
+    expect(parseTaskFile(text)).toEqual(doc);
     expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
   });
 

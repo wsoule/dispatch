@@ -413,6 +413,26 @@ describe('error paths', () => {
     expect(body.meta.selfReview).toBe(true);
   });
 
+  it('defaults selfReview to true when the create body omits it', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'X' }),
+    });
+    expect(res.status).toBe(201);
+    expect((await json(res)).meta.selfReview).toBe(true);
+  });
+
+  it('creates a task with selfReview: false when explicitly opted out', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'X', selfReview: false }),
+    });
+    expect(res.status).toBe(201);
+    expect((await json(res)).meta.selfReview).toBe(false);
+  });
+
   it('400s patching a task with a non-boolean selfReview', async () => {
     const created = await json(
       await fetch(`${baseUrl}/api/tasks`, {

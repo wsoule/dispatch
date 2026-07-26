@@ -85,7 +85,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     created: String(raw.created),
     updated: String(raw.updated),
     external: (raw.external as string | null) ?? null,
-    selfReview: (raw['self-review'] as boolean | undefined) ?? false,
+    // Absent means on: self-review is the default, so a file only carries the key once the
+    // task has explicitly opted out (see serializeTaskFile).
+    selfReview: (raw['self-review'] as boolean | undefined) ?? true,
   };
   return { meta, body: content.slice(m[0].length) };
 }
@@ -106,10 +108,10 @@ export function serializeTaskFile(doc: TaskDoc): string {
     created: meta.created,
     updated: meta.updated,
     external: meta.external,
-    // Omitted entirely when false (the common case) rather than always written as
-    // `self-review: false` — keeps a plain task's frontmatter identical to how it looked
-    // before this field existed.
-    ...(meta.selfReview ? { 'self-review': true } : {}),
+    // Only the opt-out is written. Self-review is the default, so omitting the key on the
+    // common (enabled) case keeps a plain task's frontmatter free of a line that just restates
+    // the default — the same reason the parser treats an absent key as `true`.
+    ...(meta.selfReview ? {} : { 'self-review': false }),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }
