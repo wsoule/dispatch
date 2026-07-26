@@ -18,14 +18,15 @@ interface PierreWorkerPoolProps {
 }
 
 /**
- * Wraps `PatchDiff` (RunReviewView) in the worker pool @pierre/diffs uses to
- * tokenize/highlight file contents off the main thread, per the plan's
- * "PatchDiff ... with WorkerPoolContext" requirement. Scoped to just the
- * review view rather than the whole app — the pool (and its Shiki
- * highlighter) only needs to exist while a finished run's diff is actually
- * open, not for the lifetime of the Tasks tab. A small fixed pool size (2)
- * is plenty for one diff view at a time; @pierre/diffs defaults to 8, sized
- * for apps rendering many diffs concurrently, which this isn't.
+ * Wraps RunDiffView's per-file `FileDiff` stack in the worker pool
+ * @pierre/diffs uses to tokenize/highlight file contents off the main
+ * thread. Scoped to just the review view rather than the whole app — the
+ * pool (and its Shiki highlighter) only needs to exist while a run's diff
+ * is actually open, not for the lifetime of the Tasks tab. A small fixed
+ * pool size (2) still serves a multi-file diff fine — files queue behind
+ * the two workers and hydrate as they're highlighted; @pierre/diffs
+ * defaults to 8, sized for apps rendering many diff *views* concurrently,
+ * which this isn't.
  */
 export function PierreWorkerPool({ children }: PierreWorkerPoolProps) {
   return (

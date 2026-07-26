@@ -203,8 +203,8 @@ interface PrReviewPanelProps {
  * PR's live status (state, checks, review decision, mergeability, diffstat), its conversation
  * (reviews + PR comments + code-line comments), and a composer to approve / request changes /
  * comment — each action shelling out to `gh` server-side and syncing straight to GitHub. The
- * diff itself stays rendered by RunReviewView's PatchDiff; this panel is the review layer on
- * top of it.
+ * diff itself stays rendered by RunReviewView's per-file FileDiff stack (RunDiffView); this
+ * panel is the review layer on top of it.
  */
 export function PrReviewPanel({
   detail,

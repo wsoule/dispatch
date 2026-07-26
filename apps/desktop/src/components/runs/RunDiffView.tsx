@@ -166,29 +166,33 @@ export function RunDiffView({
             </p>
           </div>
         ) : (
-          <ErrorBoundary label="the diff">
-            <PierreWorkerPool>
-              <div className="flex flex-col">
-                {parsed.files.map((file) => {
-                  const path = normalizeDiffFilePath(file.name);
-                  return (
-                    <div
-                      key={path}
-                      ref={(node) => {
-                        if (node === null) {
-                          fileSectionRefs.current.delete(path);
-                        } else {
-                          fileSectionRefs.current.set(path, node);
-                        }
-                      }}
-                    >
+          <PierreWorkerPool>
+            <div className="flex flex-col">
+              {parsed.files.map((file) => {
+                const path = normalizeDiffFilePath(file.name);
+                return (
+                  <div
+                    key={path}
+                    ref={(node) => {
+                      if (node === null) {
+                        fileSectionRefs.current.delete(path);
+                      } else {
+                        fileSectionRefs.current.set(path, node);
+                      }
+                    }}
+                  >
+                    {/* Boundary per file, not around the whole stack: one file
+                        hitting a render/highlight edge case must degrade to an
+                        inline error on that file alone, never blank the other
+                        N-1 diffs beside it. */}
+                    <ErrorBoundary label={`the diff for ${path}`}>
                       <FileDiff fileDiff={file} />
-                    </div>
-                  );
-                })}
-              </div>
-            </PierreWorkerPool>
-          </ErrorBoundary>
+                    </ErrorBoundary>
+                  </div>
+                );
+              })}
+            </div>
+          </PierreWorkerPool>
         )}
       </div>
     </div>
