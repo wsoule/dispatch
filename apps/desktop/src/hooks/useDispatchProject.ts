@@ -130,6 +130,10 @@ export interface DispatchProjectData {
   // Error — callers surface `err.message` the same way every other mutation
   // here does, rather than swallowing it.
   handleEnqueueMerge: (runId: string) => Promise<void>;
+  // Enqueues every reviewable run in a task's stack in one call — mirrors
+  // handleEnqueueMerge's error-propagation shape (the server's 409 for "no
+  // reviewable runs in this stack" surfaces as a thrown Error).
+  handleEnqueueMergeStack: (taskId: string) => Promise<void>;
   handleDequeueMerge: (runId: string) => Promise<void>;
 }
 
@@ -800,6 +804,20 @@ export function useDispatchProject(
     [client, queryClient, mergeQueueQueryKey]
   );
 
+  // Enqueues an entire stack's worth of reviewable runs in one call — see
+  // MergeQueue.enqueueStack's own comment for why the server enqueues them
+  // in dependency order. Same error-propagation shape as handleEnqueueMerge:
+  // the server's 409 (nothing reviewable in the stack) surfaces as a thrown
+  // Error for the caller to render inline.
+  const handleEnqueueMergeStack = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (client === null) return;
+      await client.enqueueMergeStack(taskId);
+      void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
+    },
+    [client, queryClient, mergeQueueQueryKey]
+  );
+
   const handleDequeueMerge = useCallback(
     async (runId: string): Promise<void> => {
       if (client === null) return;
@@ -865,6 +883,7 @@ export function useDispatchProject(
     handleSubmitPrompt,
     handleConfirmPlan,
     handleEnqueueMerge,
+    handleEnqueueMergeStack,
     handleDequeueMerge,
   };
 }

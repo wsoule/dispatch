@@ -380,6 +380,129 @@ describe('MergeQueue dependency gating', () => {
   });
 });
 
+describe('MergeQueue.enqueueStack', () => {
+  // Builds a 3-task stack a <- b <- c (b blockedBy a, c blockedBy b),
+  // dispatches+finishes all three runs, then marks a's run reviewed/merged
+  // so task a lands in `done` — the shape the TDD scenario in the task spec
+  // asks for: a(done) <- b(reviewable) <- c(reviewable). Every call here is
+  // synchronous with respect to the queue's own pump() (which always yields
+  // on its own `await Promise.resolve()` before touching an entry — see its
+  // comment), so nothing enqueued below has had a chance to start
+  // processing by the time each test's assertions run.
+  async function makeStack(harness: Harness): Promise<{
+    taskA: string;
+    taskB: string;
+    taskC: string;
+    runB: string;
+    runC: string;
+  }> {
+    const { runId: runA, taskId: taskA } = await dispatchAndFinish(
+      harness,
+      'A'
+    );
+    harness.orchestrator.review(runA, 'merge');
+
+    const taskB = harness.store.create({ title: 'B', blockedBy: [taskA] });
+    const metaB = harness.orchestrator.dispatch(taskB.meta.id, 'fake');
+    await waitFor(
+      () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
+    );
+
+    const taskC = harness.store.create({
+      title: 'C',
+      blockedBy: [taskB.meta.id],
+    });
+    const metaC = harness.orchestrator.dispatch(taskC.meta.id, 'fake');
+    await waitFor(
+      () => harness.orchestrator.getRun(metaC.id)?.meta.state === 'finished'
+    );
+
+    return {
+      taskA,
+      taskB: taskB.meta.id,
+      taskC: taskC.meta.id,
+      runB: metaB.id,
+      runC: metaC.id,
+    };
+  }
+
+  it('enqueues b then c in dependency order, skipping done task a', async () => {
+    const harness = makeHarness();
+    const { taskA, taskB, taskC, runB, runC } = await makeStack(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const entries = queue.enqueueStack(taskC);
+    expect(entries.map((e) => e.taskId)).toEqual([taskB, taskC]);
+    expect(entries.map((e) => e.runId)).toEqual([runB, runC]);
+
+    const snapshotTaskIds = queue.snapshot().entries.map((e) => e.taskId);
+    expect(snapshotTaskIds).toEqual([taskB, taskC]);
+    expect(snapshotTaskIds).not.toContain(taskA);
+  });
+
+  it('skips a run already sitting in the queue and enqueues the rest', async () => {
+    const harness = makeHarness();
+    const { taskC, runB, runC } = await makeStack(harness);
+    const stub = new StubRunner();
+    // Stall the rebase indefinitely so runB's entry stays live (present in
+    // `entries`, mid-processing) rather than racing to merged/failed before
+    // enqueueStack below gets to check it — mirrors the stalling pattern in
+    // the "409s removing the actively-processing entry" test above.
+    let resolveRebase: (() => void) | undefined;
+    const originalRun = stub.run;
+    stub.run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
+      if (cmd[1] === 'rebase' && cmd[2] !== '--abort') {
+        await new Promise<void>((resolve) => {
+          resolveRebase = resolve;
+        });
+      }
+      return originalRun(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runB);
+    await waitFor(
+      () =>
+        queue.snapshot().entries.find((e) => e.runId === runB)?.state ===
+        'rebasing'
+    );
+
+    const entries = queue.enqueueStack(taskC);
+    expect(entries.map((e) => e.taskId)).toEqual([taskC]);
+    expect(entries[0].runId).toBe(runC);
+
+    resolveRebase?.();
+    await waitFor(() => queue.snapshot().history.length === 1);
+  });
+
+  it('409s when nothing in the stack is reviewable', () => {
+    const harness = makeHarness();
+    const task = harness.store.create({ title: 'Lonely task' });
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+    expect(() => queue.enqueueStack(task.meta.id)).toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  it('persists enqueueStack entries across a fresh MergeQueue over the same rootDir', async () => {
+    const harness = makeHarness();
+    const { taskC, runB, runC } = await makeStack(harness);
+    const stub = new StubRunner();
+    const queue1 = new MergeQueue(harness, stub.run);
+    queue1.enqueueStack(taskC);
+
+    // A second MergeQueue over the exact same rootDir stands in for a daemon
+    // restart — it must reload what queue1 just persisted synchronously via
+    // broadcast()'s writeFileSync, not start from an empty queue.
+    const queue2 = new MergeQueue(harness, stub.run);
+    const runIds = queue2.snapshot().entries.map((e) => e.runId);
+    expect(runIds).toContain(runB);
+    expect(runIds).toContain(runC);
+  });
+});
+
 describe('MergeQueue.remove', () => {
   it('dequeues a queued entry', async () => {
     const harness = makeHarness();

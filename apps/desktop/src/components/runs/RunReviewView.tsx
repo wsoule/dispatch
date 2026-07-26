@@ -1,13 +1,16 @@
 import type { DiffResult, MergeQueueSnapshot, RunMeta } from '@dispatch/client';
+import { computeStack, type TaskDoc } from '@dispatch/core';
 import {
   ExternalLink,
   GitMerge,
   GitPullRequest,
+  ListOrdered,
   MessageSquarePlus,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
+import { isTerminalRunState } from '../../lib/runState';
 import { QueueMergeControl } from './QueueMergeControl';
 import { RunDiffView } from './RunDiffView';
 import { Button } from '@/ui/button';
@@ -26,6 +29,12 @@ interface RunReviewViewProps {
    * position/state instead of a plain static button once it has an entry. `null` while the
    * query hasn't resolved yet — treated the same as an empty queue. */
   mergeQueue: MergeQueueSnapshot | null;
+  /** Full project task list — used to compute this run's task's stack (see
+   * `computeStack`) so the "Queue stack" action can show/hide itself and its count. */
+  tasks: TaskDoc[];
+  /** Per-task latest run, same map `StackRail` uses — lets the stack-count check below
+   * look up every OTHER stack member's latest run without a second fetch. */
+  latestRunByTaskId: Map<string, RunMeta>;
   onMerge: () => Promise<void>;
   onDiscard: () => Promise<void>;
   onRequestChanges: (text: string) => Promise<void>;
@@ -34,6 +43,7 @@ interface RunReviewViewProps {
    * inline here — keeps the run surface from nesting a whole second review surface inside it). */
   onViewPr: () => void;
   onQueueMerge: () => Promise<void>;
+  onQueueStack: () => Promise<void>;
 }
 
 /**
@@ -51,17 +61,43 @@ export function RunReviewView({
   diffError,
   prCapability,
   mergeQueue,
+  tasks,
+  latestRunByTaskId,
   onMerge,
   onDiscard,
   onRequestChanges,
   onOpenPr,
   onViewPr,
   onQueueMerge,
+  onQueueStack,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // How many members of this run's task's stack (its blockedBy-connected
+  // component) are worth a "Queue stack" action: each one whose latest run is
+  // either still reviewable (terminal + unreviewed, the same bar
+  // `QueueMergeControl` itself uses) or already sitting in the merge queue.
+  // The button only shows once this is >1 — a stack where this run is the
+  // only reviewable member has nothing extra for the stack action to do
+  // beyond the plain "Queue merge" button already sitting next to it.
+  const stackQueueableCount = useMemo(() => {
+    const stack = computeStack(tasks, meta.taskId);
+    if (stack === null) return 0;
+    let count = 0;
+    for (const id of stack.order) {
+      const run = id === meta.taskId ? meta : latestRunByTaskId.get(id);
+      if (run === undefined) continue;
+      const reviewable =
+        isTerminalRunState(run.state) && run.reviewedAt === undefined;
+      const queued =
+        mergeQueue?.entries.some((e) => e.runId === run.id) ?? false;
+      if (reviewable || queued) count += 1;
+    }
+    return count;
+  }, [tasks, meta, latestRunByTaskId, mergeQueue]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -86,6 +122,23 @@ export function RunReviewView({
 
   const hasOpenPr = meta.prUrl !== undefined;
   const canOpenPr = prCapability && meta.reviewedAt === undefined && !hasOpenPr;
+
+  // Shared between both action-row branches below (open-PR vs plain) so the
+  // "Queue stack" affordance always sits right next to "Queue merge",
+  // whichever branch is showing.
+  const queueStackButton =
+    stackQueueableCount > 1 ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={busy}
+        title={`Enqueue every reviewable run in this stack, blockers first (${stackQueueableCount})`}
+        onClick={() => void run(onQueueStack)}
+      >
+        <ListOrdered className="size-3.5" />
+        Queue stack ({stackQueueableCount})
+      </Button>
+    ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -115,6 +168,7 @@ export function RunReviewView({
               busy={busy}
               onQueueMerge={() => void run(onQueueMerge)}
             />
+            {queueStackButton}
             <Button variant="secondary" size="sm" onClick={onViewPr}>
               <GitPullRequest className="size-3.5" />
               Review PR
@@ -156,6 +210,7 @@ export function RunReviewView({
             busy={busy}
             onQueueMerge={() => void run(onQueueMerge)}
           />
+          {queueStackButton}
           <Button
             variant="ghost"
             size="sm"

@@ -1,4 +1,9 @@
-import { isDone, loadConfig, type TaskStore } from '@dispatch/core';
+import {
+  computeStack,
+  isDone,
+  loadConfig,
+  type TaskStore,
+} from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
@@ -300,6 +305,67 @@ export class MergeQueue {
     this.broadcast();
     this.kick();
     return entry;
+  }
+
+  // POST /api/merge-queue/stack. Enqueues every reviewable run across
+  // `taskId`'s stack — the blockedBy-connected component computed by
+  // `computeStack` (blockers first, topologically). Deliberately enqueues in
+  // that same order: the queue's own dependency gating (nextEligible's
+  // waiting-blockers check) then serializes the stack for free — the
+  // earliest-enqueued member of the stack is always the first one eligible
+  // to actually process, and merging it is what flips the next member's
+  // blocker check to satisfied, unblocking it in turn without this method
+  // needing any extra bookkeeping of its own.
+  //
+  // `computeStack` returns null for a task with no stack edges at all (a
+  // "stack" of one) — that's still a valid target for this action, just a
+  // single-task one, so the fallback order is `[taskId]` by itself.
+  //
+  // Each stack member resolves to its own latest run the same way the UI's
+  // `latestRunByTaskId` does: `orchestrator.list()` is already
+  // most-recent-first, so the first entry matching a given taskId is that
+  // task's latest run. A member is skipped — never thrown for — when: the
+  // task is already done/cancelled, it has no run at all, its latest run
+  // isn't in the same terminal-and-unreviewed state `enqueue()` itself
+  // requires, or that run is already sitting in this queue. Only when the
+  // whole stack skips does this throw 409 — an all-skipped call would
+  // otherwise look like a silent no-op to the caller.
+  enqueueStack(taskId: string): MergeQueueEntry[] {
+    const tasks = this.ctx.cache.query();
+    const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+    const stack = computeStack(tasks, taskId);
+    const order = stack !== null ? stack.order : [taskId];
+
+    const runs = this.ctx.orchestrator.list();
+    const enqueued: MergeQueueEntry[] = [];
+    for (const id of order) {
+      const task = byId.get(id);
+      if (task !== undefined && isDone(task)) continue;
+      const meta = runs.find((r) => r.taskId === id);
+      if (meta === undefined) continue;
+      if (!TERMINAL_RUN_STATES.has(meta.state)) continue;
+      if (meta.reviewedAt !== undefined) continue;
+      if (this.entries.some((e) => e.runId === meta.id)) continue;
+
+      const entry: MergeQueueEntry = {
+        runId: meta.id,
+        taskId: meta.taskId,
+        taskTitle: meta.taskTitle,
+        state: 'queued',
+        enqueuedAt: new Date().toISOString(),
+      };
+      this.entries.push(entry);
+      enqueued.push(entry);
+    }
+
+    if (enqueued.length === 0) {
+      throw new OrchestratorConflictError(
+        `no reviewable runs in this stack: ${taskId}`
+      );
+    }
+    this.broadcast();
+    this.kick();
+    return enqueued;
   }
 
   // DELETE /api/merge-queue/:runId. The entry actively being rebased/

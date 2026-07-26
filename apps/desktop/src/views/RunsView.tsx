@@ -301,6 +301,8 @@ export function RunsView({
                       diffError={data.diffError}
                       prCapability={data.health?.pr ?? false}
                       mergeQueue={data.mergeQueue}
+                      tasks={data.tasks}
+                      latestRunByTaskId={data.latestRunByTaskId}
                       onMerge={() => data.handleReview(selected.id, 'merge')}
                       onDiscard={() =>
                         data.handleReview(selected.id, 'discard')
@@ -311,6 +313,9 @@ export function RunsView({
                       onOpenPr={() => data.handleOpenPr(selected.id)}
                       onViewPr={() => onViewPr(selected.id)}
                       onQueueMerge={() => data.handleEnqueueMerge(selected.id)}
+                      onQueueStack={() =>
+                        data.handleEnqueueMergeStack(selected.taskId)
+                      }
                     />
                   )}
                 </TabsContent>
