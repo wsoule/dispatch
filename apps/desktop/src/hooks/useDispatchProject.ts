@@ -840,8 +840,12 @@ export function useDispatchProject(
 
   // Notifies on run finished/failed and merge-queue merged/failed transitions —
   // see useTransitionNotifications's own comment for why it needs the *lists*
-  // (not just this render's counts) to diff against what it last saw.
-  useTransitionNotifications(runs ?? [], mergeQueue ?? null);
+  // (not just this render's counts) to diff against what it last saw. `projectPath`
+  // is threaded through so a project switch resets its tracking (see
+  // resetTrackingForRoot) instead of diffing the new project against the old one's
+  // leftover state — this hook's `projectPath` argument swaps in place rather than
+  // remounting on a project switch.
+  useTransitionNotifications(projectPath, runs ?? [], mergeQueue ?? null);
 
   return {
     client,
