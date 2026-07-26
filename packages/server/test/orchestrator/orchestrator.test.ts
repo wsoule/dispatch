@@ -1896,7 +1896,12 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.permissionMode).toBe('plan');
   });
 
-  it('falls back to 100 turns / auto with no config file', async () => {
+  // No turn cap by default (see DEFAULT_ORCHESTRATOR in @dispatch/core's
+  // config.ts): a turn ceiling is a runaway backstop, not a work budget, and a
+  // low one truncates healthy runs mid-task — `maxBudgetUsd` is the real guard.
+  // Asserting `undefined` rather than a number is the point: the cap has to
+  // stay absent unless a project opts into one.
+  it('applies no turn cap and auto permissions with no config file', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const executor = new CapturingExecutor();
     orchestrator.registerExecutor('fake', executor);
@@ -1907,7 +1912,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
 
-    expect(executor.lastOpts?.maxTurns).toBe(100);
+    expect(executor.lastOpts?.maxTurns).toBeUndefined();
     expect(executor.lastOpts?.maxBudgetUsd).toBeUndefined();
     expect(executor.lastOpts?.permissionMode).toBe('auto');
   });
