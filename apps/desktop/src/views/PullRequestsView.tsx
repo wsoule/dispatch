@@ -37,6 +37,7 @@ interface PullRequestsViewProps {
 const QUEUE_STATE_LABEL: Record<MergeQueueEntryState, string> = {
   queued: 'Queued',
   'waiting-blockers': 'Waiting on blockers',
+  'blocked-environment': 'Blocked on your checkout',
   rebasing: 'Rebasing',
   verifying: 'Verifying',
   merging: 'Merging',
@@ -46,9 +47,13 @@ const QUEUE_STATE_LABEL: Record<MergeQueueEntryState, string> = {
 
 // Color mapping the brief spells out exactly: queued=secondary, waiting-blockers=muted,
 // rebasing/verifying/merging=primary (+ spinner), merged=emerald, failed=destructive.
+// blocked-environment is amber rather than destructive: nothing has gone wrong with the run,
+// the queue is just waiting on the person to commit/stash/switch branch.
 const QUEUE_STATE_TONE: Record<MergeQueueEntryState, string> = {
   queued: 'border-border bg-secondary text-secondary-foreground',
   'waiting-blockers': 'border-border bg-muted/60 text-muted-foreground',
+  'blocked-environment':
+    'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
   rebasing: 'border-primary/30 bg-primary/10 text-primary',
   verifying: 'border-primary/30 bg-primary/10 text-primary',
   merging: 'border-primary/30 bg-primary/10 text-primary',
@@ -120,8 +125,14 @@ function MergeQueuePanel({
       ) : (
         <div className="flex flex-col gap-1">
           {mergeQueue.entries.map((entry, i) => {
+            // Anything not mid-flight can be pulled back out. A
+            // blocked-environment entry is idle by definition (the pump gave up
+            // on it until the checkout is clean), so it dequeues like a plain
+            // queued one — the server refuses only the actively-processing entry.
             const dequeueable =
-              entry.state === 'queued' || entry.state === 'waiting-blockers';
+              entry.state === 'queued' ||
+              entry.state === 'waiting-blockers' ||
+              entry.state === 'blocked-environment';
             return (
               <div
                 key={entry.runId}

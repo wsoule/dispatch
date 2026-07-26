@@ -53,9 +53,15 @@ export function diffRunNotifications(
   return { notifications, next };
 }
 
+// 'blocked-environment' notifies alongside the two terminal states because it
+// is the one queue state that needs the PERSON to do something (commit, stash,
+// switch branch) before anything else can move. The bug this addresses was
+// precisely that a blocked merge was silent — the entry used to fail straight
+// into history and the queue looked like it had swallowed the run.
 const QUEUE_NOTIFY_STATES: ReadonlySet<MergeQueueEntryState> = new Set([
   'merged',
   'failed',
+  'blocked-environment',
 ]);
 
 /**
@@ -90,6 +96,11 @@ export function diffQueueNotifications(
     ) {
       if (entry.state === 'merged') {
         notifications.push({ title: 'Merged', body: entry.taskTitle });
+      } else if (entry.state === 'blocked-environment') {
+        notifications.push({
+          title: 'Merge blocked — action needed',
+          body: `${entry.taskTitle} — ${(entry.reason ?? '').slice(0, 80)}`,
+        });
       } else {
         const reason = (entry.reason ?? '').slice(0, 80);
         notifications.push({

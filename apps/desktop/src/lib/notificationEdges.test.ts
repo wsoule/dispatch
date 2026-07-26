@@ -132,6 +132,34 @@ describe('diffQueueNotifications', () => {
     expect(note.body).toBe(`Add feature — ${'x'.repeat(80)}`);
   });
 
+  // A blocked merge is the one non-terminal state that needs the person, and
+  // the original bug was that it happened silently.
+  test('queued -> blocked-environment notifies with the actionable reason', () => {
+    const previous = new Map([['r1', 'queued' as const]]);
+    const { notifications } = diffQueueNotifications(previous, [
+      entry('r1', 'blocked-environment', {
+        taskTitle: 'Add feature',
+        reason: 'main checkout has uncommitted changes: stray.zip',
+      }),
+    ]);
+    expect(notifications).toEqual([
+      {
+        title: 'Merge blocked — action needed',
+        body: 'Add feature — main checkout has uncommitted changes: stray.zip',
+      },
+    ]);
+  });
+
+  // Re-blocking on the same reason must not re-notify every pump — the state
+  // hasn't changed, so the edge detector's own equality check covers it.
+  test('staying blocked does not notify again', () => {
+    const previous = new Map([['r1', 'blocked-environment' as const]]);
+    const { notifications } = diffQueueNotifications(previous, [
+      entry('r1', 'blocked-environment', { taskTitle: 'Add feature' }),
+    ]);
+    expect(notifications).toEqual([]);
+  });
+
   test('a missing reason falls back to an empty string rather than "undefined"', () => {
     const previous = new Map([['r1', 'verifying' as const]]);
     const { notifications } = diffQueueNotifications(previous, [

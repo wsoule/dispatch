@@ -82,6 +82,16 @@ export interface DispatchProjectData {
   prDetail: import('@dispatch/client').PrDetail | undefined;
   prDetailLoading: boolean;
   prDetailError: string | null;
+  // Every dispatch worktree/branch on disk, joined with whatever run claims it
+  // — the Branches surface's data. See BranchEntry in @dispatch/client.
+  branches: import('@dispatch/client').BranchEntry[];
+  branchesLoading: boolean;
+  handleRefreshBranches: () => Promise<void>;
+  handleFreeBranchDisk: (branch: string) => Promise<void>;
+  handleDeleteBranch: (
+    branch: string,
+    opts?: { force?: boolean }
+  ) => Promise<void>;
   notes: import('@dispatch/client').Note[];
   handleCreateNote: (
     input: import('@dispatch/client').CreateNoteInput
@@ -225,6 +235,7 @@ export function useDispatchProject(
     [port]
   );
   const repoPrsQueryKey = useMemo(() => ['dispatch-repo-prs', port], [port]);
+  const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
@@ -314,6 +325,20 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchNotes();
+    },
+    enabled: client !== null,
+  });
+
+  // Every dispatch worktree/branch on disk. Each row costs several `git`
+  // shell-outs on the server (ahead count, merged check, dirty check), so this
+  // deliberately has no `refetchInterval` — it refreshes on `run.changed` (see
+  // the WS effect below) and on the view's manual refresh, which together cover
+  // everything short of the user running git in their own terminal.
+  const { data: branches, isLoading: branchesLoading } = useQuery({
+    queryKey: branchesQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchBranches();
     },
     enabled: client !== null,
   });
@@ -445,6 +470,10 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: epicProgressKeyPrefix,
             });
+            // Every worktree/branch lifecycle event (dispatch, review, and the
+            // branch actions themselves) broadcasts run.changed, so this is the
+            // one signal the Branches surface needs.
+            void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
           } else if (event.type === 'run.log') {
             queryClient.setQueryData<RunDetail>(
               ['dispatch-run', port, event.runId],
@@ -495,6 +524,7 @@ export function useDispatchProject(
     notesQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
+    branchesQueryKey,
     port,
   ]);
 
@@ -613,6 +643,41 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: notesQueryKey });
     },
     [client, queryClient, notesQueryKey]
+  );
+
+  // Manual refetch for the Branches view. This surface has no polling (each row
+  // costs several git shell-outs), and git state can change entirely outside the
+  // app — the user's own terminal — so an explicit refresh is the only way to
+  // pick that up.
+  const handleRefreshBranches = useCallback(async (): Promise<void> => {
+    await queryClient.invalidateQueries({ queryKey: branchesQueryKey });
+  }, [queryClient, branchesQueryKey]);
+
+  // Reclaims a branch's worktree directory, keeping the branch ref so the work
+  // stays recoverable. Errors are deliberately allowed to propagate: the server
+  // 409s with a specific reason (live run, open PR, stacked dependent) that the
+  // Branches view surfaces verbatim rather than swallowing.
+  const handleFreeBranchDisk = useCallback(
+    async (branch: string): Promise<void> => {
+      if (client === null) return;
+      await client.freeBranchDisk(branch);
+      void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
+    },
+    [client, queryClient, branchesQueryKey]
+  );
+
+  // Deletes a branch ref and any worktree it still has. `force` is required by
+  // the server for a branch whose commits never landed on its base — the one
+  // action here that destroys work irreversibly. Also refetches runs, since a
+  // deleted branch changes what the run list can still offer actions on.
+  const handleDeleteBranch = useCallback(
+    async (branch: string, opts?: { force?: boolean }): Promise<void> => {
+      if (client === null) return;
+      await client.deleteBranch(branch, opts);
+      void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    },
+    [client, queryClient, branchesQueryKey, runsQueryKey]
   );
 
   // Promoting a note into a task refetches both — the note gains its linked-task
@@ -875,6 +940,11 @@ export function useDispatchProject(
     prDetail,
     prDetailLoading,
     prDetailError,
+    branches: branches ?? [],
+    branchesLoading,
+    handleRefreshBranches,
+    handleFreeBranchDisk,
+    handleDeleteBranch,
     notes: notes ?? [],
     handleCreateNote,
     handleUpdateNote,
