@@ -31,23 +31,24 @@ export function isSatisfiedForDispatch(t: TaskDoc): boolean {
 }
 
 /**
- * Tasks the orchestrator may start *now*: same filter and ordering as
- * `readyTasks`, but blockers only need to be dispatch-satisfied (see
- * `isSatisfiedForDispatch`) rather than done.
- *
- * Deliberately a separate function rather than an option on `readyTasks`:
- * `readyTasks` is what the CLI, the MCP `ready` tool, the board's Blocked
- * badge, and merge-queue ordering all mean by "ready", and none of those
- * should start calling a task with an unmerged blocker ready.
+ * Shared filtering and sorting logic for tasks ready to be started or dispatched.
+ * Extracted as a private helper to prevent drift between readyTasks and
+ * dispatchableTasks — both apply the same kind/status filter and priority/created
+ * sort, differing only in their blocker-satisfaction predicate (isDone vs
+ * isSatisfiedForDispatch). A single source of truth here ensures that future
+ * changes to sort order or filtering strategy apply to both consistently.
  */
-export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
+function filterAndSortByReadiness(
+  tasks: TaskDoc[],
+  isSatisfied: (t: TaskDoc) => boolean
+): TaskDoc[] {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
   return tasks
     .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
     .filter((t) =>
       t.meta.blockedBy.every((dep) => {
         const d = byId.get(dep);
-        return d === undefined || isSatisfiedForDispatch(d);
+        return d === undefined || isSatisfied(d);
       })
     )
     .sort((a, b) => {
@@ -60,26 +61,25 @@ export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
 }
 
 /**
+ * Tasks the orchestrator may start *now*: same filter and ordering as
+ * `readyTasks`, but blockers only need to be dispatch-satisfied (see
+ * `isSatisfiedForDispatch`) rather than done.
+ *
+ * Deliberately a separate function rather than an option on `readyTasks`:
+ * `readyTasks` is what the CLI, the MCP `ready` tool, the board's Blocked
+ * badge, and merge-queue ordering all mean by "ready", and none of those
+ * should start calling a task with an unmerged blocker ready.
+ */
+export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
+  return filterAndSortByReadiness(tasks, isSatisfiedForDispatch);
+}
+
+/**
  * Tasks safe to start now: kind=task, status=todo, all blockers done.
  * Dangling blocker ids (no task in the set) do not block; `doctor` reports them.
  */
 export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
-  const byId = new Map(tasks.map((t) => [t.meta.id, t]));
-  return tasks
-    .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
-    .filter((t) =>
-      t.meta.blockedBy.every((dep) => {
-        const d = byId.get(dep);
-        return d === undefined || isDone(d);
-      })
-    )
-    .sort((a, b) => {
-      const byPriority =
-        PRIORITY_ORDER[a.meta.priority] - PRIORITY_ORDER[b.meta.priority];
-      return byPriority !== 0
-        ? byPriority
-        : a.meta.created.localeCompare(b.meta.created);
-    });
+  return filterAndSortByReadiness(tasks, isDone);
 }
 
 /**
