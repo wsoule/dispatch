@@ -326,11 +326,20 @@ describe('EpicEngine.start', () => {
 
   // C1: readyTasks(children) alone treats a blocker id outside the passed
   // array as satisfied (dangling ids never block, per core's own readyTasks
-  // doc comment) — which silently ignores a blocker that genuinely exists
-  // elsewhere in the project, just not as a sibling child. Readiness must be
-  // computed over the FULL task set and only then intersected with the
-  // epic's children.
-  it('does not dispatch a child blocked by an outside (non-sibling) task until that task is done', async () => {
+  // doc comment) — which would silently ignore a blocker that genuinely
+  // exists elsewhere in the project (just not as a sibling child) and let
+  // the dependent dispatch immediately. Readiness must be computed over the
+  // FULL task set and only then intersected with the epic's children — the
+  // initial "still todo after start()" assertion below is what actually
+  // catches a regression back to computing readiness over `children` only.
+  //
+  // No review/merge call happens in this test on purpose: EpicEngine now
+  // dispatches on dispatchableTasks (isSatisfiedForDispatch), so the outside
+  // blocker only needs to reach `in-review` to unblock the child, and the
+  // dispatch assertion below fires strictly before any merge could — that's
+  // what makes it discriminate the in-review path rather than passing for a
+  // reason unrelated to what the test name claims.
+  it('dispatches a child blocked by an outside (non-sibling) task once that task reaches in-review, without a merge', async () => {
     const harness = makeHarness();
     const outside = harness.store.create({ title: 'Outside blocker' });
     const { epicId, childIds } = createEpicWithChildren(
@@ -345,8 +354,9 @@ describe('EpicEngine.start', () => {
     expect(harness.orchestrator.list()).toHaveLength(0);
     expect(harness.store.get(childIds[0])?.meta.status).toBe('todo');
 
-    // Finishing+merging the outside blocker (unrelated to any epic) must
-    // cascade-dispatch the now-unblocked child.
+    // Drive the outside blocker (unrelated to any epic) to a terminal run
+    // state -> its task becomes `in-review`. That alone must cascade-dispatch
+    // the now-unblocked child.
     const outsideRun = harness.orchestrator.dispatch(outside.meta.id, 'fake');
     await waitFor(() =>
       harness.orchestrator
@@ -354,10 +364,6 @@ describe('EpicEngine.start', () => {
         .some((r) => r.id === outsideRun.id && r.state === 'awaiting-approval')
     );
     harness.orchestrator.approve(outsideRun.id, 'go', true);
-    await waitFor(
-      () => harness.store.get(outside.meta.id)?.meta.status === 'in-review'
-    );
-    harness.orchestrator.review(outsideRun.id, 'merge');
 
     await waitFor(() =>
       harness.orchestrator
@@ -366,6 +372,9 @@ describe('EpicEngine.start', () => {
           (r) => r.taskId === childIds[0] && r.state === 'awaiting-approval'
         )
     );
+    // The outside blocker is still merely `in-review` — no merge/PR-merge
+    // ever ran — confirming dispatch didn't secretly wait on one.
+    expect(harness.store.get(outside.meta.id)?.meta.status).toBe('in-review');
   });
 
   // The behavioral fix under test: a dependent must dispatch as soon as its
