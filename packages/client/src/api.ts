@@ -69,6 +69,10 @@ export interface RunMeta {
   // PR — stays set (and `reviewedAt` stays unset) until the PR poller sees it
   // merged.
   prUrl?: string;
+  // Set on a follow-up run created by request-changes: the id of the
+  // finished run whose session this one resumed — the earlier conversation
+  // lives on that run's transcript.
+  resumedFrom?: string;
 }
 
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the

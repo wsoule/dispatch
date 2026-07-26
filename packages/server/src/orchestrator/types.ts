@@ -150,6 +150,12 @@ export interface RunMeta {
   // Orchestrator.markRunMergedViaPr, at which point reviewAction becomes
   // 'pr'.
   prUrl?: string;
+  // Set by requestChanges() on the follow-up run it creates: the id of the
+  // finished run whose session this one resumed. Lets the UI point back at
+  // the earlier conversation instead of the new transcript looking like the
+  // chat history was wiped. Optional so pre-existing transcripts (which
+  // never wrote it) hydrate unchanged.
+  resumedFrom?: string;
 }
 
 // Typed errors the orchestrator throws for the API layer to map to HTTP

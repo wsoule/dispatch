@@ -292,6 +292,17 @@ export class Orchestrator {
           `run has already been reviewed: ${runId}`
         );
       }
+      // Same one-live-run-per-task rule dispatch() enforces: a resume forks
+      // a NEW run into the task's existing worktree, so two resumes racing
+      // each other (double-Enter on the composer, a retry after a UI error)
+      // would put two agents in the SAME worktree editing concurrently. The
+      // first resume wins; every duplicate 409s here instead.
+      const live = this.registry.liveRunForTask(meta.taskId);
+      if (live !== undefined) {
+        throw new OrchestratorConflictError(
+          `task already has a live run: ${live.id}`
+        );
+      }
       this.requireNoOpenPr(meta);
       return this.requestChanges(meta, text);
     }
@@ -1241,9 +1252,24 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       sessionId: oldMeta.sessionId,
+      resumedFrom: oldMeta.id,
     };
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
+
+    // The user's feedback is this run's opening conversation turn — record
+    // it on the NEW run's transcript (mirroring the live-run branch of
+    // sendMessage) so the follow-up chat opens showing what the user asked
+    // for instead of an empty history. It still reaches the executor as the
+    // start() prompt below; this entry is purely the transcript/UI record.
+    const userEntry: NormalizedEntry = {
+      ts: now,
+      kind: 'message',
+      from: 'user',
+      text,
+    };
+    this.transcriptFor(runId).appendEntry(userEntry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry: userEntry });
 
     // Records the executor substitution as part of the same Activity line a
     // request-changes redispatch always writes, so the "why did this run end

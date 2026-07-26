@@ -190,6 +190,13 @@ export function RunLogView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1">
+        {meta.resumedFrom !== undefined && (
+          <div className="text-muted-foreground flex items-center justify-center gap-1.5 py-1 text-center text-[11px]">
+            <Info className="size-3 shrink-0" />
+            Resumed from run {meta.resumedFrom} — earlier conversation lives
+            there.
+          </div>
+        )}
         {groups.length === 0 && (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
             <MessageSquare className="size-5" />
