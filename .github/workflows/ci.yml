@@ -56,6 +56,12 @@ jobs:
       # The root `build`/`test` scripts only run across `packages/*` (see
       # package.json), so apps/desktop's frontend needs its own build/test
       # invocation here rather than riding along with the `verify` job.
+      # Workspace packages must be built first for the same reason Verify
+      # builds before linting: the desktop tsc resolves @dispatch/* through
+      # exports maps pointing at dist/*, which only exists after a build.
+      - name: Build workspace packages
+        run: bun run build
+
       - name: Build desktop frontend
         run: bun ws desktop build
 

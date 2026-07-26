@@ -1,0 +1,35 @@
+[
+  {
+    "id": "nt-c09aef",
+    "kind": "triage",
+    "title": "bug: clicking on the \"diffs\" when an agent is running makes the page go blank",
+    "body": "",
+    "done": true,
+    "linkedTaskId": "t-364075",
+    "createdByRunId": null,
+    "created": "2026-07-26T19:12:48.435Z",
+    "updated": "2026-07-26T19:12:51.791Z"
+  },
+  {
+    "id": "nt-f367bd",
+    "kind": "triage",
+    "title": "need to add to the notes / triage page to auto generate the task with AI to give more context",
+    "body": "",
+    "done": true,
+    "linkedTaskId": "t-4a8cce",
+    "createdByRunId": null,
+    "created": "2026-07-26T19:13:23.119Z",
+    "updated": "2026-07-26T19:13:24.372Z"
+  },
+  {
+    "id": "nt-2e7060",
+    "kind": "triage",
+    "title": "need a way to veiw git",
+    "body": "",
+    "done": false,
+    "linkedTaskId": null,
+    "createdByRunId": null,
+    "created": "2026-07-26T20:01:17.818Z",
+    "updated": "2026-07-26T20:01:17.818Z"
+  }
+]
