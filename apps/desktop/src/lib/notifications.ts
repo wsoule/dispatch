@@ -42,5 +42,18 @@ export async function notify(title: string, body: string): Promise<void> {
   if (document.hasFocus()) return;
   const granted = await ensurePermission();
   if (!granted) return;
-  sendNotification({ title, body });
+  // Re-check focus after the await above: the very permission prompt this awaited
+  // (on the session's first-ever call) can itself re-focus the window once the user
+  // dismisses it, so the "user is watching" check from before the await can be stale
+  // by the time we're about to actually fire.
+  if (document.hasFocus()) return;
+  try {
+    sendNotification({ title, body });
+  } catch (err) {
+    // Never let a notification failure (e.g. the OS notification center rejecting the
+    // call) propagate to `notify`'s caller — every call site here fires this with
+    // `void notify(...)` precisely because a notification is a best-effort side
+    // channel, not something a transition-handling code path should ever throw over.
+    console.error('notify: sendNotification failed', err);
+  }
 }
