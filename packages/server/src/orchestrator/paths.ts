@@ -43,6 +43,16 @@ export function diffSnapshotPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.diff.json`);
 }
 
+// Where the merge queue's persisted state (queued/active entries plus
+// history) lives — see MergeQueue's persist()/hydrate() — so a daemon
+// restart reloads the queue instead of silently dropping it, the same way
+// diffSnapshotPath lets `diff()` survive a worktree's removal. Kept flat
+// alongside the other per-run files under runsDir rather than its own
+// subdirectory, since there is exactly one of these per project.
+export function mergeQueuePath(rootDir: string): string {
+  return join(runsDir(rootDir), 'merge-queue.json');
+}
+
 export function worktreesDir(rootDir: string): string {
   return join(dispatchHome(), '.dispatch', 'worktrees', rootHash(rootDir));
 }

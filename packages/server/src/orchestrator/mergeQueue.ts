@@ -1,8 +1,10 @@
 import { isDone, loadConfig, type TaskStore } from '@dispatch/core';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import type { Orchestrator } from './orchestrator.js';
+import { mergeQueuePath, runsDir } from './paths.js';
 import { type CommandRunner, defaultCommandRunner } from './pr.js';
 import type { CommandResult } from './pr.js';
 import type { RunMeta } from './types.js';
@@ -60,12 +62,24 @@ export interface MergeQueueContext {
 
 const HISTORY_LIMIT = 20;
 
+// States process() can leave an entry in mid-way through rebase -> verify ->
+// merge. An entry stuck in one of these on disk when hydrate() runs means the
+// previous daemon process died before finish() ever ran for it — see
+// hydrate()'s comment for why that's always safe to treat as a fresh failure
+// rather than an attempt to resume.
+const MID_FLIGHT_STATES: ReadonlySet<MergeQueueEntryState> = new Set([
+  'rebasing',
+  'verifying',
+  'merging',
+]);
+
 /**
  * The merge queue (spec §2): strictly serial rebase -> verify -> merge over
  * reviewed-and-approved runs, so stacked/concurrent agent branches always
  * land on a fresh base. Event-driven like EpicEngine — enqueueing and the
  * orchestrator's onRunReviewed hook both nudge the pump; there is no polling
- * loop. In-memory: a daemon restart drops the queue (v1, like epic sessions).
+ * loop. Persisted to `mergeQueuePath` (see persist()/hydrate()) so a daemon
+ * restart reloads the queue instead of silently dropping it.
  *
  * `verifyCommand` is read fresh via `loadConfig(ctx.rootDir)` at the moment
  * each entry is verified (not cached at construction or per-enqueue) — this
@@ -90,6 +104,148 @@ export class MergeQueue {
     // on the stack — the `pumping` guard below makes that a no-op instead of
     // a double-process or a deadlock.
     ctx.orchestrator.onRunReviewed(() => this.kick());
+    this.hydrate();
+    // Anything hydrate() kept as `queued` may already be eligible (or may
+    // have been sitting there through however long the daemon was down) —
+    // give it the same nudge a fresh enqueue() would, rather than waiting on
+    // some unrelated event to trigger the first pump.
+    this.kick();
+  }
+
+  // Reloads whatever the previous process last persisted (mergeQueuePath),
+  // so a daemon restart doesn't silently drop queued work. Must run AFTER
+  // `orchestrator.reconcileOnBoot()` has hydrated the run registry (see
+  // index.ts's construction order) — otherwise every entry below would look
+  // stale and get dropped.
+  //
+  // History is inert (already `merged`/`failed`) and carried over as-is.
+  // Live `entries` need more care:
+  //   - An entry stuck `rebasing`/`verifying`/`merging` means the previous
+  //     process died partway through process() for it. process() only calls
+  //     orchestrator.review()/markRunMergedViaPr right at the very end of
+  //     merge() — the last of the three steps — so a death at any earlier
+  //     point leaves the run's `reviewedAt` unset. The run is therefore
+  //     still unreviewed and re-enqueueable; what's NOT safe is resuming
+  //     *this* attempt's half-finished rebase/verify/merge, so the entry is
+  //     filed to history as failed instead, with a reason that tells the
+  //     user to re-enqueue.
+  //   - A `queued`/`waiting-blockers` entry never got touched — reload it as
+  //     `queued` (nextEligible() re-derives waiting-blockers on the first
+  //     pump) — but only if it still points at a run that's terminal and
+  //     unreviewed per the orchestrator's live registry. A run that was
+  //     reviewed, discarded, or vanished entirely while the daemon was down
+  //     is dropped to failed history instead of kept around forever.
+  private hydrate(): void {
+    const persisted = this.loadPersistedFile();
+    this.history.push(...persisted.history);
+    this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
+
+    const runsById = new Map(
+      this.ctx.orchestrator.list().map((meta) => [meta.id, meta])
+    );
+    for (const entry of persisted.entries) {
+      if (MID_FLIGHT_STATES.has(entry.state)) {
+        this.fileStaleEntry(
+          entry,
+          'daemon restarted mid-merge; re-enqueue to retry'
+        );
+        continue;
+      }
+      const meta = runsById.get(entry.runId);
+      if (meta === undefined) {
+        this.fileStaleEntry(entry, `run no longer exists: ${entry.runId}`);
+        continue;
+      }
+      if (!TERMINAL_RUN_STATES.has(meta.state)) {
+        this.fileStaleEntry(
+          entry,
+          `run is not in a terminal state: ${entry.runId} (state: ${meta.state})`
+        );
+        continue;
+      }
+      if (meta.reviewedAt !== undefined) {
+        this.fileStaleEntry(
+          entry,
+          'run was already reviewed while the daemon was down'
+        );
+        continue;
+      }
+      entry.state = 'queued';
+      this.entries.push(entry);
+    }
+    // Persist the corrected state immediately — otherwise a hydrate() that
+    // dropped stale entries would leave the on-disk file describing entries
+    // this process just decided to discard, until some unrelated state
+    // change happened to overwrite it.
+    this.persist();
+  }
+
+  // Files a reloaded entry directly into history as failed. Only used from
+  // hydrate(), for entries this process never took ownership of via
+  // enqueue() — finish() is the equivalent for entries actually processed
+  // this run.
+  private fileStaleEntry(entry: MergeQueueEntry, reason: string): void {
+    entry.state = 'failed';
+    entry.reason = reason;
+    entry.finishedAt = new Date().toISOString();
+    this.history.unshift(entry);
+    this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
+  }
+
+  // Reads mergeQueuePath, treating a missing or corrupt file as "nothing
+  // persisted yet" rather than throwing — persist()'s writeFileSync is not
+  // atomic, so a crash mid-write can leave truncated/garbage JSON on disk,
+  // and dispatchd must still start cleanly in that case (mirrors
+  // Orchestrator.diff()'s snapshot-read convention and readRegistry() in
+  // @dispatch/core).
+  private loadPersistedFile(): MergeQueueSnapshot {
+    const path = mergeQueuePath(this.ctx.rootDir);
+    if (!existsSync(path)) return { entries: [], history: [] };
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<
+        Record<keyof MergeQueueSnapshot, unknown>
+      >;
+      return {
+        entries: Array.isArray(parsed.entries)
+          ? (parsed.entries as MergeQueueEntry[])
+          : [],
+        history: Array.isArray(parsed.history)
+          ? (parsed.history as MergeQueueEntry[])
+          : [],
+      };
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to read merge queue state, starting empty: ${(err as Error).message}`
+      );
+      return { entries: [], history: [] };
+    }
+  }
+
+  // Write-through persistence: called from every broadcast() site (which is
+  // every state change — enqueue, remove, each process() transition, finish)
+  // so the on-disk file never lags the in-memory queue. Non-atomic
+  // writeFileSync with a trailing newline, same accepted convention as
+  // registry.ts's writeRegistry() — a crash mid-write is handled by
+  // loadPersistedFile()'s try/catch on the read side, not by avoiding the
+  // write here. Best-effort: a failure here (full disk, permissions) must
+  // never block the queue action that triggered it, matching
+  // persistDiffSnapshot's log-and-continue convention.
+  private persist(): void {
+    try {
+      mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
+      const snapshot: MergeQueueSnapshot = {
+        entries: this.entries,
+        history: this.history,
+      };
+      writeFileSync(
+        mergeQueuePath(this.ctx.rootDir),
+        `${JSON.stringify(snapshot)}\n`
+      );
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to persist merge queue: ${(err as Error).message}`
+      );
+    }
   }
 
   // Fire-and-forget pump trigger, shared by enqueue() and the onRunReviewed
@@ -365,7 +521,13 @@ export class MergeQueue {
     this.broadcast();
   }
 
+  // Every state change in this class routes through here, which is exactly
+  // why persist() lives here too: enqueue, remove, each process() state
+  // transition, and finish all call broadcast(), so write-through
+  // persistence falls out for free without a second call site to keep in
+  // sync.
   private broadcast(): void {
+    this.persist();
     this.ctx.events.broadcast({ type: 'merge-queue.changed' });
   }
 }

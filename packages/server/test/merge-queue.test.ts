@@ -1,6 +1,6 @@
 import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,7 @@ import type { ServerEvent } from '../src/events.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import { MergeQueue } from '../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../src/orchestrator/orchestrator.js';
+import { mergeQueuePath, runsDir } from '../src/orchestrator/paths.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
 import {
   OrchestratorConflictError,
@@ -442,5 +443,108 @@ describe('MergeQueue.remove', () => {
     const stub = new StubRunner();
     const queue = new MergeQueue(harness, stub.run);
     expect(() => queue.remove('r-nope')).toThrow(OrchestratorNotFoundError);
+  });
+});
+
+describe('MergeQueue persistence', () => {
+  it('reloads a queued entry into a freshly constructed MergeQueue over the same rootDir', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue1 = new MergeQueue(harness, stub.run);
+    queue1.enqueue(runId);
+
+    // A second MergeQueue over the exact same rootDir/orchestrator stands in
+    // for a daemon restart: it must reload what queue1 just persisted rather
+    // than starting from an empty queue. Everything above and below runs
+    // synchronously with no `await` in between — pump() always yields on its
+    // own `await Promise.resolve()` before touching any entry (see its
+    // comment), so nothing has had a chance to advance this entry past
+    // `queued` yet.
+    const queue2 = new MergeQueue(harness, stub.run);
+    const reloaded = queue2.snapshot().entries.find((e) => e.runId === runId);
+    expect(reloaded?.state).toBe('queued');
+  });
+
+  it('files a mid-flight persisted entry to failed history with a restart reason', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    // Simulate what a previous daemon process would have left on disk had it
+    // died partway through process() — the entry never reached finish().
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [
+          {
+            runId,
+            taskId,
+            taskTitle: 'Ship it',
+            state: 'merging',
+            enqueuedAt: new Date().toISOString(),
+          },
+        ],
+        history: [],
+      })
+    );
+
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const filed = queue.snapshot().history.find((e) => e.runId === runId);
+    expect(filed?.state).toBe('failed');
+    expect(filed?.reason).toContain('daemon restarted mid-merge');
+    expect(
+      queue.snapshot().entries.find((e) => e.runId === runId)
+    ).toBeUndefined();
+    // The run itself is still unreviewed — process() only reviews a run at
+    // the very end of merge(), so a mid-flight death never got that far.
+    const run = harness.orchestrator.getRun(runId);
+    expect(run?.meta.reviewedAt).toBeUndefined();
+  });
+
+  it('starts with an empty queue when the persisted file is corrupt', () => {
+    const harness = makeHarness();
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    writeFileSync(mergeQueuePath(harness.rootDir), '{not valid json');
+
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+    expect(queue.snapshot()).toEqual({ entries: [], history: [] });
+  });
+
+  it('drops a reloaded entry to failed history when its run was reviewed while the daemon was down', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [
+          {
+            runId,
+            taskId,
+            taskTitle: 'Ship it',
+            state: 'queued',
+            enqueuedAt: new Date().toISOString(),
+          },
+        ],
+        history: [],
+      })
+    );
+
+    // Something else (a manual merge, the PR poller) resolves the run
+    // directly, outside the queue, while the daemon is down.
+    harness.orchestrator.review(runId, 'discard');
+
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const dropped = queue.snapshot().history.find((e) => e.runId === runId);
+    expect(dropped?.state).toBe('failed');
+    expect(dropped?.reason).toContain('already reviewed');
+    expect(
+      queue.snapshot().entries.find((e) => e.runId === runId)
+    ).toBeUndefined();
   });
 });
