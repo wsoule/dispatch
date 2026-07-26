@@ -588,14 +588,6 @@ export class Orchestrator {
     if (action === 'merge') {
       this.mergeRun(meta, now);
     } else {
-      // Discarding removes this run's branch, which breaks the merge base of
-      // any dependent stacked on it — the same corruption the Branches
-      // surface's delete/free-disk actions refuse (see
-      // requireNoStackedDependent). Deliberately NOT applied to 'merge' above:
-      // a blocker's branch disappearing after its work actually lands is the
-      // normal, intended end of a stack, and the merge queue restacks the
-      // dependents onto the new base itself.
-      this.requireNoStackedDependent(meta.branch);
       this.persistDiffSnapshot(meta);
       this.worktrees.remove(meta.worktreePath, meta.branch);
       this.ctx.store.update(
@@ -995,6 +987,15 @@ export class Orchestrator {
    * case. A dependent's diff and eventual merge are both anchored on its merge
    * base with this ref, so deleting it doesn't fail loudly, it silently
    * repoints that dependent at whatever unrelated commit git falls back to.
+   *
+   * Scoped to the raw branch actions (delete, free-disk) on purpose, and NOT to
+   * `review(id, 'discard')`. The difference is what each layer can do about it:
+   * these two are pure git operations with no run bookkeeping to hang a marker
+   * on, so refusing is the only way they can avoid corrupting a dependent.
+   * `review()` does have that bookkeeping, so discarding a blocker instead
+   * flags every dependent with `baseDiscarded` and lets the merge queue refuse
+   * it later with a specific reason — which keeps the human free to reject work
+   * without first dismantling everything stacked above it.
    *
    * Deliberately has NO force escape hatch. Dependents form a DAG, so its
    * leaves are always cleanable right now — "clean up the dependent first"
