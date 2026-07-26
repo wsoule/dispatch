@@ -75,11 +75,14 @@ export function RunsView({
   const splitRef = useRef<HTMLDivElement>(null);
   const {
     width: listWidth,
+    minWidth: listMinWidth,
+    maxWidth: listMaxWidth,
     onPointerDown: onResizePointerDown,
     onPointerMove: onResizePointerMove,
     onPointerUp: onResizePointerUp,
     onPointerCancel: onResizePointerCancel,
     onDoubleClick: onResizeDoubleClick,
+    onKeyDown: onResizeKeyDown,
   } = useResizablePane(
     'dispatch:runs-list-width',
     DEFAULT_RUN_LIST_WIDTH,
@@ -204,14 +207,19 @@ export function RunsView({
             easy to grab without a pixel-perfect cursor. */}
         <div
           role="separator"
+          tabIndex={0}
           aria-orientation="vertical"
           aria-label="Resize run list"
+          aria-valuenow={Math.round(listWidth)}
+          aria-valuemin={Math.round(listMinWidth)}
+          aria-valuemax={Math.round(listMaxWidth)}
           onPointerDown={onResizePointerDown}
           onPointerMove={onResizePointerMove}
           onPointerUp={onResizePointerUp}
           onPointerCancel={onResizePointerCancel}
           onDoubleClick={onResizeDoubleClick}
-          className="group relative w-2 shrink-0 cursor-col-resize touch-none"
+          onKeyDown={onResizeKeyDown}
+          className="group focus-visible:ring-ring/50 relative w-2 shrink-0 cursor-col-resize touch-none outline-none focus-visible:ring-[3px]"
         >
           <div className="bg-border group-hover:bg-primary/50 absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors" />
         </div>
