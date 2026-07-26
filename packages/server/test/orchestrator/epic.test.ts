@@ -515,6 +515,57 @@ describe('EpicEngine.start', () => {
     expect(progress.concurrency).toBe(1);
     void childIds;
   });
+
+  it('counts an archived child in progress() and completes once its sibling also finishes', async () => {
+    const harness = makeHarness();
+    const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
+    // Simulate a reconciler having already archived one child (done + pushed).
+    harness.store.update(childIds[0], {
+      status: 'done',
+      archivedAt: '2026-07-26T00:00:00Z',
+    });
+    harness.cache.rebuild(harness.store);
+
+    await harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
+    await waitFor(() => harness.orchestrator.list().length === 1);
+    // Archived child must still be counted, not dropped from progress().
+    expect(harness.epics.progress(epicId).children).toHaveLength(2);
+
+    const run = harness.orchestrator.list()[0];
+    harness.orchestrator.approve(run.id, 'go', true);
+    await waitFor(() => harness.epics.progress(epicId).active === false);
+  });
+
+  it('lets a fully-archived epic notice completion instead of staying active forever', async () => {
+    const harness = makeHarness();
+    const { epicId: epicA, childIds: childIdsA } = createEpicWithChildren(
+      harness.store,
+      1
+    );
+    // Both the child and (later) the epic are already fully done+archived
+    // before the session even starts — nothing left to dispatch.
+    harness.store.update(childIdsA[0], {
+      status: 'done',
+      archivedAt: '2026-07-26T00:00:00Z',
+    });
+    harness.cache.rebuild(harness.store);
+
+    await harness.epics.start(epicA, { concurrency: 1, executor: 'fake' });
+    expect(harness.orchestrator.list()).toHaveLength(0);
+
+    // reactAcrossSessions re-checks EVERY active session on any run's
+    // terminal event, not just runs belonging to that session's own epic —
+    // this is epicA's first chance to notice its archived-only child set
+    // means it's actually done.
+    const { epicId: epicB } = createEpicWithChildren(harness.store, 1);
+    await harness.epics.start(epicB, { concurrency: 1, executor: 'fake' });
+    await waitFor(() => harness.orchestrator.list().length === 1);
+    const runB = harness.orchestrator.list()[0];
+    harness.orchestrator.approve(runB.id, 'go', true);
+
+    await waitFor(() => harness.epics.progress(epicA).active === false);
+    expect(harness.epics.progress(epicA).children).toHaveLength(1);
+  });
 });
 
 describe('EpicEngine fill serialization', () => {

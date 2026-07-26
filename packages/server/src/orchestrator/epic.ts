@@ -322,8 +322,10 @@ export class EpicEngine {
     let slots = session.concurrency - liveCount;
     if (slots <= 0) return;
 
-    const ready = dispatchableTasks(this.ctx.cache.query()).filter((t) =>
-      childIds.has(t.meta.id)
+    // childIds now includes archived children (see childrenOf); dispatchability
+    // must exclude them explicitly rather than rely on childrenOf's filtering.
+    const ready = dispatchableTasks(this.ctx.cache.query()).filter(
+      (t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined
     );
     for (const task of ready) {
       if (slots <= 0) break;
@@ -370,9 +372,11 @@ export class EpicEngine {
     );
   }
 
+  // Includes archived children: progress/completeness are historical facts
+  // about the epic, and an archived child is done+pushed, not missing.
   private childrenOf(epicId: string): TaskDoc[] {
     return this.ctx.cache
-      .query({ parent: epicId })
+      .query({ parent: epicId, includeArchived: true })
       .filter((t) => t.meta.kind === 'task');
   }
 

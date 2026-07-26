@@ -174,6 +174,25 @@ describe('selfReview / self-review frontmatter', () => {
       /invalid self-review: expected a boolean/
     );
   });
+
+  it('throws on non-string archived-at', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'archived-at: 42',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid archived-at: expected a string/
+    );
+  });
 });
 
 describe('parseTaskFile frontmatter shape validation', () => {

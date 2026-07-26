@@ -115,6 +115,20 @@ function validateBooleanField(value: unknown, label: string): string | null {
   return null;
 }
 
+// Validates that an optional field, if present, is a string or null — used
+// for `archivedAt` (a string sets it, null clears it), rejecting bad values
+// here rather than letting them corrupt the task's YAML frontmatter.
+function validateStringOrNullField(
+  value: unknown,
+  label: string
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') {
+    return `invalid ${label}: expected a string or null`;
+  }
+  return null;
+}
+
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
@@ -152,6 +166,11 @@ function validateTaskFields(
   if (blockedByError) return blockedByError;
   const selfReviewError = validateBooleanField(value.selfReview, 'selfReview');
   if (selfReviewError) return selfReviewError;
+  const archivedAtError = validateStringOrNullField(
+    value.archivedAt,
+    'archivedAt'
+  );
+  if (archivedAtError) return archivedAtError;
   // Free-text body sections — validated as optional strings before they reach
   // setSection, which would otherwise `.trim()` a non-string and throw.
   const descriptionError = validateStringField(
