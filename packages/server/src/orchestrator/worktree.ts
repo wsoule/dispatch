@@ -311,7 +311,19 @@ export class WorktreeManager {
         .join(' | ');
       throw new Error(`git merge --squash failed: ${reason}`);
     }
-    const commit = runGit(this.mainRepoDir, ['commit', '-m', message]);
+    // --no-verify: the queue already verified this branch in its own
+    // worktree; the user's pre-commit hook would re-typecheck the desktop
+    // against the *stale built* dist of workspace packages (the incoming
+    // branch's client/core source changes aren't rebuilt yet at commit
+    // time), failing merges that are actually fine — seen live when a
+    // branch adding a @dispatch/client export died in the hook with
+    // "has no exported member" on its own new symbol.
+    const commit = runGit(this.mainRepoDir, [
+      'commit',
+      '--no-verify',
+      '-m',
+      message,
+    ]);
     if (!commit.ok) {
       throw new Error(`git commit failed: ${commit.stderr.trim()}`);
     }
