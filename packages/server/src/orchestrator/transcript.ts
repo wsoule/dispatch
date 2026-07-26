@@ -39,6 +39,18 @@ export interface TranscriptStateLine {
   // Rides along on a state line exactly like reviewedAt/reviewAction — see
   // RunMeta.prUrl's comment for what sets this and when.
   prUrl?: string;
+  // Restack bookkeeping (MergeQueue.restackDependents, via
+  // Orchestrator.repointRunBase/flagRunRestackFailure). A run's base moves
+  // when the blocker it was stacked on merges away, and both the new base and
+  // the "this one could not be restacked, a human needs to look at it" flag
+  // have to survive a daemon restart: the registry is in-memory only, so a
+  // restart replays a run's meta from THIS file. Without these two fields a
+  // restart resurrects the merged-away base branch (and the next merge is
+  // refused with "merge target is X, expected Y") and silently clears the
+  // flag, leaving a broken run looking healthy with nothing left to re-run
+  // the restack.
+  baseBranch?: string;
+  baseDiscarded?: boolean;
 }
 
 export type TranscriptLine =
@@ -78,6 +90,8 @@ export class Transcript {
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
       prUrl?: string;
+      baseBranch?: string;
+      baseDiscarded?: boolean;
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
@@ -146,6 +160,8 @@ export function replayTranscript(
         reviewedAt: line.reviewedAt ?? meta.reviewedAt,
         reviewAction: line.reviewAction ?? meta.reviewAction,
         prUrl: line.prUrl ?? meta.prUrl,
+        baseBranch: line.baseBranch ?? meta.baseBranch,
+        baseDiscarded: line.baseDiscarded ?? meta.baseDiscarded,
       };
     }
   }

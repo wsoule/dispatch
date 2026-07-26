@@ -8,11 +8,17 @@ import { TaskCache } from '../src/cache.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
+import { JjManager } from '../src/orchestrator/jj.js';
 import { MergeQueue } from '../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../src/orchestrator/orchestrator.js';
-import { mergeQueuePath, runsDir } from '../src/orchestrator/paths.js';
+import {
+  mergeQueuePath,
+  runsDir,
+  transcriptPath,
+} from '../src/orchestrator/paths.js';
 import type { CommandResult, CommandRunner } from '../src/orchestrator/pr.js';
 import { defaultCommandRunner } from '../src/orchestrator/pr.js';
+import { replayTranscript } from '../src/orchestrator/transcript.js';
 import type { RunMeta } from '../src/orchestrator/types.js';
 import {
   OrchestratorConflictError,
@@ -81,7 +87,10 @@ interface Harness {
   events: EventBus;
 }
 
-function makeHarness(): Harness {
+// `jj` is passed to the Orchestrator only — the returned Harness deliberately
+// does not carry it, so a MergeQueue built over this harness still picks its
+// own jj path from the CommandRunner each test injects.
+function makeHarness(jj?: JjManager): Harness {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
   cache.rebuild(store);
@@ -91,6 +100,7 @@ function makeHarness(): Harness {
     store,
     cache,
     events,
+    jj,
   });
   orchestrator.registerExecutor(
     'fake',
@@ -927,5 +937,319 @@ describe('MergeQueue restack of stacked dependents', () => {
       .list()
       .find((r) => r.id === dependentRun.id);
     expect(updated?.baseBranch).toBe('main');
+  });
+});
+
+describe('MergeQueue restack edge cases', () => {
+  // The mainline shape of stacked dispatch, not an edge case: task B is
+  // dispatched off task A's branch precisely BECAUSE A is only `in-review`,
+  // so B's agent is very often still working when the user merges A. B is
+  // untouchable at that moment (its agent owns the worktree), so the restack
+  // has to happen when B itself goes terminal.
+  it('restacks a dependent that was still live when its blocker merged, once it finishes', async () => {
+    const harness = makeHarness();
+    const { runId: runA, taskId: taskA } = await dispatchAndFinish(
+      harness,
+      'Task A'
+    );
+    const blockerRun = harness.orchestrator.list().find((r) => r.id === runA)!;
+    commitFile(blockerRun.worktreePath, 'a.txt', 'A work');
+
+    // B pauses at an approval gate, then commits its own work once released.
+    harness.orchestrator.registerExecutor(
+      'gated',
+      new FakeExecutor({
+        steps: [
+          { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+          {
+            write: (cwd: string) => {
+              writeFileSync(join(cwd, 'b.txt'), 'B work\n');
+            },
+            commitMessage: 'B work',
+          },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const taskB = harness.store.create({ title: 'Task B', blockedBy: [taskA] });
+    const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'gated');
+    await waitFor(
+      () =>
+        harness.orchestrator.getRun(metaB.id)?.meta.state ===
+        'awaiting-approval'
+    );
+    expect(
+      harness.orchestrator.list().find((r) => r.id === metaB.id)?.stackParents
+    ).toEqual([blockerRun.branch]);
+
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(runA);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    // While B is live it must not have been touched OR flagged — its agent
+    // still owns that worktree.
+    const midway = harness.orchestrator.list().find((r) => r.id === metaB.id)!;
+    expect(midway.baseBranch).toBe(blockerRun.branch);
+    expect(midway.baseDiscarded).toBeUndefined();
+
+    harness.orchestrator.approve(metaB.id, 'gate', true);
+    await waitFor(
+      () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
+    );
+
+    // Reaching a terminal state is what makes it safe, and the queue picks it
+    // up from there.
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === metaB.id)
+          ?.baseBranch === 'main'
+    );
+    const restacked = harness.orchestrator
+      .list()
+      .find((r) => r.id === metaB.id)!;
+    expect(restacked.baseDiscarded).toBeUndefined();
+    expect(await Bun.file(join(restacked.worktreePath, 'a.txt')).exists()).toBe(
+      true
+    );
+    expect(await Bun.file(join(restacked.worktreePath, 'b.txt')).exists()).toBe(
+      true
+    );
+    expect(
+      runGitSync(restacked.worktreePath, [
+        'rev-parse',
+        '--abbrev-ref',
+        'HEAD',
+      ]).trim()
+    ).toBe(restacked.branch);
+  });
+
+  // A run branched off a multi-parent jj merge base cannot be moved onto any
+  // single blocker's base without dropping the other blockers' work. Skipping
+  // it silently is worse than refusing: its remaining blockers merge one by
+  // one and it is never repaired, until the queue eventually fails it with an
+  // opaque "merge target is main, expected dispatch/stack-base-…".
+  it('flags a multi-parent dependent instead of silently skipping it, exactly once', async () => {
+    const jjCalls: string[][] = [];
+    const jj = new JjManager(repo, (_cwd, cmd) => {
+      jjCalls.push(cmd);
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
+    });
+    const harness = makeHarness(jj);
+
+    const { runId: runA, taskId: taskA } = await dispatchAndFinish(
+      harness,
+      'Blocker A'
+    );
+    const blockerA = harness.orchestrator.list().find((r) => r.id === runA)!;
+    commitFile(blockerA.worktreePath, 'a.txt', 'A work');
+    const { runId: runB, taskId: taskB } = await dispatchAndFinish(
+      harness,
+      'Blocker B'
+    );
+    const blockerB = harness.orchestrator.list().find((r) => r.id === runB)!;
+    commitFile(blockerB.worktreePath, 'b.txt', 'B work');
+
+    // The jj stub never runs real jj, so stand the merge-base bookmark up as
+    // a real git ref the way stacked-dispatch.test.ts does — pointed at one
+    // blocker's tip, which is enough to reproduce the shape under test: a
+    // base branch that is NOT any single blocker's branch.
+    const taskC = harness.store.create({
+      title: 'Task C',
+      blockedBy: [taskA, taskB],
+    });
+    runGitSync(harness.rootDir, [
+      'branch',
+      `dispatch/stack-base-${taskC.meta.id}`,
+      blockerA.branch,
+    ]);
+    const metaC = await harness.orchestrator.dispatch(taskC.meta.id, 'fake');
+    await waitFor(
+      () => harness.orchestrator.getRun(metaC.id)?.meta.state === 'finished'
+    );
+    const dependent = harness.orchestrator
+      .list()
+      .find((r) => r.id === metaC.id)!;
+    expect(dependent.stackParents).toEqual([blockerA.branch, blockerB.branch]);
+    expect(dependent.baseBranch).toBe(`dispatch/stack-base-${taskC.meta.id}`);
+
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(runA);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    const flagged = harness.orchestrator.list().find((r) => r.id === metaC.id)!;
+    expect(flagged.baseDiscarded).toBe(true);
+    expect(flagged.error).toContain('multi-parent base');
+    expect(flagged.error).toContain(`dispatch/stack-base-${taskC.meta.id}`);
+    // Its base is left exactly as it was — nothing was guessed at.
+    expect(flagged.baseBranch).toBe(`dispatch/stack-base-${taskC.meta.id}`);
+    // ...and the run's own task says so, not just the run's error field.
+    expect(harness.store.get(taskC.meta.id)?.body).toContain(
+      'multi-parent base'
+    );
+    // Restart-equivalent: the flag survives a transcript replay.
+    expect(
+      replayTranscript(transcriptPath(harness.rootDir, metaC.id))?.meta
+        .baseDiscarded
+    ).toBe(true);
+
+    // The SECOND blocker merging must not re-flag or re-process it.
+    queue.enqueue(runB);
+    await waitFor(() => queue.snapshot().history.length === 2);
+    const activity = harness.store.get(taskC.meta.id)?.body ?? '';
+    expect(activity.split('multi-parent base')).toHaveLength(2);
+  });
+
+  // jj moves refs/heads/<branch> from the project root while the run's own
+  // worktree has that branch checked out, so HEAD there starts resolving to
+  // the rebased commit while the index and working tree still hold pre-rebase
+  // content. verify() runs in that worktree and merge() squashes the branch —
+  // without an explicit resync the queue verifies one tree and merges another.
+  it('resyncs the entry own worktree after a jj rebase, so verify sees post-rebase content', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness, 'Task A');
+    const run = harness.orchestrator.list().find((r) => r.id === runId)!;
+    commitFile(run.worktreePath, 'a.txt', 'A work');
+
+    // A commit that exists only on the base — the rebase is what should bring
+    // it into the run's worktree.
+    writeFileSync(join(harness.rootDir, 'late.txt'), 'landed on main\n');
+    runGitSync(harness.rootDir, ['add', 'late.txt']);
+    runGitSync(harness.rootDir, ['commit', '-m', 'late main commit']);
+
+    // verify() passes only if the worktree really holds post-rebase content.
+    writeVerifyCommand(harness.rootDir, 'test -f late.txt');
+
+    // A jj stub that actually moves the branch ref, the way `jj git export`
+    // does. Moving it to the destination tip is the shape jj produces when
+    // the rebased commit is emptied (`--skip-emptied`); what matters here is
+    // that the ref moves from OUTSIDE the worktree holding it.
+    const runner: CommandRunner = async (cwd, cmd) => {
+      if (cmd[0] !== 'jj') return defaultCommandRunner(cwd, cmd);
+      if (cmd[1] === 'rebase' && cmd[2] === '-b') {
+        const target = runGitSync(harness.rootDir, [
+          'rev-parse',
+          cmd[5],
+        ]).trim();
+        runGitSync(harness.rootDir, [
+          'update-ref',
+          `refs/heads/${cmd[3]}`,
+          target,
+        ]);
+      }
+      return { ok: true, stdout: '', stderr: '' };
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+
+    expect(queue.snapshot().history[0].reason).toBeUndefined();
+    expect(queue.snapshot().history[0].state).toBe('merged');
+  });
+
+  // markRunMergedViaPr deliberately merges nothing locally — the blocker's
+  // content landed on the REMOTE base. Replaying a dependent onto the local
+  // base branch would drop the blocker's files entirely.
+  it('restacks a PR-merged blocker dependents onto origin/<base>, not the stale local base', async () => {
+    const harness = makeHarness();
+    // A real remote, so `origin/main` is a ref the restack can actually use.
+    const remote = mkdtempSync(join(tmpdir(), 'dispatch-remote-'));
+    runGitSync(remote, ['init', '--bare', '-b', 'main']);
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', remote]);
+    runGitSync(harness.rootDir, ['push', '-u', 'origin', 'main']);
+
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    harness.orchestrator.setRunPrUrl(
+      blockerRun.id,
+      'https://github.com/example/repo/pull/1'
+    );
+
+    const calls: string[][] = [];
+    const runner: CommandRunner = async (cwd, cmd) => {
+      calls.push(cmd);
+      if (cmd[0] === 'jj') {
+        return { ok: false, stdout: '', stderr: 'jj: command not found' };
+      }
+      if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'merge') {
+        // Stand in for GitHub landing the PR: the blocker's work appears on
+        // the REMOTE main while the local main stays exactly where it was.
+        runGitSync(harness.rootDir, [
+          'push',
+          'origin',
+          `${blockerRun.branch}:main`,
+        ]);
+        // ...and this daemon has not seen it yet, so the remote-tracking ref
+        // is stale until something fetches.
+        runGitSync(harness.rootDir, [
+          'update-ref',
+          '-d',
+          'refs/remotes/origin/main',
+        ]);
+        return { ok: true, stdout: '', stderr: '' };
+      }
+      return defaultCommandRunner(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(blockerRun.id);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    // The restack refreshed the remote-tracking ref itself...
+    expect(
+      calls.filter((c) => c[0] === 'git' && c[1] === 'fetch' && c[3] === 'main')
+        .length
+    ).toBeGreaterThan(0);
+    // ...and replayed the dependent onto it, so the blocker's work is present
+    // even though the LOCAL main still knows nothing about it.
+    expect(
+      await Bun.file(join(dependentRun.worktreePath, 'a.txt')).exists()
+    ).toBe(true);
+    expect(await Bun.file(join(harness.rootDir, 'a.txt')).exists()).toBe(false);
+    expect(
+      Bun.spawnSync(
+        [
+          'git',
+          'merge-base',
+          '--is-ancestor',
+          'origin/main',
+          dependentRun.branch,
+        ],
+        { cwd: dependentRun.worktreePath, stdout: 'pipe', stderr: 'pipe' }
+      ).exitCode
+    ).toBe(0);
+    // The recorded base is the plain branch name — `origin/` is a rebase
+    // target, never something mergeRun() compares the main checkout against.
+    const updated = harness.orchestrator
+      .list()
+      .find((r) => r.id === dependentRun.id);
+    expect(updated?.baseBranch).toBe('main');
+    expect(updated?.baseDiscarded).toBeUndefined();
+
+    rmSync(remote, { recursive: true, force: true });
+  });
+
+  // Restart-equivalent for the success path: the repointed base has to be on
+  // disk, not just in the in-memory registry.
+  it('persists a repointed baseBranch so a transcript replay recovers it', async () => {
+    const harness = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    const queue = new MergeQueue(harness, noJjRunner);
+
+    queue.enqueue(blockerRun.id);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    const replayed = replayTranscript(
+      transcriptPath(harness.rootDir, dependentRun.id)
+    );
+    expect(replayed?.meta.baseBranch).toBe('main');
+    expect(replayed?.meta.baseBranch).not.toBe(blockerRun.branch);
   });
 });

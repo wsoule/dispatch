@@ -64,6 +64,10 @@ export interface MergeQueueContext {
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
+  // Same optional override OrchestratorContext takes, and passed the same
+  // object in production (see index.ts) so the queue and the orchestrator
+  // never end up talking to jj through two differently-configured managers.
+  jj?: JjManager;
 }
 
 const HISTORY_LIMIT = 20;
@@ -104,13 +108,19 @@ export class MergeQueue {
   // pump()/process() so every restack runs on the pump's single thread of
   // control instead of racing the entry being processed.
   private readonly pendingRestacks: RunMeta[] = [];
+  // Run ids to re-examine because the run itself just reached a terminal
+  // state (onRunTerminal), plus everything seeded at construction. A run that
+  // was still LIVE when its blocker merged could not be restacked then — its
+  // agent was using the worktree — so it is checked here instead, once it is
+  // safe to touch. See restackStaleRuns().
+  private readonly pendingStaleRuns: string[] = [];
   private readonly jj: JjManager;
 
   constructor(
     private readonly ctx: MergeQueueContext,
     private readonly run: CommandRunner = defaultCommandRunner
   ) {
-    this.jj = new JjManager(ctx.rootDir, run);
+    this.jj = ctx.jj ?? new JjManager(ctx.rootDir, run);
     // A review elsewhere (local merge, PR poller) can complete a blocker —
     // re-check waiting entries whenever any run gets reviewed. Note: the
     // queue's OWN merge()/markRunMergedViaPr calls fire this same hook
@@ -131,7 +141,28 @@ export class MergeQueue {
       }
       this.kick();
     });
+    // The other half of the same job. A dependent that was still LIVE when
+    // its blocker merged is deliberately skipped by restackDependents (its
+    // agent owns that worktree), and that is the DESIGNED shape of stacking:
+    // a task is dispatched off its blocker's branch precisely while the
+    // blocker sits `in-review`, so an agent still working when the user
+    // merges the blocker is the normal case, not an edge case. Re-examining
+    // the run the moment it goes terminal is what stops it being stranded on
+    // a branch that no longer exists.
+    ctx.orchestrator.onRunTerminal((meta) => {
+      this.pendingStaleRuns.push(meta.id);
+      this.kick();
+    });
     this.hydrate();
+    // Seed the same check for every run this process inherited. The
+    // pending-restack backlog above is in-memory, so a crash between a
+    // blocker's merge and the drain would otherwise lose the restack with no
+    // trace; re-deriving the need from durable RunMeta (the dependent's own
+    // baseBranch/stackParents versus its blocker's persisted reviewedAt)
+    // makes boot the recovery path instead.
+    for (const meta of ctx.orchestrator.list()) {
+      this.pendingStaleRuns.push(meta.id);
+    }
     // Anything hydrate() kept as `queued` may already be eligible (or may
     // have been sitting there through however long the daemon was down) —
     // give it the same nudge a fresh enqueue() would, rather than waiting on
@@ -535,6 +566,23 @@ export class MergeQueue {
     const cwd = meta.worktreePath;
 
     if (await this.jj.isColocated()) {
+      // The jj rebase runs in the project root and moves `refs/heads/<branch>`
+      // via `jj git export`. git raises no objection (writing a ref that is
+      // checked out elsewhere is only refused for `git branch -f`), so this
+      // run's worktree is left with HEAD resolving to the REBASED commit while
+      // its index and working tree still hold pre-rebase content — measured:
+      // `git status` there reports the base's new files as staged deletions.
+      // verify() runs in that same worktree and merge() squashes the rebased
+      // branch, so without the resync below the queue would verify one tree
+      // and merge a different one. The resync hard-resets, so a worktree with
+      // uncommitted content is refused outright rather than silently wiped —
+      // the plain-git path below refuses the same case, since `git rebase`
+      // will not run on a dirty tree either.
+      if (this.ctx.orchestrator.runWorktreeIsDirty(meta.id)) {
+        throw new Error(
+          'worktree has uncommitted changes; commit or discard them before merging'
+        );
+      }
       if (meta.prUrl !== undefined) {
         const fetch = await this.run(cwd, [
           'git',
@@ -551,6 +599,7 @@ export class MergeQueue {
           ? `origin/${meta.baseBranch}`
           : meta.baseBranch;
       await this.jj.restack(meta.branch, jjTarget);
+      this.ctx.orchestrator.resyncRunWorktree(meta.id);
       return;
     }
 
@@ -632,30 +681,110 @@ export class MergeQueue {
     }
   }
 
-  // Works through the merged-run backlog the onRunReviewed hook fills, one
-  // merged run at a time. Never throws: restacking is repair work that runs
-  // *after* a merge already succeeded, so a failure here must not undo or
-  // fail that merge — restackDependents records the damage on the affected
-  // run, and anything unexpected above that is logged and stepped over.
+  // Works through both restack backlogs — blockers that just merged, and runs
+  // that just became safe to touch — one item at a time. Never throws:
+  // restacking is repair work that runs *after* a merge already succeeded, so
+  // a failure here must not undo or fail that merge. restackRun records the
+  // damage on the affected run; anything unexpected above that is logged and
+  // stepped over.
   private async drainRestacks(): Promise<void> {
     for (;;) {
       const merged = this.pendingRestacks.shift();
-      if (merged === undefined) return;
+      if (merged !== undefined) {
+        try {
+          await this.restackDependents(merged);
+        } catch (err) {
+          console.error(
+            `dispatchd: failed to restack dependents of ${merged.id}: ${(err as Error).message}`
+          );
+        }
+        continue;
+      }
+      const staleRunId = this.pendingStaleRuns.shift();
+      if (staleRunId === undefined) return;
       try {
-        await this.restackDependents(merged);
+        await this.restackStaleRun(staleRunId);
       } catch (err) {
         console.error(
-          `dispatchd: failed to restack dependents of ${merged.id}: ${(err as Error).message}`
+          `dispatchd: failed to restack ${staleRunId}: ${(err as Error).message}`
         );
       }
     }
   }
 
   /**
-   * Once `merged` lands, every run stacked on its branch is sitting on a
-   * branch that no longer exists, carrying the blocker's commits that the new
-   * base now holds in squashed form. This brings each of them back onto
-   * `merged.baseBranch`. Two paths, same outcome:
+   * Every run stacked on `merged`'s branch, now that that branch has landed
+   * and been deleted. Runs still LIVE are deliberately not touched here — an
+   * agent owns that worktree — they are picked up by restackStaleRun() the
+   * moment they go terminal instead.
+   */
+  private async restackDependents(merged: RunMeta): Promise<void> {
+    const dependents = this.ctx.orchestrator
+      .list()
+      .filter(
+        (r) =>
+          r.stackParents?.includes(merged.branch) === true &&
+          this.isRestackCandidate(r)
+      );
+    for (const dependent of dependents) {
+      await this.restackRun(dependent, merged);
+    }
+  }
+
+  /**
+   * The other entry point: `runId` just reached a terminal state (or this
+   * process just booted), so check whether the branch it was stacked on has
+   * been merged away in the meantime and bring it back onto the new base if
+   * so.
+   */
+  private async restackStaleRun(runId: string): Promise<void> {
+    const runs = this.ctx.orchestrator.list();
+    const run = runs.find((r) => r.id === runId);
+    if (run === undefined || !this.isRestackCandidate(run)) return;
+    const parent = this.mergedStackParentOf(run, runs);
+    if (parent === null) return;
+    await this.restackRun(run, parent);
+  }
+
+  // A run is restackable at all only while it is terminal (never rewrite a
+  // live agent's worktree), still unreviewed (a merged/discarded run has no
+  // worktree left), and not already flagged — `baseDiscarded` means a human
+  // has been asked to look at it, and re-flagging it on every subsequent
+  // merge and every reboot would just be noise.
+  private isRestackCandidate(run: RunMeta): boolean {
+    return (
+      TERMINAL_RUN_STATES.has(run.state) &&
+      run.reviewedAt === undefined &&
+      run.baseDiscarded !== true
+    );
+  }
+
+  /**
+   * The run whose branch `run` is stacked on, IF that run has since been
+   * merged away — otherwise null.
+   *
+   * The detection is deliberately explicit rather than incidental. Two facts
+   * must both hold: `run.baseBranch` is still one of its own recorded
+   * `stackParents` (so it was branched off a blocker and has not already been
+   * repointed), and the run that OWNS that branch carries a `reviewedAt` with
+   * a `merge`/`pr` action. Checking the parent run's review marker — rather
+   * than whether the branch ref still resolves — is what distinguishes "the
+   * blocker landed" from "someone deleted a branch by hand" or "the ref is
+   * missing because this daemon has not reconciled yet", and it survives a
+   * restart because `reviewedAt` is persisted on the parent's transcript.
+   */
+  private mergedStackParentOf(run: RunMeta, runs: RunMeta[]): RunMeta | null {
+    if (run.stackParents?.includes(run.baseBranch) !== true) return null;
+    const parent = runs.find((r) => r.branch === run.baseBranch);
+    if (parent === undefined || parent.reviewedAt === undefined) return null;
+    return parent.reviewAction === 'merge' || parent.reviewAction === 'pr'
+      ? parent
+      : null;
+  }
+
+  /**
+   * Brings one dependent back onto the base its merged blocker landed on.
+   * Two paths, same outcome:
    *
    * - jj: `jj rebase -s roots(<stackBaseCommit>..<branch>) -d <newBase>
    *   --skip-emptied`
@@ -666,73 +795,132 @@ export class MergeQueue {
    * may replay the whole branch: the blocker's commits are already in the new
    * base in squashed form, so replaying them duplicates the work (measured:
    * `jj rebase -b` reports "Rebased 2 commits" where only one is the
-   * dependent's). A dependent with no `stackBaseCommit` recorded therefore
-   * cannot be restacked safely by either path — it is flagged, not guessed at.
+   * dependent's).
    *
-   * Only runs in a terminal state are touched; a live agent's worktree is
-   * never rewritten underneath it. Each dependent's tip is backed up first as
-   * the undo path.
+   * Everything that cannot be done safely is FLAGGED rather than guessed at,
+   * and a flagged dependent never fails the entry that just merged
+   * successfully — the merge really did land; it is the dependent that needs
+   * a human.
    */
-  private async restackDependents(merged: RunMeta): Promise<void> {
-    const mergedBranch = merged.branch;
-    const newBase = merged.baseBranch;
-    const dependents = this.ctx.orchestrator.list().filter(
-      (r) =>
-        r.stackParents?.includes(mergedBranch) === true &&
-        // `baseBranch === mergedBranch` is what makes `newBase` the right
-        // destination. A run based on a multi-parent jj merge base still has
-        // other unmerged parents, and moving it onto this one blocker's base
-        // would drop their work — that case needs a rebuilt merge base, not a
-        // restack, so it is deliberately left alone here.
-        r.baseBranch === mergedBranch &&
-        TERMINAL_RUN_STATES.has(r.state) &&
-        r.reviewedAt === undefined
-    );
-    if (dependents.length === 0) return;
+  private async restackRun(dependent: RunMeta, parent: RunMeta): Promise<void> {
+    // A dependent whose base is NOT the merged branch itself was branched off
+    // a multi-parent jj merge base built over several unmerged blockers.
+    // Moving it onto this one blocker's base would silently drop the others'
+    // work, and leaving it silently alone is worse still: its remaining
+    // blockers merge one by one and it is never repaired, until the queue
+    // fails it with an opaque "merge target is main, expected
+    // dispatch/stack-base-…". That case needs a rebuilt merge base, which is
+    // not something this method can do, so it is flagged for a human.
+    if (dependent.baseBranch !== parent.branch) {
+      this.flagDependent(
+        dependent,
+        `cannot restack automatically: this run was branched off the multi-parent base ${dependent.baseBranch}, which spans several unmerged blockers — rebuild it or re-dispatch now that ${parent.branch} has merged`
+      );
+      return;
+    }
+    const newBase = parent.baseBranch;
+    const stackBase = dependent.stackBaseCommit;
+    if (stackBase === undefined) {
+      // Nothing records where this run's own commits begin, so neither path
+      // can name the range to replay.
+      this.flagDependent(
+        dependent,
+        'cannot restack: no stackBaseCommit recorded for this run'
+      );
+      return;
+    }
+    // The resync below hard-resets the worktree, which would throw away
+    // uncommitted content. Every normal finish path auto-commits, so this is
+    // only ever true for a cancelled run whose worktree was deliberately left
+    // as-is — refuse rather than destroy it.
+    if (this.ctx.orchestrator.runWorktreeIsDirty(dependent.id)) {
+      this.flagDependent(
+        dependent,
+        'cannot restack: worktree has uncommitted changes — commit or discard them, then re-dispatch'
+      );
+      return;
+    }
 
     const viaJj = await this.jj.isColocated();
-    // Which path a restack took decides how to read a later failure, so record
-    // it once per merge rather than leaving it to be inferred.
-    const now = new Date().toISOString();
-    this.ctx.store.update(
-      merged.taskId,
-      {
-        appendActivity: `${now} merge queue: restacking ${dependents.length} dependent run(s) onto ${newBase} via ${viaJj ? 'jj' : 'git rebase --onto'}`,
-      },
-      now
-    );
+    // Backup first — this is the undo path if the restack goes wrong. It is
+    // NOT the rebase boundary: that is stackBaseCommit, recorded at dispatch.
+    // Backing up the tip and then replaying from it would make the replay
+    // range empty and silently rebase nothing.
+    this.ctx.orchestrator.backupRunBranch(dependent.id);
+    try {
+      // A blocker merged through a PR landed its content on the REMOTE base
+      // and nothing was merged locally (markRunMergedViaPr is explicit about
+      // this), so the local base branch can be arbitrarily far behind.
+      // Replaying onto it would drop the blocker's files from the dependent
+      // entirely. Fetch and target `origin/<base>`, exactly as rebase() below
+      // already does for a PR run's own rebase.
+      const target =
+        parent.reviewAction === 'pr'
+          ? `origin/${await this.fetchBase(newBase)}`
+          : newBase;
+      if (viaJj) {
+        await this.jj.restackOnto(dependent.branch, stackBase, target);
+      } else {
+        this.ctx.orchestrator.rebaseRunOnto(dependent.id, target, stackBase);
+      }
+      this.ctx.orchestrator.resyncRunWorktree(dependent.id);
+      // Recorded as the plain branch name, never `origin/<base>`: this is the
+      // branch mergeRun() compares the main checkout against, and the one
+      // rebase() re-prefixes with `origin/` for a PR run.
+      this.ctx.orchestrator.repointRunBase(dependent.id, newBase);
+      this.noteRestack(
+        dependent,
+        parent,
+        `restacked onto ${target} after blocker run ${parent.id} merged (via ${viaJj ? 'jj' : 'git rebase --onto'})`
+      );
+    } catch (err) {
+      this.flagDependent(
+        dependent,
+        `restack onto ${newBase} failed: ${(err as Error).message}`
+      );
+    }
+  }
 
-    for (const dependent of dependents) {
-      // Backup first — this is the undo path if the restack goes wrong. It is
-      // NOT the rebase boundary: that is stackBaseCommit, recorded at
-      // dispatch. Backing up the tip and then replaying from it would make
-      // the replay range empty and silently rebase nothing.
-      this.ctx.orchestrator.backupRunBranch(dependent.id);
-      const stackBase = dependent.stackBaseCommit;
-      if (stackBase === undefined) {
-        this.ctx.orchestrator.flagRunRestackFailure(
-          dependent.id,
-          'cannot restack: no stackBaseCommit recorded for this run'
-        );
-        continue;
-      }
-      try {
-        if (viaJj) {
-          await this.jj.restackOnto(dependent.branch, stackBase, newBase);
-        } else {
-          this.ctx.orchestrator.rebaseRunOnto(dependent.id, newBase, stackBase);
-        }
-        this.ctx.orchestrator.resyncRunWorktree(dependent.id);
-        this.ctx.orchestrator.repointRunBase(dependent.id, newBase);
-      } catch (err) {
-        // A dependent that can't be restacked is not a reason to fail the
-        // entry that just merged successfully — record it on the run and let
-        // the human sort it out, exactly like a discarded base.
-        this.ctx.orchestrator.flagRunRestackFailure(
-          dependent.id,
-          `restack onto ${newBase} failed: ${(err as Error).message}`
-        );
-      }
+  // Fetches a base branch from origin so `origin/<base>` is current, and
+  // returns the branch name for the caller to compose with. Throws on
+  // failure, which restackRun turns into a flag on the dependent.
+  private async fetchBase(baseBranch: string): Promise<string> {
+    const fetch = await this.run(this.ctx.rootDir, [
+      'git',
+      'fetch',
+      'origin',
+      baseBranch,
+    ]);
+    if (!fetch.ok) {
+      throw new Error(`git fetch failed: ${commandErrorText(fetch)}`);
+    }
+    return baseBranch;
+  }
+
+  // Flags a dependent for human attention and says so on its own task's
+  // Activity, so the record is visible on the run the user is looking at and
+  // not only in the run's error field.
+  private flagDependent(dependent: RunMeta, reason: string): void {
+    this.ctx.orchestrator.flagRunRestackFailure(dependent.id, reason);
+    this.ctx.orchestrator.appendRunTaskActivity(
+      dependent.id,
+      `merge queue: run ${dependent.id} ${reason}`
+    );
+  }
+
+  // Records a successful restack on BOTH tasks involved: the dependent's own
+  // (the run whose history was just rewritten) and the merged blocker's (the
+  // action that caused it).
+  private noteRestack(dependent: RunMeta, parent: RunMeta, text: string): void {
+    this.ctx.orchestrator.appendRunTaskActivity(
+      dependent.id,
+      `merge queue: run ${dependent.id} ${text}`
+    );
+    if (parent.taskId !== dependent.taskId) {
+      this.ctx.orchestrator.appendRunTaskActivity(
+        parent.id,
+        `merge queue: dependent run ${dependent.id} ${text}`
+      );
     }
   }
 

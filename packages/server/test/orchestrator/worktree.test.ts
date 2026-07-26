@@ -330,6 +330,72 @@ describe('resyncToBranch', () => {
     wt.remove(path, 'dispatch/t-c');
     rmSync(repo, { recursive: true, force: true });
   });
+
+  // The case the jj restack path actually produces, and the one a plain
+  // `git checkout` silently fails to repair. jj's `git export` writes
+  // refs/heads/<branch> from the main checkout while that branch is checked
+  // out in a worktree — git only refuses that for `git branch -f`, not for a
+  // raw ref write — so the worktree's HEAD symref starts resolving to the new
+  // commit while its index and working tree still hold the old content.
+  it('repairs a worktree whose branch ref moved underneath it', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const path = join(repo, '..', 'wt-refmove-test');
+    wt.add(path, 'dispatch/t-refmove', 'main');
+
+    // A commit that exists only on main — the stand-in for a blocker's work
+    // the restack is supposed to bring into this worktree.
+    writeFileSync(join(repo, 'from-base.txt'), 'base work\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'base work']);
+    const mainTip = runGitSync(repo, ['rev-parse', 'main']).trim();
+
+    // What `jj git export` does: move the branch ref from outside the
+    // worktree that has it checked out.
+    runGitSync(repo, ['update-ref', 'refs/heads/dispatch/t-refmove', mainTip]);
+
+    // HEAD already follows the moved ref, but the working tree does not: the
+    // base's file is missing and git reports it as a staged deletion. This is
+    // exactly the state `git checkout <branch>` cannot fix ("Already on ...").
+    expect(runGitSync(path, ['rev-parse', 'HEAD']).trim()).toBe(mainTip);
+    expect(existsSync(join(path, 'from-base.txt'))).toBe(false);
+    expect(runGitSync(path, ['status', '--porcelain']).trim()).not.toBe('');
+
+    wt.resyncToBranch(path, 'dispatch/t-refmove');
+
+    expect(runGitSync(path, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'dispatch/t-refmove'
+    );
+    expect(existsSync(join(path, 'from-base.txt'))).toBe(true);
+    expect(runGitSync(path, ['status', '--porcelain']).trim()).toBe('');
+
+    wt.remove(path, 'dispatch/t-refmove');
+    rmSync(repo, { recursive: true, force: true });
+  });
+});
+
+describe('isDirty', () => {
+  it('is false for a clean worktree and true for uncommitted content', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const path = join(repo, '..', 'wt-dirty-test');
+    wt.add(path, 'dispatch/t-dirty', 'main');
+    expect(wt.isDirty(path)).toBe(false);
+
+    // Untracked counts: a hard reset would leave it, but a run holding
+    // uncommitted work is exactly what must not be restacked blindly.
+    writeFileSync(join(path, 'scratch.txt'), 'wip\n');
+    expect(wt.isDirty(path)).toBe(true);
+
+    runGitSync(path, ['add', '-A']);
+    expect(wt.isDirty(path)).toBe(true);
+
+    runGitSync(path, ['commit', '-m', 'wip']);
+    expect(wt.isDirty(path)).toBe(false);
+
+    wt.remove(path, 'dispatch/t-dirty');
+    rmSync(repo, { recursive: true, force: true });
+  });
 });
 
 describe('rebaseOnto', () => {
