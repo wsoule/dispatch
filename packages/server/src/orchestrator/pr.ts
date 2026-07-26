@@ -436,7 +436,8 @@ export class PrManager {
   // with a url resolved from listRepoPrs(), since a repo PR has no run/meta
   // to read a url from. `fallbackTitle` mirrors the run path's own
   // `meta.taskTitle` fallback (used only on the rare gh payload with no
-  // `title`); callers with no such fallback (the by-number path) pass none.
+  // `title`) — the by-number path passes the title `listRepoPrs()` already
+  // resolved, since that's the closest thing it has to `meta.taskTitle`.
   //
   // The status (state, checks, review verdict, diffstat) comes from one
   // `gh pr view --json` call; the conversation folds together submitted

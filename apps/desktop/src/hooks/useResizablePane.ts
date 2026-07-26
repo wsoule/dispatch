@@ -70,6 +70,51 @@ export function useResizablePane(
     [containerRef]
   );
 
+  // Same ceiling `clamp` uses, exposed standalone so callers can report it as
+  // `aria-valuemax` without duplicating the container-width-to-max math.
+  const maxWidth = useCallback(() => {
+    const containerWidth = containerRef.current?.clientWidth ?? Infinity;
+    return Math.max(MIN_WIDTH_PX, containerWidth * MAX_WIDTH_RATIO);
+  }, [containerRef]);
+
+  // Persists a width the same way a drag release does — used by both
+  // `endDrag` and the keyboard handler below, so Arrow/Home/End presses
+  // survive a reload exactly like a mouse-drag resize does.
+  const persistWidth = useCallback(
+    (value: number) => {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(storageKey, String(value));
+      }
+    },
+    [storageKey]
+  );
+
+  // Keyboard operability for the drag handle: ArrowLeft/ArrowRight nudge the
+  // width by 16px (clamped to the same min/max a drag would respect), Home
+  // snaps to the minimum, End snaps to the maximum. Each keypress persists
+  // immediately, mirroring a drag's persist-on-release behavior since there's
+  // no separate "release" event for a keypress.
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const ARROW_STEP_PX = 16;
+      let next: number | null = null;
+      if (e.key === 'ArrowLeft') {
+        next = clamp(width - ARROW_STEP_PX);
+      } else if (e.key === 'ArrowRight') {
+        next = clamp(width + ARROW_STEP_PX);
+      } else if (e.key === 'Home') {
+        next = clamp(MIN_WIDTH_PX);
+      } else if (e.key === 'End') {
+        next = clamp(maxWidth());
+      }
+      if (next === null) return;
+      e.preventDefault();
+      setWidth(next);
+      persistWidth(next);
+    },
+    [width, clamp, maxWidth, persistWidth]
+  );
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -112,10 +157,13 @@ export function useResizablePane(
 
   return {
     width,
+    minWidth: MIN_WIDTH_PX,
+    maxWidth: maxWidth(),
     onPointerDown,
     onPointerMove,
     onPointerUp,
     onPointerCancel,
     onDoubleClick,
+    onKeyDown,
   };
 }

@@ -144,6 +144,7 @@ export function Sidebar({
 
   return (
     <aside
+      id="dispatch-sidebar"
       className={cn(
         'border-border bg-background flex shrink-0 flex-col overflow-y-auto border-r py-4 transition-[width] duration-150',
         collapsed ? 'w-14 items-center px-2' : 'w-60 px-3'
@@ -187,6 +188,11 @@ export function Sidebar({
             <button
               type="button"
               title={projectPath ?? projectName}
+              aria-label={
+                collapsed
+                  ? `Switch project (current: ${projectName})`
+                  : undefined
+              }
               className={cn(
                 'text-foreground hover:bg-accent flex items-center rounded-md py-1.5 text-left text-[13px] font-medium transition-colors duration-150',
                 collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2'
@@ -275,6 +281,7 @@ export function Sidebar({
               key={item.id}
               type="button"
               title={item.label}
+              aria-label={collapsed ? item.label : undefined}
               disabled={!hasActiveProject}
               onClick={() => onSetProjectView(item.id)}
               className={cn(
@@ -314,6 +321,7 @@ export function Sidebar({
               key={item.id}
               type="button"
               title={item.label}
+              aria-label={collapsed ? item.label : undefined}
               onClick={() => onSetGlobalView(item.id)}
               className={cn(
                 'flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
@@ -357,6 +365,7 @@ export function Sidebar({
           type="button"
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           aria-expanded={!collapsed}
+          aria-controls="dispatch-sidebar"
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           onClick={() => setCollapsed((value) => !value)}
           className="text-muted-foreground hover:bg-accent hover:text-foreground flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-150"

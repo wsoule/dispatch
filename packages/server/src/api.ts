@@ -443,7 +443,7 @@ async function commentPr(
 async function resolveRepoPrByNumber(
   ctx: ApiContext,
   numberParam: string
-): Promise<{ number: number; url: string } | null> {
+): Promise<{ number: number; url: string; title: string } | null> {
   const number = Number(numberParam);
   const prs = await ctx.prManager.listRepoPrs();
   const pr = prs.find((p) => p.number === number);
@@ -459,7 +459,7 @@ async function getRepoPrDetail(
 ): Promise<Response> {
   const pr = await resolveRepoPrByNumber(ctx, numberParam);
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
-  const detail = await ctx.prManager.getPrDetailByUrl(pr.url);
+  const detail = await ctx.prManager.getPrDetailByUrl(pr.url, pr.title);
   return jsonResponse(detail);
 }
 
