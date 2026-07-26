@@ -8,6 +8,7 @@ import type {
   Planner,
   PlannerTurn,
   PlanProposal,
+  TaskDraft,
 } from './planner.js';
 import { validatePlanProposal } from './planner.js';
 import {
@@ -168,6 +169,37 @@ export class PlanManager {
     this.plans.set(record.id, record);
     void this.runTurn(record.id, () => planner.start(prompt));
     return record;
+  }
+
+  // The natural-language single-task creator (spec's "Linear-style add"): the
+  // one-task equivalent of startPlan/confirm, reusing the exact same `Planner`
+  // seam and validation rather than a second Agent-SDK path. Runs the named
+  // planner (defaults to 'claude', same registry/400-on-unknown contract as
+  // startPlan) for a single opening turn, re-validates whatever proposal it
+  // returns with the same validatePlanProposal rules confirm() uses, and hands
+  // back the first task as a `TaskDraft` for the client to review and save
+  // through the normal createTask path. Read-only and stateless — no
+  // PlanRecord is minted, since a draft is reviewed-then-created directly,
+  // never confirmed like a plan.
+  async draftTask(prompt: string, plannerName = 'claude'): Promise<TaskDraft> {
+    const planner = this.planners.get(plannerName);
+    if (planner === undefined) {
+      throw new OrchestratorClientError(`unknown planner: ${plannerName}`);
+    }
+    const turn = await planner.start(prompt);
+    const proposal = validatePlanProposal(turn.proposal);
+    const [task] = proposal.tasks;
+    if (task === undefined) {
+      throw new OrchestratorClientError(
+        'planner produced no task for this description'
+      );
+    }
+    return {
+      title: task.title,
+      description: task.description,
+      acceptanceCriteria: task.acceptanceCriteria,
+      priority: task.priority,
+    };
   }
 
   // Sends a follow-up user message on an existing plan and returns the record

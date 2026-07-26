@@ -231,6 +231,39 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   return jsonResponse(doc, 201);
 }
 
+// POST /api/tasks/draft — the natural-language single-task creator: turns a
+// free-text description into one structured task draft (title, description,
+// acceptanceCriteria, priority) the client reviews and then saves through the
+// normal POST /api/tasks path. `planner` is optional and follows createRun's
+// `executor` / startPlan's `planner` contract exactly — a name outside what's
+// registered on this PlanManager is a 400 naming every valid option. Unlike
+// startPlan this awaits the planner and returns the draft directly (no plan
+// record, no confirm step) since a lone draft is reviewed-then-created, not
+// confirmed.
+async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { prompt?: unknown; planner?: unknown };
+  if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
+    return errorResponse(400, 'invalid prompt: prompt is required');
+  }
+  const knownPlannerNames = ctx.planManager.registeredPlannerNames();
+  if (
+    body.planner !== undefined &&
+    (typeof body.planner !== 'string' ||
+      !knownPlannerNames.includes(body.planner))
+  ) {
+    return errorResponse(
+      400,
+      `invalid planner: ${String(body.planner)} (expected ${knownPlannerNames.join('|')})`
+    );
+  }
+  const plannerName =
+    typeof body.planner === 'string' ? body.planner : 'claude';
+  const draft = await ctx.planManager.draftTask(body.prompt, plannerName);
+  return jsonResponse(draft);
+}
+
 async function updateTask(
   req: Request,
   ctx: ApiContext,
@@ -868,6 +901,13 @@ export async function handleApi(
       }
       if (segments.length === 1 && method === 'POST') {
         return await createTask(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'draft' &&
+        method === 'POST'
+      ) {
+        return await draftTask(req, ctx);
       }
       if (
         segments.length === 2 &&

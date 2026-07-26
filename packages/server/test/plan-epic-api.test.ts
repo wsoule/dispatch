@@ -179,6 +179,94 @@ describe('POST /api/plan and GET /api/plan/:id', () => {
   });
 });
 
+describe('POST /api/tasks/draft', () => {
+  it('turns a free-text description into a single structured task draft', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/draft`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'please design the widget' }),
+    });
+    expect(res.status).toBe(200);
+    const draft = await json(res);
+    // The first task of the proposal, minus blockedByIndices — the same fields
+    // CreateTaskModal collects by hand.
+    expect(draft).toEqual({
+      title: 'Design',
+      description: 'Sketch it.',
+      acceptanceCriteria: ['Sketch reviewed'],
+      priority: 'high',
+    });
+  });
+
+  it('400s an empty prompt', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/draft`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: '   ' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('400s a proposal the planner returns with no tasks', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: { tasks: [] } })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/draft`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'nothing actionable' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  // The load-bearing round trip: a drafted task saves through the SAME
+  // POST /api/tasks (createTask) path a manual CreateTaskModal task uses, with
+  // no schema change. createTask only renders the `description` section, so the
+  // acceptanceCriteria list is folded into the description exactly as a
+  // confirmed plan's tasks are (buildTaskDescription) — the same fold the
+  // client's taskDraftToCreateInput performs.
+  it('saves the drafted task through the normal createTask path', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const draft = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'please design the widget' }),
+      })
+    );
+    const description = [
+      draft.description.trim(),
+      'Acceptance criteria:',
+      draft.acceptanceCriteria.map((c: string) => `- ${c}`).join('\n'),
+    ].join('\n\n');
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: draft.title,
+          kind: 'task',
+          priority: draft.priority,
+          description,
+        }),
+      })
+    );
+    expect(created.meta.kind).toBe('task');
+    expect(created.meta.priority).toBe('high');
+    expect(created.meta.title).toBe('Design');
+    expect(created.body).toContain('Sketch it.');
+    expect(created.body).toContain('Sketch reviewed');
+  });
+});
+
 describe('POST /api/plan/:id/confirm', () => {
   async function startedPlanId(): Promise<string> {
     const res = await fetch(`${baseUrl}/api/plan`, {

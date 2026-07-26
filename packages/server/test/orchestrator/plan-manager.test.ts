@@ -589,6 +589,66 @@ describe('PlanManager multi-turn conversation', () => {
   });
 });
 
+// The natural-language single-task creator reuses the same Planner seam as
+// startPlan/confirm, constrained to one task: draftTask runs the named planner,
+// re-validates its proposal with the same rules, and returns the first task as
+// a review-then-save TaskDraft — no PlanRecord, no confirm step.
+describe('PlanManager.draftTask', () => {
+  it('turns free text into a single structured draft via the fake planner', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const draft = await manager.draftTask('design the widget please');
+    expect(draft).toEqual({
+      title: 'Design the widget',
+      description: 'Sketch the API.',
+      acceptanceCriteria: ['API sketch reviewed'],
+      priority: 'high',
+    });
+    // A draft carries no blockedByIndices — it is a lone task with no siblings.
+    expect('blockedByIndices' in draft).toBe(false);
+  });
+
+  it('re-validates the planner proposal with the same priority rules', async () => {
+    const invalidProposal = {
+      tasks: [
+        {
+          title: 'Bad priority from planner',
+          description: '',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'super-urgent',
+        },
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: invalidProposal })
+    );
+    await expect(manager.draftTask('anything')).rejects.toThrow(
+      OrchestratorClientError
+    );
+  });
+
+  it('400s when the planner returns a proposal with no tasks', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: { tasks: [] } })
+    );
+    await expect(manager.draftTask('nothing actionable')).rejects.toThrow(
+      OrchestratorClientError
+    );
+  });
+
+  it('throws for an unregistered planner name (same contract as startPlan)', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    await expect(manager.draftTask('anything', 'fake')).rejects.toThrow(
+      OrchestratorClientError
+    );
+  });
+});
+
 // Phase 7: PlanManager's own executor-style registry — registerPlanner/
 // registeredPlannerNames — is what lets `POST /api/plan` accept a `planner`
 // field with the same "unknown name is a 400 naming every valid option"
