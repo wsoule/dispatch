@@ -568,6 +568,27 @@ async function enqueueMergeQueue(
   return jsonResponse(entry, 201);
 }
 
+// POST /api/merge-queue/stack { taskId }. Enqueues every reviewable run
+// across `taskId`'s stack (its blockedBy-connected component) in dependency
+// order — see MergeQueue.enqueueStack's own comment for why that order lets
+// the queue's existing waiting-blockers gating serialize the stack for free.
+// 409 only when every member of the stack was skipped (nothing reviewable),
+// mapped through the same OrchestratorConflictError -> 409 path as every
+// other merge-queue action, below.
+async function enqueueMergeQueueStack(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { taskId?: unknown };
+  if (typeof body.taskId !== 'string' || body.taskId.trim() === '') {
+    return errorResponse(400, 'invalid taskId: taskId is required');
+  }
+  const entries = ctx.mergeQueue.enqueueStack(body.taskId);
+  return jsonResponse(entries, 201);
+}
+
 // Routes every `/api/*` request. Called only for paths under `/api` — the
 // caller (index.ts) handles `/ws` upgrades and static file serving itself.
 // POST /api/notes — create a note/triage/follow-up/todo. Used by the app's
@@ -900,6 +921,13 @@ export async function handleApi(
       }
       if (segments.length === 1 && method === 'POST') {
         return await enqueueMergeQueue(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stack' &&
+        method === 'POST'
+      ) {
+        return await enqueueMergeQueueStack(req, ctx);
       }
       if (segments.length === 2 && method === 'DELETE') {
         ctx.mergeQueue.remove(segments[1]);

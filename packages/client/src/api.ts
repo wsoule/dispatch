@@ -533,6 +533,10 @@ export interface ApiClient {
   // given run is the entry actively being processed.
   fetchMergeQueue(): Promise<MergeQueueSnapshot>;
   enqueueMergeQueue(runId: string): Promise<MergeQueueEntry>;
+  // Enqueues every reviewable run in taskId's stack (blockedBy-connected
+  // component), blockers first — server's MergeQueue.enqueueStack. 409s only
+  // when the whole stack had nothing reviewable to enqueue.
+  enqueueMergeStack(taskId: string): Promise<MergeQueueEntry[]>;
   removeFromMergeQueue(runId: string): Promise<void>;
   wsUrl(): string;
   connectEvents(
@@ -651,6 +655,11 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, '/api/merge-queue', {
         method: 'POST',
         ...jsonBody({ runId }),
+      }),
+    enqueueMergeStack: (taskId) =>
+      request(baseUrl, '/api/merge-queue/stack', {
+        method: 'POST',
+        ...jsonBody({ taskId }),
       }),
     // Not routed through the shared `request()` helper: the server answers
     // this one with 204 No Content (per the merge queue's REST contract), and
