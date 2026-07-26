@@ -247,6 +247,199 @@ describe('WorktreeManager.diffCommittedOnly', () => {
   });
 });
 
+describe('backup refs', () => {
+  it('writes a backup ref at the branch tip and restores it after a rewrite', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const base = wt.defaultBaseBranch();
+    const path = join(repo, '..', 'wt-backup-test');
+    wt.add(path, 'dispatch/t-a', base);
+    writeFileSync(join(path, 'a.txt'), 'a');
+    runGitSync(path, ['add', '-A']);
+    runGitSync(path, ['commit', '-m', 'a']);
+
+    const tip = runGitSync(path, ['rev-parse', 'HEAD']).trim();
+    const saved = wt.writeBackupRef('dispatch/t-a', 'r-abc123');
+    expect(saved).toBe(tip);
+
+    // Rewrite the branch to something else, then restore. `update-ref` (not
+    // `git branch -f`) is used here because the branch is checked out in the
+    // worktree at `path` — `branch -f` refuses to force-move a branch used by
+    // another worktree, but a real restack (via jj or a raw ref update) can
+    // and does move it out from under that worktree, which is exactly the
+    // scenario a backup ref exists to make reversible.
+    runGitSync(repo, ['update-ref', 'refs/heads/dispatch/t-a', base]);
+    expect(runGitSync(repo, ['rev-parse', 'dispatch/t-a']).trim()).not.toBe(
+      tip
+    );
+
+    wt.restoreFromBackup('dispatch/t-a', 'r-abc123');
+    expect(runGitSync(repo, ['rev-parse', 'dispatch/t-a']).trim()).toBe(tip);
+
+    wt.remove(path, 'dispatch/t-a');
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('backup refs are invisible to `git branch` and pruned by runId', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const base = wt.defaultBaseBranch();
+    const path = join(repo, '..', 'wt-prune-test');
+    wt.add(path, 'dispatch/t-b', base);
+    wt.writeBackupRef('dispatch/t-b', 'r-def456');
+
+    expect(runGitSync(repo, ['branch', '--list'])).not.toContain('backup');
+    expect(
+      runGitSync(repo, ['for-each-ref', 'refs/dispatch/backup'])
+    ).toContain('r-def456');
+
+    wt.pruneBackupRefs('r-def456');
+    expect(runGitSync(repo, ['for-each-ref', 'refs/dispatch/backup'])).toBe('');
+
+    wt.remove(path, 'dispatch/t-b');
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('writeBackupRef returns null for a branch with no tip', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    expect(wt.writeBackupRef('dispatch/does-not-exist', 'r-000000')).toBeNull();
+    rmSync(repo, { recursive: true, force: true });
+  });
+});
+
+describe('resyncToBranch', () => {
+  it('reattaches a detached worktree to its branch', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const base = wt.defaultBaseBranch();
+    const path = join(repo, '..', 'wt-resync-test');
+    wt.add(path, 'dispatch/t-c', base);
+    const tip = runGitSync(path, ['rev-parse', 'HEAD']).trim();
+
+    runGitSync(path, ['checkout', '--detach', tip]);
+    expect(runGitSync(path, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'HEAD'
+    );
+
+    wt.resyncToBranch(path, 'dispatch/t-c');
+    expect(runGitSync(path, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'dispatch/t-c'
+    );
+
+    wt.remove(path, 'dispatch/t-c');
+    rmSync(repo, { recursive: true, force: true });
+  });
+});
+
+describe('rebaseOnto', () => {
+  // The key contract this must get right (per the plan's correction on this
+  // method): `oldTip` is where the dependent branch was ORIGINALLY branched
+  // from, not the dependent's own current tip and not a backup ref. Passing
+  // the dependent's own tip would make `oldTip..branch` empty and rebase
+  // nothing — this test sets up a real stacked scenario (dependent branched
+  // from blocker while the blocker had one commit, blocker then gains a
+  // second "squash" commit that supersedes it) and asserts the dependent's
+  // own commit is replayed on top of the new base.
+  it('replays only the dependent branch commits made since the original branch point', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const base = wt.defaultBaseBranch();
+
+    // Blocker branch gets one commit; this is where the dependent will
+    // originally branch from (`oldTip`).
+    runGitSync(repo, ['checkout', '-b', 'dispatch/blocker']);
+    writeFileSync(join(repo, 'blocker.txt'), 'blocker work\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'blocker work']);
+    const oldTip = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+
+    // Dependent branches off the blocker's in-progress tip and adds its own
+    // commit.
+    const path = join(repo, '..', 'wt-rebase-test');
+    wt.add(path, 'dispatch/dependent', 'dispatch/blocker');
+    writeFileSync(join(path, 'dependent.txt'), 'dependent work\n');
+    runGitSync(path, ['add', '-A']);
+    runGitSync(path, ['commit', '-m', 'dependent work']);
+
+    // Blocker later lands as a squash commit on `base` — this is the
+    // `newBase` the dependent must be restacked onto.
+    runGitSync(repo, ['checkout', base]);
+    runGitSync(repo, ['merge', '--squash', 'dispatch/blocker']);
+    runGitSync(repo, ['commit', '-m', 'blocker squashed onto base']);
+    const newBase = runGitSync(repo, ['rev-parse', base]).trim();
+
+    wt.rebaseOnto(path, newBase, oldTip, 'dispatch/dependent');
+
+    // The dependent's own file must survive the rebase...
+    expect(readFileSync(join(path, 'dependent.txt'), 'utf8')).toBe(
+      'dependent work\n'
+    );
+    // ...and the new history must be newBase + exactly one replayed commit
+    // (not newBase + blocker commit + dependent commit, which is what
+    // passing the dependent's own tip as `oldTip` would produce).
+    const log = runGitSync(path, ['log', '--pretty=%s']).trim().split('\n');
+    expect(log).toEqual([
+      'dependent work',
+      'blocker squashed onto base',
+      'initial commit',
+    ]);
+
+    wt.remove(path, 'dispatch/dependent');
+    runGitSync(repo, ['branch', '-D', 'dispatch/blocker']);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('aborts and throws on conflict, leaving the worktree clean for a retry', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const base = wt.defaultBaseBranch();
+    const startTip = runGitSync(repo, ['rev-parse', base]).trim();
+
+    const path = join(repo, '..', 'wt-rebase-conflict-test');
+    wt.add(path, 'dispatch/conflict', base);
+    writeFileSync(join(path, 'README.md'), 'dependent edit\n');
+    runGitSync(path, ['add', '-A']);
+    runGitSync(path, ['commit', '-m', 'dependent edit']);
+
+    // Move the base forward with a conflicting edit to the same line.
+    writeFileSync(join(repo, 'README.md'), 'base edit\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'base edit']);
+    const newBase = runGitSync(repo, ['rev-parse', base]).trim();
+
+    expect(() =>
+      wt.rebaseOnto(path, newBase, startTip, 'dispatch/conflict')
+    ).toThrow();
+
+    // Worktree must be left clean, no rebase in progress.
+    const status = runGitSync(path, ['status', '--porcelain']).trim();
+    expect(status).toBe('');
+
+    wt.remove(path, 'dispatch/conflict');
+    rmSync(repo, { recursive: true, force: true });
+  });
+});
+
+describe('resolveCommit', () => {
+  it('resolves a branch name to the same sha `git rev-parse` reports', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    const base = wt.defaultBaseBranch();
+    const expected = runGitSync(repo, ['rev-parse', base]).trim();
+
+    expect(wt.resolveCommit(base)).toBe(expected);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('throws on an unknown ref', () => {
+    const repo = initGitRepo('dispatch-wt-');
+    const wt = new WorktreeManager(repo);
+    expect(() => wt.resolveCommit('refs/heads/does-not-exist')).toThrow();
+    rmSync(repo, { recursive: true, force: true });
+  });
+});
+
 describe('WorktreeManager.pruneOrphans', () => {
   it('removes worktree directories that are not in the keep set', () => {
     const repo = initGitRepo();
