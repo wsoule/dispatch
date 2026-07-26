@@ -15,6 +15,51 @@ export function isDone(t: TaskDoc): boolean {
 }
 
 /**
+ * Whether a blocker no longer holds up *dispatching* its dependents. Looser
+ * than `isDone`: a run that finishes leaves its task at `in-review` and only
+ * reaches `done` once a human merges it, so gating dispatch on `isDone` keeps
+ * a dependent idle for the whole review window. Dispatch can start as soon as
+ * the blocker's code exists on a branch, which is exactly `in-review`.
+ *
+ * `'in-review'` is hardcoded for the same reason `isDone` hardcodes
+ * `'done'`/`'cancelled'` — the built-in statuses are the contract the
+ * orchestrator's own transitions are written against, even though
+ * `.dispatch/config.yml` lets a project add custom status names.
+ */
+export function isSatisfiedForDispatch(t: TaskDoc): boolean {
+  return isDone(t) || t.meta.status === 'in-review';
+}
+
+/**
+ * Tasks the orchestrator may start *now*: same filter and ordering as
+ * `readyTasks`, but blockers only need to be dispatch-satisfied (see
+ * `isSatisfiedForDispatch`) rather than done.
+ *
+ * Deliberately a separate function rather than an option on `readyTasks`:
+ * `readyTasks` is what the CLI, the MCP `ready` tool, the board's Blocked
+ * badge, and merge-queue ordering all mean by "ready", and none of those
+ * should start calling a task with an unmerged blocker ready.
+ */
+export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
+  const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+  return tasks
+    .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
+    .filter((t) =>
+      t.meta.blockedBy.every((dep) => {
+        const d = byId.get(dep);
+        return d === undefined || isSatisfiedForDispatch(d);
+      })
+    )
+    .sort((a, b) => {
+      const byPriority =
+        PRIORITY_ORDER[a.meta.priority] - PRIORITY_ORDER[b.meta.priority];
+      return byPriority !== 0
+        ? byPriority
+        : a.meta.created.localeCompare(b.meta.created);
+    });
+}
+
+/**
  * Tasks safe to start now: kind=task, status=todo, all blockers done.
  * Dangling blocker ids (no task in the set) do not block; `doctor` reports them.
  */
