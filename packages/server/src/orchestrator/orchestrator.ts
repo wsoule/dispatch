@@ -51,6 +51,12 @@ export interface OrchestratorContext {
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
+  // Optional override for the 2+-blocker stacked-dispatch path — the only
+  // path that mutates the user's actual repository. Production never passes
+  // it (a real JjManager is built below); tests inject one wired to a stub
+  // CommandRunner so that path can be exercised without a jj binary, which is
+  // otherwise structurally untestable.
+  jj?: JjManager;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -98,7 +104,7 @@ export class Orchestrator {
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
-    this.jj = new JjManager(ctx.rootDir);
+    this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -286,26 +292,40 @@ export class Orchestrator {
     // Only reached with 2+ unmerged blockers — the one case that genuinely
     // needs jj, so converting the user's repo never happens for a dispatch
     // that could have been served by plain git.
-    const wasColocated = await this.jj.isColocated();
-    if (!(await this.jj.ensureColocated())) {
-      // No jj: no way to build a multi-parent base. Fall back rather than
-      // dropping a blocker's work on the floor.
+    //
+    // The whole section is wrapped because this is the only part of dispatch
+    // that shells out to a tool the user may not have, in a repo shape jj may
+    // refuse: no jj failure may turn a perfectly valid dispatch into a 500.
+    // Every failure degrades to the same default-base fallback the
+    // jj-unavailable case takes, and says so in the task's own Activity.
+    try {
+      const wasColocated = await this.jj.isColocated();
+      if (!(await this.jj.ensureColocated())) {
+        // No jj: no way to build a multi-parent base. Fall back rather than
+        // dropping a blocker's work on the floor.
+        this.appendTaskActivity(
+          task.meta.id,
+          `stacked dispatch: ${parents.length} unmerged blockers need a multi-parent base, but jj is unavailable — using ${defaultBase}`
+        );
+        return { base: defaultBase, stackParents: [] };
+      }
+      if (!wasColocated) {
+        // Converting a user's repo is never silent — §4.2 of the spec.
+        this.appendTaskActivity(
+          task.meta.id,
+          'stacked dispatch: converted this repository to a colocated jj repo (reversible with `jj git colocation disable`)'
+        );
+      }
+      const bookmark = `dispatch/stack-base-${task.meta.id}`;
+      const base = await this.jj.mergeBase(parents, bookmark);
+      return { base, stackParents: parents };
+    } catch (err) {
       this.appendTaskActivity(
         task.meta.id,
-        `stacked dispatch: ${parents.length} unmerged blockers need a multi-parent base, but jj is unavailable — using ${defaultBase}`
+        `stacked dispatch: building a multi-parent base over ${parents.length} unmerged blockers failed (${(err as Error).message}) — using ${defaultBase}`
       );
       return { base: defaultBase, stackParents: [] };
     }
-    if (!wasColocated) {
-      // Converting a user's repo is never silent — §4.2 of the spec.
-      this.appendTaskActivity(
-        task.meta.id,
-        'stacked dispatch: converted this repository to a colocated jj repo (reversible with `jj git colocation disable`)'
-      );
-    }
-    const bookmark = `dispatch/stack-base-${task.meta.id}`;
-    const base = await this.jj.mergeBase(parents, bookmark);
-    return { base, stackParents: parents };
   }
 
   // Appends one Activity line to a task, mirroring EpicEngine's

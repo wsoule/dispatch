@@ -516,3 +516,104 @@ describe('EpicEngine.start', () => {
     void childIds;
   });
 });
+
+describe('EpicEngine fill serialization', () => {
+  // Regression guard for the concurrency window the async dispatch conversion
+  // opened. Orchestrator.dispatch now `await`s base resolution BEFORE it
+  // registers the run, so a fill sitting in that await has a dispatch in
+  // flight that the registry cannot see yet. If a hook-driven fill is allowed
+  // to run concurrently with start()'s own initial fill, both read the same
+  // live-run count and between them hand out more slots than the cap.
+  //
+  // Deterministic, with no timers involved: the first child's executor
+  // finishes SYNCHRONOUSLY inside `executor.start()`, so its terminal hook —
+  // and therefore the hook-driven fill — is raised while start()'s fill is
+  // still mid-loop, awaiting the next dispatch. Every subsequent child stays
+  // live forever, so the live-run count is simply the number dispatched so
+  // far. Sampling that count inside `start()` (by which point the orchestrator
+  // has already registered and transitioned the run) checks the cap at the
+  // exact instant each slot is consumed, rather than polling for it.
+  it('never exceeds the concurrency cap when a run finishes during the initial fill', async () => {
+    const store = TaskStore.init(repo);
+    const cache = new TaskCache();
+    cache.rebuild(store);
+    const events = new EventBus();
+    const orchestrator = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache,
+      events,
+    });
+
+    const liveSamples: number[] = [];
+    let started = 0;
+    orchestrator.registerExecutor('fake', {
+      start(_opts, evts) {
+        started++;
+        liveSamples.push(
+          orchestrator
+            .list()
+            .filter(
+              (r) =>
+                r.state !== 'finished' &&
+                r.state !== 'failed' &&
+                r.state !== 'cancelled'
+            ).length
+        );
+        // Only the first run finishes, and it does so synchronously — that is
+        // what raises a terminal hook from inside start()'s own fill.
+        if (started === 1) evts.onFinish({ state: 'finished' });
+        return {
+          interrupt: () => Promise.resolve(),
+          send: () => {},
+          approve: () => {},
+        };
+      },
+    });
+
+    const epics = new EpicEngine({
+      rootDir: repo,
+      store,
+      cache,
+      events,
+      orchestrator,
+    });
+    const { epicId } = createEpicWithChildren(store, 6);
+
+    await epics.start(epicId, { concurrency: 2, executor: 'fake' });
+    // Let every chained fill drain.
+    await waitFor(() => orchestrator.list().length >= 3);
+    await sleep(50);
+
+    expect(liveSamples.length).toBeGreaterThan(2);
+    expect(Math.max(...liveSamples)).toBeLessThanOrEqual(2);
+  });
+
+  // Fix 5: an auto-dispatch failure must leave a durable trail, not just a
+  // console line — invokeHooksSafely's rule for a throwing subscriber.
+  it('records a failed hook-driven fill on the epic Activity', async () => {
+    const harness = makeHarness();
+    const { epicId } = createEpicWithChildren(harness.store, 2);
+    await harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
+    await waitFor(() => harness.orchestrator.list().length === 1);
+
+    // Break the next fill: dispatching the second child now fails inside
+    // WorktreeManager.add with a plain Error, which fillQueue does not catch.
+    const gitDir = join(repo, '.git');
+    const runId = harness.orchestrator.list()[0].id;
+    Bun.spawnSync(['chmod', '-R', '000', gitDir]);
+    try {
+      harness.orchestrator.approve(runId, 'go', true);
+      await waitFor(() => {
+        const body = harness.store.get(epicId)?.body ?? '';
+        return body.includes('[hook error] auto-dispatch failed');
+      });
+    } finally {
+      Bun.spawnSync(['chmod', '-R', '755', gitDir]);
+    }
+
+    expect(harness.store.get(epicId)?.body).toContain(
+      '[hook error] auto-dispatch failed'
+    );
+  });
+});
