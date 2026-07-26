@@ -1,4 +1,4 @@
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'bun:test';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
@@ -51,6 +51,38 @@ describe('ClaudePlanner.plan', () => {
 
     const result = await planner.plan('build the thing');
     expect(result).toEqual(proposal);
+  });
+
+  // CLI parity (matching ClaudeExecutor's sdkOptions in executors/claude.ts):
+  // without `systemPrompt`'s `claude_code` preset and `settingSources`
+  // including `'project'`, the SDK contract states CLAUDE.md/AGENTS.md never
+  // load — the planner would then be planning blind against the checkout its
+  // `cwd` points at instead of grounding proposals in the project's own
+  // instruction files, the same gap ClaudeExecutor's own comment documents.
+  it('passes the claude_code system prompt preset and full settingSources, mirroring ClaudeExecutor', async () => {
+    const proposal: PlanProposal = { tasks: [] };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async function* fakeMessages(): AsyncGenerator<any> {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        structured_output: proposal,
+      };
+    }
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return fakeMessages() as unknown as Query;
+    };
+    const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
+
+    await planner.plan('build the thing');
+
+    expect(captured?.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+    });
+    expect(captured?.settingSources).toEqual(['user', 'project', 'local']);
   });
 
   it('rejects when the result message is an error subtype', async () => {

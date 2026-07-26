@@ -101,7 +101,9 @@ if (process.platform === 'darwin' && identity) {
       join(resourcesDir, name),
     ]);
   }
-  console.log(`build-sidecars: signed both sidecars as "${identity}"`);
+  console.log(
+    `build-sidecars: signed all ${SIDECARS.length} sidecars as "${identity}"`
+  );
 } else {
   console.log(
     'build-sidecars: APPLE_SIGNING_IDENTITY not set — sidecars left unsigned'

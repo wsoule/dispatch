@@ -7,11 +7,35 @@
       "cache_write": 18.75,
       "cache_read": 1.5
     },
+    "claude-opus-5": {
+      "input": 5.0,
+      "output": 25.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5
+    },
+    "claude-opus-4-7": {
+      "input": 5.0,
+      "output": 25.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5
+    },
     "claude-sonnet-5": {
       "input": 3.0,
       "output": 15.0,
       "cache_write": 3.75,
       "cache_read": 0.3
+    },
+    "claude-sonnet-4-6": {
+      "input": 3.0,
+      "output": 15.0,
+      "cache_write": 3.75,
+      "cache_read": 0.3
+    },
+    "claude-fable-5": {
+      "input": 10.0,
+      "output": 50.0,
+      "cache_write": 12.5,
+      "cache_read": 1.0
     },
     "claude-haiku-4-5-20251001": {
       "input": 1.0,
