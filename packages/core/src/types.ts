@@ -30,7 +30,8 @@ export interface TaskMeta {
   external: string | null;
   // When true, the dispatched agent is instructed (see server's prompt builder) to re-review
   // its own diff against the acceptance criteria before finishing, rather than stopping at
-  // "tests pass." Defaults to false — most tasks don't need the extra turn.
+  // "tests pass." Defaults to true — the extra pass is cheap next to reviewing (or merging) a
+  // half-checked diff, so tasks opt out of it rather than into it.
   selfReview: boolean;
 }
 
