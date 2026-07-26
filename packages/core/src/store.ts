@@ -40,6 +40,7 @@ export interface CreateInput {
   labels?: string[];
   priority?: Priority;
   assignee?: Assignee;
+  selfReview?: boolean;
 }
 
 export interface UpdatePatch {
@@ -51,6 +52,7 @@ export interface UpdatePatch {
   labels?: string[];
   priority?: Priority;
   assignee?: Assignee;
+  selfReview?: boolean;
   appendActivity?: string;
   // Free-text body sections (edited as whole-section replacements via
   // taskfile.ts's setSection), so the app can edit a task's Description and
@@ -118,6 +120,7 @@ export class TaskStore {
       created: now,
       updated: now,
       external: null,
+      selfReview: input.selfReview ?? false,
     };
     const body = `\n## Description\n\n${input.description ?? ''}\n\n## Acceptance Criteria\n\n## Activity\n`;
     const doc: TaskDoc = { meta, body };

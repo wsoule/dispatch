@@ -104,6 +104,17 @@ function validateStringField(value: unknown, label: string): string | null {
   return null;
 }
 
+// Validates that an optional field, if present, is a boolean — used for
+// `selfReview`, mirroring core's taskfile.ts `self-review` boolean check so a
+// bad value is rejected here rather than only after it's already written.
+function validateBooleanField(value: unknown, label: string): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'boolean') {
+    return `invalid ${label}: expected a boolean`;
+  }
+  return null;
+}
+
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
@@ -139,6 +150,8 @@ function validateTaskFields(
   if (labelsError) return labelsError;
   const blockedByError = validateStringArrayField(value.blockedBy, 'blockedBy');
   if (blockedByError) return blockedByError;
+  const selfReviewError = validateBooleanField(value.selfReview, 'selfReview');
+  if (selfReviewError) return selfReviewError;
   // Free-text body sections — validated as optional strings before they reach
   // setSection, which would otherwise `.trim()` a non-string and throw.
   const descriptionError = validateStringField(

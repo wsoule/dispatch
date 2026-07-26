@@ -28,6 +28,10 @@ export interface TaskMeta {
   created: string;
   updated: string;
   external: string | null;
+  // When true, the dispatched agent is instructed (see server's prompt builder) to re-review
+  // its own diff against the acceptance criteria before finishing, rather than stopping at
+  // "tests pass." Defaults to false — most tasks don't need the extra turn.
+  selfReview: boolean;
 }
 
 export interface TaskDoc {

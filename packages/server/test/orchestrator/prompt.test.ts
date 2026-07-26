@@ -22,6 +22,7 @@ function fixtureTask(): TaskDoc {
       created: '2026-07-20T00:00:00.000Z',
       updated: '2026-07-20T00:00:00.000Z',
       external: null,
+      selfReview: false,
     },
     body:
       '\n## Description\n\nAdd a rate limiter to the login endpoint.\n\n' +
@@ -46,6 +47,7 @@ function fixtureEpic(): TaskDoc {
       created: '2026-07-01T00:00:00.000Z',
       updated: '2026-07-01T00:00:00.000Z',
       external: null,
+      selfReview: false,
     },
     body: '\n## Description\n\nMake the auth system resistant to abuse.\n\n## Activity\n',
   };
@@ -77,5 +79,18 @@ describe('buildTaskPrompt', () => {
     expect(prompt).toContain(task.meta.id);
     expect(prompt).toContain(task.meta.title);
     expect(prompt).toContain('5 attempts per minute per IP');
+  });
+
+  it('omits the self-review instruction when selfReview is false', () => {
+    const prompt = buildTaskPrompt(fixtureTask(), null);
+    expect(prompt).not.toContain('self-review your work');
+  });
+
+  it('appends the self-review instruction when selfReview is true', () => {
+    const task = fixtureTask();
+    task.meta.selfReview = true;
+    const prompt = buildTaskPrompt(task, null);
+    expect(prompt).toContain('self-review your work');
+    expect(prompt).toContain('Only finish when the review comes back clean.');
   });
 });

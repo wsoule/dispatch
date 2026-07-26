@@ -250,13 +250,6 @@ function App() {
     onCommand: (command) => {
       if (command === 'open-palette') dispatchNav({ type: 'togglePalette' });
       else if (command === 'escape') dispatchNav({ type: 'escape' });
-      else if (
-        command === 'new-task' &&
-        activeProject !== null &&
-        data.client !== null
-      ) {
-        openCreateTask();
-      }
     },
   });
 

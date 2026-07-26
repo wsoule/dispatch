@@ -198,6 +198,8 @@ export function EpicCardTile({
             onChange={(e) =>
               setConcurrency(clampConcurrencyInput(e.target.value))
             }
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
             aria-label="Epic dispatch concurrency"
             className="h-6 w-11 rounded px-1.5 py-0 text-[11px]"
           />
@@ -206,7 +208,10 @@ export function EpicCardTile({
               variant="ghost"
               size="sm"
               disabled={busy}
-              onClick={() => void run(() => onStop(doc.meta.id))}
+              onClick={(e) => {
+                e.stopPropagation();
+                void run(() => onStop(doc.meta.id));
+              }}
               className="hover:bg-destructive/10 hover:text-destructive h-6 gap-1 px-2 text-[11px]"
             >
               <Square className="size-3" />
@@ -217,7 +222,10 @@ export function EpicCardTile({
               variant="ghost"
               size="sm"
               disabled={busy}
-              onClick={() => void run(() => onWork(doc.meta.id, concurrency))}
+              onClick={(e) => {
+                e.stopPropagation();
+                void run(() => onWork(doc.meta.id, concurrency));
+              }}
               className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
             >
               <Play className="size-3" />

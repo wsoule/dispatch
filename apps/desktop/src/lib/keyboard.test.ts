@@ -71,11 +71,8 @@ describe('resolveGlobalKeyCommand', () => {
     ).toBeNull();
   });
 
-  test('"c" starts a new task only when not typing', () => {
-    expect(resolveGlobalKeyCommand(key('c'), baseGlobalCtx)).toBe('new-task');
-    expect(
-      resolveGlobalKeyCommand(key('c'), { ...baseGlobalCtx, isTyping: true })
-    ).toBeNull();
+  test('"c" is not a global shortcut (would conflict with copy)', () => {
+    expect(resolveGlobalKeyCommand(key('c'), baseGlobalCtx)).toBeNull();
   });
 
   test('bare Enter outside text fields resolves to null globally (C2)', () => {

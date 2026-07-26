@@ -13,9 +13,19 @@ export interface ModelOption {
 
 export const MODELS: ModelOption[] = [
   {
+    id: 'claude-opus-5',
+    label: 'Opus 5',
+    hint: 'Most capable Opus — the default for real work',
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Fable 5',
+    hint: "Anthropic's most capable model — hardest long-horizon work (premium pricing)",
+  },
+  {
     id: 'claude-opus-4-8',
     label: 'Opus 4.8',
-    hint: 'Most capable — the default for real work',
+    hint: 'Previous-generation Opus',
   },
   {
     id: 'claude-sonnet-5',
