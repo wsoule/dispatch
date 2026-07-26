@@ -1,4 +1,4 @@
-import { loadConfig, readyTasks } from '@dispatch/core';
+import { dispatchableTasks, loadConfig } from '@dispatch/core';
 import type { TaskDoc, TaskStore } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
@@ -71,13 +71,15 @@ export class EpicEngine {
 
   constructor(private readonly ctx: EpicEngineContext) {
     // Two distinct triggers can make an epic's next dispatch decision stale:
-    // a run reaching a terminal state (frees a concurrency slot) and a run
-    // being reviewed (can flip a blocker all the way to `done`, which is
-    // what core's readyTasks() actually gates a dependent task on — see
-    // Orchestrator's onRunReviewed doc comment). They are handled by two
-    // *distinct* methods below (not funneled into one), because a discard
-    // review must NOT trigger the same re-dispatch a merge/PR-merge should
-    // (see I3 in onRunReviewed's own doc comment).
+    // a run reaching a terminal state (frees a concurrency slot, and — since
+    // Orchestrator.handleFinish moves the task to `in-review` before firing
+    // terminal hooks — is also the exact moment a blocker becomes
+    // dispatch-satisfying; see core's isSatisfiedForDispatch) and a run
+    // being reviewed (a discard sends the task back to `todo`, undoing that
+    // satisfaction for any dependent not yet dispatched). They are handled
+    // by two *distinct* methods below (not funneled into one), because a
+    // discard review must NOT trigger the same re-dispatch a merge/PR-merge
+    // would (see I3 in onRunReviewed's own doc comment).
     ctx.orchestrator.onRunTerminal((meta) => this.onRunTerminal(meta));
     ctx.orchestrator.onRunReviewed((meta) => this.onRunReviewed(meta));
   }
@@ -200,8 +202,12 @@ export class EpicEngine {
   // wrong, and auto-re-dispatching the identical prompt would just burn
   // budget repeating the same mistake. The task simply stays in the ready
   // queue for a human (or a future session) to explicitly pick up again.
-  // Only merge/PR-merge (task -> `done`) can actually unblock a sibling
-  // under core's readyTasks() semantics, so only those cascade here.
+  // Merge/PR-merge (task -> `done`) is no longer the trigger that unblocks a
+  // sibling: fillQueue's dispatchableTasks() already counts a blocker as
+  // satisfied the moment it reaches `in-review`, which onRunTerminal already
+  // reacted to. The non-discard branch here still re-checks readiness
+  // (cheap, and a no-op if nothing changed) so nothing is missed if a review
+  // action is ever the first signal an active session sees.
   private onRunReviewed(meta: RunMeta): void {
     if (meta.reviewAction === 'discard') return;
     this.reactAcrossSessions();
@@ -223,13 +229,14 @@ export class EpicEngine {
   // the actual registry, not a shadow copy, that the concurrency guarantee
   // has to hold against.
   //
-  // C1: readiness is computed over the FULL task set (`readyTasks` gates a
-  // blocker on being done/cancelled, but treats a blocker id that isn't in
-  // the array it's given as automatically satisfied — see core's own
-  // readyTasks doc comment) and only *then* intersected with this epic's
-  // children. Passing just `children` here would silently ignore a blocker
-  // that genuinely exists elsewhere in the project (a different epic, or no
-  // epic at all) simply because it isn't a sibling.
+  // C1: readiness is computed over the FULL task set (`dispatchableTasks`
+  // gates a blocker on being in-review/done/cancelled, but treats a blocker
+  // id that isn't in the array it's given as automatically satisfied — see
+  // core's own dispatchableTasks/readyTasks doc comments) and only *then*
+  // intersected with this epic's children. Passing just `children` here
+  // would silently ignore a blocker that genuinely exists elsewhere in the
+  // project (a different epic, or no epic at all) simply because it isn't a
+  // sibling.
   private fillQueue(epicId: string): void {
     const session = this.sessions.get(epicId);
     if (session === undefined || !session.active) return;
@@ -244,7 +251,7 @@ export class EpicEngine {
     let slots = session.concurrency - liveCount;
     if (slots <= 0) return;
 
-    const ready = readyTasks(this.ctx.cache.query()).filter((t) =>
+    const ready = dispatchableTasks(this.ctx.cache.query()).filter((t) =>
       childIds.has(t.meta.id)
     );
     for (const task of ready) {
