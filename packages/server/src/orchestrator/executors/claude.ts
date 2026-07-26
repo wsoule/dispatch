@@ -57,20 +57,53 @@ function resolveMcpBin(): string {
 // dispatch MCP server's `agent_message`/`message_user` tools (packages/mcp/
 // src/tools.ts) read it back out so a calling agent never has to know or
 // supply its own run id just to be identified as the sender/raiser.
+// The only inherited environment variables the dispatch MCP server child is
+// given. This is an ALLOWLIST, and deliberately so: the SDK serializes this
+// `env` into the `--mcp-config` value on the spawned CLI's **argv**, where it
+// is readable by any local process through `ps`. Copying the whole
+// `process.env` (what this used to do) therefore published every credential
+// dispatchd happened to inherit — GITHUB_TOKEN, API keys, DB passwords — to
+// anything that could list processes.
+//
+// A denylist can't work here; secrets have no reliable naming convention. An
+// allowlist can, because the child's needs are tiny and known: the three
+// DISPATCH_* variables it actually reads (see packages/mcp/src/tools.ts and
+// daemon.ts) plus the handful the runtime itself needs to start.
+//
+// Note this restricts *only* the MCP server child. The agent's own tools run
+// in the Claude Code CLI's environment, so nothing here limits what a
+// dispatched agent can use in Bash.
+const MCP_ENV_PASSTHROUGH: readonly string[] = [
+  // Required for `bun` to be found and to run at all.
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  // Locale — keeps the child's stdio encoding matching the parent's.
+  'LANG',
+  'LC_ALL',
+  // Bun's own install/cache root, when the install isn't in the default place.
+  'BUN_INSTALL',
+  // Redirects all dispatch state away from the real home directory; the
+  // child's own daemon discovery reads it (packages/mcp/src/daemon.ts), so
+  // dropping it would break every test harness and non-default install.
+  'DISPATCH_HOME',
+];
+
 function buildDispatchMcpServerConfig(
   cwd: string,
   projectRoot: string,
   runId: string
 ): McpServerConfig {
-  // `McpStdioServerConfig.env` is `Record<string, string>`, but
-  // `process.env` is `Record<string, string | undefined>` (any key can be
-  // unset) — drop the unset ones rather than passing `undefined` through.
-  // An explicit `env` on the spawned child replaces its inherited
-  // environment entirely (unlike omitting `env`, which inherits as-is), so
-  // this has to carry everything the child needs — PATH for `bun` to find
-  // itself included — not just the one new variable.
+  // `McpStdioServerConfig.env` is `Record<string, string>`, but `process.env`
+  // is `Record<string, string | undefined>` (any key can be unset) — drop the
+  // unset ones rather than passing `undefined` through. An explicit `env` on
+  // the spawned child replaces its inherited environment entirely (unlike
+  // omitting `env`, which inherits as-is), so this must carry everything the
+  // child needs — see MCP_ENV_PASSTHROUGH for why that set is an allowlist
+  // rather than the whole environment.
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const key of MCP_ENV_PASSTHROUGH) {
+    const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
   env.DISPATCH_PROJECT_ROOT = projectRoot;
@@ -240,10 +273,76 @@ function entriesForAssistantContent(
   return entries;
 }
 
+// Human-readable explanations for the `terminal_reason` values that mean the
+// agent was CUT OFF rather than finishing its work. Only `'completed'` means
+// genuinely done, so this map exists purely to give the common truncation
+// causes a message a human can act on; anything absent from it still fails
+// (see reasonForTruncation) carrying the raw reason string.
+//
+// The load-bearing entry is `'blocking_limit'` — the Claude usage/session
+// limit. See the doc comment on finishFromResult for why that one silently
+// looked like success.
+const TRUNCATING_TERMINAL_REASONS: Record<string, string> = {
+  blocking_limit:
+    'Claude usage limit reached before the agent finished — resume this run once your limit resets',
+  rapid_refill_breaker:
+    'Claude rate limiter stopped the session before the agent finished — resume this run shortly',
+  budget_exhausted: 'run hit its cost budget before the agent finished',
+  max_turns: 'run hit its turn limit before the agent finished',
+  prompt_too_long:
+    'conversation grew too long for the model before the agent finished',
+  hook_stopped: 'a hook stopped the session before the agent finished',
+  stop_hook_prevented: 'a stop hook prevented the agent from finishing',
+  api_error: 'the Claude API errored before the agent finished',
+  model_error: 'the model errored before the agent finished',
+  image_error: 'an image could not be processed before the agent finished',
+  malformed_tool_use_exhausted:
+    'the agent could not produce a valid tool call after repeated attempts',
+  structured_output_retry_exhausted:
+    'the agent could not produce valid structured output after repeated attempts',
+  turn_setup_failed: 'a turn failed to start before the agent finished',
+  tool_deferred_unavailable: 'a required tool was unavailable',
+  aborted_streaming: 'the session was aborted mid-response',
+  aborted_tools: 'the session was aborted mid-tool-call',
+};
+
+// Decides whether a `subtype: 'success'` result actually represents finished
+// work, returning the failure message when it does not and `null` when the run
+// genuinely completed.
+//
+// Deliberately an ALLOWLIST of one value (`'completed'`): a `terminal_reason`
+// this build has never heard of — a value a future SDK adds — defaults to
+// "not complete" rather than silently claiming success. That default is the
+// entire point; the alternative is re-introducing this class of bug every
+// time the SDK grows a new stop condition.
+function reasonForTruncation(message: SDKResultMessage): string | null {
+  // Older SDKs (and FakeExecutor fixtures) never set this field at all —
+  // absent means "no opinion", so fall back to the subtype-only judgement
+  // rather than failing every run.
+  const reason = (message as { terminal_reason?: string }).terminal_reason;
+  if (reason === undefined || reason === 'completed') return null;
+  // Not a truncation: the turn was intentionally handed off rather than cut
+  // short. Dispatch enables neither feature, but claiming failure for a
+  // deliberate handoff would be its own wrong answer.
+  if (reason === 'background_requested' || reason === 'tool_deferred') {
+    return null;
+  }
+  return TRUNCATING_TERMINAL_REASONS[reason] ?? `agent stopped: ${reason}`;
+}
+
 // Turns the SDK's terminal `result` message into the ExecutorEvents.onFinish
-// shape: `subtype: 'success'` is a finished run; every other subtype
-// (error_max_turns, error_max_budget_usd, error_during_execution, ...) is a
-// failed one, with `errors` (when present) joined into a single message.
+// shape. Every subtype other than `'success'` (error_max_turns,
+// error_max_budget_usd, error_during_execution, ...) is a failed run, with
+// `errors` (when present) joined into a single message.
+//
+// `subtype: 'success'` alone is NOT enough to call a run finished, and reading
+// it that way was the "hit the session limit but reported complete" bug: the
+// subtype describes the CLI *process* exiting cleanly, not the agent
+// accomplishing anything. A run the Claude usage limit cut off mid-task exits
+// exactly that cleanly, reporting the real outcome on `terminal_reason`
+// (and/or `is_error`) instead — so both are checked here before a run is
+// allowed to claim it finished. Turn/cost accounting is preserved either way,
+// so reclassifying a run never loses what it already spent.
 function finishFromResult(message: SDKResultMessage): {
   state: 'finished' | 'failed';
   costUsd?: number;
@@ -257,6 +356,21 @@ function finishFromResult(message: SDKResultMessage): {
     sessionId: message.session_id,
   };
   if (message.subtype === 'success') {
+    const truncation = reasonForTruncation(message);
+    if (truncation !== null) {
+      return { state: 'failed', ...base, error: truncation };
+    }
+    if (message.is_error) {
+      const detail = message.result.trim();
+      return {
+        state: 'failed',
+        ...base,
+        error:
+          detail.length > 0
+            ? detail
+            : 'agent reported an error before finishing',
+      };
+    }
     return { state: 'finished', ...base };
   }
   return {

@@ -292,6 +292,126 @@ describe('MergeQueue local-run happy path', () => {
   });
 });
 
+// The "merge queue does not work" report. A dirty main checkout is an
+// ENVIRONMENTAL precondition — transient, global, and fixed by the user in
+// seconds — but it used to be treated like a content failure: the entry
+// fast-failed straight into history ~80ms after enqueue, so from the UI the
+// queue simply swallowed the run. Environmental blockers now behave like the
+// `waiting-blockers` case that already existed: the entry stays in line,
+// carrying the reason, and retries once the environment clears.
+describe('MergeQueue environmental blockers', () => {
+  it('keeps the entry queued and blocked (not failed) when the main checkout is dirty', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    // The exact real-world trigger: one stray untracked file at the repo root.
+    writeFileSync(join(harness.rootDir, 'stray-download.zip'), 'nope\n');
+
+    queue.enqueue(runId);
+    await waitFor(
+      () => queue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+
+    const snapshot = queue.snapshot();
+    // Still in line — this is the whole point. Nothing in history.
+    expect(snapshot.entries).toHaveLength(1);
+    expect(snapshot.history).toHaveLength(0);
+    // And it says which file, so the user can actually act.
+    expect(snapshot.entries[0].reason).toContain('stray-download.zip');
+
+    // Nothing landed: the run is unreviewed and the task is not done.
+    expect(harness.orchestrator.getRun(runId)?.meta.reviewedAt).toBeUndefined();
+    expect(harness.store.get(taskId)?.meta.status).not.toBe('done');
+  });
+
+  it('merges the blocked entry once the checkout is clean again and the queue is re-checked', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const stray = join(harness.rootDir, 'stray-download.zip');
+    writeFileSync(stray, 'nope\n');
+    queue.enqueue(runId);
+    await waitFor(
+      () => queue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+
+    // The user cleans up, then the queue re-checks — no re-enqueue needed.
+    rmSync(stray);
+    queue.recheck();
+
+    await waitFor(() => queue.snapshot().history.length === 1);
+    expect(queue.snapshot().history[0].state).toBe('merged');
+    expect(queue.snapshot().entries).toHaveLength(0);
+    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+  });
+
+  // A blocked entry must not wedge the queue's own bookkeeping: the blocker is
+  // global (one checkout), so nothing behind it could proceed either, and both
+  // entries must survive to retry rather than one being failed out.
+  it('holds every queued entry when the environment blocks, failing none of them', async () => {
+    const harness = makeHarness();
+    const { runId: first } = await dispatchAndFinish(harness, 'First');
+    const { runId: second } = await dispatchAndFinish(harness, 'Second');
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    writeFileSync(join(harness.rootDir, 'stray-download.zip'), 'nope\n');
+    queue.enqueue(first);
+    queue.enqueue(second);
+    await waitFor(
+      () => queue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+
+    const snapshot = queue.snapshot();
+    expect(snapshot.entries).toHaveLength(2);
+    expect(snapshot.history).toHaveLength(0);
+  });
+
+  // A real content conflict is NOT environmental — it needs a human to change
+  // the branch, so it must still fail out to history as before. This is the
+  // line the classification has to hold.
+  it('still fails a genuine rebase conflict out to history', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    stub.rebaseResult = { ok: false, stdout: '', stderr: 'CONFLICT' };
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+    expect(queue.snapshot().history[0].state).toBe('failed');
+    expect(queue.snapshot().entries).toHaveLength(0);
+  });
+
+  // A blocked entry is a display state, exactly like waiting-blockers: it
+  // reloads as `queued` so the next pump re-derives it from the live
+  // environment rather than trusting a stale reason from a dead daemon.
+  it('reloads a persisted blocked entry as queued', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const first = new MergeQueue(harness, stub.run);
+
+    const stray = join(harness.rootDir, 'stray-download.zip');
+    writeFileSync(stray, 'nope\n');
+    first.enqueue(runId);
+    await waitFor(
+      () => first.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+
+    // Environment fixed while the "daemon" was down, then a fresh queue over
+    // the same rootDir picks the entry back up and merges it.
+    rmSync(stray);
+    const second = new MergeQueue(harness, stub.run);
+    await waitFor(() => second.snapshot().history.length === 1);
+    expect(second.snapshot().history[0].state).toBe('merged');
+  });
+});
+
 describe('MergeQueue PR-run happy path', () => {
   it('fetches, rebases onto origin, force-pushes, gh merges, and marks merged via PR', async () => {
     const harness = makeHarness();

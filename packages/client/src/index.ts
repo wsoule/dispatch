@@ -7,6 +7,8 @@ export {
 } from './api';
 export type {
   ApiClient,
+  BranchEntry,
+  BranchEntryStatus,
   ConfirmResult,
   ConnectEventsOptions,
   DiffFile,

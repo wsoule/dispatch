@@ -493,3 +493,148 @@ describe('WebSocket run.changed / run.log broadcasts', () => {
     ws.close();
   });
 });
+
+// The branches surface's HTTP layer (spec §3). The interesting part here is
+// URL encoding: every dispatch branch name contains `/`, so the DELETE route
+// has to reassemble a name that URL parsing has already split apart.
+describe('/api/branches', () => {
+  // Dispatches a run and waits for it to finish, leaving one un-reviewed
+  // branch + worktree behind for the branches routes to act on.
+  async function finishedRun(title = 'Branch surface'): Promise<any> {
+    const task = await createTask(title);
+    const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'fake' }),
+    });
+    const meta = await json(res);
+    await waitFor(async () => {
+      const run = await json(await fetch(`${baseUrl}/api/runs/${meta.id}`));
+      return run.meta.state === 'finished';
+    });
+    return meta;
+  }
+
+  it('lists a finished run as reviewable', async () => {
+    const meta = await finishedRun();
+
+    const res = await fetch(`${baseUrl}/api/branches`);
+    const entries = await json(res);
+
+    expect(res.status).toBe(200);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].branch).toBe(meta.branch);
+    expect(entries[0].status).toBe('reviewable');
+    expect(entries[0].runId).toBe(meta.id);
+  });
+
+  it('returns an empty list for a project with no dispatch branches', async () => {
+    const res = await fetch(`${baseUrl}/api/branches`);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual([]);
+  });
+
+  it('frees a worktree while keeping the branch listed', async () => {
+    const meta = await finishedRun();
+
+    const res = await fetch(`${baseUrl}/api/branches/free-disk`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ branch: meta.branch }),
+    });
+    const entry = await json(res);
+
+    expect(res.status).toBe(200);
+    expect(entry.worktreeExists).toBe(false);
+    expect(entry.status).toBe('reviewable');
+    // Still listed, because the ref survived — that's what makes it recoverable.
+    expect(await json(await fetch(`${baseUrl}/api/branches`))).toHaveLength(1);
+    // And the diff still resolves, from the snapshot taken before removal.
+    expect((await fetch(`${baseUrl}/api/runs/${meta.id}/diff`)).status).toBe(
+      200
+    );
+  });
+
+  it('400s free-disk without a branch', async () => {
+    const res = await fetch(`${baseUrl}/api/branches/free-disk`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe('branch is required');
+  });
+
+  it('deletes a branch with no commits of its own without needing force', async () => {
+    // The default fake script only streams an assistant entry — it changes no
+    // files, so this branch is identical to main and deleting it destroys
+    // nothing. The unmerged guard must not fire on it.
+    const meta = await finishedRun();
+
+    const res = await fetch(
+      `${baseUrl}/api/branches/${encodeURIComponent(meta.branch)}`,
+      { method: 'DELETE' }
+    );
+
+    expect(res.status).toBe(200);
+    expect(await json(await fetch(`${baseUrl}/api/branches`))).toEqual([]);
+  });
+
+  it('409s deleting an unmerged branch and succeeds with force=1', async () => {
+    const meta = await finishedRun();
+    const encoded = encodeURIComponent(meta.branch);
+    // Real committed work on the branch is what makes it unmerged — the
+    // default fake script commits nothing, so the guard needs a commit here.
+    writeFileSync(join(meta.worktreePath, 'unmerged.txt'), 'work\n');
+    runGitSync(meta.worktreePath, ['add', '-A']);
+    runGitSync(meta.worktreePath, ['commit', '-m', 'unmerged work']);
+
+    const refused = await fetch(`${baseUrl}/api/branches/${encoded}`, {
+      method: 'DELETE',
+    });
+    expect(refused.status).toBe(409);
+    expect((await json(refused)).error).toMatch(/not merged/);
+
+    const forced = await fetch(`${baseUrl}/api/branches/${encoded}?force=1`, {
+      method: 'DELETE',
+    });
+    expect(forced.status).toBe(200);
+    expect(await json(await fetch(`${baseUrl}/api/branches`))).toEqual([]);
+  });
+
+  it('deletes a merged orphan ref', async () => {
+    runGitSync(root, ['branch', 'dispatch/t-ghost-r000000', 'main']);
+    const listed = await json(await fetch(`${baseUrl}/api/branches`));
+    expect(listed[0].status).toBe('orphan');
+
+    const res = await fetch(
+      `${baseUrl}/api/branches/${encodeURIComponent('dispatch/t-ghost-r000000')}`,
+      { method: 'DELETE' }
+    );
+
+    expect(res.status).toBe(200);
+    expect(await json(await fetch(`${baseUrl}/api/branches`))).toEqual([]);
+  });
+
+  it('accepts an un-encoded branch name whose slashes became separate segments', async () => {
+    runGitSync(root, ['branch', 'dispatch/t-ghost-r000000', 'main']);
+
+    // A client that did not encodeURIComponent the name — the route rejoins
+    // the trailing segments rather than 404ing on a partial name.
+    const res = await fetch(
+      `${baseUrl}/api/branches/dispatch/t-ghost-r000000`,
+      { method: 'DELETE' }
+    );
+
+    expect(res.status).toBe(200);
+    expect(await json(await fetch(`${baseUrl}/api/branches`))).toEqual([]);
+  });
+
+  it('404s an unknown branch', async () => {
+    const res = await fetch(
+      `${baseUrl}/api/branches/${encodeURIComponent('dispatch/t-nope-r000000')}`,
+      { method: 'DELETE' }
+    );
+    expect(res.status).toBe(404);
+  });
+});

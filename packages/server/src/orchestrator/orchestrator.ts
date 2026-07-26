@@ -30,6 +30,8 @@ import { buildTaskPrompt } from './prompt.js';
 import { RunRegistry } from './registry.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
+  BranchEntry,
+  BranchEntryStatus,
   Executor,
   ExecutorEvents,
   ExecutorStartOptions,
@@ -38,6 +40,7 @@ import type {
   RunState,
 } from './types.js';
 import {
+  MergeEnvironmentError,
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
@@ -60,6 +63,30 @@ export interface OrchestratorContext {
 // case (a run created with a dev-only executor, now being resumed under a
 // daemon that only has the real one).
 const DEFAULT_EXECUTOR_NAME = 'claude';
+
+// The ref namespace every run's branch is created under (see dispatch()) and
+// the prefix listBranches() enumerates. Kept as one constant so the writer and
+// the reader can never drift — a mismatch would make every dispatch branch
+// invisible to the Branches surface.
+const DISPATCH_BRANCH_PREFIX = 'dispatch/';
+
+// Sort order for the Branches surface: the rows that need a human decision
+// come first, read-only live runs last.
+const STATUS_RANK: Record<BranchEntryStatus, number> = {
+  leftover: 0,
+  orphan: 1,
+  reviewable: 2,
+  active: 3,
+};
+
+// How a branch ref relates to the run registry — see BranchEntryStatus for
+// what each value means. A branch with no run at all is an orphan; otherwise
+// the run's own lifecycle decides.
+function branchEntryStatus(meta: RunMeta | undefined): BranchEntryStatus {
+  if (meta === undefined) return 'orphan';
+  if (!TERMINAL_RUN_STATES.has(meta.state)) return 'active';
+  return meta.reviewedAt === undefined ? 'reviewable' : 'leftover';
+}
 
 /**
  * Coordinates the full lifecycle of orchestrator runs for one dispatch
@@ -184,7 +211,7 @@ export class Orchestrator {
     // each is merged/discarded, each keeping its own worktree/branch until
     // then. `sendMessage(..., { resume: true })` intentionally reuses the
     // *same* branch/worktree instead of generating a new one here.
-    const branch = `dispatch/${taskId}-${slugify(task.meta.title)}-${runId.slice(2)}`;
+    const branch = `${DISPATCH_BRANCH_PREFIX}${taskId}-${slugify(task.meta.title)}-${runId.slice(2)}`;
     const wtPath = worktreePath(this.ctx.rootDir, runId);
 
     this.worktrees.add(wtPath, branch, baseBranch);
@@ -268,10 +295,10 @@ export class Orchestrator {
     this.transition(runId, 'running');
   }
 
-  // `resume: true` is the request-changes path: only valid on a finished
-  // run, and re-dispatches into the *same* worktree/branch rather than
-  // provisioning a new one. Otherwise this is a plain mid-run message to a
-  // live run's executor.
+  // `resume: true` is the request-changes path: valid on any run that has
+  // come to rest with a resumable session, and re-dispatches into the *same*
+  // worktree/branch rather than provisioning a new one. Otherwise this is a
+  // plain mid-run message to a live run's executor.
   sendMessage(
     runId: string,
     text: string,
@@ -280,8 +307,25 @@ export class Orchestrator {
     const meta = this.requireRun(runId);
 
     if (opts.resume === true) {
-      if (meta.state !== 'finished') {
-        throw new OrchestratorClientError(`run is not finished: ${runId}`);
+      // A run must have stopped before it can be resumed — a live one takes
+      // the plain mid-run message path below instead.
+      if (!TERMINAL_RUN_STATES.has(meta.state)) {
+        throw new OrchestratorClientError(`run is still live: ${runId}`);
+      }
+      // Deliberately keyed on the SESSION, not on `state === 'finished'`.
+      // This gate used to admit only finished runs, which was indistinguish-
+      // able from the session check for as long as every non-crash
+      // termination was mislabelled `finished` (see ClaudeExecutor's
+      // truncated-run detection). Now that a usage-limit stop is correctly
+      // recorded as `failed`, keying on state would refuse to resume exactly
+      // the runs that most need it — cut off mid-task with their work still
+      // sitting on the branch. What makes a run resumable is having a session
+      // to resume into; a failed run with no session id would start a brand
+      // new agent while pretending to continue, so that still refuses.
+      if (meta.sessionId === undefined || meta.sessionId === '') {
+        throw new OrchestratorClientError(
+          `run has no resumable session: ${runId}`
+        );
       }
       // C2: a reviewed run's worktree/branch may already be gone (merge) or
       // intentionally abandoned (discard) — either way there is nothing left
@@ -651,14 +695,21 @@ export class Orchestrator {
   // refused the second run's merge with "local changes ... would be
   // overwritten").
   private mergeRun(meta: RunMeta, now: string): void {
+    // All three gates below describe the MAIN CHECKOUT, not this run, and all
+    // three clear the moment the user commits/stashes/checks out — so they
+    // throw MergeEnvironmentError rather than a plain conflict, which is what
+    // lets the merge queue hold an entry in line and retry instead of failing
+    // it out to history (see MergeQueue's 'blocked-environment' state).
+    //
     // The dirty gate deliberately ignores `.dispatch/` — Activity/status
     // edits dispatchd itself made while running this task (dispatch,
     // finish, prior request-changes) are expected bookkeeping, not
     // unrelated user work; a genuinely dirty checkout (the user's own
     // pending changes elsewhere) still refuses the merge.
-    if (this.isMainDirtyOutsideDispatch()) {
-      throw new OrchestratorConflictError(
-        'main checkout has uncommitted changes'
+    const dirtyPaths = this.mainDirtyPathsOutsideDispatch();
+    if (dirtyPaths.length > 0) {
+      throw new MergeEnvironmentError(
+        Orchestrator.describeDirtyPaths(dirtyPaths)
       );
     }
     // Staged changes anywhere — including `.dispatch/` paths the gate above
@@ -666,7 +717,7 @@ export class Orchestrator {
     // `git commit` commits the whole index. Refuse instead of committing
     // work the user staged for something else.
     if (this.worktrees.hasStagedChanges()) {
-      throw new OrchestratorConflictError(
+      throw new MergeEnvironmentError(
         'main checkout index has staged changes — commit or unstage them first'
       );
     }
@@ -676,7 +727,7 @@ export class Orchestrator {
     // silently, which is worse than just refusing.
     const currentBranch = this.currentMainBranch();
     if (currentBranch !== meta.baseBranch) {
-      throw new OrchestratorConflictError(
+      throw new MergeEnvironmentError(
         `merge target is ${currentBranch}, expected ${meta.baseBranch}`
       );
     }
@@ -751,6 +802,194 @@ export class Orchestrator {
 
     this.persistDiffSnapshot(meta, preMergeDiff);
     this.worktrees.remove(meta.worktreePath, meta.branch);
+  }
+
+  /**
+   * Every `dispatch/*` branch ref that exists in git right now, joined with
+   * whatever the run registry knows about it — the data behind the Branches
+   * surface.
+   *
+   * Enumeration starts from GIT, not from the registry, and that direction is
+   * the whole point: `pruneOrphans` scans the worktrees *directory*, so a ref
+   * whose directory is already gone is invisible to every other code path and
+   * leaks forever. Starting from `for-each-ref` is what surfaces it.
+   *
+   * The join is deliberately one-directional. Git is authoritative for "does
+   * this exist"; the registry is authoritative for "what does it mean".
+   * Neither side is mutated to agree with the other — disagreement comes out
+   * as a `status` value (see BranchEntryStatus) instead of being silently
+   * reconciled, so a failed cleanup becomes visible rather than invisible.
+   *
+   * Registry entries whose ref is already gone are intentionally NOT listed:
+   * there is nothing left to clean up, and including them would turn every
+   * run in project history into permanent noise on this surface.
+   */
+  listBranches(): BranchEntry[] {
+    const refs = this.worktrees.listBranches(DISPATCH_BRANCH_PREFIX);
+    const pathByBranch = new Map<string, string>();
+    for (const wt of this.worktrees.listWorktrees()) {
+      if (wt.branch !== undefined) pathByBranch.set(wt.branch, wt.path);
+    }
+    const runByBranch = this.newestRunByBranch();
+    // Orphan refs have no recorded base branch of their own, so they're
+    // measured against the project's default base. Resolved once per call
+    // (it shells out to git) and tolerant of failure: a repo with no remote
+    // and an unborn HEAD would otherwise take the whole listing down.
+    let fallbackBase: string;
+    try {
+      fallbackBase = this.worktrees.defaultBaseBranch();
+    } catch {
+      fallbackBase = 'HEAD';
+    }
+
+    const entries = refs.map((ref) => {
+      const meta = runByBranch.get(ref.branch);
+      const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
+      const base = meta?.baseBranch ?? fallbackBase;
+      return {
+        branch: ref.branch,
+        worktreePath: wtPath,
+        worktreeExists: wtPath !== undefined && existsSync(wtPath),
+        dirty: wtPath !== undefined && this.worktrees.isWorktreeDirty(wtPath),
+        lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
+        ahead: this.worktrees.aheadCount(ref.branch, base),
+        mergedIntoBase: this.worktrees.isMergedInto(ref.branch, base),
+        runId: meta?.id,
+        taskId: meta?.taskId,
+        taskTitle: meta?.taskTitle,
+        runState: meta?.state,
+        baseBranch: meta?.baseBranch,
+        reviewedAt: meta?.reviewedAt,
+        prUrl: meta?.prUrl,
+        status: branchEntryStatus(meta),
+      } satisfies BranchEntry;
+    });
+
+    // Most-urgent-first within a stable order so the UI's grouping never has
+    // to re-sort, and so two consecutive polls can't shuffle rows around.
+    return entries.sort((a, b) => {
+      const rank = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+      if (rank !== 0) return rank;
+      return (b.lastCommitAt ?? '').localeCompare(a.lastCommitAt ?? '');
+    });
+  }
+
+  // Indexes runs by branch name, keeping the NEWEST run per branch.
+  // `sendMessage(..., { resume: true })` deliberately reuses one task's
+  // existing branch and worktree across a chain of request-changes follow-up
+  // runs, so several RunMeta can legitimately claim the same branch — the
+  // latest one is the one whose review state actually governs whether that
+  // branch is still cleanable.
+  private newestRunByBranch(): Map<string, RunMeta> {
+    const byBranch = new Map<string, RunMeta>();
+    for (const meta of this.registry.list()) {
+      const existing = byBranch.get(meta.branch);
+      if (existing === undefined || meta.createdAt >= existing.createdAt) {
+        byBranch.set(meta.branch, meta);
+      }
+    }
+    return byBranch;
+  }
+
+  /**
+   * Reclaims a branch's worktree DIRECTORY while leaving its branch ref alone
+   * — the "free disk" action. Reversible by design: `git worktree add` can
+   * recreate the working copy from the surviving ref, whereas deleting the ref
+   * on an unmerged branch destroys those commits outright.
+   *
+   * The run's own bookkeeping is deliberately untouched, so a `reviewable` run
+   * stays reviewable afterwards. `meta.worktreePath` is left pointing at a
+   * directory that no longer exists, which is safe because `diff()` already
+   * tests `existsSync` on it and falls back to the snapshot persisted just
+   * below — the same mechanism every review path already relies on.
+   */
+  freeWorktreeDisk(branch: string): BranchEntry {
+    const entry = this.requireCleanableBranch(branch);
+    const meta =
+      entry.runId !== undefined ? this.registry.get(entry.runId) : undefined;
+    if (meta !== undefined) this.persistDiffSnapshot(meta);
+    if (entry.worktreePath !== undefined) {
+      this.worktrees.removeWorktreeOnly(entry.worktreePath);
+    }
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return this.requireBranchEntry(branch);
+  }
+
+  /**
+   * Deletes a branch ref and its worktree outright — the cleanup path for an
+   * `orphan` (no run claims it) or a `leftover` (a prior remove() failed
+   * silently). Snapshots the diff first when a run is known, so a still-listed
+   * run's review surface keeps working afterwards.
+   *
+   * Refuses an unmerged branch unless `force` is set: `mergedIntoBase` proves
+   * the commits already landed on the base branch, and without that proof this
+   * is the one action here that destroys work with no way back.
+   */
+  deleteBranch(branch: string, opts: { force?: boolean } = {}): void {
+    const entry = this.requireCleanableBranch(branch);
+    if (!entry.mergedIntoBase && opts.force !== true) {
+      throw new OrchestratorConflictError(
+        `branch is not merged into ${entry.baseBranch ?? 'its base'} and has ${entry.ahead} unmerged commit(s): ${branch} — retry with force to delete anyway`
+      );
+    }
+    const meta =
+      entry.runId !== undefined ? this.registry.get(entry.runId) : undefined;
+    if (meta !== undefined) this.persistDiffSnapshot(meta);
+    if (entry.worktreePath !== undefined) {
+      this.worktrees.remove(entry.worktreePath, branch);
+    } else {
+      this.worktrees.removeBranchRef(branch);
+    }
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  private requireBranchEntry(branch: string): BranchEntry {
+    const entry = this.listBranches().find((e) => e.branch === branch);
+    if (entry === undefined) {
+      throw new OrchestratorNotFoundError(`branch not found: ${branch}`);
+    }
+    return entry;
+  }
+
+  // The shared guard for both destructive branch actions. Refuses anything
+  // that would pull a worktree or ref out from under something still using it,
+  // naming the specific reason so the UI can show it verbatim.
+  private requireCleanableBranch(branch: string): BranchEntry {
+    const all = this.listBranches();
+    const entry = all.find((e) => e.branch === branch);
+    if (entry === undefined) {
+      throw new OrchestratorNotFoundError(`branch not found: ${branch}`);
+    }
+    // A live agent is actively writing into this worktree.
+    if (entry.status === 'active') {
+      throw new OrchestratorConflictError(
+        `branch has a live run: ${branch} (run ${entry.runId ?? 'unknown'}, state ${entry.runState ?? 'unknown'})`
+      );
+    }
+    // Same rule review() enforces: an open PR points at exactly this branch
+    // and worktree, so tearing them down would break the remote review.
+    const meta =
+      entry.runId !== undefined ? this.registry.get(entry.runId) : undefined;
+    if (meta !== undefined) this.requireNoOpenPr(meta);
+    // `git branch -D` would refuse the checked-out branch anyway; failing
+    // here names the reason instead of surfacing git's error text.
+    if (branch === this.currentMainBranch()) {
+      throw new OrchestratorConflictError(
+        `branch is checked out in the main repo: ${branch}`
+      );
+    }
+    // The stacked case: a dependent's worktree was branched off this ref, so
+    // removing it destroys that dependent's merge base and silently corrupts
+    // its diff.
+    const dependent = all.find(
+      (e) => e.branch !== branch && e.baseBranch === branch
+    );
+    if (dependent !== undefined) {
+      throw new OrchestratorConflictError(
+        `branch is the base of ${dependent.branch} — clean that up first`
+      );
+    }
+    return entry;
   }
 
   // Boot-time hygiene: any transcript whose last recorded state isn't
@@ -942,15 +1181,43 @@ export class Orchestrator {
     return new Transcript(transcriptPath(this.ctx.rootDir, runId));
   }
 
-  // True when the main checkout has pending changes outside `.dispatch/` —
-  // see the long comment at its one call site in `review()` for why
-  // `.dispatch/` itself is excluded from this particular check.
-  private isMainDirtyOutsideDispatch(): boolean {
+  // How many offending paths a dirty-checkout refusal names before it
+  // summarises the rest — enough to identify the culprit in the common case
+  // (one or two stray files) without turning an error message into a wall of
+  // text when a user has a genuinely busy tree.
+  private static readonly DIRTY_PATHS_SHOWN = 5;
+
+  // The paths making the main checkout dirty outside `.dispatch/`, as
+  // `git status --porcelain` reports them (so untracked files count too — a
+  // stray download at the repo root blocks a merge exactly like a modified
+  // source file). Empty means clean. See the long comment at the call site in
+  // `mergeRun()` for why `.dispatch/` itself is excluded from this check.
+  private mainDirtyPathsOutsideDispatch(): string[] {
     const result = Bun.spawnSync(
       ['git', 'status', '--porcelain', '--', '.', `:!${DISPATCH_DIR}`],
       { cwd: this.ctx.rootDir, stdout: 'pipe', stderr: 'pipe' }
     );
-    return result.stdout.toString('utf8').trim().length > 0;
+    return (
+      result.stdout
+        .toString('utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        // Porcelain lines are `XY <path>`; keep just the path so the message
+        // reads as a file list rather than as git status output.
+        .map((line) => line.replace(/^\S+\s+/, ''))
+    );
+  }
+
+  // Renders the dirty paths into the refusal message. Naming them is the
+  // whole point: "main checkout has uncommitted changes" on its own sent
+  // users hunting through a repo for a blocker that was, in the incident that
+  // motivated this, a single untracked zip at the root.
+  private static describeDirtyPaths(paths: string[]): string {
+    const shown = paths.slice(0, Orchestrator.DIRTY_PATHS_SHOWN);
+    const rest = paths.length - shown.length;
+    const suffix = rest > 0 ? ` (+${rest} more)` : '';
+    return `main checkout has uncommitted changes: ${shown.join(', ')}${suffix} — commit, stash, or remove them, then retry`;
   }
 
   // C4: the branch actually checked out in the main checkout right now —
@@ -1252,6 +1519,11 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       sessionId: oldMeta.sessionId,
+      // A follow-up must answer on the same model the conversation started
+      // on; without this the resumed run silently fell back to the SDK
+      // default, so continuing an Opus run could hand the rest of the task
+      // to a different model mid-conversation.
+      model: oldMeta.model,
       resumedFrom: oldMeta.id,
     };
     this.registry.create(meta);
@@ -1302,6 +1574,7 @@ export class Orchestrator {
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
+        model: oldMeta.model,
       },
       executor
     );

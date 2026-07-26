@@ -158,6 +158,56 @@ export interface RunMeta {
   resumedFrom?: string;
 }
 
+// How a branch ref relates to the run registry, derived fresh on every
+// listBranches() call rather than stored anywhere. It describes the *current*
+// disagreement between git and the registry, and the user's own terminal can
+// change git underneath the daemon at any time — a persisted copy would go
+// stale with nothing to invalidate it.
+//
+// - 'active':     a run is still executing in this worktree. Read-only.
+// - 'reviewable': the run reached a terminal state but was never reviewed, so
+//                 nothing has cleaned it up. The common leftover case.
+// - 'leftover':   the run WAS reviewed, yet the ref or directory is still
+//                 here — meaning a prior WorktreeManager.remove() failed
+//                 silently (both its git calls swallow errors by design).
+//                 Should never occur; surfaced so the failure is visible.
+// - 'orphan':     no run in the registry claims this ref at all (a
+//                 hand-deleted transcript, or a crash between creating the
+//                 ref and writing the transcript header).
+export type BranchEntryStatus = 'active' | 'reviewable' | 'leftover' | 'orphan';
+
+// One row of the branches surface: a join of what git knows (the ref exists,
+// here is its worktree and how far ahead it is) with what the run registry
+// knows (which run and task it belongs to, and whether it was reviewed).
+// Neither side alone can answer "what dispatch branches exist and what do they
+// mean", which is why this type carries both and marks the registry half
+// optional.
+export interface BranchEntry {
+  branch: string;
+  // Absent when no worktree is registered for this ref at all (an orphan ref,
+  // or a run whose worktree directory was freed). Distinct from
+  // `worktreeExists`, which is about the directory actually being on disk.
+  worktreePath?: string;
+  worktreeExists: boolean;
+  dirty: boolean;
+  lastCommitAt?: string;
+  // Commits on this branch that its base does not have — how much work
+  // deleting the ref would destroy.
+  ahead: number;
+  mergedIntoBase: boolean;
+
+  // The registry half: present only when a run claims this branch.
+  runId?: string;
+  taskId?: string;
+  taskTitle?: string;
+  runState?: RunState;
+  baseBranch?: string;
+  reviewedAt?: string;
+  prUrl?: string;
+
+  status: BranchEntryStatus;
+}
+
 // Typed errors the orchestrator throws for the API layer to map to HTTP
 // status codes, mirroring the existing TaskParseError/ConfigError pattern in
 // api.ts rather than inventing a new error-handling convention.
@@ -179,5 +229,25 @@ export class OrchestratorConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'OrchestratorConflictError';
+  }
+}
+
+/**
+ * A merge refused because of the state of the MAIN CHECKOUT rather than
+ * anything about the run itself — a dirty working tree, a staged index, or the
+ * wrong branch checked out.
+ *
+ * Distinguished from a plain OrchestratorConflictError because these are
+ * transient, global, and fixed by the user in seconds, which makes them
+ * retryable: the merge queue holds an entry in line and re-checks it (see
+ * MergeQueue's 'blocked-environment' state) instead of failing it out to
+ * history the way it must for a genuine content conflict. Subclasses
+ * OrchestratorConflictError so api.ts keeps mapping it to the same 409 and
+ * every existing caller/test that checks for that type is unaffected.
+ */
+export class MergeEnvironmentError extends OrchestratorConflictError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MergeEnvironmentError';
   }
 }

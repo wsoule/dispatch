@@ -75,6 +75,36 @@ export interface RunMeta {
   resumedFrom?: string;
 }
 
+// Mirrors BranchEntryStatus in packages/server/src/orchestrator/types.ts.
+// 'active' = a live run is writing here (read-only); 'reviewable' = a terminal
+// run nobody reviewed, so nothing cleaned it up; 'leftover' = a reviewed run
+// whose ref somehow survived (a silently-failed cleanup); 'orphan' = no run
+// claims this ref at all.
+export type BranchEntryStatus = 'active' | 'reviewable' | 'leftover' | 'orphan';
+
+// Mirrors BranchEntry in packages/server/src/orchestrator/types.ts — one row
+// of the Branches surface, joining what git knows about a `dispatch/*` ref
+// with what the run registry knows about it. The registry half is optional
+// because an orphan ref has no run behind it.
+export interface BranchEntry {
+  branch: string;
+  worktreePath?: string;
+  worktreeExists: boolean;
+  dirty: boolean;
+  lastCommitAt?: string;
+  /** Commits this branch has that its base does not — what deletion destroys. */
+  ahead: number;
+  mergedIntoBase: boolean;
+  runId?: string;
+  taskId?: string;
+  taskTitle?: string;
+  runState?: RunState;
+  baseBranch?: string;
+  reviewedAt?: string;
+  prUrl?: string;
+  status: BranchEntryStatus;
+}
+
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the
 // one log-entry shape every executor streams, real or fake. `kind: 'message'`
 // is the agent-comms identified chat channel: `from: 'user'` is the run's own
@@ -285,6 +315,10 @@ export interface EpicProgress {
 export type MergeQueueEntryState =
   | 'queued'
   | 'waiting-blockers'
+  // Held because the main checkout isn't mergeable-into right now (dirty tree,
+  // staged index, wrong branch). Retryable and user-resolvable — the entry
+  // stays in the queue carrying `reason`; POST /api/merge-queue/recheck retries.
+  | 'blocked-environment'
   | 'rebasing'
   | 'verifying'
   | 'merging'
@@ -481,6 +515,15 @@ export interface ApiClient {
     runId: string,
     action: 'merge' | 'discard' | 'pr'
   ): Promise<RunMeta>;
+  // The Branches surface: every `dispatch/*` ref that exists in git right now,
+  // joined with whatever run claims it. `freeBranchDisk` reclaims the working
+  // copy but keeps the ref (recoverable); `deleteBranch` removes both, and
+  // needs `force` for a branch whose commits have not landed on its base.
+  // Discarding a run is deliberately NOT here — that's `reviewRun(id,
+  // 'discard')`, the path that already does the full bookkeeping.
+  fetchBranches(): Promise<BranchEntry[]>;
+  freeBranchDisk(branch: string): Promise<BranchEntry>;
+  deleteBranch(branch: string, opts?: { force?: boolean }): Promise<void>;
   // GitHub PR review surface (items 3+4): read a run's PR status + conversation,
   // submit a review verdict (approve/request-changes/comment), or add a
   // PR-level comment — each POST returns the refreshed PrDetail. All 409 a run
@@ -556,6 +599,12 @@ export interface ApiClient {
   // when the whole stack had nothing reviewable to enqueue.
   enqueueMergeStack(taskId: string): Promise<MergeQueueEntry[]>;
   removeFromMergeQueue(runId: string): Promise<void>;
+  // Retries entries held in 'blocked-environment' against the current main
+  // checkout. Those blockers (dirty tree, staged index, wrong branch) are
+  // cleared by the user outside the app, where nothing notifies the daemon —
+  // so this is the explicit "I've cleaned up, try again" nudge. Never errors on
+  // an unblocked queue; returns the resulting snapshot either way.
+  recheckMergeQueue(): Promise<MergeQueueSnapshot>;
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -613,6 +662,22 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ action }),
       }),
+    fetchBranches: () => request(baseUrl, '/api/branches'),
+    freeBranchDisk: (branch) =>
+      request(baseUrl, '/api/branches/free-disk', {
+        method: 'POST',
+        ...jsonBody({ branch }),
+      }),
+    deleteBranch: async (branch, opts = {}) => {
+      // Dispatch branch names always contain `/`, so the name is encoded into
+      // a single path segment — the server rejoins and decodes it.
+      const query = opts.force === true ? '?force=1' : '';
+      await request(
+        baseUrl,
+        `/api/branches/${encodeURIComponent(branch)}${query}`,
+        { method: 'DELETE' }
+      );
+    },
     fetchPrDetail: (runId) => request(baseUrl, `/api/runs/${runId}/pr`),
     reviewPr: (runId, event, body) =>
       request(baseUrl, `/api/runs/${runId}/pr/review`, {
@@ -691,6 +756,8 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ taskId }),
       }),
+    recheckMergeQueue: () =>
+      request(baseUrl, '/api/merge-queue/recheck', { method: 'POST' }),
     // Not routed through the shared `request()` helper: the server answers
     // this one with 204 No Content (per the merge queue's REST contract), and
     // `request()` always tries to parse a JSON body on success — which throws

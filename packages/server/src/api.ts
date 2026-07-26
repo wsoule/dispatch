@@ -379,6 +379,35 @@ async function reviewRun(
   return jsonResponse(meta);
 }
 
+// POST /api/branches/free-disk — reclaims a branch's worktree directory while
+// leaving its branch ref intact, so the work stays recoverable. Returns the
+// branch's refreshed BranchEntry rather than a bare 204 so the client can
+// re-render one row without re-fetching the whole list.
+async function freeBranchDisk(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { branch?: unknown };
+  if (typeof body.branch !== 'string' || body.branch === '') {
+    return errorResponse(400, 'branch is required');
+  }
+  return jsonResponse(ctx.orchestrator.freeWorktreeDisk(body.branch));
+}
+
+// DELETE /api/branches/:branch — removes a branch ref and any worktree it
+// still has. The branch name is URL-encoded by the client because dispatch
+// branch names always contain `/`, so the whole remainder of the path after
+// `branches/` is rejoined and decoded rather than read as a single segment.
+// `?force=1` opts into deleting a branch whose commits have NOT landed on its
+// base — the one irreversible case, which the orchestrator refuses otherwise.
+function deleteBranch(ctx: ApiContext, branch: string, url: URL): Response {
+  const force = url.searchParams.get('force') === '1';
+  ctx.orchestrator.deleteBranch(branch, { force });
+  return jsonResponse({ ok: true });
+}
+
 // GET /api/runs/:id/pr — the run's GitHub PR status + conversation, read live
 // via gh (see PrManager.getPrDetail). 409s a run with no open PR.
 async function getPr(
@@ -962,6 +991,29 @@ export async function handleApi(
       }
     }
 
+    if (segments[0] === 'branches') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.orchestrator.listBranches());
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'free-disk' &&
+        method === 'POST'
+      ) {
+        return await freeBranchDisk(req, ctx);
+      }
+      // Everything after `branches/` is one branch name that happens to
+      // contain slashes — `segments` already split it apart, so rejoin it and
+      // decode each part back to its original form.
+      if (segments.length >= 2 && method === 'DELETE') {
+        const branch = segments
+          .slice(1)
+          .map((part) => decodeURIComponent(part))
+          .join('/');
+        return deleteBranch(ctx, branch, url);
+      }
+    }
+
     if (segments[0] === 'notes') {
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(ctx.noteStore.list());
@@ -1037,6 +1089,21 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await enqueueMergeQueueStack(req, ctx);
+      }
+      // POST /api/merge-queue/recheck. Re-runs the pump against the current
+      // main checkout — the retry for entries held in 'blocked-environment'
+      // (dirty tree, staged index, wrong branch). Those blockers are resolved
+      // by the user in a terminal, which produces no event this daemon can
+      // observe, so there has to be an explicit "I've cleaned up, try again"
+      // call. Takes no body and always 200s with the resulting snapshot: it's
+      // a nudge, not an assertion that anything is currently blocked.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'recheck' &&
+        method === 'POST'
+      ) {
+        ctx.mergeQueue.recheck();
+        return jsonResponse(ctx.mergeQueue.snapshot());
       }
       if (segments.length === 2 && method === 'DELETE') {
         ctx.mergeQueue.remove(segments[1]);

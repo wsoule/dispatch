@@ -404,6 +404,88 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
     });
   });
 
+  // The other half of the truncated-run fix (see ClaudeExecutor's
+  // truncated-run detection): once a session-limit stop is correctly recorded
+  // as `failed` instead of `finished`, a gate that only admits `finished`
+  // would refuse to resume exactly the runs that most need resuming — the
+  // ones cut off mid-task with their work still on the branch. What actually
+  // makes a run resumable is having a session nobody has closed out, not the
+  // particular terminal state it landed in.
+  it('resumes a run that FAILED with a session id (the truncated-run recovery path)', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    let starts = 0;
+    orchestrator.registerExecutor('fake', {
+      start(_opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+        starts += 1;
+        // First start reproduces a usage-limit truncation: failed, but with a
+        // real session id underneath it.
+        if (starts === 1) {
+          events.onFinish({
+            state: 'failed',
+            sessionId: 'sess-truncated',
+            error: 'Claude usage limit reached before the agent finished',
+          });
+        }
+        return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+      },
+    });
+    const task = store.create({ title: 'Cut off by the limit' });
+    const first = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(first.id)?.meta.state === 'failed');
+
+    const second = orchestrator.sendMessage(first.id, 'keep going', {
+      resume: true,
+    });
+
+    expect(second.id).not.toBe(first.id);
+    expect(second.worktreePath).toBe(first.worktreePath);
+    expect(second.sessionId).toBe('sess-truncated');
+    expect(second.resumedFrom).toBe(first.id);
+  });
+
+  // A failed run with no session underneath it has nothing to resume into —
+  // resuming would start a fresh agent while pretending to continue, so it
+  // must refuse rather than silently restart from scratch.
+  it('refuses to resume a failed run that never got a session id', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'failed', error: 'died early' } })
+    );
+    const task = store.create({ title: 'Nothing to resume' });
+    const first = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(first.id)?.meta.state === 'failed');
+
+    expect(() =>
+      orchestrator.sendMessage(first.id, 'keep going', { resume: true })
+    ).toThrow(/no resumable session/i);
+  });
+
+  // The model a run was dispatched with is part of how it behaves; a
+  // follow-up that silently drops back to the SDK default is a different
+  // agent answering the same conversation.
+  it('carries the original run model onto the resumed run', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
+    );
+    const task = store.create({ title: 'Keep my model' });
+    const first = orchestrator.dispatch(task.meta.id, 'fake', {
+      model: 'claude-opus-5',
+    });
+    await waitFor(
+      () => orchestrator.getRun(first.id)?.meta.state === 'finished'
+    );
+    expect(first.model).toBe('claude-opus-5');
+
+    const second = orchestrator.sendMessage(first.id, 'please fix x', {
+      resume: true,
+    });
+
+    expect(second.model).toBe('claude-opus-5');
+  });
+
   // The triple-dispatch incident: a resume forks a new run into the SAME
   // worktree, so a duplicate resume (double-Enter, retry after a UI error)
   // must 409 exactly like dispatch() does — not silently start a second
@@ -496,6 +578,33 @@ describe('Orchestrator.review merge', () => {
       OrchestratorConflictError
     );
     expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+  });
+
+  // A bare "main checkout has uncommitted changes" sent users hunting: in the
+  // real incident that motivated this, the sole offender was one stray
+  // untracked zip at the repo root, and every merge-queue enqueue fast-failed
+  // with no hint which file to deal with. The gate has the paths in hand from
+  // `git status --porcelain` — it must say them.
+  it('names the offending paths when refusing a dirty main checkout, including untracked files', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Dirty main names paths' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    writeFileSync(join(repo, 'stray-download.zip'), 'not source\n');
+
+    try {
+      orchestrator.review(meta.id, 'merge');
+      throw new Error('expected the merge to be refused');
+    } catch (err) {
+      expect((err as Error).message).toContain('stray-download.zip');
+    }
   });
 
   // Residual of Important #5 (fix-wave verification New-1): `git commit`
@@ -1582,9 +1691,12 @@ describe('Orchestrator request-changes executor fallback', () => {
 
   it('falls back to the single other registered executor when neither the original nor the default is registered', async () => {
     const { orchestrator: first, store } = makeOrchestrator(repo);
+    // The sessionId is what makes the run resumable at all (see sendMessage's
+    // resume gate) — this test is about which executor the resume resolves to,
+    // so it has to get past that gate first.
     first.registerExecutor(
       'fake',
-      new FakeExecutor({ finish: { state: 'finished' } })
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
     );
     const task = store.create({
       title: 'Resume onto a single-executor daemon',
@@ -1614,9 +1726,12 @@ describe('Orchestrator request-changes executor fallback', () => {
 
   it('throws unknown executor when nothing can be resolved (neither the original, the default, nor a lone fallback)', async () => {
     const { orchestrator: first, store } = makeOrchestrator(repo);
+    // Resumable (has a sessionId) so this reaches executor resolution rather
+    // than stopping at sendMessage's resume gate — the assertion below pins
+    // the message precisely for exactly that reason.
     first.registerExecutor(
       'fake',
-      new FakeExecutor({ finish: { state: 'finished' } })
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
     );
     const task = store.create({ title: 'Resume with no viable fallback' });
     const meta = first.dispatch(task.meta.id, 'fake');
@@ -1637,7 +1752,7 @@ describe('Orchestrator request-changes executor fallback', () => {
 
     expect(() =>
       second.sendMessage(meta.id, 'please fix z', { resume: true })
-    ).toThrow(OrchestratorClientError);
+    ).toThrow(/unknown executor/i);
   });
 });
 
@@ -1819,5 +1934,318 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.prompt).toContain('Add login rate limiting');
     expect(executor.lastOpts?.prompt).toContain('Harden auth');
     expect(executor.lastOpts?.prompt).toContain('resistant to abuse');
+  });
+});
+
+// The Branches surface (spec §§1-4): listBranches() joins git's refs with the
+// run registry, and the two destructive actions refuse anything still in use.
+describe('Orchestrator.listBranches', () => {
+  // Dispatches one run that writes a commit and finishes, leaving a real
+  // worktree + branch behind un-reviewed — the common "leftover" starting
+  // point every case below builds on.
+  async function dispatchFinishedRun(
+    rootDir: string,
+    title = 'Add feature'
+  ): Promise<{ orchestrator: Orchestrator; store: TaskStore; meta: RunMeta }> {
+    const { orchestrator, store } = makeOrchestrator(rootDir);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'feature.txt'), 'done\n');
+            },
+            commitMessage: 'agent: add feature',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    return { orchestrator, store, meta };
+  }
+
+  it('reports a finished, un-reviewed run as reviewable with its run and task attached', async () => {
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+
+    const entries = orchestrator.listBranches();
+
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry.branch).toBe(meta.branch);
+    expect(entry.status).toBe('reviewable');
+    expect(entry.runId).toBe(meta.id);
+    expect(entry.taskId).toBe(meta.taskId);
+    expect(entry.taskTitle).toBe('Add feature');
+    expect(entry.runState).toBe('finished');
+    expect(entry.worktreeExists).toBe(true);
+    expect(entry.ahead).toBe(1);
+    expect(entry.mergedIntoBase).toBe(false);
+    expect(entry.reviewedAt).toBeUndefined();
+  });
+
+  it('reports a branch with no run in the registry as an orphan', () => {
+    const { orchestrator } = makeOrchestrator(repo);
+    // A ref nothing ever recorded a transcript for — exactly what a crash
+    // between `worktree add` and the transcript header leaves behind.
+    runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
+
+    const entries = orchestrator.listBranches();
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].branch).toBe('dispatch/t-ghost-r000000');
+    expect(entries[0].status).toBe('orphan');
+    expect(entries[0].runId).toBeUndefined();
+    // Nothing on it beyond main, so deleting it destroys nothing.
+    expect(entries[0].mergedIntoBase).toBe(true);
+    expect(entries[0].ahead).toBe(0);
+  });
+
+  it('ignores non-dispatch branches entirely', () => {
+    const { orchestrator } = makeOrchestrator(repo);
+    runGitSync(repo, ['branch', 'feature/mine', 'main']);
+    runGitSync(repo, ['branch', 'wip', 'main']);
+
+    expect(orchestrator.listBranches()).toEqual([]);
+  });
+
+  it('stops listing a branch once a review has cleaned it up', async () => {
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    expect(orchestrator.listBranches()).toHaveLength(1);
+
+    orchestrator.review(meta.id, 'discard');
+
+    // The ref is gone, so there is nothing left to clean up and nothing to
+    // show — a reviewed run must not linger on this surface forever.
+    expect(orchestrator.listBranches()).toEqual([]);
+  });
+
+  it('reports a reviewed run whose ref survived as a leftover', async () => {
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    orchestrator.review(meta.id, 'discard');
+    // Simulate the failure mode `leftover` exists to surface: review() ran,
+    // but the branch ref is somehow still here (WorktreeManager.remove
+    // swallows git errors by design, so a failed `branch -D` is silent).
+    runGitSync(repo, ['branch', meta.branch, 'main']);
+
+    const entries = orchestrator.listBranches();
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe('leftover');
+    expect(entries[0].reviewedAt).toBeDefined();
+  });
+
+  it('marks a worktree with uncommitted files dirty', async () => {
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    writeFileSync(join(meta.worktreePath, 'scratch.txt'), 'stray\n');
+
+    expect(orchestrator.listBranches()[0].dirty).toBe(true);
+  });
+
+  it('sorts leftovers and orphans ahead of reviewable and active rows', async () => {
+    const { orchestrator } = await dispatchFinishedRun(repo);
+    runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
+
+    const statuses = orchestrator.listBranches().map((e) => e.status);
+
+    expect(statuses).toEqual(['orphan', 'reviewable']);
+  });
+});
+
+describe('Orchestrator.freeWorktreeDisk', () => {
+  it('removes the worktree directory, keeps the ref, and leaves the run reviewable', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'feature.txt'), 'done\n');
+            },
+            commitMessage: 'agent: add feature',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Add feature' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const entry = orchestrator.freeWorktreeDisk(meta.branch);
+
+    expect(existsSync(meta.worktreePath)).toBe(false);
+    // The ref surviving is what makes this reversible.
+    expect(entry.branch).toBe(meta.branch);
+    expect(entry.worktreeExists).toBe(false);
+    expect(entry.status).toBe('reviewable');
+    expect(orchestrator.getRun(meta.id)!.meta.reviewedAt).toBeUndefined();
+  });
+
+  it('keeps the run diffable from its snapshot after the worktree is gone', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'feature.txt'), 'done\n');
+            },
+            commitMessage: 'agent: add feature',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Add feature' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    const before = orchestrator.diff(meta.id);
+
+    orchestrator.freeWorktreeDisk(meta.branch);
+
+    // This is the load-bearing assertion for the whole action: diff() already
+    // falls back to the snapshot persisted just before removal, so freeing
+    // disk must never break the review surface.
+    expect(existsSync(diffSnapshotPath(repo, meta.id))).toBe(true);
+    expect(orchestrator.diff(meta.id).files).toEqual(before.files);
+  });
+});
+
+describe('Orchestrator.deleteBranch guards', () => {
+  it('deletes a merged orphan ref outright', () => {
+    const { orchestrator } = makeOrchestrator(repo);
+    runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
+
+    orchestrator.deleteBranch('dispatch/t-ghost-r000000');
+
+    expect(orchestrator.listBranches()).toEqual([]);
+  });
+
+  it('refuses an unmerged branch without force, and deletes it with force', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'feature.txt'), 'done\n');
+            },
+            commitMessage: 'agent: add feature',
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Add feature' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(
+      OrchestratorConflictError
+    );
+    expect(orchestrator.listBranches()).toHaveLength(1);
+
+    orchestrator.deleteBranch(meta.branch, { force: true });
+
+    expect(orchestrator.listBranches()).toEqual([]);
+  });
+
+  it('refuses a branch whose run is still live', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    // A script that parks on an approval gate keeps the run non-terminal for
+    // the duration of the test, which is exactly the 'active' case.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            approval: {
+              requestId: 'req-1',
+              toolName: 'edit_file',
+              input: { path: 'x' },
+            },
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Add feature' });
+    const meta = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
+    );
+
+    expect(orchestrator.listBranches()[0].status).toBe('active');
+    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(
+      /has a live run/
+    );
+    expect(() => orchestrator.freeWorktreeDisk(meta.branch)).toThrow(
+      /has a live run/
+    );
+  });
+
+  it('refuses the branch currently checked out in the main repo', () => {
+    const { orchestrator } = makeOrchestrator(repo);
+    runGitSync(repo, ['checkout', '-b', 'dispatch/t-here-r000000']);
+
+    expect(() => orchestrator.deleteBranch('dispatch/t-here-r000000')).toThrow(
+      /checked out in the main repo/
+    );
+  });
+
+  it('refuses a branch that another branch is stacked on', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ steps: [], finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Blocker' });
+    const blocker = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(blocker.id)?.meta.state === 'finished'
+    );
+    // Stand in for a stacked dependent: a dispatch ref whose recorded base is
+    // the blocker's branch. Built by hand because base-resolution for
+    // dependents is the stacked-dispatch work, not this feature.
+    const dependent = 'dispatch/t-dep-r111111';
+    runGitSync(repo, ['branch', dependent, 'main']);
+    const runsPath = runsDir(repo);
+    mkdirSync(runsPath, { recursive: true });
+    new Transcript(join(runsPath, 'r-111111.jsonl')).writeHeader({
+      ...blocker,
+      id: 'r-111111',
+      branch: dependent,
+      baseBranch: blocker.branch,
+      state: 'finished',
+      worktreePath: join(worktreesDir(repo), 'r-111111'),
+    });
+    orchestrator.reconcileOnBoot();
+
+    expect(() =>
+      orchestrator.deleteBranch(blocker.branch, { force: true })
+    ).toThrow(new RegExp(`is the base of ${dependent}`));
+  });
+
+  it('404s an unknown branch', () => {
+    const { orchestrator } = makeOrchestrator(repo);
+
+    expect(() => orchestrator.deleteBranch('dispatch/nope')).toThrow(
+      OrchestratorNotFoundError
+    );
   });
 });
