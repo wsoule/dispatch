@@ -1,12 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, History } from 'lucide-react';
+import { History, OctagonAlert } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { SessionDetailModal } from '../components/sessions/SessionDetailModal';
+import {
+  parseTags,
+  projectNameFor,
+  statusDotClass,
+} from '../components/sessions/sessionDisplay';
+import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
 import { formatRelativeTime, sessionDisplayName } from '../lib/format';
 import { colorForProject } from '../lib/projectColor';
 import { listProjects, listSessions } from '../lib/tauri';
-import type { ProjectSummary, Session } from '../lib/types';
-import { SessionDetailModal } from './SessionDetailModal';
+import type { Session } from '../lib/types';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import {
@@ -18,38 +24,10 @@ import {
 } from '@/ui/select';
 import { Skeleton } from '@/ui/skeleton';
 
-/** `tags` is stored as a JSON array string (e.g. `["bugfix","refactor"]`); fall back to
- * treating the raw string as a single tag if it doesn't parse, rather than hiding it.
- * Kept identical to `SessionDetailModal`'s `parseTags` so the two views never diverge
- * in how they interpret the same stored value. */
-function parseTags(tags: string | null): string[] {
-  if (!tags) return [];
-  try {
-    const parsed = JSON.parse(tags);
-    if (Array.isArray(parsed)) {
-      return parsed.filter((t): t is string => typeof t === 'string');
-    }
-    return [tags];
-  } catch {
-    return [tags];
-  }
-}
-
 /** Timestamp used for both sorting and date filtering: `started_at` when known, falling
  * back to `last_activity_at` for the rare case a session hasn't recorded a start yet. */
 function timelineTimestamp(session: Session): number {
   return session.started_at ?? session.last_activity_at;
-}
-
-function projectNameFor(
-  projects: ProjectSummary[] | undefined,
-  projectId: string
-): string {
-  return projects?.find((p) => p.id === projectId)?.name ?? projectId;
-}
-
-function statusDotClass(status: Session['status']): string {
-  return status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50';
 }
 
 type DatePreset = 'all' | 'today' | 'week';
@@ -142,6 +120,7 @@ export function TimelineView() {
     data: sessions,
     isLoading,
     isError,
+    refetch,
   } = useQuery({ queryKey: ['sessions'], queryFn: listSessions });
 
   const { data: projects } = useQuery({
@@ -182,9 +161,7 @@ export function TimelineView() {
   }, [sessions, projectFilter, tagFilter, datePreset]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-foreground text-[15px] font-medium">Timeline</h1>
-
+    <div className="flex h-full flex-col gap-4">
       {isLoading && (
         <div className="flex flex-col gap-2">
           <Skeleton className="h-16 w-full" />
@@ -194,22 +171,19 @@ export function TimelineView() {
       )}
 
       {isError && (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-          <AlertCircle className="text-destructive size-5" />
-          <p className="text-muted-foreground text-[13px]">
-            Couldn&rsquo;t load sessions. Is the backend running?
-          </p>
-        </div>
+        <SessionsEmptyState
+          icon={<OctagonAlert className="size-5" />}
+          message="Couldn’t load sessions. Is the backend running?"
+          tone="destructive"
+          onRetry={() => void refetch()}
+        />
       )}
 
       {!isLoading && !isError && (!sessions || sessions.length === 0) && (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-          <History className="text-muted-foreground size-5" />
-          <p className="text-muted-foreground max-w-sm text-[13px]">
-            No sessions yet — start a Claude Code session in any repo and it
-            will appear here.
-          </p>
-        </div>
+        <SessionsEmptyState
+          icon={<History className="size-5" />}
+          message="No sessions yet — start a Claude Code session in any repo and it will appear here."
+        />
       )}
 
       {!isLoading && !isError && sessions && sessions.length > 0 && (

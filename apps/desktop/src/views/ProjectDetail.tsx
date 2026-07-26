@@ -1,16 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
+import { Inbox, OctagonAlert } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ProjectBoard } from '../components/board/ProjectBoard';
+import { SessionDetailModal } from '../components/sessions/SessionDetailModal';
+import { SessionRow } from '../components/sessions/SessionRow';
+import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
 import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { StatTile } from '../components/ui/StatTile';
 import { formatRelativeTime } from '../lib/format';
 import { getProjectGitInsights, listSessions } from '../lib/tauri';
 import type { ProjectSummary } from '../lib/types';
-import { SessionDetailModal } from './SessionDetailModal';
-import { SessionRow } from './SessionRow';
 import { cn } from '@/lib/utils';
+import { Skeleton } from '@/ui/skeleton';
 
 type ProjectDetailTab = 'overview' | 'board' | 'sessions';
 
@@ -43,6 +45,7 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
     data: sessions,
     isLoading,
     isError,
+    refetch,
   } = useQuery({ queryKey: ['sessions'], queryFn: listSessions });
 
   const { data: gitInsights } = useQuery({
@@ -106,9 +109,10 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
             </h2>
 
             {!gitInsights && (
-              <div className="text-muted-foreground flex items-center gap-2 text-[13px]">
-                <Loader2 className="size-3.5 animate-spin" />
-                Loading commit history…
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
               </div>
             )}
 
@@ -151,22 +155,26 @@ export function ProjectDetail({ project }: ProjectDetailProps) {
       {activeTab === 'sessions' && (
         <div className="flex flex-col gap-2">
           {isLoading && (
-            <div className="text-muted-foreground flex items-center gap-2 text-[13px]">
-              <Loader2 className="size-3.5 animate-spin" />
-              Loading sessions…
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
             </div>
           )}
 
           {isError && (
-            <p className="text-muted-foreground text-[13px]">
-              Couldn&rsquo;t load sessions.
-            </p>
+            <SessionsEmptyState
+              icon={<OctagonAlert className="size-5" />}
+              message="Couldn’t load sessions."
+              tone="destructive"
+              onRetry={() => void refetch()}
+            />
           )}
 
           {!isLoading && !isError && projectSessions.length === 0 && (
-            <p className="text-muted-foreground text-[13px]">
-              No sessions yet for this project.
-            </p>
+            <SessionsEmptyState
+              icon={<Inbox className="size-5" />}
+              message="No sessions yet for this project."
+            />
           )}
 
           {!isLoading && !isError && projectSessions.length > 0 && (

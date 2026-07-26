@@ -1,18 +1,12 @@
-import { ProjectDot } from '../components/ui/ProjectDot';
-import { formatRelativeTime, sessionDisplayName } from '../lib/format';
-import type { Session } from '../lib/types';
+import { formatRelativeTime, sessionDisplayName } from '../../lib/format';
+import type { Session } from '../../lib/types';
+import { ProjectDot } from '../ui/ProjectDot';
+import { statusDotClass } from './sessionDisplay';
 
 interface SessionRowProps {
   session: Session;
   projectName: string;
   onClick: () => void;
-}
-
-/** Session status renders as a small colored dot rather than a filled pill, matching the
- * shared "status = colored dot" convention — green while the session is still active, a
- * muted dot once it's ended. */
-function statusDotClass(status: Session['status']): string {
-  return status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50';
 }
 
 /**
