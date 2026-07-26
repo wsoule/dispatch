@@ -26,14 +26,36 @@ export interface PlanProposal {
   tasks: PlannedTask[];
 }
 
-// The load-bearing planner seam (mirrors Executor in types.ts): one-shot,
-// read-only "turn a prompt into a PlanProposal" call. FakePlanner (tests) and
-// ClaudePlanner (the real Agent SDK, one-shot in the main checkout,
-// permissionMode 'plan') both implement this so PlanManager never branches
-// on which one is running. A rejected promise means the plan failed — the
-// registry maps that straight to `state: 'failed'`.
+// One assistant turn in a plan conversation: the natural-language `reply`
+// the planner just produced, the `proposal` it is working toward *after* this
+// turn (refined across turns — never final until a human confirms it), and an
+// opaque `sessionId` the planner hands back so the next turn can resume with
+// full prior context. `sessionId` is deliberately opaque to PlanManager (it's
+// the Agent SDK's own session id for ClaudePlanner, a turn counter for
+// FakePlanner) — the manager only stores it and threads it back into the next
+// `sendMessage` call, never interprets it.
+export interface PlannerTurn {
+  reply: string;
+  proposal: PlanProposal;
+  sessionId?: string;
+}
+
+// The load-bearing planner seam (mirrors Executor in types.ts): a durable,
+// read-only planning *conversation* rather than a single prompt-in/proposal-
+// out call. `start` opens the conversation from the user's first prompt;
+// `sendMessage` continues an existing one with a follow-up user message,
+// resuming from the prior turn's `sessionId` so context carries across turns.
+// Both return a PlannerTurn. FakePlanner (tests) and ClaudePlanner (the real
+// Agent SDK, permissionMode 'plan', SDK session resume between turns) both
+// implement this so PlanManager never branches on which one is running. A
+// rejected promise means the turn failed — the registry maps that straight to
+// `state: 'failed'`.
 export interface Planner {
-  plan(prompt: string): Promise<PlanProposal>;
+  start(prompt: string): Promise<PlannerTurn>;
+  sendMessage(
+    sessionId: string | undefined,
+    message: string
+  ): Promise<PlannerTurn>;
 }
 
 // Validates and normalizes an arbitrary JSON value into a PlanProposal,

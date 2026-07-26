@@ -3,7 +3,12 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
-import type { PlannedTask, Planner, PlanProposal } from './planner.js';
+import type {
+  PlannedTask,
+  Planner,
+  PlannerTurn,
+  PlanProposal,
+} from './planner.js';
 import { validatePlanProposal } from './planner.js';
 import {
   OrchestratorClientError,
@@ -27,13 +32,41 @@ function generatePlanId(
   return `plan-${hash}`;
 }
 
+// `running` means a turn (the opening one or a follow-up) is currently in
+// flight; `ready` means the last turn settled and `proposal` holds a working
+// proposal that can be refined further or confirmed; `failed` means the last
+// turn errored.
 export type PlanState = 'running' | 'ready' | 'failed';
+
+// One entry in a plan's conversation transcript: a `user` message (the opening
+// prompt or a follow-up) or the `assistant` reply that answered it.
+export interface PlanMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  at: string;
+}
 
 export interface PlanRecord {
   id: string;
+  // The opening prompt that started this conversation. Kept alongside
+  // `messages[0]` (which is the same text) as a convenience for callers that
+  // only want the plan's original ask.
   prompt: string;
+  // Which registered planner this plan is talking to. Stored so a follow-up
+  // (sendMessage) re-resolves the same planner the opening turn used — a plan
+  // is one continuous conversation with one backend.
+  plannerName: string;
   state: PlanState;
+  // The full conversation transcript, appended to on every turn: the user
+  // message first, then the assistant reply once the turn settles.
+  messages: PlanMessage[];
+  // The latest *working* proposal — refined across turns and the target
+  // confirm() validates against. Undefined until the first turn settles ready.
   proposal?: PlanProposal;
+  // The planner's opaque resume handle from the most recent turn (the Agent
+  // SDK session id for ClaudePlanner). Threaded back into the next
+  // sendMessage so follow-ups retain prior context.
+  sessionId?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -73,12 +106,15 @@ function buildTaskDescription(task: PlannedTask): string {
 }
 
 /**
- * Owns the plan/confirm half of Phase 5's big-prompt flow (spec §5): runs a
- * `Planner` against a prompt, tracks its running -> ready|failed state in a
- * small in-memory registry (machine-local — a plan that was still `running`
- * when dispatchd restarts is simply gone, same as the epic engine's own
- * state; nothing here is durable the way run transcripts are), and, on
- * confirm, re-validates the (client-editable) proposal from scratch and
+ * Owns the plan/confirm half of Phase 5's big-prompt flow (spec §5): drives a
+ * `Planner` as a multi-turn conversation — an opening `startPlan` prompt plus
+ * any number of `sendMessage` follow-ups that refine the working proposal —
+ * tracking each turn's running -> ready|failed state, the message history, and
+ * the latest working proposal in a small in-memory registry (machine-local —
+ * a plan that was still `running` when dispatchd restarts is simply gone, same
+ * as the epic engine's own state; nothing here is durable the way run
+ * transcripts are), and, on confirm, re-validates the (client-editable)
+ * proposal from scratch and
  * writes it via TaskStore: the epic first (if any), then every task with its
  * `parent` and `blockedBy` wired from proposal indices to the real ids
  * TaskStore just minted. Proposals are NEVER written without an explicit
@@ -109,10 +145,10 @@ export class PlanManager {
     return [...this.planners.keys()];
   }
 
-  // Starts a plan running against `prompt` on the named planner (defaults to
-  // 'claude') and returns its id immediately — the actual Planner call
+  // Opens a plan conversation against `prompt` on the named planner (defaults
+  // to 'claude') and returns its id immediately — the actual Planner call
   // happens fire-and-forget (mirrors Orchestrator.dispatch()'s
-  // executor.start() pattern), with the result landing via runPlanner()'s
+  // executor.start() pattern), with the opening turn landing via runTurn()'s
   // state update + `plan.changed` broadcast.
   startPlan(prompt: string, plannerName = 'claude'): PlanRecord {
     const planner = this.planners.get(plannerName);
@@ -123,28 +159,83 @@ export class PlanManager {
     const record: PlanRecord = {
       id: generatePlanId(now),
       prompt,
+      plannerName,
       state: 'running',
+      messages: [{ role: 'user', text: prompt, at: now }],
       createdAt: now,
       updatedAt: now,
     };
     this.plans.set(record.id, record);
-    void this.runPlanner(record.id, planner);
+    void this.runTurn(record.id, () => planner.start(prompt));
     return record;
   }
 
-  private async runPlanner(planId: string, planner: Planner): Promise<void> {
-    const record = this.plans.get(planId);
-    if (record === undefined) return;
+  // Sends a follow-up user message on an existing plan and returns the record
+  // immediately with the message recorded and state back to `running` — the
+  // planner's reply lands fire-and-forget via runTurn(), same as startPlan.
+  // The conversation must be idle (not mid-turn) and not already confirmed:
+  // a plan still `running` has a turn in flight to answer first, and a
+  // confirmed plan's proposal is already written and immutable.
+  sendMessage(planId: string, message: string): PlanRecord {
+    const record = this.get(planId);
+    if (record.confirmedAt !== undefined) {
+      throw new OrchestratorConflictError(`plan already confirmed: ${planId}`);
+    }
+    if (record.state === 'running') {
+      throw new OrchestratorConflictError(
+        `plan is busy: a turn is already in progress: ${planId}`
+      );
+    }
+    const planner = this.planners.get(record.plannerName);
+    if (planner === undefined) {
+      throw new OrchestratorClientError(
+        `unknown planner: ${record.plannerName}`
+      );
+    }
+    const now = new Date().toISOString();
+    const updated: PlanRecord = {
+      ...record,
+      state: 'running',
+      messages: [...record.messages, { role: 'user', text: message, at: now }],
+      // A new turn supersedes any prior failure — clear the stale error so a
+      // retry after a failed turn doesn't keep advertising the old message.
+      error: undefined,
+      updatedAt: now,
+    };
+    this.plans.set(planId, updated);
+    this.ctx.events.broadcast({ type: 'plan.changed', planId });
+    const sessionId = record.sessionId;
+    void this.runTurn(planId, () => planner.sendMessage(sessionId, message));
+    return updated;
+  }
+
+  // Runs one planner turn (opening or follow-up) to completion and folds it
+  // into the record: on success, appends the assistant reply, stores the
+  // (re-validated) working proposal and the planner's resume session, and
+  // moves to `ready`; on any error, moves to `failed`.
+  private async runTurn(
+    planId: string,
+    run: () => Promise<PlannerTurn>
+  ): Promise<void> {
     try {
-      const rawProposal = await planner.plan(record.prompt);
-      // Minor fix: a Planner (Fake or Claude) can itself return a proposal
-      // that fails validation — re-validate here too (the same
-      // validatePlanProposal confirm() uses) so a plan never sits at
-      // `ready` advertising a proposal nobody could actually confirm; an
-      // invalid one downgrades straight to `failed` with the validation
-      // message instead.
-      const proposal = validatePlanProposal(rawProposal);
-      this.updateRecord(planId, { state: 'ready', proposal });
+      const turn = await run();
+      // A Planner (Fake or Claude) can itself return a proposal that fails
+      // validation — re-validate here (the same validatePlanProposal confirm()
+      // uses) so a plan never sits at `ready` advertising a proposal nobody
+      // could actually confirm; an invalid one downgrades to `failed` with the
+      // validation message instead.
+      const proposal = validatePlanProposal(turn.proposal);
+      const current = this.plans.get(planId);
+      if (current === undefined) return;
+      this.updateRecord(planId, {
+        state: 'ready',
+        proposal,
+        sessionId: turn.sessionId ?? current.sessionId,
+        messages: [
+          ...current.messages,
+          { role: 'assistant', text: turn.reply, at: new Date().toISOString() },
+        ],
+      });
     } catch (err) {
       this.updateRecord(planId, {
         state: 'failed',

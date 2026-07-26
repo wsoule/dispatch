@@ -13,44 +13,50 @@ const MISSING_CLI_MESSAGE =
   '@anthropic-ai/claude-agent-sdk without --omit=optional, or set ' +
   'options.pathToClaudeCodeExecutable.';
 
+const PROPOSAL: PlanProposal = {
+  tasks: [
+    {
+      title: 'Do the thing',
+      description: 'Do it well.',
+      acceptanceCriteria: ['It is done'],
+      blockedByIndices: [],
+      priority: 'medium',
+    },
+  ],
+};
+
 // Bun-compat gate, mirroring claude-executor.test.ts's own: constructing a
 // ClaudePlanner must succeed under Bun with no import/native-binding crash.
-// The real one-shot SDK call is never exercised in CI — every scenario below
-// injects a stub `queryFn`, same seam ClaudeExecutor uses.
+// The real SDK call is never exercised in CI — every scenario below injects a
+// stub `queryFn`, same seam ClaudeExecutor uses.
 describe('ClaudePlanner Bun compatibility', () => {
   it('imports @anthropic-ai/claude-agent-sdk and constructs under Bun', () => {
     const planner = new ClaudePlanner('/tmp/does-not-matter');
     expect(planner).toBeInstanceOf(ClaudePlanner);
-    expect(typeof planner.plan).toBe('function');
+    expect(typeof planner.start).toBe('function');
+    expect(typeof planner.sendMessage).toBe('function');
   });
 });
 
-describe('ClaudePlanner.plan', () => {
-  it('returns the structured_output from a successful result message', async () => {
-    const proposal: PlanProposal = {
-      tasks: [
-        {
-          title: 'Do the thing',
-          description: 'Do it well.',
-          acceptanceCriteria: ['It is done'],
-          blockedByIndices: [],
-          priority: 'medium',
-        },
-      ],
-    };
+describe('ClaudePlanner.start', () => {
+  it('returns the reply, proposal, and session id from a successful result', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async function* fakeMessages(): AsyncGenerator<any> {
+      yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
       yield {
         type: 'result',
         subtype: 'success',
-        structured_output: proposal,
+        session_id: 'sess-1',
+        structured_output: { message: "here's a plan", proposal: PROPOSAL },
       };
     }
     const fakeQueryFn = () => fakeMessages() as unknown as Query;
     const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-    const result = await planner.plan('build the thing');
-    expect(result).toEqual(proposal);
+    const turn = await planner.start('build the thing');
+    expect(turn.reply).toBe("here's a plan");
+    expect(turn.proposal).toEqual(PROPOSAL);
+    expect(turn.sessionId).toBe('sess-1');
   });
 
   // CLI parity (matching ClaudeExecutor's sdkOptions in executors/claude.ts):
@@ -66,7 +72,7 @@ describe('ClaudePlanner.plan', () => {
       yield {
         type: 'result',
         subtype: 'success',
-        structured_output: proposal,
+        structured_output: { message: 'ok', proposal },
       };
     }
     let captured: Options | undefined;
@@ -76,7 +82,7 @@ describe('ClaudePlanner.plan', () => {
     };
     const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-    await planner.plan('build the thing');
+    await planner.start('build the thing');
 
     expect(captured?.systemPrompt).toEqual({
       type: 'preset',
@@ -97,7 +103,7 @@ describe('ClaudePlanner.plan', () => {
     const fakeQueryFn = () => fakeMessages() as unknown as Query;
     const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-    await expect(planner.plan('build the thing')).rejects.toThrow(/boom/);
+    await expect(planner.start('build the thing')).rejects.toThrow(/boom/);
   });
 
   it('rejects when a successful result carries no structured_output', async () => {
@@ -108,7 +114,7 @@ describe('ClaudePlanner.plan', () => {
     const fakeQueryFn = () => fakeMessages() as unknown as Query;
     const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-    await expect(planner.plan('build the thing')).rejects.toThrow(
+    await expect(planner.start('build the thing')).rejects.toThrow(
       /no structured output/
     );
   });
@@ -121,9 +127,51 @@ describe('ClaudePlanner.plan', () => {
     const fakeQueryFn = () => fakeMessages() as unknown as Query;
     const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-    await expect(planner.plan('build the thing')).rejects.toThrow(
+    await expect(planner.start('build the thing')).rejects.toThrow(
       /no result message/
     );
+  });
+});
+
+describe('ClaudePlanner.sendMessage', () => {
+  it('resumes the prior session and returns the refined turn', async () => {
+    const refined: PlanProposal = {
+      tasks: [
+        ...PROPOSAL.tasks,
+        {
+          title: 'A second task',
+          description: 'Added on the follow-up turn.',
+          acceptanceCriteria: [],
+          blockedByIndices: [0],
+          priority: 'low',
+        },
+      ],
+    };
+    // Capture the options the SDK is called with so we can assert the prior
+    // session id is passed through as `resume` — this is what makes a
+    // follow-up turn retain the first turn's context.
+    let capturedResume: unknown;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fakeQueryFn = (args: any) => {
+      capturedResume = args.options.resume;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async function* fakeMessages(): AsyncGenerator<any> {
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-2',
+          structured_output: { message: 'added it', proposal: refined },
+        };
+      }
+      return fakeMessages() as unknown as Query;
+    };
+    const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
+
+    const turn = await planner.sendMessage('sess-1', 'add a second task');
+    expect(capturedResume).toBe('sess-1');
+    expect(turn.reply).toBe('added it');
+    expect(turn.proposal).toEqual(refined);
+    expect(turn.sessionId).toBe('sess-2');
   });
 });
 
@@ -136,7 +184,7 @@ describe('ClaudePlanner.plan', () => {
 // unwrapped `query()` call and got none of it, so "Plans" reported the raw
 // SDK text as "planning failed: Native CLI binary for darwin-arm64 not
 // found..." while dispatching a run from the task page worked fine. These
-// tests prove ClaudePlanner.plan() now goes through the same shared
+// tests prove ClaudePlanner's turns go through the same shared
 // openClaudeQuery() chain (claudeCli.ts) as the executor.
 describe('ClaudePlanner Claude Code CLI resolution', () => {
   it('falls back to a PATH `claude` when the bundled attempt reports a missing CLI, and still returns a proposal', async () => {
@@ -146,24 +194,13 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
         ? '/fake/path/claude'
         : originalWhich(cmd)) as typeof Bun.which;
     try {
-      const proposal: PlanProposal = {
-        tasks: [
-          {
-            title: 'Do the thing',
-            description: 'Do it well.',
-            acceptanceCriteria: ['It is done'],
-            blockedByIndices: [],
-            priority: 'medium',
-          },
-        ],
-      };
       let calls = 0;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       async function* fakeMessages(): AsyncGenerator<any> {
         yield {
           type: 'result',
           subtype: 'success',
-          structured_output: proposal,
+          structured_output: { message: 'planned', proposal: PROPOSAL },
         };
       }
       const fakeQueryFn = () => {
@@ -173,9 +210,9 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
       };
       const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-      const result = await planner.plan('build the thing');
+      const turn = await planner.start('build the thing');
 
-      expect(result).toEqual(proposal);
+      expect(turn.proposal).toEqual(PROPOSAL);
       expect(calls).toBe(2);
     } finally {
       Bun.which = originalWhich;
@@ -191,7 +228,7 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
       };
       const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-      await expect(planner.plan('build the thing')).rejects.toThrow(
+      await expect(planner.start('build the thing')).rejects.toThrow(
         CLAUDE_INSTALL_HINT
       );
     } finally {
@@ -210,7 +247,7 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
       const fakeQueryFn = () => fakeMessages() as unknown as Query;
       const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
-      await expect(planner.plan('build the thing')).rejects.toThrow(
+      await expect(planner.start('build the thing')).rejects.toThrow(
         CLAUDE_INSTALL_HINT
       );
     } finally {
