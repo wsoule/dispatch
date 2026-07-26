@@ -28,6 +28,7 @@ export interface TaskFilter {
   status?: string;
   kind?: string;
   parent?: string;
+  archived?: boolean;
 }
 
 // Mirrors packages/server/src/orchestrator/types.ts's RunState exactly —
@@ -453,6 +454,7 @@ export function taskQueryString(filter: TaskFilter = {}): string {
   if (filter.status !== undefined) params.set('status', filter.status);
   if (filter.kind !== undefined) params.set('kind', filter.kind);
   if (filter.parent !== undefined) params.set('parent', filter.parent);
+  if (filter.archived === true) params.set('archived', '1');
   return params.size > 0 ? `?${params.toString()}` : '';
 }
 

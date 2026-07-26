@@ -53,6 +53,8 @@ export interface UpdatePatch {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
+  archivedAt?: string | null;
   appendActivity?: string;
   // Free-text body sections (edited as whole-section replacements via
   // taskfile.ts's setSection), so the app can edit a task's Description and
@@ -205,6 +207,7 @@ export class TaskStore {
       appendActivity: activityLine,
       description,
       acceptanceCriteria,
+      archivedAt,
       ...patchFields
     } = patch;
     // Drop undefined entries so a partial patch never blanks existing fields.
@@ -212,6 +215,10 @@ export class TaskStore {
       Object.entries(patchFields).filter(([, v]) => v !== undefined)
     );
     const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
+    // archivedAt is string|undefined on TaskMeta, so null (clear) is handled
+    // separately rather than spread in like the other fields.
+    if (archivedAt === null) delete meta.archivedAt;
+    else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
     let body = doc.body;
     if (description !== undefined)
       body = setSection(body, 'Description', description);

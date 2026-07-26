@@ -970,6 +970,7 @@ export async function handleApi(
             status: url.searchParams.get('status') ?? undefined,
             kind: url.searchParams.get('kind') ?? undefined,
             parent: url.searchParams.get('parent') ?? undefined,
+            includeArchived: url.searchParams.get('archived') === '1',
           })
         );
       }
