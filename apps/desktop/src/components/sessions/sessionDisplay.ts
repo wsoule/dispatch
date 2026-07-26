@@ -25,6 +25,27 @@ export function parseTags(tags: string | null): string[] {
   }
 }
 
+/** Fraction of a session's input tokens that were served from the prompt cache, as a 0–100
+ * percentage string (e.g. `"87%"`), or `"—"` when the session has no input tokens at all yet
+ * (division would be undefined). The denominator is every token that entered the model —
+ * fresh prompt tokens + cache-creation (first-write) tokens + cache-read (reused) tokens — so
+ * a high value means most context was reused from cache rather than re-sent, which is the main
+ * driver of low per-session cost. Kept here (not inline) so it's unit-testable and shared if
+ * another surface wants the same number. */
+export function cacheHitRateDisplay(session: {
+  prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}): string {
+  const totalInput =
+    session.prompt_tokens +
+    session.cache_read_tokens +
+    session.cache_creation_tokens;
+  if (totalInput <= 0) return '—';
+  const pct = (session.cache_read_tokens / totalInput) * 100;
+  return `${Math.round(pct)}%`;
+}
+
 /** Resolves a session's project id to its display name, falling back to the raw id while the
  * project list hasn't loaded yet (or the project has since disappeared). Shared by
  * `SessionsView` and `TimelineView`, the two flat (non-project-scoped) session lists. */

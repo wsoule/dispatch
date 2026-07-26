@@ -569,6 +569,38 @@ pub fn agent_usage(conn: &Connection) -> rusqlite::Result<Vec<AgentUsage>> {
     rows.collect()
 }
 
+/// Per-model rollup for the Dashboard's "spend by model" breakdown. `model` is `None` for
+/// sessions ingested before any model string was seen (e.g. metadata-only sessions), which the
+/// frontend renders as "Unknown". A session records a single `model` (the last one seen on it),
+/// so this attributes the session's whole cost to that model — the same granularity every other
+/// per-session number here uses, not a per-message split.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelUsage {
+    pub model: Option<String>,
+    pub session_count: i64,
+    pub total_cost_usd: f64,
+}
+
+/// Cost and session-count totals grouped by `model`, highest spend first. Names the raw model
+/// id (`claude-opus-5`, etc.); the frontend maps it to a display label ("Opus 5") via
+/// `models.ts` so the mapping lives in one place on the TS side.
+pub fn model_usage(conn: &Connection) -> rusqlite::Result<Vec<ModelUsage>> {
+    let mut stmt = conn.prepare(
+        "SELECT model, COUNT(*) as session_count, COALESCE(SUM(cost_usd), 0.0) as total_cost_usd
+         FROM sessions
+         GROUP BY model
+         ORDER BY total_cost_usd DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ModelUsage {
+            model: row.get(0)?,
+            session_count: row.get(1)?,
+            total_cost_usd: row.get(2)?,
+        })
+    })?;
+    rows.collect()
+}
+
 // --- Spend report (Reports view) ---
 //
 // All three queries below window on `last_activity_at` rather than `started_at`: every
@@ -1424,6 +1456,40 @@ mod report_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].agent, "claude");
         assert_eq!(rows[0].total_cost_usd, 3.0);
+    }
+
+    #[test]
+    fn model_usage_groups_by_model_orders_by_spend_and_keeps_null_model() {
+        let conn = in_memory_db();
+        upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
+        // Two opus-5 sessions and one fable-5, plus one metadata-only session with no model.
+        let insert = |id: &str, model: Option<&str>, cost: f64| {
+            conn.execute(
+                "INSERT INTO sessions (id, project_id, agent, model, started_at, last_activity_at, status, cost_usd, raw_log_path)
+                 VALUES (?1, 'p1', 'claude', ?2, 2000, 2000, 'ended', ?3, '')",
+                params![id, model, cost],
+            )
+            .unwrap();
+        };
+        insert("s1", Some("claude-opus-5"), 4.0);
+        insert("s2", Some("claude-opus-5"), 2.0);
+        insert("s3", Some("claude-fable-5"), 10.0);
+        insert("s4", None, 1.0);
+
+        let rows = model_usage(&conn).unwrap();
+        assert_eq!(rows.len(), 3, "opus-5 rows collapse into one; null model is its own group");
+
+        // Highest spend first: fable-5 (10) > opus-5 (6) > null (1).
+        assert_eq!(rows[0].model.as_deref(), Some("claude-fable-5"));
+        assert_eq!(rows[0].session_count, 1);
+        assert_eq!(rows[0].total_cost_usd, 10.0);
+
+        assert_eq!(rows[1].model.as_deref(), Some("claude-opus-5"));
+        assert_eq!(rows[1].session_count, 2);
+        assert_eq!(rows[1].total_cost_usd, 6.0);
+
+        assert_eq!(rows[2].model, None);
+        assert_eq!(rows[2].session_count, 1);
     }
 }
 

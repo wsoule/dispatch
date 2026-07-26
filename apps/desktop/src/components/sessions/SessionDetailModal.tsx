@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { agentMeta } from '../../lib/agents';
 import { sessionDisplayName } from '../../lib/format';
+import { modelDisplayName } from '../../lib/models';
 import {
   exportTranscript,
   getSessionDetail,
@@ -14,7 +15,11 @@ import { DiffModal } from '../../views/DiffModal';
 import { StatTile } from '../ui/StatTile';
 import { AgentIcon } from './AgentIcon';
 import { ExportControl } from './ExportControl';
-import { parseTags, statusDotClass } from './sessionDisplay';
+import {
+  cacheHitRateDisplay,
+  parseTags,
+  statusDotClass,
+} from './sessionDisplay';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
@@ -158,7 +163,7 @@ function SessionDetailContent({
           {agent.label}
         </Badge>
         <span className="text-muted-foreground font-mono text-[11px]">
-          {session.model ?? 'unknown model'}
+          {modelDisplayName(session.model) ?? 'unknown model'}
         </span>
       </div>
 
@@ -172,11 +177,16 @@ function SessionDetailContent({
         <StatTile value={`$${session.cost_usd.toFixed(2)}`} label="Cost" />
         <StatTile value={session.prompt_tokens} label="Prompt tokens" />
         <StatTile value={session.completion_tokens} label="Completion tokens" />
+        <StatTile
+          value={session.prompt_tokens + session.completion_tokens}
+          label="Total tokens"
+        />
         <StatTile value={session.cache_read_tokens} label="Cache read tokens" />
         <StatTile
           value={session.cache_creation_tokens}
           label="Cache creation tokens"
         />
+        <StatTile value={cacheHitRateDisplay(session)} label="Cache hit rate" />
         <StatTile value={session.lines_added} label="Lines added" />
         <StatTile value={session.lines_removed} label="Lines removed" />
       </div>
