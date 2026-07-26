@@ -678,27 +678,29 @@ export class MergeQueue {
   // it, so a dependent stacked on this branch stays stacked instead of being
   // left pointing at the pre-rebase commits. A plain `git rebase` writes new
   // commits jj reads as divergence, and descendants do not follow.
+  //
+  // That descendant rewriting is exactly why the jj path is skipped while any
+  // dependent is still LIVE — see hasLiveDependents for what jj does to such a
+  // worktree, and why re-attaching it is not an option.
   private async rebase(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
     entry.state = 'rebasing';
     this.broadcast();
     const cwd = meta.worktreePath;
 
-    if (await this.jj.isColocated()) {
+    const liveDependents = this.hasLiveDependents(meta.branch);
+    if (!liveDependents && (await this.jj.isColocated())) {
       // The jj rebase runs in the project root and moves `refs/heads/<branch>`
-      // via `jj git export`. git raises no objection (writing a ref that is
-      // checked out elsewhere is only refused for `git branch -f`), so this
-      // run's worktree is left with HEAD resolving to the REBASED commit while
-      // its index and working tree still hold pre-rebase content — measured:
-      // `git status` there reports the base's new files as staged deletions.
-      // verify() runs in that same worktree and merge() squashes the rebased
-      // branch, so without the resync below the queue would verify one tree
-      // and merge a different one. The resync hard-resets, so uncommitted
-      // TRACKED changes are refused outright rather than silently wiped —
-      // exactly the case the plain-git path below refuses too, since
-      // `git rebase` will not run over them either. Untracked files are not
-      // counted, for the same reason: `git rebase` tolerates them (measured),
-      // so failing this entry over one would make the jj path refuse merges
-      // the git path completes.
+      // out from under this run's own worktree, which has that branch checked
+      // out. Measured (jj 0.43.0): the worktree is left DETACHED at the
+      // pre-rebase commit with a clean `git status`. verify() runs in that same
+      // worktree and merge() squashes the rebased branch, so without the resync
+      // below the queue would verify one tree and merge a different one. The
+      // resync hard-resets, so uncommitted TRACKED changes are refused outright
+      // rather than silently wiped — exactly the case the plain-git path below
+      // refuses too, since `git rebase` will not run over them either.
+      // Untracked files are not counted, for the same reason: `git rebase`
+      // tolerates them (measured), so failing this entry over one would make
+      // the jj path refuse merges the git path completes.
       if (this.ctx.orchestrator.runWorktreeIsDirty(meta.id)) {
         throw new Error(
           'worktree has uncommitted changes; commit or discard them before merging'
@@ -719,9 +721,17 @@ export class MergeQueue {
         meta.prUrl !== undefined
           ? `origin/${meta.baseBranch}`
           : meta.baseBranch;
-      await this.jj.restack(meta.branch, jjTarget);
+      await this.jj.restack(meta.branch, await this.jjRevision(jjTarget));
       this.ctx.orchestrator.resyncRunWorktree(meta.id);
       return;
+    }
+    if (liveDependents) {
+      // Rare and consequential enough to be worth a durable line rather than
+      // only a comment — §4.6 asks for the chosen path to be recorded.
+      this.ctx.orchestrator.appendRunTaskActivity(
+        meta.id,
+        `merge queue: run ${meta.id} rebased with plain git rather than jj — a dependent run is still live on this branch, and a jj rewrite would detach its worktree`
+      );
     }
 
     if (meta.prUrl !== undefined) {
@@ -882,21 +892,112 @@ export class MergeQueue {
     const run = runs.find((r) => r.id === runId);
     if (run === undefined || !this.isRestackCandidate(run)) return;
     const parent = this.mergedStackParentOf(run, runs);
-    if (parent === null) return;
-    await this.restackRun(run, parent);
+    if (parent !== null) {
+      await this.restackRun(run, parent);
+      return;
+    }
+    // The mirror case, and the reason it is handled here rather than only in
+    // Orchestrator.review: a blocker can be DISCARDED while this run's agent
+    // is still working, and a live run is deliberately never flagged mid-flight
+    // (an error chip on a healthy run is worse than a late one). Nothing else
+    // would ever come back to it, so the sweep that catches "your blocker
+    // merged" catches "your blocker was thrown away" too.
+    const discarded = this.discardedStackParentOf(run, runs);
+    if (discarded === null) return;
+    this.flagDependent(
+      run,
+      `the run this one was stacked on (${discarded.id}) was discarded — rebase onto a valid base before merging`
+    );
   }
 
-  // A run is restackable at all only while it is terminal (never rewrite a
-  // live agent's worktree), still unreviewed (a merged/discarded run has no
-  // worktree left), and not already flagged — `baseDiscarded` means a human
-  // has been asked to look at it, and re-flagging it on every subsequent
-  // merge and every reboot would just be noise.
+  // A blocker `run` was stacked on that a human discarded. Same shape as
+  // mergedStackParentOf below, opposite review action.
+  private discardedStackParentOf(
+    run: RunMeta,
+    runs: RunMeta[]
+  ): RunMeta | null {
+    for (const branch of run.stackParents ?? []) {
+      const parent = runs.find((r) => r.branch === branch);
+      if (parent?.reviewAction === 'discard') return parent;
+    }
+    return null;
+  }
+
+  // A run is restackable at all only while NOTHING is live in its worktree
+  // (never rewrite a working copy an agent is using), it is still unreviewed
+  // (a merged/discarded run has no worktree left), and it is not already
+  // flagged — `baseDiscarded` means a human has been asked to look at it, and
+  // re-flagging it on every subsequent merge and every reboot would just be
+  // noise.
+  //
+  // The liveness question is deliberately asked of the WORKTREE, not of this
+  // run's own state: request-changes starts a new run in the same worktree on
+  // the same branch, so a terminal run can sit next to a live one that owns
+  // the directory. Testing `run.state` alone would let a restack hard-reset
+  // that directory out from under a working agent.
   private isRestackCandidate(run: RunMeta): boolean {
     return (
-      TERMINAL_RUN_STATES.has(run.state) &&
       run.reviewedAt === undefined &&
-      run.baseDiscarded !== true
+      run.baseDiscarded !== true &&
+      !this.ctx.orchestrator.worktreeIsBusy(run.id)
     );
+  }
+
+  /**
+   * Whether any run that is still LIVE is stacked on `branch`.
+   *
+   * This is the gate on jj. jj's whole value here is that rewriting a commit
+   * automatically rewrites its descendants and moves their bookmarks — but a
+   * descendant branch checked out in a git worktree is left DETACHED at its
+   * old commit by that rewrite, with a clean `git status` (measured, jj
+   * 0.43.0). Nothing downstream notices: the run's state has not changed, the
+   * worktree is not dirty, and the restack paths correctly skip it as live.
+   * Its agent then keeps committing onto a detached HEAD, and every one of
+   * those commits is silently dropped when the branch is later squash-merged.
+   *
+   * Re-attaching the descendant is not an option — that means `git checkout`
+   * plus `git reset --hard` in a directory an agent is writing to. So the jj
+   * path is simply not taken while a live dependent exists: `git rebase` never
+   * touches descendants, and the explicit post-merge restack (restackRun)
+   * brings them across afterwards anyway.
+   */
+  private hasLiveDependents(branch: string): boolean {
+    return this.ctx.orchestrator
+      .list()
+      .some(
+        (r) =>
+          !TERMINAL_RUN_STATES.has(r.state) &&
+          r.stackParents?.includes(branch) === true
+      );
+  }
+
+  /**
+   * A git ref, resolved to a plain commit id for use as a jj revision.
+   *
+   * jj does not understand git's remote-tracking ref names: measured on jj
+   * 0.43.0, `jj rebase -b feat -d origin/main` fails with ``Revision
+   * `origin/main` doesn't exist`` (jj spells that bookmark `main@origin`, and
+   * reads `origin/main` only as a local bookmark of that literal name). Every
+   * PR-backed rebase and every restack after a PR-merged blocker targets
+   * exactly that shape, so each one threw and either failed the entry forever
+   * or stuck a permanent `baseDiscarded` flag on the dependent.
+   *
+   * Resolving through git first sidesteps jj's naming entirely — a commit id
+   * is always a valid jj revision (measured: `jj rebase -b feat -d <sha>`
+   * rebases as expected) — and works identically for local branch names.
+   */
+  private async jjRevision(ref: string): Promise<string> {
+    const result = await this.run(this.ctx.rootDir, [
+      'git',
+      'rev-parse',
+      '--verify',
+      `${ref}^{commit}`,
+    ]);
+    const sha = result.stdout.trim();
+    if (!result.ok || sha.length === 0) {
+      throw new Error(`unable to resolve ${ref}: ${commandErrorText(result)}`);
+    }
+    return sha;
   }
 
   /**
@@ -1008,7 +1109,12 @@ export class MergeQueue {
       return;
     }
 
-    const viaJj = await this.jj.isColocated();
+    // Same jj gate rebase() applies, for the same reason: `jj rebase -s` also
+    // rewrites the descendants of the commits it moves, so a run stacked on
+    // THIS dependent that is still live would be silently detached.
+    const viaJj =
+      !this.hasLiveDependents(dependent.branch) &&
+      (await this.jj.isColocated());
     // Backup first — this is the undo path if the restack goes wrong. It is
     // NOT the rebase boundary: that is stackBaseCommit, recorded at dispatch.
     // Backing up the tip and then replaying from it would make the replay
@@ -1026,7 +1132,13 @@ export class MergeQueue {
           ? `origin/${await this.fetchBase(newBase)}`
           : newBase;
       if (viaJj) {
-        await this.jj.restackOnto(dependent.branch, stackBase, target);
+        // Resolved to a commit id: jj cannot parse `origin/<base>` at all —
+        // see jjRevision.
+        await this.jj.restackOnto(
+          dependent.branch,
+          stackBase,
+          await this.jjRevision(target)
+        );
       } else {
         this.ctx.orchestrator.rebaseRunOnto(dependent.id, target, stackBase);
       }

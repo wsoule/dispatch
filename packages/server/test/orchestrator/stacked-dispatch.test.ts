@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +12,7 @@ import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { transcriptPath } from '../../src/orchestrator/paths.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
 import { replayTranscript } from '../../src/orchestrator/transcript.js';
+import { OrchestratorConflictError } from '../../src/orchestrator/types.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
 let fakeHome: string;
@@ -284,7 +285,16 @@ describe('base selection', () => {
 // repository (it can convert it to a colocated jj repo and writes a merge
 // commit), so it gets its own coverage rather than being left to inspection.
 describe('base selection with two or more unmerged blockers', () => {
-  it('falls back to the default base when jj is unavailable, and says so on the task', async () => {
+  // Spec §4.6: "under the git path a task with two or more unmerged blockers
+  // WAITS (today's behavior) rather than dispatching against a wrong base."
+  // Dispatching it off `main` would be strictly worse than today — §1 of the
+  // spec is the argument for exactly that — because the agent would see
+  // NEITHER blocker's work, and a run with no recorded stackParents is
+  // afterwards invisible to the merge queue: never restacked, never flagged.
+  // The refusal is an OrchestratorConflictError specifically so that
+  // EpicEngine.fillQueue's existing `continue` skips the task and retries it
+  // on the next pass, and a manual dispatch 409s with a readable reason.
+  it('refuses to dispatch when jj is unavailable, so the task waits, and says so on the task', async () => {
     const f = fakeJj({
       'jj --version': { ok: false, stdout: '', stderr: 'command not found' },
       'jj git colocation status': { ok: false, stdout: '', stderr: 'no jj' },
@@ -294,12 +304,19 @@ describe('base selection with two or more unmerged blockers', () => {
     const dependent = h.store.create({ title: 'dep', blockedBy: ids });
     h.cache.rebuild(h.store);
 
-    const meta = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
-    expect(meta.baseBranch).toBe('main');
-    expect(meta.stackParents ?? []).toEqual([]);
-    expect(meta.stackBaseCommit).toBeUndefined();
+    await expect(
+      h.orchestrator.dispatch(dependent.meta.id, 'fake')
+    ).rejects.toBeInstanceOf(OrchestratorConflictError);
+    await expect(
+      h.orchestrator.dispatch(dependent.meta.id, 'fake')
+    ).rejects.toThrow('2 unmerged blockers need a multi-parent base');
+
+    // No run was created, and nothing was branched off a wrong base.
+    expect(h.orchestrator.list()).not.toContainEqual(
+      expect.objectContaining({ taskId: dependent.meta.id })
+    );
     expect(activityFor(h, dependent.meta.id)).toContain(
-      '2 unmerged blockers need a multi-parent base, but jj is unavailable — using main'
+      'which only jj can build'
     );
     // It must never try to build the merge base after bailing out.
     expect(f.calls.map((c) => c.join(' '))).not.toContain(
@@ -377,9 +394,10 @@ describe('base selection with two or more unmerged blockers', () => {
     );
   });
 
-  // No jj failure may turn an otherwise valid dispatch into a 500 — every one
-  // degrades to the same default base the jj-unavailable case uses.
-  it('falls back to the default base when a jj command fails mid-way', async () => {
+  // No jj failure may turn an otherwise valid dispatch into an opaque 500 —
+  // every one converges on the same typed refusal the jj-unavailable case
+  // raises, carrying jj's own error text so the reason is actionable.
+  it('refuses with the jj error text when a jj command fails mid-way', async () => {
     // `jj new` is stubbed to fail, which makes JjManager.mergeBase throw.
     // Before this was contained, that rejection escaped dispatch() as a 500.
     const h = makeHarness(
@@ -399,14 +417,38 @@ describe('base selection with two or more unmerged blockers', () => {
     const dependent = h.store.create({ title: 'dep', blockedBy: ids });
     h.cache.rebuild(h.store);
 
-    const meta = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
-    expect(meta.baseBranch).toBe('main');
-    expect(meta.stackParents ?? []).toEqual([]);
-    expect(meta.stackBaseCommit).toBeUndefined();
+    await expect(
+      h.orchestrator.dispatch(dependent.meta.id, 'fake')
+    ).rejects.toBeInstanceOf(OrchestratorConflictError);
     expect(activityFor(h, dependent.meta.id)).toContain(
-      'building a multi-parent base over 2 unmerged blockers failed'
+      '2 unmerged blockers need a multi-parent base'
     );
     expect(activityFor(h, dependent.meta.id)).toContain('jj new failed');
+  });
+
+  // The Activity write in that failure path is itself a task-file write, and
+  // it can fail too (an unwritable file). Reporting a problem must not replace
+  // the real, actionable reason with an opaque filesystem error — same
+  // swallow-and-log rule EpicEngine.recordFillFailure applies.
+  it('still refuses with the real reason when recording it on the task fails', async () => {
+    const f = fakeJj({
+      'jj --version': { ok: false, stdout: '', stderr: 'command not found' },
+      'jj git colocation status': { ok: false, stdout: '', stderr: 'no jj' },
+    });
+    const h = makeHarness(f.jj);
+    const { ids } = await makeInReviewBlockers(h, ['A', 'B']);
+    const dependent = h.store.create({ title: 'dep', blockedBy: ids });
+    h.cache.rebuild(h.store);
+
+    const file = h.store.taskFilePath(dependent.meta.id)!;
+    chmodSync(file, 0o444);
+    try {
+      await expect(
+        h.orchestrator.dispatch(dependent.meta.id, 'fake')
+      ).rejects.toBeInstanceOf(OrchestratorConflictError);
+    } finally {
+      chmodSync(file, 0o644);
+    }
   });
 
   // Real jj, real repo — the only thing that can actually catch a regression
@@ -485,5 +527,84 @@ describe('discarding a stacked-on run', () => {
       replayTranscript(transcriptPath(repo, dependentRun.id))?.meta
         .baseDiscarded
     ).toBe(true);
+  });
+
+  // `baseDiscarded` is raised for three different situations and only one of
+  // them is an actually-discarded base, so the flag alone cannot be rendered.
+  // The reason travels with it — and unlike `error`, it is written
+  // unconditionally, so it is still there on a run that already failed for its
+  // own reasons.
+  it('records why the flag was raised, and the reason survives a replay', async () => {
+    const h = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(h);
+
+    h.orchestrator.review(blockerRun.id, 'discard');
+
+    const dependent = h.orchestrator
+      .list()
+      .find((r) => r.id === dependentRun.id)!;
+    expect(dependent.baseDiscardedReason).toContain(blockerRun.id);
+    expect(dependent.baseDiscardedReason).toContain('was discarded');
+    expect(
+      replayTranscript(transcriptPath(repo, dependentRun.id))?.meta
+        .baseDiscardedReason
+    ).toBe(dependent.baseDiscardedReason);
+  });
+
+  // A live dependent is left completely alone. Flagging it would stamp an
+  // error chip and a mid-run state line onto a run whose agent is working
+  // perfectly happily; the merge queue's stale-run sweep picks it up once the
+  // worktree goes quiet instead (covered in merge-queue.test.ts).
+  it('does not flag a dependent whose agent is still running', async () => {
+    const h = makeHarness();
+    const blocker = h.store.create({ title: 'A' });
+    const blockerRun = await h.orchestrator.dispatch(blocker.meta.id, 'fake');
+    await waitFor(
+      () => h.orchestrator.getRun(blockerRun.id)?.meta.state === 'finished'
+    );
+    await Bun.write(join(blockerRun.worktreePath, 'a.txt'), 'a');
+    runGitSync(blockerRun.worktreePath, ['add', '-A']);
+    runGitSync(blockerRun.worktreePath, ['commit', '-m', 'A work']);
+    h.store.update(
+      blocker.meta.id,
+      { status: 'in-review' },
+      new Date().toISOString()
+    );
+    h.cache.rebuild(h.store);
+
+    h.orchestrator.registerExecutor(
+      'gated',
+      new FakeExecutor({
+        steps: [
+          { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const dependent = h.store.create({
+      title: 'B',
+      blockedBy: [blocker.meta.id],
+    });
+    h.cache.rebuild(h.store);
+    const dependentRun = await h.orchestrator.dispatch(
+      dependent.meta.id,
+      'gated'
+    );
+    await waitFor(
+      () =>
+        h.orchestrator.getRun(dependentRun.id)?.meta.state ===
+        'awaiting-approval'
+    );
+
+    h.orchestrator.review(blockerRun.id, 'discard');
+
+    const live = h.orchestrator.list().find((r) => r.id === dependentRun.id)!;
+    expect(live.baseDiscarded).toBeUndefined();
+    expect(live.error).toBeUndefined();
+    // ...and nothing was appended to its transcript mid-run either.
+    expect(
+      replayTranscript(transcriptPath(repo, dependentRun.id))?.meta
+        .baseDiscarded
+    ).toBeUndefined();
   });
 });

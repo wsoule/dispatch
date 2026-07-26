@@ -44,13 +44,28 @@ export interface TranscriptStateLine {
   // when the blocker it was stacked on merges away, and both the new base and
   // the "this one could not be restacked, a human needs to look at it" flag
   // have to survive a daemon restart: the registry is in-memory only, so a
-  // restart replays a run's meta from THIS file. Without these two fields a
+  // restart replays a run's meta from THIS file. Without these fields a
   // restart resurrects the merged-away base branch (and the next merge is
   // refused with "merge target is X, expected Y") and silently clears the
   // flag, leaving a broken run looking healthy with nothing left to re-run
   // the restack.
+  //
+  // `stackParents` is here for the same reason and belongs with them: a
+  // restack narrows it (the merged blocker drops out) at exactly the moment it
+  // rewrites `baseBranch`. Persisting one without the other is worse than
+  // persisting neither — replay would then combine the NEW base with the
+  // ORIGINAL parent list, and the merge queue would re-derive an
+  // already-merged blocker, decide the run sits on an unrepairable
+  // multi-parent base, and flag a perfectly healthy run as unmergeable for
+  // good. An empty array means "no parents left" and is distinct from an
+  // absent field, which means "this line says nothing about parents".
+  //
+  // `stackBaseCommit` deliberately does NOT appear here: it is fixed at
+  // dispatch and never changes, so the header is its only writer.
   baseBranch?: string;
+  stackParents?: string[];
   baseDiscarded?: boolean;
+  baseDiscardedReason?: string;
 }
 
 export type TranscriptLine =
@@ -91,7 +106,9 @@ export class Transcript {
       reviewAction?: 'merge' | 'discard' | 'pr';
       prUrl?: string;
       baseBranch?: string;
+      stackParents?: string[];
       baseDiscarded?: boolean;
+      baseDiscardedReason?: string;
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
@@ -129,6 +146,20 @@ export class Transcript {
   }
 }
 
+// The stack parents a state line leaves a run with. A line that carries no
+// `stackParents` at all says nothing about them, so the previous value stands;
+// a line that carries an EMPTY array means the last parent just merged away,
+// which is recorded as an absent field on RunMeta (what repointRunBase writes
+// to the registry) rather than an empty array, so a replayed run compares equal
+// to the live one.
+function narrowedStackParents(
+  line: TranscriptStateLine,
+  meta: RunMeta
+): string[] | undefined {
+  if (line.stackParents === undefined) return meta.stackParents;
+  return line.stackParents.length > 0 ? line.stackParents : undefined;
+}
+
 // Reconstructs a run's current RunMeta + ordered entry log purely from its
 // transcript file — the read path used both by boot reconciliation (which
 // has no in-memory registry yet) and by GET /api/runs/:id as a fallback for
@@ -161,7 +192,10 @@ export function replayTranscript(
         reviewAction: line.reviewAction ?? meta.reviewAction,
         prUrl: line.prUrl ?? meta.prUrl,
         baseBranch: line.baseBranch ?? meta.baseBranch,
+        stackParents: narrowedStackParents(line, meta),
         baseDiscarded: line.baseDiscarded ?? meta.baseDiscarded,
+        baseDiscardedReason:
+          line.baseDiscardedReason ?? meta.baseDiscardedReason,
       };
     }
   }
