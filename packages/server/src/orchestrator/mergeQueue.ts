@@ -529,6 +529,16 @@ export class MergeQueue {
       this.finish(entry, 'failed');
       return;
     }
+    // A discarded run's dependents are flagged (Orchestrator.review's discard
+    // branch), never auto-repaired — only a human can decide whether this
+    // work still makes sense once the base it was built on is gone. Merging
+    // it as-is would land content on top of code that was just rejected.
+    if (meta.baseDiscarded === true) {
+      entry.reason =
+        'the run this one was stacked on was discarded — rebase it onto a valid base before merging';
+      this.finish(entry, 'failed');
+      return;
+    }
 
     try {
       await this.rebase(entry, meta);
