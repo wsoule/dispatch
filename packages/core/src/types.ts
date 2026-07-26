@@ -33,6 +33,8 @@ export interface TaskMeta {
   // "tests pass." Defaults to true — the extra pass is cheap next to reviewing (or merging) a
   // half-checked diff, so tasks opt out of it rather than into it.
   selfReview: boolean;
+  // Set once a reconciler determines the task's merge landed; absent otherwise.
+  archivedAt?: string;
 }
 
 export interface TaskDoc {

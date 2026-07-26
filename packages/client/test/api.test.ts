@@ -30,6 +30,11 @@ describe('taskQueryString', () => {
       taskQueryString({ status: 'todo', kind: 'task', parent: 'epic-1' })
     ).toBe('?status=todo&kind=task&parent=epic-1');
   });
+
+  it('emits archived=1 only when archived is true', () => {
+    expect(taskQueryString({ archived: true })).toBe('?archived=1');
+    expect(taskQueryString({ archived: false })).toBe('');
+  });
 });
 
 describe('taskDraftToCreateInput', () => {

@@ -59,6 +59,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw['self-review'] != null && typeof raw['self-review'] !== 'boolean') {
     throw new TaskParseError(`invalid self-review: expected a boolean`, file);
   }
+  if (raw['archived-at'] != null && typeof raw['archived-at'] !== 'string') {
+    throw new TaskParseError(`invalid archived-at: expected a string`, file);
+  }
   for (const key of ['blocked-by', 'labels'] as const) {
     const value = raw[key];
     if (
@@ -88,6 +91,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     // Absent means on: self-review is the default, so a file only carries the key once the
     // task has explicitly opted out (see serializeTaskFile).
     selfReview: (raw['self-review'] as boolean | undefined) ?? true,
+    ...(raw['archived-at'] == null ? {} : { archivedAt: raw['archived-at'] }),
   };
   return { meta, body: content.slice(m[0].length) };
 }
@@ -112,6 +116,9 @@ export function serializeTaskFile(doc: TaskDoc): string {
     // common (enabled) case keeps a plain task's frontmatter free of a line that just restates
     // the default — the same reason the parser treats an absent key as `true`.
     ...(meta.selfReview ? {} : { 'self-review': false }),
+    ...(meta.archivedAt === undefined
+      ? {}
+      : { 'archived-at': meta.archivedAt }),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }

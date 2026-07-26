@@ -143,6 +143,19 @@ describe('selfReview / self-review frontmatter', () => {
     expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
   });
 
+  it('round-trips archived-at and omits the key when unset', () => {
+    expect(
+      parseTaskFile(serializeTaskFile(doc)).meta.archivedAt
+    ).toBeUndefined();
+    expect(serializeTaskFile(doc)).not.toContain('archived-at');
+    const archived: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, archivedAt: '2026-07-26T00:00:00Z' },
+    };
+    const back = parseTaskFile(serializeTaskFile(archived));
+    expect(back.meta.archivedAt).toBe('2026-07-26T00:00:00Z');
+  });
+
   it('throws on non-boolean self-review', () => {
     const text = [
       '---',

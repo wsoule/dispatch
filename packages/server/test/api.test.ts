@@ -248,6 +248,33 @@ describe('filter + ready queries', () => {
   });
 });
 
+describe('archived tasks', () => {
+  it('excludes archived tasks by default and includes them with ?archived=1', async () => {
+    await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Active' }),
+    });
+    const archived = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Archived' }),
+      })
+    );
+    await fetch(`${baseUrl}/api/tasks/${archived.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ archivedAt: '2026-07-26T00:00:00Z' }),
+    });
+
+    const all = await json(await fetch(`${baseUrl}/api/tasks?archived=1`));
+    const active = await json(await fetch(`${baseUrl}/api/tasks`));
+    expect(all.length).toBe(2);
+    expect(active.length).toBe(1);
+  });
+});
+
 describe('error paths', () => {
   it('404s a missing task id', async () => {
     const res = await fetch(`${baseUrl}/api/tasks/t-000000`);

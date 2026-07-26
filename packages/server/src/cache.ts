@@ -8,6 +8,8 @@ export interface CacheFilter {
   status?: string;
   kind?: string;
   parent?: string;
+  // When false/omitted, query() excludes archived tasks (the default board view).
+  includeArchived?: boolean;
 }
 
 interface TaskRow {
@@ -45,6 +47,7 @@ export class TaskCache {
         assignee TEXT,
         created TEXT,
         updated TEXT,
+        archived INTEGER NOT NULL DEFAULT 0,
         json TEXT
       )
     `);
@@ -66,8 +69,8 @@ export class TaskCache {
     const { docs, errors } = store.listSafe();
     this.db.run('DELETE FROM tasks');
     const insert = this.db.prepare(
-      `INSERT INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, json)
-       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $json)`
+      `INSERT INTO tasks (id, title, status, kind, parent, priority, assignee, created, updated, archived, json)
+       VALUES ($id, $title, $status, $kind, $parent, $priority, $assignee, $created, $updated, $archived, $json)`
     );
     for (const doc of docs) {
       insert.run({
@@ -80,6 +83,7 @@ export class TaskCache {
         $assignee: doc.meta.assignee,
         $created: doc.meta.created,
         $updated: doc.meta.updated,
+        $archived: doc.meta.archivedAt !== undefined ? 1 : 0,
         $json: JSON.stringify(doc),
       });
     }
@@ -110,6 +114,9 @@ export class TaskCache {
     if (filter.parent !== undefined) {
       clauses.push('parent = $parent');
       params.$parent = filter.parent;
+    }
+    if (filter.includeArchived !== true) {
+      clauses.push('archived = 0');
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.db
