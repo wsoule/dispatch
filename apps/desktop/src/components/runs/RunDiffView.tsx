@@ -5,6 +5,7 @@ import { CircleAlert, FileX } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
+import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
 import { Skeleton } from '@/ui/skeleton';
 
@@ -111,9 +112,11 @@ export function RunDiffView({
             <p className="text-[12px]">No changes to show for this run.</p>
           </div>
         ) : (
-          <PierreWorkerPool>
-            <PatchDiff patch={diff.patch} />
-          </PierreWorkerPool>
+          <ErrorBoundary label="the diff">
+            <PierreWorkerPool>
+              <PatchDiff patch={diff.patch} />
+            </PierreWorkerPool>
+          </ErrorBoundary>
         )}
       </div>
     </div>

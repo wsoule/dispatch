@@ -23,6 +23,7 @@ import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections } from '../../lib/taskDisplay';
 import { RunStatePill } from '../runs/RunStatePill';
+import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { EpicDagModal } from './EpicDagModal';
 import {
   AssigneeControl,
@@ -518,303 +519,309 @@ export function TaskDetailDialog({
             (event.currentTarget as HTMLElement).focus();
           }}
         >
-          {/* Breadcrumb-style header, matching Linear's `Team › Issues › ID`: just the id and
+          <ErrorBoundary label="this dialog">
+            {/* Breadcrumb-style header, matching Linear's `Team › Issues › ID`: just the id and
             live status, quiet, above the two-column body. */}
-          <div className="border-border flex shrink-0 items-center gap-2 border-b px-6 py-3">
-            <span className="text-muted-foreground font-mono text-[11px]">
-              {doc.meta.id}
-            </span>
-            <span className="text-muted-foreground/40">›</span>
-            <StatusIcon status={doc.meta.status} />
-            <span className="text-muted-foreground text-[12px]">
-              {doc.meta.status}
-            </span>
-            <DialogTitle className="sr-only">
-              {doc.meta.title || 'Task detail'}
-            </DialogTitle>
-          </div>
-
-          <div className="flex min-h-0 flex-1">
-            {/* Main column: the title leads, then dispatch actions, editable prose sections,
-              sessions, and the activity feed + composer — all left-aligned in a roomy flow. */}
-            <div className="flex min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-8 py-6">
-              {error !== null && (
-                <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
-                  {error}
-                </div>
-              )}
-
-              <Input
-                className="text-foreground hover:bg-muted/40 dark:hover:bg-muted/40 -mx-2 h-auto w-[calc(100%+1rem)] border-transparent bg-transparent px-2 py-1 text-[22px] leading-tight font-semibold shadow-none transition-colors duration-150 dark:bg-transparent"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                onBlur={saveTitleIfChanged}
-                aria-label="Task title"
-              />
-
-              {doc.meta.kind === 'epic' && (
-                <div className="-mt-2 flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setShowGraph(true)}
-                  >
-                    <Waypoints className="size-3.5" />
-                    View graph
-                  </Button>
-                </div>
-              )}
-
-              {(ready || hasOpenRun) && (
-                <div className="-mt-2 flex items-center gap-2">
-                  {ready && (
-                    <>
-                      <Button
-                        size="sm"
-                        disabled={dispatching}
-                        onClick={() => void dispatch()}
-                      >
-                        Dispatch
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="text-muted-foreground hover:bg-muted/60 hover:text-foreground inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-[12px] transition-colors duration-150"
-                          >
-                            {modelLabel(model)}
-                            <ChevronDown className="size-3" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                          {MODELS.map((m) => (
-                            <DropdownMenuItem
-                              key={m.id}
-                              onSelect={() => setModel(m.id)}
-                              className="gap-2 pr-8 text-[13px]"
-                            >
-                              <span className="flex-1">{m.label}</span>
-                              {m.id === model && (
-                                <Check className="ml-auto size-3.5" />
-                              )}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </>
-                  )}
-                  {ready && isFakeExecutorDevToolEnabled() && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={dispatching}
-                      onClick={() => void dispatch('fake')}
-                    >
-                      Dispatch (fake)
-                    </Button>
-                  )}
-                  {hasOpenRun && run !== undefined && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => onOpenRun(run.id)}
-                    >
-                      {doc.meta.status === 'in-review'
-                        ? 'Review run'
-                        : 'View run'}
-                    </Button>
-                  )}
-                  {run?.prUrl !== undefined && (
-                    <a
-                      className="text-primary hover:bg-accent border-border inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors duration-150"
-                      href={run.prUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      PR
-                      <ArrowUpRight className="size-3" />
-                    </a>
-                  )}
-                </div>
-              )}
-
-              <EditableBodySection
-                title="Description"
-                value={description}
-                placeholder="Add a description…"
-                onSave={(next) => void runUpdate({ description: next })}
-              />
-
-              <EditableBodySection
-                title="Acceptance Criteria"
-                value={acceptance}
-                placeholder="Add acceptance criteria…"
-                onSave={(next) => void runUpdate({ acceptanceCriteria: next })}
-              />
-
-              <MainSection
-                title={`Sessions${runs.length > 0 ? ` · ${runs.length}` : ''}`}
-              >
-                {runs.length === 0 ? (
-                  <p className="text-muted-foreground text-[13px]">
-                    No agent has worked this task yet.
-                  </p>
-                ) : (
-                  <ul className="flex flex-col gap-1">
-                    {runs.map((r) => (
-                      <li key={r.id}>
-                        <button
-                          type="button"
-                          onClick={() => onOpenRun(r.id)}
-                          className="hover:bg-muted/60 border-border/60 flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150"
-                        >
-                          <RunStatePill state={r.state} />
-                          <span className="text-muted-foreground font-mono text-[11px]">
-                            {r.id}
-                          </span>
-                          <span className="text-muted-foreground/70 ml-auto text-[11px] whitespace-nowrap">
-                            {r.costUsd !== undefined &&
-                              `$${r.costUsd.toFixed(2)} · `}
-                            {formatRelativeTimeFromIso(r.updatedAt)}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </MainSection>
-
-              <MainSection title="Activity">
-                {activityEntries.length === 0 ? (
-                  <p className="text-muted-foreground text-[13px]">
-                    No activity yet.
-                  </p>
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {activityEntries.map((entry, i) => (
-                      <li
-                        key={i}
-                        className="text-muted-foreground text-[13px] whitespace-pre-wrap"
-                      >
-                        {entry}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {/* Linear-style comment composer: one bordered, rounded box that focuses as a
-                  unit, with the send affordance tucked inside on the right. */}
-                <div className="border-border focus-within:border-ring/60 mt-1 flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors duration-150">
-                  <Input
-                    className="h-7 flex-1 border-transparent bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
-                    placeholder="Leave a note…"
-                    value={activityDraft}
-                    onChange={(e) => setActivityDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') submitActivity();
-                    }}
-                  />
-                  <Button
-                    size="sm"
-                    disabled={activityDraft.trim() === ''}
-                    onClick={submitActivity}
-                  >
-                    Add
-                  </Button>
-                </div>
-              </MainSection>
+            <div className="border-border flex shrink-0 items-center gap-2 border-b px-6 py-3">
+              <span className="text-muted-foreground font-mono text-[11px]">
+                {doc.meta.id}
+              </span>
+              <span className="text-muted-foreground/40">›</span>
+              <StatusIcon status={doc.meta.status} />
+              <span className="text-muted-foreground text-[12px]">
+                {doc.meta.status}
+              </span>
+              <DialogTitle className="sr-only">
+                {doc.meta.title || 'Task detail'}
+              </DialogTitle>
             </div>
 
-            {/* Properties rail: the signature Linear element — every property editable in place
-              as a compact icon+value row (ghost selects) or chip editor, grouped under quiet
-              headers, instead of a grid of boxed form fields. */}
-            <aside className="border-border bg-muted/20 w-[248px] shrink-0 overflow-y-auto border-l px-4 py-6">
-              <div className="flex flex-col gap-5">
-                <RailSection title="Properties">
-                  <StatusControl
-                    value={doc.meta.status}
-                    statuses={statuses}
-                    onChange={(s) => void changeStatus(s)}
-                    variant="row"
-                  />
-                  <PriorityControl
-                    value={doc.meta.priority}
-                    onChange={(p) => void runUpdate({ priority: p })}
-                    variant="row"
-                  />
-                  <AssigneeControl
-                    value={doc.meta.assignee}
-                    onChange={(a) => void runUpdate({ assignee: a })}
-                    variant="row"
-                  />
-                  <EpicControl
-                    value={doc.meta.parent}
-                    epics={epics}
-                    onChange={(parent) => void runUpdate({ parent })}
-                    variant="row"
-                  />
-
-                  <MilestoneRow
-                    value={doc.meta.milestone}
-                    milestones={milestones}
-                    onChange={(milestone) => void runUpdate({ milestone })}
-                  />
-
-                  <SelfReviewRow
-                    value={doc.meta.selfReview}
-                    onChange={(selfReview) => void runUpdate({ selfReview })}
-                  />
-
-                  {/* Kind is fixed at creation (task vs epic) — the one property that stays
-                    read-only, shown for context alongside the editable rows. */}
-                  <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]">
-                    <Layers className="text-muted-foreground size-3.5" />
-                    <span>{doc.meta.kind}</span>
+            <div className="flex min-h-0 flex-1">
+              {/* Main column: the title leads, then dispatch actions, editable prose sections,
+              sessions, and the activity feed + composer — all left-aligned in a roomy flow. */}
+              <div className="flex min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-8 py-6">
+                {error !== null && (
+                  <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
+                    {error}
                   </div>
-                </RailSection>
-
-                <RailSection title="Blocked by">
-                  {doc.meta.blockedBy.length === 0 && (
-                    <div className="text-muted-foreground flex items-center gap-2 px-2 py-1.5 text-[13px]">
-                      <Ban className="size-3.5" />
-                      No blockers
-                    </div>
-                  )}
-                  <BlockedByEditor
-                    blockedBy={doc.meta.blockedBy}
-                    candidates={tasks.filter((t) => t.meta.id !== doc.meta.id)}
-                    onChange={(next) => void runUpdate({ blockedBy: next })}
-                  />
-                </RailSection>
-
-                {/* Gated on `stack` (not just letting `StackRail` render null on its own) so a
-                  lone task — the common case, not a "stack" of one — never shows an empty
-                  "Stack" heading with nothing beneath it. */}
-                {stack !== null && (
-                  <RailSection title="Stack">
-                    <StackRail
-                      tasks={tasks}
-                      taskId={doc.meta.id}
-                      latestRunByTaskId={latestRunByTaskId}
-                      onOpenTask={onOpenTask}
-                    />
-                  </RailSection>
                 )}
 
-                <RailSection title="Labels">
-                  {doc.meta.labels.length === 0 && (
-                    <div className="text-muted-foreground flex items-center gap-2 px-2 pb-0.5 text-[13px]">
-                      <Tag className="size-3.5" />
-                      No labels
-                    </div>
+                <Input
+                  className="text-foreground hover:bg-muted/40 dark:hover:bg-muted/40 -mx-2 h-auto w-[calc(100%+1rem)] border-transparent bg-transparent px-2 py-1 text-[22px] leading-tight font-semibold shadow-none transition-colors duration-150 dark:bg-transparent"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onBlur={saveTitleIfChanged}
+                  aria-label="Task title"
+                />
+
+                {doc.meta.kind === 'epic' && (
+                  <div className="-mt-2 flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setShowGraph(true)}
+                    >
+                      <Waypoints className="size-3.5" />
+                      View graph
+                    </Button>
+                  </div>
+                )}
+
+                {(ready || hasOpenRun) && (
+                  <div className="-mt-2 flex items-center gap-2">
+                    {ready && (
+                      <>
+                        <Button
+                          size="sm"
+                          disabled={dispatching}
+                          onClick={() => void dispatch()}
+                        >
+                          Dispatch
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:bg-muted/60 hover:text-foreground inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-[12px] transition-colors duration-150"
+                            >
+                              {modelLabel(model)}
+                              <ChevronDown className="size-3" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start">
+                            {MODELS.map((m) => (
+                              <DropdownMenuItem
+                                key={m.id}
+                                onSelect={() => setModel(m.id)}
+                                className="gap-2 pr-8 text-[13px]"
+                              >
+                                <span className="flex-1">{m.label}</span>
+                                {m.id === model && (
+                                  <Check className="ml-auto size-3.5" />
+                                )}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </>
+                    )}
+                    {ready && isFakeExecutorDevToolEnabled() && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={dispatching}
+                        onClick={() => void dispatch('fake')}
+                      >
+                        Dispatch (fake)
+                      </Button>
+                    )}
+                    {hasOpenRun && run !== undefined && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => onOpenRun(run.id)}
+                      >
+                        {doc.meta.status === 'in-review'
+                          ? 'Review run'
+                          : 'View run'}
+                      </Button>
+                    )}
+                    {run?.prUrl !== undefined && (
+                      <a
+                        className="text-primary hover:bg-accent border-border inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors duration-150"
+                        href={run.prUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        PR
+                        <ArrowUpRight className="size-3" />
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                <EditableBodySection
+                  title="Description"
+                  value={description}
+                  placeholder="Add a description…"
+                  onSave={(next) => void runUpdate({ description: next })}
+                />
+
+                <EditableBodySection
+                  title="Acceptance Criteria"
+                  value={acceptance}
+                  placeholder="Add acceptance criteria…"
+                  onSave={(next) =>
+                    void runUpdate({ acceptanceCriteria: next })
+                  }
+                />
+
+                <MainSection
+                  title={`Sessions${runs.length > 0 ? ` · ${runs.length}` : ''}`}
+                >
+                  {runs.length === 0 ? (
+                    <p className="text-muted-foreground text-[13px]">
+                      No agent has worked this task yet.
+                    </p>
+                  ) : (
+                    <ul className="flex flex-col gap-1">
+                      {runs.map((r) => (
+                        <li key={r.id}>
+                          <button
+                            type="button"
+                            onClick={() => onOpenRun(r.id)}
+                            className="hover:bg-muted/60 border-border/60 flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150"
+                          >
+                            <RunStatePill state={r.state} />
+                            <span className="text-muted-foreground font-mono text-[11px]">
+                              {r.id}
+                            </span>
+                            <span className="text-muted-foreground/70 ml-auto text-[11px] whitespace-nowrap">
+                              {r.costUsd !== undefined &&
+                                `$${r.costUsd.toFixed(2)} · `}
+                              {formatRelativeTimeFromIso(r.updatedAt)}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                  <LabelEditor
-                    labels={doc.meta.labels}
-                    onChange={(next) => void runUpdate({ labels: next })}
-                  />
-                </RailSection>
+                </MainSection>
+
+                <MainSection title="Activity">
+                  {activityEntries.length === 0 ? (
+                    <p className="text-muted-foreground text-[13px]">
+                      No activity yet.
+                    </p>
+                  ) : (
+                    <ul className="flex flex-col gap-2">
+                      {activityEntries.map((entry, i) => (
+                        <li
+                          key={i}
+                          className="text-muted-foreground text-[13px] whitespace-pre-wrap"
+                        >
+                          {entry}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {/* Linear-style comment composer: one bordered, rounded box that focuses as a
+                  unit, with the send affordance tucked inside on the right. */}
+                  <div className="border-border focus-within:border-ring/60 mt-1 flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors duration-150">
+                    <Input
+                      className="h-7 flex-1 border-transparent bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
+                      placeholder="Leave a note…"
+                      value={activityDraft}
+                      onChange={(e) => setActivityDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') submitActivity();
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      disabled={activityDraft.trim() === ''}
+                      onClick={submitActivity}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                </MainSection>
               </div>
-            </aside>
-          </div>
+
+              {/* Properties rail: the signature Linear element — every property editable in place
+              as a compact icon+value row (ghost selects) or chip editor, grouped under quiet
+              headers, instead of a grid of boxed form fields. */}
+              <aside className="border-border bg-muted/20 w-[248px] shrink-0 overflow-y-auto border-l px-4 py-6">
+                <div className="flex flex-col gap-5">
+                  <RailSection title="Properties">
+                    <StatusControl
+                      value={doc.meta.status}
+                      statuses={statuses}
+                      onChange={(s) => void changeStatus(s)}
+                      variant="row"
+                    />
+                    <PriorityControl
+                      value={doc.meta.priority}
+                      onChange={(p) => void runUpdate({ priority: p })}
+                      variant="row"
+                    />
+                    <AssigneeControl
+                      value={doc.meta.assignee}
+                      onChange={(a) => void runUpdate({ assignee: a })}
+                      variant="row"
+                    />
+                    <EpicControl
+                      value={doc.meta.parent}
+                      epics={epics}
+                      onChange={(parent) => void runUpdate({ parent })}
+                      variant="row"
+                    />
+
+                    <MilestoneRow
+                      value={doc.meta.milestone}
+                      milestones={milestones}
+                      onChange={(milestone) => void runUpdate({ milestone })}
+                    />
+
+                    <SelfReviewRow
+                      value={doc.meta.selfReview}
+                      onChange={(selfReview) => void runUpdate({ selfReview })}
+                    />
+
+                    {/* Kind is fixed at creation (task vs epic) — the one property that stays
+                    read-only, shown for context alongside the editable rows. */}
+                    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]">
+                      <Layers className="text-muted-foreground size-3.5" />
+                      <span>{doc.meta.kind}</span>
+                    </div>
+                  </RailSection>
+
+                  <RailSection title="Blocked by">
+                    {doc.meta.blockedBy.length === 0 && (
+                      <div className="text-muted-foreground flex items-center gap-2 px-2 py-1.5 text-[13px]">
+                        <Ban className="size-3.5" />
+                        No blockers
+                      </div>
+                    )}
+                    <BlockedByEditor
+                      blockedBy={doc.meta.blockedBy}
+                      candidates={tasks.filter(
+                        (t) => t.meta.id !== doc.meta.id
+                      )}
+                      onChange={(next) => void runUpdate({ blockedBy: next })}
+                    />
+                  </RailSection>
+
+                  {/* Gated on `stack` (not just letting `StackRail` render null on its own) so a
+                  lone task — the common case, not a "stack" of one — never shows an empty
+                  "Stack" heading with nothing beneath it. */}
+                  {stack !== null && (
+                    <RailSection title="Stack">
+                      <StackRail
+                        tasks={tasks}
+                        taskId={doc.meta.id}
+                        latestRunByTaskId={latestRunByTaskId}
+                        onOpenTask={onOpenTask}
+                      />
+                    </RailSection>
+                  )}
+
+                  <RailSection title="Labels">
+                    {doc.meta.labels.length === 0 && (
+                      <div className="text-muted-foreground flex items-center gap-2 px-2 pb-0.5 text-[13px]">
+                        <Tag className="size-3.5" />
+                        No labels
+                      </div>
+                    )}
+                    <LabelEditor
+                      labels={doc.meta.labels}
+                      onChange={(next) => void runUpdate({ labels: next })}
+                    />
+                  </RailSection>
+                </div>
+              </aside>
+            </div>
+          </ErrorBoundary>
         </DialogContent>
       </Dialog>
 
