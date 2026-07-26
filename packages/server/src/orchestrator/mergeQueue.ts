@@ -680,15 +680,15 @@ export class MergeQueue {
   // commits jj reads as divergence, and descendants do not follow.
   //
   // That descendant rewriting is exactly why the jj path is skipped while any
-  // dependent is still LIVE — see hasLiveDependents for what jj does to such a
-  // worktree, and why re-attaching it is not an option.
+  // run on a DESCENDANT branch is still LIVE — see hasLiveDescendants for what
+  // jj does to such a worktree, and why re-attaching it is not an option.
   private async rebase(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
     entry.state = 'rebasing';
     this.broadcast();
     const cwd = meta.worktreePath;
 
-    const liveDependents = this.hasLiveDependents(meta.branch);
-    if (!liveDependents && (await this.jj.isColocated())) {
+    const liveDescendants = await this.hasLiveDescendants(meta.branch);
+    if (!liveDescendants && (await this.jj.isColocated())) {
       // The jj rebase runs in the project root and moves `refs/heads/<branch>`
       // out from under this run's own worktree, which has that branch checked
       // out. Measured (jj 0.43.0): the worktree is left DETACHED at the
@@ -725,12 +725,12 @@ export class MergeQueue {
       this.ctx.orchestrator.resyncRunWorktree(meta.id);
       return;
     }
-    if (liveDependents) {
+    if (liveDescendants) {
       // Rare and consequential enough to be worth a durable line rather than
       // only a comment — §4.6 asks for the chosen path to be recorded.
       this.ctx.orchestrator.appendRunTaskActivity(
         meta.id,
-        `merge queue: run ${meta.id} rebased with plain git rather than jj — a dependent run is still live on this branch, and a jj rewrite would detach its worktree`
+        `merge queue: run ${meta.id} rebased with plain git rather than jj — a run stacked above this branch is still live, and a jj rewrite would detach its worktree`
       );
     }
 
@@ -944,7 +944,9 @@ export class MergeQueue {
   }
 
   /**
-   * Whether any run that is still LIVE is stacked on `branch`.
+   * Whether any run that is still LIVE sits on a branch that would be rewritten
+   * by rewriting `branch` — i.e. a branch descended from it, at ANY depth, plus
+   * `branch` itself.
    *
    * This is the gate on jj. jj's whole value here is that rewriting a commit
    * automatically rewrites its descendants and moves their bookmarks — but a
@@ -957,18 +959,47 @@ export class MergeQueue {
    *
    * Re-attaching the descendant is not an option — that means `git checkout`
    * plus `git reset --hard` in a directory an agent is writing to. So the jj
-   * path is simply not taken while a live dependent exists: `git rebase` never
+   * path is simply not taken while a live descendant exists: `git rebase` never
    * touches descendants, and the explicit post-merge restack (restackRun)
    * brings them across afterwards anyway.
+   *
+   * The question is put to GIT, not to recorded `stackParents`. `stackParents`
+   * names only a run's IMMEDIATE blockers, and stacks are not two levels deep
+   * by nature: with A blocking B blocking C, C is branched off B's branch and
+   * records only B — yet C's branch is a git descendant of A's, and
+   * `jj rebase -b <A>` rewrites it. A membership test on `stackParents` misses
+   * that entirely, which is the whole shape stacked dispatch exists to serve.
+   * `git branch --contains` returns every branch reachable-from-descendant in
+   * one call, at any depth, and does not depend on metadata being complete —
+   * which, as the request-changes bug showed, it can fail to be.
+   *
+   * Fails CLOSED: a git error (an unresolvable ref) is answered "yes, there may
+   * be one", because being wrong in that direction costs a slower rebase while
+   * being wrong the other way silently destroys an agent's work.
    */
-  private hasLiveDependents(branch: string): boolean {
-    return this.ctx.orchestrator
-      .list()
-      .some(
-        (r) =>
-          !TERMINAL_RUN_STATES.has(r.state) &&
-          r.stackParents?.includes(branch) === true
-      );
+  private async hasLiveDescendants(branch: string): Promise<boolean> {
+    const liveBranches = new Set(
+      this.ctx.orchestrator
+        .list()
+        .filter((r) => !TERMINAL_RUN_STATES.has(r.state))
+        .map((r) => r.branch)
+    );
+    // No live run anywhere is the overwhelmingly common case, and it needs no
+    // git call at all — this keeps the ordinary merge path exactly as cheap as
+    // it was.
+    if (liveBranches.size === 0) return false;
+    const contains = await this.run(this.ctx.rootDir, [
+      'git',
+      'branch',
+      '--contains',
+      branch,
+      '--format=%(refname:short)',
+    ]);
+    if (!contains.ok) return true;
+    for (const line of contains.stdout.split('\n')) {
+      if (liveBranches.has(line.trim())) return true;
+    }
+    return false;
   }
 
   /**
@@ -1110,10 +1141,10 @@ export class MergeQueue {
     }
 
     // Same jj gate rebase() applies, for the same reason: `jj rebase -s` also
-    // rewrites the descendants of the commits it moves, so a run stacked on
-    // THIS dependent that is still live would be silently detached.
+    // rewrites the descendants of the commits it moves, so a live run anywhere
+    // above THIS dependent in the stack would be silently detached.
     const viaJj =
-      !this.hasLiveDependents(dependent.branch) &&
+      !(await this.hasLiveDescendants(dependent.branch)) &&
       (await this.jj.isColocated());
     // Backup first — this is the undo path if the restack goes wrong. It is
     // NOT the rebase boundary: that is stackBaseCommit, recorded at dispatch.

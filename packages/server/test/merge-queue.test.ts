@@ -1093,6 +1093,16 @@ describe('MergeQueue restack of stacked dependents', () => {
       'rev-parse',
       dependentRun.branch,
     ]).trim();
+    // Both jj destinations are pinned to an exact commit, so a regression that
+    // rebased onto the WRONG commit could not slip through a looser shape
+    // check. The two are different commits and both have to be captured at the
+    // right moment: the entry's own `-b` rebase runs BEFORE the squash-merge,
+    // against main's tip as it stands now; the dependent's `-s` restack runs
+    // after, against the squash commit.
+    const mainShaBeforeMerge = runGitSync(harness.rootDir, [
+      'rev-parse',
+      'main',
+    ]).trim();
 
     queue.enqueue(blockerRun.id);
     await waitFor(() =>
@@ -1101,17 +1111,21 @@ describe('MergeQueue restack of stacked dependents', () => {
 
     // Destinations are always plain commit ids, never ref names: jj cannot
     // resolve git's `origin/<base>` spelling at all, so every jj destination
-    // goes through `git rev-parse` first (see MergeQueue.jjRevision). `main`
-    // has moved on by now (the blocker just squash-merged into it), so this is
-    // read after the merge.
-    const mainSha = runGitSync(harness.rootDir, ['rev-parse', 'main']).trim();
+    // goes through `git rev-parse` first (see MergeQueue.jjRevision).
+    const mainShaAfterMerge = runGitSync(harness.rootDir, [
+      'rev-parse',
+      'main',
+    ]).trim();
+    expect(mainShaAfterMerge).not.toBe(mainShaBeforeMerge);
     // The entry's own rebase goes through jj too, so descendants follow it.
-    // That one runs BEFORE the merge, against the pre-merge tip.
-    expect(
-      jjCalls.filter(
-        (c) => c[1] === 'rebase' && c[2] === '-b' && c[3] === blockerRun.branch
-      )
-    ).toHaveLength(1);
+    expect(jjCalls).toContainEqual([
+      'jj',
+      'rebase',
+      '-b',
+      blockerRun.branch,
+      '-d',
+      mainShaBeforeMerge,
+    ]);
     // The dependent is restacked with -s over ONLY its own commits, never -b
     // over the whole branch.
     expect(jjCalls).toContainEqual([
@@ -1120,7 +1134,7 @@ describe('MergeQueue restack of stacked dependents', () => {
       '-s',
       `roots(${dependentRun.stackBaseCommit ?? ''}..${dependentRun.branch})`,
       '-d',
-      mainSha,
+      mainShaAfterMerge,
       '--skip-emptied',
     ]);
     // No jj destination may be a ref name — that is exactly the bug this
@@ -2131,6 +2145,138 @@ describe('MergeQueue against real jj', () => {
       expect(
         await Bun.file(join(dependent.worktreePath, 'b.txt')).exists()
       ).toBe(true);
+    }
+  );
+
+  // The same hazard one level further out, which is the shape stacked dispatch
+  // actually exists to serve. A blocks B blocks C: because an `in-review`
+  // blocker counts as satisfied for dispatch, B is branched off A's branch and
+  // C off B's, so C's branch is a git DESCENDANT of A's — but C records only
+  // `['dispatch/B…']` in `stackParents` and never names A at all.
+  //
+  // `jj rebase -b <A>` rewrites A's, B's AND C's commits and moves C's
+  // bookmark, so a gate that tests direct `stackParents` membership returns
+  // false, takes the jj path, and detaches live C exactly as Probe 1 showed —
+  // one level up, where nothing is watching. Asking git which branches contain
+  // A answers this at any depth.
+  it.skipIf(!hasJj())(
+    'rebases with plain git when a live run sits two levels above, not just one',
+    async () => {
+      const harness = makeHarness();
+      colocate(harness.rootDir);
+
+      // A: blocker, terminal and unreviewed, with real content.
+      const { runId: runA, taskId: taskA } = await dispatchAndFinish(
+        harness,
+        'Task A'
+      );
+      const branchA = harness.orchestrator.list().find((r) => r.id === runA)!;
+      commitFile(branchA.worktreePath, 'a.txt', 'A work');
+
+      // B: blocked by A, so branched off A's branch. Also terminal.
+      const taskB = harness.store.create({
+        title: 'Task B',
+        blockedBy: [taskA],
+      });
+      const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'fake');
+      await waitFor(
+        () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
+      );
+      const branchB = harness.orchestrator
+        .list()
+        .find((r) => r.id === metaB.id)!;
+      expect(branchB.baseBranch).toBe(branchA.branch);
+      commitFile(branchB.worktreePath, 'b.txt', 'B work');
+
+      // C: blocked by B, so branched off B's branch — and still LIVE.
+      harness.orchestrator.registerExecutor(
+        'gated',
+        new FakeExecutor({
+          steps: [
+            { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+          ],
+          finish: { state: 'finished', costUsd: 0, turns: 1 },
+        })
+      );
+      const taskC = harness.store.create({
+        title: 'Task C',
+        blockedBy: [taskB.meta.id],
+      });
+      const metaC = await harness.orchestrator.dispatch(taskC.meta.id, 'gated');
+      await waitFor(
+        () =>
+          harness.orchestrator.getRun(metaC.id)?.meta.state ===
+          'awaiting-approval'
+      );
+      const liveC = harness.orchestrator.list().find((r) => r.id === metaC.id)!;
+
+      // The exact shape the one-link gate is blind to: C is a git descendant
+      // of A, but nothing C records mentions A.
+      expect(liveC.baseBranch).toBe(branchB.branch);
+      expect(liveC.stackParents).toEqual([branchB.branch]);
+      expect(liveC.stackParents).not.toContain(branchA.branch);
+      expect(
+        Bun.spawnSync(
+          ['git', 'merge-base', '--is-ancestor', branchA.branch, liveC.branch],
+          { cwd: harness.rootDir, stdout: 'pipe', stderr: 'pipe' }
+        ).exitCode
+      ).toBe(0);
+
+      // main has to have moved, or A's rebase is a no-op and jj rewrites
+      // nothing whichever path ran.
+      writeFileSync(join(harness.rootDir, 'late.txt'), 'landed on main\n');
+      runGitSync(harness.rootDir, ['add', 'late.txt']);
+      runGitSync(harness.rootDir, ['commit', '-m', 'late main commit']);
+
+      const tipC = runGitSync(harness.rootDir, [
+        'rev-parse',
+        liveC.branch,
+      ]).trim();
+
+      const queue = new MergeQueue(harness, defaultCommandRunner);
+      queue.enqueue(runA);
+      await waitFor(() =>
+        queue.snapshot().history.some((e) => e.state === 'merged')
+      );
+
+      // Live C, two levels up, is untouched and still ATTACHED.
+      expect(
+        runGitSync(harness.rootDir, ['rev-parse', liveC.branch]).trim()
+      ).toBe(tipC);
+      expect(
+        runGitSync(liveC.worktreePath, [
+          'rev-parse',
+          '--abbrev-ref',
+          'HEAD',
+        ]).trim()
+      ).toBe(liveC.branch);
+      // The load-bearing consequence: a commit C's agent makes after the merge
+      // reaches refs/heads/<C> instead of vanishing onto a detached HEAD.
+      commitFile(liveC.worktreePath, 'c.txt', 'C work');
+      expect(
+        runGitSync(harness.rootDir, ['rev-parse', liveC.branch]).trim()
+      ).toBe(runGitSync(liveC.worktreePath, ['rev-parse', 'HEAD']).trim());
+      expect(harness.store.get(taskA)?.body ?? '').toContain(
+        'rebased with plain git rather than jj'
+      );
+
+      // The same gate must hold for the post-merge restack of B, whose jj form
+      // (`jj rebase -s`) also carries descendants: B moves, C does not.
+      await waitFor(
+        () =>
+          harness.orchestrator.list().find((r) => r.id === metaB.id)
+            ?.baseBranch === 'main'
+      );
+      expect(
+        runGitSync(liveC.worktreePath, [
+          'rev-parse',
+          '--abbrev-ref',
+          'HEAD',
+        ]).trim()
+      ).toBe(liveC.branch);
+      expect(
+        runGitSync(harness.rootDir, ['rev-parse', liveC.branch]).trim()
+      ).toBe(runGitSync(liveC.worktreePath, ['rev-parse', 'HEAD']).trim());
     }
   );
 });
