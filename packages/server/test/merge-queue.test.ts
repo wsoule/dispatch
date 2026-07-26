@@ -1253,3 +1253,108 @@ describe('MergeQueue restack edge cases', () => {
     expect(replayed?.meta.baseBranch).not.toBe(blockerRun.branch);
   });
 });
+
+describe('MergeQueue multi-parent dependent that was live when its blocker merged', () => {
+  // The gap the terminal/boot path originally had: keying the stale-run check
+  // on `baseBranch` alone made the multi-parent shape invisible to it, because
+  // a multi-parent run's base is a jj merge-base bookmark that is NOT any
+  // blocker's branch. Such a run was skipped by restackDependents (still live)
+  // and then matched nothing on the terminal path either — neither restacked
+  // nor flagged, with nothing to re-examine it on reboot.
+  it('flags it once it goes terminal, and preserves its own failure message', async () => {
+    const jj = new JjManager(repo, (_cwd, cmd) => {
+      void cmd;
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
+    });
+    const harness = makeHarness(jj);
+
+    const { runId: runA, taskId: taskA } = await dispatchAndFinish(
+      harness,
+      'Blocker A'
+    );
+    const blockerA = harness.orchestrator.list().find((r) => r.id === runA)!;
+    commitFile(blockerA.worktreePath, 'a.txt', 'A work');
+    const { taskId: taskB } = await dispatchAndFinish(harness, 'Blocker B');
+
+    // C is blocked on BOTH, so it is branched off a multi-parent merge base.
+    // It also pauses at an approval gate, so it is still LIVE when A merges,
+    // and then fails — which is what exercises error preservation.
+    harness.orchestrator.registerExecutor(
+      'gated-fail',
+      new FakeExecutor({
+        steps: [
+          { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+        ],
+        finish: { state: 'failed', error: 'agent ran out of budget' },
+      })
+    );
+    const taskC = harness.store.create({
+      title: 'Task C',
+      blockedBy: [taskA, taskB],
+    });
+    const stackBase = `dispatch/stack-base-${taskC.meta.id}`;
+    runGitSync(harness.rootDir, ['branch', stackBase, blockerA.branch]);
+    const metaC = await harness.orchestrator.dispatch(
+      taskC.meta.id,
+      'gated-fail'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.getRun(metaC.id)?.meta.state ===
+        'awaiting-approval'
+    );
+    const dependent = harness.orchestrator
+      .list()
+      .find((r) => r.id === metaC.id)!;
+    // The exact shape the stale-run check has to recognise: the base is the
+    // bookmark, and it is NOT among the recorded stack parents.
+    expect(dependent.baseBranch).toBe(stackBase);
+    expect(dependent.stackParents).not.toContain(stackBase);
+    expect(dependent.stackParents).toContain(blockerA.branch);
+
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(runA);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'merged')
+    );
+
+    // Untouched and unflagged while its agent still owns the worktree.
+    expect(
+      harness.orchestrator.list().find((r) => r.id === metaC.id)?.baseDiscarded
+    ).toBeUndefined();
+
+    harness.orchestrator.approve(metaC.id, 'gate', true);
+    await waitFor(
+      () => harness.orchestrator.getRun(metaC.id)?.meta.state === 'failed'
+    );
+
+    // Going terminal is what makes it reachable, and it must be FLAGGED —
+    // a multi-parent base cannot be restacked onto one blocker's base.
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === metaC.id)
+          ?.baseDiscarded === true
+    );
+    const flagged = harness.orchestrator.list().find((r) => r.id === metaC.id)!;
+    expect(flagged.baseBranch).toBe(stackBase);
+    // The run's OWN failure message survives the flag — it says why the work
+    // is broken, where the restack reason only says why the base could not
+    // move, and the write is persisted so clobbering it would be permanent.
+    expect(flagged.error).toBe('agent ran out of budget');
+    // ...and the restack reason still reaches the user, on the task.
+    const activity = harness.store.get(taskC.meta.id)?.body ?? '';
+    expect(activity).toContain('multi-parent base');
+    // Restart-equivalent: both the flag and the original error replay.
+    const replayed = replayTranscript(
+      transcriptPath(harness.rootDir, metaC.id)
+    );
+    expect(replayed?.meta.baseDiscarded).toBe(true);
+    expect(replayed?.meta.error).toBe('agent ran out of budget');
+
+    // A second pass (the boot sweep re-deriving from durable state) must not
+    // flag it again.
+    const queue2 = new MergeQueue(harness, noJjRunner);
+    await waitFor(() => queue2.snapshot().entries.length === 0);
+    expect(activity.split('multi-parent base')).toHaveLength(2);
+  });
+});

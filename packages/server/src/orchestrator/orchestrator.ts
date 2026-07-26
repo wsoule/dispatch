@@ -942,19 +942,23 @@ export class Orchestrator {
   // flag is the ONLY record that a run needs human attention, and the restack
   // is never retried on its own, so losing it across a restart would leave a
   // broken run looking perfectly healthy.
+  //
+  // `reason` never overwrites an error the run already had. A `failed` run's
+  // own failure message is the more important one — it says why the work is
+  // broken, where this only says why the base could not be moved — and since
+  // the write is now persisted, clobbering it would destroy it for good. The
+  // restack reason still reaches the user: every caller also writes it to the
+  // run's task Activity (see MergeQueue.flagDependent).
   flagRunRestackFailure(runId: string, reason: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const now = new Date().toISOString();
-    this.registry.updateMeta(runId, {
-      baseDiscarded: true,
-      error: reason,
-      updatedAt: now,
-    });
-    this.transcriptFor(runId).appendState(meta.state, now, {
-      baseDiscarded: true,
-      error: reason,
-    });
+    const patch =
+      meta.error === undefined
+        ? { baseDiscarded: true, error: reason }
+        : { baseDiscarded: true };
+    this.registry.updateMeta(runId, { ...patch, updatedAt: now });
+    this.transcriptFor(runId).appendState(meta.state, now, patch);
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
