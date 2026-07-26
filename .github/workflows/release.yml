@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   create-release:
-    name: Create draft release
+    name: Create release
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:

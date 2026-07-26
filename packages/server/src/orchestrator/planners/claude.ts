@@ -96,6 +96,15 @@ export class ClaudePlanner implements Planner {
       cwd: this.rootDir,
       permissionMode: 'plan',
       outputFormat: { type: 'json_schema', schema: PROPOSAL_JSON_SCHEMA },
+      // Same "query() doesn't auto-load what the CLI does" fix as
+      // ClaudeExecutor's sdkOptions (executors/claude.ts): without
+      // `settingSources: ['project', ...]`, the SDK contract is explicit that
+      // CLAUDE.md/AGENTS.md never load at all. This planner runs against the
+      // real checkout via `cwd` (this.rootDir), so grounding it in the
+      // project's own instruction files the same way a dispatched run is
+      // improves the quality of its proposals, not just its executed work.
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      settingSources: ['user', 'project', 'local'],
     };
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
     // PATH `claude` -> install hint) ClaudeExecutor.openQuery uses — see
