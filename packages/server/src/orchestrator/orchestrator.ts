@@ -740,8 +740,9 @@ export class Orchestrator {
     this.requireNoOpenPr(meta);
     const now = new Date().toISOString();
 
+    let mergeCommit: string | undefined;
     if (action === 'merge') {
-      this.mergeRun(meta, now);
+      mergeCommit = this.mergeRun(meta, now);
     } else {
       this.persistDiffSnapshot(meta);
       this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
@@ -762,6 +763,7 @@ export class Orchestrator {
     this.transition(runId, meta.state, {
       reviewedAt: now,
       reviewAction: action,
+      mergeCommit,
     });
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
@@ -850,7 +852,7 @@ export class Orchestrator {
   // the previous order staged the *edited* task file before merging, so git
   // refused the second run's merge with "local changes ... would be
   // overwritten").
-  private mergeRun(meta: RunMeta, now: string): void {
+  private mergeRun(meta: RunMeta, now: string): string | undefined {
     // All three gates below describe the MAIN CHECKOUT, not this run, and all
     // three clear the moment the user commits/stashes/checks out — so they
     // throw MergeEnvironmentError rather than a plain conflict, which is what
@@ -958,6 +960,9 @@ export class Orchestrator {
 
     this.persistDiffSnapshot(meta, preMergeDiff);
     this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+    // Only a real squash-merge produced a new commit worth pointing at — the
+    // no-changes path's task-only commit is bookkeeping, not a merge.
+    return hasChanges ? this.worktrees.resolveCommit('HEAD') : undefined;
   }
 
   /**
@@ -1659,6 +1664,7 @@ export class Orchestrator {
       error?: string;
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
+      mergeCommit?: string;
     }
   ): void {
     const meta = this.registry.get(runId);

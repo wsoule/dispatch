@@ -65,6 +65,10 @@ export interface RunMeta {
   // packages/server/src/orchestrator/types.ts.
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';
+  // The squash-merge commit sha, set only when the 'merge' review action
+  // actually produced one. Mirrors RunMeta.mergeCommit in
+  // packages/server/src/orchestrator/types.ts.
+  mergeCommit?: string;
   // Set once the PR review action has pushed the branch and opened a GitHub
   // PR — stays set (and `reviewedAt` stays unset) until the PR poller sees it
   // merged.
