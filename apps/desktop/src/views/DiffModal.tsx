@@ -106,7 +106,7 @@ export function DiffModal({
             {data.lines.length === 0 ? (
               <p className="text-muted-foreground text-[13px]">
                 No diff content captured for this change — it was recorded
-                before Relay started storing before/after text.
+                before Dispatch started storing before/after text.
               </p>
             ) : (
               <div className="-mx-6 flex flex-col">

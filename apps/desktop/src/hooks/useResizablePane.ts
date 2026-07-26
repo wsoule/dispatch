@@ -53,6 +53,25 @@ export function useResizablePane(
     }
   }, []);
 
+  // `maxWidth` (and therefore the `aria-valuemax` a caller reports for the resize handle) is
+  // derived from the container's *current* clientWidth, but nothing above re-renders this hook
+  // when the container itself resizes without `width` changing — e.g. the window resizing, a
+  // sidebar toggling, or a sibling pane growing. A ResizeObserver on the container bumps this
+  // counter on every size change purely to force a re-render, so the next render recomputes
+  // `maxWidth()` against the live size instead of leaving `aria-valuemax` stale. Disconnected on
+  // unmount; a no-op if the container ref isn't attached yet or `ResizeObserver` is unavailable
+  // (e.g. under a test environment without DOM resize support).
+  const [, setResizeTick] = useState(0);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      setResizeTick((tick) => tick + 1);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [containerRef]);
+
   // Persist width to localStorage, but skip during active drag to avoid hammering storage
   // on every pointermove frame. Drag release and non-drag setters will still persist.
   useEffect(() => {
@@ -77,23 +96,12 @@ export function useResizablePane(
     return Math.max(MIN_WIDTH_PX, containerWidth * MAX_WIDTH_RATIO);
   }, [containerRef]);
 
-  // Persists a width the same way a drag release does — used by both
-  // `endDrag` and the keyboard handler below, so Arrow/Home/End presses
-  // survive a reload exactly like a mouse-drag resize does.
-  const persistWidth = useCallback(
-    (value: number) => {
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(storageKey, String(value));
-      }
-    },
-    [storageKey]
-  );
-
   // Keyboard operability for the drag handle: ArrowLeft/ArrowRight nudge the
   // width by 16px (clamped to the same min/max a drag would respect), Home
-  // snaps to the minimum, End snaps to the maximum. Each keypress persists
-  // immediately, mirroring a drag's persist-on-release behavior since there's
-  // no separate "release" event for a keypress.
+  // snaps to the minimum, End snaps to the maximum. No separate persist call
+  // is needed here — `setWidth` alone is enough, since the [storageKey, width]
+  // effect above already persists every non-drag width change, and
+  // `isDragging.current` is false for a keypress.
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       const ARROW_STEP_PX = 16;
@@ -110,9 +118,8 @@ export function useResizablePane(
       if (next === null) return;
       e.preventDefault();
       setWidth(next);
-      persistWidth(next);
     },
-    [width, clamp, maxWidth, persistWidth]
+    [width, clamp, maxWidth]
   );
 
   const onPointerDown = useCallback(

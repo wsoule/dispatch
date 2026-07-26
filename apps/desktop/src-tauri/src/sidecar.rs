@@ -146,24 +146,26 @@ async fn is_healthy(client: &reqwest::Client, port: u16) -> bool {
     parse_health_response(&body).unwrap_or(false)
 }
 
-/// Parses `rootDir` out of `/api/health`'s response body — used only by the
-/// stale-daemon kill decision (`should_kill_superseded_daemon`), which needs
-/// more than the plain `ok` flag `parse_health_response` extracts. `None`
-/// for malformed JSON or a response that omits the field, both treated the
-/// same as "can't confirm" by the caller.
-fn parse_health_root_dir(body: &str) -> Option<String> {
-    serde_json::from_str::<HealthResponse>(body).ok()?.root_dir
+/// Parses `/api/health`'s response body in full (both `ok` and `rootDir`) —
+/// used by `fetch_health`, which lets the stale-daemon kill decision
+/// (`should_kill_superseded_daemon`) get both signals it needs from a single
+/// GET instead of two (previously `is_healthy` and a separate rootDir-only
+/// fetch each issued their own request against the same endpoint). `None`
+/// for malformed JSON.
+fn parse_health(body: &str) -> Option<HealthResponse> {
+    serde_json::from_str(body).ok()
 }
 
-/// Same network shape as `is_healthy` (GET `/api/health` with the same 2s
-/// timeout), but returns the response's `rootDir` instead of its `ok` flag —
-/// the signal `should_kill_superseded_daemon` cross-checks against the root
-/// this call is ensuring a daemon for, before ever killing a pid a daemon
-/// file merely *names*. Kept as its own GET rather than reusing `is_healthy`'s
-/// response: `is_healthy` only surfaces a bool, not the parsed body, so
-/// there's nothing to share without also changing that widely-called
-/// function's signature.
-async fn fetch_health_root_dir(client: &reqwest::Client, port: u16) -> Option<String> {
+/// One GET against `/api/health` (same 2s timeout as `is_healthy`), parsed
+/// into both fields the kill decision needs (`ok` and `rootDir`) rather than
+/// issuing a second request for the rootDir alone. `is_healthy` is left as
+/// its own independent GET rather than being rewritten in terms of this: it
+/// only ever needs the `ok` flag and is called from hot polling loops
+/// (`poll_for_healthy_daemon`) and the reuse fast path, so keeping its
+/// public shape (a plain `bool`) unchanged there avoids touching those
+/// call sites for a duplicate-fetch fix that's only actually needed at the
+/// single kill-decision call site below.
+async fn fetch_health(client: &reqwest::Client, port: u16) -> Option<HealthResponse> {
     let response = client
         .get(format!("http://127.0.0.1:{port}/api/health"))
         .timeout(Duration::from_secs(2))
@@ -171,7 +173,7 @@ async fn fetch_health_root_dir(client: &reqwest::Client, port: u16) -> Option<St
         .await
         .ok()?;
     let body = response.text().await.ok()?;
-    parse_health_root_dir(&body)
+    parse_health(&body)
 }
 
 /// Pure decision for whether a live process named by an on-disk daemon file
@@ -186,13 +188,25 @@ async fn fetch_health_root_dir(client: &reqwest::Client, port: u16) -> Option<St
 /// (the file could be stale — its process already dead, or dead and
 /// reused by some unrelated program under the same pid) AND both the
 /// daemon file's claimed root and the live health response's claimed root
-/// exactly match `root`. Deliberately never kills on the pid/daemon-file
-/// alone — a daemon file surviving after its process died, or naming a pid
-/// now occupied by a completely unrelated process, must never be treated as
-/// license to send that pid a real kill signal. Requiring the *live*
-/// response's own rootDir (not just the file's) additionally guards against
-/// a stale file whose claimed rootDir happens to match but whose port now
-/// answers for some other, unrelated daemon entirely.
+/// exactly match `root`.
+///
+/// What this actually guarantees: `kill_pid_best_effort` is only ever called
+/// with the pid the daemon *file* names — there is no independent source for
+/// that pid, and this function never verifies that the pid is the process
+/// actually bound to the file's port (the health check confirms something
+/// is answering on the PORT, not that it *is* the named pid). The kill is
+/// gated on that port being answered, right now, by a live dispatchd
+/// claiming the exact same `rootDir` this call is ensuring a daemon for —
+/// never on the daemon file's pid/rootDir claims alone. The residual risk is
+/// the coincidence of the original process having exited, its pid having
+/// been reused by an unrelated program, AND some other dispatchd instance
+/// having landed on the exact same port and happening to serve the same
+/// rootDir — at which point this would kill that unrelated pid. This is
+/// mitigated (not eliminated) by dispatchd binding an ephemeral port per
+/// instance, which makes two unrelated processes coinciding on the identical
+/// port for the identical root vanishingly unlikely. Actually verifying the
+/// pid owns the port (e.g. via `lsof`/procfs) would close this gap but is
+/// out of scope here.
 fn should_kill_superseded_daemon(
     root: &str,
     daemon_root_dir: &str,
@@ -657,14 +671,17 @@ pub async fn ensure_dispatchd(
     // spawning its replacement — otherwise the about-to-be-spawned daemon
     // and an orphaned still-running one for the same root would both be
     // alive at once, racing to write the same daemon file. Re-verifies
-    // health AND rootDir independently right here (never trusting the
-    // daemon file's own claims alone, and never killing on the pid alone —
-    // see `should_kill_superseded_daemon`) since the file is only ever a
-    // hint about which port to probe next, not proof of what's still
-    // listening there.
+    // health AND rootDir independently right here — never trusting the
+    // daemon file's own claims alone, and never killing before a live,
+    // same-root dispatchd is confirmed answering on the file's port (see
+    // `should_kill_superseded_daemon` for exactly what that does and does
+    // not guarantee about the pid) — since the file is only ever a hint
+    // about which port to probe next, not proof of what's still listening
+    // there.
     if let Some(info) = read_daemon_file(root) {
-        let health_ok = is_healthy(&client, info.port).await;
-        let health_root_dir = fetch_health_root_dir(&client, info.port).await;
+        let health = fetch_health(&client, info.port).await;
+        let health_ok = health.as_ref().map(|h| h.ok).unwrap_or(false);
+        let health_root_dir = health.and_then(|h| h.root_dir);
         if should_kill_superseded_daemon(
             root,
             &info.root_dir,
@@ -818,17 +835,22 @@ mod tests {
     }
 
     #[test]
-    fn parse_health_root_dir_reads_the_camelcase_field() {
-        assert_eq!(
-            parse_health_root_dir(r#"{"ok":true,"version":"0.0.1","rootDir":"/x"}"#),
-            Some("/x".to_string())
-        );
+    fn parse_health_reads_both_ok_and_root_dir_from_one_body() {
+        let health = parse_health(r#"{"ok":true,"version":"0.0.1","rootDir":"/x"}"#)
+            .expect("valid health body should parse");
+        assert!(health.ok);
+        assert_eq!(health.root_dir, Some("/x".to_string()));
     }
 
     #[test]
-    fn parse_health_root_dir_is_none_when_the_field_is_absent_or_the_json_is_malformed() {
-        assert_eq!(parse_health_root_dir(r#"{"ok":true}"#), None);
-        assert_eq!(parse_health_root_dir("not json"), None);
+    fn parse_health_root_dir_is_none_when_the_field_is_absent() {
+        let health = parse_health(r#"{"ok":true}"#).expect("valid health body should parse");
+        assert_eq!(health.root_dir, None);
+    }
+
+    #[test]
+    fn parse_health_is_none_for_malformed_json() {
+        assert!(parse_health("not json").is_none());
     }
 
     #[test]

@@ -352,7 +352,7 @@ pub fn export_report(db: State<'_, Db>, range_days: i64) -> Result<String, Strin
         .ok_or_else(|| "could not resolve a directory to save the report into".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    let filename = format!("relay-report-{}.md", Utc::now().format("%Y-%m-%d-%H%M%S"));
+    let filename = format!("dispatch-report-{}.md", Utc::now().format("%Y-%m-%d-%H%M%S"));
     let path = dir.join(filename);
     std::fs::write(&path, render_report_markdown(&report)).map_err(|e| e.to_string())?;
 
@@ -361,7 +361,7 @@ pub fn export_report(db: State<'_, Db>, range_days: i64) -> Result<String, Strin
 
 fn render_report_markdown(report: &ReportData) -> String {
     let mut out = String::new();
-    out.push_str(&format!("# Relay spend report — last {} days\n\n", report.range_days));
+    out.push_str(&format!("# Dispatch spend report — last {} days\n\n", report.range_days));
     out.push_str(&format!("Generated {}\n\n", Utc::now().format("%Y-%m-%d %H:%M UTC")));
 
     out.push_str("## Totals\n\n");
@@ -451,7 +451,7 @@ pub fn export_transcript(db: State<'_, Db>, session_id: String) -> Result<String
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let filename = format!(
-        "relay-transcript-{}-{}.md",
+        "dispatch-transcript-{}-{}.md",
         &session.id[..8],
         Utc::now().format("%Y-%m-%d-%H%M%S")
     );
