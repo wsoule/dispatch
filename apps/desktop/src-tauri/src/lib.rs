@@ -26,6 +26,11 @@ pub fn run() {
     // plugin's JS `open({ directory: true })` API directly (see `pickDirectory`
     // in tauri.ts), gated by the `dialog:default` capability permission.
     .plugin(tauri_plugin_dialog::init())
+    // Native OS notifications — the frontend calls the plugin's JS
+    // `isPermissionGranted`/`requestPermission`/`sendNotification` directly (see
+    // `notify` in `lib/notifications.ts`), gated by the `notification:default`
+    // capability permission.
+    .plugin(tauri_plugin_notification::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

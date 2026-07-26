@@ -26,6 +26,7 @@
     "@tanstack/react-query": "catalog:",
     "@tauri-apps/api": "catalog:",
     "@tauri-apps/plugin-dialog": "catalog:",
+    "@tauri-apps/plugin-notification": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "lucide-react": "catalog:",
