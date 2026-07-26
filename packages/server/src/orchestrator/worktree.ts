@@ -114,15 +114,146 @@ export class WorktreeManager {
   // Removes a run's worktree directory and its branch. Idempotent-ish: git
   // errors from either step (e.g. the directory was already gone) are
   // swallowed since the caller's goal — no worktree, no branch — is already
-  // satisfied by the time `prune()` runs.
-  remove(path: string, branch: string): void {
+  // satisfied by the time `prune()` runs. `runId` is optional: when passed,
+  // any backup refs stashed for this run are dropped too so they don't
+  // accumulate; existing call sites that don't have a run id in hand keep
+  // compiling unchanged.
+  remove(path: string, branch: string, runId?: string): void {
     runGit(this.mainRepoDir, ['worktree', 'remove', '--force', path]);
     runGit(this.mainRepoDir, ['branch', '-D', branch]);
+    if (runId !== undefined) this.pruneBackupRefs(runId);
     this.prune();
   }
 
   prune(): void {
     runGit(this.mainRepoDir, ['worktree', 'prune']);
+  }
+
+  /**
+   * Where a branch's pre-restack tip is parked. Lives under `refs/dispatch/`
+   * rather than `refs/heads/` so it never shows up in `git branch`, never gets
+   * pushed, and can't be confused for a real branch — it is recovery state,
+   * not something anyone checks out. Scoped by runId so two runs on the same
+   * branch never clobber each other's backup.
+   */
+  backupRefName(branch: string, runId: string): string {
+    return `refs/dispatch/backup/${branch}/${runId}`;
+  }
+
+  /**
+   * Saves `branch`'s current tip before something rewrites it. Returns the
+   * saved sha, or null when the branch has no tip yet (nothing to protect).
+   *
+   * This exists for two reasons at once: it makes every restack reversible,
+   * and the sha it returns is exactly the `<oldTip>` argument `rebaseOnto`
+   * needs to know where a dependent's own commits begin.
+   */
+  writeBackupRef(branch: string, runId: string): string | null {
+    const tip = runGit(this.mainRepoDir, ['rev-parse', '--verify', branch]);
+    if (!tip.ok) return null;
+    const sha = tip.stdout.trim();
+    runGit(this.mainRepoDir, [
+      'update-ref',
+      this.backupRefName(branch, runId),
+      sha,
+    ]);
+    return sha;
+  }
+
+  // Points `branch` back at whatever `writeBackupRef` saved for this run.
+  restoreFromBackup(branch: string, runId: string): void {
+    const ref = this.backupRefName(branch, runId);
+    const saved = runGit(this.mainRepoDir, ['rev-parse', '--verify', ref]);
+    if (!saved.ok) return;
+    runGit(this.mainRepoDir, [
+      'update-ref',
+      `refs/heads/${branch}`,
+      saved.stdout.trim(),
+    ]);
+  }
+
+  // Drops every backup ref belonging to a run — called from the same cleanup
+  // path that removes its worktree and branch, so backups don't accumulate.
+  pruneBackupRefs(runId: string): void {
+    const refs = runGit(this.mainRepoDir, [
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/dispatch/backup',
+    ]);
+    if (!refs.ok) return;
+    for (const ref of refs.stdout.split('\n')) {
+      const trimmed = ref.trim();
+      if (trimmed.endsWith(`/${runId}`)) {
+        runGit(this.mainRepoDir, ['update-ref', '-d', trimmed]);
+      }
+    }
+  }
+
+  /**
+   * Reattaches a worktree to `branch`. A restack rewrites branch refs from the
+   * main checkout, and git refuses to move a branch that is checked out in
+   * another worktree — so the worktree is left in detached HEAD at the old
+   * commit. This is the one command that brings it back in line.
+   *
+   * Callers MUST only invoke this for runs in a terminal state; a live agent's
+   * worktree is never touched.
+   */
+  resyncToBranch(worktreePath: string, branch: string): void {
+    const checkout = runGit(worktreePath, ['checkout', branch]);
+    if (!checkout.ok) {
+      throw new Error(
+        `git checkout ${branch} failed: ${checkout.stderr.trim()}`
+      );
+    }
+  }
+
+  /**
+   * The plain-git restack, used when jj isn't available: replays exactly the
+   * commits in `oldTip..branch` (a dependent's own work) onto `newBase`,
+   * dropping the blocker commits that `newBase` now already contains in
+   * squashed form. Without the explicit `--onto`, a plain `git rebase newBase`
+   * would try to replay the blocker's commits too and conflict against their
+   * own squashed copies.
+   *
+   * `oldTip` is the commit the dependent branch was ORIGINALLY branched from
+   * — not the dependent's own current tip, and not a backup ref. Passing the
+   * dependent's own tip here would make `oldTip..branch` empty and silently
+   * rebase nothing.
+   *
+   * Aborts and throws on conflict, leaving the worktree clean for a retry —
+   * the same contract MergeQueue.rebase() already has.
+   */
+  rebaseOnto(
+    worktreePath: string,
+    newBase: string,
+    oldTip: string,
+    branch: string
+  ): void {
+    const rebase = runGit(worktreePath, [
+      'rebase',
+      '--onto',
+      newBase,
+      oldTip,
+      branch,
+    ]);
+    if (!rebase.ok) {
+      runGit(worktreePath, ['rebase', '--abort']);
+      const reason = [rebase.stdout.trim(), rebase.stderr.trim()]
+        .filter((s) => s.length > 0)
+        .join(' | ');
+      throw new Error(`git rebase --onto failed: ${reason}`);
+    }
+  }
+
+  // The commit a ref currently points at, in the main checkout. Used to pin
+  // down what a stacked run was branched from at the moment it was created —
+  // branch refs move, commit shas don't.
+  resolveCommit(ref: string): string {
+    const result = runGit(this.mainRepoDir, ['rev-parse', '--verify', ref]);
+    if (!result.ok) {
+      throw new Error(`unable to resolve ${ref}: ${result.stderr.trim()}`);
+    }
+    return result.stdout.trim();
   }
 
   // Boot-time hygiene: any directory directly under `worktreesRoot` that
