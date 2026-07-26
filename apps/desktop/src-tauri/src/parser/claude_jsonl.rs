@@ -11,14 +11,32 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
-/// Record types seen in real logs that carry no session content — safe to ignore.
+/// Record types seen in real `~/.claude/projects/**/*.jsonl` logs on this machine (Claude Code
+/// ~2.1.x) that carry no per-session analytics content we surface — deliberately skipped so a
+/// genuinely *new*, unrecognized type still trips `log_unknown_type_once` and gets noticed.
+/// Grouped by what they are so a future reader knows each was inspected, not blindly ignored:
+///   - session-control chatter: `last-prompt`, `mode`, `permission-mode`, `queue-operation`,
+///     `agent-setting`
+///   - editor/file bookkeeping: `attachment`, `file-history-snapshot`, `file-history-delta`
+///   - worktree/cwd bookkeeping: `worktree-state`, `relocated`
+///   - alternate title/name records superseded by the `ai-title` we already ingest:
+///     `agent-name`, `custom-title`
+///   - external links (PR/artifact) with no token/cost data: `pr-link`, `frame-link`
 const INERT_TYPES: &[&str] = &[
     "last-prompt",
     "mode",
     "permission-mode",
     "attachment",
     "file-history-snapshot",
+    "file-history-delta",
     "queue-operation",
+    "agent-setting",
+    "worktree-state",
+    "relocated",
+    "agent-name",
+    "custom-title",
+    "pr-link",
+    "frame-link",
 ];
 
 /// Parses a single complete JSONL line. Returns `None` for malformed JSON, records with no
@@ -266,6 +284,31 @@ mod tests {
                 .all(|r| r.ai_title.is_none()),
             "only the ai-title record should carry ai_title"
         );
+    }
+
+    #[test]
+    fn known_inert_types_seen_in_real_logs_are_skipped_silently() {
+        // Real record shapes captured from `~/.claude/projects/**/*.jsonl` on this machine
+        // (field names abbreviated). None carry token/cost/text we surface, so each must parse
+        // to `None` — and, crucially, NOT be treated as an unknown type (that would spam a
+        // warning on every ingest for these very common lines). A genuinely new type still
+        // warns; see `unknown_record_type_is_skipped_not_fatal`.
+        let inert_lines = [
+            r#"{"type":"worktree-state","worktreeSession":{"worktreeName":"wt","worktreeBranch":"feat/x"}}"#,
+            r#"{"type":"relocated","relocatedCwd":"/tmp/wt"}"#,
+            r#"{"type":"pr-link","prNumber":123,"prUrl":"https://example.test/pull/123"}"#,
+            r#"{"type":"file-history-delta","messageId":"m","trackingPath":"a.ts"}"#,
+            r#"{"type":"agent-name","agentName":"Some session name"}"#,
+            r#"{"type":"agent-setting","agentSetting":"claude"}"#,
+            r#"{"type":"custom-title","customTitle":"my-title"}"#,
+            r#"{"type":"frame-link","path":"/tmp/x.html","frameUrl":"https://example.test/a"}"#,
+        ];
+        for line in inert_lines {
+            assert!(
+                parse_line(line).is_none(),
+                "expected inert record to yield no ParsedRecord: {line}"
+            );
+        }
     }
 
     #[test]

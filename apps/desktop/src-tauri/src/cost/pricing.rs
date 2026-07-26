@@ -170,6 +170,32 @@ mod tests {
     }
 
     #[test]
+    fn modern_model_prices_cache_read_and_cache_write_tokens_per_model() {
+        // Regression guard for correct modern-session costs: cache-read and cache-creation
+        // (cache-write) tokens dominate token volume in real logs, so they must be billed at
+        // the model's own cache rates, not dropped or billed at the base input rate.
+        // claude-opus-5 rates from resources/pricing.json: input 5.0, output 25.0,
+        // cache_write 6.25, cache_read 0.5 (USD per million tokens).
+        let cost = cost_usd(Some("claude-opus-5"), 2, 492, 20285, 24182);
+        let expected = (2.0 / 1e6) * 5.0
+            + (492.0 / 1e6) * 25.0
+            + (24182.0 / 1e6) * 6.25
+            + (20285.0 / 1e6) * 0.5;
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "expected {expected}, got {cost}"
+        );
+
+        // The cache tokens are the bulk of this cost — a version that ignored them would be off
+        // by more than 10x here, so assert they materially contribute.
+        let without_cache = cost_usd(Some("claude-opus-5"), 2, 492, 0, 0);
+        assert!(
+            cost > without_cache * 10.0,
+            "cache tokens must dominate the cost for a cache-heavy modern session"
+        );
+    }
+
+    #[test]
     fn longest_prefix_match_resolves_a_dated_suffix_to_the_known_family_rate() {
         let dated = cost_usd(Some("claude-opus-4-8-20260115"), 148, 700, 21800, 290);
         let exact = cost_usd(Some("claude-opus-4-8"), 148, 700, 21800, 290);

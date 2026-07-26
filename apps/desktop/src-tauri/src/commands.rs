@@ -225,6 +225,10 @@ pub struct DashboardStats {
     /// Highest-spend projects first, capped for display — see `TOP_PROJECTS_LIMIT`.
     pub top_projects: Vec<queries::ProjectSummary>,
     pub agent_usage: Vec<queries::AgentUsage>,
+    /// All-time spend/session-count grouped by model, highest spend first — powers the
+    /// Dashboard's "Spend by model" table. Raw model ids; the frontend maps them to display
+    /// labels via `models.ts`.
+    pub model_usage: Vec<queries::ModelUsage>,
     /// The most-recently-active `status = 'active'` session, if any — powers the Dashboard's
     /// "active now" widget.
     pub active_session: Option<queries::ActiveSessionSummary>,
@@ -254,6 +258,7 @@ pub fn dashboard_stats(db: State<'_, Db>) -> Result<DashboardStats, String> {
     projects.truncate(TOP_PROJECTS_LIMIT);
 
     let agent_usage = queries::agent_usage(&conn).map_err(|e| e.to_string())?;
+    let model_usage = queries::model_usage(&conn).map_err(|e| e.to_string())?;
     let active_session =
         queries::most_recent_active_session(&conn).map_err(|e| e.to_string())?;
 
@@ -276,6 +281,7 @@ pub fn dashboard_stats(db: State<'_, Db>) -> Result<DashboardStats, String> {
         daily_activity,
         top_projects: projects,
         agent_usage,
+        model_usage,
         active_session,
     })
 }

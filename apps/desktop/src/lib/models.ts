@@ -65,3 +65,39 @@ export function modelLabel(id: string | undefined): string | undefined {
   if (id === undefined) return undefined;
   return MODELS.find((m) => m.id === id)?.label ?? id;
 }
+
+// Display labels for model ids that appear in *ingested analytics* but aren't in the dispatch
+// picker `MODELS` — older generations still present in historical sessions, plus Claude Code's
+// non-billable `<synthetic>` sentinel. Kept beside `MODELS` so all id→label mapping lives in
+// one file, per the parser's "map raw ids to display names in one place" note.
+const HISTORICAL_MODEL_LABELS: Record<string, string> = {
+  'claude-opus-4-7': 'Opus 4.7',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
+  '<synthetic>': 'Synthetic',
+};
+
+// Human-readable name for any model id seen in analytics (session rows, per-model spend), not
+// just the dispatchable ones. Resolution order: exact `MODELS` match, exact historical match,
+// then longest-prefix match against known ids so a dated/versioned suffix (e.g.
+// `claude-opus-5-20260115`) still resolves to its family label. Falls back to the raw id, and
+// returns undefined only for a missing/undefined id so callers can show "unknown model".
+export function modelDisplayName(
+  id: string | null | undefined
+): string | undefined {
+  if (id === undefined || id === null) return undefined;
+  const exact =
+    MODELS.find((m) => m.id === id)?.label ?? HISTORICAL_MODEL_LABELS[id];
+  if (exact !== undefined) return exact;
+
+  const known: { id: string; label: string }[] = [
+    ...MODELS.map((m) => ({ id: m.id, label: m.label })),
+    ...Object.entries(HISTORICAL_MODEL_LABELS).map(([mid, label]) => ({
+      id: mid,
+      label,
+    })),
+  ];
+  const prefix = known
+    .filter((m) => id.startsWith(m.id))
+    .sort((a, b) => b.id.length - a.id.length)[0];
+  return prefix?.label ?? id;
+}

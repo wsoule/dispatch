@@ -1,4 +1,5 @@
 import { formatRelativeTime, sessionDisplayName } from '../../lib/format';
+import { modelDisplayName } from '../../lib/models';
 import type { Session } from '../../lib/types';
 import { ProjectDot } from '../ui/ProjectDot';
 import { statusDotClass } from './sessionDisplay';
@@ -35,7 +36,7 @@ export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
             {session.status}
           </span>
           <span className="text-muted-foreground font-mono text-[11px]">
-            {session.model ?? 'unknown model'}
+            {modelDisplayName(session.model) ?? 'unknown model'}
           </span>
         </div>
         <div className="text-muted-foreground truncate text-[13px]">

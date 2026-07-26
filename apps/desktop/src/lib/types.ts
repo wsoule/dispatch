@@ -79,6 +79,14 @@ export interface AgentUsage {
   total_cost_usd: number;
 }
 
+export interface ModelUsage {
+  /** Raw model id (e.g. `claude-opus-5`); null for sessions with no model recorded. Map to a
+   * display label with `modelDisplayName` from `lib/models.ts`. */
+  model: string | null;
+  session_count: number;
+  total_cost_usd: number;
+}
+
 export interface DiffLine {
   tag: 'insert' | 'delete' | 'equal';
   content: string;
@@ -111,6 +119,8 @@ export interface DashboardStats {
   /** Highest-spend projects first, capped for display. */
   top_projects: ProjectSummary[];
   agent_usage: AgentUsage[];
+  /** All-time spend/session-count grouped by model, highest spend first. Raw model ids. */
+  model_usage: ModelUsage[];
   /** The most-recently-active session, if any is currently `status: "active"`. */
   active_session: ActiveSessionSummary | null;
 }

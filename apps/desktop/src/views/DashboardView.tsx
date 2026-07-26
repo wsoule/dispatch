@@ -2,11 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { OctagonAlert } from 'lucide-react';
 
 import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
+import { SpendTable } from '../components/sessions/SpendTable';
 import { ActivityHeatmap } from '../components/ui/ActivityHeatmap';
 import { ProjectDot } from '../components/ui/ProjectDot';
 import { StatTile } from '../components/ui/StatTile';
 import { agentMeta, KNOWN_AGENT_IDS } from '../lib/agents';
 import { sessionDisplayName } from '../lib/format';
+import { modelDisplayName } from '../lib/models';
 import { colorForProject } from '../lib/projectColor';
 import { getDashboardStats } from '../lib/tauri';
 import type { AgentUsage } from '../lib/types';
@@ -195,6 +197,24 @@ export function DashboardView() {
           </div>
         </section>
       </div>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+          Spend by model
+        </h2>
+        <div className="border-border bg-card rounded-lg border p-4">
+          <SpendTable
+            columnLabel="Model"
+            rows={data.model_usage.map((m) => ({
+              key: m.model ?? 'unknown',
+              label: modelDisplayName(m.model) ?? 'Unknown',
+              sessionCount: m.session_count,
+              totalCostUsd: m.total_cost_usd,
+            }))}
+            emptyMessage="No model usage yet."
+          />
+        </div>
+      </section>
     </div>
   );
 }
