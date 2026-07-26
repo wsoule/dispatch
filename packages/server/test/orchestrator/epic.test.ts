@@ -368,6 +368,67 @@ describe('EpicEngine.start', () => {
     );
   });
 
+  // The behavioral fix under test: a dependent must dispatch as soon as its
+  // blocker's run finishes and the blocker lands at `in-review` — it must
+  // NOT wait for a human to merge the blocker all the way to `done`. This
+  // exercises EpicEngine.fillQueue's switch from readyTasks (gates on
+  // isDone) to dispatchableTasks (gates on isSatisfiedForDispatch, which
+  // also accepts `in-review`).
+  it('dispatches a child whose blocker is only in-review, not yet done', async () => {
+    const h = makeHarness();
+    const epic = h.store.create({ title: 'Epic', kind: 'epic' });
+    const blocker = h.store.create({ title: 'A', parent: epic.meta.id });
+    const dependent = h.store.create({
+      title: 'B',
+      parent: epic.meta.id,
+      blockedBy: [blocker.meta.id],
+    });
+    h.cache.rebuild(h.store);
+
+    h.epics.start(epic.meta.id, { concurrency: 2, executor: 'fake' });
+
+    // Only the blocker is dispatchable at first.
+    await waitFor(() => h.orchestrator.list().length === 1);
+    expect(h.orchestrator.list()[0].taskId).toBe(blocker.meta.id);
+
+    // Drive the blocker to a terminal state -> task becomes `in-review`.
+    const run = h.orchestrator.list()[0];
+    h.orchestrator.approve(run.id, 'go', true);
+    await waitFor(
+      () => h.store.get(blocker.meta.id)!.meta.status === 'in-review'
+    );
+
+    // The dependent must now dispatch WITHOUT the blocker ever reaching `done`.
+    await waitFor(() =>
+      h.orchestrator.list().some((r) => r.taskId === dependent.meta.id)
+    );
+    expect(h.store.get(blocker.meta.id)!.meta.status).toBe('in-review');
+  });
+
+  // Guard against over-loosening the fix above: a blocker that is merely
+  // `in-progress` (its run hasn't reached a terminal state yet) must not
+  // satisfy dispatch-readiness — only in-review/done/cancelled do.
+  it('does not dispatch a child whose blocker is still in-progress', async () => {
+    const h = makeHarness();
+    const epic = h.store.create({ title: 'Epic', kind: 'epic' });
+    const blocker = h.store.create({ title: 'A', parent: epic.meta.id });
+    const dependent = h.store.create({
+      title: 'B',
+      parent: epic.meta.id,
+      blockedBy: [blocker.meta.id],
+    });
+    h.cache.rebuild(h.store);
+
+    h.epics.start(epic.meta.id, { concurrency: 2, executor: 'fake' });
+    await waitFor(() => h.orchestrator.list().length === 1);
+    await sleep(50); // give a wrong implementation time to dispatch the dependent
+
+    expect(h.store.get(blocker.meta.id)!.meta.status).toBe('in-progress');
+    expect(
+      h.orchestrator.list().some((r) => r.taskId === dependent.meta.id)
+    ).toBe(false);
+  });
+
   it('stop halts new dispatches while letting the live run finish', async () => {
     const harness = makeHarness();
     const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
