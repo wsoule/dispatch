@@ -23,7 +23,6 @@ describe('loadConfig', () => {
       ],
       autoCommit: false,
       orchestrator: {
-        maxTurns: 500,
         permissionMode: 'auto',
         epicConcurrency: 3,
       },
@@ -100,9 +99,8 @@ describe('loadConfig', () => {
   });
 
   describe('orchestrator block', () => {
-    it('defaults to 500 turns, no budget cap, auto, epicConcurrency 3', () => {
+    it('defaults to no turn cap, no budget cap, auto, epicConcurrency 3', () => {
       expect(loadConfig(root).orchestrator).toEqual({
-        maxTurns: 500,
         permissionMode: 'auto',
         epicConcurrency: 3,
       });

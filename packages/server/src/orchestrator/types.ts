@@ -65,7 +65,7 @@ export interface ExecutorStartOptions {
   prompt: string;
   resumeSessionId?: string;
   permissionMode: string;
-  maxTurns: number;
+  maxTurns?: number;
   maxBudgetUsd?: number;
   // The Claude model this run should use (an SDK model id like
   // 'claude-opus-4-8' or an alias like 'sonnet'), chosen at dispatch time.

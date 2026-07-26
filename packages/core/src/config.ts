@@ -43,7 +43,7 @@ const KNOWN_PERMISSION_MODES = [
 // against the installed SDK (0.3.207)'s `PermissionMode` union, which
 // includes `'auto'`.
 export interface OrchestratorConfig {
-  maxTurns: number;
+  maxTurns?: number;
   maxBudgetUsd?: number;
   permissionMode: string;
   epicConcurrency: number;
@@ -57,12 +57,7 @@ export interface DispatchConfig {
 }
 
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
-  // 500, not 100: real tasks blew through 100 turns mid-implementation (a
-  // run died at turn 101 with $9+ of finished-but-uncommitted work), and
-  // cost is the meaningful guard anyway — `maxBudgetUsd` exists for that.
-  // The cap is a runaway backstop, so it should only trip on runs that are
-  // genuinely stuck in a loop, not on large-but-healthy ones.
-  maxTurns: 500,
+  // No default turn cap — maxBudgetUsd is the real guard.
   permissionMode: 'auto',
   epicConcurrency: 3,
 };

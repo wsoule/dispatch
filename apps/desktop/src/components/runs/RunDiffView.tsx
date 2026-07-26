@@ -181,10 +181,7 @@ export function RunDiffView({
                       }
                     }}
                   >
-                    {/* Boundary per file, not around the whole stack: one file
-                        hitting a render/highlight edge case must degrade to an
-                        inline error on that file alone, never blank the other
-                        N-1 diffs beside it. */}
+                    {/* Per-file boundary so one bad file can't blank the rest. */}
                     <ErrorBoundary label={`the diff for ${path}`}>
                       <FileDiff fileDiff={file} />
                     </ErrorBoundary>
