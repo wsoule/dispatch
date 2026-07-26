@@ -77,6 +77,10 @@ export function diffQueueNotifications(
   const notifications: PendingNotification[] = [];
 
   for (const entry of entries) {
+    // Re-enqueued runs appear in both entries and history; keep the first (current)
+    // occurrence and skip duplicates to avoid older history entries overwriting live state.
+    if (next.has(entry.runId)) continue;
+
     next.set(entry.runId, entry.state);
     const prevState = previous.get(entry.runId);
     if (
