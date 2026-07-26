@@ -119,6 +119,106 @@ describe('ClaudeExecutor dispatch MCP server wiring', () => {
     );
   });
 
+  // Security: this `env` is serialized by the SDK into the `--mcp-config`
+  // value on the spawned CLI's ARGV, where any local process can read it via
+  // `ps`. It used to be a straight copy of the whole `process.env`, which put
+  // every credential dispatchd happened to inherit — GITHUB_TOKEN, API keys,
+  // DB passwords — into a world-readable process listing. The dispatch MCP
+  // server reads exactly three variables of its own, so the env is now an
+  // allowlist.
+  it('does not leak unrelated environment variables (notably secrets) into the MCP server env', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    const secrets = {
+      GITHUB_TOKEN: 'ghp_should_not_appear',
+      OPENAI_KEY: 'sk-should-not-appear',
+      EXPRESS_SESSION_SECRET: 'session-should-not-appear',
+      SOME_DB_PASSWORD: 'pw-should-not-appear',
+    };
+    const previous = new Map(
+      Object.keys(secrets).map((key) => [key, process.env[key]])
+    );
+    Object.assign(process.env, secrets);
+    try {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          projectRoot: '/tmp/dispatch-project-y',
+          runId: 'r-abc123',
+          prompt: 'do the thing',
+          permissionMode: 'acceptEdits',
+          maxTurns: 5,
+        },
+        noopEvents
+      );
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+
+    const dispatch = captured?.mcpServers?.dispatch as
+      | McpStdioServerConfig
+      | undefined;
+    const env = dispatch?.env ?? {};
+    for (const key of Object.keys(secrets)) {
+      expect(env[key]).toBeUndefined();
+    }
+    // Nothing secret-shaped survives under any name — guards against a future
+    // passthrough entry quietly re-admitting one.
+    const serialized = JSON.stringify(env);
+    for (const value of Object.values(secrets)) {
+      expect(serialized).not.toContain(value);
+    }
+
+    // What the child genuinely needs is still there: PATH so `bun` can be
+    // found, plus the three variables packages/mcp actually reads.
+    expect(env.PATH).toBe(process.env.PATH!);
+    expect(env.DISPATCH_PROJECT_ROOT).toBe('/tmp/dispatch-project-y');
+    expect(env.DISPATCH_RUN_ID).toBe('r-abc123');
+  });
+
+  // DISPATCH_HOME redirects all dispatch state away from the real home
+  // directory, and the MCP child's own daemon discovery reads it
+  // (packages/mcp/src/daemon.ts) — an allowlist that dropped it would break
+  // every test harness and any non-default install.
+  it('passes DISPATCH_HOME through to the MCP server env when set', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    const prev = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = '/tmp/dispatch-home-under-test';
+    try {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'do the thing',
+          permissionMode: 'acceptEdits',
+          maxTurns: 5,
+        },
+        noopEvents
+      );
+    } finally {
+      if (prev === undefined) delete process.env.DISPATCH_HOME;
+      else process.env.DISPATCH_HOME = prev;
+    }
+
+    const dispatch = captured?.mcpServers?.dispatch as
+      | McpStdioServerConfig
+      | undefined;
+    expect(dispatch?.env?.DISPATCH_HOME).toBe('/tmp/dispatch-home-under-test');
+  });
+
   // agent-comms: `agent_message`/`message_user` (packages/mcp/src/tools.ts)
   // read DISPATCH_RUN_ID back out of their own process env to identify the
   // calling run as a message's sender without it having to know its own run
@@ -488,6 +588,166 @@ describe('ClaudeExecutor abrupt stream end with no result message', () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+// Drives one scripted `result` message through the executor and returns the
+// finish it reported. Every truncation test below differs only in the fields
+// on that single result message, so they share this harness.
+async function finishForResult(
+  result: Record<string, unknown>
+): Promise<{ state: string; error?: string; turns?: number }> {
+  const repo = initGitRepo('dispatch-claude-terminal-reason-');
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function* fakeMessages(): Generator<any> {
+      yield { type: 'system', subtype: 'init', session_id: 'sess-tr' };
+      yield { type: 'result', ...result };
+    }
+    const executor = new ClaudeExecutor(
+      (() => fakeMessages() as unknown as Query) as never
+    );
+    return await new Promise((resolve) => {
+      executor.start(
+        {
+          cwd: repo,
+          prompt: 'do the thing',
+          permissionMode: 'acceptEdits',
+          maxTurns: 100,
+        },
+        {
+          onEntry: () => {},
+          onApprovalRequest: () => {},
+          onFinish: (finish) => resolve(finish),
+        }
+      );
+    });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+// The "said complete but actually got cut off" bug. A run stopped by the
+// Claude usage/session limit comes back from the SDK as `subtype: 'success'`
+// — the CLI process *did* exit cleanly — with the real outcome carried on
+// `terminal_reason` instead (see SDKResultSuccess in the SDK's sdk.d.ts).
+// finishFromResult used to branch on `subtype` alone, so such a run was
+// recorded `finished` with an empty error, and the truncated work looked done.
+// Real evidence this happened: run r-bdf748's transcript ends with the
+// assistant line "You've hit your session limit · resets 3:50pm" immediately
+// followed by a `finished` state line.
+describe('ClaudeExecutor truncated-run detection', () => {
+  it("reports failed with an actionable error when the session limit cut the run off (subtype 'success', terminal_reason 'blocking_limit')", async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: false,
+      num_turns: 72,
+      total_cost_usd: 3.37,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      terminal_reason: 'blocking_limit',
+      errors: [],
+    });
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toMatch(/usage limit/i);
+    // The partial work still happened — turn/cost accounting must survive the
+    // reclassification so the run's cost isn't silently lost.
+    expect(finish.turns).toBe(72);
+  });
+
+  it.each([
+    ['max_turns', /turn limit/i],
+    ['budget_exhausted', /budget/i],
+    ['prompt_too_long', /too long/i],
+    ['hook_stopped', /hook/i],
+  ])(
+    "reports failed for terminal_reason '%s' even under subtype 'success'",
+    async (terminalReason, expected) => {
+      const finish = await finishForResult({
+        subtype: 'success',
+        is_error: false,
+        num_turns: 5,
+        total_cost_usd: 0.1,
+        session_id: 'sess-tr',
+        stop_reason: null,
+        terminal_reason: terminalReason,
+        errors: [],
+      });
+
+      expect(finish.state).toBe('failed');
+      expect(finish.error).toMatch(expected);
+    }
+  );
+
+  // An unrecognized future terminal_reason must default to "not complete"
+  // rather than silently claiming success — the whole class of bug this
+  // detection exists to prevent.
+  it('reports failed for an unrecognized terminal_reason, carrying the raw reason', async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: false,
+      num_turns: 3,
+      total_cost_usd: 0.1,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      terminal_reason: 'some_future_reason',
+      errors: [],
+    });
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toContain('some_future_reason');
+  });
+
+  it("reports finished for terminal_reason 'completed'", async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: false,
+      num_turns: 9,
+      total_cost_usd: 0.5,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      terminal_reason: 'completed',
+      errors: [],
+    });
+
+    expect(finish.state).toBe('finished');
+    expect(finish.error).toBeUndefined();
+  });
+
+  // Back-compat: an SDK (or a fixture) that never sets terminal_reason at all
+  // must keep the original subtype-only behavior rather than start failing
+  // every run.
+  it('reports finished when terminal_reason is absent entirely', async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: false,
+      num_turns: 9,
+      total_cost_usd: 0.5,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      errors: [],
+    });
+
+    expect(finish.state).toBe('finished');
+  });
+
+  // `is_error` is the SDK's other success-subtype failure signal, independent
+  // of terminal_reason.
+  it("reports failed when is_error is set despite subtype 'success'", async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: true,
+      num_turns: 4,
+      total_cost_usd: 0.2,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      errors: [],
+      result: 'something went wrong upstream',
+    });
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toBeTruthy();
   });
 });
 

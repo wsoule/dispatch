@@ -1,6 +1,6 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 // Runs a git command synchronously and throws with stderr on failure — used
 // by tests that need to set up or inspect real repo state (as opposed to the
@@ -32,4 +32,24 @@ export function initGitRepo(prefix = 'dispatch-orch-'): string {
   runGitSync(dir, ['add', '-A']);
   runGitSync(dir, ['commit', '-m', 'initial commit']);
   return dir;
+}
+
+/**
+ * A unique path for a worktree belonging to `repo`, beside it rather than
+ * inside it.
+ *
+ * Worktrees have to live outside the checkout they belong to, so tests place
+ * them next to `repo` — but writing that as `join(repo, '..', 'wt-thing')`
+ * resolves to the SHARED system temp root, because `initGitRepo` only
+ * randomizes the repo directory itself. Every test using a fixed name therefore
+ * competes for one global path, and a directory left behind by a previous run
+ * collides with the next one: `git worktree add` refuses a path that already
+ * exists, so the suite passes on a clean machine and then fails on every rerun.
+ *
+ * Prefixing with the repo's own (already unique) directory name makes the path
+ * unique per `initGitRepo()` call while keeping it a sibling, so repeated local
+ * runs stop interfering with each other.
+ */
+export function worktreeSiblingPath(repo: string, name: string): string {
+  return join(repo, '..', `${basename(repo)}-${name}`);
 }

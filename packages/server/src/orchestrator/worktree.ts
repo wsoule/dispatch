@@ -11,6 +11,22 @@ export interface DiffResult {
   files: DiffFile[];
 }
 
+// One `dispatch/*` branch ref as git knows it, independent of whether any run
+// registry entry still claims it — the raw input to Orchestrator.listBranches'
+// git-side enumeration.
+export interface BranchRef {
+  branch: string;
+  lastCommitAt: string;
+}
+
+// One entry from `git worktree list`, narrowed to the two fields the branches
+// surface needs. `branch` is undefined for a detached-HEAD worktree, which a
+// dispatch worktree never is but a user's own worktree can be.
+export interface WorktreeRef {
+  path: string;
+  branch?: string;
+}
+
 interface GitResult {
   ok: boolean;
   stdout: string;
@@ -123,6 +139,126 @@ export class WorktreeManager {
 
   prune(): void {
     runGit(this.mainRepoDir, ['worktree', 'prune']);
+  }
+
+  // Removes a run's worktree *directory* while deliberately leaving its branch
+  // ref in place — the "free disk" action's git half. Reclaiming the working
+  // copy is reversible (`git worktree add` can recreate it from the ref);
+  // deleting the ref is not, since for an unmerged branch the ref is the only
+  // remaining pointer to those commits.
+  removeWorktreeOnly(path: string): void {
+    runGit(this.mainRepoDir, ['worktree', 'remove', '--force', path]);
+    this.prune();
+  }
+
+  // Deletes a branch ref that has no worktree of its own — the orphan-ref
+  // case, where `remove()` above would be wrong because there is no directory
+  // to remove. Errors are swallowed for the same reason `remove()` swallows
+  // them: the caller's goal is "no such ref", which a missing ref already
+  // satisfies.
+  removeBranchRef(branch: string): void {
+    runGit(this.mainRepoDir, ['branch', '-D', branch]);
+    this.prune();
+  }
+
+  // Every branch ref under `refs/heads/<prefix>` with its tip's commit date.
+  // Enumerating from git (rather than from the run registry) is what makes an
+  // orphaned ref visible at all: `pruneOrphans` below scans the worktrees
+  // *directory*, so a ref whose directory is already gone is invisible to it.
+  //
+  // The `%09` in the format is a literal tab — chosen as the field separator
+  // because a git branch name can contain almost anything except a tab.
+  listBranches(prefix: string): BranchRef[] {
+    const result = runGit(this.mainRepoDir, [
+      'for-each-ref',
+      '--format=%(refname:short)%09%(committerdate:iso-strict)',
+      `refs/heads/${prefix}`,
+    ]);
+    if (!result.ok) return [];
+    return result.stdout
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => {
+        const tab = line.indexOf('\t');
+        return tab === -1
+          ? { branch: line.trim(), lastCommitAt: '' }
+          : {
+              branch: line.slice(0, tab),
+              lastCommitAt: line.slice(tab + 1).trim(),
+            };
+      });
+  }
+
+  // Every worktree git currently knows about, including the main checkout
+  // itself. `--porcelain` emits one blank-line-separated record per worktree
+  // (`worktree <path>`, then `HEAD <sha>`, then either `branch <ref>` or
+  // `detached`), which is parsed line-by-line here rather than by splitting on
+  // blank lines so a trailing/missing separator can't drop the last record.
+  listWorktrees(): WorktreeRef[] {
+    const result = runGit(this.mainRepoDir, [
+      'worktree',
+      'list',
+      '--porcelain',
+    ]);
+    if (!result.ok) return [];
+    const entries: WorktreeRef[] = [];
+    let current: WorktreeRef | undefined;
+    for (const line of result.stdout.split('\n')) {
+      if (line.startsWith('worktree ')) {
+        if (current !== undefined) entries.push(current);
+        current = { path: line.slice('worktree '.length).trim() };
+      } else if (line.startsWith('branch ') && current !== undefined) {
+        const ref = line.slice('branch '.length).trim();
+        const prefix = 'refs/heads/';
+        current.branch = ref.startsWith(prefix)
+          ? ref.slice(prefix.length)
+          : ref;
+      }
+    }
+    if (current !== undefined) entries.push(current);
+    return entries;
+  }
+
+  // How many commits `branch` has that `base` does not — i.e. how much work
+  // would be lost by deleting it. `base..branch` is already relative to the
+  // two refs' merge base, so a base branch that moved on since the worktree
+  // was created never inflates this count. Returns 0 when either ref is
+  // missing (an orphan ref whose recorded base branch is itself gone), since
+  // "unknown" and "nothing to lose" are both better served by the caller's
+  // unmerged guard than by throwing here.
+  aheadCount(branch: string, base: string): number {
+    const result = runGit(this.mainRepoDir, [
+      'rev-list',
+      '--count',
+      `${base}..${branch}`,
+    ]);
+    if (!result.ok) return 0;
+    const parsed = Number.parseInt(result.stdout.trim(), 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  // True when every commit on `branch` is already reachable from `base` —
+  // proof that deleting the ref destroys nothing. `merge-base --is-ancestor`
+  // signals the answer through its exit code (0 = ancestor) and prints
+  // nothing, so `ok` *is* the result here.
+  isMergedInto(branch: string, base: string): boolean {
+    return runGit(this.mainRepoDir, [
+      'merge-base',
+      '--is-ancestor',
+      branch,
+      base,
+    ]).ok;
+  }
+
+  // Whether a run's worktree has uncommitted work sitting in it. Runs in the
+  // worktree itself, not the main checkout — unlike `isMainDirty()` below,
+  // which deliberately asks about the user's own checkout. A path that no
+  // longer exists is reported clean rather than throwing: the branches surface
+  // lists refs whose directory may already be gone.
+  isWorktreeDirty(path: string): boolean {
+    if (!existsSync(path)) return false;
+    const status = runGit(path, ['status', '--porcelain']);
+    return status.ok && status.stdout.trim().length > 0;
   }
 
   // Boot-time hygiene: any directory directly under `worktreesRoot` that

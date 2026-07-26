@@ -14,6 +14,7 @@ import { type CommandRunner, defaultCommandRunner } from './pr.js';
 import type { CommandResult } from './pr.js';
 import type { RunMeta } from './types.js';
 import {
+  MergeEnvironmentError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
   TERMINAL_RUN_STATES,
@@ -32,6 +33,11 @@ function commandErrorText(result: CommandResult): string {
 export type MergeQueueEntryState =
   | 'queued'
   | 'waiting-blockers'
+  // Held because the MAIN CHECKOUT isn't mergeable-into right now — dirty
+  // tree, staged index, or the wrong branch out. A display state like
+  // 'waiting-blockers': the entry stays in line, carries the reason, and is
+  // retried on the next pump rather than being failed out to history.
+  | 'blocked-environment'
   | 'rebasing'
   | 'verifying'
   | 'merging'
@@ -43,7 +49,10 @@ export interface MergeQueueEntry {
   taskId: string;
   taskTitle: string;
   state: MergeQueueEntryState;
-  /** Failure detail — set only once an entry lands in `failed`. */
+  /**
+   * Why this entry failed or is being held — set on `failed` (terminal) and on
+   * `blocked-environment` (retryable, and the one the user has to act on).
+   */
   reason?: string;
   enqueuedAt: string;
   /** Set only once an entry lands in `merged`/`failed`. */
@@ -192,6 +201,11 @@ export class MergeQueue {
         continue;
       }
       entry.state = 'queued';
+      // Any held reason came from the previous process's view of a checkout
+      // that may since have been cleaned up — drop it so a reloaded entry
+      // doesn't display a stale "blocked because X" that no longer applies.
+      // The first pump re-derives it from the live environment.
+      delete entry.reason;
       this.entries.push(entry);
     }
     // Persist the corrected state immediately — otherwise a hydrate() that
@@ -282,6 +296,22 @@ export class MergeQueue {
         `dispatchd: merge queue pump failed: ${(err as Error).message}`
       );
     });
+  }
+
+  /**
+   * Re-runs the pump against the CURRENT environment — the retry seam for
+   * entries held in 'blocked-environment'.
+   *
+   * Those blockers live in the user's main checkout (an uncommitted file, a
+   * staged index, the wrong branch), so nothing this daemon observes tells it
+   * when they clear: unlike `waiting-blockers`, which resolves through a run
+   * being reviewed and is already covered by the onRunReviewed hook, a `git
+   * commit` in a terminal produces no event here. This is what the API calls
+   * so the app can say "retry now" once the user has cleaned up, without them
+   * having to remove and re-enqueue the entry.
+   */
+  recheck(): void {
+    this.kick();
   }
 
   // Shared eligibility rules for enqueue()/enqueueStack(): a run must be in
@@ -446,8 +476,13 @@ export class MergeQueue {
         const next = this.nextEligible();
         if (next === null) return;
         this.active = next;
-        await this.process(next);
+        const outcome = await this.process(next);
         this.active = null;
+        // An environmental blocker is a property of the one main checkout, so
+        // every remaining entry would hit exactly the same wall. Stop the
+        // sweep instead of grinding through the queue marking each one
+        // blocked in turn (and re-running `git status` per entry to do it).
+        if (outcome === 'blocked') return;
       }
     } finally {
       this.pumping = false;
@@ -472,9 +507,16 @@ export class MergeQueue {
         const blocker = byId.get(id);
         return blocker !== undefined && !isDone(blocker);
       });
+      // A 'blocked-environment' entry keeps that state (and its reason) here
+      // rather than being reset to 'queued': process() is what re-derives it
+      // from the live checkout, and flipping it to 'queued' first would make
+      // the UI flicker between "queued" and "blocked" on every pump while the
+      // user still has an uncommitted file sitting there.
       const nextState: MergeQueueEntryState = unmet
         ? 'waiting-blockers'
-        : 'queued';
+        : entry.state === 'blocked-environment'
+          ? 'blocked-environment'
+          : 'queued';
       if (entry.state !== nextState) {
         entry.state = nextState;
         changed = true;
@@ -485,7 +527,12 @@ export class MergeQueue {
     return eligible;
   }
 
-  private async process(entry: MergeQueueEntry): Promise<void> {
+  // Runs one entry through rebase -> verify -> merge. Returns 'blocked' when
+  // the main checkout itself stopped the merge (see MergeEnvironmentError):
+  // that's transient and global, so the entry is HELD in line with its reason
+  // rather than filed to history, and pump() stops the current sweep because
+  // no other entry could get past the same checkout either.
+  private async process(entry: MergeQueueEntry): Promise<'done' | 'blocked'> {
     const meta = this.ctx.orchestrator.list().find((r) => r.id === entry.runId);
     // The run may have been reviewed or vanished (e.g. discarded directly,
     // bypassing the queue) while this entry was waiting its turn — fail it
@@ -493,12 +540,12 @@ export class MergeQueue {
     if (meta === undefined) {
       entry.reason = `run no longer exists: ${entry.runId}`;
       this.finish(entry, 'failed');
-      return;
+      return 'done';
     }
     if (meta.reviewedAt !== undefined) {
       entry.reason = 'run was already reviewed outside the merge queue';
       this.finish(entry, 'failed');
-      return;
+      return 'done';
     }
 
     try {
@@ -506,9 +553,17 @@ export class MergeQueue {
       await this.verify(entry, meta);
       await this.merge(entry, meta);
       this.finish(entry, 'merged');
+      return 'done';
     } catch (err) {
       entry.reason = (err as Error).message;
+      if (err instanceof MergeEnvironmentError) {
+        entry.state = 'blocked-environment';
+        this.persist();
+        this.broadcast();
+        return 'blocked';
+      }
       this.finish(entry, 'failed');
+      return 'done';
     }
   }
 
