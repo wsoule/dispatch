@@ -135,6 +135,12 @@ export interface DispatchProjectData {
   handleWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   handleStopEpic: (epicId: string) => Promise<void>;
   handleSubmitPrompt: (prompt: string) => Promise<string>;
+  /** Post a follow-up message onto the active plan conversation. Returns the
+   * 202 record (already flipped back to `running`); the assistant's reply +
+   * refined proposal land via the `plan.changed` broadcast and refetch. */
+  handleSendPlanMessage: (
+    text: string
+  ) => Promise<import('@dispatch/client').PlanRecord>;
   handleConfirmPlan: (proposal: PlanProposal) => Promise<void>;
   // Task 6: enqueue/dequeue a run in the merge queue. Both let the server's
   // 404/409 (unknown run, not terminal, already reviewed, already queued, or
@@ -853,6 +859,22 @@ export function useDispatchProject(
     [client]
   );
 
+  // Refine the active plan across turns: post the follow-up (the server 202s
+  // with the record back in `running`), then invalidate the plan query so the
+  // thread re-renders immediately with the user's turn; the assistant's reply
+  // arrives via the plan.changed broadcast the same way the opening turn does.
+  const handleSendPlanMessage = useCallback(
+    async (text: string): Promise<import('@dispatch/client').PlanRecord> => {
+      if (client === null || planId === null) {
+        throw new Error('no plan in progress');
+      }
+      const record = await client.sendPlanMessage(planId, text);
+      void queryClient.invalidateQueries({ queryKey: planQueryKey });
+      return record;
+    },
+    [client, planId, queryClient, planQueryKey]
+  );
+
   const handleConfirmPlan = useCallback(
     async (proposal: PlanProposal): Promise<void> => {
       if (client === null || planId === null) return;
@@ -971,6 +993,7 @@ export function useDispatchProject(
     handleWorkEpic,
     handleStopEpic,
     handleSubmitPrompt,
+    handleSendPlanMessage,
     handleConfirmPlan,
     handleEnqueueMerge,
     handleEnqueueMergeStack,

@@ -356,6 +356,21 @@ describe('POST /api/plan/:id/message', () => {
     });
     expect(res.status).toBe(404);
   });
+
+  it('409s a message to an already-confirmed plan', async () => {
+    const planId = await startedConversationPlanId();
+    await fetch(`${baseUrl}/api/plan/${planId}/confirm`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ proposal: DRAFT_ONE }),
+    });
+    const res = await fetch(`${baseUrl}/api/plan/${planId}/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'one more change' }),
+    });
+    expect(res.status).toBe(409);
+  });
 });
 
 describe('POST /api/epics/:id/dispatch, /stop, GET /progress', () => {
