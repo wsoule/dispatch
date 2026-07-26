@@ -372,6 +372,78 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
       `requested changes (run ${second.id}): please fix x`
     );
   });
+
+  it("records the user's message on the new run's transcript and links it back via resumedFrom", async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
+    );
+    const task = store.create({ title: 'Keep the conversation' });
+    const first = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(first.id)?.meta.state === 'finished'
+    );
+
+    const second = orchestrator.sendMessage(first.id, 'please fix x', {
+      resume: true,
+    });
+
+    // Lineage: the follow-up run points back at the run it resumed, so the
+    // UI can say where the earlier conversation lives.
+    expect(second.resumedFrom).toBe(first.id);
+
+    // Continuity: the follow-up transcript opens with the user's own
+    // request-changes message rather than starting empty — same entry shape
+    // the live-run sendMessage branch records.
+    const entries = orchestrator.getRun(second.id)!.entries;
+    expect(entries[0]).toMatchObject({
+      kind: 'message',
+      from: 'user',
+      text: 'please fix x',
+    });
+  });
+
+  // The triple-dispatch incident: a resume forks a new run into the SAME
+  // worktree, so a duplicate resume (double-Enter, retry after a UI error)
+  // must 409 exactly like dispatch() does — not silently start a second
+  // agent racing the first one's edits.
+  it('409s a resume while the task already has a live run', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    // Finishes the FIRST start (so the run becomes resumable), then hangs on
+    // every later start — leaving the resumed follow-up run live.
+    let starts = 0;
+    orchestrator.registerExecutor('fake', {
+      start(_opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+        starts += 1;
+        if (starts === 1) {
+          events.onFinish({ state: 'finished', sessionId: 'sess-1' });
+        }
+        return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+      },
+    });
+    const task = store.create({ title: 'No duplicate resumes' });
+    const first = orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(first.id)?.meta.state === 'finished'
+    );
+
+    const second = orchestrator.sendMessage(first.id, 'please fix x', {
+      resume: true,
+    });
+    expect(orchestrator.getRun(second.id)!.meta.state).toBe('running');
+
+    expect(() =>
+      orchestrator.sendMessage(first.id, 'please fix x again', {
+        resume: true,
+      })
+    ).toThrow(OrchestratorConflictError);
+    expect(() =>
+      orchestrator.sendMessage(first.id, 'please fix x again', {
+        resume: true,
+      })
+    ).toThrow(`task already has a live run: ${second.id}`);
+  });
 });
 
 describe('Orchestrator.review merge', () => {
