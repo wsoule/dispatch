@@ -12,6 +12,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -747,10 +748,12 @@ export class Orchestrator {
   // never see a run stuck "running" forever with nothing actually running
   // it. Every transcript's worktreePath is then used as the keep-set for
   // pruning orphan worktree directories left by a crash before a transcript
-  // header was even written.
+  // header was even written. Every transcript's runId is also collected as
+  // the keep-set for pruning orphaned `*.diff.json` snapshots (see below).
   reconcileOnBoot(): void {
     const dir = runsDir(this.ctx.rootDir);
     const keepPaths = new Set<string>();
+    const keepRunIds = new Set<string>();
     if (existsSync(dir)) {
       for (const file of readdirSync(dir)) {
         if (!file.endsWith('.jsonl')) continue;
@@ -770,9 +773,35 @@ export class Orchestrator {
           }
           this.registry.create(meta);
           keepPaths.add(meta.worktreePath);
+          keepRunIds.add(meta.id);
         } catch (err) {
           console.error(
             `dispatchd: skipping unreadable transcript ${path}: ${(err as Error).message}`
+          );
+        }
+      }
+      // Diff-snapshot GC: persistDiffSnapshot writes `<runId>.diff.json`
+      // alongside each run's transcript, but nothing ever deletes it once the
+      // run itself is gone (e.g. its transcript was manually removed, or a
+      // future "delete run" action drops the .jsonl without also dropping
+      // its snapshot). An orphaned snapshot is permanently unreachable —
+      // diff() only ever looks one up by a runId the registry still knows
+      // about — so it just wastes disk forever; sweep it here, once per
+      // boot, using the same runId keep-set built above. `merge-queue.json`
+      // lives in this same directory (see paths.ts's mergeQueuePath) but
+      // never matches the `.diff.json` suffix below — skip it by name too,
+      // as a defense-in-depth guard against ever deleting the live queue
+      // state file here.
+      for (const file of readdirSync(dir)) {
+        if (file === 'merge-queue.json') continue;
+        if (!file.endsWith('.diff.json')) continue;
+        const runId = file.slice(0, -'.diff.json'.length);
+        if (keepRunIds.has(runId)) continue;
+        try {
+          rmSync(join(dir, file));
+        } catch (err) {
+          console.error(
+            `dispatchd: failed to remove orphaned diff snapshot ${file}: ${(err as Error).message}`
           );
         }
       }

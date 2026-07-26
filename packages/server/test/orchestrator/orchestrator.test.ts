@@ -1324,6 +1324,48 @@ describe('Orchestrator.reconcileOnBoot', () => {
 
     expect(orchestrator.getRun(runId)?.meta.state).toBe('failed');
   });
+
+  // Diff-snapshot GC: persistDiffSnapshot writes `<runId>.diff.json`
+  // alongside a run's transcript, but nothing deletes it once the run itself
+  // is gone. reconcileOnBoot should sweep any `*.diff.json` with no matching
+  // `<runId>.jsonl` transcript, while leaving a matched snapshot (and the
+  // unrelated merge-queue.json state file, which lives in the same
+  // directory) alone.
+  it('removes an orphaned diff snapshot, keeps a matched one, and leaves merge-queue.json untouched', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const task = store.create({ title: 'Diff snapshot GC' });
+    const runId = 'r-diffgc';
+    const meta: RunMeta = {
+      id: runId,
+      taskId: task.meta.id,
+      taskTitle: task.meta.title,
+      executor: 'fake',
+      state: 'finished',
+      branch: 'dispatch/diffgc',
+      baseBranch: 'main',
+      worktreePath: join(worktreesDir(repo), runId),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mkdirSync(meta.worktreePath, { recursive: true });
+    new Transcript(transcriptPath(repo, runId)).writeHeader(meta);
+
+    // Matched: this run's own transcript exists above.
+    writeFileSync(diffSnapshotPath(repo, runId), '{}\n');
+    // Orphaned: no `r-gone.jsonl` transcript anywhere in runsDir.
+    const orphanDiffPath = join(runsDir(repo), 'r-gone.diff.json');
+    writeFileSync(orphanDiffPath, '{}\n');
+    // The merge queue's own persisted state, sitting in the same directory —
+    // must survive the sweep even though nothing keeps it in any keep-set.
+    const queuePath = join(runsDir(repo), 'merge-queue.json');
+    writeFileSync(queuePath, '{"entries":[],"history":[]}\n');
+
+    orchestrator.reconcileOnBoot();
+
+    expect(existsSync(diffSnapshotPath(repo, runId))).toBe(true);
+    expect(existsSync(orphanDiffPath)).toBe(false);
+    expect(existsSync(queuePath)).toBe(true);
+  });
 });
 
 describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
