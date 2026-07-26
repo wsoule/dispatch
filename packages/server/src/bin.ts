@@ -172,6 +172,8 @@ function makeFakeGhRunner(): CommandRunner {
     number: number;
     url: string;
     title: string;
+    headRefName: string;
+    author: string;
     state: string;
     reviews: Array<Record<string, unknown>>;
     comments: Array<Record<string, unknown>>;
@@ -184,6 +186,33 @@ function makeFakeGhRunner(): CommandRunner {
     const i = cmd.indexOf(name);
     return i >= 0 && i < cmd.length - 1 ? cmd[i + 1] : undefined;
   };
+
+  // The one standalone fake PR (#7, dependabot) that `gh pr list` has always
+  // reported without dispatch ever "creating" it via `gh pr create` below —
+  // so the PRs page's "Other open PRs" section has a real non-dispatch row
+  // in demo mode. Seeded straight into `prs` (rather than assembled ad hoc
+  // inside the `list` handler, as it used to be) so `gh pr view`/`review`/
+  // `comment` of this PR — item B's in-app review surface for those rows —
+  // resolve against the same map every dispatch-created PR does, instead of
+  // map-missing into the generic "PR not found" default below.
+  const standaloneUrl = 'https://github.com/dispatch-demo/repo/pull/7';
+  prs.set(standaloneUrl, {
+    number: 7,
+    url: standaloneUrl,
+    title: 'Bump dependency versions',
+    headRefName: 'deps/bump-versions',
+    author: 'dependabot',
+    state: 'OPEN',
+    reviews: [],
+    comments: [
+      {
+        author: { login: 'dependabot' },
+        body: 'Superseded by a newer version bump — should still be safe to merge as-is.',
+        createdAt: new Date().toISOString(),
+      },
+    ],
+    lineComments: [],
+  });
 
   return (_cwd, cmd) => {
     const [bin, sub, action] = cmd;
@@ -203,6 +232,8 @@ function makeFakeGhRunner(): CommandRunner {
         number: counter,
         url,
         title: flagValue(cmd, '--title') ?? 'Pull request',
+        headRefName: `dispatch/fake-${counter}`,
+        author: 'you',
         state: 'OPEN',
         reviews: [],
         comments: [
@@ -226,32 +257,27 @@ function makeFakeGhRunner(): CommandRunner {
     }
 
     if (bin === 'gh' && sub === 'pr' && action === 'list') {
-      // Every PR this fake has "opened" via `gh pr create` above, plus one
-      // standalone fake PR that was never dispatched through this daemon at
-      // all — so the PRs page's "Other open PRs" section has a real
+      // Every open PR in `prs` — every one this fake has "opened" via
+      // `gh pr create` below, plus the standalone fake PR (#7, dependabot)
+      // seeded above — so the PRs page's "Other open PRs" section has a real
       // non-dispatch row to render in demo mode (DISPATCH_FAKE_GH=1), not
-      // just an empty section.
-      const dispatchPrs = [...prs.values()]
+      // just an empty section. Read straight off each PR's own headRefName/
+      // author (rather than a hardcoded `dispatch/fake-N` + `you` here) now
+      // that both dispatch-created and the standalone PR carry those fields
+      // themselves — see the standalone seed's own comment for why it's in
+      // this same map rather than assembled ad hoc here.
+      const open = [...prs.values()]
         .filter((pr) => pr.state === 'OPEN')
         .map((pr) => ({
           number: pr.number,
           title: pr.title,
           url: pr.url,
-          headRefName: `dispatch/fake-${pr.number}`,
-          author: { login: 'you' },
+          headRefName: pr.headRefName,
+          author: { login: pr.author },
           isDraft: false,
           updatedAt: now,
         }));
-      const standalone = {
-        number: 7,
-        title: 'Bump dependency versions',
-        url: 'https://github.com/dispatch-demo/repo/pull/7',
-        headRefName: 'deps/bump-versions',
-        author: { login: 'dependabot' },
-        isDraft: false,
-        updatedAt: now,
-      };
-      return ok(JSON.stringify([...dispatchPrs, standalone]));
+      return ok(JSON.stringify(open));
     }
 
     if (bin === 'gh' && sub === 'pr' && action === 'view') {

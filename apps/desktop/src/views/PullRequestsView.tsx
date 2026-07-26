@@ -21,6 +21,7 @@ import { RunDiffView } from '../components/runs/RunDiffView';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StackBadge, StackRail } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useRepoPrDetail } from '../hooks/useRepoPrDetail';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { cn } from '@/lib/utils';
 
@@ -196,15 +197,22 @@ interface PrEpicGroup {
 /**
  * One row in the "Other open PRs" section — a repo PR dispatch never opened itself (no run's
  * `prUrl` matches it), so there's no run/stack/queue context to show, just what `gh pr list`
- * reports. v1 has no in-app detail for these (follow-up: fetch a `PrDetail` for an arbitrary
- * PR url, not just a run's own); the whole row is instead a plain external link out to GitHub.
+ * reports. The row itself is selectable (`onSelect`, mirroring a dispatch-run PR row) to open
+ * the same in-app status/conversation/review surface `PullRequestsView` renders for those; the
+ * external-link icon stays a separate, `stopPropagation`-guarded escape hatch straight out to
+ * GitHub, same as every dispatch-run PR row's own link icon.
  */
-function OtherOpenPrRow({ pr }: { pr: RepoPr }) {
+function OtherOpenPrRow({
+  pr,
+  onSelect,
+}: {
+  pr: RepoPr;
+  onSelect: (number: number) => void;
+}) {
   return (
-    <a
-      href={pr.url}
-      target="_blank"
-      rel="noreferrer"
+    <button
+      type="button"
+      onClick={() => onSelect(pr.number)}
       className={cn(
         'group flex w-full items-center gap-3 rounded-md border border-transparent px-3 py-2.5 text-left transition-colors duration-150',
         'hover:border-border hover:bg-muted/50'
@@ -230,8 +238,16 @@ function OtherOpenPrRow({ pr }: { pr: RepoPr }) {
       <span className="text-muted-foreground/70 w-16 shrink-0 text-right text-[11px]">
         {formatRelativeTimeFromIso(pr.updatedAt)}
       </span>
-      <ExternalLink className="text-muted-foreground group-hover:text-foreground size-3.5 shrink-0" />
-    </a>
+      <a
+        href={pr.url}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="text-muted-foreground hover:text-foreground shrink-0"
+      >
+        <ExternalLink className="size-3.5" />
+      </a>
+    </button>
   );
 }
 
@@ -244,8 +260,15 @@ function OtherOpenPrRow({ pr }: { pr: RepoPr }) {
  * the shared PrReviewPanel; this view only owns the list + queue panel + framing.
  *
  * Below the dispatch-run rows, an "Other open PRs" section (item B) lists every open repo PR
- * `gh pr list` reports that no run's own `prUrl` already covers — plain external-link rows with
- * no in-app detail in v1 (see OtherOpenPrRow's own comment for the follow-up).
+ * `gh pr list` reports that no run's own `prUrl` already covers. Each of those rows is now
+ * selectable too (see OtherOpenPrRow) — picking one shows the same status-card + conversation +
+ * review-action surface (`PrReviewPanel`, reused as-is) as a dispatch-run PR, just without a
+ * diff pane: dispatch never opened this PR itself, so there's no worktree to diff against,
+ * which is inherent to a PR with no run rather than a gap to close later. That selection
+ * (`selectedRepoPrNumber`) is kept as this view's own local state rather than nav state: unlike
+ * every run-keyed selection in this app (nav's `activeRunId`), a repo PR has no run for nav to
+ * key off, and there's no cross-view surface (peek panel, palette, etc.) that needs to jump to
+ * one the way they do to a run.
  */
 export function PullRequestsView({
   data,
@@ -285,6 +308,32 @@ export function PullRequestsView({
     () => (data.repoPrs ?? []).filter((pr) => !dispatchPrUrls.has(pr.url)),
     [data.repoPrs, dispatchPrUrls]
   );
+
+  // Item B's in-app detail: which "Other open PRs" row is selected, if any — a repo PR has no
+  // run, so nav's run-keyed `activeRunId` has nothing to point at. Kept as local state (not
+  // nav state) for exactly that reason; see this component's own doc comment. Cleared whenever
+  // the underlying repo-PR list changes out from under it (e.g. it closed on GitHub and no
+  // longer appears) so the detail view doesn't get stuck showing a stale selection.
+  const [selectedRepoPrNumber, setSelectedRepoPrNumber] = useState<
+    number | null
+  >(null);
+  const selectedRepoPr = useMemo(
+    () =>
+      selectedRepoPrNumber !== null
+        ? otherPrs.find((pr) => pr.number === selectedRepoPrNumber)
+        : undefined,
+    [otherPrs, selectedRepoPrNumber]
+  );
+  useEffect(() => {
+    if (
+      selectedRepoPrNumber !== null &&
+      !otherPrs.some((pr) => pr.number === selectedRepoPrNumber)
+    ) {
+      setSelectedRepoPrNumber(null);
+    }
+  }, [otherPrs, selectedRepoPrNumber]);
+
+  const repoPrDetail = useRepoPrDetail(data.client, selectedRepoPrNumber);
 
   // One entry per run currently pending/active in the queue (never history — a row's pill only
   // ever reflects the queue's *live* state, the same "go refetch" semantics as everywhere else).
@@ -386,6 +435,54 @@ export function PullRequestsView({
         errorDetail={data.portErrorDetail}
         onRetry={data.retryEnsureDispatchd}
       />
+    );
+  }
+
+  // Item B's in-app detail for an "Other open PRs" row — checked ahead of the dispatch-run
+  // detail branch below since the two selections are independent (this one is view-local, not
+  // nav state; see selectedRepoPrNumber's own comment). Reuses PrReviewPanel as-is (same
+  // detail/loading/error/onReview/onComment props the run-PR branch already passes it) — no
+  // diff pane and no StackRail/QueueMergeControl, since a repo PR with no run has no worktree,
+  // stack, or merge-queue standing to show.
+  if (selectedRepoPr !== undefined) {
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedRepoPrNumber(null)}
+              className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 text-[13px]"
+            >
+              <ChevronLeft className="size-4" />
+              Pull requests
+            </button>
+            <span className="text-muted-foreground/40">/</span>
+            <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
+              {selectedRepoPr.title}
+            </span>
+          </div>
+          <a
+            href={selectedRepoPr.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 text-[11px]"
+          >
+            View on GitHub
+            <ExternalLink className="size-3" />
+          </a>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <PrReviewPanel
+            detail={repoPrDetail.prDetail}
+            loading={repoPrDetail.prDetailLoading}
+            error={repoPrDetail.prDetailError}
+            onReview={(event, body) => repoPrDetail.handleReview(event, body)}
+            onComment={(body) => repoPrDetail.handleComment(body)}
+          />
+        </div>
+      </div>
     );
   }
 
@@ -548,7 +645,11 @@ export function PullRequestsView({
                 Other open PRs
               </span>
               {otherPrs.map((pr) => (
-                <OtherOpenPrRow key={pr.url} pr={pr} />
+                <OtherOpenPrRow
+                  key={pr.url}
+                  pr={pr}
+                  onSelect={setSelectedRepoPrNumber}
+                />
               ))}
             </div>
           )}
