@@ -39,6 +39,16 @@ const SIDECARS = [
     entry: join(repoRoot, 'packages', 'mcp', 'src', 'bin.ts'),
     name: 'dispatch-mcp',
   },
+  // The `dispatch` CLI, compiled so the Homebrew cask can expose it on PATH
+  // (see the cask's `binary` stanza) without requiring `bun` or the checkout.
+  // Its `dispatch mcp` subcommand runs the bundled MCP server in-process, and
+  // `dispatch`/`dispatch serve` spawn the `dispatchd` binary sitting beside it
+  // in this same Resources dir — see resolveDaemonLauncher in
+  // packages/cli/src/commands/daemon.ts.
+  {
+    entry: join(repoRoot, 'packages', 'cli', 'src', 'cli.ts'),
+    name: 'dispatch-cli',
+  },
 ];
 
 // `bun build --compile` (Bun 1.3.x) leaves a stray `.<hash>-00000000.bun-build`

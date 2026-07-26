@@ -79,6 +79,78 @@ function resolveDaemonBin(): string {
   return join(dirname(pkgJsonPath), 'src', 'bin.ts');
 }
 
+// How to launch dispatchd, resolved by `resolveDaemonLauncher`. `cmd` is the
+// executable to spawn; `leadingArgs` are the args that must precede `--root`
+// (the daemon entry script when launching through `bun`, empty when spawning a
+// compiled binary directly); `env` carries extra vars merged into the child's
+// environment (the sibling MCP binary path for a packaged install); `usesBun`
+// tailors error messages, since the "is bun installed?" hint only makes sense
+// on the bun-script path.
+export interface DaemonLauncher {
+  cmd: string;
+  leadingArgs: string[];
+  env?: Record<string, string>;
+  usesBun: boolean;
+}
+
+// Classifies an explicit `DISPATCH_DAEMON_BIN` override: a `.ts`/`.js` entry
+// still runs through `bun`, anything else is treated as a compiled binary
+// spawned directly.
+function launcherForOverride(binPath: string): DaemonLauncher {
+  if (binPath.endsWith('.ts') || binPath.endsWith('.js')) {
+    return { cmd: 'bun', leadingArgs: [binPath], usesBun: true };
+  }
+  return { cmd: binPath, leadingArgs: [], usesBun: false };
+}
+
+// Resolves how to launch dispatchd, in precedence order:
+//   (a) `DISPATCH_DAEMON_BIN` — an explicit override (escape hatch for tests
+//       and non-standard installs); see `launcherForOverride`.
+//   (b) a compiled `dispatchd` binary sitting beside the running executable
+//       (`process.execPath`'s directory). In a packaged Homebrew install the
+//       compiled `dispatch` CLI, `dispatchd`, and `dispatch-mcp` all live
+//       together in the app's Resources dir, so this is how the shipped CLI
+//       finds the daemon without `bun` or the monorepo checkout — spawned
+//       directly, and pointed at the sibling `dispatch-mcp` via
+//       `DISPATCH_MCP_BIN` so the daemon's executor runs that compiled MCP
+//       instead of shelling out to `bun` (see `buildDispatchMcpServerConfig`
+//       in packages/server/src/orchestrator/executors/claude.ts). Mirrors the
+//       desktop app's own `DaemonLaunch::Bundled` path in
+//       apps/desktop/src-tauri/src/sidecar.rs.
+//   (c) the monorepo source entry via `bun` (dev / running from a checkout) —
+//       the original behavior, via `resolveDaemonBin`.
+//
+// `execPath` defaults to the running executable and is only injected by tests,
+// which point it at a temp-dir layout to exercise the sibling-binary branch
+// without depending on where the test runner itself lives.
+export function resolveDaemonLauncher(
+  execPath: string = process.execPath
+): DaemonLauncher {
+  const override = process.env.DISPATCH_DAEMON_BIN;
+  if (override !== undefined && override !== '') {
+    return launcherForOverride(override);
+  }
+
+  const execDir = dirname(execPath);
+  const siblingDaemon = join(execDir, 'dispatchd');
+  if (existsSync(siblingDaemon)) {
+    const env: Record<string, string> = {};
+    const siblingMcp = join(execDir, 'dispatch-mcp');
+    if (existsSync(siblingMcp)) env.DISPATCH_MCP_BIN = siblingMcp;
+    return { cmd: siblingDaemon, leadingArgs: [], env, usesBun: false };
+  }
+
+  return { cmd: 'bun', leadingArgs: [resolveDaemonBin()], usesBun: true };
+}
+
+// Merges a launcher's extra env over the current process environment, or
+// returns `undefined` (inherit as-is) when the launcher adds nothing — so the
+// common bun-script path keeps its exact previous "no env override" behavior.
+function childEnvFor(launcher: DaemonLauncher): NodeJS.ProcessEnv | undefined {
+  if (launcher.env === undefined) return undefined;
+  return { ...process.env, ...launcher.env };
+}
+
 // Default `openBrowser` used when a CliContext doesn't inject its own (tests
 // inject a stub; real usage falls through to here).
 function defaultOpenBrowser(url: string): void {
@@ -196,18 +268,24 @@ export async function ensureDaemon(
     return { port: existing.port };
   }
 
-  const binPath = resolveDaemonBin();
-  const args = [binPath, '--root', ctx.cwd];
+  const launcher = resolveDaemonLauncher();
+  const args = [...launcher.leadingArgs, '--root', ctx.cwd];
   if (opts.port !== undefined) args.push('--port', opts.port);
 
   // Detached + ignored stdio: this daemon should outlive the CLI invocation
   // that spawned it and keep running in the background, the same way
-  // `dispatch serve` running in a separate terminal would. No `env` override
-  // is passed, so the child inherits this process's full environment —
-  // including `DISPATCH_ENABLE_FAKES`/`DISPATCH_HOME` when a test (or a
-  // user) has set them, which is what lets the CLI's own e2e tests exercise
-  // this exact auto-start path against a fakes-enabled daemon.
-  const child = spawn('bun', args, { detached: true, stdio: 'ignore' });
+  // `dispatch serve` running in a separate terminal would. On the bun-script
+  // path no `env` override is passed, so the child inherits this process's
+  // full environment — including `DISPATCH_ENABLE_FAKES`/`DISPATCH_HOME` when
+  // a test (or a user) has set them, which is what lets the CLI's own e2e
+  // tests exercise this exact auto-start path against a fakes-enabled daemon.
+  // The compiled-sibling path adds `DISPATCH_MCP_BIN` on top of that same
+  // inherited environment (see `resolveDaemonLauncher`).
+  const child = spawn(launcher.cmd, args, {
+    detached: true,
+    stdio: 'ignore',
+    env: childEnvFor(launcher),
+  });
   child.on('error', () => {
     // Surfaced below via the health-poll timeout instead of here — by the
     // time this fires asynchronously, the caller may already have moved on
@@ -218,7 +296,9 @@ export async function ensureDaemon(
   const port = await waitForHealthyDaemon(ctx.cwd, 5000);
   if (port === null) {
     throw new CliError(
-      'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
+      launcher.usesBun
+        ? 'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
+        : `dispatchd did not become healthy within 5s (launched ${launcher.cmd})`
     );
   }
   return { port: await resolveRaceWinner(ctx.cwd, child, port) };
@@ -273,14 +353,21 @@ export function registerDaemonCommands(
     .option('--port <n>', 'port to listen on (default: ephemeral)')
     .action((opts: { port?: string }) => {
       requireStore(ctx);
-      const binPath = resolveDaemonBin();
-      const args = [binPath, '--root', ctx.cwd];
+      const launcher = resolveDaemonLauncher();
+      const args = [...launcher.leadingArgs, '--root', ctx.cwd];
       if (opts.port !== undefined) args.push('--port', opts.port);
 
-      const result = spawnSync('bun', args, { stdio: 'inherit' });
+      const result = spawnSync(launcher.cmd, args, {
+        stdio: 'inherit',
+        env: childEnvFor(launcher),
+      });
       if (result.error !== undefined) {
         if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-          throw new CliError('dispatch serve requires bun (https://bun.sh)');
+          throw new CliError(
+            launcher.usesBun
+              ? 'dispatch serve requires bun (https://bun.sh)'
+              : `dispatch serve could not launch the daemon binary: ${launcher.cmd}`
+          );
         }
         throw result.error;
       }

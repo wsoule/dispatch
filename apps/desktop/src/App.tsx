@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import type { Update } from '@tauri-apps/plugin-updater';
 import { Loader2, Plus, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 
@@ -6,6 +7,7 @@ import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { Sidebar } from './components/shell/Sidebar';
+import { UpdateBanner } from './components/shell/UpdateBanner';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { TaskDetailDialog } from './components/tasks/TaskDetailDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
@@ -23,6 +25,7 @@ import {
   listRegisteredProjects,
   touchProjectOpened,
 } from './lib/tauri';
+import { checkForUpdate } from './lib/updater';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { GetStartedView } from './views/GetStartedView';
@@ -45,6 +48,19 @@ function App() {
   // the plain "New task" button, which leaves the modal to default to the first configured
   // status on its own.
   const [createStatus, setCreateStatus] = useState<string | null>(null);
+
+  // Auto-update: check GitHub's `latest.json` once after mount (non-blocking —
+  // `checkForUpdate` is a no-op outside Tauri and swallows its own errors), and
+  // if a newer signed release is published, offer a dismissible banner. Dismissal
+  // is session-only; the next launch re-checks. `void` because the effect body
+  // can't be async and the result is stored via `setPendingUpdate`.
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  useEffect(() => {
+    void checkForUpdate().then((update) => {
+      if (update !== null) setPendingUpdate(update);
+    });
+  }, []);
 
   useDataChangedEvents();
 
@@ -391,177 +407,185 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-screen overflow-hidden">
-        <Sidebar
-          projectName={activeProject?.name ?? null}
-          projectPath={activeProject?.path ?? null}
-          hasActiveProject={activeProject !== null}
-          section={navState.section}
-          projectView={navState.projectView}
-          globalView={navState.globalView}
-          liveAgentCount={liveRuns.length}
-          prCount={data.runs.filter((r) => r.prUrl !== undefined).length}
-          onSetProjectView={selectProjectView}
-          onSetGlobalView={setGlobalView}
-          switcherOpen={switcherOpen}
-          onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
-          switchProjects={switchProjects ?? []}
-          onSelectProject={selectSwitchProject}
-          noProjectYet={noProjectYet}
-          onAddProject={() => {
-            setSwitcherOpen(false);
-            setAddProjectOpen(true);
-          }}
-        />
-        <main className="min-w-0 flex-1 overflow-auto p-6">
-          {resolutionError !== null ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <TriangleAlert className="text-destructive size-5" />
-              <p className="text-muted-foreground max-w-sm text-[13px]">
-                {resolutionError}
-              </p>
-            </div>
-          ) : noProjectYet ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-              {/* The Hydrogen mark — same wordmark icon as the sidebar, scaled up — so the
-                  empty first-run state still reads as "Dispatch", not a generic error page. */}
-              <span className="border-border inline-flex size-12 items-center justify-center rounded-xl border bg-white">
-                <svg
-                  viewBox="0 0 34 36"
-                  className="size-7"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
-                    fill="#000000"
-                  />
-                </svg>
-              </span>
-              <div className="space-y-1">
-                <p className="text-foreground text-[15px] font-medium">
-                  No project yet
-                </p>
+      <div className="flex h-screen flex-col overflow-hidden">
+        {pendingUpdate !== null && !updateDismissed && (
+          <UpdateBanner
+            update={pendingUpdate}
+            onDismiss={() => setUpdateDismissed(true)}
+          />
+        )}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <Sidebar
+            projectName={activeProject?.name ?? null}
+            projectPath={activeProject?.path ?? null}
+            hasActiveProject={activeProject !== null}
+            section={navState.section}
+            projectView={navState.projectView}
+            globalView={navState.globalView}
+            liveAgentCount={liveRuns.length}
+            prCount={data.runs.filter((r) => r.prUrl !== undefined).length}
+            onSetProjectView={selectProjectView}
+            onSetGlobalView={setGlobalView}
+            switcherOpen={switcherOpen}
+            onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
+            switchProjects={switchProjects ?? []}
+            onSelectProject={selectSwitchProject}
+            noProjectYet={noProjectYet}
+            onAddProject={() => {
+              setSwitcherOpen(false);
+              setAddProjectOpen(true);
+            }}
+          />
+          <main className="min-w-0 flex-1 overflow-auto p-6">
+            {resolutionError !== null ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                <TriangleAlert className="text-destructive size-5" />
                 <p className="text-muted-foreground max-w-sm text-[13px]">
-                  Add a local folder or clone a repository from GitHub to get
-                  started.
+                  {resolutionError}
                 </p>
               </div>
-              <Button onClick={() => setAddProjectOpen(true)}>
-                <Plus className="size-4" />
-                Add project
-              </Button>
-            </div>
-          ) : stillResolving ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <Loader2 className="text-muted-foreground size-5 animate-spin" />
-              <p className="text-muted-foreground text-[13px]">
-                Loading project…
-              </p>
-            </div>
-          ) : showGetStarted ? (
-            <GetStartedView projectPath={root} />
-          ) : navState.section === 'global' ? (
-            <>
-              {navState.globalView === 'all-agents' && (
-                <AllAgentsView
-                  liveRuns={liveRuns}
-                  portLoading={data.portLoading}
-                  portError={data.portError}
-                  portErrorDetail={data.portErrorDetail}
-                  client={data.client}
-                  onRetry={data.retryEnsureDispatchd}
-                  onJumpToRun={jumpToRun}
-                />
-              )}
-              {navState.globalView === 'sessions' && <SessionsHubView />}
-              {navState.globalView === 'settings' && (
-                <SettingsView activeProject={activeProject} data={data} />
-              )}
-            </>
-          ) : activeProject === null ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <Loader2 className="text-muted-foreground size-5 animate-spin" />
-              <p className="text-muted-foreground text-[13px]">
-                Loading project…
-              </p>
-            </div>
-          ) : (
-            <>
-              {navState.projectView === 'overview' && (
-                <OverviewView
-                  data={data}
-                  projectName={activeProject?.name ?? null}
-                  onOpenRun={(runId) => {
-                    dispatchNav({ type: 'openRun', runId });
-                    selectProjectView('runs');
-                  }}
-                  onOpenTask={(taskId) =>
-                    dispatchNav({ type: 'openPeek', taskId })
-                  }
-                  onOpenPr={(runId) => {
-                    dispatchNav({ type: 'openRun', runId });
-                    selectProjectView('pull-requests');
-                  }}
-                  onDispatch={(taskId) => data.handleDispatch(taskId)}
-                  onGoToBoard={() => selectProjectView('board')}
-                />
-              )}
-              {navState.projectView === 'board' && (
-                <BoardView
-                  data={data}
-                  onSelectTask={(taskId) =>
-                    dispatchNav({ type: 'openPeek', taskId })
-                  }
-                  onNewTask={openCreateTask}
-                  onPlanWork={() => selectProjectView('plans')}
-                />
-              )}
-              {navState.projectView === 'runs' && (
-                <RunsView
-                  data={data}
-                  selectedRunId={navState.activeRunId}
-                  onSelectRun={(runId) =>
-                    dispatchNav({ type: 'openRun', runId })
-                  }
-                  onViewPr={(runId) => {
-                    dispatchNav({ type: 'openRun', runId });
-                    selectProjectView('pull-requests');
-                  }}
-                />
-              )}
-              {navState.projectView === 'pull-requests' && (
-                <PullRequestsView
-                  data={data}
-                  selectedRunId={navState.activeRunId}
-                  onSelectRun={(runId) =>
-                    dispatchNav({ type: 'openRun', runId })
-                  }
-                  onCloseRun={() => dispatchNav({ type: 'closeRun' })}
-                />
-              )}
-              {navState.projectView === 'milestones' && (
-                <MilestonesView
-                  data={data}
-                  onOpenTask={(taskId) =>
-                    dispatchNav({ type: 'openPeek', taskId })
-                  }
-                />
-              )}
-              {navState.projectView === 'notes' && (
-                <NotesView
-                  data={data}
-                  onOpenTask={(taskId) =>
-                    dispatchNav({ type: 'openPeek', taskId })
-                  }
-                />
-              )}
-              {navState.projectView === 'plans' && (
-                <PlansView data={data} projectPath={activeProject.path} />
-              )}
-            </>
-          )}
-        </main>
+            ) : noProjectYet ? (
+              <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+                {/* The Hydrogen mark — same wordmark icon as the sidebar, scaled up — so the
+                  empty first-run state still reads as "Dispatch", not a generic error page. */}
+                <span className="border-border inline-flex size-12 items-center justify-center rounded-xl border bg-white">
+                  <svg
+                    viewBox="0 0 34 36"
+                    className="size-7"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
+                      fill="#000000"
+                    />
+                  </svg>
+                </span>
+                <div className="space-y-1">
+                  <p className="text-foreground text-[15px] font-medium">
+                    No project yet
+                  </p>
+                  <p className="text-muted-foreground max-w-sm text-[13px]">
+                    Add a local folder or clone a repository from GitHub to get
+                    started.
+                  </p>
+                </div>
+                <Button onClick={() => setAddProjectOpen(true)}>
+                  <Plus className="size-4" />
+                  Add project
+                </Button>
+              </div>
+            ) : stillResolving ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                <Loader2 className="text-muted-foreground size-5 animate-spin" />
+                <p className="text-muted-foreground text-[13px]">
+                  Loading project…
+                </p>
+              </div>
+            ) : showGetStarted ? (
+              <GetStartedView projectPath={root} />
+            ) : navState.section === 'global' ? (
+              <>
+                {navState.globalView === 'all-agents' && (
+                  <AllAgentsView
+                    liveRuns={liveRuns}
+                    portLoading={data.portLoading}
+                    portError={data.portError}
+                    portErrorDetail={data.portErrorDetail}
+                    client={data.client}
+                    onRetry={data.retryEnsureDispatchd}
+                    onJumpToRun={jumpToRun}
+                  />
+                )}
+                {navState.globalView === 'sessions' && <SessionsHubView />}
+                {navState.globalView === 'settings' && (
+                  <SettingsView activeProject={activeProject} data={data} />
+                )}
+              </>
+            ) : activeProject === null ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                <Loader2 className="text-muted-foreground size-5 animate-spin" />
+                <p className="text-muted-foreground text-[13px]">
+                  Loading project…
+                </p>
+              </div>
+            ) : (
+              <>
+                {navState.projectView === 'overview' && (
+                  <OverviewView
+                    data={data}
+                    projectName={activeProject?.name ?? null}
+                    onOpenRun={(runId) => {
+                      dispatchNav({ type: 'openRun', runId });
+                      selectProjectView('runs');
+                    }}
+                    onOpenTask={(taskId) =>
+                      dispatchNav({ type: 'openPeek', taskId })
+                    }
+                    onOpenPr={(runId) => {
+                      dispatchNav({ type: 'openRun', runId });
+                      selectProjectView('pull-requests');
+                    }}
+                    onDispatch={(taskId) => data.handleDispatch(taskId)}
+                    onGoToBoard={() => selectProjectView('board')}
+                  />
+                )}
+                {navState.projectView === 'board' && (
+                  <BoardView
+                    data={data}
+                    onSelectTask={(taskId) =>
+                      dispatchNav({ type: 'openPeek', taskId })
+                    }
+                    onNewTask={openCreateTask}
+                    onPlanWork={() => selectProjectView('plans')}
+                  />
+                )}
+                {navState.projectView === 'runs' && (
+                  <RunsView
+                    data={data}
+                    selectedRunId={navState.activeRunId}
+                    onSelectRun={(runId) =>
+                      dispatchNav({ type: 'openRun', runId })
+                    }
+                    onViewPr={(runId) => {
+                      dispatchNav({ type: 'openRun', runId });
+                      selectProjectView('pull-requests');
+                    }}
+                  />
+                )}
+                {navState.projectView === 'pull-requests' && (
+                  <PullRequestsView
+                    data={data}
+                    selectedRunId={navState.activeRunId}
+                    onSelectRun={(runId) =>
+                      dispatchNav({ type: 'openRun', runId })
+                    }
+                    onCloseRun={() => dispatchNav({ type: 'closeRun' })}
+                  />
+                )}
+                {navState.projectView === 'milestones' && (
+                  <MilestonesView
+                    data={data}
+                    onOpenTask={(taskId) =>
+                      dispatchNav({ type: 'openPeek', taskId })
+                    }
+                  />
+                )}
+                {navState.projectView === 'notes' && (
+                  <NotesView
+                    data={data}
+                    onOpenTask={(taskId) =>
+                      dispatchNav({ type: 'openPeek', taskId })
+                    }
+                  />
+                )}
+                {navState.projectView === 'plans' && (
+                  <PlansView data={data} projectPath={activeProject.path} />
+                )}
+              </>
+            )}
+          </main>
+        </div>
 
         {selectedDoc !== null && data.config !== null && (
           // Remount dialog per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.

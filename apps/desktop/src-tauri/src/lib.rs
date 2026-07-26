@@ -31,6 +31,13 @@ pub fn run() {
     // `notify` in `lib/notifications.ts`), gated by the `notification:default`
     // capability permission.
     .plugin(tauri_plugin_notification::init())
+    // In-app auto-update — the frontend calls the updater plugin's JS `check()`
+    // and `update.downloadAndInstall()` directly (see `lib/updater.ts`), gated
+    // by the `updater:default` capability permission. `tauri-plugin-process`
+    // supplies the JS `relaunch()` the update banner calls after an install to
+    // restart into the freshly downloaded version, gated by `process:default`.
+    .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
