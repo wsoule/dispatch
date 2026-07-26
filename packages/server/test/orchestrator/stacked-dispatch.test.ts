@@ -318,6 +318,13 @@ describe('base selection with two or more unmerged blockers', () => {
     expect(activityFor(h, dependent.meta.id)).toContain(
       'which only jj can build'
     );
+    // Recorded ONCE, not once per attempt. A waiting task is retried on every
+    // fill pass for as long as its blockers stay unmerged, so an append per
+    // attempt would fill the task file with identical lines. Two dispatches
+    // above, one line.
+    expect(
+      activityFor(h, dependent.meta.id).split('which only jj can build')
+    ).toHaveLength(2);
     // It must never try to build the merge base after bailing out.
     expect(f.calls.map((c) => c.join(' '))).not.toContain(
       'jj new -r dispatch/a -r dispatch/b --no-edit'

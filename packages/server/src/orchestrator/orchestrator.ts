@@ -349,7 +349,13 @@ export class Orchestrator {
       base = await this.jj.mergeBase(parents, bookmark);
     } catch (err) {
       const reason = `${parents.length} unmerged blockers need a multi-parent base, which only jj can build (${(err as Error).message}) — waiting until they merge`;
-      this.noteTaskActivity(task.meta.id, `stacked dispatch: ${reason}`);
+      // Once per distinct reason, not once per fill pass. A waiting task is
+      // re-attempted on every pass for as long as its blockers stay unmerged,
+      // and the old fallback wrote its line exactly once because it never
+      // retried; an unbounded run of identical lines in the task file would be
+      // pure noise. A reason that CHANGES (a different jj failure) is new
+      // information and is recorded.
+      this.noteTaskActivityOnce(task.meta.id, `stacked dispatch: ${reason}`);
       throw new OrchestratorConflictError(reason);
     }
     return { base, stackParents: parents };
@@ -378,6 +384,21 @@ export class Orchestrator {
         `dispatchd: failed to record activity on task ${taskId}: ${(err as Error).message}`
       );
     }
+  }
+
+  // noteTaskActivity for a condition that RECURS: skips the append when this
+  // exact text is already somewhere in the task's body. Activity lines are
+  // written as `<timestamp> <text>`, so the text alone is what identifies a
+  // repeat. Reading the task can itself fail (a corrupt or unreadable file),
+  // which must not be worse than a duplicate line — that case falls through to
+  // appending.
+  private noteTaskActivityOnce(taskId: string, text: string): void {
+    try {
+      if (this.ctx.store.get(taskId)?.body.includes(text) === true) return;
+    } catch {
+      // Fall through and append.
+    }
+    this.noteTaskActivity(taskId, text);
   }
 
   // The branch of a task's most recent terminal, unreviewed run — the branch
