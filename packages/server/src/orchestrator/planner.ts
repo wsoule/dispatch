@@ -16,6 +16,21 @@ export interface PlannedTask {
   priority: Priority;
 }
 
+// One structured task draft the natural-language single-task creator returns
+// for review before saving — a `PlannedTask` minus `blockedByIndices` (a lone
+// draft has no siblings to depend on). Its fields mirror what CreateTaskModal
+// collects by hand, so a draft is directly mappable to core's `CreateInput`
+// via the existing TaskStore.create path with no schema change (the
+// `acceptanceCriteria` list is joined into the task body's "Acceptance
+// Criteria" section at save time, exactly as buildTaskDescription does for a
+// confirmed plan).
+export interface TaskDraft {
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  priority: Priority;
+}
+
 // The shape a Planner produces and a client confirms. `epic` is optional —
 // a plan can propose a flat set of tasks with no wrapping epic. Nothing
 // here carries a `status` field on purpose: every task this proposal

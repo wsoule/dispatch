@@ -7,6 +7,7 @@ import type {
   RunDetail,
   RunMeta,
   RunState,
+  TaskDraft,
 } from '@dispatch/client';
 import { createApiClient } from '@dispatch/client';
 import type {
@@ -111,6 +112,12 @@ export interface DispatchProjectData {
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
   handleCreate: (input: CreateInput) => Promise<void>;
+  /** Natural-language single-task creation: turns a free-text description into a
+   * structured `TaskDraft` (via the planner/Agent-SDK backend, constrained to one
+   * task) for the caller to review and then persist with `handleCreate` — the
+   * language-driven sibling of the structured `handleCreate` form. Returns the
+   * draft without saving; nothing is written until `handleCreate` runs. */
+  handleDraftTask: (prompt: string) => Promise<TaskDraft>;
   handleDispatch: (
     taskId: string,
     executor?: 'fake' | 'claude',
@@ -619,6 +626,18 @@ export function useDispatchProject(
     [client, queryClient, tasksQueryKey, readyQueryKey]
   );
 
+  // No cache invalidation here on purpose: drafting is read-only (it only asks
+  // the planner to structure the text) and persists nothing — the returned
+  // draft is handed to the caller to review and then save via `handleCreate`,
+  // which is where the task list actually refetches.
+  const handleDraftTask = useCallback(
+    async (prompt: string): Promise<TaskDraft> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.draftTask(prompt);
+    },
+    [client]
+  );
+
   const handleCreateNote = useCallback(
     async (
       input: import('@dispatch/client').CreateNoteInput
@@ -981,6 +1000,7 @@ export function useDispatchProject(
     handleUpdate,
     moveTaskStatus,
     handleCreate,
+    handleDraftTask,
     handleDispatch,
     handleApprove,
     handleSendMessage,

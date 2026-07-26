@@ -2,6 +2,7 @@ export {
   connectEvents,
   createApiClient,
   httpToWs,
+  taskDraftToCreateInput,
   taskQueryString,
   wsUrl,
 } from './api';
@@ -40,6 +41,7 @@ export type {
   RunState,
   ServerEvent,
   SocketLike,
+  TaskDraft,
   TaskFilter,
   UpdateNotePatch,
 } from './api';

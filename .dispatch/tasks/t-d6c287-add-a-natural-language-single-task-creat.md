@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-26T19:06:42.666Z
-updated: 2026-07-26T20:32:16.363Z
+updated: 2026-07-26T22:09:46.953Z
 external: null
 ---
 
@@ -39,3 +39,4 @@ Acceptance criteria:
 Tests (all FakePlanner-backed): PlanManager.draftTask unit tests; POST /api/tasks/draft integration incl. free-text-in/structured-out + draft->createTask round trip asserting the rendered task body; taskDraftToCreateInput mapper tests.
 Verification: server 237 pass / client 25 pass; tsc clean for server/client/desktop; format + lint 0 errors (pre-commit hooks green). NOTE: worktree needed `bun install` + `bun run build` first (dist/ was absent) for @dispatch/* resolution.
 - 2026-07-26T19:18:29.738Z [run r-020122] finished: finished — 9 files, $5.94
+- 2026-07-26T22:09:46.953Z run r-020122 merged into main

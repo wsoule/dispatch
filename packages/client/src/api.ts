@@ -285,6 +285,40 @@ export interface PlanProposal {
   tasks: PlannedTask[];
 }
 
+// Mirrors TaskDraft in packages/server/src/orchestrator/planner.ts — the body
+// of `POST /api/tasks/draft`, the natural-language single-task creator's
+// output. A `PlannedTask` minus `blockedByIndices`: one structured task the
+// user reviews before saving through the normal createTask path.
+export interface TaskDraft {
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  priority: Priority;
+}
+
+// Maps a reviewed `TaskDraft` onto core's `CreateInput` so it saves through the
+// exact same createTask path CreateTaskModal uses — no server or store schema
+// change. `TaskStore.create` only ever renders the `description` section (it
+// always births an empty "Acceptance Criteria" section and ignores a separate
+// `acceptanceCriteria` field), so the draft's criteria list is folded into the
+// description as a bullet block — identical to the server's own
+// buildTaskDescription, the fold a confirmed plan's tasks already go through.
+export function taskDraftToCreateInput(draft: TaskDraft): CreateInput {
+  const parts = [draft.description.trim()];
+  if (draft.acceptanceCriteria.length > 0) {
+    parts.push(
+      'Acceptance criteria:',
+      draft.acceptanceCriteria.map((c) => `- ${c}`).join('\n')
+    );
+  }
+  return {
+    title: draft.title,
+    kind: 'task',
+    priority: draft.priority,
+    description: parts.join('\n\n'),
+  };
+}
+
 export type PlanState = 'running' | 'ready' | 'failed';
 
 // Mirrors PlanMessage in packages/server/src/orchestrator/plan.ts — one entry
@@ -524,6 +558,12 @@ export interface ApiClient {
   fetchTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  // The natural-language single-task creator (`POST /api/tasks/draft`): turns a
+  // free-text description into one structured `TaskDraft` the caller reviews
+  // and then saves via `createTask` (map it with `taskDraftToCreateInput`). The
+  // draft is produced by the same planner/Agent-SDK backend the plan flow uses,
+  // constrained to a single task — it is NOT persisted until createTask runs.
+  draftTask(prompt: string): Promise<TaskDraft>;
   // Orchestrator run endpoints (Phase 4 Slice O1/O2 API, Slice O3 client) —
   // see packages/server/src/api.ts for the exact request/response shapes
   // these mirror. `executor` defaults to 'claude' server-side when omitted;
@@ -667,6 +707,11 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/tasks/${id}`, {
         method: 'PATCH',
         ...jsonBody(patch),
+      }),
+    draftTask: (prompt) =>
+      request(baseUrl, '/api/tasks/draft', {
+        method: 'POST',
+        ...jsonBody({ prompt }),
       }),
     createRun: (taskId, opts = {}) =>
       request(baseUrl, `/api/tasks/${taskId}/runs`, {

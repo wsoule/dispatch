@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
-import { httpToWs, taskQueryString } from '../src/api';
+import type { TaskDraft } from '../src/api';
+import { httpToWs, taskDraftToCreateInput, taskQueryString } from '../src/api';
 
 describe('httpToWs', () => {
   it('swaps http for ws and appends /ws', () => {
@@ -28,5 +29,43 @@ describe('taskQueryString', () => {
     expect(
       taskQueryString({ status: 'todo', kind: 'task', parent: 'epic-1' })
     ).toBe('?status=todo&kind=task&parent=epic-1');
+  });
+});
+
+describe('taskDraftToCreateInput', () => {
+  it('folds acceptanceCriteria into the description (createTask ignores a separate field)', () => {
+    const draft: TaskDraft = {
+      title: 'Add a logout button',
+      description: 'Let signed-in users end their session.',
+      acceptanceCriteria: [
+        'Button visible in the header',
+        'Click clears the session',
+      ],
+      priority: 'high',
+    };
+    expect(taskDraftToCreateInput(draft)).toEqual({
+      title: 'Add a logout button',
+      kind: 'task',
+      priority: 'high',
+      description:
+        'Let signed-in users end their session.\n\n' +
+        'Acceptance criteria:\n\n' +
+        '- Button visible in the header\n- Click clears the session',
+    });
+  });
+
+  it('emits a bare description when the draft has no acceptanceCriteria', () => {
+    const draft: TaskDraft = {
+      title: 'Tiny tweak',
+      description: 'Just do the thing.',
+      acceptanceCriteria: [],
+      priority: 'none',
+    };
+    expect(taskDraftToCreateInput(draft)).toEqual({
+      title: 'Tiny tweak',
+      kind: 'task',
+      priority: 'none',
+      description: 'Just do the thing.',
+    });
   });
 });
