@@ -479,6 +479,31 @@ describe('error paths', () => {
     );
   });
 
+  it('400s patching a task with a non-string, non-null archivedAt, leaving the file untouched', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'X' }),
+      })
+    );
+    const before = taskFileNames(root);
+    const res = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ archivedAt: 42 }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe(
+      'invalid archivedAt: expected a string or null'
+    );
+    expect(taskFileNames(root)).toEqual(before);
+    const after = await json(
+      await fetch(`${baseUrl}/api/tasks/${created.meta.id}`)
+    );
+    expect(after.meta.archivedAt).toBeUndefined();
+  });
+
   it('400s patching a task with an invalid priority, and leaves the file untouched', async () => {
     const created = await json(
       await fetch(`${baseUrl}/api/tasks`, {
