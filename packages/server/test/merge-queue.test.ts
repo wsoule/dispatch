@@ -1358,3 +1358,41 @@ describe('MergeQueue multi-parent dependent that was live when its blocker merge
     expect(activity.split('multi-parent base')).toHaveLength(2);
   });
 });
+
+describe('MergeQueue refuses a run whose base was discarded', () => {
+  // A human discarding the blocker rejected the work the dependent was
+  // written against. process() must not merge it — that would land content
+  // built on top of code that no longer exists in the target history.
+  //
+  // Discarding blockerRun reopens task A to 'todo' (Orchestrator.review's
+  // discard branch), so task B's own task-level `blockedBy` gate (a separate,
+  // correctly-behaving mechanism — see "MergeQueue dependency gating" above)
+  // would otherwise park this entry at 'waiting-blockers' forever and it
+  // would never reach process() at all. That gate is a real, independent
+  // guard this task isn't touching; clearing `blockedBy` here simulates a
+  // human resolving that edge some other way (e.g. re-pointing or removing
+  // the dependency) so the test can isolate and exercise the run-level
+  // `baseDiscarded` guard process() gains in this task.
+  it('refuses to merge a run whose base was discarded', async () => {
+    const harness = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    harness.orchestrator.review(blockerRun.id, 'discard');
+    harness.store.update(
+      dependentRun.taskId,
+      { blockedBy: [] },
+      new Date().toISOString()
+    );
+    harness.cache.rebuild(harness.store);
+
+    const queue = new MergeQueue(harness, noJjRunner);
+    queue.enqueue(dependentRun.id);
+    await waitFor(() =>
+      queue.snapshot().history.some((e) => e.state === 'failed')
+    );
+
+    const entry = queue
+      .snapshot()
+      .history.find((e) => e.runId === dependentRun.id)!;
+    expect(entry.reason).toContain('base');
+  });
+});

@@ -112,6 +112,46 @@ function activityFor(h: Harness, taskId: string): string {
   return h.store.get(taskId)?.body ?? '';
 }
 
+// Builds the single-blocker stacked shape a discard test needs: a finished,
+// in-review blocker run with its own commit, and a dependent run branched off
+// it (per resolveBase's single-parent path) with its own distinct commit.
+// Mirrors the "branches off the blocker branch" test above but returns both
+// runs so a caller can review() one and inspect the other.
+async function makeStackedPair(h: Harness): Promise<{
+  blockerRun: Awaited<ReturnType<typeof h.orchestrator.dispatch>>;
+  dependentRun: Awaited<ReturnType<typeof h.orchestrator.dispatch>>;
+}> {
+  const blocker = h.store.create({ title: 'A' });
+  const blockerRun = await h.orchestrator.dispatch(blocker.meta.id, 'fake');
+  await waitFor(
+    () => h.orchestrator.getRun(blockerRun.id)?.meta.state === 'finished'
+  );
+  await Bun.write(join(blockerRun.worktreePath, 'a.txt'), 'a');
+  runGitSync(blockerRun.worktreePath, ['add', '-A']);
+  runGitSync(blockerRun.worktreePath, ['commit', '-m', 'A work']);
+  h.store.update(
+    blocker.meta.id,
+    { status: 'in-review' },
+    new Date().toISOString()
+  );
+  h.cache.rebuild(h.store);
+
+  const dependent = h.store.create({
+    title: 'B',
+    blockedBy: [blocker.meta.id],
+  });
+  h.cache.rebuild(h.store);
+  const dependentRun = await h.orchestrator.dispatch(dependent.meta.id, 'fake');
+  await waitFor(
+    () => h.orchestrator.getRun(dependentRun.id)?.meta.state === 'finished'
+  );
+  await Bun.write(join(dependentRun.worktreePath, 'b.txt'), 'b');
+  runGitSync(dependentRun.worktreePath, ['add', '-A']);
+  runGitSync(dependentRun.worktreePath, ['commit', '-m', 'B work']);
+
+  return { blockerRun, dependentRun };
+}
+
 // The set of paths git reports as pending in a checkout, ignoring the status
 // letters — see its call site for why the letters are deliberately not
 // compared.
@@ -410,4 +450,29 @@ describe('base selection with two or more unmerged blockers', () => {
       expect(await Bun.file(join(meta.worktreePath, 'B.txt')).text()).toBe('B');
     }
   );
+});
+
+// Task 7: discarding a run means a human rejected the work its dependents
+// were stacked on. Nothing about the dependent may be touched — only a flag
+// that tells a human it needs attention before it can be merged.
+describe('discarding a stacked-on run', () => {
+  it('flags dependents when the run they were stacked on is discarded', async () => {
+    const h = makeHarness();
+    const { blockerRun, dependentRun } = await makeStackedPair(h);
+
+    h.orchestrator.review(blockerRun.id, 'discard');
+
+    const dependent = h.orchestrator
+      .list()
+      .find((r) => r.id === dependentRun.id)!;
+    expect(dependent.baseDiscarded).toBe(true);
+    // Nothing is destroyed: the worktree and branch are untouched.
+    expect(await Bun.file(join(dependent.worktreePath, 'b.txt')).exists()).toBe(
+      true
+    );
+    expect(
+      runGitSync(repo, ['rev-parse', '--verify', dependentRun.branch]).trim()
+        .length
+    ).toBeGreaterThan(0);
+  });
 });

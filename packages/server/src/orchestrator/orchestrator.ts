@@ -662,6 +662,7 @@ export class Orchestrator {
         },
         now
       );
+      this.flagStackedDependents(meta);
     }
 
     // Record the review marker as its own state-line append (transition()
@@ -930,6 +931,34 @@ export class Orchestrator {
       baseBranch: newBase,
     });
     this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // Called from review()'s discard branch: everything stacked on the
+  // just-discarded run's branch was written against a base a human just
+  // rejected. Flag every un-reviewed dependent for human attention and
+  // change NOTHING else — the dependent's own worktree, branch, and any
+  // in-flight work are left completely intact. Auto-rebasing it onto the
+  // default base would silently strip the code it was written against, and
+  // cascading the discard would throw away work a human never rejected;
+  // only a human gets to make that call. Reuses flagRunRestackFailure's
+  // `baseDiscarded` flag and its persistence/Activity shape rather than
+  // inventing a second one for the same "needs a human" meaning — the two
+  // uses are compatible: MergeQueue.isRestackCandidate already treats
+  // `baseDiscarded` as "do not touch this automatically" regardless of which
+  // path set it.
+  private flagStackedDependents(discarded: RunMeta): void {
+    for (const dependent of this.registry.list()) {
+      // Already merged or discarded runs are done; they must never be
+      // touched again, and a run without this branch in its stack simply
+      // wasn't built on top of it.
+      if (dependent.reviewedAt !== undefined) continue;
+      if (dependent.stackParents?.includes(discarded.branch) !== true) {
+        continue;
+      }
+      const reason = `the run this one was stacked on (${discarded.id}) was discarded — rebase onto a valid base before merging`;
+      this.flagRunRestackFailure(dependent.id, reason);
+      this.appendRunTaskActivity(dependent.id, `run ${dependent.id} ${reason}`);
+    }
   }
 
   // Records that a dependent could not be restacked after its base merged.
