@@ -342,7 +342,7 @@ export function Sidebar({
             <span className="flex-1">Notifications</span>
             {unreadCount > 0 && (
               <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
-                {unreadCount}
+                {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
           </>

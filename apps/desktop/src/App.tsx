@@ -307,18 +307,27 @@ function App() {
     });
   }, [markInboxRead]);
 
+  // Stable identity for InboxPanel's onClose — that prop drives its outside-click/Escape
+  // listener effect, so an inline arrow here would tear down and re-add those `document`
+  // listeners on every App render instead of just when the panel opens/closes.
+  const closeInbox = useCallback(() => setInboxOpen(false), []);
+
   // Click-through for an inbox row: a run transition jumps to the Runs view with that run
   // selected; a queue-wide event (or anything without a specific run) just jumps to Runs —
   // the same two nav shapes `onRunDispatched`/`jumpToRun` already use elsewhere in this file.
+  // Also marks the whole inbox read again: an entry can arrive while the panel is already
+  // open (opening only marks-read at that instant), and without this a fresh unread badge
+  // would linger after the user just acted on the newest entry.
   const navigateFromInbox = useCallback(
     (target: InboxTarget) => {
       selectProjectView('runs');
       if (target.kind === 'run') {
         dispatchNav({ type: 'openRun', runId: target.runId });
       }
+      markInboxRead();
       setInboxOpen(false);
     },
-    [selectProjectView]
+    [selectProjectView, markInboxRead]
   );
 
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
@@ -687,7 +696,7 @@ function App() {
             entries={inbox.entries}
             onNavigate={navigateFromInbox}
             onMarkAllRead={markInboxRead}
-            onClose={() => setInboxOpen(false)}
+            onClose={closeInbox}
           />
         )}
       </div>

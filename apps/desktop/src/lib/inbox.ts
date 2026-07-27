@@ -126,12 +126,22 @@ export function loadInbox(
   }
 }
 
-/** Persists `state` for `root`. `storage` is narrowed to `Pick<Storage, 'setItem'>` for the
- * same testability reason as `loadInbox`. */
+/**
+ * Persists `state` for `root`. `storage` is narrowed to `Pick<Storage, 'setItem'>` for the
+ * same testability reason as `loadInbox`. `setItem` can throw (quota exceeded, or Safari
+ * private browsing rejects `localStorage` writes outright) — this is called from inside a
+ * React state updater (see useDispatchProject's `updateInbox`), where an uncaught throw would
+ * propagate out of the updater and crash the render, so a failed persist is swallowed with a
+ * warning rather than losing the whole inbox update.
+ */
 export function saveInbox(
   root: string,
   state: InboxState,
   storage: Pick<Storage, 'setItem'>
 ): void {
-  storage.setItem(storageKey(root), JSON.stringify(state));
+  try {
+    storage.setItem(storageKey(root), JSON.stringify(state));
+  } catch (err) {
+    console.warn('dispatch: failed to persist notification inbox', err);
+  }
 }
