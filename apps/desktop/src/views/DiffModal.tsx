@@ -21,14 +21,14 @@ const TAG_PREFIX: Record<string, string> = {
 };
 
 const TAG_LINE_CLASS: Record<string, string> = {
-  insert: 'bg-emerald-500/10',
-  delete: 'bg-red-500/10',
+  insert: 'bg-state-review-surface',
+  delete: 'bg-state-failed-surface',
   equal: '',
 };
 
 const TAG_PREFIX_CLASS: Record<string, string> = {
-  insert: 'text-emerald-500',
-  delete: 'text-red-500',
+  insert: 'text-state-review',
+  delete: 'text-state-failed',
   equal: 'text-muted-foreground/40',
 };
 

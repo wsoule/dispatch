@@ -105,13 +105,13 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
         'flex max-w-[90%] flex-col gap-0.5 rounded-md px-3 py-2',
         fromUser
           ? 'bg-primary text-primary-foreground self-end'
-          : 'border border-amber-500/30 bg-amber-500/10 self-start'
+          : 'border-state-waiting-edge bg-state-waiting-surface self-start border'
       )}
     >
       <div
         className={cn(
           'text-[11px] font-medium tracking-wide uppercase',
-          fromUser ? 'text-primary-foreground/70' : 'text-amber-600'
+          fromUser ? 'text-primary-foreground/70' : 'text-state-waiting'
         )}
       >
         {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}

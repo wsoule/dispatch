@@ -80,7 +80,7 @@ export function RunDetailHeader({
         )}
         {meta.prUrl !== undefined && (
           <a
-            className="inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[11px] text-blue-600 transition-colors duration-150 hover:bg-blue-500/20 dark:text-blue-400"
+            className="border-state-landing-edge bg-state-landing-surface text-state-landing hover:bg-state-landing-surface/70 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors duration-150"
             href={meta.prUrl}
             target="_blank"
             rel="noreferrer"
