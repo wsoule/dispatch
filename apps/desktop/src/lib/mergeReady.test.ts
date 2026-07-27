@@ -25,7 +25,8 @@ function run(overrides: Partial<RunMeta>): RunMeta {
 function makeTask(
   id: string,
   status: string,
-  blockedBy: string[] = []
+  blockedBy: string[] = [],
+  archivedAt?: string
 ): TaskDoc {
   return {
     meta: {
@@ -43,6 +44,7 @@ function makeTask(
       updated: '2026-01-01T00:00:00.000Z',
       external: null,
       selfReview: false,
+      archivedAt,
     },
     body: '',
   };
@@ -100,6 +102,26 @@ describe('countMergeReady', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
     const tasks = [makeTask('t1', 'cancelled')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
+  });
+
+  // `tasks` must be the archived-inclusive list (fetchTasks({ archived: true }))
+  // — the default board-view fetch excludes archived tasks entirely, which
+  // would make an archived own-task/blocker missing from `byId` rather than
+  // correctly read as done. These two cases only pass when an archived task
+  // is actually present in the array.
+  test('an archived, done own task does not count, even though it is archived', () => {
+    const runs = [run({ id: 'r1', taskId: 't1' })];
+    const tasks = [makeTask('t1', 'done', [], '2026-01-03T00:00:00.000Z')];
+    expect(countMergeReady(runs, tasks, new Set())).toBe(0);
+  });
+
+  test('an archived, done blocker still satisfies the blockedBy gate', () => {
+    const runs = [run({ id: 'r1', taskId: 't1' })];
+    const tasks = [
+      makeTask('archived-blocker', 'done', [], '2026-01-03T00:00:00.000Z'),
+      makeTask('t1', 'in-review', ['archived-blocker']),
+    ];
+    expect(countMergeReady(runs, tasks, new Set())).toBe(1);
   });
 
   test('a still-running or non-finished-terminal run does not count', () => {

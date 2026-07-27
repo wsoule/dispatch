@@ -92,6 +92,12 @@ export interface DispatchProjectData {
 
   tasks: TaskDoc[];
   tasksLoading: boolean;
+  // Task 8 fix: the same task list as `tasks`, but including archived tasks
+  // (`fetchTasks({ archived: true })`) — feed this, not `tasks`, to
+  // countMergeReady, or an archived done own-task/blocker will be missing
+  // from its lookup entirely. No other consumer here should use this; every
+  // other surface wants the default board-view (archived-excluded) `tasks`.
+  tasksIncludingArchived: TaskDoc[];
   config: DispatchConfig | null;
   runs: RunMeta[];
   health: { pr: boolean } | undefined;
@@ -302,12 +308,27 @@ export function useDispatchProject(
   );
   const repoPrsQueryKey = useMemo(() => ['dispatch-repo-prs', port], [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
+  // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
+  // countMergeReady's own-task/blocker lookups — `tasks` below stays the
+  // default board-view (archived-excluded) list every other consumer here
+  // relies on. Without this, an archived done own-task or blocker would be
+  // missing from countMergeReady's lookup map entirely and read as
+  // "not done", wrongly inflating the "Merge all ready" count.
+  const allTasksQueryKey = useMemo(() => ['dispatch-tasks-all', port], [port]);
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchTasks();
+    },
+    enabled: client !== null,
+  });
+  const { data: allTasksIncludingArchived } = useQuery({
+    queryKey: allTasksQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchTasks({ archived: true });
     },
     enabled: client !== null,
   });
@@ -506,6 +527,7 @@ export function useDispatchProject(
     return client.connectEvents(
       () => {
         void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+        void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
         void queryClient.invalidateQueries({ queryKey: configQueryKey });
         void queryClient.invalidateQueries({ queryKey: readyQueryKey });
         void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
@@ -563,21 +585,30 @@ export function useDispatchProject(
           } else if (event.type === 'queue.drained') {
             // The drain reviewed runs (tasks/runs move to done) and may have
             // pushed origin (branches' pushedToOrigin flips) — refetch all
-            // three rather than waiting on their own *.changed broadcasts.
+            // four rather than waiting on their own *.changed broadcasts.
             void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+            void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
             });
-            if (event.pushed === false && event.pushError !== undefined) {
+            // Per-run "Merged" toasts already come from
+            // useTransitionNotifications' own merge-queue diff — this event
+            // only needs to report the *push* outcome, not repeat that a
+            // merge happened.
+            if (event.pushError !== undefined) {
               setLastPushError(event.pushError);
               void notify('Push failed', event.pushError);
-            } else {
+            } else if (event.pushed) {
               setLastPushError(null);
               void notify(
-                'Merged & pushed',
-                `${event.merged} task(s) archived`
+                'Pushed to origin',
+                `${event.merged} merge(s) now on origin`
               );
+            } else {
+              // Merged locally with nothing to push to (no origin remote
+              // configured) — not a failure, so no toast and no banner.
+              setLastPushError(null);
             }
           }
         },
@@ -587,6 +618,7 @@ export function useDispatchProject(
     client,
     queryClient,
     tasksQueryKey,
+    allTasksQueryKey,
     configQueryKey,
     readyQueryKey,
     runsQueryKey,
@@ -1070,6 +1102,7 @@ export function useDispatchProject(
 
     tasks: tasks ?? [],
     tasksLoading,
+    tasksIncludingArchived: allTasksIncludingArchived ?? [],
     config: config ?? null,
     runs: runs ?? [],
     health,
