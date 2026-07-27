@@ -393,6 +393,18 @@ export class MergeQueue {
     return this.whyNotEnqueueable(meta) === null;
   }
 
+  // Shared entry shape for enqueue()/enqueueReady() — one place both build
+  // the queued entry so they can't drift apart.
+  private buildEntry(meta: RunMeta): MergeQueueEntry {
+    return {
+      runId: meta.id,
+      taskId: meta.taskId,
+      taskTitle: meta.taskTitle,
+      state: 'queued',
+      enqueuedAt: new Date().toISOString(),
+    };
+  }
+
   // POST /api/merge-queue. Validates against the orchestrator's live
   // registry: 404 for an id it's never heard of, 409 for a run that hasn't
   // reached a terminal state yet, one that's already been reviewed (nothing
@@ -408,13 +420,7 @@ export class MergeQueue {
       throw new OrchestratorConflictError(reason);
     }
 
-    const entry: MergeQueueEntry = {
-      runId,
-      taskId: meta.taskId,
-      taskTitle: meta.taskTitle,
-      state: 'queued',
-      enqueuedAt: new Date().toISOString(),
-    };
+    const entry = this.buildEntry(meta);
     this.entries.push(entry);
     this.broadcast();
     this.kick();
@@ -476,6 +482,48 @@ export class MergeQueue {
       );
     }
     this.broadcast();
+    this.kick();
+    return enqueued;
+  }
+
+  // POST /api/merge-queue/ready. Enqueues every eligible run across the whole
+  // registry in one shot: runs that share a stack are grouped and ordered via
+  // `computeStack` exactly as enqueueStack does (blockers before dependents),
+  // runs outside any stack keep orchestrator.list()'s own order. Ineligible
+  // runs are skipped silently — an empty result is a valid "nothing was
+  // ready" outcome here, not an error like enqueueStack's all-skipped 409.
+  enqueueReady(): MergeQueueEntry[] {
+    const tasks = this.ctx.cache.query();
+    const eligible = this.ctx.orchestrator
+      .list()
+      .filter((m) => this.isEnqueueable(m));
+    // list() is most-recent-first, so the first eligible run seen per taskId
+    // is that task's latest — same convention enqueueStack relies on.
+    const eligibleByTaskId = new Map<string, RunMeta>();
+    for (const meta of eligible) {
+      if (!eligibleByTaskId.has(meta.taskId)) {
+        eligibleByTaskId.set(meta.taskId, meta);
+      }
+    }
+
+    const ordered: RunMeta[] = [];
+    const placed = new Set<string>();
+    for (const meta of eligible) {
+      if (placed.has(meta.taskId)) continue;
+      const stack = computeStack(tasks, meta.taskId);
+      const order = stack !== null ? stack.order : [meta.taskId];
+      for (const id of order) {
+        if (placed.has(id)) continue;
+        const stackMeta = eligibleByTaskId.get(id);
+        if (stackMeta === undefined) continue;
+        ordered.push(stackMeta);
+        placed.add(id);
+      }
+    }
+
+    const enqueued = ordered.map((meta) => this.buildEntry(meta));
+    this.entries.push(...enqueued);
+    if (enqueued.length > 0) this.broadcast();
     this.kick();
     return enqueued;
   }

@@ -693,6 +693,10 @@ export interface ApiClient {
   // component), blockers first — server's MergeQueue.enqueueStack. 409s only
   // when the whole stack had nothing reviewable to enqueue.
   enqueueMergeStack(taskId: string): Promise<MergeQueueEntry[]>;
+  // Enqueues every eligible run across the whole registry in one call —
+  // server's MergeQueue.enqueueReady. Never errors on nothing being ready;
+  // resolves `[]` in that case.
+  enqueueMergeReady(): Promise<MergeQueueEntry[]>;
   removeFromMergeQueue(runId: string): Promise<void>;
   // Retries entries held in 'blocked-environment' against the current main
   // checkout. Those blockers (dirty tree, staged index, wrong branch) are
@@ -863,6 +867,8 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ taskId }),
       }),
+    enqueueMergeReady: () =>
+      request(baseUrl, '/api/merge-queue/ready', { method: 'POST' }),
     recheckMergeQueue: () =>
       request(baseUrl, '/api/merge-queue/recheck', { method: 'POST' }),
     // Not routed through the shared `request()` helper: the server answers
