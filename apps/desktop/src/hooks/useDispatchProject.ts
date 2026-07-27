@@ -720,19 +720,39 @@ export function useDispatchProject(
             // Per-run "Merged" toasts already come from
             // useTransitionNotifications' own merge-queue diff — this event
             // only needs to report the *push* outcome, not repeat that a
-            // merge happened.
+            // merge happened. Both outcomes below also go through
+            // onRecordInbox, not just `notify`: this is the exact event
+            // class the inbox exists for — `lastPushError`'s RunsView banner
+            // clears on the next drain, but without an inbox row a failed
+            // auto-push would otherwise leave no trace at all once that
+            // banner is gone.
             if (event.pushError !== undefined) {
               setLastPushError(event.pushError);
               void notify('Push failed', event.pushError);
+              onRecordInbox([
+                {
+                  ts: new Date().toISOString(),
+                  title: 'Push failed',
+                  body: event.pushError,
+                  target: { kind: 'runs-page' },
+                },
+              ]);
             } else if (event.pushed) {
               setLastPushError(null);
-              void notify(
-                'Pushed to origin',
-                `${event.merged} merge(s) now on origin`
-              );
+              const body = `${event.merged} merge(s) now on origin`;
+              void notify('Pushed to origin', body);
+              onRecordInbox([
+                {
+                  ts: new Date().toISOString(),
+                  title: 'Pushed to origin',
+                  body,
+                  target: { kind: 'runs-page' },
+                },
+              ]);
             } else {
               // Merged locally with nothing to push to (no origin remote
-              // configured) — not a failure, so no toast and no banner.
+              // configured) — not a failure, so no toast, no banner, and no
+              // inbox row either.
               setLastPushError(null);
             }
           }
@@ -752,6 +772,7 @@ export function useDispatchProject(
     mergeQueueQueryKey,
     branchesQueryKey,
     port,
+    onRecordInbox,
   ]);
 
   useEffect(() => {

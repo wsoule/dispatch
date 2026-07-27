@@ -242,4 +242,25 @@ describe('loadInbox / saveInbox', () => {
     expect(loadInbox('/repo/a', storage).entries[0].title).toBe('A');
     expect(loadInbox('/repo/b', storage).entries[0].title).toBe('B');
   });
+
+  test('a storage that throws (quota exceeded, Safari private mode) is swallowed, not propagated', () => {
+    const throwingStorage: Pick<Storage, 'setItem'> = {
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+    };
+    const originalWarn = console.warn;
+    let warned = false;
+    console.warn = () => {
+      warned = true;
+    };
+    try {
+      expect(() =>
+        saveInbox('/repo/a', { entries: [] }, throwingStorage)
+      ).not.toThrow();
+    } finally {
+      console.warn = originalWarn;
+    }
+    expect(warned).toBe(true);
+  });
 });
