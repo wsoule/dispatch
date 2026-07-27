@@ -1,0 +1,151 @@
+import type { Dirent } from 'node:fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * Directory names that hold reinstallable build/dependency output rather than a
+ * run's actual work.
+ *
+ * Measured on a real project: 641MB of a 648MB worktree was `node_modules`. The
+ * source checkout — the part that makes a run reviewable — was about 7MB. So
+ * reclaiming disk from a run does not require giving up its checkout, which is
+ * what the pre-existing `free-disk` action does by removing the whole directory.
+ *
+ * `.git` is deliberately absent and must stay absent: a worktree's gitdir link is
+ * what makes it a worktree at all.
+ */
+const RECLAIMABLE_DIRS: readonly string[] = ['node_modules', 'dist'];
+
+// Directories never descended into when scanning or trimming. `.git` is
+// off-limits (see RECLAIMABLE_DIRS), and skipping it also keeps the scan from
+// walking the object store, which can dwarf the working files.
+const SKIP_DIRS: readonly string[] = ['.git'];
+
+export interface TrimResult {
+  /** Bytes freed. Zero when there was nothing to reclaim, or no worktree. */
+  reclaimedBytes: number;
+  /** Paths removed, relative to the worktree — for logging what a trim did. */
+  removed: string[];
+}
+
+export interface WorktreeDiskUsage {
+  /** Reinstallable output: node_modules, dist. Free to reclaim. */
+  dependencyBytes: number;
+  /** Everything else — the checkout, which is what makes a run reviewable. */
+  checkoutBytes: number;
+  totalBytes: number;
+}
+
+// Recursively sums file sizes under `dir`. Tolerant by design: a worktree being
+// scanned can have files removed underneath it (a review's cleanup, a concurrent
+// trim), and a disk-usage readout is not worth throwing over a vanished entry.
+function directorySize(dir: string): number {
+  let total = 0;
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      total += directorySize(full);
+      continue;
+    }
+    try {
+      total += statSync(full).size;
+    } catch {
+      // Vanished between readdir and stat — skip it.
+    }
+  }
+  return total;
+}
+
+// Walks a worktree, calling `onReclaimable` for each reclaimable directory found
+// and accumulating the size of everything else. Reclaimable directories are not
+// descended into: their whole subtree is counted at once, and a `node_modules`
+// nested inside another is already included in its parent's total.
+function walk(
+  dir: string,
+  onReclaimable: (path: string, bytes: number) => void
+): number {
+  let otherBytes = 0;
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.includes(entry.name)) continue;
+      if (RECLAIMABLE_DIRS.includes(entry.name)) {
+        onReclaimable(full, directorySize(full));
+        continue;
+      }
+      otherBytes += walk(full, onReclaimable);
+      continue;
+    }
+    try {
+      otherBytes += statSync(full).size;
+    } catch {
+      // Vanished mid-walk — skip it.
+    }
+  }
+  return otherBytes;
+}
+
+/**
+ * Deletes a worktree's reinstallable dependency/build directories, leaving the
+ * checkout, the branch, and the run's reviewability intact.
+ *
+ * Cheap in every sense that matters: `diff()` is pure git and never needed
+ * `node_modules`, the branch ref is untouched so the run stays mergeable, and it
+ * self-heals — a `verifyCommand` that starts with an install repopulates whatever
+ * a later merge-queue attempt needs.
+ *
+ * A missing worktree reports zero rather than throwing: once a run is reviewed its
+ * worktree is removed, so callers would otherwise have to special-case the common
+ * case.
+ */
+export function trimWorktree(worktreePath: string): TrimResult {
+  if (!existsSync(worktreePath)) return { reclaimedBytes: 0, removed: [] };
+  let reclaimedBytes = 0;
+  const removed: string[] = [];
+  walk(worktreePath, (path, bytes) => {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      reclaimedBytes += bytes;
+      removed.push(path.slice(worktreePath.length + 1));
+    } catch {
+      // Leave it; a trim that cannot remove one directory should still remove
+      // the rest rather than abandoning the whole worktree.
+    }
+  });
+  return { reclaimedBytes, removed };
+}
+
+/**
+ * What a worktree costs on disk, split into the part that is free to reclaim and
+ * the part that is not. The split is the point: it turns "this run uses 648MB"
+ * into "641MB of that is reinstallable", which is the difference between a
+ * decision and a number.
+ */
+export function worktreeDiskUsage(worktreePath: string): WorktreeDiskUsage {
+  if (!existsSync(worktreePath)) {
+    return { dependencyBytes: 0, checkoutBytes: 0, totalBytes: 0 };
+  }
+  let dependencyBytes = 0;
+  const checkoutBytes = walk(worktreePath, (_path, bytes) => {
+    dependencyBytes += bytes;
+  });
+  return {
+    dependencyBytes,
+    checkoutBytes,
+    totalBytes: dependencyBytes + checkoutBytes,
+  };
+}

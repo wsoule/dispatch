@@ -13,6 +13,7 @@ import type { Orchestrator } from './orchestrator.js';
 import { mergeQueuePath, runsDir } from './paths.js';
 import { type CommandRunner, defaultCommandRunner } from './pr.js';
 import type { CommandResult } from './pr.js';
+import { trimWorktree } from './trim.js';
 import type { RunMeta } from './types.js';
 import {
   MergeEnvironmentError,
@@ -107,11 +108,6 @@ export interface MergeQueueContext {
 
 const HISTORY_LIMIT = 20;
 
-// States process() can leave an entry in mid-way through rebase -> verify ->
-// merge. An entry stuck in one of these on disk when hydrate() runs means the
-// previous daemon process died before finish() ever ran for it — see
-// hydrate()'s comment for why that's always safe to treat as a fresh failure
-// rather than an attempt to resume.
 // How many times an entry may be picked back up after a daemon died partway
 // through processing it before the queue gives up on it for good. See
 // MergeQueueEntry.attempts for why this must be counted on disk.
@@ -122,6 +118,10 @@ const MAX_INTERRUPTED_ATTEMPTS = 3;
 // daemon processing many entries cannot accumulate meaningful memory.
 const VERIFY_OUTPUT_TAIL_BYTES = 8192;
 
+// States process() can leave an entry in mid-way through rebase -> verify ->
+// merge. An entry found in one of these on disk when hydrate() runs means the
+// previous daemon process died before finish() ever ran for it — see hydrate()
+// for why that is retried rather than failed outright.
 const MID_FLIGHT_STATES: ReadonlySet<MergeQueueEntryState> = new Set([
   'rebasing',
   'verifying',
@@ -196,6 +196,7 @@ export class MergeQueue {
     // a branch that no longer exists.
     ctx.orchestrator.onRunTerminal((meta) => {
       this.pendingStaleRuns.push(meta.id);
+      this.trimIfIdle(meta);
       this.kick();
     });
     this.hydrate();
@@ -1334,6 +1335,40 @@ export class MergeQueue {
   // assigning `entry.state` directly — a forgotten stamp would silently make an
   // entry look like it had been in its current state since whenever it last
   // happened to be updated, which is worse than showing no elapsed time at all.
+  /**
+   * Reclaims a just-finished run's reinstallable dependency directories, keeping
+   * its checkout so the run stays reviewable (see trimWorktree).
+   *
+   * Measured motivation: 641MB of a 648MB worktree is `node_modules`, and a run
+   * that is terminal-but-unreviewed holds that indefinitely — those are exactly
+   * the worktrees that accumulate, because a reviewed run's worktree is removed
+   * outright by `review()`.
+   *
+   * It costs nothing at merge time: `verifyCommand` runs an install on every
+   * entry anyway, so a later merge would have reinstalled regardless.
+   *
+   * Skipped while the run has an entry in this queue. Trimming mid-rebase or
+   * mid-verify would delete dependencies out from under a running test suite,
+   * and the queue is about to need them.
+   */
+  private trimIfIdle(meta: RunMeta): void {
+    if (this.entries.some((e) => e.runId === meta.id)) return;
+    if (this.active?.runId === meta.id) return;
+    try {
+      const { reclaimedBytes } = trimWorktree(meta.worktreePath);
+      if (reclaimedBytes > 0) {
+        console.error(
+          `dispatchd: trimmed ${Math.round(reclaimedBytes / 1_000_000)}MB of reinstallable output from ${meta.id}'s worktree`
+        );
+      }
+    } catch (err) {
+      // Reclaiming disk is opportunistic — never let it break the run lifecycle.
+      console.error(
+        `dispatchd: failed to trim worktree for ${meta.id}: ${(err as Error).message}`
+      );
+    }
+  }
+
   private setEntryState(
     entry: MergeQueueEntry,
     state: MergeQueueEntryState
