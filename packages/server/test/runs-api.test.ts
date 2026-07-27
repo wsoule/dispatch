@@ -340,6 +340,75 @@ describe('run review: merge and discard', () => {
     expect(log).toContain('Merge via API');
   });
 
+  it('reports pushedToOrigin false on GET /api/runs for a merged run with no origin remote', async () => {
+    // The shared fixture's FakeExecutor never writes a file, so its merge
+    // never produces a mergeCommit — this scenario needs one, hence a
+    // dedicated executor script (see the "known executor names" describe
+    // block above for the same solo-server pattern).
+    const writingRoot = initDispatchGitRepo();
+    TaskStore.init(writingRoot);
+    const writingHandle = await startServer({
+      rootDir: writingRoot,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor(
+          'fake',
+          new FakeExecutor({
+            steps: [
+              {
+                write: (cwd) => {
+                  writeFileSync(join(cwd, 'feature.txt'), 'done\n');
+                },
+                commitMessage: 'agent: add feature',
+              },
+            ],
+            finish: { state: 'finished' },
+          })
+        );
+      },
+    });
+    const writingBaseUrl = `http://127.0.0.1:${writingHandle.port}`;
+    try {
+      const taskRes = await fetch(`${writingBaseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Merge with a real commit' }),
+      });
+      const task = await json(taskRes);
+      const meta = await json(
+        await fetch(`${writingBaseUrl}/api/tasks/${task.meta.id}/runs`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ executor: 'fake' }),
+        })
+      );
+      await waitFor(async () => {
+        const r = await json(
+          await fetch(`${writingBaseUrl}/api/runs/${meta.id}`)
+        );
+        return r.meta.state === 'finished';
+      });
+
+      const reviewRes = await fetch(
+        `${writingBaseUrl}/api/runs/${meta.id}/review`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'merge' }),
+        }
+      );
+      expect(reviewRes.status).toBe(200);
+
+      const list = await json(await fetch(`${writingBaseUrl}/api/runs`));
+      const listed = list.find((r: { id: string }) => r.id === meta.id);
+      expect(listed.pushedToOrigin).toBe(false);
+    } finally {
+      await writingHandle.stop();
+      rmSync(writingRoot, { recursive: true, force: true });
+    }
+  });
+
   it('400s an invalid review action', async () => {
     const task = await createTask('Bad review action');
     const meta = await json(

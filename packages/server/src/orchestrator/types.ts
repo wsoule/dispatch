@@ -238,6 +238,10 @@ export interface BranchEntry {
   baseBranch?: string;
   reviewedAt?: string;
   prUrl?: string;
+  // True only once this run's merge commit is reachable from origin's copy of
+  // its base branch — i.e. the merge is not just local but actually pushed.
+  // Always false when the run is unmerged or the repo has no origin remote.
+  pushedToOrigin: boolean;
 
   status: BranchEntryStatus;
 }

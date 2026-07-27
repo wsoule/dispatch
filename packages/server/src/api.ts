@@ -1030,7 +1030,9 @@ export async function handleApi(
 
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(ctx.orchestrator.list());
+        return jsonResponse(
+          ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
+        );
       }
       if (segments.length === 2 && method === 'GET') {
         const result = ctx.orchestrator.getRun(segments[1]);

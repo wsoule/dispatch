@@ -174,6 +174,28 @@ export class Orchestrator {
     return this.registry.list();
   }
 
+  // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
+  // persisted). Memoizes by (mergeCommit, baseBranch) so runs sharing a base pay once.
+  decorateRunsWithPushed(
+    runs: RunMeta[]
+  ): (RunMeta & { pushedToOrigin?: boolean })[] {
+    const hasOrigin = this.worktrees.hasOriginRemote();
+    const cache = new Map<string, boolean>();
+    return runs.map((run) => {
+      if (run.reviewAction !== 'merge' || run.mergeCommit === undefined) {
+        return run;
+      }
+      if (!hasOrigin) return { ...run, pushedToOrigin: false };
+      const key = `${run.mergeCommit}\0${run.baseBranch}`;
+      let pushed = cache.get(key);
+      if (pushed === undefined) {
+        pushed = this.worktrees.isOnOriginBase(run.mergeCommit, run.baseBranch);
+        cache.set(key, pushed);
+      }
+      return { ...run, pushedToOrigin: pushed };
+    });
+  }
+
   // Live runs (and anything hydrated by reconcileOnBoot) come straight from
   // the in-memory registry; a run this process has never seen — the same
   // rootDir after a restart with no reconciliation yet — falls back to
@@ -1022,6 +1044,9 @@ export class Orchestrator {
         baseBranch: meta?.baseBranch,
         reviewedAt: meta?.reviewedAt,
         prUrl: meta?.prUrl,
+        pushedToOrigin:
+          meta?.mergeCommit !== undefined &&
+          this.worktrees.isOnOriginBase(meta.mergeCommit, base),
         status: branchEntryStatus(meta),
       } satisfies BranchEntry;
     });
