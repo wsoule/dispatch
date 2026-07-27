@@ -52,13 +52,57 @@
 
   --red: #d64c4c;
   --red-bg: #fdeded;
+  /* Green/blue/gray ship a hand-picked border; red and amber didn't. Derived rather than
+     hand-picked so the pair stays consistent when either end is retuned, and so the dark
+     override below comes for free. */
+  --red-border: color-mix(in srgb, var(--red) 34%, var(--red-bg));
 
   --amber: #a8721f;
   --amber-bg: #fbf3e6;
+  --amber-border: color-mix(in srgb, var(--amber) 34%, var(--amber-bg));
 
   --gray: #71757d;
   --gray-bg: #f1f2f4;
   --gray-border: #d7d9dd;
+
+  /* Run state — the one semantic role for "what does this run want from a human", so eight
+     screens can't each invent their own idea of what "waiting on you" looks like. Names match
+     the `RunDisposition` vocabulary in lib/runState.ts, which is the derivation these paint.
+     Every value forwards to a palette token above; nothing here introduces a hue. Because they
+     are references and not literals, the dark theme's palette override below flows through
+     automatically — deliberately NOT restated in the dark block, so the two can never drift.
+
+     `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its hairline. */
+  --state-working-fg: var(--accent);
+  --state-working-surface: var(--accent-muted);
+  --state-working-edge: var(--accent-border);
+
+  --state-waiting-fg: var(--amber);
+  --state-waiting-surface: var(--amber-bg);
+  --state-waiting-edge: var(--amber-border);
+
+  --state-failed-fg: var(--red);
+  --state-failed-surface: var(--red-bg);
+  --state-failed-edge: var(--red-border);
+
+  --state-review-fg: var(--green);
+  --state-review-surface: var(--green-bg);
+  --state-review-edge: var(--green-border);
+
+  --state-landing-fg: var(--blue);
+  --state-landing-surface: var(--blue-bg);
+  --state-landing-edge: var(--blue-border);
+
+  /* Ready and blocked aren't run states — they're task states, and both are deliberately
+     colorless. A ready task is not an event; making it green would compete with the states
+     that actually need a human. */
+  --state-ready-fg: var(--text-secondary);
+  --state-ready-surface: var(--surface-muted);
+  --state-ready-edge: var(--border-strong);
+
+  --state-blocked-fg: var(--text-ghost);
+  --state-blocked-surface: var(--gray-bg);
+  --state-blocked-edge: var(--border-default);
 
   /* Modal backdrop — a translucent scrim, tuned per-theme. */
   --overlay: rgba(20, 21, 24, 0.4);
@@ -73,12 +117,31 @@
   /* Sizing tokens are rem, deliberately matching the old hardcoded px values at the browser
      default 16px root. global.css sets the root font-size with a clamp() tied to viewport
      width, so type and spacing scale together as the window grows. */
+  --text-2xs: 0.5938rem; /* 9.5px — the tracked section label, and nothing else */
   --text-xs: 0.625rem; /* 10px */
+  --text-meta: 0.6563rem; /* 10.5px — mono row metadata: ids, elapsed, counts */
   --text-sm: 0.6875rem; /* 11px */
   --text-base: 0.8125rem; /* 13px */
   --text-md: 0.9375rem; /* 15px */
   --text-lg: 1.0625rem; /* 17px */
   --text-xl: 1.25rem; /* 20px */
+
+  /* The dense-row treatments. Every list surface in the redesign leans on these two, so they
+     live here rather than being respelled as font-size + letter-spacing per component. */
+  --label-tracking: 0.11em;
+  --meta-tracking: 0.02em;
+
+  /* Hairlines as inset shadows rather than borders: an inset shadow doesn't participate in
+     layout, so a row can carry an edge without shifting by a pixel or double-drawing against
+     its neighbour — which is what lets dense rows sit flush. `--hairline` outlines a whole
+     box; the directional four draw a single side (a pane divider, a sticky header's underline).
+     Use in `box-shadow`, and compose with a comma for two sides. */
+  --hairline: inset 0 0 0 1px var(--border-default);
+  --hairline-strong: inset 0 0 0 1px var(--border-strong);
+  --hairline-top: inset 0 1px 0 var(--border-default);
+  --hairline-bottom: inset 0 -1px 0 var(--border-default);
+  --hairline-left: inset 1px 0 0 var(--border-default);
+  --hairline-right: inset -1px 0 0 var(--border-default);
 
   /* Spacing */
   --space-1: 0.25rem; /* 4px */

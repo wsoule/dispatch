@@ -45,6 +45,43 @@ export type RunDisposition =
   | 'in-review-elsewhere'
   | 'closed';
 
+/**
+ * The short badge text for a disposition, or `null` when a run needs no badge.
+ *
+ * Kept separate from `deriveRunDisposition` on purpose: that function decides
+ * *what kind of situation* a run is in, and this one only chooses wording. It is
+ * why `RunDisposition` has a single coarse `closed` rather than merged/discarded
+ * variants — encoding review bookkeeping in the type would blur the "whose turn
+ * is it, and to do what" question the type exists to answer.
+ *
+ * `live` and `dead` return `null`: the state pill beside the badge already says
+ * "Running" and "Failed"/"Cancelled" respectively, and neither has anything a
+ * human can act on, so a badge would be pure noise.
+ */
+export function runDispositionLabel(
+  disposition: RunDisposition,
+  reviewAction?: RunMeta['reviewAction']
+): string | null {
+  switch (disposition) {
+    case 'live':
+    case 'dead':
+      return null;
+    case 'needs-review':
+      return 'Needs review';
+    case 'stopped-short':
+      return 'Continue';
+    case 'in-review-elsewhere':
+      return 'PR open';
+    case 'closed':
+      // A reviewed run with no recorded action still needs a word, and "Closed"
+      // is the honest one — reading it as "Merged" would assert that work landed
+      // when nothing recorded that it did.
+      if (reviewAction === 'discard') return 'Discarded';
+      if (reviewAction === 'merge' || reviewAction === 'pr') return 'Merged';
+      return 'Closed';
+  }
+}
+
 export function deriveRunDisposition(meta: RunMeta): RunDisposition {
   if (!isTerminalRunState(meta.state)) return 'live';
   // `reviewedAt` is the orchestrator's one-way "a human closed this out"

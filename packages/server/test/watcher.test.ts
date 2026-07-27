@@ -53,12 +53,20 @@ describe('watchTasks', () => {
     expect(existsSync(missing)).toBe(true);
   });
 
+  // The assertion under test is `calls === 1` — that a burst collapses into one
+  // callback. The timer below is only a hang-guard so a regression fails fast
+  // instead of stalling the suite; it is not a latency assertion. It was 2s,
+  // which is 20x DEBOUNCE_MS but still not enough on a machine running the whole
+  // workspace's suites at once: macOS delays fs event delivery under I/O
+  // pressure, so this failed only in `bun run test` and passed every time in
+  // isolation. Raised well clear of that, with an `it` timeout above it (bun's
+  // default is 5s, which would otherwise cut the guard off first).
   it('collapses a burst of writes into a single onChange call', async () => {
     let calls = 0;
     const done = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error('watcher did not fire onChange in time')),
-        2000
+        15_000
       );
       watcher = watchTasks(store.tasksDir, () => {
         calls += 1;
@@ -73,5 +81,5 @@ describe('watchTasks', () => {
     store.create({ title: 'Three' });
     await done;
     expect(calls).toBe(1);
-  });
+  }, 30_000);
 });

@@ -1,6 +1,12 @@
 import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -239,6 +245,177 @@ function writeVerifyCommand(rootDir: string, cmd: string): void {
     `verifyCommand: "${cmd}"\n`
   );
 }
+
+// The wedge that motivated the timeout: an entry sat in `verifying` for 11
+// minutes with no process behind it, and because the queue is strictly serial it
+// blocked everything behind it. A verify that never returns must fail the entry
+// with an actionable reason and let the queue move on.
+describe('MergeQueue verify timeout', () => {
+  it('fails a verify that never returns, and still processes the next entry', async () => {
+    const harness = makeHarness();
+    writeFileSync(
+      join(harness.rootDir, DISPATCH_DIR, 'config.yml'),
+      'verifyCommand: "sleep 600"\norchestrator:\n  verifyTimeoutSec: 1\n'
+    );
+    const { runId: hangs } = await dispatchAndFinish(harness, 'Hangs');
+    const { runId: fine } = await dispatchAndFinish(harness, 'Fine');
+
+    const stub = new StubRunner();
+    // Never resolves — the process-that-hangs case, independent of wall clock.
+    let releaseHang: (() => void) | undefined;
+    const hangUntilReleased = new Promise<CommandResult>((resolve) => {
+      releaseHang = () => resolve({ ok: true, stdout: '', stderr: '' });
+    });
+    let verifyCalls = 0;
+    const runner = async (
+      cwd: string,
+      cmd: string[],
+      opts?: { timeoutMs?: number }
+    ): Promise<CommandResult> => {
+      if (cmd[0] === 'bash') {
+        verifyCalls += 1;
+        // Only the FIRST verify hangs, so the second entry can still complete —
+        // proving a timed-out entry does not wedge the queue behind it.
+        if (verifyCalls === 1) {
+          if (opts?.timeoutMs === undefined) {
+            throw new Error('verify must be given a timeoutMs');
+          }
+          // Honour the timeout the way defaultCommandRunner must: give up and
+          // report failure rather than waiting forever.
+          return await Promise.race([
+            hangUntilReleased,
+            new Promise<CommandResult>((resolve) =>
+              setTimeout(
+                () => resolve({ ok: false, stdout: '', stderr: 'timed out' }),
+                opts.timeoutMs
+              )
+            ),
+          ]);
+        }
+      }
+      return await stub.run(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(hangs);
+    queue.enqueue(fine);
+    await waitFor(() => queue.snapshot().history.length === 2, 20_000);
+
+    const hung = queue.snapshot().history.find((e) => e.runId === hangs);
+    expect(hung?.state).toBe('failed');
+    expect(hung?.reason).toMatch(/timed out/i);
+    // The remedy has to be in the message — otherwise this is the same
+    // "something went wrong" dead end the wedge already was.
+    expect(hung?.reason).toMatch(/verifyTimeoutSec/);
+
+    const ok = queue.snapshot().history.find((e) => e.runId === fine);
+    expect(ok?.state).toBe('merged');
+    releaseHang?.();
+  }, 30_000);
+});
+
+// Elapsed time is what makes "slow" and "wedged" distinguishable without
+// inspecting processes. `enqueuedAt` cannot do it — it never moves — so each
+// state transition stamps its own `stateSince`.
+describe('MergeQueue entry stateSince', () => {
+  it('stamps stateSince on enqueue and advances it on each state transition', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    const queued = queue.snapshot().entries[0];
+    expect(queued.stateSince).toBeDefined();
+
+    await waitFor(() => queue.snapshot().history.length === 1);
+    const done = queue.snapshot().history[0];
+    expect(done.state).toBe('merged');
+    // The entry moved queued -> rebasing -> merging -> merged, so its final
+    // stamp must be later than the one it carried while queued.
+    expect(new Date(done.stateSince!).getTime()).toBeGreaterThanOrEqual(
+      new Date(queued.stateSince!).getTime()
+    );
+    // And it must not simply mirror enqueuedAt, which is what it would do if
+    // transitions were not stamping it.
+    expect(done.stateSince).not.toBe(done.enqueuedAt);
+  });
+});
+
+// Streaming exists so a multi-minute verify shows progress instead of a silent
+// `verifying` that could equally be wedged. Mirrors the run.log contract: one
+// event per chunk, plus a bounded tail on the entry so a client that connects
+// mid-verify or refreshes still sees recent output.
+describe('MergeQueue verify output streaming', () => {
+  it('broadcasts each verify output chunk and keeps a bounded tail on the entry', async () => {
+    const harness = makeHarness();
+    writeVerifyCommand(harness.rootDir, 'echo verifying');
+    const { runId } = await dispatchAndFinish(harness);
+    const seen = captureEvents(harness.events);
+
+    const stub = new StubRunner();
+    const runner = async (
+      cwd: string,
+      cmd: string[],
+      opts?: { onOutput?: (chunk: string) => void }
+    ): Promise<CommandResult> => {
+      if (cmd[0] === 'bash') {
+        opts?.onOutput?.('building...\n');
+        opts?.onOutput?.('tests passed\n');
+        return { ok: true, stdout: '', stderr: '' };
+      }
+      return await stub.run(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+    expect(queue.snapshot().history[0].state).toBe('merged');
+
+    const logs = seen.filter(
+      (e): e is { type: 'merge-queue.log'; runId: string; chunk: string } =>
+        e.type === 'merge-queue.log'
+    );
+    expect(logs.map((l) => l.chunk)).toEqual([
+      'building...\n',
+      'tests passed\n',
+    ]);
+    expect(logs.every((l) => l.runId === runId)).toBe(true);
+  });
+
+  it('bounds the retained tail rather than growing it without limit', async () => {
+    const harness = makeHarness();
+    writeVerifyCommand(harness.rootDir, 'echo verifying');
+    const { runId } = await dispatchAndFinish(harness);
+
+    const stub = new StubRunner();
+    // Far more output than the cap, so an unbounded buffer would be obvious.
+    const chunk = 'x'.repeat(1024);
+    const runner = async (
+      cwd: string,
+      cmd: string[],
+      opts?: { onOutput?: (chunk: string) => void }
+    ): Promise<CommandResult> => {
+      if (cmd[0] === 'bash') {
+        for (let i = 0; i < 40; i++) opts?.onOutput?.(chunk);
+        // Fail so the entry keeps its output for inspection.
+        return { ok: false, stdout: '', stderr: 'boom' };
+      }
+      return await stub.run(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+    const entry = queue.snapshot().history[0];
+    expect(entry.state).toBe('failed');
+    // 40KB in; the retained tail must be capped well below that. An unbounded
+    // buffer in a long-lived daemon is a leak, and the full log belongs in the
+    // failure reason rather than in memory.
+    expect((entry.output ?? '').length).toBeLessThanOrEqual(8192);
+    expect((entry.output ?? '').length).toBeGreaterThan(0);
+  });
+});
 
 describe('MergeQueue.enqueue', () => {
   it('enqueues a finished, unreviewed run as queued and broadcasts', async () => {
@@ -1201,7 +1378,7 @@ describe('MergeQueue persistence', () => {
     expect(reloaded?.state).toBe('queued');
   });
 
-  it('files a mid-flight persisted entry to failed history with a restart reason', async () => {
+  it('requeues a mid-flight persisted entry instead of failing it, counting the attempt', async () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
     // Simulate what a previous daemon process would have left on disk had it
@@ -1226,16 +1403,104 @@ describe('MergeQueue persistence', () => {
     const stub = new StubRunner();
     const queue = new MergeQueue(harness, stub.run);
 
+    // Retrying is safe for the same reason the old "re-enqueue to retry" advice
+    // was: the rebase/verify/merge steps are idempotent against a half-done
+    // prior attempt. So do it automatically rather than making a human notice.
+    // Either it is still in line, or the retry already carried it to merged —
+    // both mean it was not abandoned, which is what this asserts.
+    await waitFor(
+      () =>
+        queue.snapshot().entries.some((e) => e.runId === runId) ||
+        queue.snapshot().history.some((e) => e.runId === runId)
+    );
+    const filed = queue.snapshot().history.find((e) => e.runId === runId);
+    // Not abandoned: it must not have been filed straight to failed history with
+    // the old "re-enqueue to retry" reason.
+    expect(filed?.state ?? 'merged').not.toBe('failed');
+    expect(String(filed?.reason ?? '')).not.toContain(
+      'daemon restarted mid-merge'
+    );
+    // And the retry was counted, so a recurring hang cannot loop forever.
+    const seen =
+      filed ?? queue.snapshot().entries.find((e) => e.runId === runId);
+    expect(seen?.attempts).toBe(1);
+  });
+
+  // Auto-requeue plus a reproducible hang is an infinite loop: the daemon dies
+  // mid-verify, boots, requeues, wedges again. The cap is the backstop for the
+  // case a timeout cannot catch — the daemon being killed rather than the
+  // command overrunning. `attempts` must therefore be PERSISTED; an in-memory
+  // counter resets every boot, which is precisely the loop it exists to stop.
+  it('abandons a mid-flight entry once it has burned through its attempts', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [
+          {
+            runId,
+            taskId,
+            taskTitle: 'Ship it',
+            state: 'merging',
+            enqueuedAt: new Date().toISOString(),
+            attempts: 3,
+          },
+        ],
+        history: [],
+      })
+    );
+
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
     const filed = queue.snapshot().history.find((e) => e.runId === runId);
     expect(filed?.state).toBe('failed');
-    expect(filed?.reason).toContain('daemon restarted mid-merge');
+    expect(filed?.reason).toMatch(/abandoned after 3/i);
     expect(
       queue.snapshot().entries.find((e) => e.runId === runId)
     ).toBeUndefined();
-    // The run itself is still unreviewed — process() only reviews a run at
-    // the very end of merge(), so a mid-flight death never got that far.
-    const run = harness.orchestrator.getRun(runId);
-    expect(run?.meta.reviewedAt).toBeUndefined();
+    // Still unreviewed — process() only reviews at the very end of merge(), so
+    // a mid-flight death never got that far.
+    expect(harness.orchestrator.getRun(runId)?.meta.reviewedAt).toBeUndefined();
+  });
+
+  it('persists the incremented attempt count so the cap survives a restart', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [
+          {
+            runId,
+            taskId,
+            taskTitle: 'Ship it',
+            state: 'merging',
+            enqueuedAt: new Date().toISOString(),
+            attempts: 1,
+          },
+        ],
+        history: [],
+      })
+    );
+
+    const stub = new StubRunner();
+    // Rebase fails, so the entry stays put rather than merging and clearing —
+    // leaving the persisted attempt count observable on disk.
+    stub.rebaseResult = { ok: false, stdout: '', stderr: 'CONFLICT' };
+    const queue = new MergeQueue(harness, stub.run);
+    await waitFor(() => queue.snapshot().history.length === 1);
+
+    const persisted = JSON.parse(
+      readFileSync(mergeQueuePath(harness.rootDir), 'utf8')
+    ) as { entries: { attempts?: number }[]; history: { attempts?: number }[] };
+    const seen = [...persisted.entries, ...persisted.history].find(
+      (e) => (e as { runId?: string }).runId === runId
+    );
+    expect(seen?.attempts).toBe(2);
   });
 
   it('starts with an empty queue when the persisted file is corrupt', () => {

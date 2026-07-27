@@ -174,6 +174,31 @@ export interface DispatchProjectData {
     branch: string,
     opts?: { force?: boolean }
   ) => Promise<void>;
+  /** The brain-dump inbox — captured, not committed. */
+  inbox: import('@dispatch/client').InboxItem[];
+  /** Splits `text` server-side into one item per non-empty line. */
+  handleCaptureInbox: (text: string) => Promise<void>;
+  handleUpdateInboxItem: (
+    id: string,
+    patch: { kind?: import('@dispatch/client').InboxKind; text?: string }
+  ) => Promise<void>;
+  handleDismissInbox: (ids: string[]) => Promise<void>;
+  /**
+   * Starts an AI draft that adds the detail a one-line capture or a thin task is missing.
+   * Lands on `notePlanRecord` (the second plan slot, kept apart from the Plans view's own so
+   * starting one cannot clobber an open plan) and writes nothing until
+   * `handleConfirmNotePlan`.
+   */
+  handleEnrichInboxItem: (id: string) => Promise<void>;
+  handleEnrichTask: (taskId: string) => Promise<void>;
+  /** Model-backed grouping of related captures. Costs a call, so callers trigger it explicitly. */
+  handleClusterInbox: () => Promise<
+    import('@dispatch/client').InboxClusterGroup[]
+  >;
+  /** Returns the per-item outcome so a partial failure can be surfaced, not swallowed. */
+  handleConvertInbox: (
+    ids: string[]
+  ) => Promise<import('@dispatch/client').InboxConvertResponse>;
   notes: import('@dispatch/client').Note[];
   handleCreateNote: (
     input: import('@dispatch/client').CreateNoteInput
@@ -252,17 +277,20 @@ export interface DispatchProjectData {
   // "Merge all ready" toolbar action) — thin wrapper over enqueueMergeReady,
   // since the server owns the actual eligibility/ordering logic.
   handleMergeAllReady: () => Promise<void>;
+  /** Retries every entry held on a blocked checkout. Queue-wide, mirroring the server. */
+  handleRecheckMergeQueue: () => Promise<void>;
   // Set from the `queue.drained` WS event when the queue's auto-push after a
   // drain fails (merged locally, origin didn't get the commit) — surfaced as
   // a banner in RunsView. Cleared on the next successful drain-push.
   lastPushError: string | null;
 
   // Task 10: the persisted notification inbox — the recoverable record behind every
-  // transient run/queue toast `useTransitionNotifications` fires (see inbox.ts). Loaded
+  // transient run/queue toast `useTransitionNotifications` fires (see inbox.ts). Named
+  // `notificationInbox` to stay distinct from the brain-dump `inbox` above. Loaded
   // per-project and re-saved on every change so it survives a restart/project switch.
-  inbox: InboxState;
-  // Marks every inbox entry read — called once when the inbox panel opens, not per-entry.
-  markInboxRead: () => void;
+  notificationInbox: InboxState;
+  // Marks every notification entry read — called once when the panel opens, not per-entry.
+  markNotificationInboxRead: () => void;
 }
 
 /**
@@ -309,19 +337,19 @@ export function useDispatchProject(
   // Task 10: the notification inbox — one per project root, loaded lazily on mount and
   // reloaded whenever the active project switches (this hook's `projectPath` swaps in place
   // rather than remounting on a project switch, same as `planId` below).
-  const [inbox, setInboxState] = useState<InboxState>(() =>
-    readStoredInbox(projectPath)
+  const [notificationInbox, setNotificationInboxState] = useState<InboxState>(
+    () => readStoredInbox(projectPath)
   );
   useEffect(() => {
-    setInboxState(readStoredInbox(projectPath));
+    setNotificationInboxState(readStoredInbox(projectPath));
   }, [projectPath]);
 
-  // Applies `updater` to the inbox and persists the result under the current project's
-  // storage key in the same step, so every inbox mutation (a new transition recorded, or
+  // Applies `updater` to the notification inbox and persists the result under the current
+  // project's storage key in the same step, so every mutation (a new transition recorded, or
   // markAllRead) survives a restart without a separate "save" call site.
-  const updateInbox = useCallback(
+  const updateNotificationInbox = useCallback(
     (updater: (prev: InboxState) => InboxState) => {
-      setInboxState((prev) => {
+      setNotificationInboxState((prev) => {
         const next = updater(prev);
         if (projectPath !== null && typeof window !== 'undefined') {
           saveInbox(projectPath, next, window.localStorage);
@@ -336,16 +364,16 @@ export function useDispatchProject(
   // batch of run/queue transitions it detects onto the persisted inbox as new unread entries.
   const onRecordInbox = useCallback(
     (adds: InboxEntryDraft[]) => {
-      updateInbox((prev) => addEntries(prev, adds));
+      updateNotificationInbox((prev) => addEntries(prev, adds));
     },
-    [updateInbox]
+    [updateNotificationInbox]
   );
 
-  // Marks the whole inbox read in one step — fired once when the inbox panel opens (see
-  // App.tsx), not per-entry.
-  const markInboxRead = useCallback(() => {
-    updateInbox((prev) => markAllRead(prev));
-  }, [updateInbox]);
+  // Marks the whole notification inbox read in one step — fired once when the panel opens
+  // (see App.tsx), not per-entry.
+  const markNotificationInboxRead = useCallback(() => {
+    updateNotificationInbox((prev) => markAllRead(prev));
+  }, [updateNotificationInbox]);
 
   // A plan started against one project's dispatchd must never leak into another project's
   // Plans view — without this, switching projects while a plan was mid-flight (or just left
@@ -397,6 +425,7 @@ export function useDispatchProject(
   );
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
+  const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
   const epicProgressKeyPrefix = useMemo(
     () => ['dispatch-epic-progress', port],
     [port]
@@ -511,6 +540,15 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchNotes();
+    },
+    enabled: client !== null,
+  });
+
+  const { data: inbox } = useQuery({
+    queryKey: inboxQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchInbox();
     },
     enabled: client !== null,
   });
@@ -703,6 +741,8 @@ export function useDispatchProject(
             });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+          } else if (event.type === 'inbox.changed') {
+            void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
@@ -786,6 +826,7 @@ export function useDispatchProject(
     readyQueryKey,
     runsQueryKey,
     notesQueryKey,
+    inboxQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     branchesQueryKey,
@@ -1168,10 +1209,11 @@ export function useDispatchProject(
     [client]
   );
 
-  // Refine the active plan across turns: post the follow-up (the server 202s
-  // with the record back in `running`), then invalidate the plan query so the
-  // thread re-renders immediately with the user's turn; the assistant's reply
-  // arrives via the plan.changed broadcast the same way the opening turn does.
+  // Refine the active plan across turns: post the follow-up, then seed the plan query with
+  // the 202's record — already carrying the user's message and back in `running` — so the
+  // thread shows the turn the instant it's accepted instead of after a round trip. The
+  // invalidate right after re-syncs with the server (and restarts the `running` poll), and
+  // the assistant's reply arrives via `plan.changed` the same way the opening turn does.
   const handleSendPlanMessage = useCallback(
     async (text: string): Promise<import('@dispatch/client').PlanRecord> => {
       if (client === null || planId === null) {
@@ -1179,11 +1221,14 @@ export function useDispatchProject(
       }
       const record = await client.sendPlanMessage(planId, text);
       // usePlanRecord keys the plan query as ['dispatch-plan', port, planId]
-      // (see the helper above) — invalidate that same key so the thread
-      // re-renders with the user's turn immediately.
-      void queryClient.invalidateQueries({
-        queryKey: ['dispatch-plan', port, planId],
-      });
+      // (see the helper above). Seed that key with the 202's record first so the
+      // thread shows the user's turn immediately — which is what the comment
+      // above promises — then invalidate to re-sync and restart the `running`
+      // poll. The incoming side used a `planQueryKey` local that no longer
+      // exists here, so this keeps its optimistic behaviour on main's key form.
+      const planKey = ['dispatch-plan', port, planId];
+      queryClient.setQueryData(planKey, record);
+      void queryClient.invalidateQueries({ queryKey: planKey });
       return record;
     },
     [client, planId, queryClient, port]
@@ -1249,6 +1294,87 @@ export function useDispatchProject(
   const handleMergeAllReady = useCallback(async (): Promise<void> => {
     if (client === null) return;
     await client.enqueueMergeReady();
+    void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
+  }, [client, queryClient, mergeQueueQueryKey]);
+
+  const invalidateInbox = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
+  }, [queryClient, inboxQueryKey]);
+
+  const handleCaptureInbox = useCallback(
+    async (text: string): Promise<void> => {
+      if (client === null) return;
+      await client.addInbox({ text });
+      invalidateInbox();
+    },
+    [client, invalidateInbox]
+  );
+
+  const handleUpdateInboxItem = useCallback(
+    async (
+      id: string,
+      patch: { kind?: import('@dispatch/client').InboxKind; text?: string }
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.updateInbox(id, patch);
+      invalidateInbox();
+    },
+    [client, invalidateInbox]
+  );
+
+  const handleDismissInbox = useCallback(
+    async (ids: string[]): Promise<void> => {
+      if (client === null || ids.length === 0) return;
+      await client.dismissInbox(ids);
+      invalidateInbox();
+    },
+    [client, invalidateInbox]
+  );
+
+  const handleConvertInbox = useCallback(
+    async (ids: string[]) => {
+      if (client === null) return { results: [], converted: 0, failed: 0 };
+      const res = await client.convertInbox(ids);
+      invalidateInbox();
+      // Converting writes tasks too, so the task list has to refetch or the new tasks only
+      // appear on the next poll.
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      return res;
+    },
+    [client, invalidateInbox, queryClient, tasksQueryKey]
+  );
+
+  const handleEnrichInboxItem = useCallback(
+    async (id: string): Promise<void> => {
+      if (client === null) return;
+      const { planId } = await client.enrichInbox(id);
+      setNotePlanId(planId);
+    },
+    [client]
+  );
+
+  const handleEnrichTask = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (client === null) return;
+      const { planId } = await client.enrichTask(taskId);
+      setNotePlanId(planId);
+    },
+    [client]
+  );
+
+  const handleClusterInbox = useCallback(async () => {
+    if (client === null) return [];
+    const { groups } = await client.clusterInbox();
+    return groups;
+  }, [client]);
+
+  // Retries every entry the queue is holding on a `blocked-environment` (a dirty checkout, a
+  // staged index, the wrong branch). Deliberately queue-wide rather than per-entry, because the
+  // server's endpoint is: the block is a property of the shared checkout, not of one entry, so
+  // one fix unblocks all of them at once.
+  const handleRecheckMergeQueue = useCallback(async (): Promise<void> => {
+    if (client === null) return;
+    await client.recheckMergeQueue();
     void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
   }, [client, queryClient, mergeQueueQueryKey]);
 
@@ -1342,9 +1468,19 @@ export function useDispatchProject(
     handleEnqueueMergeStack,
     handleDequeueMerge,
     handleMergeAllReady,
+    handleRecheckMergeQueue,
     lastPushError,
 
-    inbox,
-    markInboxRead,
+    notificationInbox,
+    markNotificationInboxRead,
+
+    inbox: inbox ?? [],
+    handleCaptureInbox,
+    handleUpdateInboxItem,
+    handleDismissInbox,
+    handleConvertInbox,
+    handleEnrichInboxItem,
+    handleEnrichTask,
+    handleClusterInbox,
   };
 }

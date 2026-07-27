@@ -2,7 +2,11 @@ import type { RunMeta, RunState } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import type { RunDisposition } from './runState';
-import { deriveRunDisposition, isTerminalRunState } from './runState';
+import {
+  deriveRunDisposition,
+  isTerminalRunState,
+  runDispositionLabel,
+} from './runState';
 
 describe('isTerminalRunState', () => {
   test.each([
@@ -101,5 +105,54 @@ describe('deriveRunDisposition', () => {
         })
       )
     ).toBe('closed');
+  });
+});
+
+describe('runDispositionLabel', () => {
+  // The two cases that render nothing. `live` needs no badge because the state
+  // pill already says Running; `dead` needs none because the raw
+  // failed/cancelled label already says everything true about it — there is no
+  // action available and nothing to review.
+  test.each([['live'], ['dead']] as [RunDisposition][])(
+    '%s renders no badge',
+    (disposition) => {
+      expect(runDispositionLabel(disposition)).toBeNull();
+    }
+  );
+
+  test('needs-review asks for a human look', () => {
+    expect(runDispositionLabel('needs-review')).toBe('Needs review');
+  });
+
+  // The complement of the truncated-run fix: a usage-limit stop is recorded
+  // `failed`, and the actionable next step is to continue it, not review it.
+  test('stopped-short offers to continue', () => {
+    expect(runDispositionLabel('stopped-short')).toBe('Continue');
+  });
+
+  test('in-review-elsewhere points at the PR', () => {
+    expect(runDispositionLabel('in-review-elsewhere')).toBe('PR open');
+  });
+
+  // `closed` is deliberately coarse in RunDisposition — the wording comes from
+  // reviewAction, so the disposition type keeps answering "whose turn is it"
+  // rather than encoding review bookkeeping.
+  test.each([
+    ['merge', 'Merged'],
+    ['discard', 'Discarded'],
+    ['pr', 'Merged'],
+  ] as ['merge' | 'discard' | 'pr', string][])(
+    'closed via %s reads %s',
+    (action, expected) => {
+      expect(runDispositionLabel('closed', action)).toBe(expected);
+    }
+  );
+
+  // A reviewed run with no recorded action still needs a word. "Closed" is the
+  // honest fallback — claiming "Merged" would assert that work landed when
+  // nothing recorded that it did, which is the class of false confidence this
+  // whole badge exists to remove.
+  test('closed with no reviewAction falls back to Closed', () => {
+    expect(runDispositionLabel('closed')).toBe('Closed');
   });
 });

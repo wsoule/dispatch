@@ -1,5 +1,4 @@
-import type { PlannedTask, PlanProposal, PlanState } from '@dispatch/client';
-import { reduceProposal } from '@dispatch/client';
+import type { PlannedTask, PlanState, ProposalAction } from '@dispatch/client';
 import type { Priority } from '@dispatch/core';
 import {
   AlertTriangle,
@@ -9,16 +8,25 @@ import {
   Link2,
   Loader2,
   Minus,
+  Plus,
   Send,
   SignalHigh,
   SignalLow,
   SignalMedium,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { Markdown } from '../components/runs/Markdown';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { formatRelativeTimeFromIso } from '../lib/format';
+import type { PlanDraft, PlanThreadItem } from '../lib/planThread';
+import {
+  buildPlanThread,
+  editPlanDraft,
+  syncPlanDraft,
+} from '../lib/planThread';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
@@ -118,11 +126,203 @@ function PlanStateDot({ state }: { state: PlanHistoryEntry['state'] }) {
   );
 }
 
+/** One turn of the plan conversation. The planner's replies are markdown (same agent, same
+ * output style as a run's transcript, so they get the same renderer); the user's own text is
+ * shown verbatim, since it was typed as prose and not as markup. */
+function PlanMessageBubble({
+  role,
+  text,
+  at,
+}: {
+  role: 'user' | 'assistant';
+  text: string;
+  at: string;
+}) {
+  const fromUser = role === 'user';
+  return (
+    <div
+      className={cn(
+        'flex max-w-[85%] flex-col gap-1 rounded-md px-3 py-2',
+        fromUser
+          ? 'bg-primary text-primary-foreground self-end'
+          : 'border-border bg-card self-start border'
+      )}
+    >
+      <div
+        className={cn(
+          'flex items-baseline gap-1.5 text-[11px] font-medium tracking-wide uppercase',
+          fromUser ? 'text-primary-foreground/70' : 'text-muted-foreground'
+        )}
+      >
+        {fromUser ? 'You' : 'Planner'}
+        <span className="font-normal normal-case opacity-70">
+          {formatRelativeTimeFromIso(at)}
+        </span>
+      </div>
+      {fromUser ? (
+        <p className="text-[13px] whitespace-pre-wrap">{text}</p>
+      ) : (
+        <Markdown content={text} className="text-[13px]" />
+      )}
+    </div>
+  );
+}
+
+interface PlanConversationProps {
+  items: PlanThreadItem[];
+  /** A turn is in flight — dispatchd rejects a second message until it lands. */
+  busy: boolean;
+  /** This plan's tasks are already written, so the conversation is closed. */
+  confirmed: boolean;
+  onSend: (text: string) => Promise<void>;
+}
+
+/**
+ * The plan's transcript plus the follow-up composer that keeps it going: every turn the
+ * planner has answered, the live turn's spinner or error as its own trailing row, and a
+ * composer that posts the next message onto the same conversation. Owns its own draft/sending
+ * state the way the run session composer does — the view above only supplies the transcript
+ * and the send call.
+ */
+function PlanConversation({
+  items,
+  busy,
+  confirmed,
+  onSend,
+}: PlanConversationProps) {
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Pin the transcript to the newest turn. Keyed on the last row's identity as well as the
+  // row count because a turn settling in place (the `pending` spinner becoming a `failed`
+  // row) changes what's at the bottom without changing how many rows there are.
+  const lastKey = items.length > 0 ? items[items.length - 1].key : '';
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el !== null) el.scrollTop = el.scrollHeight;
+  }, [items.length, lastKey]);
+
+  async function submit() {
+    const message = text.trim();
+    // `busy`/`sending` are re-checked here, not just on the Send button: the composer stays
+    // editable mid-turn (drafting the next ask while the planner works is the whole point of
+    // a conversation), so Enter must not slip a message past a turn dispatchd would 409.
+    if (message === '' || busy || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await onSend(message);
+      setText('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-label="Plan conversation"
+        className="flex max-h-[22rem] flex-col gap-2 overflow-y-auto"
+      >
+        {items.map((item) => {
+          if (item.kind === 'pending') {
+            return (
+              <div
+                key={item.key}
+                className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 self-start rounded-md border px-3 py-2 text-[13px]"
+              >
+                <Loader2 className="text-primary size-3.5 animate-spin" />
+                Planning — reading the codebase and updating the proposal…
+              </div>
+            );
+          }
+          if (item.kind === 'failed') {
+            return (
+              <div
+                key={item.key}
+                className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 self-start rounded-md border px-3 py-2 text-[13px]"
+              >
+                <CircleAlert className="size-4 shrink-0 translate-y-0.5" />
+                <span>{item.error}</span>
+              </div>
+            );
+          }
+          return (
+            <PlanMessageBubble
+              key={item.key}
+              role={item.role}
+              text={item.text}
+              at={item.at}
+            />
+          );
+        })}
+      </div>
+
+      <div className="border-border flex flex-col gap-1.5 border-t pt-3">
+        {error !== null && (
+          <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+            <CircleAlert className="size-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+        <span className="text-muted-foreground text-[11px]">
+          {confirmed
+            ? 'This plan is confirmed — its tasks are already created. Start a new plan to keep planning.'
+            : busy
+              ? 'The planner is answering — send your next message once its reply lands.'
+              : 'Keep refining — ask for a change and the proposal below updates.'}
+        </span>
+        {!confirmed && (
+          <div className="flex gap-2">
+            <Textarea
+              rows={2}
+              placeholder="Split a task, add one, change the order…"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void submit();
+                }
+              }}
+              aria-label="Follow-up message"
+              className="min-h-0 flex-1 resize-none text-[13px]"
+            />
+            <Button
+              disabled={busy || sending || text.trim() === ''}
+              onClick={() => void submit()}
+              className="self-end"
+            >
+              {sending ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> Sending…
+                </>
+              ) : (
+                <>
+                  <Send className="size-4" /> Send
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface PlanTaskRowProps {
   task: PlannedTask;
   index: number;
   allTasks: PlannedTask[];
-  onEdit: (index: number, patch: Partial<PlannedTask>) => void;
+  /** Every field edit goes through `reduceProposal`'s own action type rather than a loose
+   * patch object, so the row and the reducer can never disagree about what an edit means. */
+  onEdit: (action: ProposalAction) => void;
   onRemove: (index: number) => void;
 }
 
@@ -151,7 +351,11 @@ function PlanTaskRow({
         <Select
           value={task.priority}
           onValueChange={(value) =>
-            onEdit(index, { priority: value as Priority })
+            onEdit({
+              type: 'setTaskPriority',
+              index,
+              priority: value as Priority,
+            })
           }
         >
           <SelectTrigger
@@ -186,14 +390,22 @@ function PlanTaskRow({
 
       <Input
         value={task.title}
-        onChange={(e) => onEdit(index, { title: e.target.value })}
+        onChange={(e) =>
+          onEdit({ type: 'setTaskTitle', index, title: e.target.value })
+        }
         aria-label={`Task ${index + 1} title`}
         className="focus-visible:ring-ring/40 h-auto border-none bg-transparent px-0 py-0.5 text-[13px] font-medium shadow-none focus-visible:ring-1"
       />
       <Textarea
         rows={2}
         value={task.description}
-        onChange={(e) => onEdit(index, { description: e.target.value })}
+        onChange={(e) =>
+          onEdit({
+            type: 'setTaskDescription',
+            index,
+            description: e.target.value,
+          })
+        }
         aria-label={`Task ${index + 1} description`}
         className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-y border-none bg-transparent px-0 py-0.5 text-[12px] shadow-none focus-visible:ring-1"
       />
@@ -220,59 +432,71 @@ function PlanTaskRow({
 interface PlansViewProps {
   data: DispatchProjectData;
   projectPath: string;
+  /**
+   * Text to open the composer with, when the user arrived here from somewhere that already had
+   * the words — "hand it to the planner" in Brain dump, or "plan it" on a single inbox item.
+   * Seeded once on mount rather than kept in sync, so arriving with a seed and then editing it
+   * does not fight the prop on every re-render.
+   */
+  initialPrompt?: string;
 }
 
 /**
  * The plan-work flow as its own primary view rather than a modal: a composer at top
- * ("Describe the work…"), this session's plan history below it, and — once a plan resolves
- * — an editable proposal review list, in place of the composer.
+ * ("Describe the work…") until a plan is open, then that plan's conversation — every turn of
+ * it, plus a follow-up composer — with the latest proposal below as an editable review list,
+ * and this session's plan history at the bottom. Planning is a conversation, so the proposal
+ * on screen is whatever the newest turn produced: a follow-up ("split task 3", "drop the
+ * migration") re-renders the review list in place rather than starting a second plan.
  */
-export function PlansView({ data, projectPath }: PlansViewProps) {
+export function PlansView({
+  data,
+  projectPath,
+  initialPrompt,
+}: PlansViewProps) {
   const [history, setHistory] = useState<PlanHistoryEntry[]>(() =>
     loadHistory(projectPath)
   );
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(initialPrompt ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<PlanProposal | null>(null);
-  // Stable per-row identity for `draft.tasks`, kept in lockstep with it (same length, same
-  // order) — index-based keys would make React reuse a row's DOM node/focus/scroll position
-  // for whatever task slides into that index after `removeTask` splices one out, which reads
-  // as a row's in-progress edit jumping to a different task.
-  const [taskKeys, setTaskKeys] = useState<string[]>([]);
+  // The editable proposal plus its per-row keys and the server proposal it came from — see
+  // `PlanDraft`, which owns the "a later turn refined the plan, adopt it / a poll returned
+  // the same plan, keep my edits" rule this view used to approximate with `prev ?? proposal`.
+  const [draft, setDraft] = useState<PlanDraft | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
 
   // Keeps the visible history entry's state snapshot fresh whenever the currently-open
-  // plan's record changes (running -> ready/failed), and seeds the editable draft the
-  // moment a proposal is ready.
+  // plan's record changes (running -> ready/failed), and folds each turn's proposal into
+  // the editable draft as the conversation produces it.
   useEffect(() => {
     if (data.planId === null || data.planRecord === undefined) return;
+    const planId = data.planId;
     const planRecord = data.planRecord;
     setHistory((prev) => {
       const next = prev.map((entry) =>
-        entry.id === data.planId ? { ...entry, state: planRecord.state } : entry
+        entry.id === planId ? { ...entry, state: planRecord.state } : entry
       );
       saveHistory(projectPath, next);
       return next;
     });
     if (planRecord.state === 'ready' && planRecord.proposal) {
       const proposal = planRecord.proposal;
-      setDraft((prev) => prev ?? proposal);
-      setTaskKeys((prev) =>
-        prev.length === 0
-          ? proposal.tasks.map((_, i) => `plan-task-${data.planId}-${i}`)
-          : prev
-      );
+      setDraft((prev) => syncPlanDraft(prev, proposal, planId));
     }
   }, [data.planId, data.planRecord, projectPath]);
+
+  const thread = useMemo(
+    () => buildPlanThread(data.planRecord),
+    [data.planRecord]
+  );
 
   async function submitPrompt() {
     if (prompt.trim() === '') return;
     setSubmitting(true);
     setSubmitError(null);
     setDraft(null);
-    setTaskKeys([]);
     try {
       const newPlanId = await data.handleSubmitPrompt(prompt.trim());
       const entry: PlanHistoryEntry = {
@@ -294,21 +518,12 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     }
   }
 
-  function editTask(index: number, patch: Partial<PlannedTask>) {
-    setDraft((prev) => {
-      if (prev === null) return prev;
-      const tasks = prev.tasks.map((t, i) =>
-        i === index ? { ...t, ...patch } : t
-      );
-      return { ...prev, tasks };
-    });
+  function applyEdit(action: ProposalAction) {
+    setDraft((prev) => (prev === null ? prev : editPlanDraft(prev, action)));
   }
 
-  function removeTask(index: number) {
-    setDraft((prev) =>
-      prev === null ? prev : reduceProposal(prev, { type: 'removeTask', index })
-    );
-    setTaskKeys((prev) => prev.filter((_, i) => i !== index));
+  async function sendFollowUp(text: string) {
+    await data.handleSendPlanMessage(text);
   }
 
   async function submitConfirm() {
@@ -316,10 +531,8 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     setConfirming(true);
     setConfirmError(null);
     try {
-      await data.handleConfirmPlan(draft);
-      setDraft(null);
-      setTaskKeys([]);
-      data.setPlanId(null);
+      await data.handleConfirmPlan(draft.proposal);
+      closePlan();
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -327,17 +540,24 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     }
   }
 
+  /** Closes whatever plan is open and returns the view to its "start a new plan" state.
+   * Clearing the draft matters as much as clearing the id: a draft left behind would be
+   * re-adopted the moment another plan's proposal arrived. */
+  function closePlan() {
+    setDraft(null);
+    setConfirmError(null);
+    data.setPlanId(null);
+  }
+
   function openHistoryEntry(entry: PlanHistoryEntry) {
     setDraft(null);
-    // Cleared here too (not just on submitPrompt) — switching to a *different* history entry
-    // must not carry over the previous entry's row keys onto this one's tasks.
-    setTaskKeys([]);
     setConfirmError(null);
     data.setPlanId(entry.id);
   }
 
-  const showProposalTable =
-    draft !== null && data.planRecord?.state === 'ready';
+  // A plan whose tasks are already written (reopened from history): dispatchd 409s both a
+  // follow-up turn and a second confirm, so the UI says so instead of offering either.
+  const planConfirmed = data.planRecord?.confirmedAt !== undefined;
 
   // A composer that submits against a dead daemon would just hang on "Starting…" forever
   // (`handleSubmitPrompt` throws once `client` is null, but only *after* the click) — show
@@ -353,16 +573,40 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
     );
   }
 
-  const planIsPending =
+  // A turn is in flight: dispatchd rejects both a second follow-up and a confirm until the
+  // planner's reply lands, so every control that would 409 is disabled while this holds.
+  const turnRunning =
     data.planId !== null &&
-    !showProposalTable &&
     (data.planRecord === undefined || data.planRecord.state === 'running');
+  // The opening turn, which has no proposal to show underneath it yet — the only time the
+  // review-list skeleton is the right stand-in (a later turn refines a plan that's already
+  // on screen, and replacing it with a skeleton would throw that context away).
+  const awaitingFirstProposal = turnRunning && draft === null;
+  // Confirm is gated on the *record*, not on having a draft on screen: a turn that fails
+  // leaves the previous turn's proposal in place (so the review list rightly stays up), but
+  // dispatchd refuses to confirm any plan that isn't `ready`, so the button would 409.
+  const canConfirm = data.planRecord?.state === 'ready' && !planConfirmed;
+  // Why the review list may not be confirmable right now — the review list is the last
+  // proposal the planner sent either way, so it stays on screen and this line says what
+  // changed underneath it.
+  const reviewNotice = turnRunning
+    ? 'The planner is revising this plan — the version below is the last one it sent, and your edits to it will be replaced when the new one arrives.'
+    : data.planRecord?.state === 'failed'
+      ? 'That turn failed, so this is still the last plan the planner sent. Send another message to get a version you can confirm.'
+      : null;
 
   return (
     <div className="mx-auto flex w-full max-w-[60rem] flex-col gap-6">
-      <h1 className="view-topbar-title">Plans</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="view-topbar-title">Plans</h1>
+        {data.planId !== null && (
+          <Button variant="outline" size="sm" onClick={closePlan}>
+            <Plus className="size-3.5" /> New plan
+          </Button>
+        )}
+      </div>
 
-      {!showProposalTable && (
+      {data.planId === null ? (
         <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
           {submitError !== null && (
             <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
@@ -394,37 +638,36 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
             </Button>
           </div>
         </div>
+      ) : (
+        thread.length > 0 && (
+          // Keyed by plan so opening a different one starts with an empty composer rather
+          // than the half-typed follow-up meant for the plan the user just left.
+          <PlanConversation
+            key={data.planId}
+            items={thread}
+            busy={turnRunning}
+            confirmed={planConfirmed}
+            onSend={sendFollowUp}
+          />
+        )
       )}
 
-      {planIsPending && (
-        <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
-          <div className="text-muted-foreground flex items-center gap-2 text-[13px]">
-            <Loader2 className="text-primary size-4 animate-spin" />
-            <span>
-              Planning — the agent is reading the codebase and drafting an epic
-              and its tasks. This can take a minute.
-            </span>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-4 w-2/3" />
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-          </div>
+      {awaitingFirstProposal && (
+        // Shape-only: the conversation's own pending row above already says the planner is
+        // working, so this is where the epic and its tasks are *going* to be and nothing more
+        // — a second "Planning…" line here just says the same thing twice.
+        <div
+          className="border-border bg-card animate-in fade-in-0 flex flex-col gap-2 rounded-lg border p-4 duration-150"
+          aria-hidden="true"
+        >
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-14 w-full" />
+          <Skeleton className="h-14 w-full" />
+          <Skeleton className="h-14 w-full" />
         </div>
       )}
 
-      {data.planId !== null && data.planRecord?.state === 'failed' && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive animate-in fade-in-0 flex items-center gap-2 rounded-md border px-3 py-2 text-[13px] duration-150">
-          <CircleAlert className="size-4 shrink-0" />
-          <span>
-            Planning failed
-            {data.planRecord.error ? `: ${data.planRecord.error}` : '.'}
-          </span>
-        </div>
-      )}
-
-      {showProposalTable && draft !== null && (
+      {draft !== null && (
         <div className="animate-in fade-in-0 flex flex-col gap-4 duration-150">
           {confirmError !== null && (
             <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
@@ -433,38 +676,38 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
             </div>
           )}
 
-          {draft.epic !== undefined && (
+          {reviewNotice !== null && (
+            <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
+              {turnRunning ? (
+                <Loader2 className="text-primary size-3.5 shrink-0 animate-spin" />
+              ) : (
+                <CircleAlert className="text-destructive size-3.5 shrink-0" />
+              )}
+              <span>{reviewNotice}</span>
+            </div>
+          )}
+
+          {draft.proposal.epic !== undefined && (
             <div className="border-border bg-card flex flex-col gap-2 rounded-lg border p-4">
               <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
                 Epic
               </div>
               <Input
-                value={draft.epic.title}
+                value={draft.proposal.epic.title}
                 onChange={(e) =>
-                  setDraft((prev) =>
-                    prev === null
-                      ? prev
-                      : reduceProposal(prev, {
-                          type: 'setEpicTitle',
-                          title: e.target.value,
-                        })
-                  )
+                  applyEdit({ type: 'setEpicTitle', title: e.target.value })
                 }
                 aria-label="Epic title"
                 className="focus-visible:ring-ring/40 h-auto border-none bg-transparent px-0 text-[14px] font-medium shadow-none focus-visible:ring-1"
               />
               <Textarea
                 rows={2}
-                value={draft.epic.description}
+                value={draft.proposal.epic.description}
                 onChange={(e) =>
-                  setDraft((prev) =>
-                    prev === null
-                      ? prev
-                      : reduceProposal(prev, {
-                          type: 'setEpicDescription',
-                          description: e.target.value,
-                        })
-                  )
+                  applyEdit({
+                    type: 'setEpicDescription',
+                    description: e.target.value,
+                  })
                 }
                 aria-label="Epic description"
                 className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-y border-none bg-transparent px-0 text-[13px] shadow-none focus-visible:ring-1"
@@ -473,42 +716,40 @@ export function PlansView({ data, projectPath }: PlansViewProps) {
           )}
 
           <div className="flex flex-col gap-2">
-            {draft.tasks.map((task, i) => (
+            {draft.proposal.tasks.map((task, i) => (
               <PlanTaskRow
-                key={taskKeys[i] ?? i}
+                key={draft.taskKeys[i] ?? i}
                 task={task}
                 index={i}
-                allTasks={draft.tasks}
-                onEdit={editTask}
-                onRemove={removeTask}
+                allTasks={draft.proposal.tasks}
+                onEdit={applyEdit}
+                onRemove={(index) => applyEdit({ type: 'removeTask', index })}
               />
             ))}
           </div>
 
           <div className="border-border flex items-center justify-end gap-2 border-t pt-3">
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setDraft(null);
-                setTaskKeys([]);
-                data.setPlanId(null);
-              }}
-              disabled={confirming}
-            >
+            <Button variant="ghost" onClick={closePlan} disabled={confirming}>
               Cancel
             </Button>
             <Button
-              disabled={confirming || draft.tasks.length === 0}
+              disabled={
+                confirming || !canConfirm || draft.proposal.tasks.length === 0
+              }
               onClick={() => void submitConfirm()}
             >
               {confirming ? (
                 <>
                   <Loader2 className="size-4 animate-spin" /> Creating…
                 </>
+              ) : planConfirmed ? (
+                <>
+                  <Check className="size-4" /> Tasks created
+                </>
               ) : (
                 <>
-                  <Check className="size-4" /> Confirm {draft.tasks.length}{' '}
-                  tasks
+                  <Check className="size-4" /> Confirm{' '}
+                  {draft.proposal.tasks.length} tasks
                 </>
               )}
             </Button>

@@ -13,6 +13,7 @@ import type { Orchestrator } from './orchestrator.js';
 import { mergeQueuePath, runsDir } from './paths.js';
 import { type CommandRunner, defaultCommandRunner } from './pr.js';
 import type { CommandResult } from './pr.js';
+import { trimWorktree } from './trim.js';
 import type { RunMeta } from './types.js';
 import {
   MergeEnvironmentError,
@@ -56,6 +57,32 @@ export interface MergeQueueEntry {
    */
   reason?: string;
   enqueuedAt: string;
+  /**
+   * When this entry last CHANGED state — distinct from `enqueuedAt`, which never
+   * moves. The UI renders elapsed time from this ("Verifying · 4m"), which is
+   * what makes a slow step distinguishable from a wedged one; an entry once sat
+   * in `verifying` for 11 minutes with no process behind it and nothing said so.
+   * Optional so entries persisted before this field existed hydrate unchanged.
+   */
+  stateSince?: string;
+  /**
+   * How many times this entry has been picked up after a daemon died partway
+   * through processing it. Persisted with the rest of the entry, which is
+   * load-bearing rather than incidental: the scenario the cap exists to stop is a
+   * hang that recurs across restarts, and an in-memory counter resets to zero
+   * every boot — precisely the infinite loop, with a field that looks like it
+   * prevents one. Absent on entries written before this field existed, which
+   * reads as zero.
+   */
+  attempts?: number;
+  /**
+   * The tail of this entry's verify output, capped at VERIFY_OUTPUT_TAIL_BYTES.
+   * Exists so a client that opens mid-verify or refreshes sees recent progress
+   * rather than a silent `verifying`. Bounded rather than complete on purpose: an
+   * unbounded buffer against a multi-minute test suite is a leak in a long-lived
+   * daemon, and the full log belongs in the failure reason, not in memory.
+   */
+  output?: string;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;
 }
@@ -89,11 +116,20 @@ export interface MergeQueueOptions {
 const HISTORY_LIMIT = 20;
 const DEFAULT_BLOCKED_RETRY_DELAY_MS = 15_000;
 
+// How many times an entry may be picked back up after a daemon died partway
+// through processing it before the queue gives up on it for good. See
+// MergeQueueEntry.attempts for why this must be counted on disk.
+const MAX_INTERRUPTED_ATTEMPTS = 3;
+
+// How much of an entry's verify output is retained on the entry itself. Enough
+// to show what a verify was doing when it stalled or failed, small enough that a
+// daemon processing many entries cannot accumulate meaningful memory.
+const VERIFY_OUTPUT_TAIL_BYTES = 8192;
+
 // States process() can leave an entry in mid-way through rebase -> verify ->
-// merge. An entry stuck in one of these on disk when hydrate() runs means the
-// previous daemon process died before finish() ever ran for it — see
-// hydrate()'s comment for why that's always safe to treat as a fresh failure
-// rather than an attempt to resume.
+// merge. An entry found in one of these on disk when hydrate() runs means the
+// previous daemon process died before finish() ever ran for it — see hydrate()
+// for why that is retried rather than failed outright.
 const MID_FLIGHT_STATES: ReadonlySet<MergeQueueEntryState> = new Set([
   'rebasing',
   'verifying',
@@ -198,6 +234,7 @@ export class MergeQueue {
     // a branch that no longer exists.
     ctx.orchestrator.onRunTerminal((meta) => {
       this.pendingStaleRuns.push(meta.id);
+      this.trimIfIdle(meta);
       this.kick();
     });
     this.hydrate();
@@ -258,11 +295,31 @@ export class MergeQueue {
       this.ctx.orchestrator.list().map((meta) => [meta.id, meta])
     );
     for (const entry of persisted.entries) {
+      // A mid-flight entry means the previous process died partway through
+      // process() for it. Retrying is safe for exactly the reason the old
+      // "re-enqueue to retry" advice gave: the downstream steps are idempotent
+      // against a half-done prior attempt — merge()'s local path is a no-op the
+      // second time via review()/mergeRun's hasChanges skip, and its PR path
+      // either force-pushes again harmlessly or hits `gh pr merge`'s "already
+      // merged". So retry automatically instead of making a human notice.
+      //
+      // Bounded, though: auto-requeue plus a reproducible hang is an infinite
+      // loop (die mid-verify, boot, requeue, wedge again). The verify timeout
+      // catches most of that, but not the daemon being killed rather than the
+      // command overrunning — this cap is that backstop.
       if (MID_FLIGHT_STATES.has(entry.state)) {
-        this.fileStaleEntry(
-          entry,
-          'daemon restarted mid-merge; re-enqueue to retry'
-        );
+        const attempts = (entry.attempts ?? 0) + 1;
+        if (attempts > MAX_INTERRUPTED_ATTEMPTS) {
+          this.fileStaleEntry(
+            entry,
+            `abandoned after ${MAX_INTERRUPTED_ATTEMPTS} interrupted attempts — check verifyCommand`
+          );
+          continue;
+        }
+        entry.attempts = attempts;
+        this.setEntryState(entry, 'queued');
+        delete entry.reason;
+        this.entries.push(entry);
         continue;
       }
       if (this.entries.some((e) => e.runId === entry.runId)) {
@@ -291,7 +348,7 @@ export class MergeQueue {
         );
         continue;
       }
-      entry.state = 'queued';
+      this.setEntryState(entry, 'queued');
       // Any held reason came from the previous process's view of a checkout
       // that may since have been cleaned up — drop it so a reloaded entry
       // doesn't display a stale "blocked because X" that no longer applies.
@@ -311,7 +368,7 @@ export class MergeQueue {
   // enqueue() — finish() is the equivalent for entries actually processed
   // this run.
   private fileStaleEntry(entry: MergeQueueEntry, reason: string): void {
-    entry.state = 'failed';
+    this.setEntryState(entry, 'failed');
     entry.reason = reason;
     entry.finishedAt = new Date().toISOString();
     this.history.unshift(entry);
@@ -449,12 +506,14 @@ export class MergeQueue {
   // Shared entry shape for enqueue()/enqueueReady() — one place both build
   // the queued entry so they can't drift apart.
   private buildEntry(meta: RunMeta): MergeQueueEntry {
+    const now = new Date().toISOString();
     return {
       runId: meta.id,
       taskId: meta.taskId,
       taskTitle: meta.taskTitle,
       state: 'queued',
-      enqueuedAt: new Date().toISOString(),
+      enqueuedAt: now,
+      stateSince: now,
     };
   }
 
@@ -520,13 +579,7 @@ export class MergeQueue {
       if (meta === undefined) continue;
       if (!this.isEnqueueable(meta)) continue;
 
-      const entry: MergeQueueEntry = {
-        runId: meta.id,
-        taskId: meta.taskId,
-        taskTitle: meta.taskTitle,
-        state: 'queued',
-        enqueuedAt: new Date().toISOString(),
-      };
+      const entry = this.buildEntry(meta);
       this.entries.push(entry);
       enqueued.push(entry);
     }
@@ -749,7 +802,7 @@ export class MergeQueue {
             ? 'blocked-environment'
             : 'queued';
       if (entry.state !== nextState) {
-        entry.state = nextState;
+        this.setEntryState(entry, nextState);
         changed = true;
       }
       if ((!unmet || baseDiscarded) && eligible === null) eligible = entry;
@@ -807,7 +860,7 @@ export class MergeQueue {
     } catch (err) {
       entry.reason = (err as Error).message;
       if (err instanceof MergeEnvironmentError) {
-        entry.state = 'blocked-environment';
+        this.setEntryState(entry, 'blocked-environment');
         this.persist();
         this.broadcast();
         return 'blocked';
@@ -836,7 +889,7 @@ export class MergeQueue {
   // run on a DESCENDANT branch is still LIVE — see hasLiveDescendants for what
   // jj does to such a worktree, and why re-attaching it is not an option.
   private async rebase(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
-    entry.state = 'rebasing';
+    this.setEntryState(entry, 'rebasing');
     this.broadcast();
     const cwd = meta.worktreePath;
 
@@ -920,16 +973,48 @@ export class MergeQueue {
   // worktree sits mid-way — rebased onto the latest base, not yet
   // verified/merged — until the next enqueue attempt touches it again.
   private async verify(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
-    const verifyCommand = loadConfig(this.ctx.rootDir).verifyCommand;
+    const config = loadConfig(this.ctx.rootDir);
+    const verifyCommand = config.verifyCommand;
     if (verifyCommand === undefined) return;
-    entry.state = 'verifying';
+    this.setEntryState(entry, 'verifying');
     this.broadcast();
-    const result = await this.run(meta.worktreePath, [
-      'bash',
-      '-lc',
-      verifyCommand,
-    ]);
+    // Bounded because the queue is strictly serial: a verify that never returns
+    // holds up every entry behind it, and from the outside a wedged step and a
+    // slow one look identical. Read fresh from config here, exactly like
+    // `verifyCommand` itself, so raising the ceiling takes effect on the next
+    // entry without a daemon restart.
+    const timeoutSec = config.orchestrator.verifyTimeoutSec;
+    entry.output = '';
+    const result = await this.run(
+      meta.worktreePath,
+      ['bash', '-lc', verifyCommand],
+      {
+        timeoutMs: timeoutSec * 1000,
+        // Each chunk goes out as its own event and is appended to a bounded tail
+        // on the entry. The event is the increment (mirroring `run.log`); the
+        // tail is what a client that connects mid-verify or refreshes can read.
+        // Deliberately NOT calling broadcast() per chunk — that persists and
+        // ships a full snapshot, which at output volume would be pathological.
+        onOutput: (chunk: string) => {
+          entry.output = `${entry.output ?? ''}${chunk}`.slice(
+            -VERIFY_OUTPUT_TAIL_BYTES
+          );
+          this.ctx.events.broadcast({
+            type: 'merge-queue.log',
+            runId: entry.runId,
+            chunk,
+          });
+        },
+      }
+    );
     if (!result.ok) {
+      // The remedy belongs in the message — a bare "timed out" leaves the user
+      // exactly as stuck as the silent wedge did.
+      if (/timed out/i.test(result.stderr)) {
+        throw new Error(
+          `verify timed out after ${timeoutSec}s — raise orchestrator.verifyTimeoutSec or narrow verifyCommand`
+        );
+      }
       throw new Error(`verify failed: ${commandErrorText(result)}`);
     }
   }
@@ -942,7 +1027,7 @@ export class MergeQueue {
   // markRunMergedViaPr (mirroring what PrManager's own poller does once it
   // sees a PR merged).
   private async merge(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
-    entry.state = 'merging';
+    this.setEntryState(entry, 'merging');
     this.broadcast();
 
     if (meta.prUrl !== undefined) {
@@ -1392,6 +1477,53 @@ export class MergeQueue {
   // place both `merged` and `failed` outcomes converge. `mergedBaseBranch` is
   // supplied only for a 'merged' outcome, and is what feeds pushOnDrain's
   // eventual `git push origin <base>` once the queue empties out.
+  /**
+   * Reclaims a just-finished run's reinstallable dependency directories, keeping
+   * its checkout so the run stays reviewable (see trimWorktree).
+   *
+   * Measured motivation: 641MB of a 648MB worktree is `node_modules`, and a run
+   * that is terminal-but-unreviewed holds that indefinitely — those are exactly
+   * the worktrees that accumulate, because a reviewed run's worktree is removed
+   * outright by `review()`.
+   *
+   * It costs nothing at merge time: `verifyCommand` runs an install on every
+   * entry anyway, so a later merge would have reinstalled regardless.
+   *
+   * Skipped while the run has an entry in this queue. Trimming mid-rebase or
+   * mid-verify would delete dependencies out from under a running test suite,
+   * and the queue is about to need them.
+   */
+  private trimIfIdle(meta: RunMeta): void {
+    if (this.entries.some((e) => e.runId === meta.id)) return;
+    if (this.active?.runId === meta.id) return;
+    try {
+      const { reclaimedBytes } = trimWorktree(meta.worktreePath);
+      if (reclaimedBytes > 0) {
+        console.error(
+          `dispatchd: trimmed ${Math.round(reclaimedBytes / 1_000_000)}MB of reinstallable output from ${meta.id}'s worktree`
+        );
+      }
+    } catch (err) {
+      // Reclaiming disk is opportunistic — never let it break the run lifecycle.
+      console.error(
+        `dispatchd: failed to trim worktree for ${meta.id}: ${(err as Error).message}`
+      );
+    }
+  }
+
+  // The one place an entry's state is written, so `stateSince` cannot drift out
+  // of sync with it. Every transition site routes through here rather than
+  // assigning `entry.state` directly — a forgotten stamp would silently make an
+  // entry look like it had been in its current state since whenever it last
+  // happened to be updated, which is worse than showing no elapsed time at all.
+  private setEntryState(
+    entry: MergeQueueEntry,
+    state: MergeQueueEntryState
+  ): void {
+    entry.state = state;
+    entry.stateSince = new Date().toISOString();
+  }
+
   private finish(
     entry: MergeQueueEntry,
     state: 'merged' | 'failed',
@@ -1399,7 +1531,7 @@ export class MergeQueue {
   ): void {
     const idx = this.entries.indexOf(entry);
     if (idx !== -1) this.entries.splice(idx, 1);
-    entry.state = state;
+    this.setEntryState(entry, state);
     entry.finishedAt = new Date().toISOString();
     this.history.unshift(entry);
     this.history.length = Math.min(this.history.length, HISTORY_LIMIT);

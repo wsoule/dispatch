@@ -276,6 +276,11 @@ export type ServerEvent =
   // "go refetch" contract as run.changed. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'merge-queue.changed' }
+  // One chunk of a merge-queue entry's verify output, as it is produced. Its own
+  // event rather than part of `merge-queue.changed` because that one carries a
+  // full snapshot — per-chunk snapshots would be pathologically chatty. Same
+  // contract as `run.log`: the payload is the increment.
+  | { type: 'merge-queue.log'; runId: string; chunk: string }
   // The queue just finished draining and attempted to push origin's base up
   // to date. Mirrors packages/server/src/events.ts exactly.
   | {
@@ -283,7 +288,9 @@ export type ServerEvent =
       merged: number;
       pushed: boolean;
       pushError?: string;
-    };
+    }
+  // The brain-dump inbox changed — captured, retyped, dismissed or converted.
+  | { type: 'inbox.changed' };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's
@@ -399,6 +406,41 @@ export interface EpicProgress {
   liveRuns: RunMeta[];
 }
 
+// Mirrors InboxKind/InboxItem in packages/server/src/inbox.ts — the brain-dump inbox, which
+// replaced the notes store. `createdByRunId` is how "an agent flagged this mid-run" survives.
+export type InboxKind = 'bug' | 'idea' | 'task' | 'note';
+
+export interface InboxItem {
+  id: string;
+  kind: InboxKind;
+  text: string;
+  done: boolean;
+  linkedTaskId: string | null;
+  createdByRunId: string | null;
+  created: string;
+}
+
+/** Per-item outcome of a convert. `taskId` on success, `error` when that one item failed —
+ * a batch that half-succeeds has to be able to say which half. */
+export interface InboxConvertResult {
+  id: string;
+  taskId?: string;
+  error?: string;
+}
+
+/** One model-proposed grouping of related captures, ready to become an epic. */
+export interface InboxClusterGroup {
+  epicTitle: string;
+  reason: string;
+  itemIds: string[];
+}
+
+export interface InboxConvertResponse {
+  results: InboxConvertResult[];
+  converted: number;
+  failed: number;
+}
+
 // Mirrors MergeQueueEntryState in packages/server/src/orchestrator/mergeQueue.ts.
 export type MergeQueueEntryState =
   | 'queued'
@@ -421,6 +463,25 @@ export interface MergeQueueEntry {
   state: MergeQueueEntryState;
   /** Failure detail — set only once an entry lands in `failed`. */
   reason?: string;
+  /**
+   * When this entry last changed state — distinct from `enqueuedAt`, which never
+   * moves. Render elapsed time from this on in-flight entries ("Verifying · 4m"):
+   * it is what distinguishes a slow step from a wedged one. Optional, since
+   * entries persisted before the field existed hydrate without it.
+   */
+  stateSince?: string;
+  /**
+   * How many times this entry has been picked back up after a daemon died partway
+   * through processing it. Surfaced so a repeatedly-interrupted entry is visible
+   * before the queue abandons it.
+   */
+  attempts?: number;
+  /**
+   * The tail of this entry's verify output (bounded server-side). Render it while
+   * an entry is `verifying` so a multi-minute gate shows progress rather than
+   * looking wedged; `merge-queue.log` streams the increments live.
+   */
+  output?: string;
   enqueuedAt: string;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;
@@ -649,6 +710,27 @@ export interface ApiClient {
   ): Promise<PrDetail>;
   commentRepoPr(number: number, body: string): Promise<PrDetail>;
   // The notes/triage hub.
+  // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
+  // the splitting rule has exactly one implementation. `convertInbox` reports per-item results
+  // rather than throwing on a partial failure.
+  fetchInbox(): Promise<InboxItem[]>;
+  addInbox(input: {
+    text: string;
+    kind?: InboxKind;
+    createdByRunId?: string;
+  }): Promise<InboxItem[]>;
+  updateInbox(
+    id: string,
+    patch: { kind?: InboxKind; text?: string; done?: boolean }
+  ): Promise<InboxItem>;
+  dismissInbox(ids: string[]): Promise<{ dismissed: number }>;
+  convertInbox(ids: string[]): Promise<InboxConvertResponse>;
+  /** Starts an AI draft that turns one captured line into a properly specified task. */
+  enrichInbox(id: string): Promise<{ planId: string }>;
+  /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
+  enrichTask(id: string): Promise<{ planId: string }>;
+  /** Model-backed grouping of related captures. Costs a call, so it is user-triggered. */
+  clusterInbox(): Promise<{ groups: InboxClusterGroup[] }>;
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, patch: UpdateNotePatch): Promise<Note>;
@@ -814,6 +896,37 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ body }),
       }),
+    fetchInbox: () => request(baseUrl, '/api/inbox'),
+    addInbox: (input) =>
+      request(baseUrl, '/api/inbox', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    updateInbox: (id, patch) =>
+      request(baseUrl, `/api/inbox/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    dismissInbox: (ids) =>
+      request(baseUrl, '/api/inbox/dismiss', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    convertInbox: (ids) =>
+      request(baseUrl, '/api/inbox/convert', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    enrichInbox: (id) =>
+      request(baseUrl, `/api/inbox/${encodeURIComponent(id)}/enrich`, {
+        method: 'POST',
+      }),
+    enrichTask: (id) =>
+      request(baseUrl, `/api/tasks/${encodeURIComponent(id)}/enrich`, {
+        method: 'POST',
+      }),
+    clusterInbox: () =>
+      request(baseUrl, '/api/inbox/cluster', { method: 'POST' }),
     fetchNotes: () => request(baseUrl, '/api/notes'),
     createNote: (input) =>
       request(baseUrl, '/api/notes', { method: 'POST', ...jsonBody(input) }),

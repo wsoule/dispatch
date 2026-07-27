@@ -45,7 +45,7 @@ const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
   'in-progress': {
     shape: 'pie',
     fraction: 0.5,
-    colorClass: 'text-amber-500 dark:text-amber-400',
+    colorClass: 'text-state-waiting',
     tone: 'amber',
   },
   'in-review': {
@@ -67,9 +67,9 @@ const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
 // so a project's own `.dispatch/config.yml` status list always renders *something* sensible
 // (an empty ring in a deliberate color) rather than an unstyled shape.
 const FALLBACK_TONE_COLOR_CLASS: Record<Tone, string> = {
-  green: 'text-emerald-500 dark:text-emerald-400',
-  blue: 'text-blue-500 dark:text-blue-400',
-  amber: 'text-amber-500 dark:text-amber-400',
+  green: 'text-state-review',
+  blue: 'text-state-landing',
+  amber: 'text-state-waiting',
   red: 'text-destructive',
   gray: 'text-muted-foreground',
   accent: 'text-primary',

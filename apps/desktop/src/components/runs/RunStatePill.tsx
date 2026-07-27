@@ -1,5 +1,8 @@
-import type { RunState } from '@dispatch/client';
+import type { RunMeta, RunState } from '@dispatch/client';
 
+import { deriveRunDisposition, runDispositionLabel } from '../../lib/runState';
+import { StateDot } from '@/components/ui/StateDot';
+import type { FeedState } from '@/lib/feedState';
 import { cn } from '@/lib/utils';
 
 // Mirrors `statusTone` in lib/taskDisplay.ts's spirit (map a fixed enum to a
@@ -16,26 +19,50 @@ const RUN_STATE_LABEL: Record<RunState, string> = {
   cancelled: 'Cancelled',
 };
 
-const RUN_STATE_DOT: Record<RunState, string> = {
-  provisioning: 'bg-muted-foreground/50',
-  running: 'bg-blue-500',
-  'awaiting-approval': 'bg-amber-500',
-  finished: 'bg-emerald-500',
-  failed: 'bg-destructive',
-  cancelled: 'bg-muted-foreground/50',
+/**
+ * Which state color each `RunState` paints with, as a `FeedState` so this pill and the dense
+ * surfaces that group by state can never disagree about what "waiting on you" looks like. The
+ * colors themselves are the `--state-*` tokens in styles/tokens.css.
+ *
+ * One row differs from `deriveFeedState` on purpose: `cancelled` is neutral here, not a
+ * failure. The two answer different questions. The Control room asks "does a human owe this
+ * something", and a cancelled run does — so it groups with failures there. This pill only
+ * reports where the process ended, and a run the user deliberately stopped is not an error;
+ * painting it red would claim something broke.
+ */
+const RUN_STATE_TONE: Record<RunState, FeedState> = {
+  provisioning: 'working',
+  running: 'working',
+  'awaiting-approval': 'waiting',
+  finished: 'review',
+  failed: 'failed',
+  cancelled: 'blocked',
 };
 
 interface RunStatePillProps {
-  state: RunState;
+  meta: RunMeta;
   className?: string;
 }
 
 /** Small state indicator shared by the Tasks board card, the Runs rail, and the run detail
  * header — one place owns the RunState -> label/color mapping so all three always agree.
  * Per the redesign brief, status renders as a small colored dot + label rather than a
- * bordered/background pill box; the dot pulses gently while the run is actively in flight. */
-export function RunStatePill({ state, className }: RunStatePillProps) {
+ * bordered/background pill box; the dot pulses gently while the run is actively in flight.
+ *
+ * Takes the whole `RunMeta` rather than just `state` because `RunState` alone cannot say what
+ * a run needs from a human: two runs on `finished` differ on whether anyone reviewed them, and
+ * two on `failed` differ on whether a session remains to continue from. The disposition badge
+ * beside the state answers that (see `deriveRunDisposition`), and deriving it here rather than
+ * at each of this component's five call sites is what keeps every surface agreeing — a run
+ * reading "Needs review" in the Runs rail but bare "Finished" on a board card is exactly the
+ * inconsistency this exists to remove. */
+export function RunStatePill({ meta, className }: RunStatePillProps) {
+  const state = meta.state;
   const inFlight = state === 'provisioning' || state === 'running';
+  const badge = runDispositionLabel(
+    deriveRunDisposition(meta),
+    meta.reviewAction
+  );
   return (
     <span
       className={cn(
@@ -43,14 +70,13 @@ export function RunStatePill({ state, className }: RunStatePillProps) {
         className
       )}
     >
-      <span
-        className={cn(
-          'size-1.5 shrink-0 rounded-full',
-          RUN_STATE_DOT[state],
-          inFlight && 'animate-pulse'
-        )}
-      />
+      <StateDot state={RUN_STATE_TONE[state]} pulse={inFlight} />
       {RUN_STATE_LABEL[state]}
+      {badge !== null && (
+        <span className="border-border text-muted-foreground rounded border px-1 py-px text-[10px] leading-none">
+          {badge}
+        </span>
+      )}
     </span>
   );
 }

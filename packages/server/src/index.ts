@@ -8,6 +8,7 @@ import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
+import { InboxStore } from './inbox.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
@@ -274,6 +275,18 @@ export async function startServer(
   );
   mergeQueue.startAutoRefresh();
 
+  // The brain-dump inbox, and the one-time fold of the retired notes store into it. Run at
+  // startup rather than behind a user action because it is idempotent (see migrateNotes) and
+  // because a daemon that has already read notes.json should never serve an inbox that is
+  // missing them — a half-migrated state is the one outcome worth ruling out entirely.
+  const inboxStore = new InboxStore(rootDir);
+  const migrated = inboxStore.migrateNotes(rootDir);
+  if (migrated > 0) {
+    console.log(
+      `dispatchd: migrated ${migrated} note(s) from .dispatch/notes.json into .dispatch/inbox.md`
+    );
+  }
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -287,6 +300,7 @@ export async function startServer(
     mergeQueue,
     prCapability,
     noteStore: new NoteStore(rootDir),
+    inboxStore,
   };
 
   const server = Bun.serve({
