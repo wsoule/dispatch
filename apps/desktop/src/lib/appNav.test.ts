@@ -106,6 +106,64 @@ describe('navReducer', () => {
     expect(next).toEqual(initialNavState);
   });
 
+  test('openNewTask opens the full-page creator and remembers where it came from', () => {
+    const state: NavState = { ...initialNavState, projectView: 'runs' };
+    const next = navReducer(state, { type: 'openNewTask' });
+    expect(next.section).toBe('project');
+    expect(next.projectView).toBe('new-task');
+    expect(next.newTaskReturnView).toBe('runs');
+  });
+
+  test('closeNewTask returns to the view the creator was opened from', () => {
+    let state = navReducer(
+      { ...initialNavState, projectView: 'milestones' },
+      { type: 'openNewTask' }
+    );
+    state = navReducer(state, { type: 'closeNewTask' });
+    expect(state.projectView).toBe('milestones');
+  });
+
+  test('closeNewTask is a no-op when the creator is not the current view', () => {
+    const state: NavState = { ...initialNavState, projectView: 'board' };
+    expect(navReducer(state, { type: 'closeNewTask' })).toEqual(state);
+  });
+
+  test('opening the creator twice keeps the original return view', () => {
+    let state = navReducer(
+      { ...initialNavState, projectView: 'notes' },
+      { type: 'openNewTask' }
+    );
+    state = navReducer(state, { type: 'openNewTask' });
+    expect(state.newTaskReturnView).toBe('notes');
+  });
+
+  test('opening the creator from a global view keeps the last project view as the way back', () => {
+    let state = navReducer(
+      { ...initialNavState, projectView: 'plans' },
+      { type: 'setGlobalView', view: 'settings' }
+    );
+    state = navReducer(state, { type: 'openNewTask' });
+    expect(state.section).toBe('project');
+    expect(state.newTaskReturnView).toBe('plans');
+  });
+
+  test('escape closes the full-page creator once palette and peek are closed', () => {
+    let state = navReducer(
+      { ...initialNavState, projectView: 'board' },
+      { type: 'openNewTask' }
+    );
+    state = navReducer(state, { type: 'escape' });
+    expect(state.projectView).toBe('board');
+  });
+
+  test('escape closes the palette before the full-page creator behind it', () => {
+    let state = navReducer(initialNavState, { type: 'openNewTask' });
+    state = navReducer(state, { type: 'openPalette' });
+    state = navReducer(state, { type: 'escape' });
+    expect(state.paletteOpen).toBe(false);
+    expect(state.projectView).toBe('new-task');
+  });
+
   // C1 regression guard: `activeRunId` is the *only* place "which run is selected" lives —
   // `useDispatchProject` and `RunsView` both read it directly now (no more hook-internal
   // duplicate). These sequences are exactly what App.tsx's `jumpToRun` (All Agents → a run
