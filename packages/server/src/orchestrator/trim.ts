@@ -22,9 +22,11 @@ const RECLAIMABLE_DIRS: readonly string[] = ['node_modules', 'dist'];
 const SKIP_DIRS: readonly string[] = ['.git'];
 
 export interface TrimResult {
-  /** Bytes freed. Zero when there was nothing to reclaim, or no worktree. */
-  reclaimedBytes: number;
-  /** Paths removed, relative to the worktree — for logging what a trim did. */
+  /**
+   * Paths removed, relative to the worktree. Deliberately not a byte count:
+   * measuring what is about to be deleted costs more than deleting it (see
+   * collectReclaimable). Use worktreeDiskUsage beforehand if a number is wanted.
+   */
   removed: string[];
 }
 
@@ -63,10 +65,38 @@ function directorySize(dir: string): number {
   return total;
 }
 
-// Walks a worktree, calling `onReclaimable` for each reclaimable directory found
-// and accumulating the size of everything else. Reclaimable directories are not
-// descended into: their whole subtree is counted at once, and a `node_modules`
-// nested inside another is already included in its parent's total.
+// Finds reclaimable directories WITHOUT measuring or descending into them.
+//
+// Deliberately cheap: it never stats files and never walks inside a
+// `node_modules`, so its cost is proportional to the checkout's directory count
+// rather than to the hundreds of thousands of files it is about to delete. An
+// earlier version sized each directory before removing it, purely to report a
+// byte count in a log line — that measurement ran synchronously on the daemon's
+// event loop and cost far more than the deletion itself, enough to blow past
+// test timeouts. If a caller wants the number, worktreeDiskUsage is the
+// on-demand way to get it.
+function collectReclaimable(dir: string, out: string[]): void {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    if (SKIP_DIRS.includes(entry.name)) continue;
+    const full = join(dir, entry.name);
+    if (RECLAIMABLE_DIRS.includes(entry.name)) {
+      out.push(full);
+      continue;
+    }
+    collectReclaimable(full, out);
+  }
+}
+
+// Walks a worktree, sizing each reclaimable directory and accumulating the size
+// of everything else. Only worktreeDiskUsage uses this — it is the expensive
+// path, and it exists to answer "what is this costing", not to delete anything.
 function walk(
   dir: string,
   onReclaimable: (path: string, bytes: number) => void
@@ -113,20 +143,20 @@ function walk(
  * case.
  */
 export function trimWorktree(worktreePath: string): TrimResult {
-  if (!existsSync(worktreePath)) return { reclaimedBytes: 0, removed: [] };
-  let reclaimedBytes = 0;
+  if (!existsSync(worktreePath)) return { removed: [] };
+  const found: string[] = [];
+  collectReclaimable(worktreePath, found);
   const removed: string[] = [];
-  walk(worktreePath, (path, bytes) => {
+  for (const path of found) {
     try {
       rmSync(path, { recursive: true, force: true });
-      reclaimedBytes += bytes;
       removed.push(path.slice(worktreePath.length + 1));
     } catch {
       // Leave it; a trim that cannot remove one directory should still remove
       // the rest rather than abandoning the whole worktree.
     }
-  });
-  return { reclaimedBytes, removed };
+  }
+  return { removed };
 }
 
 /**

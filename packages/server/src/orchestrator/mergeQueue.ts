@@ -1497,10 +1497,10 @@ export class MergeQueue {
     if (this.entries.some((e) => e.runId === meta.id)) return;
     if (this.active?.runId === meta.id) return;
     try {
-      const { reclaimedBytes } = trimWorktree(meta.worktreePath);
-      if (reclaimedBytes > 0) {
+      const { removed } = trimWorktree(meta.worktreePath);
+      if (removed.length > 0) {
         console.error(
-          `dispatchd: trimmed ${Math.round(reclaimedBytes / 1_000_000)}MB of reinstallable output from ${meta.id}'s worktree`
+          `dispatchd: trimmed ${removed.length} reinstallable director${removed.length === 1 ? 'y' : 'ies'} from ${meta.id}'s worktree`
         );
       }
     } catch (err) {

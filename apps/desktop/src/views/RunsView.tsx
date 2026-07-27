@@ -6,6 +6,7 @@ import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunDiffView } from '../components/runs/RunDiffView';
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
+import { RunSidebar } from '../components/runs/RunSidebar';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StackBadge, StackRail } from '../components/tasks/StackRail';
@@ -328,22 +329,49 @@ export function RunsView({
                 </TabsList>
 
                 <TabsContent value="session" className="min-h-0">
-                  <RunLogView
-                    meta={data.runDetail.meta}
-                    entries={data.runDetail.entries}
-                    pendingApproval={
-                      data.pendingApprovals.get(selected.id) ?? null
-                    }
-                    onApprove={(requestId, allow) =>
-                      data.handleApprove(selected.id, requestId, allow)
-                    }
-                    onSendMessage={(text) =>
-                      data.handleSendMessage(selected.id, text)
-                    }
-                    onRequestChanges={(text) =>
-                      data.handleRequestChanges(selected.id, text)
-                    }
-                  />
+                  <div className="flex min-h-0 gap-4">
+                    <div className="min-h-0 min-w-0 flex-1">
+                      <RunLogView
+                        meta={data.runDetail.meta}
+                        entries={data.runDetail.entries}
+                        pendingApproval={
+                          data.pendingApprovals.get(selected.id) ?? null
+                        }
+                        onApprove={(requestId, allow) =>
+                          data.handleApprove(selected.id, requestId, allow)
+                        }
+                        onSendMessage={(text) =>
+                          data.handleSendMessage(selected.id, text)
+                        }
+                        onRequestChanges={(text) =>
+                          data.handleRequestChanges(selected.id, text)
+                        }
+                      />
+                    </div>
+                    <RunSidebar
+                      meta={data.runDetail.meta}
+                      diff={data.diff}
+                      task={data.tasks.find(
+                        (t) => t.meta.id === selected.taskId
+                      )}
+                      epicTitle={
+                        data.epics.find(
+                          (e) =>
+                            e.meta.id ===
+                            data.tasks.find(
+                              (t) => t.meta.id === selected.taskId
+                            )?.meta.parent
+                        )?.meta.title ?? null
+                      }
+                      onOpenTask={(taskId) => {
+                        // The Runs surface has no task peek of its own, so "open the task"
+                        // means jump to that task's latest run — the same thing StackRail
+                        // does above.
+                        const run = data.latestRunByTaskId.get(taskId);
+                        if (run !== undefined) onSelectRun(run.id);
+                      }}
+                    />
+                  </div>
                 </TabsContent>
 
                 <TabsContent value="diff" className="min-h-0">
