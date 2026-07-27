@@ -173,10 +173,15 @@ function statusPaths(dir: string): string[] {
 // the user's main checkout, but jj is not a build dependency — skip rather
 // than fail where the binary isn't installed.
 function hasJj(): boolean {
-  return (
-    Bun.spawnSync(['jj', '--version'], { stdout: 'pipe', stderr: 'pipe' })
-      .exitCode === 0
-  );
+  // Bun.spawnSync throws on a missing executable — absent jj means false.
+  try {
+    return (
+      Bun.spawnSync(['jj', '--version'], { stdout: 'pipe', stderr: 'pipe' })
+        .exitCode === 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 describe('base selection', () => {
