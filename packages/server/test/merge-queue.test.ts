@@ -217,10 +217,15 @@ function makeJjStubRunner(): {
 // where the binary isn't installed — same convention stacked-dispatch.test.ts
 // already uses for its own real-jj coverage.
 function hasJj(): boolean {
-  return (
-    Bun.spawnSync(['jj', '--version'], { stdout: 'pipe', stderr: 'pipe' })
-      .exitCode === 0
-  );
+  // Bun.spawnSync throws on a missing executable — absent jj means false.
+  try {
+    return (
+      Bun.spawnSync(['jj', '--version'], { stdout: 'pipe', stderr: 'pipe' })
+        .exitCode === 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 // Converts the test repo in place to a colocated jj repo, so a MergeQueue
