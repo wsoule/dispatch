@@ -11,9 +11,11 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StackBadge, StackRail } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useResizablePane } from '../hooks/useResizablePane';
+import { countMergeReady } from '../lib/mergeReady';
 import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
 
@@ -70,6 +72,29 @@ export function RunsView({
   // run (on first seeing it, or once its diff resolves), so switching tabs manually never
   // gets clobbered by a later poll of the same run's data.
   const defaultedRunIdRef = useRef<string | null>(null);
+
+  // "Merge all ready" toolbar button state — disabled while the enqueue call
+  // itself is in flight, on top of countMergeReady's own zero-count disable.
+  const [mergeAllPending, setMergeAllPending] = useState(false);
+  const queuedRunIds = useMemo(
+    () => new Set((data.mergeQueue?.entries ?? []).map((e) => e.runId)),
+    [data.mergeQueue]
+  );
+  const mergeReadyCount = useMemo(
+    () => countMergeReady(data.runs, data.tasks, queuedRunIds),
+    [data.runs, data.tasks, queuedRunIds]
+  );
+  // Also used as the push-failure banner's Retry action: re-invoking with
+  // nothing left to enqueue still kicks the queue's pump, which retries a
+  // failed drain-push (see useDispatchProject's handleMergeAllReady comment).
+  const handleMergeAll = async () => {
+    setMergeAllPending(true);
+    try {
+      await data.handleMergeAllReady();
+    } finally {
+      setMergeAllPending(false);
+    }
+  };
 
   // The split container the run-list column and drag handle live in — its width is the
   // clamp ceiling for the resize (the list can take at most half of it).
@@ -142,7 +167,32 @@ export function RunsView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <h1 className="view-topbar-title">Runs</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="view-topbar-title">Runs</h1>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={mergeReadyCount === 0 || mergeAllPending}
+          onClick={() => void handleMergeAll()}
+        >
+          Merge all ready ({mergeReadyCount})
+        </Button>
+      </div>
+      {data.lastPushError !== null && (
+        <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-[12px]">
+          <span className="min-w-0 truncate">
+            Merged locally — push failed: {data.lastPushError}
+          </span>
+          <Button
+            variant="secondary"
+            size="xs"
+            disabled={mergeAllPending}
+            onClick={() => void handleMergeAll()}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
       <div ref={splitRef} className="flex min-h-0 flex-1">
         <div
           className="flex shrink-0 flex-col gap-1 overflow-y-auto pr-3"
