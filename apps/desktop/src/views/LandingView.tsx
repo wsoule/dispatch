@@ -128,13 +128,22 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
                   <span
                     className={cn(
                       'dense-meta truncate',
-                      row.stalled && 'text-state-waiting'
+                      (row.stalled || row.overdue) && 'text-state-waiting'
                     )}
                   >
                     {row.label}
+                    {row.overdue && ' · taking longer than expected'}
                   </span>
-                  <span className="dense-meta text-right">
-                    {formatRelativeTimeFromIso(row.entry.enqueuedAt)}
+                  {/* Time in the CURRENT state, not since enqueue — a step that
+                      has run for two minutes and one wedged for eleven look
+                      identical measured from enqueue. */}
+                  <span
+                    className={cn(
+                      'dense-meta text-right',
+                      row.overdue && 'text-state-waiting'
+                    )}
+                  >
+                    {formatRelativeTimeFromIso(row.elapsedSince)}
                   </span>
                 </div>
 

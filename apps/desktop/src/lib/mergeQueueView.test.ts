@@ -2,8 +2,10 @@ import type { MergeQueueEntry, MergeQueueEntryState } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
+  elapsedInStateMs,
   heldCount,
   isMidFlight,
+  isOverdue,
   isRetryable,
   phaseSteps,
   QUEUE_PHASES,
@@ -172,5 +174,58 @@ describe('toQueueRows', () => {
 
   test('an empty queue produces no rows', () => {
     expect(toQueueRows([])).toEqual([]);
+  });
+});
+
+// The wedge this exists for: an entry sat in `verifying` for 11 minutes with no
+// process behind it. `isStalled` cannot see that — it reads the state alone, and
+// `verifying` is a legitimately busy state. Elapsed time in the CURRENT state is
+// what separates slow from wedged, which is why `enqueuedAt` cannot answer it
+// (it never moves, so it only ever says "how long since queued").
+describe('elapsedInStateMs', () => {
+  const now = new Date('2026-07-26T00:10:00.000Z').getTime();
+
+  test('measures from stateSince, not enqueuedAt', () => {
+    const e = entry('verifying', {
+      enqueuedAt: '2026-07-26T00:00:00.000Z',
+      stateSince: '2026-07-26T00:08:00.000Z',
+    });
+    // 2 minutes in `verifying`, despite 10 minutes in the queue.
+    expect(elapsedInStateMs(e, now)).toBe(120_000);
+  });
+
+  // Entries persisted before stateSince existed still have to render something
+  // rather than NaN.
+  test('falls back to enqueuedAt when stateSince is absent', () => {
+    const e = entry('verifying', { enqueuedAt: '2026-07-26T00:00:00.000Z' });
+    expect(elapsedInStateMs(e, now)).toBe(600_000);
+  });
+});
+
+describe('isOverdue', () => {
+  const now = new Date('2026-07-26T00:10:00.000Z').getTime();
+
+  test('flags a mid-flight entry stuck well past the expected window', () => {
+    const e = entry('verifying', { stateSince: '2026-07-26T00:00:00.000Z' });
+    expect(isOverdue(e, now)).toBe(true);
+  });
+
+  test('leaves a mid-flight entry alone while it is plausibly working', () => {
+    const e = entry('verifying', { stateSince: '2026-07-26T00:09:00.000Z' });
+    expect(isOverdue(e, now)).toBe(false);
+  });
+
+  // A held entry is waiting on a human by design — it is not overdue however
+  // long it sits, and flagging it would cry wolf on the normal case.
+  test('never flags a held entry, however long it has waited', () => {
+    const e = entry('blocked-environment', {
+      stateSince: '2026-07-25T00:00:00.000Z',
+    });
+    expect(isOverdue(e, now)).toBe(false);
+  });
+
+  test('never flags a queued entry waiting its turn', () => {
+    const e = entry('queued', { stateSince: '2026-07-25T00:00:00.000Z' });
+    expect(isOverdue(e, now)).toBe(false);
   });
 });
