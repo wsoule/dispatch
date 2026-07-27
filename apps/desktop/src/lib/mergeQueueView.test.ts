@@ -1,4 +1,8 @@
-import type { MergeQueueEntry, MergeQueueEntryState } from '@dispatch/client';
+import type {
+  MergeQueueEntry,
+  MergeQueueEntryState,
+  VerifyStepResult,
+} from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
@@ -227,5 +231,57 @@ describe('isOverdue', () => {
   test('never flags a queued entry waiting its turn', () => {
     const e = entry('queued', { stateSince: '2026-07-25T00:00:00.000Z' });
     expect(isOverdue(e, now)).toBe(false);
+  });
+});
+
+describe('named verify steps', () => {
+  test('while verifying, the real steps replace the coarse phases', () => {
+    const steps = phaseSteps('verifying', [
+      { name: 'typecheck', status: 'passed', ms: 2100 },
+      { name: 'tests', status: 'running' },
+      { name: 'lint', status: 'pending' },
+    ]);
+    expect(steps?.map((s) => s.name)).toEqual(['typecheck', 'tests', 'lint']);
+    expect(steps?.map((s) => s.status)).toEqual([
+      'passed',
+      'active',
+      'pending',
+    ]);
+  });
+
+  test('a failed step is shown as failed, not merely stopped', () => {
+    const steps = phaseSteps('verifying', [
+      { name: 'typecheck', status: 'failed' },
+    ]);
+    expect(steps?.[0]?.status).toBe('failed');
+  });
+
+  // Before and after verification the named steps say nothing useful about where the entry is
+  // in the queue, so the three-phase view stays the honest summary.
+  test('outside verification the phase view is used even when steps exist', () => {
+    const withSteps: VerifyStepResult[] = [
+      { name: 'typecheck', status: 'passed' },
+    ];
+    expect(phaseSteps('merging', withSteps)?.map((s) => s.name)).toEqual([
+      'rebase',
+      'verify',
+      'merge',
+    ]);
+  });
+
+  test('an entry that reports no steps still gets the phase view', () => {
+    expect(phaseSteps('verifying', [])?.map((s) => s.name)).toEqual([
+      'rebase',
+      'verify',
+      'merge',
+    ]);
+  });
+
+  // Still unknowable: a failed entry has left verification, and the server records only the
+  // thrown message, so there is no pipeline to draw.
+  test('a failed entry gets no strip regardless of recorded steps', () => {
+    expect(
+      phaseSteps('failed', [{ name: 'tests', status: 'failed' }])
+    ).toBeNull();
   });
 });

@@ -118,7 +118,7 @@ describe('FakeExecutor', () => {
     expect(entries).toEqual([{ ts: 't0', kind: 'assistant', text: 'before' }]);
     expect(finishes).toHaveLength(0);
 
-    run.approve('req-1', true);
+    run.approve('req-1', { allow: true });
     await Bun.sleep(10);
 
     expect(entries).toEqual([
@@ -147,7 +147,7 @@ describe('FakeExecutor', () => {
 
     const run = executor.start({ ...baseOpts, cwd: repo }, events);
     await Bun.sleep(10);
-    run.approve('req-2', false);
+    run.approve('req-2', { allow: false });
     await Bun.sleep(10);
 
     expect(entries).toEqual([]);

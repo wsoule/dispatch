@@ -32,6 +32,7 @@ export type {
   ConfigPatch,
   DispatchConfig,
   OrchestratorConfig,
+  VerifyStep,
 } from './config.js';
 export {
   readRegistry,

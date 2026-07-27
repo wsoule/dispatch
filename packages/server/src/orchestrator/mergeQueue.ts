@@ -46,11 +46,25 @@ export type MergeQueueEntryState =
   | 'merged'
   | 'failed';
 
+/** One named verify gate's outcome on a queue entry. */
+export interface VerifyStepResult {
+  name: string;
+  status: 'pending' | 'running' | 'passed' | 'failed';
+  /** Wall-clock duration, set once the step comes to rest. */
+  ms?: number;
+}
+
 export interface MergeQueueEntry {
   runId: string;
   taskId: string;
   taskTitle: string;
   state: MergeQueueEntryState;
+  /**
+   * Per-step verify results, present once verification starts. Seeded as all-pending so the
+   * whole pipeline is visible from the first render rather than appearing a step at a time.
+   * A project with no `verifySteps` gets a single step named "verify".
+   */
+  steps?: VerifyStepResult[];
   /**
    * Why this entry failed or is being held — set on `failed` (terminal) and on
    * `blocked-environment` (retryable, and the one the user has to act on).
@@ -974,9 +988,20 @@ export class MergeQueue {
   // verified/merged — until the next enqueue attempt touches it again.
   private async verify(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
     const config = loadConfig(this.ctx.rootDir);
-    const verifyCommand = config.verifyCommand;
-    if (verifyCommand === undefined) return;
+    // Named steps when the project configured them, otherwise the single command as one step.
+    // Collapsing both onto the same shape is what lets everything downstream — the entry's
+    // per-step record, the UI, the failure message — stop caring which form the project uses.
+    const steps =
+      config.verifySteps !== undefined && config.verifySteps.length > 0
+        ? config.verifySteps
+        : config.verifyCommand !== undefined
+          ? [{ name: 'verify', command: config.verifyCommand }]
+          : [];
+    if (steps.length === 0) return;
     this.setEntryState(entry, 'verifying');
+    // Seeded up front so a client sees the whole pipeline as pending from the first render,
+    // rather than steps popping into existence one at a time as they start.
+    entry.steps = steps.map((s) => ({ name: s.name, status: 'pending' }));
     this.broadcast();
     // Bounded because the queue is strictly serial: a verify that never returns
     // holds up every entry behind it, and from the outside a wedged step and a
@@ -985,9 +1010,35 @@ export class MergeQueue {
     // entry without a daemon restart.
     const timeoutSec = config.orchestrator.verifyTimeoutSec;
     entry.output = '';
+    for (const [i, step] of steps.entries()) {
+      const record = entry.steps[i];
+      if (record !== undefined) {
+        record.status = 'running';
+        this.broadcast();
+      }
+      const startedAt = Date.now();
+      await this.runVerifyStep(entry, meta, step, timeoutSec, i);
+      if (record !== undefined) record.ms = Date.now() - startedAt;
+    }
+    entry.steps.forEach((r) => {
+      if (r.status === 'running') r.status = 'passed';
+    });
+    this.broadcast();
+  }
+
+  /** One verify step. Throws on failure, which stops the pipeline — a typecheck failure makes
+   * running the tests pointless, and the first real error is the one worth reporting. */
+  private async runVerifyStep(
+    entry: MergeQueueEntry,
+    meta: RunMeta,
+    step: { name: string; command: string },
+    timeoutSec: number,
+    index: number
+  ): Promise<void> {
+    const record = entry.steps?.[index];
     const result = await this.run(
       meta.worktreePath,
-      ['bash', '-lc', verifyCommand],
+      ['bash', '-lc', step.command],
       {
         timeoutMs: timeoutSec * 1000,
         // Each chunk goes out as its own event and is appended to a bounded tail
@@ -1008,15 +1059,17 @@ export class MergeQueue {
       }
     );
     if (!result.ok) {
-      // The remedy belongs in the message — a bare "timed out" leaves the user
-      // exactly as stuck as the silent wedge did.
+      if (record !== undefined) record.status = 'failed';
+      // Naming the step is the whole point of configuring them: "verify failed" tells you to go
+      // read a log, "typecheck failed" tells you what broke.
       if (/timed out/i.test(result.stderr)) {
         throw new Error(
-          `verify timed out after ${timeoutSec}s — raise orchestrator.verifyTimeoutSec or narrow verifyCommand`
+          `${step.name} timed out after ${timeoutSec}s — raise orchestrator.verifyTimeoutSec or narrow the step`
         );
       }
-      throw new Error(`verify failed: ${commandErrorText(result)}`);
+      throw new Error(`${step.name} failed: ${commandErrorText(result)}`);
     }
+    if (record !== undefined) record.status = 'passed';
   }
 
   // The terminal step: a local run goes through the orchestrator's own

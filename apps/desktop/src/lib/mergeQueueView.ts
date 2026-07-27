@@ -1,4 +1,8 @@
-import type { MergeQueueEntry, MergeQueueEntryState } from '@dispatch/client';
+import type {
+  MergeQueueEntry,
+  MergeQueueEntryState,
+  VerifyStepResult,
+} from '@dispatch/client';
 
 import type { Step } from '@/components/ui/StepStrip';
 
@@ -33,7 +37,33 @@ const PHASE_LABEL: Record<QueuePhase, string> = {
  * broke. Painting all three red would claim the rebase failed when it may well have succeeded;
  * painting them grey would claim nothing ran. The honest move is to show no strip at all and
  * let the recorded reason speak. */
-export function phaseSteps(state: MergeQueueEntryState): Step[] | null {
+export function phaseSteps(
+  state: MergeQueueEntryState,
+  /** Real per-step verify results, when the entry has reached verification. */
+  verifySteps?: VerifyStepResult[]
+): Step[] | null {
+  // Once the queue reports named verify steps, show those instead of the coarse three phases —
+  // "typecheck failed" is worth an entire pipeline diagram of "verify failed". Only while
+  // verification is actually the current phase; before and after, the phase view is the honest
+  // summary.
+  if (
+    state === 'verifying' &&
+    verifySteps !== undefined &&
+    verifySteps.length > 0
+  ) {
+    return verifySteps.map((s) => ({
+      name: s.name,
+      status:
+        s.status === 'running'
+          ? 'active'
+          : s.status === 'passed'
+            ? 'passed'
+            : s.status === 'failed'
+              ? 'failed'
+              : 'pending',
+    }));
+  }
+
   if (state === 'failed') return null;
 
   const reached: Record<MergeQueueEntryState, number> = {
@@ -168,7 +198,7 @@ export function toQueueRows(
     entry,
     position: i + 1,
     label: queueStateLabel(entry.state),
-    steps: phaseSteps(entry.state),
+    steps: phaseSteps(entry.state, entry.steps),
     retryable: isRetryable(entry.state),
     stalled: isStalled(entry.state),
     overdue: isOverdue(entry, now),

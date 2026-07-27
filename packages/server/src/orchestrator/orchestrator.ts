@@ -31,6 +31,7 @@ import { buildTaskPrompt } from './prompt.js';
 import { RunRegistry } from './registry.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
+  ApprovalDecision,
   BranchEntry,
   BranchEntryStatus,
   Executor,
@@ -455,7 +456,15 @@ export class Orchestrator {
   // `awaiting-approval` and `requestId` matches the one it's actually
   // waiting on — both mismatches are 400s, not 404s, since the run itself
   // does exist.
-  approve(runId: string, requestId: string, allow: boolean): void {
+  approve(
+    runId: string,
+    requestId: string,
+    decision: ApprovalDecision | boolean
+  ): void {
+    // Accepts a bare boolean so the older two-argument callers keep working unchanged; a
+    // decision object is the richer form the review UI sends.
+    const resolved: ApprovalDecision =
+      typeof decision === 'boolean' ? { allow: decision } : decision;
     const meta = this.requireRun(runId);
     if (meta.state !== 'awaiting-approval') {
       throw new OrchestratorClientError(
@@ -479,7 +488,7 @@ export class Orchestrator {
       this.healZombieRun(meta);
     }
     this.registry.setPendingApproval(runId, undefined);
-    executorRun.approve(requestId, allow);
+    executorRun.approve(requestId, resolved);
     this.transition(runId, 'running');
   }
 

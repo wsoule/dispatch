@@ -1,4 +1,5 @@
 import type {
+  ApprovalDecision,
   Executor,
   ExecutorEvents,
   ExecutorRun,
@@ -64,7 +65,10 @@ export class FakeExecutor implements Executor {
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     let cancelled = false;
-    const pendingApprovals = new Map<string, (allow: boolean) => void>();
+    const pendingApprovals = new Map<
+      string,
+      (decision: ApprovalDecision) => void
+    >();
 
     // I6: a scripted step throwing (a bad `write` callback, a commit that
     // fails, etc.) must never leave this run silently hung mid-script — a
@@ -99,12 +103,18 @@ export class FakeExecutor implements Executor {
           if (step.approval !== undefined) {
             const approval = step.approval;
             events.onApprovalRequest(approval);
-            const allow = await new Promise<boolean>((resolve) => {
+            const decision = await new Promise<ApprovalDecision>((resolve) => {
               pendingApprovals.set(approval.requestId, resolve);
             });
             if (cancelled) return;
-            if (!allow) {
-              events.onFinish({ state: 'failed', error: 'approval denied' });
+            if (!decision.allow) {
+              events.onFinish({
+                state: 'failed',
+                error:
+                  decision.reason !== undefined && decision.reason !== ''
+                    ? `approval denied: ${decision.reason}`
+                    : 'approval denied',
+              });
               return;
             }
           }
@@ -129,7 +139,9 @@ export class FakeExecutor implements Executor {
     return {
       interrupt(): Promise<void> {
         cancelled = true;
-        for (const resolve of pendingApprovals.values()) resolve(false);
+        for (const resolve of pendingApprovals.values()) {
+          resolve({ allow: false, reason: 'run cancelled' });
+        }
         pendingApprovals.clear();
         return Promise.resolve();
       },
@@ -137,11 +149,11 @@ export class FakeExecutor implements Executor {
       // so the interface matches the real executor; FakeExecutor has
       // nothing useful to do with it.
       send(): void {},
-      approve(requestId: string, allow: boolean): void {
+      approve(requestId: string, decision: ApprovalDecision): void {
         const resolve = pendingApprovals.get(requestId);
         if (resolve !== undefined) {
           pendingApprovals.delete(requestId);
-          resolve(allow);
+          resolve(decision);
         }
       },
     };

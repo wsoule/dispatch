@@ -35,10 +35,28 @@ export interface NormalizedEntry {
 // one of these per live run so API calls (approval, mid-run message, cancel)
 // have somewhere to go without the executor itself needing to know about
 // HTTP or the registry.
+/**
+ * How a human answered one approval request.
+ *
+ * Three outcomes rather than a boolean, because "yes", "yes and stop asking about this tool"
+ * and "no, because X" are genuinely different instructions and collapsing them loses the two
+ * that carry information. `scope: 'session'` grants the tool for the remainder of THIS run
+ * only — the grant lives in the executor run's own closure, so it cannot outlive it. `reason`
+ * is passed through as the SDK's denial message, so a refusal reaches the model as an
+ * explanation rather than a bare no.
+ */
+export interface ApprovalDecision {
+  allow: boolean;
+  /** 'once' (default) answers this request; 'session' also pre-approves the same tool. */
+  scope?: 'once' | 'session';
+  /** Why it was denied. Ignored when allowing. */
+  reason?: string;
+}
+
 export interface ExecutorRun {
   interrupt(): Promise<void>;
   send(message: string): void;
-  approve(requestId: string, allow: boolean): void;
+  approve(requestId: string, decision: ApprovalDecision): void;
 }
 
 // Callbacks an Executor uses to report progress back to the orchestrator.

@@ -337,8 +337,13 @@ export function RunsView({
                         pendingApproval={
                           data.pendingApprovals.get(selected.id) ?? null
                         }
-                        onApprove={(requestId, allow) =>
-                          data.handleApprove(selected.id, requestId, allow)
+                        onApprove={(requestId, allow, opts) =>
+                          data.handleApprove(
+                            selected.id,
+                            requestId,
+                            allow,
+                            opts
+                          )
                         }
                         onSendMessage={(text) =>
                           data.handleSendMessage(selected.id, text)

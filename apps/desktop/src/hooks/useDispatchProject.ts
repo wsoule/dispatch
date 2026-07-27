@@ -263,7 +263,8 @@ export interface DispatchProjectData {
   handleApprove: (
     runId: string,
     requestId: string,
-    allow: boolean
+    allow: boolean,
+    opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
   handleCancelRun: (runId: string) => Promise<void>;
@@ -1120,9 +1121,14 @@ export function useDispatchProject(
   );
 
   const handleApprove = useCallback(
-    async (runId: string, requestId: string, allow: boolean): Promise<void> => {
+    async (
+      runId: string,
+      requestId: string,
+      allow: boolean,
+      opts?: { scope?: 'once' | 'session'; reason?: string }
+    ): Promise<void> => {
       if (client === null) return;
-      await client.approveRun(runId, requestId, allow);
+      await client.approveRun(runId, requestId, allow, opts);
       setPendingApprovals((prev) => {
         const next = new Map(prev);
         next.delete(runId);

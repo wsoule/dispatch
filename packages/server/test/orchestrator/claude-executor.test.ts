@@ -775,7 +775,7 @@ test.skipIf(!process.env.DISPATCH_CLAUDE_SMOKE)(
             // acceptEdits auto-allows the one tool this prompt needs
             // (Write); nothing should ever reach here for this smoke test,
             // but auto-deny rather than hang forever if it does.
-            run.approve(request.requestId, false);
+            run.approve(request.requestId, { allow: false });
           },
           onFinish: (result) => resolve(result),
         };

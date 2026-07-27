@@ -55,10 +55,28 @@ export interface OrchestratorConfig {
   epicConcurrency: number;
 }
 
+/** One named gate in the verify pipeline. */
+export interface VerifyStep {
+  name: string;
+  command: string;
+}
+
 export interface DispatchConfig {
   statuses: string[];
   autoCommit: boolean;
   verifyCommand?: string;
+  /**
+   * Verify as named steps rather than one opaque command.
+   *
+   * `verifyCommand` runs a single shell line, which means a failure can only ever be reported
+   * as "verify failed" — the queue genuinely does not know whether typecheck or the tests broke.
+   * Listing steps here is what makes per-check reporting possible at all: each runs in order,
+   * each is recorded pass/fail with its duration, and the first failure stops the rest.
+   *
+   * Takes precedence over `verifyCommand` when both are set. Absent, the single command is run
+   * as one step called "verify", so nothing changes for a project that has not opted in.
+   */
+  verifySteps?: VerifyStep[];
   orchestrator: OrchestratorConfig;
 }
 
@@ -180,6 +198,27 @@ export function loadConfig(rootDir: string): DispatchConfig {
     );
   }
   const raw = (parsed ?? {}) as Partial<DispatchConfig>;
+  if (raw.verifySteps !== undefined) {
+    if (!Array.isArray(raw.verifySteps)) {
+      throw new ConfigError(
+        'invalid .dispatch/config.yml: verifySteps must be a list'
+      );
+    }
+    for (const step of raw.verifySteps) {
+      if (
+        typeof step !== 'object' ||
+        step === null ||
+        typeof step.name !== 'string' ||
+        typeof step.command !== 'string' ||
+        step.name.trim() === '' ||
+        step.command.trim() === ''
+      ) {
+        throw new ConfigError(
+          'invalid .dispatch/config.yml: each verifySteps entry needs a name and a command'
+        );
+      }
+    }
+  }
   if (
     raw.statuses !== undefined &&
     (!Array.isArray(raw.statuses) ||
@@ -206,6 +245,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     statuses: [...(raw.statuses ?? DEFAULTS.statuses)],
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     verifyCommand: raw.verifyCommand,
+    verifySteps: raw.verifySteps,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
   };
 }
