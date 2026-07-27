@@ -1260,6 +1260,15 @@ export async function handleApi(
       ) {
         return await enqueueMergeQueueStack(req, ctx);
       }
+      // POST /api/merge-queue/ready. Enqueues every mergeable run in the
+      // registry at once — an empty `[]` is a valid 201, not an error.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'ready' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.mergeQueue.enqueueReady(), 201);
+      }
       // POST /api/merge-queue/recheck. Re-runs the pump against the current
       // main checkout — the retry for entries held in 'blocked-environment'
       // (dirty tree, staged index, wrong branch). Those blockers are resolved

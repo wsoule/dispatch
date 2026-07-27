@@ -743,6 +743,32 @@ describe('MergeQueue.enqueueStack', () => {
   });
 });
 
+describe('MergeQueue.enqueueReady', () => {
+  it('queues every eligible run, stacked pairs in dependency order, and is idempotent', async () => {
+    const harness = makeHarness();
+    const { runId: runA } = await dispatchAndFinish(harness, 'independent');
+    const { blockerRun, dependentRun } = await makeStackedPair(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const entries = queue.enqueueReady();
+    const ids = entries.map((e) => e.runId);
+    expect(ids).toContain(runA);
+    expect(ids.indexOf(blockerRun.id)).toBeLessThan(
+      ids.indexOf(dependentRun.id)
+    );
+    // Already-queued runs are skipped silently on a second call.
+    expect(queue.enqueueReady()).toEqual([]);
+  });
+
+  it('returns [] rather than throwing when nothing in the registry is eligible', () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+    expect(queue.enqueueReady()).toEqual([]);
+  });
+});
+
 describe('MergeQueue.remove', () => {
   it('dequeues a queued entry', async () => {
     const harness = makeHarness();
