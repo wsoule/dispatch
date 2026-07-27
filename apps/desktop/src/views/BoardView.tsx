@@ -7,6 +7,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { groupTasksByStatus } from '../lib/boardGrouping';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { countMergeReady } from '../lib/mergeReady';
 import { TasksListView } from './TasksListView';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -89,6 +90,9 @@ export function BoardView({
 }: BoardViewProps) {
   const [mode, setMode] = useState<TasksViewMode>(readStoredViewMode);
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  // "Merge all ready" toolbar button state — see RunsView's identical control
+  // for the fuller comment; this is the Board's copy of the same action.
+  const [mergeAllPending, setMergeAllPending] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
@@ -108,6 +112,22 @@ export function BoardView({
     () => columns.flatMap((column) => column.tasks.map((t) => t.meta.id)),
     [columns]
   );
+  const queuedRunIds = useMemo(
+    () => new Set((data.mergeQueue?.entries ?? []).map((e) => e.runId)),
+    [data.mergeQueue]
+  );
+  const mergeReadyCount = useMemo(
+    () => countMergeReady(data.runs, data.tasks, queuedRunIds),
+    [data.runs, data.tasks, queuedRunIds]
+  );
+  const handleMergeAll = async () => {
+    setMergeAllPending(true);
+    try {
+      await data.handleMergeAllReady();
+    } finally {
+      setMergeAllPending(false);
+    }
+  };
 
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls —
@@ -198,6 +218,14 @@ export function BoardView({
               <LayoutGrid className="size-3.5" />
             </button>
           </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={mergeReadyCount === 0 || mergeAllPending}
+            onClick={() => void handleMergeAll()}
+          >
+            Merge all ready ({mergeReadyCount})
+          </Button>
           <Button variant="secondary" size="sm" onClick={onPlanWork}>
             <Sparkles className="size-3.5" />
             Plan work…

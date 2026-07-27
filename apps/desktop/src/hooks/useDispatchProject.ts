@@ -202,6 +202,14 @@ export interface DispatchProjectData {
   // reviewable runs in this stack" surfaces as a thrown Error).
   handleEnqueueMergeStack: (taskId: string) => Promise<void>;
   handleDequeueMerge: (runId: string) => Promise<void>;
+  // Task 8: enqueues every eligible run across the project in one shot (the
+  // "Merge all ready" toolbar action) — thin wrapper over enqueueMergeReady,
+  // since the server owns the actual eligibility/ordering logic.
+  handleMergeAllReady: () => Promise<void>;
+  // Set from the `queue.drained` WS event when the queue's auto-push after a
+  // drain fails (merged locally, origin didn't get the commit) — surfaced as
+  // a banner in RunsView. Cleared on the next successful drain-push.
+  lastPushError: string | null;
 }
 
 /**
@@ -230,6 +238,9 @@ export function useDispatchProject(
   // The Notes hub's own plan slot: the AI task draft started off a single note, kept apart
   // from `planId` so the two views never overwrite each other's in-flight proposal.
   const [notePlanId, setNotePlanId] = useState<string | null>(null);
+  // Task 8: last drain-push failure reported by `queue.drained`, for the
+  // RunsView banner — `null` once a later drain pushes successfully.
+  const [lastPushError, setLastPushError] = useState<string | null>(null);
 
   // A plan started against one project's dispatchd must never leak into another project's
   // Plans view — without this, switching projects while a plan was mid-flight (or just left
@@ -549,6 +560,25 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
             });
+          } else if (event.type === 'queue.drained') {
+            // The drain reviewed runs (tasks/runs move to done) and may have
+            // pushed origin (branches' pushedToOrigin flips) — refetch all
+            // three rather than waiting on their own *.changed broadcasts.
+            void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+            void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+            void queryClient.invalidateQueries({
+              queryKey: mergeQueueQueryKey,
+            });
+            if (event.pushed === false && event.pushError !== undefined) {
+              setLastPushError(event.pushError);
+              void notify('Push failed', event.pushError);
+            } else {
+              setLastPushError(null);
+              void notify(
+                'Merged & pushed',
+                `${event.merged} task(s) archived`
+              );
+            }
           }
         },
       }
@@ -1009,6 +1039,19 @@ export function useDispatchProject(
     [client, queryClient, mergeQueueQueryKey]
   );
 
+  // Task 8: the "Merge all ready" toolbar action — enqueues every eligible
+  // run in the project in one call. Also doubles as the push-failure Retry
+  // button: called with nothing new to enqueue, this still kicks the queue's
+  // pump, which retries a failed drain-push per `lastDrainPushFailed` on the
+  // server (see mergeQueue.ts). The `merge-queue.changed`/`queue.drained`
+  // broadcasts (not this invalidation) are what actually update the
+  // lastPushError banner once the retry resolves.
+  const handleMergeAllReady = useCallback(async (): Promise<void> => {
+    if (client === null) return;
+    await client.enqueueMergeReady();
+    void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
+  }, [client, queryClient, mergeQueueQueryKey]);
+
   // Notifies on run finished/failed and merge-queue merged/failed transitions —
   // see useTransitionNotifications's own comment for why it needs the *lists*
   // (not just this render's counts) to diff against what it last saw. `projectPath`
@@ -1088,5 +1131,7 @@ export function useDispatchProject(
     handleEnqueueMerge,
     handleEnqueueMergeStack,
     handleDequeueMerge,
+    handleMergeAllReady,
+    lastPushError,
   };
 }
