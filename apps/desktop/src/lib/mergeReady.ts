@@ -1,10 +1,9 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core';
 
-// Mirrors mergeQueue.ts's enqueueReady()/nextEligible() eligibility rules
-// server-side: a task's blocker (or the run's own task) counts as resolved
-// once it's done OR cancelled — the same isDone semantics the server's
-// blocker-gating and own-task guard both use.
+// Mirrors mergeQueue.ts's isDone-based checks server-side: a task counts as
+// resolved once it's done OR cancelled — the same semantics enqueueReady's
+// own-task guard and nextEligible's blocker check both use.
 function isTaskDone(task: TaskDoc): boolean {
   return task.meta.status === 'done' || task.meta.status === 'cancelled';
 }
@@ -12,10 +11,18 @@ function isTaskDone(task: TaskDoc): boolean {
 /**
  * How many runs the "Merge all ready" toolbar button would enqueue right
  * now: finished, unreviewed, not routed to PR review, not already sitting
- * in the merge queue, and — mirroring enqueueReady's server-side
- * eligibility — belonging to a task that isn't itself done/cancelled and
- * whose blockers are all done/cancelled. Pure so the toolbar's count is
- * unit-testable without a live tasks/queue fetch.
+ * in the merge queue, and belonging to a task that isn't itself done/
+ * cancelled — this part mirrors enqueueReady's own admission checks
+ * server-side exactly. The blockedBy check on top of that is a
+ * conservative client-side pre-filter, NOT a mirror of enqueueReady's
+ * admission: the server happily enqueues a blocked run and only gates it
+ * later, at pump time, via nextEligible's 'waiting-blockers' state — this
+ * just avoids the button's count (and its one-shot enqueue) promising a
+ * run that would immediately sit blocked in the queue. `tasks` must
+ * include archived tasks (e.g. via `fetchTasks({ archived: true })`) or an
+ * archived own-task/blocker will be missing from `byId` and read as
+ * "not done" here. Pure so the toolbar's count is unit-testable without a
+ * live tasks/queue fetch.
  */
 export function countMergeReady(
   runs: RunMeta[],

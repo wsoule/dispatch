@@ -81,8 +81,8 @@ export function RunsView({
     [data.mergeQueue]
   );
   const mergeReadyCount = useMemo(
-    () => countMergeReady(data.runs, data.tasks, queuedRunIds),
-    [data.runs, data.tasks, queuedRunIds]
+    () => countMergeReady(data.runs, data.tasksIncludingArchived, queuedRunIds),
+    [data.runs, data.tasksIncludingArchived, queuedRunIds]
   );
   // Also used as the push-failure banner's Retry action: re-invoking with
   // nothing left to enqueue still kicks the queue's pump, which retries a

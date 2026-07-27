@@ -117,8 +117,8 @@ export function BoardView({
     [data.mergeQueue]
   );
   const mergeReadyCount = useMemo(
-    () => countMergeReady(data.runs, data.tasks, queuedRunIds),
-    [data.runs, data.tasks, queuedRunIds]
+    () => countMergeReady(data.runs, data.tasksIncludingArchived, queuedRunIds),
+    [data.runs, data.tasksIncludingArchived, queuedRunIds]
   );
   const handleMergeAll = async () => {
     setMergeAllPending(true);
