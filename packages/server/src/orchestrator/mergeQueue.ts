@@ -74,6 +74,14 @@ export interface MergeQueueEntry {
    * reads as zero.
    */
   attempts?: number;
+  /**
+   * The tail of this entry's verify output, capped at VERIFY_OUTPUT_TAIL_BYTES.
+   * Exists so a client that opens mid-verify or refreshes sees recent progress
+   * rather than a silent `verifying`. Bounded rather than complete on purpose: an
+   * unbounded buffer against a multi-minute test suite is a leak in a long-lived
+   * daemon, and the full log belongs in the failure reason, not in memory.
+   */
+  output?: string;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;
 }
@@ -108,6 +116,11 @@ const HISTORY_LIMIT = 20;
 // through processing it before the queue gives up on it for good. See
 // MergeQueueEntry.attempts for why this must be counted on disk.
 const MAX_INTERRUPTED_ATTEMPTS = 3;
+
+// How much of an entry's verify output is retained on the entry itself. Enough
+// to show what a verify was doing when it stalled or failed, small enough that a
+// daemon processing many entries cannot accumulate meaningful memory.
+const VERIFY_OUTPUT_TAIL_BYTES = 8192;
 
 const MID_FLIGHT_STATES: ReadonlySet<MergeQueueEntryState> = new Set([
   'rebasing',
@@ -825,10 +838,28 @@ export class MergeQueue {
     // `verifyCommand` itself, so raising the ceiling takes effect on the next
     // entry without a daemon restart.
     const timeoutSec = config.orchestrator.verifyTimeoutSec;
+    entry.output = '';
     const result = await this.run(
       meta.worktreePath,
       ['bash', '-lc', verifyCommand],
-      { timeoutMs: timeoutSec * 1000 }
+      {
+        timeoutMs: timeoutSec * 1000,
+        // Each chunk goes out as its own event and is appended to a bounded tail
+        // on the entry. The event is the increment (mirroring `run.log`); the
+        // tail is what a client that connects mid-verify or refreshes can read.
+        // Deliberately NOT calling broadcast() per chunk — that persists and
+        // ships a full snapshot, which at output volume would be pathological.
+        onOutput: (chunk: string) => {
+          entry.output = `${entry.output ?? ''}${chunk}`.slice(
+            -VERIFY_OUTPUT_TAIL_BYTES
+          );
+          this.ctx.events.broadcast({
+            type: 'merge-queue.log',
+            runId: entry.runId,
+            chunk,
+          });
+        },
+      }
     );
     if (!result.ok) {
       // The remedy belongs in the message — a bare "timed out" leaves the user

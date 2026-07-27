@@ -265,7 +265,12 @@ export type ServerEvent =
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed. Mirrors
   // packages/server/src/events.ts exactly.
-  | { type: 'merge-queue.changed' };
+  | { type: 'merge-queue.changed' }
+  // One chunk of a merge-queue entry's verify output, as it is produced. Its own
+  // event rather than part of `merge-queue.changed` because that one carries a
+  // full snapshot — per-chunk snapshots would be pathologically chatty. Same
+  // contract as `run.log`: the payload is the increment.
+  | { type: 'merge-queue.log'; runId: string; chunk: string };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's
@@ -410,6 +415,18 @@ export interface MergeQueueEntry {
    * entries persisted before the field existed hydrate without it.
    */
   stateSince?: string;
+  /**
+   * How many times this entry has been picked back up after a daemon died partway
+   * through processing it. Surfaced so a repeatedly-interrupted entry is visible
+   * before the queue abandons it.
+   */
+  attempts?: number;
+  /**
+   * The tail of this entry's verify output (bounded server-side). Render it while
+   * an entry is `verifying` so a multi-minute gate shows progress rather than
+   * looking wedged; `merge-queue.log` streams the increments live.
+   */
+  output?: string;
   enqueuedAt: string;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;

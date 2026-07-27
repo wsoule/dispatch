@@ -33,7 +33,13 @@ export type ServerEvent =
   | { type: 'note.changed' }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
-  | { type: 'merge-queue.changed' };
+  | { type: 'merge-queue.changed' }
+  // One chunk of a merge-queue entry's verify output, as it is produced.
+  // Deliberately its own event rather than folded into `merge-queue.changed`:
+  // that one carries a full snapshot, so emitting it per output chunk would be
+  // pathologically chatty. Mirrors the `run.log` contract — the payload is the
+  // increment, and a client that wants the whole picture refetches.
+  | { type: 'merge-queue.log'; runId: string; chunk: string };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
