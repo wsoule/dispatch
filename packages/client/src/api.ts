@@ -403,6 +403,13 @@ export interface MergeQueueEntry {
   state: MergeQueueEntryState;
   /** Failure detail — set only once an entry lands in `failed`. */
   reason?: string;
+  /**
+   * When this entry last changed state — distinct from `enqueuedAt`, which never
+   * moves. Render elapsed time from this on in-flight entries ("Verifying · 4m"):
+   * it is what distinguishes a slow step from a wedged one. Optional, since
+   * entries persisted before the field existed hydrate without it.
+   */
+  stateSince?: string;
   enqueuedAt: string;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;

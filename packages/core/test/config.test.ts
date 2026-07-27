@@ -25,6 +25,7 @@ describe('loadConfig', () => {
       orchestrator: {
         permissionMode: 'auto',
         epicConcurrency: 3,
+        verifyTimeoutSec: 600,
       },
     });
   });
@@ -103,6 +104,7 @@ describe('loadConfig', () => {
       expect(loadConfig(root).orchestrator).toEqual({
         permissionMode: 'auto',
         epicConcurrency: 3,
+        verifyTimeoutSec: 600,
       });
     });
 
@@ -117,6 +119,7 @@ describe('loadConfig', () => {
         maxBudgetUsd: 5,
         permissionMode: 'plan',
         epicConcurrency: 5,
+        verifyTimeoutSec: 600,
       });
     });
 
@@ -178,6 +181,29 @@ describe('loadConfig', () => {
       expect(() => loadConfig(root)).toThrow(
         /orchestrator\.maxTurns must be a positive number/
       );
+    });
+
+    // A zero or negative verify timeout would kill every verify instantly,
+    // failing every merge-queue entry — louder to reject it at load than to let
+    // the queue mysteriously refuse everything.
+    it('throws when verifyTimeoutSec is not a positive number', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  verifyTimeoutSec: 0\n'
+      );
+      expect(() => loadConfig(root)).toThrow(
+        /orchestrator\.verifyTimeoutSec must be a positive number/
+      );
+    });
+
+    it('reads a provided verifyTimeoutSec over the default', () => {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'orchestrator:\n  verifyTimeoutSec: 45\n'
+      );
+      expect(loadConfig(root).orchestrator.verifyTimeoutSec).toBe(45);
     });
 
     it('throws when maxBudgetUsd is not a positive number', () => {

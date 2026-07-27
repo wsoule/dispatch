@@ -56,6 +56,14 @@ export interface MergeQueueEntry {
    */
   reason?: string;
   enqueuedAt: string;
+  /**
+   * When this entry last CHANGED state — distinct from `enqueuedAt`, which never
+   * moves. The UI renders elapsed time from this ("Verifying · 4m"), which is
+   * what makes a slow step distinguishable from a wedged one; an entry once sat
+   * in `verifying` for 11 minutes with no process behind it and nothing said so.
+   * Optional so entries persisted before this field existed hydrate unchanged.
+   */
+  stateSince?: string;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;
 }
@@ -253,7 +261,7 @@ export class MergeQueue {
         );
         continue;
       }
-      entry.state = 'queued';
+      this.setEntryState(entry, 'queued');
       // Any held reason came from the previous process's view of a checkout
       // that may since have been cleaned up — drop it so a reloaded entry
       // doesn't display a stale "blocked because X" that no longer applies.
@@ -273,7 +281,7 @@ export class MergeQueue {
   // enqueue() — finish() is the equivalent for entries actually processed
   // this run.
   private fileStaleEntry(entry: MergeQueueEntry, reason: string): void {
-    entry.state = 'failed';
+    this.setEntryState(entry, 'failed');
     entry.reason = reason;
     entry.finishedAt = new Date().toISOString();
     this.history.unshift(entry);
@@ -408,12 +416,14 @@ export class MergeQueue {
       throw new OrchestratorConflictError(reason);
     }
 
+    const now = new Date().toISOString();
     const entry: MergeQueueEntry = {
       runId,
       taskId: meta.taskId,
       taskTitle: meta.taskTitle,
       state: 'queued',
-      enqueuedAt: new Date().toISOString(),
+      enqueuedAt: now,
+      stateSince: now,
     };
     this.entries.push(entry);
     this.broadcast();
@@ -459,12 +469,14 @@ export class MergeQueue {
       if (meta === undefined) continue;
       if (!this.isEnqueueable(meta)) continue;
 
+      const now = new Date().toISOString();
       const entry: MergeQueueEntry = {
         runId: meta.id,
         taskId: meta.taskId,
         taskTitle: meta.taskTitle,
         state: 'queued',
-        enqueuedAt: new Date().toISOString(),
+        enqueuedAt: now,
+        stateSince: now,
       };
       this.entries.push(entry);
       enqueued.push(entry);
@@ -596,7 +608,7 @@ export class MergeQueue {
             ? 'blocked-environment'
             : 'queued';
       if (entry.state !== nextState) {
-        entry.state = nextState;
+        this.setEntryState(entry, nextState);
         changed = true;
       }
       if ((!unmet || baseDiscarded) && eligible === null) eligible = entry;
@@ -654,7 +666,7 @@ export class MergeQueue {
     } catch (err) {
       entry.reason = (err as Error).message;
       if (err instanceof MergeEnvironmentError) {
-        entry.state = 'blocked-environment';
+        this.setEntryState(entry, 'blocked-environment');
         this.persist();
         this.broadcast();
         return 'blocked';
@@ -683,7 +695,7 @@ export class MergeQueue {
   // run on a DESCENDANT branch is still LIVE — see hasLiveDescendants for what
   // jj does to such a worktree, and why re-attaching it is not an option.
   private async rebase(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
-    entry.state = 'rebasing';
+    this.setEntryState(entry, 'rebasing');
     this.broadcast();
     const cwd = meta.worktreePath;
 
@@ -767,16 +779,30 @@ export class MergeQueue {
   // worktree sits mid-way — rebased onto the latest base, not yet
   // verified/merged — until the next enqueue attempt touches it again.
   private async verify(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
-    const verifyCommand = loadConfig(this.ctx.rootDir).verifyCommand;
+    const config = loadConfig(this.ctx.rootDir);
+    const verifyCommand = config.verifyCommand;
     if (verifyCommand === undefined) return;
-    entry.state = 'verifying';
+    this.setEntryState(entry, 'verifying');
     this.broadcast();
-    const result = await this.run(meta.worktreePath, [
-      'bash',
-      '-lc',
-      verifyCommand,
-    ]);
+    // Bounded because the queue is strictly serial: a verify that never returns
+    // holds up every entry behind it, and from the outside a wedged step and a
+    // slow one look identical. Read fresh from config here, exactly like
+    // `verifyCommand` itself, so raising the ceiling takes effect on the next
+    // entry without a daemon restart.
+    const timeoutSec = config.orchestrator.verifyTimeoutSec;
+    const result = await this.run(
+      meta.worktreePath,
+      ['bash', '-lc', verifyCommand],
+      { timeoutMs: timeoutSec * 1000 }
+    );
     if (!result.ok) {
+      // The remedy belongs in the message — a bare "timed out" leaves the user
+      // exactly as stuck as the silent wedge did.
+      if (/timed out/i.test(result.stderr)) {
+        throw new Error(
+          `verify timed out after ${timeoutSec}s — raise orchestrator.verifyTimeoutSec or narrow verifyCommand`
+        );
+      }
       throw new Error(`verify failed: ${commandErrorText(result)}`);
     }
   }
@@ -789,7 +815,7 @@ export class MergeQueue {
   // markRunMergedViaPr (mirroring what PrManager's own poller does once it
   // sees a PR merged).
   private async merge(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
-    entry.state = 'merging';
+    this.setEntryState(entry, 'merging');
     this.broadcast();
 
     if (meta.prUrl !== undefined) {
@@ -1237,10 +1263,23 @@ export class MergeQueue {
   // Removes `entry` from the live queue, stamps it terminal, and files it
   // into history (most-recent-first, capped at HISTORY_LIMIT) — the one
   // place both `merged` and `failed` outcomes converge.
+  // The one place an entry's state is written, so `stateSince` cannot drift out
+  // of sync with it. Every transition site routes through here rather than
+  // assigning `entry.state` directly — a forgotten stamp would silently make an
+  // entry look like it had been in its current state since whenever it last
+  // happened to be updated, which is worse than showing no elapsed time at all.
+  private setEntryState(
+    entry: MergeQueueEntry,
+    state: MergeQueueEntryState
+  ): void {
+    entry.state = state;
+    entry.stateSince = new Date().toISOString();
+  }
+
   private finish(entry: MergeQueueEntry, state: 'merged' | 'failed'): void {
     const idx = this.entries.indexOf(entry);
     if (idx !== -1) this.entries.splice(idx, 1);
-    entry.state = state;
+    this.setEntryState(entry, state);
     entry.finishedAt = new Date().toISOString();
     this.history.unshift(entry);
     this.history.length = Math.min(this.history.length, HISTORY_LIMIT);

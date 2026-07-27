@@ -240,6 +240,102 @@ function writeVerifyCommand(rootDir: string, cmd: string): void {
   );
 }
 
+// The wedge that motivated the timeout: an entry sat in `verifying` for 11
+// minutes with no process behind it, and because the queue is strictly serial it
+// blocked everything behind it. A verify that never returns must fail the entry
+// with an actionable reason and let the queue move on.
+describe('MergeQueue verify timeout', () => {
+  it('fails a verify that never returns, and still processes the next entry', async () => {
+    const harness = makeHarness();
+    writeFileSync(
+      join(harness.rootDir, DISPATCH_DIR, 'config.yml'),
+      'verifyCommand: "sleep 600"\norchestrator:\n  verifyTimeoutSec: 1\n'
+    );
+    const { runId: hangs } = await dispatchAndFinish(harness, 'Hangs');
+    const { runId: fine } = await dispatchAndFinish(harness, 'Fine');
+
+    const stub = new StubRunner();
+    // Never resolves — the process-that-hangs case, independent of wall clock.
+    let releaseHang: (() => void) | undefined;
+    const hangUntilReleased = new Promise<CommandResult>((resolve) => {
+      releaseHang = () => resolve({ ok: true, stdout: '', stderr: '' });
+    });
+    let verifyCalls = 0;
+    const runner = async (
+      cwd: string,
+      cmd: string[],
+      opts?: { timeoutMs?: number }
+    ): Promise<CommandResult> => {
+      if (cmd[0] === 'bash') {
+        verifyCalls += 1;
+        // Only the FIRST verify hangs, so the second entry can still complete —
+        // proving a timed-out entry does not wedge the queue behind it.
+        if (verifyCalls === 1) {
+          if (opts?.timeoutMs === undefined) {
+            throw new Error('verify must be given a timeoutMs');
+          }
+          // Honour the timeout the way defaultCommandRunner must: give up and
+          // report failure rather than waiting forever.
+          return await Promise.race([
+            hangUntilReleased,
+            new Promise<CommandResult>((resolve) =>
+              setTimeout(
+                () => resolve({ ok: false, stdout: '', stderr: 'timed out' }),
+                opts.timeoutMs
+              )
+            ),
+          ]);
+        }
+      }
+      return await stub.run(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(hangs);
+    queue.enqueue(fine);
+    await waitFor(() => queue.snapshot().history.length === 2, 20_000);
+
+    const hung = queue.snapshot().history.find((e) => e.runId === hangs);
+    expect(hung?.state).toBe('failed');
+    expect(hung?.reason).toMatch(/timed out/i);
+    // The remedy has to be in the message — otherwise this is the same
+    // "something went wrong" dead end the wedge already was.
+    expect(hung?.reason).toMatch(/verifyTimeoutSec/);
+
+    const ok = queue.snapshot().history.find((e) => e.runId === fine);
+    expect(ok?.state).toBe('merged');
+    releaseHang?.();
+  }, 30_000);
+});
+
+// Elapsed time is what makes "slow" and "wedged" distinguishable without
+// inspecting processes. `enqueuedAt` cannot do it — it never moves — so each
+// state transition stamps its own `stateSince`.
+describe('MergeQueue entry stateSince', () => {
+  it('stamps stateSince on enqueue and advances it on each state transition', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    const queued = queue.snapshot().entries[0];
+    expect(queued.stateSince).toBeDefined();
+
+    await waitFor(() => queue.snapshot().history.length === 1);
+    const done = queue.snapshot().history[0];
+    expect(done.state).toBe('merged');
+    // The entry moved queued -> rebasing -> merging -> merged, so its final
+    // stamp must be later than the one it carried while queued.
+    expect(new Date(done.stateSince!).getTime()).toBeGreaterThanOrEqual(
+      new Date(queued.stateSince!).getTime()
+    );
+    // And it must not simply mirror enqueuedAt, which is what it would do if
+    // transitions were not stamping it.
+    expect(done.stateSince).not.toBe(done.enqueuedAt);
+  });
+});
+
 describe('MergeQueue.enqueue', () => {
   it('enqueues a finished, unreviewed run as queued and broadcasts', async () => {
     const harness = makeHarness();
