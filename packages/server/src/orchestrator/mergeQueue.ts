@@ -493,16 +493,17 @@ export class MergeQueue {
   // runs are skipped silently — an empty result is a valid "nothing was
   // ready" outcome here, not an error like enqueueStack's all-skipped 409.
   enqueueReady(): MergeQueueEntry[] {
-    const tasks = this.ctx.cache.query();
-    // Same task-status guard enqueueStack applies via its own `isDone` check:
-    // a task's status is user-settable independent of its run's state, so a
-    // run left finished-and-unreviewed on a task the user since cancelled (or
-    // deleted) must not be swept in just because the run itself looks ready.
+    // includeArchived: archivedAt is orthogonal to status/mergeability, and
+    // query()'s default (board-view) filter would otherwise drop an archived
+    // task's run here and starve computeStack of it as a stack member.
+    const tasks = this.ctx.cache.query({ includeArchived: true });
+    // Same guard enqueueStack applies: skip only a CONFIRMED done/cancelled
+    // task; an unresolved id falls through as eligible, same as there.
     const byId = new Map(tasks.map((t) => [t.meta.id, t]));
     const eligible = this.ctx.orchestrator.list().filter((m) => {
       if (!this.isEnqueueable(m)) return false;
       const task = byId.get(m.taskId);
-      return task !== undefined && !isDone(task);
+      return task === undefined || !isDone(task);
     });
     // list() is most-recent-first, so the first eligible run seen per taskId
     // is that task's latest — same convention enqueueStack relies on.

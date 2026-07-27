@@ -783,6 +783,21 @@ describe('MergeQueue.enqueueReady', () => {
     expect(queue.enqueueReady()).toEqual([]);
     expect(queue.snapshot().entries.map((e) => e.runId)).not.toContain(runId);
   });
+
+  // Regression: archivedAt is orthogonal to status — an archived-but-active
+  // task's genuinely mergeable run must not be dropped just because
+  // query()'s default (board-view) filter excludes archived tasks.
+  it('includes a finished unreviewed run whose task is archived but still in-review', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness, 'archived');
+    harness.store.update(taskId, { archivedAt: new Date().toISOString() });
+    harness.cache.rebuild(harness.store);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const entries = queue.enqueueReady();
+    expect(entries.map((e) => e.runId)).toContain(runId);
+  });
 });
 
 describe('MergeQueue.remove', () => {
