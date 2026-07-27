@@ -9,6 +9,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import { TaskBoard } from '../components/tasks/TaskBoard';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
@@ -102,6 +103,8 @@ export function BoardView({
 }: BoardViewProps) {
   const [mode, setMode] = useState<TasksViewMode>(readStoredViewMode);
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  // Which epic's dispatch is awaiting confirmation, or null when the dialog is closed.
+  const [dispatchEpicId, setDispatchEpicId] = useState<string | null>(null);
   // "Merge all ready" toolbar button state — see RunsView's identical control
   // for the fuller comment; this is the Board's copy of the same action.
   const [mergeAllPending, setMergeAllPending] = useState(false);
@@ -310,6 +313,7 @@ export function BoardView({
         >
           <TaskBoard
             swimLanes={mode === 'lanes'}
+            onRequestWorkEpic={setDispatchEpicId}
             tasks={boardTasks}
             archivedTaskIds={archivedTaskIds}
             statuses={data.config.statuses}
@@ -333,6 +337,21 @@ export function BoardView({
         </div>
       ) : (
         <TasksListView data={data} onSelectTask={onSelectTask} />
+      )}
+
+      {dispatchEpicId !== null && (
+        <DispatchDialog
+          title="Send agents at this epic"
+          tasks={data.tasks.filter((t) => t.meta.parent === dispatchEpicId)}
+          readyIds={data.readyIds}
+          runningNow={data.liveRunStateByTaskId.size}
+          defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
+          onCancel={() => setDispatchEpicId(null)}
+          onConfirm={async (concurrency) => {
+            await data.handleWorkEpic(dispatchEpicId, concurrency);
+            setDispatchEpicId(null);
+          }}
+        />
       )}
     </div>
   );

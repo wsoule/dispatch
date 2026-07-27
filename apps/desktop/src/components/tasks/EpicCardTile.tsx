@@ -46,6 +46,10 @@ interface EpicCardTileProps {
   childTasks?: TaskDoc[];
   onSelect: () => void;
   onWork: (epicId: string, concurrency: number) => Promise<void>;
+  /** When given, the Work button asks for a confirmation preview instead of dispatching
+   * straight away — concurrency is bounded, so "work this epic" rarely means "start all of
+   * them" and the difference should be visible before it happens. */
+  onRequestWork?: (epicId: string) => void;
   onStop: (epicId: string) => Promise<void>;
   /** Opens a task (including one of this epic's children, from the graph modal) in the peek/
    * detail dialog — reuses whatever handler the board already wires its own card clicks to,
@@ -77,6 +81,7 @@ export function EpicCardTile({
   childTasks = [],
   onSelect,
   onWork,
+  onRequestWork,
   onStop,
   onOpenTask,
   focused = false,
@@ -257,6 +262,10 @@ export function EpicCardTile({
                 disabled={busy}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (onRequestWork !== undefined) {
+                    onRequestWork(doc.meta.id);
+                    return;
+                  }
                   void run(() => onWork(doc.meta.id, concurrency));
                 }}
                 className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"

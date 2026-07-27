@@ -44,6 +44,8 @@ interface TaskBoardProps {
   epics: TaskDoc[];
   /** Render as per-epic swim lanes instead of one flat set of status columns. */
   swimLanes?: boolean;
+  /** Routes epic dispatch through a confirmation preview. See EpicCardTile. */
+  onRequestWorkEpic?: (epicId: string) => void;
   onSelect: (id: string) => void;
   /** Dispatches a plain (non-epic) task directly from its card's inline ready-lane button.
    * Optional — omitting it (rather than requiring every caller to wire it up) simply hides
@@ -163,6 +165,7 @@ export function TaskBoard({
   epicConcurrencyDefault,
   epics,
   swimLanes = false,
+  onRequestWorkEpic,
   onSelect,
   onDispatch,
   onWorkEpic,
@@ -356,6 +359,7 @@ export function TaskBoard({
                           childTasks={childrenByEpicId.get(doc.meta.id) ?? []}
                           onSelect={() => onSelect(doc.meta.id)}
                           onWork={onWorkEpic}
+                          onRequestWork={onRequestWorkEpic}
                           onStop={onStopEpic}
                           onOpenTask={onSelect}
                           focused={doc.meta.id === focusedTaskId}
