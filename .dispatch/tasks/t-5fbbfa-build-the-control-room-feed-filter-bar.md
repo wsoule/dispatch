@@ -1,7 +1,7 @@
 ---
 id: t-5fbbfa
 title: Build the Control room feed filter bar
-status: todo
+status: done
 kind: task
 parent: e-70673f
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:56:29.318Z
-updated: 2026-07-27T00:56:29.318Z
+updated: 2026-07-27T01:31:34.117Z
 external: null
 ---
 

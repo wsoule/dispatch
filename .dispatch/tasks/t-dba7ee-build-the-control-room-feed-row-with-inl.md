@@ -1,7 +1,7 @@
 ---
 id: t-dba7ee
 title: Build the Control room feed row with inline attention and per-state actions
-status: todo
+status: done
 kind: task
 parent: e-70673f
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:56:59.804Z
-updated: 2026-07-27T00:56:59.804Z
+updated: 2026-07-27T01:32:03.384Z
 external: null
 ---
 
@@ -42,3 +42,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T01:32:03.384Z Done in d2df8f8. Three honesty deviations from the description, all because the mockup's fixture had data the backend does not. (1) A working row shows no live activity text — the orchestrator exposes no "what the agent is doing right now" field on RunMeta, and the feed does not load run transcripts. Column left empty rather than filled with something invented. (2) The working progress bar is indeterminate (ProgressTrack value=null), not a percentage; there is no completion fraction to compute. (3) A waiting row names the tool ("Wants to run Bash") but not the command — PendingApproval is {requestId, toolName} and the tool *input* only exists in the run log, which RunLogView recovers by matching entries. Fabricating "$ bun run db:migrate" would read as fact. Related: if this window never saw approval.requested (a reload drops the map), there is no requestId to answer with, so Approve opens the run rather than firing a decision at an unnamed request — covered by a test. Review rows show turn count; landing rows show the real queue phase. Actions stopPropagation.

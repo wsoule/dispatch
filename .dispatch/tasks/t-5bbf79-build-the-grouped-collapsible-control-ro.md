@@ -1,7 +1,7 @@
 ---
 id: t-5bbf79
 title: Build the grouped, collapsible Control room feed
-status: todo
+status: done
 kind: task
 parent: e-70673f
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:56:43.875Z
-updated: 2026-07-27T00:56:43.875Z
+updated: 2026-07-27T01:31:43.152Z
 external: null
 ---
 

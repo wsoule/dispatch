@@ -1,7 +1,7 @@
 ---
 id: t-78877c
 title: tasks should default to self review
-status: done
+status: todo
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-26T19:24:11.556Z
-updated: 2026-07-26T21:32:08.188Z
+updated: 2026-07-27T01:26:59.398Z
 external: null
 ---
 
@@ -36,3 +36,8 @@ external: null
 - 2026-07-26T20:19:37.723Z [run r-41ab16] cancelled
 - 2026-07-26T20:19:39.698Z [run r-b32419] cancelled
 - 2026-07-26T21:32:08.188Z run r-bdf748 merged into main
+- 2026-07-27T01:26:58.779Z run r-c55ad2 discarded
+- 2026-07-27T01:26:58.937Z run r-4747b7 discarded
+- 2026-07-27T01:26:59.218Z run r-b8e0a1 discarded
+- 2026-07-27T01:26:59.306Z run r-41ab16 discarded
+- 2026-07-27T01:26:59.398Z run r-b32419 discarded
