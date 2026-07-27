@@ -91,6 +91,10 @@ interface SidebarProps {
   /** Live per-row counts. A row with no entry, or a zero, renders no badge at all — a rail of
    * "0"s is noise, and the absence of a number is itself the information. */
   badges: Partial<Record<ProjectView, number>>;
+  /** Total spend across today's runs, or `null` to show nothing. Rendered at the foot of the
+   * rail rather than in the window titlebar, which Tauri owns — same information, somewhere
+   * this app can actually put it. */
+  spendToday: number | null;
   /** Count of unread notification-inbox entries — the bell's badge (see InboxPanel/inbox.ts).
    * The bell itself is not a nav row (it doesn't select a `ProjectView`/`GlobalView`); it
    * toggles the inbox popover via `onToggleInbox` instead. */
@@ -134,6 +138,7 @@ export function Sidebar({
   globalView,
   liveAgentCount,
   badges,
+  spendToday,
   unreadCount,
   onToggleInbox,
   onSetProjectView,
@@ -388,9 +393,21 @@ export function Sidebar({
         })}
       </nav>
 
+      {/* Today's spend. The mockup put this in the window titlebar, which Tauri owns and this
+          app cannot draw into — the foot of the rail is the same glanceable place we can
+          actually reach. Hidden entirely at zero rather than showing "$0.00": a running cost
+          meter is only worth the pixels once there is a cost. */}
+      {!collapsed && spendToday !== null && spendToday > 0 && (
+        <div className="text-muted-foreground mt-auto px-2 pt-3 text-[11px]">
+          <span className="dense-meta">${spendToday.toFixed(2)}</span> today
+        </div>
+      )}
+
       <div
         className={cn(
-          'mt-auto flex items-center pt-3',
+          'flex items-center pt-3',
+          // Only claim the remaining space when the spend row above did not already.
+          !(!collapsed && spendToday !== null && spendToday > 0) && 'mt-auto',
           collapsed ? 'justify-center' : 'justify-between px-2'
         )}
       >

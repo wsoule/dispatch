@@ -279,6 +279,19 @@ function App() {
   // Every non-terminal run for this project — the "Agents" view's list and the sidebar's live
   // badge both read from this single project's own run list now, not a cross-project fan-out
   // of N daemons (the old `useAllAgents`, removed with this pivot).
+  // Everything spent today across this project's runs. Summed from RunMeta.costUsd, which the
+  // executor stamps once a run finishes — so this is settled spend, not an estimate of work in
+  // flight. `null` when nothing has cost anything yet, which hides the readout entirely.
+  const todaySpend = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const total = data.runs.reduce((sum, r) => {
+      if (r.costUsd === undefined) return sum;
+      return new Date(r.updatedAt) >= start ? sum + r.costUsd : sum;
+    }, 0);
+    return total > 0 ? total : null;
+  }, [data.runs]);
+
   const liveRuns = useMemo(
     () => data.runs.filter((run) => !isTerminalRunState(run.state)),
     [data.runs]
@@ -499,6 +512,7 @@ function App() {
             projectView={navState.projectView}
             globalView={navState.globalView}
             liveAgentCount={liveRuns.length}
+            spendToday={todaySpend}
             badges={{
               'pull-requests': data.runs.filter((r) => r.prUrl !== undefined)
                 .length,
