@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
+import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { groupLogEntries } from '../../lib/runLog';
 import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
@@ -154,6 +155,9 @@ export function RunLogView({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Keyed on the run id because this view is reused (not remounted) when the user picks a
+  // different run on the left, and each run should open at its latest output.
+  const { scrollRef, contentRef, scrollToBottom } = useStickToBottom(meta.id);
 
   const groups = groupLogEntries(entries);
   const terminal = isTerminalRunState(meta.state);
@@ -180,6 +184,9 @@ export function RunLogView({
       if (terminal) await onRequestChanges(draft.trim());
       else await onSendMessage(draft.trim());
       setDraft('');
+      // Sending is an explicit "I'm caught up" signal, so re-pin even if the user had
+      // scrolled back through history to write the message.
+      scrollToBottom();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -189,37 +196,39 @@ export function RunLogView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1">
-        {meta.resumedFrom !== undefined && (
-          <div className="text-muted-foreground flex items-center justify-center gap-1.5 py-1 text-center text-[11px]">
-            <Info className="size-3 shrink-0" />
-            Resumed from run {meta.resumedFrom} — earlier conversation lives
-            there.
-          </div>
-        )}
-        {groups.length === 0 && (
-          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
-            <MessageSquare className="size-5" />
-            <p className="text-[13px]">
-              {meta.state === 'provisioning'
-                ? 'Waiting for the run to start…'
-                : 'No log entries yet.'}
-            </p>
-          </div>
-        )}
-        {groups.map((group, i) =>
-          group.kind === 'tools' ? (
-            <div key={i} className="flex flex-col gap-1.5">
-              {group.entries.map((entry, j) => (
-                <ToolCard key={j} entry={entry} />
-              ))}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1">
+        <div ref={contentRef} className="flex min-h-full flex-col gap-2">
+          {meta.resumedFrom !== undefined && (
+            <div className="text-muted-foreground flex items-center justify-center gap-1.5 py-1 text-center text-[11px]">
+              <Info className="size-3 shrink-0" />
+              Resumed from run {meta.resumedFrom} — earlier conversation lives
+              there.
             </div>
-          ) : group.entries[0].kind === 'message' ? (
-            <ChatMessageBubble key={i} entry={group.entries[0]} />
-          ) : (
-            <MessageBubble key={i} entry={group.entries[0]} />
-          )
-        )}
+          )}
+          {groups.length === 0 && (
+            <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
+              <MessageSquare className="size-5" />
+              <p className="text-[13px]">
+                {meta.state === 'provisioning'
+                  ? 'Waiting for the run to start…'
+                  : 'No log entries yet.'}
+              </p>
+            </div>
+          )}
+          {groups.map((group, i) =>
+            group.kind === 'tools' ? (
+              <div key={i} className="flex flex-col gap-1.5">
+                {group.entries.map((entry, j) => (
+                  <ToolCard key={j} entry={entry} />
+                ))}
+              </div>
+            ) : group.entries[0].kind === 'message' ? (
+              <ChatMessageBubble key={i} entry={group.entries[0]} />
+            ) : (
+              <MessageBubble key={i} entry={group.entries[0]} />
+            )
+          )}
+        </div>
       </div>
 
       {meta.state === 'awaiting-approval' &&
