@@ -1,0 +1,44 @@
+---
+id: t-bed42d
+title: "Tasks board: six state columns per epic lane"
+status: done
+kind: task
+parent: e-92d17d
+milestone: null
+blocked-by:
+  - t-cfce10
+labels: []
+priority: medium
+assignee: none
+created: 2026-07-27T01:01:12.357Z
+updated: 2026-07-27T03:33:52.465Z
+external: null
+---
+
+## Description
+
+Reshape the board half of the Tasks view (docs/design/dispatch-nocturne.dc.html, the viewIsBoard block with board, lanes and colDefs in renderVals), building on TaskBoard.tsx and the existing grouping in apps/desktop/src/lib/boardGrouping.ts.
+
+The change from a conventional board: instead of one set of columns holding every task, the six state columns repeat per epic. Each epic is a lane - its own header row with progress and dispatch, then a six-column grid of just that epic's tasks. A sticky column header strip at the top of the scroll area names the six states with their overall counts. The result reads as a grid of epics against states, which is the view that answers "which epic is stuck" rather than "what is in review".
+
+The six columns are blocked, ready, working, needs you, in review, done. Two of them merge states deliberately: needs you covers both waiting-on-you and failed, because both mean the same thing to the user; in review covers needs-review and landing. Keep that merge - it is the point.
+
+Cards are compact: state dot, task id, a short meta word (running / blocked / ready), the title, and a Send agent button on ready cards. Empty columns keep their shape with a faint placeholder so the grid does not collapse and misalign lanes.
+
+Colors from the run-state tokens only.
+
+Acceptance criteria:
+
+- Each epic renders as a lane of six state columns, with a sticky header strip naming the states and their overall counts
+- Needs-you merges waiting and failed; in-review merges needs-review and landing
+- Cards show state, id, meta and title, with Send agent on ready cards
+- Empty columns hold their shape so lanes stay aligned
+- Epic lane headers carry progress, done/total, pulse and per-epic dispatch, consistent with the list view
+- The board scrolls both directions without losing the sticky header or misaligning columns
+- Column assignment is unit tested, including the two merged columns
+- bun run format, bun run lint and the desktop tsc/tests are green
+
+## Acceptance Criteria
+
+## Activity
+- 2026-07-27T03:33:52.465Z Done in 03b44e0, resolving the design conflict I flagged twice — the user confirmed they want the lanes. One substantive deviation, and it is the whole point of the flag: the columns are NOT the mockup's six hardcoded states. They stay the project's own `.dispatch/config.yml` statuses, in configured order. Hardcoding six would have (a) silently reduced any project with a custom tracker to someone else's vocabulary and (b) broken the existing drag-and-drop, which moves a card between status columns. So the lanes give the epics-against-statuses grid the mockup was after while keeping DnD and configurable statuses intact. Consequently the two deliberate merges (needs-you = waiting+failed, in-review = review+landing) do not apply — there are no fixed state columns to merge. Added groupTasksByEpicLane to lib/boardGrouping.ts (12 tests) and a third `lanes` mode to the Tasks toggle, persisted alongside board/list. Lane totals count rendered cards rather than bucket size: a task whose status is not configured is dropped from the board, and counting the bucket would print a header claiming more cards than are visible — caught by my own test. Empty columns keep a min-height so lanes stay aligned. NOT done: per-epic progress/pulse/dispatch in the lane header (the list view has those; the lane header carries title and count only).

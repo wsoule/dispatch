@@ -1,11 +1,13 @@
 import {
   Bell,
+  Brain,
   Check,
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
   Cog,
   GitBranch,
+  GitMerge,
   GitPullRequest,
   LayoutDashboard,
   ListChecks,
@@ -13,13 +15,13 @@ import {
   Play,
   Plus,
   Radar,
-  StickyNote,
   Target,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
+import { CountChip } from '../ui/CountChip';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -37,14 +39,19 @@ const PROJECT_VIEWS: {
   label: string;
   icon: typeof ListChecks;
 }[] = [
+  // Brain dump and Overview lead the rail because they are the two pages this app is actually
+  // used from — one is where everything gets captured, the other is where everything gets
+  // watched. The design puts them in this order too. Everything below is somewhere you go on
+  // purpose, for one task.
+  { id: 'brain-dump', label: 'Brain dump', icon: Brain },
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'board', label: 'Tasks', icon: ListChecks },
-  { id: 'milestones', label: 'Milestones', icon: Target },
   { id: 'runs', label: 'Runs', icon: Play },
+  { id: 'landing', label: 'Landing', icon: GitMerge },
+  { id: 'plans', label: 'Plans', icon: NotebookPen },
+  { id: 'milestones', label: 'Milestones', icon: Target },
   { id: 'branches', label: 'Branches', icon: GitBranch },
   { id: 'pull-requests', label: 'Pull requests', icon: GitPullRequest },
-  { id: 'notes', label: 'Notes & triage', icon: StickyNote },
-  { id: 'plans', label: 'Plans', icon: NotebookPen },
 ];
 
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
@@ -81,8 +88,9 @@ interface SidebarProps {
   /** Count of non-terminal runs for this project — the "All Agents" badge, so you can tell
    * something is live without leaving whatever you're looking at. */
   liveAgentCount: number;
-  /** Count of runs with an open PR — the "Pull requests" nav badge. */
-  prCount: number;
+  /** Live per-row counts. A row with no entry, or a zero, renders no badge at all — a rail of
+   * "0"s is noise, and the absence of a number is itself the information. */
+  badges: Partial<Record<ProjectView, number>>;
   /** Count of unread notification-inbox entries — the bell's badge (see InboxPanel/inbox.ts).
    * The bell itself is not a nav row (it doesn't select a `ProjectView`/`GlobalView`); it
    * toggles the inbox popover via `onToggleInbox` instead. */
@@ -125,7 +133,7 @@ export function Sidebar({
   projectView,
   globalView,
   liveAgentCount,
-  prCount,
+  badges,
   unreadCount,
   onToggleInbox,
   onSetProjectView,
@@ -308,11 +316,7 @@ export function Sidebar({
               {!collapsed && (
                 <>
                   <span className="flex-1">{item.label}</span>
-                  {item.id === 'pull-requests' && prCount > 0 && (
-                    <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
-                      {prCount}
-                    </span>
-                  )}
+                  <CountChip count={badges[item.id] ?? 0} />
                 </>
               )}
             </button>

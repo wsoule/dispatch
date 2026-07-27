@@ -113,8 +113,28 @@ export function createRunWatcher(
     if (code !== null) finish(code);
   });
 
+  // A refetch that failed because the CONNECTION died is not fatal — it is the
+  // condition the socket layer's reconnect/give-up loop already exists to
+  // handle, and it will surface as `onGiveUp`'s actionable CliError if the
+  // daemon really is gone. Treating it as fatal made it win the race against
+  // that: a daemon SIGKILLed while a refetch was in flight rejected
+  // `waitForExit` with undici's raw `TypeError: fetch failed`, `settled` flipped
+  // true, the later `onGiveUp` became a no-op, and the CLI died with an uncaught
+  // exception instead of printing "lost connection to dispatchd".
+  //
+  // `TypeError` is the precise signal rather than a message match: per the fetch
+  // spec a network failure rejects with TypeError, while an HTTP error response
+  // does not reject at all — createApiClient turns those into a thrown
+  // Error/CliError carrying the server's message. So a non-TypeError here means
+  // the run is genuinely unreadable (it was deleted, the id is wrong) and must
+  // still fail the watch rather than retry forever.
+  function isConnectionError(err: unknown): boolean {
+    return err instanceof TypeError;
+  }
+
   function triggerRefetch(): void {
     void refetchAndCheck().catch((err: unknown) => {
+      if (isConnectionError(err)) return;
       fail(err instanceof Error ? err : new Error(String(err)));
     });
   }

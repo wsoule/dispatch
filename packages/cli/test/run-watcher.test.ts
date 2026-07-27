@@ -212,6 +212,89 @@ describe('createRunWatcher', () => {
     watcher.dispose();
   });
 
+  // The daemon dying mid-fetch (the SIGKILL case orchestrate-e2e's "lost
+  // connection mid-watch" exercises): the in-flight refetch rejects with a raw
+  // `TypeError: fetch failed` from undici. That is a CONNECTION problem, and the
+  // socket layer's reconnect/give-up machinery already handles it — treating it
+  // as fatal made it win the race against `onGiveUp`, so `waitForExit` rejected
+  // with the undici error instead of the CliError, and the CLI died with an
+  // uncaught exception rather than printing "lost connection to dispatchd".
+  it('does not fail the watch when a refetch dies from a connection error', async () => {
+    const created: FakeSocket[] = [];
+    const client = makeClient(() =>
+      Promise.reject(
+        Object.assign(new TypeError('fetch failed'), {
+          cause: new Error('other side closed'),
+        })
+      )
+    );
+    const watcher = createRunWatcher(
+      { cwd: '/tmp', log: () => {} },
+      client,
+      'http://127.0.0.1:1',
+      {},
+      {
+        createSocket: () => {
+          const s = new FakeSocket();
+          created.push(s);
+          return s;
+        },
+        reconnectDelayMs: 2,
+        maxConsecutiveFailures: 3,
+      }
+    );
+    // setRunId itself triggers the first refetch, which fails on the dead
+    // socket. Deliberately no emitOpen: a generation that reached 'open' resets
+    // `consecutiveFailures` (see scheduleReconnect), so give-up would never fire
+    // and this would hang rather than assert anything.
+    watcher.setRunId('r-1');
+    const exitResult = watcher.waitForExit();
+    await sleep(10);
+
+    // Then the connection gives up for real. The message the user sees must be
+    // the actionable one, not undici's.
+    for (let i = 0; i < 3; i++) {
+      created[created.length - 1].emitClose();
+      await sleep(10);
+    }
+
+    await expect(exitResult).rejects.toBeInstanceOf(CliError);
+    await expect(exitResult).rejects.toThrow('lost connection to dispatchd');
+    watcher.dispose();
+  });
+
+  // A refetch failing for a NON-connection reason is still fatal — the run is
+  // genuinely unreadable, and silently retrying forever would hang the watch.
+  it('still fails the watch when a refetch fails for a non-connection reason', async () => {
+    const created: FakeSocket[] = [];
+    const client = makeClient(() =>
+      Promise.reject(new CliError('run not found: r-1'))
+    );
+    const watcher = createRunWatcher(
+      { cwd: '/tmp', log: () => {} },
+      client,
+      'http://127.0.0.1:1',
+      {},
+      {
+        createSocket: () => {
+          const s = new FakeSocket();
+          created.push(s);
+          return s;
+        },
+        reconnectDelayMs: 2,
+        maxConsecutiveFailures: 3,
+      }
+    );
+    watcher.setRunId('r-1');
+    const exitResult = watcher.waitForExit();
+
+    created[created.length - 1].emitOpen();
+    await sleep(10);
+
+    await expect(exitResult).rejects.toThrow('run not found: r-1');
+    watcher.dispose();
+  });
+
   it('buffers events that arrive before setRunId and replays them once it is called', () => {
     const lines: string[] = [];
     const created: FakeSocket[] = [];

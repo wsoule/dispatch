@@ -22,7 +22,7 @@ interface SettingsViewProps {
  * starting, indigo once connected, red if the sidecar never came up. */
 function daemonDotClass(data: DispatchProjectData): string {
   if (data.portLoading) return 'bg-muted-foreground/40';
-  return data.client !== null ? 'bg-primary' : 'bg-red-500';
+  return data.client !== null ? 'bg-primary' : 'bg-state-failed';
 }
 
 function daemonStatusLabel(data: DispatchProjectData): string {

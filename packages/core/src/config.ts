@@ -44,6 +44,12 @@ const KNOWN_PERMISSION_MODES = [
 // includes `'auto'`.
 export interface OrchestratorConfig {
   maxTurns?: number;
+  // How long the merge queue lets `verifyCommand` run before killing it and
+  // failing the entry. A ceiling, not a budget: the queue is strictly serial, so
+  // a verify that never returns holds up every entry behind it — which is
+  // exactly how an entry once sat in `verifying` for 11 minutes with no process
+  // behind it at all.
+  verifyTimeoutSec: number;
   maxBudgetUsd?: number;
   permissionMode: string;
   epicConcurrency: number;
@@ -60,6 +66,10 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   // No default turn cap — maxBudgetUsd is the real guard.
   permissionMode: 'auto',
   epicConcurrency: 3,
+  // 10 minutes: comfortably above a real install+build+test verify (~2-3 min
+  // measured on this repo) while still bounded, so a hang is caught in minutes
+  // rather than never.
+  verifyTimeoutSec: 600,
 };
 
 const DEFAULTS: DispatchConfig = {
@@ -91,6 +101,18 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
   ) {
     throw new ConfigError(
       'invalid .dispatch/config.yml: orchestrator.maxTurns must be a positive number'
+    );
+  }
+
+  const { verifyTimeoutSec } = obj;
+  if (
+    verifyTimeoutSec !== undefined &&
+    (typeof verifyTimeoutSec !== 'number' ||
+      !Number.isFinite(verifyTimeoutSec) ||
+      verifyTimeoutSec <= 0)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: orchestrator.verifyTimeoutSec must be a positive number'
     );
   }
 
@@ -136,6 +158,7 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     maxBudgetUsd,
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
     epicConcurrency: epicConcurrency ?? DEFAULT_ORCHESTRATOR.epicConcurrency,
+    verifyTimeoutSec: verifyTimeoutSec ?? DEFAULT_ORCHESTRATOR.verifyTimeoutSec,
   };
 }
 

@@ -27,9 +27,16 @@ export interface CommandResult {
 // and dispatchd is a single process serving every other HTTP request and
 // live run on the same event loop; a synchronous shell-out here would stall
 // all of that for as long as the git/gh call takes.
+// `opts.timeoutMs` bounds how long the command may run before it is killed and
+// reported as a failure. Only the merge queue's verify step passes it: rebase and
+// merge are fast local git operations, and cutting a merge short mid-write is
+// more dangerous than letting it finish. Optional, so every existing caller and
+// test stub is unaffected — TypeScript accepts a function of fewer parameters
+// where more are expected.
 export type CommandRunner = (
   cwd: string,
-  cmd: string[]
+  cmd: string[],
+  opts?: { timeoutMs?: number; onOutput?: (chunk: string) => void }
 ) => Promise<CommandResult>;
 
 // Picks whichever of a failed command's stderr/stdout actually has content,
@@ -41,9 +48,40 @@ function commandErrorText(result: CommandResult): string {
   return stderr.length > 0 ? stderr : result.stdout.trim();
 }
 
+// Drains a piped stream to a string, handing each decoded chunk to `onOutput` as
+// it arrives. Used instead of `new Response(stream).text()` when a caller wants
+// progress while a long command runs — that helper only resolves once the stream
+// has ended, which for a multi-minute verify means no output until it is over.
+async function drain(
+  stream: ReadableStream<Uint8Array>,
+  onOutput?: (chunk: string) => void
+): Promise<string> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // `stream: true` so a multi-byte character split across chunk boundaries is
+    // not mangled into replacement characters.
+    const chunk = decoder.decode(value, { stream: true });
+    if (chunk !== '') {
+      text += chunk;
+      onOutput?.(chunk);
+    }
+  }
+  const tail = decoder.decode();
+  if (tail !== '') {
+    text += tail;
+    onOutput?.(tail);
+  }
+  return text;
+}
+
 export async function defaultCommandRunner(
   cwd: string,
-  cmd: string[]
+  cmd: string[],
+  opts?: { timeoutMs?: number; onOutput?: (chunk: string) => void }
 ): Promise<CommandResult> {
   // Bun.spawn THROWS synchronously when the executable isn't on PATH (e.g.
   // `gh` missing from a Finder-launched app's minimal environment) — an
@@ -52,12 +90,34 @@ export async function defaultCommandRunner(
   // ok:false so callers degrade (pr capability false) instead of crashing.
   try {
     const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+    const collect = Promise.all([
+      drain(proc.stdout, opts?.onOutput),
+      drain(proc.stderr, opts?.onOutput),
       proc.exited,
     ]);
-    return { ok: exitCode === 0, stdout, stderr };
+    const timeoutMs = opts?.timeoutMs;
+    if (timeoutMs === undefined) {
+      const [stdout, stderr, exitCode] = await collect;
+      return { ok: exitCode === 0, stdout, stderr };
+    }
+    // SIGKILL rather than a polite signal: the thing being bounded is a command
+    // that has already proven it will not finish, and a build/test tree can
+    // ignore SIGTERM. Killing resolves `collect`, so the reader promises above
+    // never leak.
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill('SIGKILL');
+    }, timeoutMs);
+    try {
+      const [stdout, stderr, exitCode] = await collect;
+      if (timedOut) {
+        return { ok: false, stdout, stderr: `timed out after ${timeoutMs}ms` };
+      }
+      return { ok: exitCode === 0, stdout, stderr };
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (err) {
     return { ok: false, stdout: '', stderr: (err as Error).message };
   }

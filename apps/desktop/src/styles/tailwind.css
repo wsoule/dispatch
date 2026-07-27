@@ -90,6 +90,45 @@
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Fira Code', monospace;
+
+  /* Run-state palette, forwarded from tokens.css so dense rows can say
+     `text-state-waiting bg-state-waiting-surface` instead of carrying an inline style object.
+     Defined there, not here — this block only re-exports. */
+  --color-state-working: var(--state-working-fg);
+  --color-state-working-surface: var(--state-working-surface);
+  --color-state-working-edge: var(--state-working-edge);
+  --color-state-waiting: var(--state-waiting-fg);
+  --color-state-waiting-surface: var(--state-waiting-surface);
+  --color-state-waiting-edge: var(--state-waiting-edge);
+  --color-state-failed: var(--state-failed-fg);
+  --color-state-failed-surface: var(--state-failed-surface);
+  --color-state-failed-edge: var(--state-failed-edge);
+  --color-state-review: var(--state-review-fg);
+  --color-state-review-surface: var(--state-review-surface);
+  --color-state-review-edge: var(--state-review-edge);
+  --color-state-landing: var(--state-landing-fg);
+  --color-state-landing-surface: var(--state-landing-surface);
+  --color-state-landing-edge: var(--state-landing-edge);
+  --color-state-ready: var(--state-ready-fg);
+  --color-state-ready-surface: var(--state-ready-surface);
+  --color-state-ready-edge: var(--state-ready-edge);
+  --color-state-blocked: var(--state-blocked-fg);
+  --color-state-blocked-surface: var(--state-blocked-surface);
+  --color-state-blocked-edge: var(--state-blocked-edge);
+
+  /* The dense-row *type* treatments aren't exported here: a section label is size + tracking +
+     uppercase and row metadata is size + mono + tracking, so they're one `.dense-label` /
+     `.dense-meta` class each in global.css rather than three utilities to remember to combine.
+     Tailwind's own `text-xs`/`text-sm` are also left alone — 7 call sites rely on their
+     defaults, and quietly redefining them to 10px/11px would resize existing views. */
+
+  /* Hairline edges as shadow utilities: `shadow-hairline`, `shadow-hairline-bottom`, … */
+  --shadow-hairline: var(--hairline);
+  --shadow-hairline-strong: var(--hairline-strong);
+  --shadow-hairline-top: var(--hairline-top);
+  --shadow-hairline-bottom: var(--hairline-bottom);
+  --shadow-hairline-left: var(--hairline-left);
+  --shadow-hairline-right: var(--hairline-right);
 }
 
 @layer base {

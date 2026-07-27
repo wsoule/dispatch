@@ -14,10 +14,13 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus } from 'lucide-react';
+import { Layers, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
-import { groupTasksByStatus } from '../../lib/boardGrouping';
+import {
+  groupTasksByEpicLane,
+  groupTasksByStatus,
+} from '../../lib/boardGrouping';
 import { EpicCardTile } from './EpicCardTile';
 import { StatusIcon } from './StatusIcon';
 import { TaskCardTile } from './TaskCardTile';
@@ -39,6 +42,8 @@ interface TaskBoardProps {
   /** Every epic in the project — used only to resolve a plain task's `parent` id to that
    * epic's title for the card's `t-id › Epic title` breadcrumb (see `epicTitleById` below). */
   epics: TaskDoc[];
+  /** Render as per-epic swim lanes instead of one flat set of status columns. */
+  swimLanes?: boolean;
   onSelect: (id: string) => void;
   /** Dispatches a plain (non-epic) task directly from its card's inline ready-lane button.
    * Optional — omitting it (rather than requiring every caller to wire it up) simply hides
@@ -157,6 +162,7 @@ export function TaskBoard({
   epicProgressById,
   epicConcurrencyDefault,
   epics,
+  swimLanes = false,
   onSelect,
   onDispatch,
   onWorkEpic,
@@ -169,6 +175,9 @@ export function TaskBoard({
   archivedTaskIds = NO_ARCHIVED_IDS,
 }: TaskBoardProps) {
   const columns = groupTasksByStatus(tasks, statuses);
+  // Epic swim lanes: the same status columns, repeated per epic. Reads as a grid of epics
+  // against statuses, which answers "which epic is stuck" rather than "what is in review".
+  const lanes = groupTasksByEpicLane(tasks, statuses, epics);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
   const epicTitleById = useMemo(() => {
@@ -226,93 +235,173 @@ export function TaskBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveTaskId(null)}
     >
-      <div className="flex h-full min-h-0 gap-6 overflow-x-auto pb-2">
-        {columns.map(({ status, tasks: columnTasks }) => (
-          <div key={status} className="flex w-[272px] shrink-0 flex-col gap-2">
-            <div className="group/header flex items-center gap-1.5 px-0.5">
-              <StatusIcon status={status} />
-              <span className="text-muted-foreground truncate text-[11px] font-medium">
-                {status}
-              </span>
-              <span className="text-muted-foreground/60 font-mono text-[11px]">
-                {columnTasks.length}
-              </span>
-              {onAddTask !== undefined && (
-                <button
-                  type="button"
-                  onClick={() => onAddTask(status)}
-                  aria-label={`New task in ${status}`}
-                  className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto rounded-md p-0.5 opacity-0 transition-opacity duration-150 group-hover/header:opacity-100 focus-visible:opacity-100"
-                >
-                  <Plus className="size-3.5" />
-                </button>
-              )}
-            </div>
-            <DroppableColumn status={status}>
-              {columnTasks.length === 0 && (
-                <div className="text-muted-foreground/50 px-0.5 py-1 text-[11px]">
-                  No tasks
+      {swimLanes ? (
+        <div className="flex h-full min-h-0 flex-col gap-5 overflow-auto pb-2">
+          {lanes.length === 0 ? (
+            <p className="text-muted-foreground px-0.5 text-[12.5px]">
+              No tasks yet.
+            </p>
+          ) : (
+            lanes.map((lane) => (
+              <section key={lane.epicId ?? '__none__'}>
+                <div className="mb-2 flex items-center gap-2 px-0.5">
+                  <Layers className="text-primary size-3.5 shrink-0" />
+                  <span className="truncate text-[13px] font-medium">
+                    {lane.title}
+                  </span>
+                  <span className="dense-meta">{lane.total}</span>
+                  <span
+                    aria-hidden
+                    className="h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
+                  />
                 </div>
-              )}
-              {columnTasks.map((doc) => (
-                <DraggableCard
-                  key={doc.meta.id}
-                  id={doc.meta.id}
-                  disabled={archivedTaskIds.has(doc.meta.id)}
-                >
-                  {(drag) =>
-                    doc.meta.kind === 'epic' ? (
-                      <EpicCardTile
-                        doc={doc}
-                        progress={epicProgressById.get(doc.meta.id)}
-                        concurrencyDefault={epicConcurrencyDefault}
-                        childTasks={childrenByEpicId.get(doc.meta.id) ?? []}
-                        onSelect={() => onSelect(doc.meta.id)}
-                        onWork={onWorkEpic}
-                        onStop={onStopEpic}
-                        onOpenTask={onSelect}
-                        focused={doc.meta.id === focusedTaskId}
-                        onFocus={() => onCardFocus?.(doc.meta.id)}
-                        drag={drag}
-                      />
-                    ) : (
-                      <TaskCardTile
-                        doc={doc}
-                        ready={readyIds.has(doc.meta.id)}
-                        blocked={blockedIds.has(doc.meta.id)}
-                        liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
-                        run={latestRunByTaskId.get(doc.meta.id)}
-                        epicTitle={
-                          doc.meta.parent !== null
-                            ? epicTitleById.get(doc.meta.parent)
-                            : undefined
-                        }
-                        statuses={statuses}
-                        onStatusChange={(status) =>
-                          void onMoveStatus?.(doc.meta.id, status)
-                        }
-                        onEditTask={(patch) =>
-                          void onEditTask?.(doc.meta.id, patch)
-                        }
-                        onClick={() => onSelect(doc.meta.id)}
-                        onDispatch={
-                          readyIds.has(doc.meta.id) && onDispatch !== undefined
-                            ? () => onDispatch(doc.meta.id)
-                            : undefined
-                        }
-                        focused={doc.meta.id === focusedTaskId}
-                        onFocus={() => onCardFocus?.(doc.meta.id)}
-                        drag={drag}
-                        archived={archivedTaskIds.has(doc.meta.id)}
-                      />
-                    )
-                  }
-                </DraggableCard>
-              ))}
-            </DroppableColumn>
-          </div>
-        ))}
-      </div>
+                <div className="flex gap-6">
+                  {lane.columns.map(({ status, tasks: laneTasks }) => (
+                    <div
+                      key={status}
+                      className="flex w-[248px] shrink-0 flex-col gap-2"
+                    >
+                      <div className="flex items-center gap-1.5 px-0.5">
+                        <StatusIcon status={status} />
+                        <span className="dense-label truncate">{status}</span>
+                        <span className="dense-meta">{laneTasks.length}</span>
+                      </div>
+                      {/* Droppable per lane+status so dragging within a lane still changes
+                          status, and an empty column keeps its shape rather than collapsing
+                          and knocking the lanes out of alignment. */}
+                      <DroppableColumn status={status}>
+                        {laneTasks.length === 0 && (
+                          <div className="text-muted-foreground/40 min-h-8 px-0.5 py-1 text-[11px]" />
+                        )}
+                        {laneTasks.map((doc) => (
+                          <TaskCardTile
+                            key={doc.meta.id}
+                            doc={doc}
+                            ready={readyIds.has(doc.meta.id)}
+                            blocked={blockedIds.has(doc.meta.id)}
+                            liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
+                            run={latestRunByTaskId.get(doc.meta.id)}
+                            // No epic breadcrumb inside a lane: the lane heading already says
+                            // which epic this is, so repeating it on every card is noise.
+                            epicTitle={undefined}
+                            statuses={statuses}
+                            onStatusChange={(status) =>
+                              void onMoveStatus?.(doc.meta.id, status)
+                            }
+                            onEditTask={(patch) =>
+                              void onEditTask?.(doc.meta.id, patch)
+                            }
+                            onClick={() => onSelect(doc.meta.id)}
+                            onDispatch={
+                              readyIds.has(doc.meta.id) &&
+                              onDispatch !== undefined
+                                ? () => onDispatch(doc.meta.id)
+                                : undefined
+                            }
+                            archived={archivedTaskIds.has(doc.meta.id)}
+                          />
+                        ))}
+                      </DroppableColumn>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
+        </div>
+      ) : (
+        <div className="flex h-full min-h-0 gap-6 overflow-x-auto pb-2">
+          {columns.map(({ status, tasks: columnTasks }) => (
+            <div
+              key={status}
+              className="flex w-[272px] shrink-0 flex-col gap-2"
+            >
+              <div className="group/header flex items-center gap-1.5 px-0.5">
+                <StatusIcon status={status} />
+                <span className="text-muted-foreground truncate text-[11px] font-medium">
+                  {status}
+                </span>
+                <span className="text-muted-foreground/60 font-mono text-[11px]">
+                  {columnTasks.length}
+                </span>
+                {onAddTask !== undefined && (
+                  <button
+                    type="button"
+                    onClick={() => onAddTask(status)}
+                    aria-label={`New task in ${status}`}
+                    className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto rounded-md p-0.5 opacity-0 transition-opacity duration-150 group-hover/header:opacity-100 focus-visible:opacity-100"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                )}
+              </div>
+              <DroppableColumn status={status}>
+                {columnTasks.length === 0 && (
+                  <div className="text-muted-foreground/50 px-0.5 py-1 text-[11px]">
+                    No tasks
+                  </div>
+                )}
+                {columnTasks.map((doc) => (
+                  <DraggableCard
+                    key={doc.meta.id}
+                    id={doc.meta.id}
+                    disabled={archivedTaskIds.has(doc.meta.id)}
+                  >
+                    {(drag) =>
+                      doc.meta.kind === 'epic' ? (
+                        <EpicCardTile
+                          doc={doc}
+                          progress={epicProgressById.get(doc.meta.id)}
+                          concurrencyDefault={epicConcurrencyDefault}
+                          childTasks={childrenByEpicId.get(doc.meta.id) ?? []}
+                          onSelect={() => onSelect(doc.meta.id)}
+                          onWork={onWorkEpic}
+                          onStop={onStopEpic}
+                          onOpenTask={onSelect}
+                          focused={doc.meta.id === focusedTaskId}
+                          onFocus={() => onCardFocus?.(doc.meta.id)}
+                          drag={drag}
+                        />
+                      ) : (
+                        <TaskCardTile
+                          doc={doc}
+                          ready={readyIds.has(doc.meta.id)}
+                          blocked={blockedIds.has(doc.meta.id)}
+                          liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
+                          run={latestRunByTaskId.get(doc.meta.id)}
+                          epicTitle={
+                            doc.meta.parent !== null
+                              ? epicTitleById.get(doc.meta.parent)
+                              : undefined
+                          }
+                          statuses={statuses}
+                          onStatusChange={(status) =>
+                            void onMoveStatus?.(doc.meta.id, status)
+                          }
+                          onEditTask={(patch) =>
+                            void onEditTask?.(doc.meta.id, patch)
+                          }
+                          onClick={() => onSelect(doc.meta.id)}
+                          onDispatch={
+                            readyIds.has(doc.meta.id) &&
+                            onDispatch !== undefined
+                              ? () => onDispatch(doc.meta.id)
+                              : undefined
+                          }
+                          focused={doc.meta.id === focusedTaskId}
+                          onFocus={() => onCardFocus?.(doc.meta.id)}
+                          drag={drag}
+                          archived={archivedTaskIds.has(doc.meta.id)}
+                        />
+                      )
+                    }
+                  </DraggableCard>
+                ))}
+              </DroppableColumn>
+            </div>
+          ))}
+        </div>
+      )}
       <DragOverlay>
         {activeDoc !== undefined &&
           (activeDoc.meta.kind === 'epic' ? (

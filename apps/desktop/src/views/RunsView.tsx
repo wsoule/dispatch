@@ -233,7 +233,7 @@ export function RunsView({
                       : 'hover:bg-muted/60'
                   )}
                 >
-                  <RunStatePill state={run.state} className="shrink-0" />
+                  <RunStatePill meta={run} className="shrink-0" />
                   <MergeLadderDot
                     meta={data.latestRunByTaskId.get(run.taskId)}
                   />

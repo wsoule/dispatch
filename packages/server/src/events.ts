@@ -31,9 +31,17 @@ export type ServerEvent =
   // "go refetch" contract as task.changed. Lets an agent-created triage (via
   // the MCP `dispatch_note` tool) show up live in an open Notes tab.
   | { type: 'note.changed' }
+  // The brain-dump inbox changed (captured, retyped, dismissed or converted).
+  | { type: 'inbox.changed' }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
   | { type: 'merge-queue.changed' }
+  // One chunk of a merge-queue entry's verify output, as it is produced.
+  // Deliberately its own event rather than folded into `merge-queue.changed`:
+  // that one carries a full snapshot, so emitting it per output chunk would be
+  // pathologically chatty. Mirrors the `run.log` contract — the payload is the
+  // increment, and a client that wants the whole picture refetches.
+  | { type: 'merge-queue.log'; runId: string; chunk: string }
   // The queue just finished draining (>=1 merge, or a retried push) and
   // attempted to push origin's base up to date. Carries its own payload
   // (unlike the *.changed events above) so the UI can show the outcome

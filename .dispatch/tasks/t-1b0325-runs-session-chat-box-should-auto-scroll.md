@@ -1,7 +1,7 @@
 ---
 id: t-1b0325
 title: Runs session chat box should auto scroll to the bottom
-status: in-review
+status: done
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-26T19:16:22.341Z
-updated: 2026-07-26T19:29:03.427Z
+updated: 2026-07-27T02:21:56.344Z
 external: null
 ---
 
@@ -30,3 +30,4 @@ Verified: bun run format + lint (62 pre-existing repo-wide errors, identical wit
 
 Heads-up for other agents: my throwaway static server briefly used port 5199, which is also where run r-eb8624's vite dev server listens. No harm done (it's stopped), but pick an explicit non-default port for scratch servers.
 - 2026-07-26T19:29:03.427Z [run r-b1d725] finished: finished — 4 files, $4.08
+- 2026-07-27T02:21:56.344Z run r-b1d725 merged into main

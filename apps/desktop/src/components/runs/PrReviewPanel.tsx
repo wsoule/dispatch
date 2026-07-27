@@ -35,10 +35,9 @@ function StatusPill({
   tone?: 'green' | 'amber' | 'red' | 'purple' | 'muted';
 }) {
   const toneClass = {
-    green:
-      'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+    green: 'border-state-review-edge bg-state-review-surface text-state-review',
     amber:
-      'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+      'border-state-waiting-edge bg-state-waiting-surface text-state-waiting',
     red: 'border-destructive/30 bg-destructive/10 text-destructive',
     purple: 'border-primary/30 bg-primary/10 text-primary',
     muted: 'border-border bg-muted/60 text-muted-foreground',
@@ -133,9 +132,7 @@ function PrStatusHeader({ status }: { status: PrStatus }) {
         )}
 
         <span className="text-muted-foreground ml-1 font-mono text-[11px]">
-          <span className="text-emerald-600 dark:text-emerald-400">
-            +{status.additions}
-          </span>{' '}
+          <span className="text-state-review">+{status.additions}</span>{' '}
           <span className="text-destructive">−{status.deletions}</span> ·{' '}
           {status.changedFiles} file{status.changedFiles === 1 ? '' : 's'}
         </span>
@@ -291,7 +288,7 @@ export function PrReviewPanel({
                   variant="ghost"
                   size="sm"
                   disabled={busy || needsBody}
-                  className="hover:text-amber-600"
+                  className="hover:text-state-waiting"
                   onClick={() =>
                     void act(() => onReview('request-changes', draft.trim()))
                   }

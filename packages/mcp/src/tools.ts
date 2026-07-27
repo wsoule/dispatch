@@ -405,14 +405,27 @@ async function dispatchNote(
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
     return toolError('dispatchd not running — cannot add a note');
   }
+  // Writes to the brain-dump inbox, which replaced the notes store. The tool's own vocabulary
+  // is kept (`kind`, `title`, `body`) so every agent prompt that already knows how to call it
+  // keeps working, and the four note kinds fold onto the inbox's the same way the migration
+  // does — triage/followup/todo are all "something to do".
+  const KIND: Record<string, string> = {
+    note: 'note',
+    triage: 'task',
+    followup: 'task',
+    todo: 'task',
+  };
+  const text =
+    args.body !== undefined && args.body.trim() !== ''
+      ? `${args.title.trim()} — ${args.body.trim()}`
+      : args.title.trim();
   try {
-    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/notes`, {
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/inbox`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        kind: args.kind,
-        title: args.title,
-        body: args.body,
+        kind: KIND[args.kind] ?? 'note',
+        text,
         createdByRunId: callingRunId(),
       }),
     });
@@ -422,8 +435,8 @@ async function dispatchNote(
         `dispatch_note failed: ${body.error ?? `HTTP ${res.status}`}`
       );
     }
-    const note = (await res.json()) as { id: string };
-    return toolResult({ ok: true, id: note.id });
+    const created = (await res.json()) as { id: string }[];
+    return toolResult({ ok: true, id: created[0]?.id ?? null });
   } catch (err) {
     return toolError(`dispatch_note failed: ${(err as Error).message}`);
   }

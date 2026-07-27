@@ -32,10 +32,12 @@ import {
 import { checkForUpdate } from './lib/updater';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
+import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { GetStartedView } from './views/GetStartedView';
+import { LandingView } from './views/LandingView';
 import { MilestonesView } from './views/MilestonesView';
-import { NotesView } from './views/NotesView';
+import { NewTaskView } from './views/NewTaskView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { PullRequestsView } from './views/PullRequestsView';
@@ -48,14 +50,20 @@ import { TooltipProvider } from '@/ui/tooltip';
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
-  // Pre-selects `CreateTaskModal`'s Status field when it's opened from a board column's or
-  // list group's hover "+" button (see `BoardView`'s `onNewTask`) — `null` when opened from
-  // the plain "New task" button, which leaves the modal to default to the first configured
-  // status on its own.
+  // Pre-selects the Status field of whichever creator is open — the full-page `NewTaskView` or
+  // the `CreateTaskModal` quick-add — when it's opened from a board column's or list group's
+  // hover "+" button (see `BoardView`'s `onNewTask`). `null` when opened from the plain "New
+  // task" button, which leaves the creator to default to the first configured status on its
+  // own. One piece of state for both, so switching to the quick form mid-flow keeps the column
+  // you started from.
   const [createStatus, setCreateStatus] = useState<string | null>(null);
   // Whether the notification inbox popover (the bell in Sidebar's global section) is open —
   // see toggleInbox below for why opening it also marks everything read.
   const [inboxOpen, setInboxOpen] = useState(false);
+  // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
+  // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
+  // remounts the composer rather than being swallowed by its existing state.
+  const [planSeed, setPlanSeed] = useState<string | null>(null);
 
   // Auto-update: check GitHub's `latest.json` once after mount (non-blocking —
   // `checkForUpdate` is a no-op outside Tauri and swallows its own errors), and
@@ -224,11 +232,21 @@ function App() {
     dispatchNav({ type: 'setGlobalView', view });
   }, []);
 
-  // Opens `CreateTaskModal`, optionally pre-set to a status — the single entry point every
-  // "New task"/"+" affordance (the header button, a board column's hover "+", the palette
-  // action) calls through, so the modal's initial status is always explicit rather than a
-  // leftover from whichever column's "+" was clicked last.
+  // Opens the full-page task creator, optionally pre-set to a status — the single entry point
+  // every "New task"/"+" affordance (the header button, a board column's or list group's hover
+  // "+", the palette action, the global "c" shortcut) calls through, so the creator's initial
+  // status is always explicit rather than a leftover from whichever column's "+" was clicked
+  // last. Describing the task in natural language is the primary path now; the structured
+  // modal below is the quick-add fallback.
   const openCreateTask = useCallback((status?: string) => {
+    setCreateStatus(status ?? null);
+    dispatchNav({ type: 'openNewTask' });
+  }, []);
+
+  // The structured quick-add fallback: `CreateTaskModal`, unchanged, for when you already know
+  // the exact fields and don't want to spend an agent round-trip describing them. Reachable
+  // from the palette and from the full-page creator's own "Quick add…" button.
+  const openQuickAddTask = useCallback((status?: string) => {
     setCreateStatus(status ?? null);
     setShowCreate(true);
   }, []);
@@ -297,8 +315,8 @@ function App() {
     tasks: paletteTasks,
     readyIds: paletteReadyIds,
     handleDispatch,
-    inbox,
-    markInboxRead,
+    notificationInbox,
+    markNotificationInboxRead,
   } = data;
 
   // Opens/closes the inbox popover. Opening it marks every entry read in one step (not
@@ -306,10 +324,10 @@ function App() {
   const toggleInbox = useCallback(() => {
     setInboxOpen((open) => {
       const next = !open;
-      if (next) markInboxRead();
+      if (next) markNotificationInboxRead();
       return next;
     });
-  }, [markInboxRead]);
+  }, [markNotificationInboxRead]);
 
   // Stable identity for InboxPanel's onClose — that prop drives its outside-click/Escape
   // listener effect, so an inline arrow here would tear down and re-add those `document`
@@ -332,10 +350,10 @@ function App() {
       // 'runs-page': RunsView has no separate queue drawer to open — merge
       // queue state renders inline in a selected run's own detail panel —
       // so there's nothing further to target here.
-      markInboxRead();
+      markNotificationInboxRead();
       setInboxOpen(false);
     },
-    [selectProjectView, markInboxRead]
+    [selectProjectView, markNotificationInboxRead]
   );
 
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
@@ -348,6 +366,12 @@ function App() {
           label: 'New task',
           kind: 'action',
           run: () => openCreateTask(),
+        },
+        {
+          id: 'action-quick-add-task',
+          label: 'Quick add task…',
+          kind: 'action',
+          run: () => openQuickAddTask(),
         },
         {
           id: 'action-plan-work',
@@ -426,6 +450,7 @@ function App() {
     selectProjectView,
     setGlobalView,
     openCreateTask,
+    openQuickAddTask,
   ]);
 
   // Resolution states for the single active project, checked in order: an outright failure to
@@ -474,8 +499,14 @@ function App() {
             projectView={navState.projectView}
             globalView={navState.globalView}
             liveAgentCount={liveRuns.length}
-            prCount={data.runs.filter((r) => r.prUrl !== undefined).length}
-            unreadCount={unreadCount(inbox)}
+            badges={{
+              'pull-requests': data.runs.filter((r) => r.prUrl !== undefined)
+                .length,
+              landing: data.mergeQueue?.entries.length ?? 0,
+              board: data.readyIds.size,
+              runs: liveRuns.length,
+            }}
+            unreadCount={unreadCount(data.notificationInbox)}
             onToggleInbox={toggleInbox}
             onSetProjectView={selectProjectView}
             onSetGlobalView={setGlobalView}
@@ -542,7 +573,7 @@ function App() {
                 <>
                   {navState.globalView === 'all-agents' && (
                     <AllAgentsView
-                      liveRuns={liveRuns}
+                      runs={data.runs}
                       portLoading={data.portLoading}
                       portError={data.portError}
                       portErrorDetail={data.portErrorDetail}
@@ -573,15 +604,16 @@ function App() {
                         dispatchNav({ type: 'openRun', runId });
                         selectProjectView('runs');
                       }}
-                      onOpenTask={(taskId) =>
-                        dispatchNav({ type: 'openPeek', taskId })
-                      }
-                      onOpenPr={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('pull-requests');
-                      }}
-                      onDispatch={(taskId) => data.handleDispatch(taskId)}
                       onGoToBoard={() => selectProjectView('board')}
+                    />
+                  )}
+                  {navState.projectView === 'landing' && (
+                    <LandingView
+                      data={data}
+                      onOpenRun={(runId) => {
+                        dispatchNav({ type: 'openRun', runId });
+                        selectProjectView('runs');
+                      }}
                     />
                   )}
                   {navState.projectView === 'board' && (
@@ -634,16 +666,35 @@ function App() {
                       }
                     />
                   )}
-                  {navState.projectView === 'notes' && (
-                    <NotesView
+                  {navState.projectView === 'brain-dump' && (
+                    <BrainDumpView
                       data={data}
                       onOpenTask={(taskId) =>
                         dispatchNav({ type: 'openPeek', taskId })
                       }
+                      onPlanText={(text) => {
+                        setPlanSeed(text);
+                        selectProjectView('plans');
+                      }}
                     />
                   )}
                   {navState.projectView === 'plans' && (
-                    <PlansView data={data} projectPath={activeProject.path} />
+                    <PlansView
+                      data={data}
+                      projectPath={activeProject.path}
+                      initialPrompt={planSeed ?? undefined}
+                      key={planSeed ?? 'plans'}
+                    />
+                  )}
+                  {navState.projectView === 'new-task' && (
+                    <NewTaskView
+                      data={data}
+                      initialStatus={createStatus ?? undefined}
+                      onQuickAdd={() =>
+                        openQuickAddTask(createStatus ?? undefined)
+                      }
+                      onClose={() => dispatchNav({ type: 'closeNewTask' })}
+                    />
                   )}
                 </>
               )}
@@ -667,6 +718,7 @@ function App() {
             onUpdate={data.handleUpdate}
             onMoveStatus={data.moveTaskStatus}
             onDispatch={data.handleDispatch}
+            onEnrich={data.handleEnrichTask}
             onOpenRun={(runId) => {
               dispatchNav({ type: 'closePeek' });
               selectProjectView('runs');
@@ -681,7 +733,13 @@ function App() {
             statuses={data.config.statuses}
             epics={data.epics}
             initialStatus={createStatus ?? undefined}
-            onCreate={data.handleCreate}
+            onCreate={async (input) => {
+              await data.handleCreate(input);
+              // Quick-added from on top of the full-page creator: that page has nothing left
+              // to do once the task exists, so close it rather than leaving its composer
+              // sitting behind the dismissed modal. A no-op from anywhere else.
+              dispatchNav({ type: 'closeNewTask' });
+            }}
             onClose={() => setShowCreate(false)}
           />
         )}
@@ -701,9 +759,9 @@ function App() {
 
         {inboxOpen && (
           <InboxPanel
-            entries={inbox.entries}
+            entries={notificationInbox.entries}
             onNavigate={navigateFromInbox}
-            onMarkAllRead={markInboxRead}
+            onMarkAllRead={markNotificationInboxRead}
             onClose={closeInbox}
           />
         )}
