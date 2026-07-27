@@ -1,4 +1,4 @@
-import type { EpicProgress, RunState } from '@dispatch/client';
+import type { EpicProgress, RunMeta, RunState } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import {
   closestCenter,
@@ -30,6 +30,8 @@ interface TaskBoardProps {
   blockedIds: Set<string>;
   /** Live (non-terminal) run state per task id. */
   liveRunStateByTaskId: Map<string, RunState>;
+  /** Each task's latest run, if any — feeds the card's merge-ladder dot. */
+  latestRunByTaskId: Map<string, RunMeta>;
   /** Epic dispatch progress per epic id, once fetched. */
   epicProgressById: Map<string, EpicProgress>;
   /** Default concurrency for a fresh epic dispatch session (config's `orchestrator.epicConcurrency`). */
@@ -151,6 +153,7 @@ export function TaskBoard({
   readyIds,
   blockedIds,
   liveRunStateByTaskId,
+  latestRunByTaskId,
   epicProgressById,
   epicConcurrencyDefault,
   epics,
@@ -278,6 +281,7 @@ export function TaskBoard({
                         ready={readyIds.has(doc.meta.id)}
                         blocked={blockedIds.has(doc.meta.id)}
                         liveRunState={liveRunStateByTaskId.get(doc.meta.id)}
+                        run={latestRunByTaskId.get(doc.meta.id)}
                         epicTitle={
                           doc.meta.parent !== null
                             ? epicTitleById.get(doc.meta.parent)
@@ -329,6 +333,7 @@ export function TaskBoard({
                 ready={readyIds.has(activeDoc.meta.id)}
                 blocked={blockedIds.has(activeDoc.meta.id)}
                 liveRunState={liveRunStateByTaskId.get(activeDoc.meta.id)}
+                run={latestRunByTaskId.get(activeDoc.meta.id)}
                 epicTitle={
                   activeDoc.meta.parent !== null
                     ? epicTitleById.get(activeDoc.meta.parent)

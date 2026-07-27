@@ -277,9 +277,13 @@ function App() {
     },
   });
 
+  // Resolved from the archived-inclusive list: an archived task's Board card or List row
+  // must still open its detail dialog when the Archived toggle is on.
   const selectedDoc =
     navState.peekTaskId !== null
-      ? (data.tasks.find((t) => t.meta.id === navState.peekTaskId) ?? null)
+      ? (data.tasksIncludingArchived.find(
+          (t) => t.meta.id === navState.peekTaskId
+        ) ?? null)
       : null;
 
   // Destructured to bare locals rather than referenced as `data.tasks`/`data.readyIds`/
@@ -324,6 +328,10 @@ function App() {
       if (target.kind === 'run') {
         dispatchNav({ type: 'openRun', runId: target.runId });
       }
+      // {kind:'queue'} falls through to the same runs-page landing as
+      // 'runs-page': RunsView has no separate queue drawer to open — merge
+      // queue state renders inline in a selected run's own detail panel —
+      // so there's nothing further to target here.
       markInboxRead();
       setInboxOpen(false);
     },
@@ -653,7 +661,7 @@ function App() {
             run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
             runs={data.runs.filter((r) => r.taskId === selectedDoc.meta.id)}
             epics={data.epics}
-            tasks={data.tasks}
+            tasks={data.tasksIncludingArchived}
             latestRunByTaskId={data.latestRunByTaskId}
             onClose={() => dispatchNav({ type: 'closePeek' })}
             onUpdate={data.handleUpdate}
