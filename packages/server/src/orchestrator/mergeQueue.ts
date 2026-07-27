@@ -494,9 +494,16 @@ export class MergeQueue {
   // ready" outcome here, not an error like enqueueStack's all-skipped 409.
   enqueueReady(): MergeQueueEntry[] {
     const tasks = this.ctx.cache.query();
-    const eligible = this.ctx.orchestrator
-      .list()
-      .filter((m) => this.isEnqueueable(m));
+    // Same task-status guard enqueueStack applies via its own `isDone` check:
+    // a task's status is user-settable independent of its run's state, so a
+    // run left finished-and-unreviewed on a task the user since cancelled (or
+    // deleted) must not be swept in just because the run itself looks ready.
+    const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+    const eligible = this.ctx.orchestrator.list().filter((m) => {
+      if (!this.isEnqueueable(m)) return false;
+      const task = byId.get(m.taskId);
+      return task !== undefined && !isDone(task);
+    });
     // list() is most-recent-first, so the first eligible run seen per taskId
     // is that task's latest — same convention enqueueStack relies on.
     const eligibleByTaskId = new Map<string, RunMeta>();
