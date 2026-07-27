@@ -130,6 +130,10 @@ export class MergeQueue {
   // knows what to push. Both read only by pushOnDrain, at the moment the pump
   // loop finds the queue fully empty.
   private mergedSinceIdle = 0;
+  // A single field, not a per-base map: mergeRun's C4 guard refuses a merge
+  // whenever the main checkout isn't on the run's own baseBranch, so this
+  // one process can only ever merge against one base at a time — there is no
+  // multi-base sweep for this to lose track of.
   private lastMergeBase: string | undefined;
   // Set on a drain-push failure, cleared on success — the retry seam pump()
   // checks on every subsequent idle transition (including one driven by
@@ -596,6 +600,14 @@ export class MergeQueue {
     // always sees the entry exactly as pushed before any processing begins.
     await Promise.resolve();
     try {
+      // Set once a drain-push has been attempted for the CURRENT empty
+      // streak, so a push that keeps failing retries on the NEXT
+      // externally-kicked pump() call (lastDrainPushFailed persists across
+      // calls) rather than hot-looping forever inside this one. An entry
+      // arriving during the awaited push (see the `next !== null` branch
+      // below) clears it, since that entry's own eventual merge is a fresh
+      // idle transition worth its own report.
+      let idlePushAttempted = false;
       for (;;) {
         // Before anything is picked up: bring every dependent of a
         // just-merged blocker back onto its new base. A dependent whose
@@ -607,9 +619,23 @@ export class MergeQueue {
           // Only once the queue is truly empty (not merely "nothing eligible
           // right now" — an entry can still be sitting in waiting-blockers) is
           // this actually a drain worth pushing/reporting on.
-          if (this.entries.length === 0) await this.pushOnDrain();
+          if (this.entries.length === 0 && !idlePushAttempted) {
+            const snapshot = this.captureDrainSnapshot();
+            if (snapshot !== null) {
+              idlePushAttempted = true;
+              await this.pushOnDrain(snapshot);
+              // `pumping` stays true for this whole call, so an enqueue()
+              // landing while the push above was in flight had its own kick()
+              // dropped (the pumping guard at the top of this function makes
+              // it a no-op) — looping back here, rather than returning, is
+              // what actually picks that entry up instead of stranding it at
+              // 'queued' with nothing left to nudge it.
+              continue;
+            }
+          }
           return;
         }
+        idlePushAttempted = false;
         this.active = next;
         const outcome = await this.process(next);
         this.active = null;
@@ -1334,23 +1360,40 @@ export class MergeQueue {
     this.broadcast();
   }
 
-  // Fires once the pump loop finds the queue fully drained: pushes origin's
-  // copy of whatever base branch was just merged into, so a human never has
-  // to remember to `git push` after every merge queue run. A no-op when
-  // nothing merged and no prior push is owed a retry (the common case, most
-  // idle ticks). Never throws — a push failure is reported via the
-  // `queue.drained` event and `lastDrainPushFailed`, not an exception, since
-  // this runs after every entry that needed it has already finished
-  // successfully.
-  private async pushOnDrain(): Promise<void> {
-    if (this.mergedSinceIdle === 0 && !this.lastDrainPushFailed) return;
+  // Snapshots mergedSinceIdle and clears it, synchronously and in one step,
+  // before pushOnDrain ever awaits anything — a merge that lands later (once
+  // pump()'s loop continues and picks up a newly-enqueued entry) must
+  // increment a FRESH counter and earn its own later report, not be folded
+  // into (or lost from) the drain this snapshot is about to describe.
+  // `lastMergeBase` is read but deliberately NOT cleared here: a failed push
+  // keeps it around so the retry (see `lastDrainPushFailed`) targets the same
+  // branch. Returns null when there is nothing to report at all: no merge
+  // since the last drain and no push owed a retry.
+  private captureDrainSnapshot(): {
+    merged: number;
+    base: string | undefined;
+  } | null {
+    if (this.mergedSinceIdle === 0 && !this.lastDrainPushFailed) return null;
     const merged = this.mergedSinceIdle;
     this.mergedSinceIdle = 0;
+    return { merged, base: this.lastMergeBase };
+  }
 
-    if (
-      !this.ctx.orchestrator.hasOriginRemote() ||
-      this.lastMergeBase === undefined
-    ) {
+  // Fires once the pump loop finds the queue fully drained: pushes origin's
+  // copy of whatever base branch was just merged into, so a human never has
+  // to remember to `git push` after every merge queue run. Acts strictly on
+  // the snapshot captureDrainSnapshot took (never re-reads the live counters
+  // itself), so it can't double-report or drop a merge that lands while its
+  // own `await` is in flight. Never throws — a push failure is reported via
+  // the `queue.drained` event and `lastDrainPushFailed`, not an exception,
+  // since this runs after every entry that needed it has already finished
+  // successfully.
+  private async pushOnDrain(snapshot: {
+    merged: number;
+    base: string | undefined;
+  }): Promise<void> {
+    const { merged, base } = snapshot;
+    if (!this.ctx.orchestrator.hasOriginRemote() || base === undefined) {
       this.lastDrainPushFailed = false;
       this.ctx.events.broadcast({
         type: 'queue.drained',
@@ -1364,7 +1407,7 @@ export class MergeQueue {
       'git',
       'push',
       'origin',
-      this.lastMergeBase,
+      base,
     ]);
     if (push.ok) {
       this.lastDrainPushFailed = false;

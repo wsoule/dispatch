@@ -510,6 +510,66 @@ describe('MergeQueue auto-push on drain', () => {
     }[];
     expect(retried).toMatchObject({ merged: 0, pushed: true });
   });
+
+  // The Critical fix: `pumping` stays true for this whole pump() call,
+  // including while the drain-push's `git push` is in flight, so an
+  // enqueue() landing in that window has its own kick() dropped by the
+  // pumping guard. Without the loop looping back (`continue`, not `return`)
+  // after the push settles, that entry would strand at 'queued' forever —
+  // nothing else would ever nudge pump() again.
+  it('processes an entry enqueued while the drain push is still in flight, without any external kick', async () => {
+    const origin = initBareOrigin();
+    const harness = makeHarness();
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
+    const { runId: firstRunId } = await dispatchAndFinish(harness, 'First');
+    const stub = new StubRunner();
+
+    // Stalls only the FIRST `git push origin` call indefinitely, until the
+    // test resolves it by hand — everything else (including a second push,
+    // should this run far enough to trigger one) goes through untouched.
+    let resolvePush: (() => void) | undefined;
+    let pushIntercepted = false;
+    const originalRun = stub.run;
+    stub.run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
+      if (!pushIntercepted && cmd[0] === 'git' && cmd[1] === 'push') {
+        pushIntercepted = true;
+        await new Promise<void>((resolve) => {
+          resolvePush = resolve;
+        });
+      }
+      return originalRun(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(firstRunId);
+    // The first entry has already merged and pump() is now blocked inside
+    // pushOnDrain's stalled `git push`.
+    await waitFor(() => resolvePush !== undefined);
+    expect(
+      queue
+        .snapshot()
+        .history.some((e) => e.runId === firstRunId && e.state === 'merged')
+    ).toBe(true);
+
+    // A second, already-finished run enqueued WHILE the push above is still
+    // pending. Its own kick() is a no-op (pumping is still true) — the only
+    // thing that can ever process it is this same pump() call looping back.
+    const { runId: secondRunId } = await dispatchAndFinish(harness, 'Second');
+    queue.enqueue(secondRunId);
+    expect(
+      queue.snapshot().entries.find((e) => e.runId === secondRunId)?.state
+    ).toBe('queued');
+
+    resolvePush?.();
+
+    await waitFor(
+      () =>
+        queue
+          .snapshot()
+          .history.some((e) => e.runId === secondRunId && e.state === 'merged'),
+      2000
+    );
+  });
 });
 
 // The "merge queue does not work" report. A dirty main checkout is an

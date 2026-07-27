@@ -1424,7 +1424,10 @@ export class Orchestrator {
     const doneTasks = this.ctx.cache.query({ status: 'done' });
     if (doneTasks.length === 0) return 0;
     // Newest merged run per task, scanned once against registry.list()'s own
-    // most-recent-first order — mirrors newestRunByBranch()'s same shape.
+    // most-recent-first order — mirrors newestRunByBranch()'s same shape. Safe
+    // to key purely on `reviewAction === 'merge'` here: a discarded run's task
+    // is flipped back to 'todo' by review() (never left at 'done'), so it
+    // never reaches `doneTasks` above for a discard to be mistaken for this.
     const newestMergedByTask = new Map<string, RunMeta>();
     for (const run of this.registry.list()) {
       if (run.reviewAction !== 'merge' || run.mergeCommit === undefined) {
