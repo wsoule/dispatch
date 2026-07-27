@@ -42,12 +42,14 @@ describe('mergeLadderState', () => {
     expect(mergeLadderState(run({ reviewAction: 'merge' }))).toBe('unmerged');
   });
 
-  test('a pr review action never counts as merged', () => {
+  test('a pr review action counts as on-origin — markRunMergedViaPr only fires once GitHub reports the PR merged', () => {
     expect(
       mergeLadderState(
         run({ reviewAction: 'pr', prUrl: 'https://example.com/pr/1' })
       )
-    ).toBe('unmerged');
+    ).toBe('on-origin');
+    // No prUrl at all is still on-origin — the state only depends on reviewAction.
+    expect(mergeLadderState(run({ reviewAction: 'pr' }))).toBe('on-origin');
   });
 });
 
@@ -60,5 +62,25 @@ describe('mergeLadderLabel', () => {
     expect(mergeLadderLabel('on-origin', undefined, 'abc1234567')).toBe(
       'in origin (abc1234)'
     );
+  });
+
+  test('on-origin without a sha falls back to PR wording rather than printing "undefined"', () => {
+    expect(
+      mergeLadderLabel(
+        'on-origin',
+        undefined,
+        undefined,
+        'https://github.com/o/r/pull/123'
+      )
+    ).toBe('merged via PR #123');
+    expect(
+      mergeLadderLabel(
+        'on-origin',
+        undefined,
+        undefined,
+        'https://example.com/not-a-pr'
+      )
+    ).toBe('merged via PR');
+    expect(mergeLadderLabel('on-origin')).toBe('merged via PR');
   });
 });
