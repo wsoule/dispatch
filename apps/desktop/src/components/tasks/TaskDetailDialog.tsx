@@ -539,7 +539,8 @@ export function TaskDetailDialog({
                 {mergeLadderLabel(
                   mergeLadderState(run),
                   run?.branch,
-                  run?.mergeCommit
+                  run?.mergeCommit,
+                  run?.prUrl
                 )}
               </span>
               <DialogTitle className="sr-only">

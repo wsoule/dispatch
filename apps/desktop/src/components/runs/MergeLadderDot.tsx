@@ -22,7 +22,12 @@ export function MergeLadderDot({ meta, className }: MergeLadderDotProps) {
   const state = mergeLadderState(meta);
   return (
     <span
-      title={mergeLadderLabel(state, meta?.branch, meta?.mergeCommit)}
+      title={mergeLadderLabel(
+        state,
+        meta?.branch,
+        meta?.mergeCommit,
+        meta?.prUrl
+      )}
       className={cn(
         'size-1.5 shrink-0 rounded-full',
         MERGE_LADDER_DOT[state],
