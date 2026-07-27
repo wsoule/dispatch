@@ -1,7 +1,7 @@
 ---
 id: t-3b3cde
 title: "Milestones: progress rows with risk derived from real run state"
-status: todo
+status: done
 kind: task
 parent: e-c88fb6
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T01:02:02.799Z
-updated: 2026-07-27T01:02:02.799Z
+updated: 2026-07-27T02:34:24.621Z
 external: null
 ---
 
@@ -38,3 +38,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T02:34:24.621Z Done in 389f17e. One acceptance criterion cannot be met as written: there is no target date to render or be late against. TaskMeta.milestone is a free-form string (deliberately, so a project needs no setup to use milestones), so schedule risk is not computable and is not faked. Risk is derived purely from run state in lib/milestoneRisk.ts (9 tests): a milestone is 'stalled' when any of its tasks have runs waiting on approval or failed, 'active' when agents are running, 'idle' otherwise, 'complete' when all tasks are closed. The reason always names the specific count and lists both causes when both are present, since waiting and failing call for different actions. A stall outranks concurrent progress — one frozen task is the thing to act on even if three others are running. If dated milestones are wanted, that is a core model change (TaskMeta.milestone becomes a record with a date) and deserves its own task.

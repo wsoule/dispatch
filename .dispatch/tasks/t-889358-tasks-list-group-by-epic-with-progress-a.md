@@ -1,7 +1,7 @@
 ---
 id: t-889358
 title: "Tasks list: group by epic with progress and per-epic dispatch"
-status: todo
+status: done
 kind: task
 parent: e-92d17d
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:00:57.332Z
-updated: 2026-07-27T01:00:57.332Z
+updated: 2026-07-27T02:34:59.762Z
 external: null
 ---
 
@@ -42,3 +42,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T02:34:59.762Z Done in 7f5af63, scoped down because most of this already existed. TasksListView already grouped by epic with collapsible headers, done/total from epicProgressById, dangling-parent and "No epic" buckets, a filter, and j/k roving focus; per-epic dispatch already exists via handleWorkEpic and EpicCardTile's concurrency stepper. The genuine gap was the live pulse, added as lib/epicPulse.ts (8 tests) and wired into the group header. It reports the single most actionable fact rather than a tally — needs-you > running > to-review > ready > nothing — because a header listing all four makes the reader do the triage the line exists to do for them. Waiting and failed share one counter: different fixes, same blocker. NOT done here: the per-epic dispatch button was not re-routed through a confirmation dialog, because the dialog UI itself is unbuilt (only its logic landed, in lib/dispatchPreview.ts under t-980beb) — the existing epic dispatch path is untouched and still works.
