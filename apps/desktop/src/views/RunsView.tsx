@@ -122,11 +122,14 @@ export function RunsView({
   const diffLoading = data.diffLoading;
   const diff = data.diff;
 
-  // Built once per `data.tasks`/`data.epics` change rather than re-scanned per row: a run
-  // row's epic breadcrumb needs its task's `parent`, then that parent id's title.
+  // Built once per `data.tasksIncludingArchived`/`data.epics` change rather than re-scanned
+  // per row: a run row's epic breadcrumb needs its task's `parent`, then that parent id's
+  // title. Archived-inclusive (Task 9) so a run whose task has since been archived — visible
+  // here once the shared "show archived" toggle is on — still resolves its breadcrumb/stack
+  // instead of silently missing from the lookup.
   const taskById = useMemo(
-    () => new Map(data.tasks.map((t) => [t.meta.id, t])),
-    [data.tasks]
+    () => new Map(data.tasksIncludingArchived.map((t) => [t.meta.id, t])),
+    [data.tasksIncludingArchived]
   );
   const epicTitleById = useMemo(() => {
     const map = new Map<string, string>();
@@ -243,7 +246,10 @@ export function RunsView({
                       </span>
                     )}
                   </span>
-                  <StackBadge tasks={data.tasks} taskId={run.taskId} />
+                  <StackBadge
+                    tasks={data.tasksIncludingArchived}
+                    taskId={run.taskId}
+                  />
                   {run.costUsd !== undefined && (
                     <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
                       ${run.costUsd.toFixed(2)}
@@ -302,7 +308,7 @@ export function RunsView({
               />
 
               <StackRail
-                tasks={data.tasks}
+                tasks={data.tasksIncludingArchived}
                 taskId={selected.taskId}
                 latestRunByTaskId={data.latestRunByTaskId}
                 onOpenTask={(taskId) => {
@@ -363,7 +369,7 @@ export function RunsView({
                       diffError={data.diffError}
                       prCapability={data.health?.pr ?? false}
                       mergeQueue={data.mergeQueue}
-                      tasks={data.tasks}
+                      tasks={data.tasksIncludingArchived}
                       latestRunByTaskId={data.latestRunByTaskId}
                       onMerge={() => data.handleReview(selected.id, 'merge')}
                       onDiscard={() =>

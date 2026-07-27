@@ -59,6 +59,11 @@ interface TaskBoardProps {
   /** Id of the card the Board's j/k roving-focus cursor is currently on, if any — see
    * `BoardView`'s column-major traversal. `undefined`/no match renders every card unfocused. */
   focusedTaskId?: string | null;
+  /** Task 9: ids of tasks appended to `tasks` because the "Archived" toggle is on — these
+   * cards render dimmed and can't be dragged (their `moveTaskStatus` calls are also gated
+   * centrally in `useDispatchProject`, this just keeps the drag from starting in the first
+   * place). Defaults to empty so a board rendered without the toggle never has to pass it. */
+  archivedTaskIds?: ReadonlySet<string>;
   /** Called whenever real DOM focus lands on any card (click, Tab, or the roving-focus
    * effect) — lets `BoardView` sync `focusedTaskId` to wherever focus actually is, so a
    * mouse click (which the j/k cursor never hears about on its own) can't leave Enter
@@ -66,15 +71,24 @@ interface TaskBoardProps {
   onCardFocus?: (taskId: string) => void;
 }
 
+// Stable empty-set default for `archivedTaskIds` — avoids allocating a fresh `Set` every
+// render for the common case of a board rendered without the archived toggle at all.
+const NO_ARCHIVED_IDS: ReadonlySet<string> = new Set();
+
 // A card's draggable id doubles as its task id — plain `useDraggable`, not `useSortable`,
 // since the board never persists intra-column order, only which column (status) a card sits
 // in. This wrapper is the one place that calls the hook, so `TaskCardTile`/`EpicCardTile`
 // stay ignorant of @dnd-kit beyond the small `CardDragProps` shape they already accept.
 function DraggableCard({
   id,
+  disabled = false,
   children,
 }: {
   id: string;
+  /** Task 9: true for an archived card — `useDraggable`'s own `disabled` option, so an
+   * archived card never lifts under the pointer/keyboard sensors at all rather than relying
+   * solely on `onMoveStatus`'s own archived-task guard. */
+  disabled?: boolean;
   children: (drag: {
     setNodeRef: (node: HTMLElement | null) => void;
     style: React.CSSProperties | undefined;
@@ -84,7 +98,7 @@ function DraggableCard({
   }) => React.ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id });
+    useDraggable({ id, disabled });
   const style = transform
     ? { transform: CSS.Translate.toString(transform) }
     : undefined;
@@ -149,6 +163,7 @@ export function TaskBoard({
   onAddTask,
   focusedTaskId = null,
   onCardFocus,
+  archivedTaskIds = NO_ARCHIVED_IDS,
 }: TaskBoardProps) {
   const columns = groupTasksByStatus(tasks, statuses);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -237,7 +252,11 @@ export function TaskBoard({
                 </div>
               )}
               {columnTasks.map((doc) => (
-                <DraggableCard key={doc.meta.id} id={doc.meta.id}>
+                <DraggableCard
+                  key={doc.meta.id}
+                  id={doc.meta.id}
+                  disabled={archivedTaskIds.has(doc.meta.id)}
+                >
                   {(drag) =>
                     doc.meta.kind === 'epic' ? (
                       <EpicCardTile
@@ -280,6 +299,7 @@ export function TaskBoard({
                         focused={doc.meta.id === focusedTaskId}
                         onFocus={() => onCardFocus?.(doc.meta.id)}
                         drag={drag}
+                        archived={archivedTaskIds.has(doc.meta.id)}
                       />
                     )
                   }
