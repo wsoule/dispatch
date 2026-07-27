@@ -93,6 +93,15 @@ jobs:
       # locally before writing this job. Re-run them by hand after a
       # re-vendoring pass and gate on them once the vendored code is clean;
       # for now only `cargo test`, which is green, is enforced.
+      # tauri-build's build script errors if any bundle resource is missing.
+      # The sidecar binaries are gitignored build products (release.yml builds
+      # the real ones); cargo test never runs them, so empty placeholders do.
+      - name: Create placeholder sidecar resources
+        working-directory: apps/desktop/src-tauri
+        run:
+          touch resources/dispatchd resources/dispatch-mcp
+          resources/dispatch-cli
+
       - name: Test
         working-directory: apps/desktop/src-tauri
         run: cargo test
