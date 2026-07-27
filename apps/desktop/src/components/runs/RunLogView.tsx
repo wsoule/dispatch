@@ -76,7 +76,11 @@ interface RunLogViewProps {
    * doesn't expose a paused run's requestId over `GET /api/runs/:id`, only the live WS event
    * carries it, so there's nothing to resume approving from here without it). */
   pendingApproval: { requestId: string; toolName: string } | null;
-  onApprove: (requestId: string, allow: boolean) => Promise<void>;
+  onApprove: (
+    requestId: string,
+    allow: boolean,
+    opts?: { scope?: 'once' | 'session'; reason?: string }
+  ) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
   /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
    * button drives) — this view offers it too once the run is done, so talking to the agent
@@ -187,7 +191,9 @@ export function RunLogView({
           <ApprovalCard
             toolName={pendingApproval.toolName}
             toolInput={pendingApprovalInput}
-            onDecide={(allow) => onApprove(pendingApproval.requestId, allow)}
+            onDecide={(allow, opts) =>
+              onApprove(pendingApproval.requestId, allow, opts)
+            }
           />
         ) : (
           <div className="border-border bg-muted/40 text-muted-foreground flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">

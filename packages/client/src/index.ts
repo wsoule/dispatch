@@ -45,6 +45,7 @@ export type {
   ReviewReply,
   RunDetail,
   RunMeta,
+  VerifyStepResult,
   RunState,
   ServerEvent,
   SocketLike,

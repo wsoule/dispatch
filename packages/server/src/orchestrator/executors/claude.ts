@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type {
+  ApprovalDecision,
   Executor,
   ExecutorEvents,
   ExecutorRun,
@@ -130,7 +131,7 @@ function buildDispatchMcpServerConfig(
 // requestId -> resolver shape FakeExecutor uses for its own scripted
 // approval gates, so both executors plug into the orchestrator's approval
 // flow identically.
-type ApprovalResolver = (allow: boolean) => void;
+type ApprovalResolver = (decision: ApprovalDecision) => void;
 
 // Claude Code's own file-editing tools. Verified empirically against the
 // installed SDK (0.3.207): contrary to what the SDK's own docs imply,
@@ -420,6 +421,11 @@ export class ClaudeExecutor implements Executor {
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     const pendingApprovals = new Map<string, ApprovalResolver>();
     let interrupted = false;
+    // Tools the user said "always, for this run" about. Session-scoped by construction: this
+    // Set lives inside start(), so it dies with the run rather than leaking a permission grant
+    // into the next one — which is the property that makes approve-for-session safe to offer
+    // at all.
+    const sessionAllowed = new Set<string>();
 
     const canUseTool: CanUseTool = async (toolName, input, callOpts) => {
       if (interrupted) {
@@ -431,13 +437,28 @@ export class ClaudeExecutor implements Executor {
       ) {
         return { behavior: 'allow', updatedInput: input };
       }
+      if (sessionAllowed.has(toolName)) {
+        return { behavior: 'allow', updatedInput: input };
+      }
       const { requestId } = callOpts;
       events.onApprovalRequest({ requestId, toolName, input });
-      const allow = await new Promise<boolean>((resolve) => {
+      const decision = await new Promise<ApprovalDecision>((resolve) => {
         pendingApprovals.set(requestId, resolve);
       });
-      if (allow) return { behavior: 'allow', updatedInput: input };
-      return { behavior: 'deny', message: 'denied by user' };
+      if (decision.allow) {
+        if (decision.scope === 'session') sessionAllowed.add(toolName);
+        return { behavior: 'allow', updatedInput: input };
+      }
+      // The reason is passed straight through as the denial message, which is what the SDK
+      // surfaces back to the model — so "deny and tell it why" actually tells it why, rather
+      // than the agent seeing a bare refusal and guessing.
+      return {
+        behavior: 'deny',
+        message:
+          decision.reason !== undefined && decision.reason.trim() !== ''
+            ? decision.reason.trim()
+            : 'denied by user',
+      };
     };
 
     const queue = new MessageQueue(opts.prompt);
@@ -557,7 +578,9 @@ export class ClaudeExecutor implements Executor {
     return {
       async interrupt(): Promise<void> {
         interrupted = true;
-        for (const resolve of pendingApprovals.values()) resolve(false);
+        for (const resolve of pendingApprovals.values()) {
+          resolve({ allow: false, reason: 'run cancelled' });
+        }
         pendingApprovals.clear();
         queue.close();
         try {
@@ -571,11 +594,11 @@ export class ClaudeExecutor implements Executor {
       send(message: string): void {
         queue.push(message);
       },
-      approve(requestId: string, allow: boolean): void {
+      approve(requestId: string, decision: ApprovalDecision): void {
         const resolve = pendingApprovals.get(requestId);
         if (resolve !== undefined) {
           pendingApprovals.delete(requestId);
-          resolve(allow);
+          resolve(decision);
         }
       },
     };

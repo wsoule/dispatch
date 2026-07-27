@@ -480,11 +480,25 @@ export type MergeQueueEntryState =
   | 'failed';
 
 // Mirrors MergeQueueEntry in packages/server/src/orchestrator/mergeQueue.ts.
+/** One named verify gate's outcome on a queue entry. */
+export interface VerifyStepResult {
+  name: string;
+  status: 'pending' | 'running' | 'passed' | 'failed';
+  /** Wall-clock duration, set once the step comes to rest. */
+  ms?: number;
+}
+
 export interface MergeQueueEntry {
   runId: string;
   taskId: string;
   taskTitle: string;
   state: MergeQueueEntryState;
+  /**
+   * Per-step verify results, present once verification starts. Seeded as all-pending so the
+   * whole pipeline is visible from the first render rather than appearing a step at a time.
+   * A project with no `verifySteps` gets a single step named "verify".
+   */
+  steps?: VerifyStepResult[];
   /** Failure detail — set only once an entry lands in `failed`. */
   reason?: string;
   /**
@@ -683,7 +697,14 @@ export interface ApiClient {
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
-  approveRun(runId: string, requestId: string, allow: boolean): Promise<void>;
+  /** `scope: 'session'` also pre-approves the same tool for the rest of this run; `reason`
+   * is passed to the model as the denial message, so a refusal explains itself. */
+  approveRun(
+    runId: string,
+    requestId: string,
+    allow: boolean,
+    opts?: { scope?: 'once' | 'session'; reason?: string }
+  ): Promise<void>;
   sendRunMessage(
     runId: string,
     text: string,
@@ -890,10 +911,10 @@ export function createApiClient(baseUrl: string): ApiClient {
       }),
     fetchRuns: () => request(baseUrl, '/api/runs'),
     fetchRun: (id) => request(baseUrl, `/api/runs/${id}`),
-    approveRun: async (runId, requestId, allow) => {
+    approveRun: async (runId, requestId, allow, opts = {}) => {
       await request(baseUrl, `/api/runs/${runId}/approval`, {
         method: 'POST',
-        ...jsonBody({ requestId, allow }),
+        ...jsonBody({ requestId, allow, ...opts }),
       });
     },
     sendRunMessage: (runId, text, opts = {}) =>

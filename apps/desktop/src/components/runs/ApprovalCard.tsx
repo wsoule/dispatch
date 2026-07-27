@@ -9,7 +9,10 @@ interface ApprovalCardProps {
    * and could still find the matching log entry — see RunLogView's doc comment on
    * `pendingApproval` for why this can legitimately be `null` (e.g. after a reload). */
   toolInput: unknown;
-  onDecide: (allow: boolean) => Promise<void>;
+  onDecide: (
+    allow: boolean,
+    opts?: { scope?: 'once' | 'session'; reason?: string }
+  ) => Promise<void>;
 }
 
 // Renders `toolInput` the same compact way `toolEntryPreview` does for a
@@ -39,12 +42,22 @@ export function ApprovalCard({
 }: ApprovalCardProps) {
   const [deciding, setDeciding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Denying opens a reason box rather than firing immediately. The button says "tell it why",
+  // so denying silently would make that a lie — and a bare refusal leaves the agent guessing at
+  // what it did wrong, which usually means it guesses again.
+  const [denying, setDenying] = useState(false);
+  const [reason, setReason] = useState('');
 
-  async function decide(allow: boolean) {
+  async function decide(
+    allow: boolean,
+    opts?: { scope?: 'once' | 'session'; reason?: string }
+  ) {
     setDeciding(true);
     setError(null);
     try {
-      await onDecide(allow);
+      await onDecide(allow, opts);
+      setDenying(false);
+      setReason('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -69,19 +82,62 @@ export function ApprovalCard({
       {error !== null && (
         <div className="text-destructive text-[12px]">{error}</div>
       )}
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={deciding}
-          onClick={() => void decide(false)}
-        >
-          Deny
-        </Button>
-        <Button size="sm" disabled={deciding} onClick={() => void decide(true)}>
-          Approve
-        </Button>
-      </div>
+      {denying ? (
+        <div className="flex flex-col gap-2">
+          <textarea
+            autoFocus
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why not? The agent gets this as the reason it was refused."
+            className="shadow-hairline min-h-[52px] w-full resize-y rounded-md px-2 py-1.5 text-[12.5px] outline-none"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={deciding}
+              onClick={() => setDenying(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={deciding}
+              onClick={() => void decide(false, { reason })}
+            >
+              Deny{reason.trim() === '' ? '' : ' and tell it why'}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={deciding}
+            onClick={() => setDenying(true)}
+          >
+            Deny and tell it why
+          </Button>
+          {/* Scoped to this run by construction — the grant lives in the executor run's own
+              closure, so it cannot leak into the next run. */}
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={deciding}
+            onClick={() => void decide(true, { scope: 'session' })}
+          >
+            Allow {toolName} for this run
+          </Button>
+          <Button
+            size="sm"
+            disabled={deciding}
+            onClick={() => void decide(true, { scope: 'once' })}
+          >
+            Approve once
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

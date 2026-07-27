@@ -384,14 +384,30 @@ async function approveRun(
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { requestId?: unknown; allow?: unknown };
+  const body = parsed.value as {
+    requestId?: unknown;
+    allow?: unknown;
+    scope?: unknown;
+    reason?: unknown;
+  };
   if (typeof body.requestId !== 'string' || body.requestId.trim() === '') {
     return errorResponse(400, 'invalid requestId: requestId is required');
   }
   if (typeof body.allow !== 'boolean') {
     return errorResponse(400, 'invalid allow: expected a boolean');
   }
-  ctx.orchestrator.approve(runId, body.requestId, body.allow);
+  if (
+    body.scope !== undefined &&
+    body.scope !== 'once' &&
+    body.scope !== 'session'
+  ) {
+    return errorResponse(400, "invalid scope: expected 'once' or 'session'");
+  }
+  ctx.orchestrator.approve(runId, body.requestId, {
+    allow: body.allow,
+    scope: body.scope,
+    reason: typeof body.reason === 'string' ? body.reason : undefined,
+  });
   return jsonResponse({ ok: true });
 }
 
