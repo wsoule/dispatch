@@ -1,6 +1,12 @@
 import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -925,7 +931,7 @@ describe('MergeQueue persistence', () => {
     expect(reloaded?.state).toBe('queued');
   });
 
-  it('files a mid-flight persisted entry to failed history with a restart reason', async () => {
+  it('requeues a mid-flight persisted entry instead of failing it, counting the attempt', async () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
     // Simulate what a previous daemon process would have left on disk had it
@@ -950,16 +956,104 @@ describe('MergeQueue persistence', () => {
     const stub = new StubRunner();
     const queue = new MergeQueue(harness, stub.run);
 
+    // Retrying is safe for the same reason the old "re-enqueue to retry" advice
+    // was: the rebase/verify/merge steps are idempotent against a half-done
+    // prior attempt. So do it automatically rather than making a human notice.
+    // Either it is still in line, or the retry already carried it to merged —
+    // both mean it was not abandoned, which is what this asserts.
+    await waitFor(
+      () =>
+        queue.snapshot().entries.some((e) => e.runId === runId) ||
+        queue.snapshot().history.some((e) => e.runId === runId)
+    );
+    const filed = queue.snapshot().history.find((e) => e.runId === runId);
+    // Not abandoned: it must not have been filed straight to failed history with
+    // the old "re-enqueue to retry" reason.
+    expect(filed?.state ?? 'merged').not.toBe('failed');
+    expect(String(filed?.reason ?? '')).not.toContain(
+      'daemon restarted mid-merge'
+    );
+    // And the retry was counted, so a recurring hang cannot loop forever.
+    const seen =
+      filed ?? queue.snapshot().entries.find((e) => e.runId === runId);
+    expect(seen?.attempts).toBe(1);
+  });
+
+  // Auto-requeue plus a reproducible hang is an infinite loop: the daemon dies
+  // mid-verify, boots, requeues, wedges again. The cap is the backstop for the
+  // case a timeout cannot catch — the daemon being killed rather than the
+  // command overrunning. `attempts` must therefore be PERSISTED; an in-memory
+  // counter resets every boot, which is precisely the loop it exists to stop.
+  it('abandons a mid-flight entry once it has burned through its attempts', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [
+          {
+            runId,
+            taskId,
+            taskTitle: 'Ship it',
+            state: 'merging',
+            enqueuedAt: new Date().toISOString(),
+            attempts: 3,
+          },
+        ],
+        history: [],
+      })
+    );
+
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
     const filed = queue.snapshot().history.find((e) => e.runId === runId);
     expect(filed?.state).toBe('failed');
-    expect(filed?.reason).toContain('daemon restarted mid-merge');
+    expect(filed?.reason).toMatch(/abandoned after 3/i);
     expect(
       queue.snapshot().entries.find((e) => e.runId === runId)
     ).toBeUndefined();
-    // The run itself is still unreviewed — process() only reviews a run at
-    // the very end of merge(), so a mid-flight death never got that far.
-    const run = harness.orchestrator.getRun(runId);
-    expect(run?.meta.reviewedAt).toBeUndefined();
+    // Still unreviewed — process() only reviews at the very end of merge(), so
+    // a mid-flight death never got that far.
+    expect(harness.orchestrator.getRun(runId)?.meta.reviewedAt).toBeUndefined();
+  });
+
+  it('persists the incremented attempt count so the cap survives a restart', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [
+          {
+            runId,
+            taskId,
+            taskTitle: 'Ship it',
+            state: 'merging',
+            enqueuedAt: new Date().toISOString(),
+            attempts: 1,
+          },
+        ],
+        history: [],
+      })
+    );
+
+    const stub = new StubRunner();
+    // Rebase fails, so the entry stays put rather than merging and clearing —
+    // leaving the persisted attempt count observable on disk.
+    stub.rebaseResult = { ok: false, stdout: '', stderr: 'CONFLICT' };
+    const queue = new MergeQueue(harness, stub.run);
+    await waitFor(() => queue.snapshot().history.length === 1);
+
+    const persisted = JSON.parse(
+      readFileSync(mergeQueuePath(harness.rootDir), 'utf8')
+    ) as { entries: { attempts?: number }[]; history: { attempts?: number }[] };
+    const seen = [...persisted.entries, ...persisted.history].find(
+      (e) => (e as { runId?: string }).runId === runId
+    );
+    expect(seen?.attempts).toBe(2);
   });
 
   it('starts with an empty queue when the persisted file is corrupt', () => {
