@@ -4,6 +4,7 @@ import { computeStack } from '@dispatch/core/graph';
 import type { TaskStack } from '@dispatch/core/graph';
 import { GitPullRequest, Layers2 } from 'lucide-react';
 
+import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
@@ -142,6 +143,7 @@ export function StackRail({
                   {rowDoc.meta.title}
                 </span>
               )}
+              <MergeLadderDot meta={run} />
               {run !== undefined && (
                 <span className="flex shrink-0 items-center gap-1">
                   <RunStatePill state={run.state} />

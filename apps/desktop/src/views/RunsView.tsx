@@ -1,6 +1,7 @@
 import { FileX, GitBranch, MousePointerClick } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { MergeLadderDot } from '../components/runs/MergeLadderDot';
 import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunDiffView } from '../components/runs/RunDiffView';
 import { RunLogView } from '../components/runs/RunLogView';
@@ -180,6 +181,9 @@ export function RunsView({
                   )}
                 >
                   <RunStatePill state={run.state} className="shrink-0" />
+                  <MergeLadderDot
+                    meta={data.latestRunByTaskId.get(run.taskId)}
+                  />
                   <span className="min-w-0 flex-1 truncate text-[13px]">
                     {run.taskTitle}
                     {epicTitle !== undefined && (

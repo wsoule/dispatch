@@ -19,9 +19,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { formatRelativeTimeFromIso } from '../../lib/format';
+import { mergeLadderLabel, mergeLadderState } from '../../lib/mergeLadder';
 import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections } from '../../lib/taskDisplay';
+import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { EpicDagModal } from './EpicDagModal';
@@ -530,6 +532,15 @@ export function TaskDetailDialog({
               <StatusIcon status={doc.meta.status} />
               <span className="text-muted-foreground text-[12px]">
                 {doc.meta.status}
+              </span>
+              <span className="text-muted-foreground/40">›</span>
+              <MergeLadderDot meta={run} />
+              <span className="text-muted-foreground text-[12px]">
+                {mergeLadderLabel(
+                  mergeLadderState(run),
+                  run?.branch,
+                  run?.mergeCommit
+                )}
               </span>
               <DialogTitle className="sr-only">
                 {doc.meta.title || 'Task detail'}
