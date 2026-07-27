@@ -1,7 +1,7 @@
 ---
 id: e-3f896a
 title: "Brain dump: a capture inbox that splits and triages raw text"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:53:55.134Z
-updated: 2026-07-27T01:07:28.767Z
+updated: 2026-07-27T23:11:42.440Z
 external: null
 ---
 

@@ -1,7 +1,7 @@
 ---
 id: e-3734d7
 title: "Landing: the merge queue as a first-class view"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:54:10.468Z
-updated: 2026-07-27T00:54:10.468Z
+updated: 2026-07-27T23:11:35.810Z
 external: null
 ---
 

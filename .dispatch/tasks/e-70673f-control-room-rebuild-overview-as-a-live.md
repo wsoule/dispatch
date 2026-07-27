@@ -1,7 +1,7 @@
 ---
 id: e-70673f
 title: "Control room: rebuild Overview as a live agent feed"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:53:38.106Z
-updated: 2026-07-27T00:53:38.106Z
+updated: 2026-07-27T23:11:27.899Z
 external: null
 ---
 

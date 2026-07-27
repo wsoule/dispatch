@@ -1,7 +1,7 @@
 ---
 id: e-40ee39
 title: "Redesign foundations: run-state tokens, density scale, shared row primitives"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:53:19.120Z
-updated: 2026-07-27T00:53:19.120Z
+updated: 2026-07-27T23:11:18.183Z
 external: null
 ---
 

@@ -1,7 +1,7 @@
 ---
 id: e-805f3e
 title: "Run detail: watch and steer a live agent"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:54:42.607Z
-updated: 2026-07-27T00:54:42.607Z
+updated: 2026-07-27T23:11:59.842Z
 external: null
 ---
 

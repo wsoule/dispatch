@@ -1,7 +1,7 @@
 ---
 id: e-92d17d
 title: "Tasks: epic-grouped list, board lanes, and bulk dispatch"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:55:02.121Z
-updated: 2026-07-27T00:55:02.121Z
+updated: 2026-07-27T23:11:51.555Z
 external: null
 ---
 

@@ -1,7 +1,7 @@
 ---
 id: e-c88fb6
 title: "Supporting screens: Milestones, Sessions, Settings, and the app shell"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T00:55:17.864Z
-updated: 2026-07-27T00:55:17.864Z
+updated: 2026-07-27T23:12:33.536Z
 external: null
 ---
 
