@@ -2,6 +2,7 @@ import { AlertCircle, Check, FolderSearch } from 'lucide-react';
 import { useState } from 'react';
 
 import { describeDaemonError } from '../components/shell/DaemonUnavailable';
+import { ProjectSettingsSection } from '../components/shell/ProjectSettingsSection';
 import { StatTile } from '../components/ui/StatTile';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { MODELS, readDefaultModel, writeDefaultModel } from '../lib/models';
@@ -77,10 +78,11 @@ function DefaultModelSection() {
 }
 
 /**
- * Daemon status and tracker config for the active project — read-only, since there's no
- * write path for either today (dispatchd's config comes from `.dispatch/config.yml` in the
- * repo, and the sidecar itself is process-managed, not something this view should be able to
- * kill/restart). No placeholder sections: only what actually exists renders.
+ * Settings for the active project: the writable half (verify command, auto-commit, epic
+ * concurrency, permission posture — all persisted to `.dispatch/config.yml` in the repo, so the
+ * CLI and daemon see the same values), the app-local default model, and read-only daemon status.
+ * The daemon stays read-only deliberately: the sidecar is process-managed, not something this
+ * view should be able to kill or restart. No placeholder sections — only what exists renders.
  */
 export function SettingsView({ activeProject, data }: SettingsViewProps) {
   if (activeProject === null) {
@@ -101,6 +103,13 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
   return (
     <div className="flex max-w-2xl flex-col gap-5">
       <h1 className="text-foreground text-[15px] font-medium">Settings</h1>
+
+      <ProjectSettingsSection
+        config={data.config}
+        onSave={data.handleUpdateConfig}
+      />
+
+      <Separator />
 
       <DefaultModelSection />
 

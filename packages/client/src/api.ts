@@ -290,7 +290,9 @@ export type ServerEvent =
       pushError?: string;
     }
   // The brain-dump inbox changed — captured, retyped, dismissed or converted.
-  | { type: 'inbox.changed' };
+  | { type: 'inbox.changed' }
+  | { type: 'review.changed'; runId: string }
+  | { type: 'config.changed' };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's
@@ -426,6 +428,28 @@ export interface InboxConvertResult {
   id: string;
   taskId?: string;
   error?: string;
+}
+
+// Mirrors ReviewComment/ReviewReply in packages/server/src/reviewComments.ts. `anchorText` is
+// what the line said when the comment was written — the only way to tell later whether it still
+// points at the code it was about.
+export interface ReviewReply {
+  id: string;
+  author: string;
+  body: string;
+  created: string;
+}
+
+export interface ReviewComment {
+  id: string;
+  file: string;
+  line: number;
+  anchorText: string;
+  author: string;
+  body: string;
+  resolved: boolean;
+  created: string;
+  replies: ReviewReply[];
 }
 
 /** One model-proposed grouping of related captures, ready to become an epic. */
@@ -731,6 +755,36 @@ export interface ApiClient {
   enrichTask(id: string): Promise<{ planId: string }>;
   /** Model-backed grouping of related captures. Costs a call, so it is user-triggered. */
   clusterInbox(): Promise<{ groups: InboxClusterGroup[] }>;
+
+  // Line-level review comments on a run's diff, and the send-back that carries the unresolved
+  // ones to the agent.
+  fetchReviewComments(runId: string): Promise<ReviewComment[]>;
+  addReviewComment(
+    runId: string,
+    input: { file: string; line: number; anchorText: string; body: string }
+  ): Promise<ReviewComment>;
+  resolveReviewComment(
+    runId: string,
+    commentId: string,
+    resolved: boolean
+  ): Promise<ReviewComment>;
+  replyReviewComment(
+    runId: string,
+    commentId: string,
+    body: string
+  ): Promise<ReviewComment>;
+  /** Resumes the agent on the same branch with the note and every unresolved thread attached. */
+  sendBackRun(runId: string, note: string): Promise<RunMeta>;
+
+  /** Changes the settings a person is allowed to change. Structural config (statuses) is not
+   * editable here — see the server's patchConfig for why. */
+  updateConfig(patch: {
+    verifyCommand?: string | null;
+    autoCommit?: boolean;
+    epicConcurrency?: number;
+    verifyTimeoutSec?: number;
+    permissionMode?: string;
+  }): Promise<DispatchConfig>;
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, patch: UpdateNotePatch): Promise<Note>;
@@ -927,6 +981,35 @@ export function createApiClient(baseUrl: string): ApiClient {
       }),
     clusterInbox: () =>
       request(baseUrl, '/api/inbox/cluster', { method: 'POST' }),
+    fetchReviewComments: (runId) =>
+      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/comments`),
+    addReviewComment: (runId, input) =>
+      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/comments`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    resolveReviewComment: (runId, commentId, resolved) =>
+      request(
+        baseUrl,
+        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'PATCH', body: JSON.stringify({ resolved }) }
+      ),
+    replyReviewComment: (runId, commentId, body) =>
+      request(
+        baseUrl,
+        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}/reply`,
+        { method: 'POST', body: JSON.stringify({ body }) }
+      ),
+    updateConfig: (patch) =>
+      request(baseUrl, '/api/config', {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    sendBackRun: (runId, note) =>
+      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/send-back`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }),
     fetchNotes: () => request(baseUrl, '/api/notes'),
     createNote: (input) =>
       request(baseUrl, '/api/notes', { method: 'POST', ...jsonBody(input) }),

@@ -27,8 +27,12 @@ export {
   computeStack,
 } from './graph.js';
 export type { TaskStack } from './graph.js';
-export { loadConfig, ConfigError } from './config.js';
-export type { DispatchConfig, OrchestratorConfig } from './config.js';
+export { loadConfig, updateConfig, ConfigError } from './config.js';
+export type {
+  ConfigPatch,
+  DispatchConfig,
+  OrchestratorConfig,
+} from './config.js';
 export {
   readRegistry,
   registryPath,

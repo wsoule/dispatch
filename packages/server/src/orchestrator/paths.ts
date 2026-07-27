@@ -43,6 +43,14 @@ export function diffSnapshotPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.diff.json`);
 }
 
+// Where a run's review comments live — the line-level notes a human leaves on its diff. Kept
+// per-run alongside the transcript and diff snapshot rather than in the worktree, for the same
+// reason the snapshot is: every review path removes the worktree, and a comment has to outlive
+// the code it was written against so it can travel back to the agent.
+export function reviewCommentsPath(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.review.json`);
+}
+
 // Where the merge queue's persisted state (queued/active entries plus
 // history) lives — see MergeQueue's persist()/hydrate() — so a daemon
 // restart reloads the queue instead of silently dropping it, the same way
