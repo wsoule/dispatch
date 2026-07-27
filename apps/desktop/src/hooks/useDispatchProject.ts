@@ -940,10 +940,11 @@ export function useDispatchProject(
     [client]
   );
 
-  // Refine the active plan across turns: post the follow-up (the server 202s
-  // with the record back in `running`), then invalidate the plan query so the
-  // thread re-renders immediately with the user's turn; the assistant's reply
-  // arrives via the plan.changed broadcast the same way the opening turn does.
+  // Refine the active plan across turns: post the follow-up, then seed the plan query with
+  // the 202's record — already carrying the user's message and back in `running` — so the
+  // thread shows the turn the instant it's accepted instead of after a round trip. The
+  // invalidate right after re-syncs with the server (and restarts the `running` poll), and
+  // the assistant's reply arrives via `plan.changed` the same way the opening turn does.
   const handleSendPlanMessage = useCallback(
     async (text: string): Promise<import('@dispatch/client').PlanRecord> => {
       if (client === null || planId === null) {
@@ -951,11 +952,14 @@ export function useDispatchProject(
       }
       const record = await client.sendPlanMessage(planId, text);
       // usePlanRecord keys the plan query as ['dispatch-plan', port, planId]
-      // (see the helper above) — invalidate that same key so the thread
-      // re-renders with the user's turn immediately.
-      void queryClient.invalidateQueries({
-        queryKey: ['dispatch-plan', port, planId],
-      });
+      // (see the helper above). Seed that key with the 202's record first so the
+      // thread shows the user's turn immediately — which is what the comment
+      // above promises — then invalidate to re-sync and restart the `running`
+      // poll. The incoming side used a `planQueryKey` local that no longer
+      // exists here, so this keeps its optimistic behaviour on main's key form.
+      const planKey = ['dispatch-plan', port, planId];
+      queryClient.setQueryData(planKey, record);
+      void queryClient.invalidateQueries({ queryKey: planKey });
       return record;
     },
     [client, planId, queryClient, port]
