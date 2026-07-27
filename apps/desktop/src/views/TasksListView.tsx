@@ -1,6 +1,12 @@
 import type { EpicProgress, RunMeta } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
-import { ChevronDown, ChevronRight, SearchX, Waypoints } from 'lucide-react';
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  SearchX,
+  Waypoints,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
@@ -15,6 +21,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 
 interface TasksListViewProps {
@@ -31,9 +38,15 @@ interface EpicGroup {
   title: string;
   progress: EpicProgress | undefined;
   tasks: TaskDoc[];
+  /** Task 9: true only for the trailing "Archived" bucket — its rows render muted and
+   * read-only (see `TaskListRow`'s own `archived` prop). */
+  archived?: boolean;
 }
 
 const NO_EPIC_KEY = '__no-epic__';
+// Task 9: the "Archived" toggle group's key — kept apart from `NO_EPIC_KEY` and every real
+// epic id so it never collides with an actual epic-grouping bucket.
+const ARCHIVED_GROUP_KEY = '__archived__';
 
 // Case-insensitive substring match against a task's id and title — a plain narrowing filter
 // (not the palette's fuzzy ranking), since a dense grouped list benefits more from a
@@ -150,8 +163,33 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
         tasks: noEpic,
       });
     }
+    // Task 9: with the toggle on, archived tasks get their own trailing group rather than
+    // rejoining their original epic bucket — keeps the read-only/muted rows visually and
+    // structurally separate from the live board above them.
+    if (data.showArchived) {
+      const archived = data.archivedTasks.filter((doc) =>
+        matchesFilter(doc, filter)
+      );
+      if (archived.length > 0) {
+        result.push({
+          epicId: ARCHIVED_GROUP_KEY,
+          title: 'Archived',
+          progress: undefined,
+          tasks: archived,
+          archived: true,
+        });
+      }
+    }
     return result;
-  }, [data.tasks, data.config, data.epics, data.epicProgressById, filter]);
+  }, [
+    data.tasks,
+    data.config,
+    data.epics,
+    data.epicProgressById,
+    data.showArchived,
+    data.archivedTasks,
+    filter,
+  ]);
 
   // j/k roving-focus + Enter-to-open only ever considers rows in expanded groups — a collapsed
   // group's tasks are no more reachable by keyboard than they are visible.
@@ -218,12 +256,26 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <Input
-        className="text-[13px]"
-        placeholder="Filter by id or title…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-      />
+      <div className="flex items-center gap-2">
+        <Input
+          className="text-[13px]"
+          placeholder="Filter by id or title…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        {data.archivedTasks.length > 0 && (
+          <Button
+            variant={data.showArchived ? 'secondary' : 'outline'}
+            size="sm"
+            className="shrink-0"
+            aria-pressed={data.showArchived}
+            onClick={() => data.setShowArchived(!data.showArchived)}
+          >
+            <Archive className="size-3.5" />
+            Archived ({data.archivedTasks.length})
+          </Button>
+        )}
+      </div>
 
       {orderedIds.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
@@ -296,7 +348,10 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                       <TaskListRow
                         key={doc.meta.id}
                         doc={doc}
-                        tasks={data.tasks}
+                        // Archived-inclusive (Task 9): the trailing "Archived" group's own
+                        // rows need their own doc present in `tasks` for StackBadge to find
+                        // them at all, not just any blockers/dependents they have.
+                        tasks={data.tasksIncludingArchived}
                         run={data.latestRunByTaskId.get(doc.meta.id)}
                         epicTitle={
                           doc.meta.parent !== null
@@ -313,6 +368,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                         onEditTask={(patch) =>
                           void data.handleUpdate(doc.meta.id, patch)
                         }
+                        archived={group.archived === true}
                       />
                     ))}
                   </div>
@@ -347,6 +403,9 @@ interface TaskListRowProps {
   onMouseEnter: () => void;
   onStatusChange: (status: string) => void;
   onEditTask: (patch: UpdatePatch) => void;
+  /** Task 9: true for a row in the trailing "Archived" group — dims the row; the underlying
+   * `moveTaskStatus` call is gated centrally in `useDispatchProject`, this is purely visual. */
+  archived?: boolean;
 }
 
 /** A single ~36px dense row: priority · id · status · title (+ epic breadcrumb, + stack badge)
@@ -367,6 +426,7 @@ function TaskListRow({
   onMouseEnter,
   onStatusChange,
   onEditTask,
+  archived = false,
 }: TaskListRowProps) {
   const visibleLabels = doc.meta.labels.slice(0, MAX_VISIBLE_LABELS);
   const hiddenLabelCount = doc.meta.labels.length - visibleLabels.length;
@@ -380,7 +440,7 @@ function TaskListRow({
       onClick={onClick}
       className={`flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${
         focused ? 'bg-accent/50' : 'hover:bg-accent/30'
-      }`}
+      } ${archived ? 'opacity-55 saturate-50' : ''}`}
     >
       <PriorityControl
         value={doc.meta.priority}

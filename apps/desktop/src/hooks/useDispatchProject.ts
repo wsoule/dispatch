@@ -20,6 +20,7 @@ import type {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { hideArchivedRuns } from '../lib/archiveFilter';
 import { readDefaultModel } from '../lib/models';
 import { notify } from '../lib/notifications';
 import { isTerminalRunState } from '../lib/runState';
@@ -31,6 +32,17 @@ import { useTransitionNotifications } from './useTransitionNotifications';
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
 // only the live event carries it (see the WS effect below).
 type PendingApproval = { requestId: string; toolName: string };
+
+// Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
+// own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
+// is a Tauri/browser-only app, never SSR'd, but a stray server-side render of this module
+// shouldn't throw on a missing `localStorage`).
+const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
+
+function readStoredShowArchived(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY) === '1';
+}
 
 /**
  * `GET /api/plan/:id` as a reusable query, because this hook exposes two independent plan
@@ -98,6 +110,15 @@ export interface DispatchProjectData {
   // from its lookup entirely. No other consumer here should use this; every
   // other surface wants the default board-view (archived-excluded) `tasks`.
   tasksIncludingArchived: TaskDoc[];
+  // Task 9: just the archived subset of `tasksIncludingArchived` (`archivedAt !== undefined`)
+  // — feeds the Board/List "Archived (N)" toggle chip and its muted group/column rendering.
+  archivedTasks: TaskDoc[];
+  // Task 9: whether archived tasks/runs are currently shown — persisted to localStorage so
+  // the toggle survives a restart. `runs` below is already filtered by this; `tasks` and
+  // `tasksIncludingArchived` are unaffected (callers combine `tasks` with `archivedTasks`
+  // themselves when this is on, e.g. BoardView's column grouping).
+  showArchived: boolean;
+  setShowArchived: (value: boolean) => void;
   config: DispatchConfig | null;
   runs: RunMeta[];
   health: { pr: boolean } | undefined;
@@ -247,6 +268,17 @@ export function useDispatchProject(
   // Task 8: last drain-push failure reported by `queue.drained`, for the
   // RunsView banner — `null` once a later drain pushes successfully.
   const [lastPushError, setLastPushError] = useState<string | null>(null);
+  // Task 9: the Board/List/Runs "show archived" toggle — read from localStorage once on
+  // mount, then kept in sync with every write via `setShowArchived` below.
+  const [showArchived, setShowArchivedState] = useState<boolean>(
+    readStoredShowArchived
+  );
+  const setShowArchived = useCallback((value: boolean) => {
+    setShowArchivedState(value);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, value ? '1' : '0');
+    }
+  }, []);
 
   // A plan started against one project's dispatchd must never leak into another project's
   // Plans view — without this, switching projects while a plan was mid-flight (or just left
@@ -503,6 +535,32 @@ export function useDispatchProject(
     [tasks]
   );
 
+  // Task 9: the archived subset of the archived-inclusive query — derived here (rather than a
+  // second `fetchTasks({ archived: true })` call) since `allTasksIncludingArchived` already
+  // carries every archived task Task 8 needed for countMergeReady's lookups.
+  const archivedTasks = useMemo(
+    () =>
+      (allTasksIncludingArchived ?? []).filter(
+        (t) => t.meta.archivedAt !== undefined
+      ),
+    [allTasksIncludingArchived]
+  );
+  const archivedTaskIds = useMemo(
+    () => new Set(archivedTasks.map((t) => t.meta.id)),
+    [archivedTasks]
+  );
+  // The Runs list, filtered to hide archived tasks' runs unless the toggle is on — every other
+  // consumer of the raw `runs` query data below (liveRunStateByTaskId, latestRunByTaskId, the
+  // WS notification effect) stays unfiltered on purpose, since those key off task ids that are
+  // only ever looked up for tasks actually being rendered.
+  const visibleRuns = useMemo(
+    () =>
+      showArchived
+        ? (runs ?? [])
+        : hideArchivedRuns(runs ?? [], archivedTaskIds),
+    [runs, archivedTaskIds, showArchived]
+  );
+
   const epicProgressResults = useQueries({
     queries: epics.map((epic) => ({
       queryKey: [...epicProgressKeyPrefix, epic.meta.id],
@@ -684,6 +742,10 @@ export function useDispatchProject(
   const moveTaskStatus = useCallback(
     async (id: string, status: string): Promise<void> => {
       if (client === null) return;
+      // Task 9: an archived task is read-only — gated here (not just at the drag-and-drop
+      // call site) so every path that can move a task's status, board drag or the inline
+      // status picker alike, is covered by one check rather than each caller remembering it.
+      if (archivedTaskIds.has(id)) return;
       const previous = queryClient.getQueryData<TaskDoc[]>(tasksQueryKey);
       queryClient.setQueryData<TaskDoc[]>(tasksQueryKey, (old) =>
         old?.map((doc) =>
@@ -701,7 +763,7 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
     },
-    [client, queryClient, tasksQueryKey, readyQueryKey]
+    [client, queryClient, tasksQueryKey, readyQueryKey, archivedTaskIds]
   );
 
   const handleCreate = useCallback(
@@ -1103,8 +1165,11 @@ export function useDispatchProject(
     tasks: tasks ?? [],
     tasksLoading,
     tasksIncludingArchived: allTasksIncludingArchived ?? [],
+    archivedTasks,
+    showArchived,
+    setShowArchived,
     config: config ?? null,
-    runs: runs ?? [],
+    runs: visibleRuns,
     health,
     readyIds,
     blockedIds,

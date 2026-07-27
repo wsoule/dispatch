@@ -1,4 +1,4 @@
-import { LayoutGrid, Plus, Rows3, Sparkles } from 'lucide-react';
+import { Archive, LayoutGrid, Plus, Rows3, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
@@ -101,12 +101,25 @@ export function BoardView({
   // Hooks run unconditionally on every render (before any of the early returns below) — both
   // are cheap no-ops (empty array in, empty array out) while the daemon/board data isn't
   // ready yet.
+  // Task 9: with the "Archived" toggle on, archived tasks join the board so their (typically
+  // Done) column shows them dimmed rather than just silently vanishing — `data.tasks` stays
+  // untouched so every other consumer here (orderedTaskIds, the empty-state check below)
+  // keeps its original archived-excluded meaning.
+  const boardTasks = useMemo(
+    () =>
+      data.showArchived ? [...data.tasks, ...data.archivedTasks] : data.tasks,
+    [data.tasks, data.archivedTasks, data.showArchived]
+  );
+  const archivedTaskIds = useMemo(
+    () => new Set(data.archivedTasks.map((t) => t.meta.id)),
+    [data.archivedTasks]
+  );
   const columns = useMemo(
     () =>
       data.config !== null
-        ? groupTasksByStatus(data.tasks, data.config.statuses)
+        ? groupTasksByStatus(boardTasks, data.config.statuses)
         : [],
-    [data.tasks, data.config]
+    [boardTasks, data.config]
   );
   const orderedTaskIds = useMemo(
     () => columns.flatMap((column) => column.tasks.map((t) => t.meta.id)),
@@ -218,6 +231,17 @@ export function BoardView({
               <LayoutGrid className="size-3.5" />
             </button>
           </div>
+          {data.archivedTasks.length > 0 && (
+            <Button
+              variant={data.showArchived ? 'secondary' : 'outline'}
+              size="sm"
+              aria-pressed={data.showArchived}
+              onClick={() => data.setShowArchived(!data.showArchived)}
+            >
+              <Archive className="size-3.5" />
+              Archived ({data.archivedTasks.length})
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"
@@ -237,7 +261,7 @@ export function BoardView({
         </div>
       </div>
 
-      {data.tasks.length === 0 ? (
+      {boardTasks.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
           <LayoutGrid className="text-muted-foreground size-5" />
           <p className="text-muted-foreground max-w-sm text-[13px]">
@@ -259,7 +283,8 @@ export function BoardView({
           onKeyDown={handleBoardKeyDown}
         >
           <TaskBoard
-            tasks={data.tasks}
+            tasks={boardTasks}
+            archivedTaskIds={archivedTaskIds}
             statuses={data.config.statuses}
             readyIds={data.readyIds}
             blockedIds={data.blockedIds}

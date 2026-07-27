@@ -58,6 +58,10 @@ interface TaskCardTileProps {
   onFocus?: () => void;
   /** See `CardDragProps` — omitted for a card that isn't draggable. */
   drag?: CardDragProps;
+  /** Task 9: true for an archived task shown via the "Archived" toggle — dims the card and
+   * drops the drag affordance; `TaskBoard` also disables the drag itself and the underlying
+   * `moveTaskStatus` call is gated centrally in `useDispatchProject`, so this is purely visual. */
+  archived?: boolean;
 }
 
 // Only shows the first few label pills before collapsing the rest into a "+N" — Linear's own
@@ -95,6 +99,7 @@ export function TaskCardTile({
   focused = false,
   onFocus,
   drag,
+  archived = false,
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -134,7 +139,8 @@ export function TaskCardTile({
         'hover:border-border hover:bg-card/80',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
         'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
-        drag?.isDragging === true && 'opacity-40'
+        drag?.isDragging === true && 'opacity-40',
+        archived && 'cursor-default opacity-55 saturate-50 hover:bg-card'
       )}
       onClick={onClick}
       onFocus={onFocus}
@@ -177,6 +183,14 @@ export function TaskCardTile({
                 {epicTitle}
               </span>
             </>
+          )}
+          {archived && (
+            <Badge
+              variant="outline"
+              className="text-muted-foreground h-4 shrink-0 rounded px-1.5 py-0 text-[10px] font-normal"
+            >
+              Archived
+            </Badge>
           )}
         </div>
         <AssigneeControl
