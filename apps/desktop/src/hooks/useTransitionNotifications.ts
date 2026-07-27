@@ -6,6 +6,7 @@ import type {
 } from '@dispatch/client';
 import { useEffect, useRef } from 'react';
 
+import type { InboxEntryDraft } from '../lib/inbox';
 import {
   diffQueueNotifications,
   diffRunNotifications,
@@ -68,11 +69,17 @@ export function resetTrackingForRoot(
  * The tracking state lives in a ref rather than React state: this hook never needs to
  * render from it, it only needs it to persist across renders so the next
  * `runs`/`mergeQueue` update has something to diff against.
+ *
+ * `onRecord` is called with the same transitions, reshaped into inbox drafts (see
+ * inbox.ts), for every batch that produces at least one notification — the toast stays a
+ * transient mirror, `onRecord`'s caller (`useDispatchProject`) owns the persisted record a
+ * user can come back to after the toast has already disappeared.
  */
 export function useTransitionNotifications(
   projectRoot: string | null,
   runs: readonly RunMeta[],
-  mergeQueue: MergeQueueSnapshot | null
+  mergeQueue: MergeQueueSnapshot | null,
+  onRecord: (adds: InboxEntryDraft[]) => void
 ): void {
   const tracking = useRef<TransitionTrackingState>(emptyTracking(projectRoot));
 
@@ -89,8 +96,12 @@ export function useTransitionNotifications(
       runs
     );
     tracking.current = { ...tracking.current, runStates: next };
+    if (notifications.length > 0) {
+      const ts = new Date().toISOString();
+      onRecord(notifications.map((n) => ({ ...n, ts })));
+    }
     for (const n of notifications) void notify(n.title, n.body);
-  }, [runs]);
+  }, [runs, onRecord]);
 
   useEffect(() => {
     if (mergeQueue === null) return;
@@ -103,6 +114,10 @@ export function useTransitionNotifications(
       combined
     );
     tracking.current = { ...tracking.current, queueStates: next };
+    if (notifications.length > 0) {
+      const ts = new Date().toISOString();
+      onRecord(notifications.map((n) => ({ ...n, ts })));
+    }
     for (const n of notifications) void notify(n.title, n.body);
-  }, [mergeQueue]);
+  }, [mergeQueue, onRecord]);
 }

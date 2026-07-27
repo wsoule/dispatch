@@ -5,10 +5,14 @@ import type {
   RunState,
 } from '@dispatch/client';
 
-/** A notification ready to hand to `notify(title, body)` — see notifications.ts. */
+import type { InboxTarget } from './inbox';
+
+/** A notification ready to hand to `notify(title, body)` — see notifications.ts. `target`
+ * is where the notification's inbox row (see inbox.ts) should navigate on click. */
 export interface PendingNotification {
   title: string;
   body: string;
+  target: InboxTarget;
 }
 
 const RUN_NOTIFY_STATES: ReadonlySet<RunState> = new Set([
@@ -46,6 +50,7 @@ export function diffRunNotifications(
       notifications.push({
         title: run.state === 'finished' ? 'Run finished' : 'Run failed',
         body: run.taskTitle,
+        target: { kind: 'run', runId: run.id },
       });
     }
   }
@@ -95,17 +100,23 @@ export function diffQueueNotifications(
       QUEUE_NOTIFY_STATES.has(entry.state)
     ) {
       if (entry.state === 'merged') {
-        notifications.push({ title: 'Merged', body: entry.taskTitle });
+        notifications.push({
+          title: 'Merged',
+          body: entry.taskTitle,
+          target: { kind: 'queue' },
+        });
       } else if (entry.state === 'blocked-environment') {
         notifications.push({
           title: 'Merge blocked — action needed',
           body: `${entry.taskTitle} — ${(entry.reason ?? '').slice(0, 80)}`,
+          target: { kind: 'queue' },
         });
       } else {
         const reason = (entry.reason ?? '').slice(0, 80);
         notifications.push({
           title: 'Merge failed',
           body: `${entry.taskTitle} — ${reason}`,
+          target: { kind: 'queue' },
         });
       }
     }

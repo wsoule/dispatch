@@ -21,6 +21,8 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
+import type { InboxEntryDraft, InboxState } from '../lib/inbox';
+import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
 import { readDefaultModel } from '../lib/models';
 import { notify } from '../lib/notifications';
 import { isTerminalRunState } from '../lib/runState';
@@ -42,6 +44,13 @@ const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 function readStoredShowArchived(): boolean {
   if (typeof window === 'undefined') return false;
   return window.localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY) === '1';
+}
+
+// Loads a project's persisted notification inbox — empty (not a throw) when there's no
+// active project yet or this module somehow renders outside a browser/Tauri window.
+function readStoredInbox(root: string | null): InboxState {
+  if (root === null || typeof window === 'undefined') return { entries: [] };
+  return loadInbox(root, window.localStorage);
 }
 
 /**
@@ -247,6 +256,13 @@ export interface DispatchProjectData {
   // drain fails (merged locally, origin didn't get the commit) — surfaced as
   // a banner in RunsView. Cleared on the next successful drain-push.
   lastPushError: string | null;
+
+  // Task 10: the persisted notification inbox — the recoverable record behind every
+  // transient run/queue toast `useTransitionNotifications` fires (see inbox.ts). Loaded
+  // per-project and re-saved on every change so it survives a restart/project switch.
+  inbox: InboxState;
+  // Marks every inbox entry read — called once when the inbox panel opens, not per-entry.
+  markInboxRead: () => void;
 }
 
 /**
@@ -289,6 +305,47 @@ export function useDispatchProject(
       window.localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, value ? '1' : '0');
     }
   }, []);
+
+  // Task 10: the notification inbox — one per project root, loaded lazily on mount and
+  // reloaded whenever the active project switches (this hook's `projectPath` swaps in place
+  // rather than remounting on a project switch, same as `planId` below).
+  const [inbox, setInboxState] = useState<InboxState>(() =>
+    readStoredInbox(projectPath)
+  );
+  useEffect(() => {
+    setInboxState(readStoredInbox(projectPath));
+  }, [projectPath]);
+
+  // Applies `updater` to the inbox and persists the result under the current project's
+  // storage key in the same step, so every inbox mutation (a new transition recorded, or
+  // markAllRead) survives a restart without a separate "save" call site.
+  const updateInbox = useCallback(
+    (updater: (prev: InboxState) => InboxState) => {
+      setInboxState((prev) => {
+        const next = updater(prev);
+        if (projectPath !== null && typeof window !== 'undefined') {
+          saveInbox(projectPath, next, window.localStorage);
+        }
+        return next;
+      });
+    },
+    [projectPath]
+  );
+
+  // Handed to useTransitionNotifications below as its `onRecord` callback — appends every
+  // batch of run/queue transitions it detects onto the persisted inbox as new unread entries.
+  const onRecordInbox = useCallback(
+    (adds: InboxEntryDraft[]) => {
+      updateInbox((prev) => addEntries(prev, adds));
+    },
+    [updateInbox]
+  );
+
+  // Marks the whole inbox read in one step — fired once when the inbox panel opens (see
+  // App.tsx), not per-entry.
+  const markInboxRead = useCallback(() => {
+    updateInbox((prev) => markAllRead(prev));
+  }, [updateInbox]);
 
   // A plan started against one project's dispatchd must never leak into another project's
   // Plans view — without this, switching projects while a plan was mid-flight (or just left
@@ -1163,7 +1220,12 @@ export function useDispatchProject(
   // resetTrackingForRoot) instead of diffing the new project against the old one's
   // leftover state — this hook's `projectPath` argument swaps in place rather than
   // remounting on a project switch.
-  useTransitionNotifications(projectPath, runs ?? [], mergeQueue ?? null);
+  useTransitionNotifications(
+    projectPath,
+    runs ?? [],
+    mergeQueue ?? null,
+    onRecordInbox
+  );
 
   return {
     client,
@@ -1242,5 +1304,8 @@ export function useDispatchProject(
     handleDequeueMerge,
     handleMergeAllReady,
     lastPushError,
+
+    inbox,
+    markInboxRead,
   };
 }
