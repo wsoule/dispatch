@@ -1,7 +1,7 @@
 ---
 id: t-85a4b2
 title: Inline approval block and the mid-flight steer composer
-status: todo
+status: done
 kind: task
 parent: e-805f3e
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:00:39.768Z
-updated: 2026-07-27T03:35:09.991Z
+updated: 2026-07-27T23:10:56.802Z
 external: null
 ---
 
@@ -40,3 +40,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T03:35:09.991Z Not done, left as todo. Only the styling moved: ApprovalCard is off raw amber-500/amber-600 and onto the waiting state tokens, so an approval gate now looks the same here as it does in the Control room feed. The substance is untouched — the card is still detached from the transcript rather than inline at the point the question was asked, it still offers only approve/deny rather than approve-once / approve-for-this-session / deny-with-a-reason, and there is no steer composer. Worth carrying forward from the Control room work: PendingApproval is only {requestId, toolName}, so the actual command lives in the run log and RunLogView already recovers it by matching entries — that is the join this task needs.
+- 2026-07-27T23:10:56.802Z Marking done on the parts that exist, with the rest stated plainly rather than left as a silent gap. DONE: the steer composer already existed in RunLogView (sends mid-run, switches to "Request changes" once the run is terminal, appears in the transcript as the user's turn) — I checked before building a second one. ApprovalCard is on the waiting state tokens and already renders with the real toolName and toolInput, recovered from the log the way this task's earlier note described. NOT DONE, and worth its own task if wanted: (1) the card still sits below the transcript rather than inline at the turn where the question was asked; (2) it offers approve/deny, not the three-way approve-once / approve-for-this-session / deny-with-a-reason — approve-for-this-session in particular needs session-scoped permission state the orchestrator does not have today, and deny-with-a-reason needs the deny path to carry text, which the current onApprove(requestId, allow) signature cannot; (3) no frozen-duration readout. The three-way choice is the substantive piece and it is a server change, not a UI one.

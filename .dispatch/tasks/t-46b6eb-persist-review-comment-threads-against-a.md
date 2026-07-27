@@ -1,7 +1,7 @@
 ---
 id: t-46b6eb
 title: Persist review comment threads against a run
-status: todo
+status: done
 kind: task
 parent: e-ddd932
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:59:02.564Z
-updated: 2026-07-27T00:59:02.564Z
+updated: 2026-07-27T23:07:18.404Z
 external: null
 ---
 
@@ -36,3 +36,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T23:07:18.404Z Done in e16e199. 20 tests. Anchoring resolved as: each comment records anchorText — what the line said when written — and resolveAnchor returns exact (line still says it), moved (the text appears exactly once elsewhere), or outdated (everything else). Ambiguity counts as outdated deliberately: two candidate lines means picking one presents a guess as a fact, and a comment that admits it drifted is still readable. A whitespace-only anchor is never followed, since it matches half of every file. One case my own test got wrong first: an out-of-range line whose text still exists uniquely HAS simply moved (the file shrank) — the code was right, the test was not. formatCommentsForAgent renders unresolved threads with file, line, the anchored code and replies into the send-back message; resolved ones are excluded because resolving is how you say never mind. POST /api/runs/:id/send-back refuses an empty review rather than burning a run to tell the agent nothing. Stored at runsDir/:runId.review.json alongside the transcript and diff snapshot, so comments outlive the worktree every review path deletes.

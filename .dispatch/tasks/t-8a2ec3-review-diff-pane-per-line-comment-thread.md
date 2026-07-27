@@ -1,7 +1,7 @@
 ---
 id: t-8a2ec3
 title: "Review diff pane: per-line comment threads and expandable unchanged regions"
-status: todo
+status: done
 kind: task
 parent: e-ddd932
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:59:36.050Z
-updated: 2026-07-27T00:59:36.050Z
+updated: 2026-07-27T23:07:40.932Z
 external: null
 ---
 
@@ -41,3 +41,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T23:07:40.932Z Done in e16e199, but NOT inline — and that is the significant deviation, so read this before assuming otherwise. The diff is rendered by @pierre/diffs' FileDiff, which owns its own line markup and exposes no per-line hook. Inline threads would mean forking the third-party renderer or overlaying absolutely-positioned boxes on top of it, and an overlay that drifts out of alignment on any re-render is worse than no inline at all. So the threads live in a panel beside the diff (ReviewCommentsPanel + ReviewThread): comment on a line, reply, resolve, send it all back — the same capability, one pane over rather than one line down. Consequences to be honest about: (1) the gutter affordance does not exist; you pick a file and type a line number. (2) The panel cannot read the line's text out of the renderer, so it stores an empty anchorText — resolveAnchor treats that as never-followable, which means such comments never falsely claim to have moved. (3) Expandable unchanged regions and the per-file Viewed checkbox were not built; those belong to a diff renderer we do not control. The stored data carries a real line anchor throughout, so if a fork or an upstream hook opens up later, nothing about persistence has to change.

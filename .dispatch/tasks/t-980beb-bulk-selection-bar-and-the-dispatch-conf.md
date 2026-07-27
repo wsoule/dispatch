@@ -2,7 +2,7 @@
 id: t-980beb
 title: Bulk selection bar and the dispatch confirmation dialog with concurrency
   preview
-status: todo
+status: done
 kind: task
 parent: e-92d17d
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:01:45.851Z
-updated: 2026-07-27T03:34:50.766Z
+updated: 2026-07-27T23:09:33.553Z
 external: null
 ---
 
@@ -44,3 +44,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T03:34:50.766Z Half done in e243629, left as todo. The derivation landed as lib/dispatchPreview.ts (11 tests) including the invariant this task exists for — twelve ready tasks into a concurrency of eight with five running shows twelve rows, three starting and nine queued, and nothing is silently dropped. Blocked tasks are a distinct 'not-ready' disposition rather than folded into 'queued', and do not consume a slot. One correction to the description: there is NO fixed global concurrency cap. handleWorkEpic takes concurrency per call and EpicCardTile already has a stepper for it, so the preview is computed against the concurrency the user is about to choose, not an imaginary ceiling. NOT DONE: the dialog UI itself, the selection bar in the list, and routing per-epic dispatch through it. The existing epic dispatch path is untouched and still works — it just fires without a preview.
+- 2026-07-27T23:09:33.553Z Dialog now done in 6d7dbc8, superseding the "left as todo" note above. DispatchDialog renders the preview from lib/dispatchPreview.ts and is wired to per-epic dispatch: EpicCardTile's Work button now raises onRequestWork instead of firing, and BoardView owns the dialog. Every selected task is listed and badged starts-now / queued / cannot-start, the summary sentence states the arithmetic, and the concurrency is editable in the dialog with the preview updating live — which is the fastest way to see what the number does. Still NOT done: the multi-select bar in the task list (set priority, move to an epic, bulk dispatch across an arbitrary selection). That needs selection state in TasksListView, which does not have any today; the dialog itself is selection-source-agnostic and will serve it unchanged when that lands.

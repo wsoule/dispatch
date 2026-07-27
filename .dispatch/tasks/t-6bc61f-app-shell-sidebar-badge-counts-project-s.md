@@ -2,7 +2,7 @@
 id: t-6bc61f
 title: "App shell: sidebar badge counts, project switcher, and the titlebar
   spend readout"
-status: todo
+status: done
 kind: task
 parent: e-c88fb6
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T01:02:44.221Z
-updated: 2026-07-27T03:34:40.500Z
+updated: 2026-07-27T23:09:53.387Z
 external: null
 ---
 
@@ -42,3 +42,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T03:34:40.500Z Partially done in 389f17e and e4f874b, left as todo. DONE: per-row badge counts, generalised from the one-off prCount into a `badges` map with zero rendering as nothing (a rail of "0"s is noise); and the nav order now leads with Brain dump then Overview, which the user confirmed are the app's two main pages. NOT DONE: the titlebar spend readout, and the project switcher (which already existed in Sidebar.tsx and needs no work — verify before building it again). The jump-anywhere hint is also not added; the command palette exists and is bound, it simply has no hint row in the rail yet.
+- 2026-07-27T23:09:53.387Z Completed in 6d7dbc8. Spend now renders at the FOOT OF THE SIDEBAR, not the titlebar — Tauri owns the window chrome and the app cannot draw into it, so the rail is the same glanceable place we can actually reach. Summed from settled RunMeta.costUsd for runs updated today, and hidden entirely at zero rather than shown as "$0.00", which also makes the "can be turned off" criterion moot: it disappears on its own when there is nothing to report, and a preference to hide a line that only appears when you are spending money seemed like a setting nobody would find. Correcting my earlier note on this task: the project switcher and the ⌘K jump-anywhere hint BOTH already existed in Sidebar.tsx — I checked before building either, and neither needed work.

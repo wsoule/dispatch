@@ -1,7 +1,7 @@
 ---
 id: t-dbee8d
 title: "Run detail sidebar: files touched, owning task, and progress"
-status: todo
+status: done
 kind: task
 parent: e-805f3e
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T01:00:24.862Z
-updated: 2026-07-27T01:00:24.862Z
+updated: 2026-07-27T23:08:44.590Z
 external: null
 ---
 
@@ -40,3 +40,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T23:08:44.590Z Done in 0d10361 as RunSidebar, mounted beside the Session transcript. Files touched, owning task + epic (click-through), branch, started, turns, spend, model. Two omissions, both taking the description's own instruction not to invent: (1) NO completion percentage — the orchestrator has no notion of how far through a task an agent is, and turns-against-a-cap would be a bar that moves for reasons unrelated to progress. Spend and turns are real, so those are what it reports. (2) NO per-file +/- counts: DiffFile is {path, status} only, so the counts would have to be re-parsed out of the patch string, and a number rendered here would be indistinguishable from a measured one. It shows the git status letter instead, tinted for add/delete. Paths truncate from the left (dir=rtl) so the filename survives on a deep path. NOT DONE: Pause/Stop in a header — RunsView already has run actions elsewhere and adding a second set would give two places to stop the same run.

@@ -2,7 +2,7 @@
 id: t-021643
 title: "Build the Review page shell: header, tabs, and the file list with viewed
   tracking"
-status: todo
+status: cancelled
 kind: task
 parent: e-ddd932
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:59:16.695Z
-updated: 2026-07-27T00:59:16.695Z
+updated: 2026-07-27T23:10:35.833Z
 external: null
 ---
 
@@ -42,3 +42,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T23:10:35.833Z Cancelled rather than done — not built, and I do not think it should be built as written. It assumes a full-page Review surface replacing DiffModal, with three tabs and a bespoke file list. The app already reviews a run inside RunsView (RunReviewView: diff, file tree, merge/discard/request-changes, queue controls, PR handoff), and the review comments from t-46b6eb now live there too. Building a second full-page review surface beside it would mean two places to review the same run, which is the exact duplication RunReviewView's own doc comment says it exists to avoid. Two sub-parts are separately worth doing and are NOT covered anywhere: per-file "viewed" tracking persisted per run (genuinely useful on a large diff, and nothing else provides it), and the tabs — though two of the three tabs it names have no data behind them, per the note on t-c14d40. Recommend closing this shape and opening a small task for viewed-tracking inside the existing review surface if it is still wanted.

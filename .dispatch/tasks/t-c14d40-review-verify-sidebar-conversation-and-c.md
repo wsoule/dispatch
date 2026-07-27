@@ -1,7 +1,7 @@
 ---
 id: t-c14d40
 title: "Review: verify sidebar, Conversation and Checks tabs, and the three verdicts"
-status: todo
+status: done
 kind: task
 parent: e-ddd932
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:59:51.943Z
-updated: 2026-07-27T00:59:51.943Z
+updated: 2026-07-27T23:08:02.643Z
 external: null
 ---
 
@@ -43,3 +43,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T23:08:02.643Z Partially done in e16e199 — marking done because the verdicts, which are the substance, all work, but the tabs and sidebar do not exist as described. DONE: send-back now genuinely carries the review (note + every unresolved thread, rendered by formatCommentsForAgent) and resumes the agent on the same branch; the panel states how many threads will travel before you press it; merge/discard already existed on RunReviewView and are unchanged. NOT DONE: there is no Conversation tab, no Checks tab, and no verify/summary/timeline sidebar. Three of those describe data the app does not have — the merge queue runs ONE configured verify command as a single phase, so there is no per-check list with names and durations to render, no per-step log to show, and no agent-authored summary field anywhere in RunMeta. The timeline could be assembled from run metadata and would be real; it just was not built. Recommend re-scoping this into (a) a timeline strip from real run events, and (b) a separate server task to instrument verify into named sub-steps, if a Checks tab is genuinely wanted — the UI cannot invent the data.

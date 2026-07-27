@@ -1,7 +1,7 @@
 ---
 id: t-0c695b
 title: "Task peek: acceptance criteria, sessions, self-review and blockers"
-status: todo
+status: done
 kind: task
 parent: e-92d17d
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T01:01:29.323Z
-updated: 2026-07-27T03:35:00.437Z
+updated: 2026-07-27T23:10:13.908Z
 external: null
 ---
 
@@ -43,3 +43,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T03:35:00.437Z Barely started, left as todo. The only piece landed is the "Add detail" AI action (see t-88cf9a), which sits in the peek's action row. Everything else in this task is untouched: acceptance criteria as individually checkable items (which needs a decision about where per-criterion state lives, since criteria are currently task-body markdown), the sessions list, the self-review toggle, and the blocked-by section that says plainly when nothing is holding a task up. TaskDetailDialog already has properties, status/priority/assignee controls and a stack rail, so this is additive rather than a rewrite.
+- 2026-07-27T23:10:13.908Z Correcting my earlier "barely started" note — that was wrong, and I should have read the file before writing it. TaskDetailDialog ALREADY had every section this task describes: Description and Acceptance Criteria as inline-editable body sections, Sessions, Activity, Properties, Labels, a self-review toggle, and a Blocked-by editor with removable blocker chips and an add-picker. The only thing genuinely missing was the AI "Add detail" action, which landed in 03b44e0 (see t-88cf9a). Marking done on that basis. Still NOT done, and the one real gap: acceptance criteria are an editable markdown block, not individually checkable items. Making each a checkbox needs a decision about where per-criterion state lives — parsing and writing back the markdown checkboxes keeps the task file hand-editable and is almost certainly the right call, but it is a core/store change rather than a UI one and deserves its own task.
