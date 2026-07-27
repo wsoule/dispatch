@@ -767,6 +767,22 @@ describe('MergeQueue.enqueueReady', () => {
     const queue = new MergeQueue(harness, stub.run);
     expect(queue.enqueueReady()).toEqual([]);
   });
+
+  // Regression: a task's status is user-settable (PATCH) independent of its
+  // run's state, so a run left finished-and-unreviewed on a task the user
+  // then cancels must not be swept into "merge everything ready" just
+  // because the run itself still looks terminal-and-unreviewed.
+  it('skips a finished unreviewed run whose task was since cancelled', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness, 'cancel me');
+    harness.store.update(taskId, { status: 'cancelled' });
+    harness.cache.rebuild(harness.store);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    expect(queue.enqueueReady()).toEqual([]);
+    expect(queue.snapshot().entries.map((e) => e.runId)).not.toContain(runId);
+  });
 });
 
 describe('MergeQueue.remove', () => {
