@@ -270,7 +270,9 @@ export type ServerEvent =
   // event rather than part of `merge-queue.changed` because that one carries a
   // full snapshot — per-chunk snapshots would be pathologically chatty. Same
   // contract as `run.log`: the payload is the increment.
-  | { type: 'merge-queue.log'; runId: string; chunk: string };
+  | { type: 'merge-queue.log'; runId: string; chunk: string }
+  // The brain-dump inbox changed — captured, retyped, dismissed or converted.
+  | { type: 'inbox.changed' };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's

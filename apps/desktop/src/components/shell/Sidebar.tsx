@@ -1,4 +1,5 @@
 import {
+  Brain,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -13,7 +14,6 @@ import {
   Play,
   Plus,
   Radar,
-  StickyNote,
   Target,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -38,15 +38,19 @@ const PROJECT_VIEWS: {
   label: string;
   icon: typeof ListChecks;
 }[] = [
+  // Brain dump and Overview lead the rail because they are the two pages this app is actually
+  // used from — one is where everything gets captured, the other is where everything gets
+  // watched. The design puts them in this order too. Everything below is somewhere you go on
+  // purpose, for one task.
+  { id: 'brain-dump', label: 'Brain dump', icon: Brain },
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'board', label: 'Tasks', icon: ListChecks },
-  { id: 'milestones', label: 'Milestones', icon: Target },
   { id: 'runs', label: 'Runs', icon: Play },
+  { id: 'landing', label: 'Landing', icon: GitMerge },
+  { id: 'plans', label: 'Plans', icon: NotebookPen },
+  { id: 'milestones', label: 'Milestones', icon: Target },
   { id: 'branches', label: 'Branches', icon: GitBranch },
   { id: 'pull-requests', label: 'Pull requests', icon: GitPullRequest },
-  { id: 'landing', label: 'Landing', icon: GitMerge },
-  { id: 'notes', label: 'Notes & triage', icon: StickyNote },
-  { id: 'plans', label: 'Plans', icon: NotebookPen },
 ];
 
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
