@@ -30,9 +30,9 @@ interface BoardViewProps {
   onPlanWork: () => void;
 }
 
-// `lanes` is the board's epic-swim-lane layout: same configured status columns, repeated per
-// epic. A third mode rather than a sub-toggle inside Board, so the choice is remembered and
-// reachable the same way the other two are.
+// `lanes` is the board: one swim lane per epic, with the project's configured status columns
+// inside each. That is how the work is actually organised here, so it is the default layout.
+// `board` keeps the older flat single-set-of-columns view for anyone who wants it.
 type TasksViewMode = 'board' | 'lanes' | 'list';
 
 // Persists the List/Board choice across restarts — Linear's own display toggle remembers
@@ -42,9 +42,12 @@ type TasksViewMode = 'board' | 'lanes' | 'list';
 const VIEW_MODE_STORAGE_KEY = 'dispatch:tasks-view-mode';
 
 function readStoredViewMode(): TasksViewMode {
-  if (typeof window === 'undefined') return 'board';
+  if (typeof window === 'undefined') return 'lanes';
   const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-  return stored === 'list' || stored === 'lanes' ? stored : 'board';
+  // Only an explicit past choice wins; anything else (including no stored value, and the old
+  // default of 'board' written before lanes existed) lands on lanes.
+  if (stored === 'list' || stored === 'board') return stored;
+  return 'lanes';
 }
 
 /** Skeleton placeholder for the board while tasks/config are loading — one column's worth of

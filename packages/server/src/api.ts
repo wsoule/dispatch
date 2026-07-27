@@ -6,8 +6,14 @@ import {
   PRIORITIES,
   TaskParseError,
   TaskStore,
+  updateConfig,
 } from '@dispatch/core';
-import type { CreateInput, DispatchConfig, UpdatePatch } from '@dispatch/core';
+import type {
+  ConfigPatch,
+  CreateInput,
+  DispatchConfig,
+  UpdatePatch,
+} from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
@@ -27,6 +33,10 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from './orchestrator/types.js';
+import {
+  formatCommentsForAgent,
+  ReviewCommentStore,
+} from './reviewComments.js';
 
 // Everything a request handler needs, bundled so `handleApi` stays a pure
 // function of (request, context) instead of reaching for module-level state —
@@ -46,6 +56,7 @@ export interface ApiContext {
   noteStore: NoteStore;
   inboxStore: InboxStore;
   inboxClusterer?: InboxClusterer;
+  reviewComments: ReviewCommentStore;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
@@ -435,6 +446,193 @@ async function reviewRun(
   }
   const meta = ctx.orchestrator.review(runId, body.action);
   return jsonResponse(meta);
+}
+
+/**
+ * PATCH /api/config — change the settings a person is allowed to change.
+ *
+ * Deliberately a narrow allow-list rather than a general config write. `statuses` in particular
+ * is structural: every task on disk carries one, so editing the list from a settings form would
+ * orphan tasks whose status no longer exists. Anything not in ConfigPatch has to be edited in
+ * the file, where the consequences are visible.
+ */
+async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as Record<string, unknown>;
+
+  const patch: ConfigPatch = {};
+  if ('verifyCommand' in body) {
+    const v = body.verifyCommand;
+    if (v !== null && typeof v !== 'string') {
+      return errorResponse(400, 'verifyCommand must be a string or null');
+    }
+    patch.verifyCommand = v;
+  }
+  if ('autoCommit' in body) {
+    if (typeof body.autoCommit !== 'boolean') {
+      return errorResponse(400, 'autoCommit must be a boolean');
+    }
+    patch.autoCommit = body.autoCommit;
+  }
+  for (const key of ['epicConcurrency', 'verifyTimeoutSec'] as const) {
+    if (!(key in body)) continue;
+    if (typeof body[key] !== 'number') {
+      return errorResponse(400, `${key} must be a number`);
+    }
+    patch[key] = body[key];
+  }
+  if ('permissionMode' in body) {
+    if (typeof body.permissionMode !== 'string') {
+      return errorResponse(400, 'permissionMode must be a string');
+    }
+    // The valid set lives in core, next to the parser that enforces it — duplicating it here
+    // would be a second list to keep in step. updateConfig rejects an unknown one before it
+    // writes anything, and that ConfigError becomes the 400 below.
+    patch.permissionMode = body.permissionMode;
+  }
+
+  try {
+    const config = updateConfig(ctx.rootDir, patch);
+    ctx.events.broadcast({ type: 'config.changed' });
+    return jsonResponse(config);
+  } catch (err) {
+    return errorResponse(400, (err as Error).message);
+  }
+}
+
+// GET /api/runs/:id/comments — every review comment on this run's diff.
+function listReviewComments(ctx: ApiContext, runId: string): Response {
+  return jsonResponse(ctx.reviewComments.list(runId));
+}
+
+/**
+ * POST /api/runs/:id/comments — leave a line-level note on the diff.
+ *
+ * `anchorText` is required and is the whole point: it records what the line said when the
+ * comment was written, which is the only way to tell later whether the comment still points at
+ * the code it was about. Without it a comment silently drifts onto unrelated lines as the agent
+ * pushes commits.
+ */
+async function addReviewComment(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    file?: unknown;
+    line?: unknown;
+    anchorText?: unknown;
+    body?: unknown;
+  };
+  if (typeof body.file !== 'string' || body.file === '') {
+    return errorResponse(400, 'file is required');
+  }
+  if (typeof body.line !== 'number' || !Number.isInteger(body.line)) {
+    return errorResponse(400, 'line must be an integer');
+  }
+  if (typeof body.body !== 'string' || body.body.trim() === '') {
+    return errorResponse(400, 'body is required');
+  }
+  const comment = ctx.reviewComments.add(runId, {
+    file: body.file,
+    line: body.line,
+    anchorText: typeof body.anchorText === 'string' ? body.anchorText : '',
+    body: body.body.trim(),
+  });
+  ctx.events.broadcast({ type: 'review.changed', runId });
+  return jsonResponse(comment, 201);
+}
+
+// PATCH /api/runs/:id/comments/:commentId — resolve or unresolve a thread.
+async function updateReviewComment(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  commentId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { resolved?: unknown };
+  if (typeof body.resolved !== 'boolean') {
+    return errorResponse(400, 'resolved must be a boolean');
+  }
+  try {
+    const comment = ctx.reviewComments.setResolved(
+      runId,
+      commentId,
+      body.resolved
+    );
+    ctx.events.broadcast({ type: 'review.changed', runId });
+    return jsonResponse(comment);
+  } catch (err) {
+    return errorResponse(404, (err as Error).message);
+  }
+}
+
+// POST /api/runs/:id/comments/:commentId/reply — add to a thread.
+async function replyReviewComment(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  commentId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { body?: unknown };
+  if (typeof body.body !== 'string' || body.body.trim() === '') {
+    return errorResponse(400, 'body is required');
+  }
+  try {
+    const comment = ctx.reviewComments.reply(
+      runId,
+      commentId,
+      body.body.trim()
+    );
+    ctx.events.broadcast({ type: 'review.changed', runId });
+    return jsonResponse(comment);
+  } catch (err) {
+    return errorResponse(404, (err as Error).message);
+  }
+}
+
+/**
+ * POST /api/runs/:id/send-back — return the work to the agent with the review attached.
+ *
+ * This is where the review UI's promise gets kept: the unresolved threads are rendered into the
+ * message the agent resumes on, so "the agent reads this when you send the work back" is
+ * literally true rather than decorative. A free-text note is optional and leads, since it is the
+ * reviewer's framing; the threads follow as specifics.
+ *
+ * Refuses an empty review outright. Resuming an agent with no instruction burns a run to be told
+ * nothing, which is worse than making the user say what they want.
+ */
+async function sendBackRun(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { note?: unknown };
+  const note = typeof body.note === 'string' ? body.note.trim() : '';
+  const threads = formatCommentsForAgent(ctx.reviewComments.list(runId));
+
+  if (note === '' && threads === '') {
+    return errorResponse(
+      400,
+      'nothing to send back — leave a note or an unresolved comment first'
+    );
+  }
+  const message = [note, threads].filter((part) => part !== '').join('\n\n');
+  try {
+    const meta = ctx.orchestrator.sendMessage(runId, message);
+    return jsonResponse(meta);
+  } catch (err) {
+    return errorResponse(409, (err as Error).message);
+  }
 }
 
 // POST /api/branches/free-disk — reclaims a branch's worktree directory while
@@ -1229,6 +1427,13 @@ export async function handleApi(
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {
       return jsonResponse(loadConfig(ctx.rootDir));
     }
+    if (
+      segments[0] === 'config' &&
+      segments.length === 1 &&
+      method === 'PATCH'
+    ) {
+      return await patchConfig(req, ctx);
+    }
 
     if (segments[0] === 'tasks') {
       if (segments.length === 1 && method === 'GET') {
@@ -1326,6 +1531,42 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await reviewRun(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'comments' &&
+        method === 'GET'
+      ) {
+        return listReviewComments(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'comments' &&
+        method === 'POST'
+      ) {
+        return await addReviewComment(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'comments' &&
+        method === 'PATCH'
+      ) {
+        return await updateReviewComment(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'comments' &&
+        segments[4] === 'reply' &&
+        method === 'POST'
+      ) {
+        return await replyReviewComment(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'send-back' &&
+        method === 'POST'
+      ) {
+        return await sendBackRun(req, ctx, segments[1]);
       }
       if (segments.length === 3 && segments[2] === 'pr' && method === 'GET') {
         return await getPr(req, ctx, segments[1]);

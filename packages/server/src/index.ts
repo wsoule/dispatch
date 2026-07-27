@@ -19,6 +19,7 @@ import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
+import { ReviewCommentStore } from './reviewComments.js';
 import { watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -301,6 +302,7 @@ export async function startServer(
     prCapability,
     noteStore: new NoteStore(rootDir),
     inboxStore,
+    reviewComments: new ReviewCommentStore(rootDir),
   };
 
   const server = Bun.serve({

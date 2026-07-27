@@ -384,6 +384,11 @@ export function RunsView({
                       onQueueStack={() =>
                         data.handleEnqueueMergeStack(selected.taskId)
                       }
+                      reviewComments={data.reviewComments}
+                      onAddComment={data.handleAddReviewComment}
+                      onResolveComment={data.handleResolveReviewComment}
+                      onReplyComment={data.handleReplyReviewComment}
+                      onSendBack={data.handleSendBack}
                     />
                   )}
                 </TabsContent>

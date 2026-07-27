@@ -1,0 +1,220 @@
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+
+import { reviewCommentsPath } from './orchestrator/paths.js';
+
+/**
+ * Line-level review comments on a run's diff.
+ *
+ * The hard part is not storage, it is anchoring. A comment is written against a line, and then
+ * the agent pushes more commits and that line moves, or stops existing. Three options were on
+ * the table: silently keep the line number (so the comment ends up pointing at unrelated code),
+ * re-anchor by searching for the text (guesswork that fails quietly), or record what the line
+ * said and mark the comment outdated when it no longer matches.
+ *
+ * The third is implemented here. `anchorText` is the exact line content at the moment of
+ * writing, so `resolveAnchor` can answer honestly: the line is where it was, the line moved to
+ * a known place, or the code this was about is gone. A comment that has drifted is shown as
+ * outdated rather than moved, because a wrong anchor presented confidently is worse than an
+ * admitted stale one — the reader can still read the comment and decide.
+ */
+
+export interface ReviewComment {
+  id: string;
+  file: string;
+  /** Line number in the new (post-change) side of the diff, at the time of writing. */
+  line: number;
+  /** What that line said when the comment was written — the anchor. */
+  anchorText: string;
+  author: string;
+  body: string;
+  resolved: boolean;
+  created: string;
+  /** Replies, oldest first. A thread is a comment plus these. */
+  replies: ReviewReply[];
+}
+
+export interface ReviewReply {
+  id: string;
+  author: string;
+  body: string;
+  created: string;
+}
+
+export interface AddCommentInput {
+  file: string;
+  line: number;
+  anchorText: string;
+  body: string;
+  author?: string;
+}
+
+function newId(prefix: string): string {
+  return `${prefix}-${randomBytes(3).toString('hex')}`;
+}
+
+/** Where a comment's line ended up, once the file has changed underneath it. */
+export type AnchorState =
+  | { kind: 'exact'; line: number }
+  | { kind: 'moved'; line: number }
+  | { kind: 'outdated' };
+
+/**
+ * Finds where a comment's anchor line is now.
+ *
+ * Exact when the recorded line still says what it said. Moved when that text appears exactly
+ * once elsewhere in the file — unambiguous, so following it is safe. Outdated in every other
+ * case, including when the text appears several times: two candidate lines means we cannot know
+ * which one was meant, and picking one would be a guess dressed as a fact.
+ */
+export function resolveAnchor(
+  comment: Pick<ReviewComment, 'line' | 'anchorText'>,
+  fileLines: string[]
+): AnchorState {
+  const idx = comment.line - 1;
+  if (fileLines[idx] === comment.anchorText) {
+    return { kind: 'exact', line: comment.line };
+  }
+  // An empty or whitespace-only anchor matches half the file; it can never be followed safely.
+  if (comment.anchorText.trim() === '') return { kind: 'outdated' };
+
+  const hits: number[] = [];
+  for (let i = 0; i < fileLines.length; i++) {
+    if (fileLines[i] === comment.anchorText) hits.push(i + 1);
+    if (hits.length > 1) break;
+  }
+  if (hits.length === 1 && hits[0] !== undefined) {
+    return { kind: 'moved', line: hits[0] };
+  }
+  return { kind: 'outdated' };
+}
+
+export class ReviewCommentStore {
+  constructor(private readonly rootDir: string) {}
+
+  private file(runId: string): string {
+    return reviewCommentsPath(this.rootDir, runId);
+  }
+
+  list(runId: string): ReviewComment[] {
+    const path = this.file(runId);
+    if (!existsSync(path)) return [];
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      return Array.isArray(parsed) ? (parsed as ReviewComment[]) : [];
+    } catch {
+      // A corrupt file degrades to "no comments" rather than taking the daemon down, matching
+      // how every other per-run artifact here behaves.
+      return [];
+    }
+  }
+
+  private write(runId: string, comments: ReviewComment[]): void {
+    const path = this.file(runId);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(comments, null, 2)}\n`);
+  }
+
+  add(
+    runId: string,
+    input: AddCommentInput,
+    now = new Date().toISOString()
+  ): ReviewComment {
+    const comment: ReviewComment = {
+      id: newId('rc'),
+      file: input.file,
+      line: input.line,
+      anchorText: input.anchorText,
+      author: input.author ?? 'You',
+      body: input.body,
+      resolved: false,
+      created: now,
+      replies: [],
+    };
+    const all = this.list(runId);
+    all.push(comment);
+    this.write(runId, all);
+    return comment;
+  }
+
+  reply(
+    runId: string,
+    commentId: string,
+    body: string,
+    author = 'You',
+    now = new Date().toISOString()
+  ): ReviewComment {
+    const all = this.list(runId);
+    const comment = all.find((c) => c.id === commentId);
+    if (comment === undefined) {
+      throw new Error(`review comment not found: ${commentId}`);
+    }
+    comment.replies.push({ id: newId('rr'), author, body, created: now });
+    this.write(runId, all);
+    return comment;
+  }
+
+  setResolved(
+    runId: string,
+    commentId: string,
+    resolved: boolean
+  ): ReviewComment {
+    const all = this.list(runId);
+    const comment = all.find((c) => c.id === commentId);
+    if (comment === undefined) {
+      throw new Error(`review comment not found: ${commentId}`);
+    }
+    comment.resolved = resolved;
+    this.write(runId, all);
+    return comment;
+  }
+
+  remove(runId: string, commentId: string): void {
+    this.write(
+      runId,
+      this.list(runId).filter((c) => c.id !== commentId)
+    );
+  }
+}
+
+/**
+ * Renders the unresolved threads as the note that goes back to the agent.
+ *
+ * This is the contract the review UI's copy makes out loud — "the agent reads this when you send
+ * the work back" — so it has to be real and it has to be specific enough to act on: file, line,
+ * the code the comment was about, the comment, and any replies. Resolved threads are left out,
+ * because resolving one is exactly how you say "never mind".
+ */
+export function formatCommentsForAgent(comments: ReviewComment[]): string {
+  const open = comments.filter((c) => !c.resolved);
+  if (open.length === 0) return '';
+
+  const byFile = new Map<string, ReviewComment[]>();
+  for (const c of open) {
+    const bucket = byFile.get(c.file);
+    if (bucket === undefined) byFile.set(c.file, [c]);
+    else bucket.push(c);
+  }
+
+  const sections: string[] = [
+    'Review comments on your changes. Each one names the file, the line it was written ' +
+      'against, and the code at that line. Address every one of them.',
+  ];
+  for (const [file, list] of byFile) {
+    const lines = [`### ${file}`];
+    for (const c of [...list].sort((a, b) => a.line - b.line)) {
+      lines.push('');
+      lines.push(`Line ${c.line}:`);
+      if (c.anchorText.trim() !== '') {
+        lines.push('```');
+        lines.push(c.anchorText);
+        lines.push('```');
+      }
+      lines.push(`${c.author}: ${c.body}`);
+      for (const r of c.replies) lines.push(`${r.author}: ${r.body}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+  return sections.join('\n\n');
+}

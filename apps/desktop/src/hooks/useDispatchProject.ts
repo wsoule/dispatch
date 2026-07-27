@@ -195,6 +195,30 @@ export interface DispatchProjectData {
   handleClusterInbox: () => Promise<
     import('@dispatch/client').InboxClusterGroup[]
   >;
+
+  /** Line-level review comments on the selected run's diff. */
+  reviewComments: import('@dispatch/client').ReviewComment[];
+  handleAddReviewComment: (input: {
+    file: string;
+    line: number;
+    anchorText: string;
+    body: string;
+  }) => Promise<void>;
+  handleResolveReviewComment: (
+    commentId: string,
+    resolved: boolean
+  ) => Promise<void>;
+  handleReplyReviewComment: (commentId: string, body: string) => Promise<void>;
+  /** Resumes the agent on the same branch with the note and every unresolved thread. */
+  handleSendBack: (note: string) => Promise<void>;
+  /** Writes the settings a person may change back to .dispatch/config.yml. */
+  handleUpdateConfig: (patch: {
+    verifyCommand?: string | null;
+    autoCommit?: boolean;
+    epicConcurrency?: number;
+    verifyTimeoutSec?: number;
+    permissionMode?: string;
+  }) => Promise<void>;
   /** Returns the per-item outcome so a partial failure can be surfaced, not swallowed. */
   handleConvertInbox: (
     ids: string[]
@@ -426,6 +450,10 @@ export function useDispatchProject(
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
+  const reviewQueryKey = useMemo(
+    () => ['dispatch-review', port, selectedRunId],
+    [port, selectedRunId]
+  );
   const epicProgressKeyPrefix = useMemo(
     () => ['dispatch-epic-progress', port],
     [port]
@@ -542,6 +570,17 @@ export function useDispatchProject(
       return client.fetchNotes();
     },
     enabled: client !== null,
+  });
+
+  const { data: reviewComments } = useQuery({
+    queryKey: reviewQueryKey,
+    queryFn: () => {
+      if (client === null || selectedRunId === null) {
+        throw new Error('no run selected');
+      }
+      return client.fetchReviewComments(selectedRunId);
+    },
+    enabled: client !== null && selectedRunId !== null,
   });
 
   const { data: inbox } = useQuery({
@@ -741,6 +780,8 @@ export function useDispatchProject(
             });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+          } else if (event.type === 'review.changed') {
+            void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
           } else if (event.type === 'merge-queue.changed') {
@@ -827,6 +868,7 @@ export function useDispatchProject(
     runsQueryKey,
     notesQueryKey,
     inboxQueryKey,
+    reviewQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     branchesQueryKey,
@@ -1362,6 +1404,67 @@ export function useDispatchProject(
     [client]
   );
 
+  const invalidateReview = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
+  }, [queryClient, reviewQueryKey]);
+
+  const handleAddReviewComment = useCallback(
+    async (input: {
+      file: string;
+      line: number;
+      anchorText: string;
+      body: string;
+    }): Promise<void> => {
+      if (client === null || selectedRunId === null) return;
+      await client.addReviewComment(selectedRunId, input);
+      invalidateReview();
+    },
+    [client, selectedRunId, invalidateReview]
+  );
+
+  const handleResolveReviewComment = useCallback(
+    async (commentId: string, resolved: boolean): Promise<void> => {
+      if (client === null || selectedRunId === null) return;
+      await client.resolveReviewComment(selectedRunId, commentId, resolved);
+      invalidateReview();
+    },
+    [client, selectedRunId, invalidateReview]
+  );
+
+  const handleReplyReviewComment = useCallback(
+    async (commentId: string, body: string): Promise<void> => {
+      if (client === null || selectedRunId === null) return;
+      await client.replyReviewComment(selectedRunId, commentId, body);
+      invalidateReview();
+    },
+    [client, selectedRunId, invalidateReview]
+  );
+
+  const handleSendBack = useCallback(
+    async (note: string): Promise<void> => {
+      if (client === null || selectedRunId === null) return;
+      await client.sendBackRun(selectedRunId, note);
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      invalidateReview();
+    },
+    [client, selectedRunId, queryClient, runsQueryKey, invalidateReview]
+  );
+
+  const handleUpdateConfig = useCallback(
+    async (patch: {
+      verifyCommand?: string | null;
+      autoCommit?: boolean;
+      epicConcurrency?: number;
+      verifyTimeoutSec?: number;
+      permissionMode?: string;
+    }): Promise<void> => {
+      if (client === null) return;
+      await client.updateConfig(patch);
+      void queryClient.invalidateQueries({ queryKey: configQueryKey });
+    },
+    [client, queryClient, configQueryKey]
+  );
+
   const handleClusterInbox = useCallback(async () => {
     if (client === null) return [];
     const { groups } = await client.clusterInbox();
@@ -1482,5 +1585,11 @@ export function useDispatchProject(
     handleEnrichInboxItem,
     handleEnrichTask,
     handleClusterInbox,
+    reviewComments: reviewComments ?? [],
+    handleAddReviewComment,
+    handleResolveReviewComment,
+    handleReplyReviewComment,
+    handleSendBack,
+    handleUpdateConfig,
   };
 }

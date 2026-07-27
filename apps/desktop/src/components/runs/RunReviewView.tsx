@@ -13,6 +13,7 @@ import { useMemo, useState } from 'react';
 
 import { isTerminalRunState } from '../../lib/runState';
 import { QueueMergeControl } from './QueueMergeControl';
+import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 import { RunDiffView } from './RunDiffView';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
@@ -45,6 +46,18 @@ interface RunReviewViewProps {
   onViewPr: () => void;
   onQueueMerge: () => Promise<void>;
   onQueueStack: () => Promise<void>;
+  /** Line-level review comments on this run, and the actions over them. Optional so the older
+   * call sites that never had them keep compiling with the panel hidden. */
+  reviewComments?: import('@dispatch/client').ReviewComment[];
+  onAddComment?: (input: {
+    file: string;
+    line: number;
+    anchorText: string;
+    body: string;
+  }) => Promise<void>;
+  onResolveComment?: (commentId: string, resolved: boolean) => Promise<void>;
+  onReplyComment?: (commentId: string, body: string) => Promise<void>;
+  onSendBack?: (note: string) => Promise<void>;
 }
 
 /**
@@ -71,6 +84,11 @@ export function RunReviewView({
   onViewPr,
   onQueueMerge,
   onQueueStack,
+  reviewComments,
+  onAddComment,
+  onResolveComment,
+  onReplyComment,
+  onSendBack,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
@@ -157,12 +175,29 @@ export function RunReviewView({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        <RunDiffView
-          diff={diff}
-          diffLoading={diffLoading}
-          diffError={diffError}
-        />
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-4 overflow-hidden">
+        <div className="min-h-0 overflow-auto">
+          <RunDiffView
+            diff={diff}
+            diffLoading={diffLoading}
+            diffError={diffError}
+          />
+        </div>
+        {onAddComment !== undefined &&
+          onResolveComment !== undefined &&
+          onReplyComment !== undefined &&
+          onSendBack !== undefined && (
+            <div className="min-h-0 overflow-auto">
+              <ReviewCommentsPanel
+                comments={reviewComments ?? []}
+                diff={diff}
+                onAdd={onAddComment}
+                onResolve={onResolveComment}
+                onReply={onReplyComment}
+                onSendBack={onSendBack}
+              />
+            </div>
+          )}
       </div>
 
       {hasOpenPr ? (

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
 import { DISPATCH_DIR } from './store.js';
@@ -208,4 +208,75 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verifyCommand: raw.verifyCommand,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
   };
+}
+
+/** The subset of config the Settings screen can change. Everything else in the file — statuses
+ * chief among them — is structural, and editing it from a settings form would silently
+ * invalidate every task already carrying an old status. */
+export interface ConfigPatch {
+  verifyCommand?: string | null;
+  autoCommit?: boolean;
+  epicConcurrency?: number;
+  verifyTimeoutSec?: number;
+  permissionMode?: OrchestratorConfig['permissionMode'];
+}
+
+/**
+ * Applies a partial change to `.dispatch/config.yml`, preserving everything it does not touch.
+ *
+ * Re-serialising a parsed object would be simpler and wrong: this file is hand-written and
+ * checked in, so it carries comments and key ordering someone chose. YAML's document API is used
+ * so an edit changes the one value asked for and leaves the rest of the file — comments
+ * included — exactly as it was found.
+ *
+ * `verifyCommand: null` clears the key rather than writing an empty string, since an empty
+ * verify command and no verify command mean different things to the merge queue.
+ */
+export function updateConfig(
+  rootDir: string,
+  patch: ConfigPatch
+): DispatchConfig {
+  const path = join(rootDir, DISPATCH_DIR, 'config.yml');
+  const doc = existsSync(path)
+    ? YAML.parseDocument(readFileSync(path, 'utf8'))
+    : new YAML.Document({});
+
+  if (patch.verifyCommand !== undefined) {
+    if (patch.verifyCommand === null || patch.verifyCommand.trim() === '') {
+      doc.delete('verifyCommand');
+    } else {
+      doc.set('verifyCommand', patch.verifyCommand.trim());
+    }
+  }
+  if (patch.autoCommit !== undefined) doc.set('autoCommit', patch.autoCommit);
+
+  for (const key of ['epicConcurrency', 'verifyTimeoutSec'] as const) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    if (!Number.isInteger(value) || value < 1) {
+      throw new ConfigError(`invalid ${key}: must be a positive integer`);
+    }
+    doc.setIn(['orchestrator', key], value);
+  }
+  if (patch.permissionMode !== undefined) {
+    // Validated BEFORE the write, not after. updateConfig re-reads through loadConfig to return
+    // its result, and loadConfig throws on an unknown mode — so validating only there would
+    // leave a file on disk that the daemon then refuses to load.
+    if (
+      !KNOWN_PERMISSION_MODES.includes(
+        patch.permissionMode as (typeof KNOWN_PERMISSION_MODES)[number]
+      )
+    ) {
+      throw new ConfigError(
+        `invalid permissionMode: must be one of ${KNOWN_PERMISSION_MODES.join('|')}`
+      );
+    }
+    doc.setIn(['orchestrator', 'permissionMode'], patch.permissionMode);
+  }
+
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, doc.toString());
+  // Re-read rather than returning a locally-patched object, so the caller gets exactly what the
+  // next loadConfig() will see — including any validation the parser applies.
+  return loadConfig(rootDir);
 }

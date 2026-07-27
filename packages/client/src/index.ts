@@ -41,6 +41,8 @@ export type {
   PrReviewEvent,
   PrStatus,
   RepoPr,
+  ReviewComment,
+  ReviewReply,
   RunDetail,
   RunMeta,
   RunState,

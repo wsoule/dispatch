@@ -33,6 +33,10 @@ export type ServerEvent =
   | { type: 'note.changed' }
   // The brain-dump inbox changed (captured, retyped, dismissed or converted).
   | { type: 'inbox.changed' }
+  // A run's review comments changed (added, replied to, resolved).
+  | { type: 'review.changed'; runId: string }
+  // .dispatch/config.yml changed through the Settings screen.
+  | { type: 'config.changed' }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
   | { type: 'merge-queue.changed' }
