@@ -1,4 +1,4 @@
-import type { InboxItem, InboxKind } from '@dispatch/client';
+import type { InboxClusterGroup, InboxItem, InboxKind } from '@dispatch/client';
 import { Bot, Combine, Inbox, Sparkles, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
@@ -45,6 +45,10 @@ export function BrainDumpView({
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The model-backed grouping is a separate, explicit act from the free local hint below, so it
+  // gets its own state: null until asked, [] once asked and told there is nothing related.
+  const [groups, setGroups] = useState<InboxClusterGroup[] | null>(null);
+  const [grouping, setGrouping] = useState(false);
 
   const inbox = data.inbox;
   const open = useMemo(() => inbox.filter((i) => !i.done), [inbox]);
@@ -100,6 +104,26 @@ export function BrainDumpView({
           `${res.converted} converted, ${res.failed} failed${first === undefined ? '' : `: ${first}`}`
         );
       }
+    });
+  }
+
+  function findRelated(): void {
+    setGrouping(true);
+    setError(null);
+    void (async () => {
+      try {
+        setGroups(await data.handleClusterInbox());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setGrouping(false);
+      }
+    })();
+  }
+
+  function addDetail(id: string): void {
+    void guard(async () => {
+      await data.handleEnrichInboxItem(id);
     });
   }
 
@@ -209,6 +233,7 @@ export function BrainDumpView({
                   busy={busy}
                   onToggle={() => toggle(it.id)}
                   onMakeTask={() => convert([it.id])}
+                  onAddDetail={() => addDetail(it.id)}
                   onPlan={() => onPlanText(it.text)}
                   onDismiss={() => dismiss([it.id])}
                 />
@@ -284,6 +309,74 @@ export function BrainDumpView({
         )}
 
         <div>
+          {/* Two passes, deliberately distinct. The hint above is free and instant but can only
+              see shared words; this one asks a model and so costs a call and a moment, which is
+              why it is a button rather than something that fires on its own. */}
+          <SectionLabel
+            trailing={
+              <button
+                type="button"
+                onClick={findRelated}
+                disabled={grouping || open.length < 3}
+                className="text-accent-foreground text-[11px] disabled:opacity-40"
+              >
+                {grouping ? 'Looking…' : 'Find related'}
+              </button>
+            }
+          >
+            Group into epics
+          </SectionLabel>
+          {groups === null ? (
+            <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
+              {open.length < 3
+                ? 'Capture a few more and this can look for things that belong together.'
+                : 'Reads your captures and suggests which ones are really one piece of work.'}
+            </p>
+          ) : groups.length === 0 ? (
+            <p className="text-muted-foreground mt-2 text-[12.5px]">
+              Nothing here looks related.
+            </p>
+          ) : (
+            <ul className="mt-2 flex flex-col gap-2">
+              {groups.map((g) => (
+                <li
+                  key={g.epicTitle}
+                  className="shadow-hairline rounded-lg p-2.5"
+                >
+                  <div className="text-[12.5px] font-medium">{g.epicTitle}</div>
+                  <p className="text-muted-foreground mt-1 text-[12px] leading-relaxed">
+                    {g.reason}
+                  </p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="dense-meta">{g.itemIds.length} items</span>
+                    <span className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => setSelected(new Set(g.itemIds))}
+                      className="text-accent-foreground text-[11px]"
+                    >
+                      Select
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const texts = inbox
+                          .filter((i) => g.itemIds.includes(i.id))
+                          .map((i) => i.text);
+                        onPlanText(`${g.epicTitle}. ${texts.join('. ')}`);
+                      }}
+                      className="text-accent-foreground text-[11px]"
+                    >
+                      Make an epic
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
           <SectionLabel>How this works</SectionLabel>
           <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
             Nothing here is a commitment. Items sit in the inbox until you make
@@ -342,6 +435,7 @@ function InboxRow({
   busy,
   onToggle,
   onMakeTask,
+  onAddDetail,
   onPlan,
   onDismiss,
 }: {
@@ -350,6 +444,7 @@ function InboxRow({
   busy: boolean;
   onToggle: () => void;
   onMakeTask: () => void;
+  onAddDetail: () => void;
   onPlan: () => void;
   onDismiss: () => void;
 }) {
@@ -392,6 +487,11 @@ function InboxRow({
       <span className="flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
         <BarButton onClick={onMakeTask} disabled={busy}>
           Make a task
+        </BarButton>
+        {/* Sends this one line to the planner to be turned into a properly specified task —
+            the thing a one-liner is missing is context, not wording. */}
+        <BarButton onClick={onAddDetail} disabled={busy}>
+          Add detail
         </BarButton>
         <BarButton onClick={onPlan} disabled={busy}>
           Plan it

@@ -667,6 +667,7 @@ function App() {
             onUpdate={data.handleUpdate}
             onMoveStatus={data.moveTaskStatus}
             onDispatch={data.handleDispatch}
+            onEnrich={data.handleEnrichTask}
             onOpenRun={(runId) => {
               dispatchNav({ type: 'closePeek' });
               selectProjectView('runs');

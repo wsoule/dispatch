@@ -410,6 +410,13 @@ export interface InboxConvertResult {
   error?: string;
 }
 
+/** One model-proposed grouping of related captures, ready to become an epic. */
+export interface InboxClusterGroup {
+  epicTitle: string;
+  reason: string;
+  itemIds: string[];
+}
+
 export interface InboxConvertResponse {
   results: InboxConvertResult[];
   converted: number;
@@ -699,6 +706,12 @@ export interface ApiClient {
   ): Promise<InboxItem>;
   dismissInbox(ids: string[]): Promise<{ dismissed: number }>;
   convertInbox(ids: string[]): Promise<InboxConvertResponse>;
+  /** Starts an AI draft that turns one captured line into a properly specified task. */
+  enrichInbox(id: string): Promise<{ planId: string }>;
+  /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
+  enrichTask(id: string): Promise<{ planId: string }>;
+  /** Model-backed grouping of related captures. Costs a call, so it is user-triggered. */
+  clusterInbox(): Promise<{ groups: InboxClusterGroup[] }>;
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, patch: UpdateNotePatch): Promise<Note>;
@@ -881,6 +894,16 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
+    enrichInbox: (id) =>
+      request(baseUrl, `/api/inbox/${encodeURIComponent(id)}/enrich`, {
+        method: 'POST',
+      }),
+    enrichTask: (id) =>
+      request(baseUrl, `/api/tasks/${encodeURIComponent(id)}/enrich`, {
+        method: 'POST',
+      }),
+    clusterInbox: () =>
+      request(baseUrl, '/api/inbox/cluster', { method: 'POST' }),
     fetchNotes: () => request(baseUrl, '/api/notes'),
     createNote: (input) =>
       request(baseUrl, '/api/notes', { method: 'POST', ...jsonBody(input) }),
