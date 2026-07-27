@@ -901,6 +901,38 @@ describe('MergeQueue dependency gating', () => {
     expect(queue.snapshot().history[0].runId).toBe(runB);
     expect(queue.snapshot().history[0].state).toBe('merged');
   });
+
+  // Regression for M3: nextEligible() used to look blockers up via a plain
+  // (archived-excluded) cache.query(), so an archived-but-undone blocker
+  // silently vanished from its lookup map and its dependent was treated as
+  // unblocked. Archiving the blocker (without finishing it) must keep the
+  // dependent parked at waiting-blockers, exactly like an unarchived one.
+  it('keeps a dependent at waiting-blockers when its blocker is archived but undone', async () => {
+    const harness = makeHarness();
+    const { taskId: taskA } = await dispatchAndFinish(harness, 'Task A');
+    harness.store.update(taskA, { archivedAt: new Date().toISOString() });
+
+    const taskB = harness.store.create({
+      title: 'Task B',
+      blockedBy: [taskA],
+    });
+    const metaB = await harness.orchestrator.dispatch(taskB.meta.id, 'fake');
+    await waitFor(
+      () => harness.orchestrator.getRun(metaB.id)?.meta.state === 'finished'
+    );
+    const runB = metaB.id;
+
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runB);
+    await waitFor(
+      () =>
+        queue.snapshot().entries.find((e) => e.runId === runB)?.state ===
+        'waiting-blockers'
+    );
+    expect(stub.calls.length).toBe(0);
+  });
 });
 
 describe('MergeQueue.enqueueStack', () => {

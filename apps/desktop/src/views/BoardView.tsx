@@ -289,6 +289,7 @@ export function BoardView({
             readyIds={data.readyIds}
             blockedIds={data.blockedIds}
             liveRunStateByTaskId={data.liveRunStateByTaskId}
+            latestRunByTaskId={data.latestRunByTaskId}
             epicProgressById={data.epicProgressById}
             epicConcurrencyDefault={data.config.orchestrator.epicConcurrency}
             epics={data.epics}

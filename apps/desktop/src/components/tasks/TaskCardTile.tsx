@@ -1,4 +1,4 @@
-import type { RunState } from '@dispatch/client';
+import type { RunMeta, RunState } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import type {
   DraggableAttributes,
@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { resolveCardKeyAction } from '../../lib/keyboard';
+import { MergeLadderDot } from '../runs/MergeLadderDot';
 import {
   AssigneeControl,
   PriorityControl,
@@ -35,6 +36,8 @@ interface TaskCardTileProps {
   blocked: boolean;
   /** State of this task's live (non-terminal) run, if it has one. */
   liveRunState: RunState | undefined;
+  /** This task's latest run, if any — feeds the card's merge-ladder dot. */
+  run?: RunMeta;
   /** Title of this task's parent epic, resolved by the caller (`TaskBoard`/`TasksListView`
    * build an id->title map from the project's epic list) — lets the card render Linear's
    * `t-id › Epic title` breadcrumb without needing its own epic lookup. */
@@ -90,6 +93,7 @@ export function TaskCardTile({
   ready,
   blocked,
   liveRunState,
+  run,
   epicTitle,
   statuses,
   onStatusChange,
@@ -207,6 +211,8 @@ export function TaskCardTile({
             onChange={onStatusChange}
           />
         </span>
+        {/* Merge-ladder dot: same affordance TasksListView/StackRail/TaskDetailDialog show. */}
+        <MergeLadderDot meta={run} className="mt-1.5" />
         <span className="text-foreground line-clamp-2 text-[13.5px] leading-[1.35] font-medium">
           {doc.meta.title}
         </span>

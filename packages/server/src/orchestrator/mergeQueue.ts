@@ -504,7 +504,9 @@ export class MergeQueue {
   // whole stack skips does this throw 409 — an all-skipped call would
   // otherwise look like a silent no-op to the caller.
   enqueueStack(taskId: string): MergeQueueEntry[] {
-    const tasks = this.ctx.cache.query();
+    // includeArchived: an archived blocker/dependent is still a real stack
+    // member for ordering purposes — see enqueueReady's identical rationale.
+    const tasks = this.ctx.cache.query({ includeArchived: true });
     const byId = new Map(tasks.map((t) => [t.meta.id, t]));
     const stack = computeStack(tasks, taskId);
     const order = stack !== null ? stack.order : [taskId];
@@ -699,8 +701,13 @@ export class MergeQueue {
   // every entry's display state (queued vs waiting-blockers) in that same
   // pass, only broadcasting if something actually changed.
   private nextEligible(): MergeQueueEntry | null {
+    // includeArchived: an archived blocker must still count as an unmet
+    // dependency here, or an archived-but-undone task would silently drop
+    // its dependent out of waiting-blockers and let it merge early.
     const byId = new Map(
-      this.ctx.cache.query().map((task) => [task.meta.id, task])
+      this.ctx.cache
+        .query({ includeArchived: true })
+        .map((task) => [task.meta.id, task])
     );
     // Looked up once per pass, same rationale as the task map above: a
     // per-entry registry scan would be O(entries * runs) every pump tick.

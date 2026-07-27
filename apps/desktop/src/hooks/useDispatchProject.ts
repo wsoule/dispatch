@@ -717,6 +717,9 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
             });
+            // pushedToOrigin flips on every merged branch too — Branches needs
+            // its own refetch, same as run.changed's invalidation above.
+            void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
             // Per-run "Merged" toasts already come from
             // useTransitionNotifications' own merge-queue diff — this event
             // only needs to report the *push* outcome, not repeat that a
@@ -734,6 +737,21 @@ export function useDispatchProject(
                   ts: new Date().toISOString(),
                   title: 'Push failed',
                   body: event.pushError,
+                  target: { kind: 'runs-page' },
+                },
+              ]);
+            } else if (event.pushed && event.merged === 0) {
+              // A retry-only drain: nothing new merged this pass, just a
+              // previously-failed push that finally landed. Recording it in
+              // the inbox is still worthwhile (the earlier failure got a row
+              // too), but "0 merge(s) now on origin" would misread as if
+              // nothing happened at all — so no toast here.
+              setLastPushError(null);
+              onRecordInbox([
+                {
+                  ts: new Date().toISOString(),
+                  title: 'Push retry succeeded',
+                  body: 'Origin is now up to date.',
                   target: { kind: 'runs-page' },
                 },
               ]);
