@@ -53,10 +53,10 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="animate-in fade-in-0 flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5 duration-150">
+    <div className="animate-in fade-in-0 bg-state-waiting-surface border-state-waiting-edge flex flex-col gap-2 rounded-md border px-3 py-2.5 duration-150">
       <div className="flex items-center gap-2">
-        <TriangleAlert className="size-3.5 shrink-0 text-amber-500" />
-        <span className="text-[11px] font-medium tracking-wide text-amber-600 uppercase dark:text-amber-400">
+        <TriangleAlert className="text-state-waiting size-3.5 shrink-0" />
+        <span className="dense-label text-state-waiting font-medium">
           Waiting on approval
         </span>
         <span className="text-foreground truncate font-mono text-[12px]">
