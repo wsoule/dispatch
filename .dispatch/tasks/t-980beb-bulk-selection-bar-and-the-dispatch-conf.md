@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:01:45.851Z
-updated: 2026-07-27T01:01:45.851Z
+updated: 2026-07-27T03:34:50.766Z
 external: null
 ---
 
@@ -43,3 +43,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T03:34:50.766Z Half done in e243629, left as todo. The derivation landed as lib/dispatchPreview.ts (11 tests) including the invariant this task exists for — twelve ready tasks into a concurrency of eight with five running shows twelve rows, three starting and nine queued, and nothing is silently dropped. Blocked tasks are a distinct 'not-ready' disposition rather than folded into 'queued', and do not consume a slot. One correction to the description: there is NO fixed global concurrency cap. handleWorkEpic takes concurrency per call and EpicCardTile already has a stepper for it, so the preview is computed against the concurrency the user is about to choose, not an imaginary ceiling. NOT DONE: the dialog UI itself, the selection bar in the list, and routing per-epic dispatch through it. The existing epic dispatch path is untouched and still works — it just fires without a preview.

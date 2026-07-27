@@ -1,7 +1,7 @@
 ---
 id: t-22429b
 title: Expose the inbox over the server API and client SDK
-status: todo
+status: done
 kind: task
 parent: e-3f896a
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:57:29.612Z
-updated: 2026-07-27T00:57:29.612Z
+updated: 2026-07-27T03:32:27.836Z
 external: null
 ---
 

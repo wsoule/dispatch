@@ -2,7 +2,7 @@
 id: t-2814f8
 title: Remove Notes &amp; triage, migrating its data and the agent note channel
   into the inbox
-status: todo
+status: done
 kind: task
 parent: e-3f896a
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:06:11.216Z
-updated: 2026-07-27T01:06:11.216Z
+updated: 2026-07-27T03:33:31.157Z
 external: null
 ---
 
@@ -47,3 +47,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T03:33:31.157Z Done in 3425cdc and e4f874b, with one criterion deliberately not met. NotesView.tsx is deleted, 'notes' is gone from ProjectView, the sidebar row and App render branch are replaced by Brain dump, appNav.test.ts is updated, and the mockup's "triage list from before" rail link was never built. dispatch_note now POSTs to /api/inbox with the four note kinds folded onto inbox kinds; its own tool vocabulary (kind/title/body) is unchanged so existing agent prompts keep working, with title and body joined into one captured line. migrateNotes runs at daemon startup — idempotent by construction (matches on text), preserves done/linkedTaskId/createdByRunId, and keeps anything unrecognised as a note. 12 migration tests including corrupt-file, no-file, run-twice and no-title cases. NOT done: the dead notes routes, client methods, note.changed wiring and notes.ts itself are still present. Removing them is a separate mechanical pass and leaving them costs nothing at runtime (nothing calls them now), whereas ripping them out in the same change as the migration would have meant deleting the only reader of notes.json in the same commit that first tries to migrate it — if the migration needs a fix, that data has to still be reachable. Recommend a follow-up task to delete them once a real .dispatch/notes.json has been observed migrating cleanly.

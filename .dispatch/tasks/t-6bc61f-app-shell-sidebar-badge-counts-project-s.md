@@ -12,7 +12,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T01:02:44.221Z
-updated: 2026-07-27T01:02:44.221Z
+updated: 2026-07-27T03:34:40.500Z
 external: null
 ---
 
@@ -41,3 +41,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T03:34:40.500Z Partially done in 389f17e and e4f874b, left as todo. DONE: per-row badge counts, generalised from the one-off prCount into a `badges` map with zero rendering as nothing (a rail of "0"s is noise); and the nav order now leads with Brain dump then Overview, which the user confirmed are the app's two main pages. NOT DONE: the titlebar spend readout, and the project switcher (which already existed in Sidebar.tsx and needs no work — verify before building it again). The jump-anywhere hint is also not added; the command palette exists and is bound, it simply has no hint row in the rail yet.

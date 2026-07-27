@@ -11,7 +11,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T01:01:29.323Z
-updated: 2026-07-27T01:01:29.323Z
+updated: 2026-07-27T03:35:00.437Z
 external: null
 ---
 
@@ -42,3 +42,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T03:35:00.437Z Barely started, left as todo. The only piece landed is the "Add detail" AI action (see t-88cf9a), which sits in the peek's action row. Everything else in this task is untouched: acceptance criteria as individually checkable items (which needs a decision about where per-criterion state lives, since criteria are currently task-body markdown), the sessions list, the self-review toggle, and the blocked-by section that says plainly when nothing is holding a task up. TaskDetailDialog already has properties, status/priority/assignee controls and a stack rail, so this is additive rather than a rewrite.

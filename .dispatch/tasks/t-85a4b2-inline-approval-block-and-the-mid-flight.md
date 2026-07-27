@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:00:39.768Z
-updated: 2026-07-27T01:00:39.768Z
+updated: 2026-07-27T03:35:09.991Z
 external: null
 ---
 
@@ -39,3 +39,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-07-27T03:35:09.991Z Not done, left as todo. Only the styling moved: ApprovalCard is off raw amber-500/amber-600 and onto the waiting state tokens, so an approval gate now looks the same here as it does in the Control room feed. The substance is untouched — the card is still detached from the transcript rather than inline at the point the question was asked, it still offers only approve/deny rather than approve-once / approve-for-this-session / deny-with-a-reason, and there is no steer composer. Worth carrying forward from the Control room work: PendingApproval is only {requestId, toolName}, so the actual command lives in the run log and RunLogView already recovers it by matching entries — that is the join this task needs.
