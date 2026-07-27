@@ -1,7 +1,7 @@
 ---
 id: t-74a60a
 title: "Build the Landing view: queue rows with per-check progress"
-status: todo
+status: done
 kind: task
 parent: e-3734d7
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:58:32.826Z
-updated: 2026-07-27T00:58:32.826Z
+updated: 2026-07-27T01:39:22.872Z
 external: null
 ---
 

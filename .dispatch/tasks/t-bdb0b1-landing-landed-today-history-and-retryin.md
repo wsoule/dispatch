@@ -1,7 +1,7 @@
 ---
 id: t-bdb0b1
 title: "Landing: landed-today history and retrying a blocked entry"
-status: todo
+status: done
 kind: task
 parent: e-3734d7
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T00:58:46.371Z
-updated: 2026-07-27T00:58:46.371Z
+updated: 2026-07-27T01:39:46.372Z
 external: null
 ---
 
