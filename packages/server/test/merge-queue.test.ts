@@ -403,6 +403,115 @@ describe('MergeQueue local-run happy path', () => {
   });
 });
 
+// A bare remote to push to — same shape as orchestrator.test.ts's
+// initBareGitRepo, duplicated locally so this file's own origin/remote setup
+// doesn't depend on that other suite's helper.
+function initBareOrigin(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dispatch-origin-'));
+  runGitSync(dir, ['init', '--bare', '-b', 'main']);
+  return dir;
+}
+
+// Task 6: once the queue drains with at least one merge, it pushes origin's
+// copy of the base branch itself — the whole point is that a human never has
+// to remember to `git push` after every merge queue run.
+describe('MergeQueue auto-push on drain', () => {
+  it('pushes once after draining with >=1 merge and broadcasts queue.drained', async () => {
+    const origin = initBareOrigin();
+    const harness = makeHarness();
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
+    const events = captureEvents(harness.events);
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().entries.length === 0);
+
+    const pushes = stub.calls.filter((c) =>
+      c.cmd.join(' ').startsWith('git push origin')
+    );
+    expect(pushes.length).toBe(1);
+    expect(pushes[0]?.cmd).toEqual(['git', 'push', 'origin', 'main']);
+    const drained = events.find((e) => e.type === 'queue.drained') as {
+      merged: number;
+      pushed: boolean;
+    };
+    expect(drained).toMatchObject({ merged: 1, pushed: true });
+  });
+
+  it('reports pushError and still drains when the push fails', async () => {
+    const origin = initBareOrigin();
+    const harness = makeHarness();
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
+    const events = captureEvents(harness.events);
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    stub.pushResult = { ok: false, stdout: '', stderr: 'no auth' };
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().entries.length === 0);
+
+    expect(queue.snapshot().history[0]?.state).toBe('merged');
+    const drained = events.find((e) => e.type === 'queue.drained') as {
+      pushed: boolean;
+      pushError?: string;
+    };
+    expect(drained.pushed).toBe(false);
+    expect(drained.pushError).toContain('no auth');
+  });
+
+  it('skips the push (pushed: false, no error) when the repo has no origin remote', async () => {
+    const harness = makeHarness();
+    const events = captureEvents(harness.events);
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().entries.length === 0);
+
+    expect(
+      stub.calls.some((c) => c.cmd[0] === 'git' && c.cmd[1] === 'push')
+    ).toBe(false);
+    const drained = events.find((e) => e.type === 'queue.drained') as {
+      merged: number;
+      pushed: boolean;
+      pushError?: string;
+    };
+    expect(drained).toMatchObject({ merged: 1, pushed: false });
+    expect(drained.pushError).toBeUndefined();
+  });
+
+  it('retries a failed push on the next idle pump via recheck()', async () => {
+    const origin = initBareOrigin();
+    const harness = makeHarness();
+    runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
+    const events = captureEvents(harness.events);
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    stub.pushResult = { ok: false, stdout: '', stderr: 'no auth' };
+    const queue = new MergeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    await waitFor(
+      () => events.filter((e) => e.type === 'queue.drained').length === 1
+    );
+
+    stub.pushResult = { ok: true, stdout: '', stderr: '' };
+    queue.recheck();
+    await waitFor(
+      () => events.filter((e) => e.type === 'queue.drained').length === 2
+    );
+    const [, retried] = events.filter((e) => e.type === 'queue.drained') as {
+      merged: number;
+      pushed: boolean;
+    }[];
+    expect(retried).toMatchObject({ merged: 0, pushed: true });
+  });
+});
+
 // The "merge queue does not work" report. A dirty main checkout is an
 // ENVIRONMENTAL precondition — transient, global, and fixed by the user in
 // seconds — but it used to be treated like a content failure: the entry

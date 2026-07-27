@@ -33,7 +33,17 @@ export type ServerEvent =
   | { type: 'note.changed' }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
-  | { type: 'merge-queue.changed' };
+  | { type: 'merge-queue.changed' }
+  // The queue just finished draining (>=1 merge, or a retried push) and
+  // attempted to push origin's base up to date. Carries its own payload
+  // (unlike the *.changed events above) so the UI can show the outcome
+  // without a follow-up fetch.
+  | {
+      type: 'queue.drained';
+      merged: number;
+      pushed: boolean;
+      pushError?: string;
+    };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
