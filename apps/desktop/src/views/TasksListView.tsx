@@ -10,11 +10,14 @@ import {
   StatusControl,
 } from '../components/tasks/PropertyControls';
 import { StackBadge } from '../components/tasks/StackRail';
+import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { deriveEpicPulse } from '../lib/epicPulse';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
+import { cn } from '@/lib/utils';
 
 interface TasksListViewProps {
   data: DispatchProjectData;
@@ -246,6 +249,11 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                 (c) => c.status === 'done' || c.status === 'cancelled'
               ).length ?? 0;
             const totalCount = group.progress?.children.length ?? 0;
+            const pulse = deriveEpicPulse(
+              group.tasks,
+              data.latestRunByTaskId,
+              data.readyIds
+            );
             return (
               <div key={key} className="mb-1">
                 <div className="bg-background sticky top-0 z-10 flex w-full items-center gap-1.5 px-1 py-1.5">
@@ -271,6 +279,19 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                         {doneCount}/{totalCount} done
                       </span>
                     )}
+                    {/* The single most actionable fact about this epic, rather than a tally of
+                        everything — see deriveEpicPulse for why the ordering matters. */}
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      {pulse.state !== null && <StateDot state={pulse.state} />}
+                      <span
+                        className={cn(
+                          'dense-meta',
+                          pulse.state === 'waiting' && 'text-state-waiting'
+                        )}
+                      >
+                        {pulse.label}
+                      </span>
+                    </span>
                   </button>
                   {/* Only for a group keyed by a real, known epic (not the dangling-parent or
                       "No epic" buckets) — there's no epic to graph otherwise. A sibling of the
