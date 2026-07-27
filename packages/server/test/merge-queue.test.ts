@@ -675,6 +675,74 @@ describe('MergeQueue environmental blockers', () => {
     expect(harness.store.get(taskId)?.meta.status).toBe('done');
   });
 
+  // The self-retry itself, isolated from recheck(): armBlockedRetry's timer is
+  // the ONLY thing driving this entry forward here — deleting it would make
+  // this test time out.
+  it('self-retries a blocked entry via its own timer, with no recheck() call', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run, {
+      blockedRetryDelayMs: 10,
+    });
+
+    const stray = join(harness.rootDir, 'stray-download.zip');
+    writeFileSync(stray, 'nope\n');
+    queue.enqueue(runId);
+    await waitFor(
+      () => queue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+
+    rmSync(stray);
+    await waitFor(() => queue.snapshot().history.length === 1, 1000);
+    expect(queue.snapshot().history[0].state).toBe('merged');
+    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+  });
+
+  // The IMPORTANT fix: removing the sole blocked entry must not leave its
+  // retry timer armed against an empty queue. remove()'s own kick() (added
+  // alongside this test) drives pump() into the empty-queue branch, which is
+  // what actually clears it.
+  it('clears the blocked-retry timer when the blocked entry is removed', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run, {
+      blockedRetryDelayMs: 10,
+    });
+
+    writeFileSync(join(harness.rootDir, 'stray-download.zip'), 'nope\n');
+    queue.enqueue(runId);
+    await waitFor(
+      () => queue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+    // Whether the timer fired is otherwise unobservable once the queue it
+    // would retry against is already empty (kicking an empty queue is a
+    // silent no-op either way) — reading the private field directly is the
+    // most honest way to prove remove() actually tears it down, rather than
+    // asserting the absence of an effect that would be silent regardless.
+    expect(
+      (queue as unknown as { blockedRetryTimer: unknown }).blockedRetryTimer
+    ).toBeDefined();
+
+    // remove()'s own kick() runs pump() asynchronously (it yields on a
+    // microtask before touching anything, same as every other kick()), so
+    // the clear doesn't happen synchronously within this call — poll for it.
+    queue.remove(runId);
+    await waitFor(
+      () =>
+        (queue as unknown as { blockedRetryTimer: unknown })
+          .blockedRetryTimer === undefined
+    );
+
+    // Belt-and-suspenders: past the (short, injected) retry delay, nothing
+    // reappeared — guards against a regression where remove()'s own kick()
+    // somehow re-arms the timer instead of clearing it.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(queue.snapshot().entries).toHaveLength(0);
+    expect(queue.snapshot().history).toHaveLength(0);
+  });
+
   // A blocked entry must not wedge the queue's own bookkeeping: the blocker is
   // global (one checkout), so nothing behind it could proceed either, and both
   // entries must survive to retry rather than one being failed out.

@@ -79,7 +79,15 @@ export interface MergeQueueContext {
   jj?: JjManager;
 }
 
+// Test-only override for the blocked-retry delay (see armBlockedRetry) —
+// same injection shape as the CommandRunner constructor param, so a test can
+// exercise the timer's real behavior without sleeping the production 15s.
+export interface MergeQueueOptions {
+  blockedRetryDelayMs?: number;
+}
+
 const HISTORY_LIMIT = 20;
+const DEFAULT_BLOCKED_RETRY_DELAY_MS = 15_000;
 
 // States process() can leave an entry in mid-way through rebase -> verify ->
 // merge. An entry stuck in one of these on disk when hydrate() runs means the
@@ -145,11 +153,20 @@ export class MergeQueue {
   private fetchFailureLogged = false;
   // Self-retry timer for a 'blocked-environment' entry — see armBlockedRetry.
   private blockedRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  // Overridable via `opts` so tests can observe the real self-retry firing
+  // without sleeping the production delay.
+  private readonly blockedRetryDelayMs: number;
+  // The 60s remote-refresh tick — same timer bin.ts used to own directly;
+  // moved in here so stop() has one place to tear both timers down.
+  private refreshTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly ctx: MergeQueueContext,
-    private readonly run: CommandRunner = defaultCommandRunner
+    private readonly run: CommandRunner = defaultCommandRunner,
+    opts?: MergeQueueOptions
   ) {
+    this.blockedRetryDelayMs =
+      opts?.blockedRetryDelayMs ?? DEFAULT_BLOCKED_RETRY_DELAY_MS;
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir, run);
     // A review elsewhere (local merge, PR poller) can complete a blocker —
     // re-check waiting entries whenever any run gets reviewed. Note: the
@@ -391,7 +408,10 @@ export class MergeQueue {
   // So a blocked entry no longer needs a human to POST /recheck. Single-flight.
   private armBlockedRetry(): void {
     clearTimeout(this.blockedRetryTimer);
-    this.blockedRetryTimer = setTimeout(() => this.kick(), 15_000);
+    this.blockedRetryTimer = setTimeout(
+      () => this.kick(),
+      this.blockedRetryDelayMs
+    );
   }
 
   // Nothing left to retry once the queue is fully empty.
@@ -586,6 +606,11 @@ export class MergeQueue {
     }
     this.entries.splice(idx, 1);
     this.broadcast();
+    // Removing the entry a blocked-retry timer was armed for must not leave
+    // that timer ticking against an empty queue — kick() re-runs pump(),
+    // whose empty-queue branch clears it (and processes anything this
+    // removal just unblocked, for free).
+    this.kick();
   }
 
   // GET /api/merge-queue. Clones both arrays so a caller can't mutate the
@@ -1447,15 +1472,15 @@ export class MergeQueue {
   }
 
   // Whether this project has a configured git remote — the gate refreshRemote
-  // applies internally, and the same check bin.ts's boot-time guard uses to
-  // decide whether the 60s auto-refresh timer is worth creating at all.
+  // applies internally, and the same check startAutoRefresh uses to decide
+  // whether the 60s timer is worth creating at all.
   hasOriginRemote(): boolean {
     return this.ctx.orchestrator.hasOriginRemote();
   }
 
   // Keeps `origin/<base>` current independently of a drain (a teammate can
   // push to the shared base without ever touching this queue) and reconciles
-  // archives off the freshly-fetched refs. Called on bin.ts's 60s tick.
+  // archives off the freshly-fetched refs. Called on startAutoRefresh's tick.
   async refreshRemote(): Promise<void> {
     if (!this.hasOriginRemote()) return;
     try {
@@ -1470,6 +1495,27 @@ export class MergeQueue {
       return;
     }
     this.ctx.orchestrator.reconcileArchives();
+  }
+
+  // Starts the 60s remote-refresh tick, mirroring PrManager.startPolling() —
+  // a separate opt-in call rather than something the constructor does itself,
+  // so every test that builds a MergeQueue directly (most of this file's
+  // suite) doesn't also have to remember to stop a real interval it never
+  // asked for. Production wires this up once, from startServer.
+  startAutoRefresh(intervalMs = 60_000): void {
+    if (!this.hasOriginRemote()) return;
+    clearInterval(this.refreshTimer);
+    this.refreshTimer = setInterval(() => {
+      void this.refreshRemote();
+    }, intervalMs);
+  }
+
+  // Tears down every timer this queue can own — the blocked-retry self-check
+  // and the auto-refresh tick — mirroring PrManager.stopPolling().
+  stop(): void {
+    this.clearBlockedRetry();
+    clearInterval(this.refreshTimer);
+    this.refreshTimer = undefined;
   }
 
   // Every state change in this class routes through here, which is exactly

@@ -22,10 +22,8 @@ import { watchTasks } from './watcher.js';
 
 export interface ServerHandle {
   port: number;
-  // Exposed so bin.ts can drive MergeQueue.refreshRemote() on its own 60s
-  // timer without startServer owning that lifecycle itself — the same
-  // reasoning bin.ts's DISPATCH_ENABLE_FAKES executor wiring already applies
-  // to keeping CLI/e2e-only concerns out of this shared boot path.
+  // Exposed for introspection/tests; its own 60s auto-refresh timer and
+  // blocked-retry timer are started/stopped by startServer itself below.
   mergeQueue: MergeQueue;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
@@ -274,6 +272,7 @@ export async function startServer(
     { rootDir, store, cache, events, orchestrator, jj },
     opts.prCommandRunner
   );
+  mergeQueue.startAutoRefresh();
 
   const apiCtx: ApiContext = {
     rootDir,
@@ -382,6 +381,7 @@ export async function startServer(
     async stop() {
       watcher.close();
       prManager.stopPolling();
+      mergeQueue.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on

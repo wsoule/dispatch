@@ -419,18 +419,6 @@ const handle = await startServer({
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 
-// Keeps origin's base branch (and, off the back of that, the archive
-// reconciler) current even when nothing is passing through the merge queue —
-// a teammate pushing directly is exactly the case this exists to notice.
-// Guarded once at startup (rather than only inside refreshRemote's own
-// per-tick check) so a project with no remote never carries this timer at
-// all.
-if (handle.mergeQueue.hasOriginRemote()) {
-  setInterval(() => {
-    void handle.mergeQueue.refreshRemote();
-  }, 60_000);
-}
-
 if (enableFakes) {
   console.log(
     'dispatchd: DISPATCH_ENABLE_FAKES=1 — fake executor/planner registered (test/e2e only)'
