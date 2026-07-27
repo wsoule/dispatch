@@ -16,6 +16,8 @@ import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { groupTasksByStatus } from '../lib/boardGrouping';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { countMergeReady } from '../lib/mergeReady';
+import type { TasksViewMode } from '../lib/tasksViewMode';
+import { parseViewMode, VIEW_MODE_STORAGE_KEY } from '../lib/tasksViewMode';
 import { TasksListView } from './TasksListView';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -29,26 +31,6 @@ interface BoardViewProps {
    * the modal default to the first configured status. */
   onNewTask: (status?: string) => void;
   onPlanWork: () => void;
-}
-
-// `lanes` is the board: one swim lane per epic, with the project's configured status columns
-// inside each. That is how the work is actually organised here, so it is the default layout.
-// `board` keeps the older flat single-set-of-columns view for anyone who wants it.
-type TasksViewMode = 'board' | 'lanes' | 'list';
-
-// Persists the List/Board choice across restarts — Linear's own display toggle remembers
-// itself the same way. Guarded for `window` even though this is a Tauri/browser-only app
-// (never SSR'd) so a stray server-side render of this module (e.g. a future test harness)
-// can't throw on a missing `localStorage`.
-const VIEW_MODE_STORAGE_KEY = 'dispatch:tasks-view-mode';
-
-function readStoredViewMode(): TasksViewMode {
-  if (typeof window === 'undefined') return 'lanes';
-  const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-  // Only an explicit past choice wins; anything else (including no stored value, and the old
-  // default of 'board' written before lanes existed) lands on lanes.
-  if (stored === 'list' || stored === 'board') return stored;
-  return 'lanes';
 }
 
 /** Skeleton placeholder for the board while tasks/config are loading — one column's worth of
@@ -81,10 +63,12 @@ function BoardSkeleton() {
 }
 
 /**
- * The heart of the app: the project's tasks as either a Linear-density Kanban (one column per
- * configured tracker status, drag-and-drop to change status) or a dense grouped list — a
- * segmented List/Board toggle in the header switches between them and remembers the choice
- * (localStorage), defaulting to Board. This is the single "Tasks" nav destination (the
+ * The heart of the app: the project's tasks in one of three layouts, switched by a segmented
+ * toggle in the header and remembered across restarts. `lanes` is the default — one swim lane
+ * per epic, with the project's configured status columns repeated inside each, which reads as a
+ * grid of epics against statuses and answers "which epic is stuck". `board` is the flat
+ * single-set-of-columns Kanban, and `list` the dense grouped list. All three keep the
+ * drag-and-drop and the configured statuses. This is the single "Tasks" nav destination (the
  * redesign brief's option (b): Board and the old flat Tasks list are no longer two separate
  * nav items, since Linear itself doesn't split them — they're one destination with a display
  * toggle). Loading/error/empty states mirror the old `TasksPanel`'s (starting the daemon,
@@ -101,7 +85,13 @@ export function BoardView({
   onNewTask,
   onPlanWork,
 }: BoardViewProps) {
-  const [mode, setMode] = useState<TasksViewMode>(readStoredViewMode);
+  const [mode, setMode] = useState<TasksViewMode>(() =>
+    parseViewMode(
+      typeof window === 'undefined'
+        ? null
+        : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
+    )
+  );
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   // Which epic's dispatch is awaiting confirmation, or null when the dialog is closed.
   const [dispatchEpicId, setDispatchEpicId] = useState<string | null>(null);
