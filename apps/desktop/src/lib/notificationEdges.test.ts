@@ -62,7 +62,11 @@ describe('diffRunNotifications', () => {
       run('a', 'finished', 'Ship the thing'),
     ]);
     expect(notifications).toEqual([
-      { title: 'Run finished', body: 'Ship the thing' },
+      {
+        title: 'Run finished',
+        body: 'Ship the thing',
+        target: { kind: 'run', runId: 'a' },
+      },
     ]);
   });
 
@@ -72,7 +76,11 @@ describe('diffRunNotifications', () => {
       run('a', 'failed', 'Ship the thing'),
     ]);
     expect(notifications).toEqual([
-      { title: 'Run failed', body: 'Ship the thing' },
+      {
+        title: 'Run failed',
+        body: 'Ship the thing',
+        target: { kind: 'run', runId: 'a' },
+      },
     ]);
   });
 
@@ -117,7 +125,9 @@ describe('diffQueueNotifications', () => {
     const { notifications } = diffQueueNotifications(previous, [
       entry('r1', 'merged', { taskTitle: 'Add feature' }),
     ]);
-    expect(notifications).toEqual([{ title: 'Merged', body: 'Add feature' }]);
+    expect(notifications).toEqual([
+      { title: 'Merged', body: 'Add feature', target: { kind: 'queue' } },
+    ]);
   });
 
   test('verifying -> failed notifies "Merge failed" with task title and reason, truncated to 80 chars', () => {
@@ -130,6 +140,7 @@ describe('diffQueueNotifications', () => {
     const [note] = notifications;
     expect(note.title).toBe('Merge failed');
     expect(note.body).toBe(`Add feature — ${'x'.repeat(80)}`);
+    expect(note.target).toEqual({ kind: 'queue' });
   });
 
   // A blocked merge is the one non-terminal state that needs the person, and
@@ -146,6 +157,7 @@ describe('diffQueueNotifications', () => {
       {
         title: 'Merge blocked — action needed',
         body: 'Add feature — main checkout has uncommitted changes: stray.zip',
+        target: { kind: 'queue' },
       },
     ]);
   });
@@ -166,7 +178,11 @@ describe('diffQueueNotifications', () => {
       entry('r1', 'failed', { taskTitle: 'Add feature' }),
     ]);
     expect(notifications).toEqual([
-      { title: 'Merge failed', body: 'Add feature — ' },
+      {
+        title: 'Merge failed',
+        body: 'Add feature — ',
+        target: { kind: 'queue' },
+      },
     ]);
   });
 
@@ -180,7 +196,9 @@ describe('diffQueueNotifications', () => {
       ...nextEntries,
       ...nextHistory,
     ]);
-    expect(notifications).toEqual([{ title: 'Merged', body: `task-r1` }]);
+    expect(notifications).toEqual([
+      { title: 'Merged', body: `task-r1`, target: { kind: 'queue' } },
+    ]);
   });
 
   test('no state change does not notify', () => {

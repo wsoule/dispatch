@@ -7,6 +7,7 @@ import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
+import { InboxPanel } from './components/shell/InboxPanel';
 import { Sidebar } from './components/shell/Sidebar';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
@@ -16,6 +17,8 @@ import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import type { GlobalView, ProjectView } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
+import type { InboxTarget } from './lib/inbox';
+import { unreadCount } from './lib/inbox';
 import { basename } from './lib/projectName';
 import { isTerminalRunState } from './lib/runState';
 import {
@@ -50,6 +53,9 @@ function App() {
   // the plain "New task" button, which leaves the modal to default to the first configured
   // status on its own.
   const [createStatus, setCreateStatus] = useState<string | null>(null);
+  // Whether the notification inbox popover (the bell in Sidebar's global section) is open —
+  // see toggleInbox below for why opening it also marks everything read.
+  const [inboxOpen, setInboxOpen] = useState(false);
 
   // Auto-update: check GitHub's `latest.json` once after mount (non-blocking —
   // `checkForUpdate` is a no-op outside Tauri and swallows its own errors), and
@@ -287,7 +293,33 @@ function App() {
     tasks: paletteTasks,
     readyIds: paletteReadyIds,
     handleDispatch,
+    inbox,
+    markInboxRead,
   } = data;
+
+  // Opens/closes the inbox popover. Opening it marks every entry read in one step (not
+  // per-entry, which would be more distracting than useful) — see inbox.ts's markAllRead.
+  const toggleInbox = useCallback(() => {
+    setInboxOpen((open) => {
+      const next = !open;
+      if (next) markInboxRead();
+      return next;
+    });
+  }, [markInboxRead]);
+
+  // Click-through for an inbox row: a run transition jumps to the Runs view with that run
+  // selected; a queue-wide event (or anything without a specific run) just jumps to Runs —
+  // the same two nav shapes `onRunDispatched`/`jumpToRun` already use elsewhere in this file.
+  const navigateFromInbox = useCallback(
+    (target: InboxTarget) => {
+      selectProjectView('runs');
+      if (target.kind === 'run') {
+        dispatchNav({ type: 'openRun', runId: target.runId });
+      }
+      setInboxOpen(false);
+    },
+    [selectProjectView]
+  );
 
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
     const entries: PaletteEntry[] = [];
@@ -426,6 +458,8 @@ function App() {
             globalView={navState.globalView}
             liveAgentCount={liveRuns.length}
             prCount={data.runs.filter((r) => r.prUrl !== undefined).length}
+            unreadCount={unreadCount(inbox)}
+            onToggleInbox={toggleInbox}
             onSetProjectView={selectProjectView}
             onSetGlobalView={setGlobalView}
             switcherOpen={switcherOpen}
@@ -647,6 +681,15 @@ function App() {
           entries={paletteEntries}
           onClose={() => dispatchNav({ type: 'closePalette' })}
         />
+
+        {inboxOpen && (
+          <InboxPanel
+            entries={inbox.entries}
+            onNavigate={navigateFromInbox}
+            onMarkAllRead={markInboxRead}
+            onClose={() => setInboxOpen(false)}
+          />
+        )}
       </div>
     </TooltipProvider>
   );

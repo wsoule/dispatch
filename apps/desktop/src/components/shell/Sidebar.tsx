@@ -1,4 +1,5 @@
 import {
+  Bell,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -82,6 +83,11 @@ interface SidebarProps {
   liveAgentCount: number;
   /** Count of runs with an open PR — the "Pull requests" nav badge. */
   prCount: number;
+  /** Count of unread notification-inbox entries — the bell's badge (see InboxPanel/inbox.ts).
+   * The bell itself is not a nav row (it doesn't select a `ProjectView`/`GlobalView`); it
+   * toggles the inbox popover via `onToggleInbox` instead. */
+  unreadCount: number;
+  onToggleInbox: () => void;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
   /** Whether the project switcher dropdown is open (its project list is loaded lazily on
@@ -120,6 +126,8 @@ export function Sidebar({
   globalView,
   liveAgentCount,
   prCount,
+  unreadCount,
+  onToggleInbox,
   onSetProjectView,
   onSetGlobalView,
   switcherOpen,
@@ -313,6 +321,33 @@ export function Sidebar({
       </nav>
 
       <div className="bg-border my-3 h-px w-full" />
+
+      <button
+        type="button"
+        title="Notifications"
+        aria-label={
+          collapsed
+            ? `Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`
+            : undefined
+        }
+        onClick={() => onToggleInbox()}
+        className={cn(
+          'text-foreground/80 hover:bg-accent/60 mb-0.5 flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
+          collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2'
+        )}
+      >
+        <Bell className="size-4 shrink-0" strokeWidth={2} />
+        {!collapsed && (
+          <>
+            <span className="flex-1">Notifications</span>
+            {unreadCount > 0 && (
+              <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
+                {unreadCount}
+              </span>
+            )}
+          </>
+        )}
+      </button>
 
       <nav className="flex w-full flex-col gap-0.5">
         {GLOBAL_VIEWS.map((item) => {
