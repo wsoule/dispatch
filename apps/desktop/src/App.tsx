@@ -446,7 +446,13 @@ function App() {
             projectView={navState.projectView}
             globalView={navState.globalView}
             liveAgentCount={liveRuns.length}
-            prCount={data.runs.filter((r) => r.prUrl !== undefined).length}
+            badges={{
+              'pull-requests': data.runs.filter((r) => r.prUrl !== undefined)
+                .length,
+              landing: data.mergeQueue?.entries.length ?? 0,
+              board: data.readyIds.size,
+              runs: liveRuns.length,
+            }}
             onSetProjectView={selectProjectView}
             onSetGlobalView={setGlobalView}
             switcherOpen={switcherOpen}
@@ -512,7 +518,7 @@ function App() {
                 <>
                   {navState.globalView === 'all-agents' && (
                     <AllAgentsView
-                      liveRuns={liveRuns}
+                      runs={data.runs}
                       portLoading={data.portLoading}
                       portError={data.portError}
                       portErrorDetail={data.portErrorDetail}

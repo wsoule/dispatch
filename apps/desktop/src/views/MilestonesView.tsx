@@ -1,10 +1,15 @@
 import type { TaskDoc } from '@dispatch/core';
-import { Target } from 'lucide-react';
+import { Target, TriangleAlert } from 'lucide-react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import { StatusIcon } from '../components/tasks/StatusIcon';
+import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import {
+  deriveMilestoneStatus,
+  MILESTONE_HEALTH_LABEL,
+} from '../lib/milestoneRisk';
 import { cn } from '@/lib/utils';
 
 interface MilestonesViewProps {
@@ -75,10 +80,19 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
               group.tasks.length === 0
                 ? 0
                 : Math.round((group.done / group.tasks.length) * 100);
+            const status = deriveMilestoneStatus(
+              group.tasks,
+              data.latestRunByTaskId,
+              group.done === group.tasks.length
+            );
+            const stalled = status.health === 'stalled';
             return (
               <section
                 key={group.name}
-                className="border-border bg-card flex flex-col rounded-lg border"
+                className={cn(
+                  'shadow-hairline flex flex-col rounded-lg',
+                  stalled ? 'bg-state-waiting-surface' : 'bg-card'
+                )}
               >
                 <div className="flex flex-col gap-2 px-4 py-3">
                   <div className="flex items-center gap-2">
@@ -86,7 +100,15 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
                     <h2 className="text-foreground min-w-0 flex-1 truncate text-[14px] font-medium">
                       {group.name}
                     </h2>
-                    <span className="text-muted-foreground shrink-0 text-[12px] tabular-nums">
+                    <span
+                      className={cn(
+                        'dense-meta shrink-0',
+                        stalled && 'text-state-waiting'
+                      )}
+                    >
+                      {MILESTONE_HEALTH_LABEL[status.health]}
+                    </span>
+                    <span className="dense-meta shrink-0">
                       {group.done}/{group.tasks.length}
                     </span>
                   </div>
@@ -94,11 +116,30 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
                     <div
                       className={cn(
                         'h-full rounded-full transition-[width] duration-300',
-                        pct === 100 ? 'bg-emerald-500' : 'bg-primary'
+                        pct === 100 ? 'bg-state-review' : 'bg-primary'
                       )}
                       style={{ width: `${pct}%` }}
                     />
                   </div>
+                  {/* Never "at risk" without saying why — an unexplained warning is just
+                      anxiety. There is no target date to be late against (milestones are
+                      free-form names), so the reason is always about what is stuck. */}
+                  {status.reason !== null && (
+                    <div className="flex items-center gap-2">
+                      <TriangleAlert className="text-state-waiting size-3.5 shrink-0" />
+                      <span className="text-state-waiting text-[12.5px]">
+                        {status.reason}
+                      </span>
+                    </div>
+                  )}
+                  {status.working > 0 && !stalled && (
+                    <div className="flex items-center gap-2">
+                      <StateDot state="working" />
+                      <span className="text-muted-foreground text-[12.5px]">
+                        {status.working} running
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="border-border/60 flex flex-col gap-0.5 border-t p-1.5">
                   {group.tasks.map((task) => (
