@@ -91,6 +91,7 @@
     "typescript": "catalog:"
   },
   "overrides": {
+    "@types/node": "24.13.2",
     "typescript": "catalog:"
   },
   "lint-staged": {
