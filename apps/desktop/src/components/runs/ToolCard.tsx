@@ -54,7 +54,7 @@ function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
       {added.map((line, i) => (
         <div
           key={`a${i}`}
-          className="bg-emerald-500/10 px-2 whitespace-pre-wrap text-emerald-600 dark:text-emerald-400"
+          className="bg-state-review-surface text-state-review px-2 whitespace-pre-wrap"
         >
           <span className="opacity-60 select-none">+ </span>
           {line}
