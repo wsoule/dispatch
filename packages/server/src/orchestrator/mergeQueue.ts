@@ -64,6 +64,16 @@ export interface MergeQueueEntry {
    * Optional so entries persisted before this field existed hydrate unchanged.
    */
   stateSince?: string;
+  /**
+   * How many times this entry has been picked up after a daemon died partway
+   * through processing it. Persisted with the rest of the entry, which is
+   * load-bearing rather than incidental: the scenario the cap exists to stop is a
+   * hang that recurs across restarts, and an in-memory counter resets to zero
+   * every boot — precisely the infinite loop, with a field that looks like it
+   * prevents one. Absent on entries written before this field existed, which
+   * reads as zero.
+   */
+  attempts?: number;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;
 }
@@ -94,6 +104,11 @@ const HISTORY_LIMIT = 20;
 // previous daemon process died before finish() ever ran for it — see
 // hydrate()'s comment for why that's always safe to treat as a fresh failure
 // rather than an attempt to resume.
+// How many times an entry may be picked back up after a daemon died partway
+// through processing it before the queue gives up on it for good. See
+// MergeQueueEntry.attempts for why this must be counted on disk.
+const MAX_INTERRUPTED_ATTEMPTS = 3;
+
 const MID_FLIGHT_STATES: ReadonlySet<MergeQueueEntryState> = new Set([
   'rebasing',
   'verifying',
@@ -228,11 +243,31 @@ export class MergeQueue {
       this.ctx.orchestrator.list().map((meta) => [meta.id, meta])
     );
     for (const entry of persisted.entries) {
+      // A mid-flight entry means the previous process died partway through
+      // process() for it. Retrying is safe for exactly the reason the old
+      // "re-enqueue to retry" advice gave: the downstream steps are idempotent
+      // against a half-done prior attempt — merge()'s local path is a no-op the
+      // second time via review()/mergeRun's hasChanges skip, and its PR path
+      // either force-pushes again harmlessly or hits `gh pr merge`'s "already
+      // merged". So retry automatically instead of making a human notice.
+      //
+      // Bounded, though: auto-requeue plus a reproducible hang is an infinite
+      // loop (die mid-verify, boot, requeue, wedge again). The verify timeout
+      // catches most of that, but not the daemon being killed rather than the
+      // command overrunning — this cap is that backstop.
       if (MID_FLIGHT_STATES.has(entry.state)) {
-        this.fileStaleEntry(
-          entry,
-          'daemon restarted mid-merge; re-enqueue to retry'
-        );
+        const attempts = (entry.attempts ?? 0) + 1;
+        if (attempts > MAX_INTERRUPTED_ATTEMPTS) {
+          this.fileStaleEntry(
+            entry,
+            `abandoned after ${MAX_INTERRUPTED_ATTEMPTS} interrupted attempts — check verifyCommand`
+          );
+          continue;
+        }
+        entry.attempts = attempts;
+        this.setEntryState(entry, 'queued');
+        delete entry.reason;
+        this.entries.push(entry);
         continue;
       }
       if (this.entries.some((e) => e.runId === entry.runId)) {
