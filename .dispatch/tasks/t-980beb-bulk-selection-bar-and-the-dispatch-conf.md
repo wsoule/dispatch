@@ -1,0 +1,45 @@
+---
+id: t-980beb
+title: Bulk selection bar and the dispatch confirmation dialog with concurrency
+  preview
+status: todo
+kind: task
+parent: e-92d17d
+milestone: null
+blocked-by:
+  - t-889358
+labels: []
+priority: medium
+assignee: none
+created: 2026-07-27T01:01:45.851Z
+updated: 2026-07-27T01:01:45.851Z
+external: null
+---
+
+## Description
+
+The two pieces that make dispatching many tasks at once safe (docs/design/dispatch-nocturne.dc.html, the hasTaskSel bar and the dlgOpen dialog, with willStart/runningNow/cap in renderVals).
+
+The selection bar: selecting tasks in the list reveals an accented bar reporting the count, with actions to send agents at the ready ones (labelled with how many of the selection are actually ready, since selecting a blocked task cannot dispatch it), set priority, move to an epic, and clear.
+
+The confirmation dialog is the important half. Concurrency is capped, so dispatching twelve ready tasks into eight slots with five already busy starts three and queues nine. The dialog states that arithmetic plainly - a note reading how many slots are busy and how many will start now - and lists every task with a per-task "starts now" or "queued" badge so nothing is a surprise. Nothing may be silently dropped: if a task cannot start it must appear as queued, not vanish from the list.
+
+Read the real cap and the real running count rather than hardcoding eight; apps/desktop/src/lib/epicConcurrency.ts already models some of this, so build on it. The same dialog serves per-epic dispatch, the dispatch-all-ready button in the header, and bulk dispatch from the selection bar.
+
+Colors from tokens only.
+
+Acceptance criteria:
+
+- Selecting tasks reveals a bar with an accurate count and a dispatch label naming how many of the selection are ready
+- Set priority and move-to-an-epic apply across the selection
+- The dialog reads the real concurrency cap and the real running count, not a hardcoded number
+- Every task in the dialog is badged starts-now or queued, and none are silently dropped
+- The dialog's note states how many slots are busy and how many will start now
+- The same dialog serves per-epic dispatch, dispatch-all-ready and bulk dispatch
+- Confirming dispatches everything listed, queuing what cannot start immediately
+- The starts-now/queued arithmetic is unit tested including the zero-free-slots case
+- bun run format, bun run lint and the desktop tsc/tests are green
+
+## Acceptance Criteria
+
+## Activity
