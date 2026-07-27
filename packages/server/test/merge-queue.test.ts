@@ -629,6 +629,52 @@ describe('MergeQueue environmental blockers', () => {
     expect(harness.store.get(taskId)?.meta.status).toBe('done');
   });
 
+  // The stale-reason half of the "merge queue does not work" report: a
+  // blocked entry's reason must track the CURRENT state of the checkout, not
+  // whatever first blocked it — otherwise a user who fixes one problem and
+  // hits recheck sees a message describing a file that's already gone.
+  it('refreshes the blocked reason on each recheck(), then merges once truly clean', async () => {
+    const harness = makeHarness();
+    const { runId, taskId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = new MergeQueue(harness, stub.run);
+
+    const strayA = join(harness.rootDir, 'stray-download.zip');
+    writeFileSync(strayA, 'nope\n');
+    queue.enqueue(runId);
+    await waitFor(
+      () => queue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+    expect(queue.snapshot().entries[0].reason).toContain('stray-download.zip');
+
+    // The first blocker clears, but a different one appears before the queue
+    // is re-checked — the live-incident shape this fix targets. The entry
+    // stays blocked, but its reason must name the NEW offender, not the old
+    // (already-gone) one.
+    rmSync(strayA);
+    const strayB = join(harness.rootDir, 'stray-other.txt');
+    writeFileSync(strayB, 'nope\n');
+    queue.recheck();
+    await waitFor(
+      () =>
+        queue.snapshot().entries[0]?.reason?.includes('stray-other.txt') ===
+        true
+    );
+    expect(queue.snapshot().entries[0].state).toBe('blocked-environment');
+    expect(queue.snapshot().entries[0].reason).not.toContain(
+      'stray-download.zip'
+    );
+
+    // Cleaning up and re-checking (recheck() is the same entry point the
+    // 15s self-retry timer calls once the checkout allows it) lets the entry
+    // through without ever removing/re-enqueueing it.
+    rmSync(strayB);
+    queue.recheck();
+    await waitFor(() => queue.snapshot().history.length === 1);
+    expect(queue.snapshot().history[0].state).toBe('merged');
+    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+  });
+
   // A blocked entry must not wedge the queue's own bookkeeping: the blocker is
   // global (one checkout), so nothing behind it could proceed either, and both
   // entries must survive to retry rather than one being failed out.

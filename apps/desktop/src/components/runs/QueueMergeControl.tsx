@@ -58,6 +58,11 @@ export function QueueMergeControl({
       ? mergeQueue?.history.find((e) => e.runId === meta.id)
       : undefined;
   const failedEntry = latestEntry?.state === 'failed' ? latestEntry : undefined;
+  // Live reason, not history — refreshes on every pump while still blocked.
+  const blockedReason =
+    activeEntry?.state === 'blocked-environment'
+      ? activeEntry.reason
+      : undefined;
   const alreadyReviewed = meta.reviewedAt !== undefined;
   const disabledReason = alreadyReviewed
     ? 'This run has already been reviewed'
@@ -83,6 +88,14 @@ export function QueueMergeControl({
           <ListOrdered className="size-3.5" />
           Queue merge
         </Button>
+      )}
+      {blockedReason !== undefined && (
+        <span
+          className="text-muted-foreground max-w-40 truncate text-[11px]"
+          title={blockedReason}
+        >
+          {blockedReason}
+        </span>
       )}
       {failedEntry !== undefined && (
         <span

@@ -143,6 +143,8 @@ export class MergeQueue {
   // refreshRemote()'s fetch failure is logged once per process, not once per
   // 60s tick — an offline remote would otherwise spam the log forever.
   private fetchFailureLogged = false;
+  // Self-retry timer for a 'blocked-environment' entry — see armBlockedRetry.
+  private blockedRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly ctx: MergeQueueContext,
@@ -386,6 +388,18 @@ export class MergeQueue {
     this.kick();
   }
 
+  // So a blocked entry no longer needs a human to POST /recheck. Single-flight.
+  private armBlockedRetry(): void {
+    clearTimeout(this.blockedRetryTimer);
+    this.blockedRetryTimer = setTimeout(() => this.kick(), 15_000);
+  }
+
+  // Nothing left to retry once the queue is fully empty.
+  private clearBlockedRetry(): void {
+    clearTimeout(this.blockedRetryTimer);
+    this.blockedRetryTimer = undefined;
+  }
+
   // Shared eligibility rules for enqueue()/enqueueStack(): a run must be in
   // a terminal state, not yet reviewed, and not already sitting in this
   // queue (active or pending). Split into a reason-returning helper and a
@@ -619,6 +633,7 @@ export class MergeQueue {
           // Only once the queue is truly empty (not merely "nothing eligible
           // right now" — an entry can still be sitting in waiting-blockers) is
           // this actually a drain worth pushing/reporting on.
+          if (this.entries.length === 0) this.clearBlockedRetry();
           if (this.entries.length === 0 && !idlePushAttempted) {
             const snapshot = this.captureDrainSnapshot();
             if (snapshot !== null) {
@@ -643,7 +658,10 @@ export class MergeQueue {
         // every remaining entry would hit exactly the same wall. Stop the
         // sweep instead of grinding through the queue marking each one
         // blocked in turn (and re-running `git status` per entry to do it).
-        if (outcome === 'blocked') return;
+        if (outcome === 'blocked') {
+          this.armBlockedRetry();
+          return;
+        }
       }
     } finally {
       this.pumping = false;
