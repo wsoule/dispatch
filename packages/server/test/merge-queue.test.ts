@@ -342,6 +342,81 @@ describe('MergeQueue entry stateSince', () => {
   });
 });
 
+// Streaming exists so a multi-minute verify shows progress instead of a silent
+// `verifying` that could equally be wedged. Mirrors the run.log contract: one
+// event per chunk, plus a bounded tail on the entry so a client that connects
+// mid-verify or refreshes still sees recent output.
+describe('MergeQueue verify output streaming', () => {
+  it('broadcasts each verify output chunk and keeps a bounded tail on the entry', async () => {
+    const harness = makeHarness();
+    writeVerifyCommand(harness.rootDir, 'echo verifying');
+    const { runId } = await dispatchAndFinish(harness);
+    const seen = captureEvents(harness.events);
+
+    const stub = new StubRunner();
+    const runner = async (
+      cwd: string,
+      cmd: string[],
+      opts?: { onOutput?: (chunk: string) => void }
+    ): Promise<CommandResult> => {
+      if (cmd[0] === 'bash') {
+        opts?.onOutput?.('building...\n');
+        opts?.onOutput?.('tests passed\n');
+        return { ok: true, stdout: '', stderr: '' };
+      }
+      return await stub.run(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+    expect(queue.snapshot().history[0].state).toBe('merged');
+
+    const logs = seen.filter(
+      (e): e is { type: 'merge-queue.log'; runId: string; chunk: string } =>
+        e.type === 'merge-queue.log'
+    );
+    expect(logs.map((l) => l.chunk)).toEqual([
+      'building...\n',
+      'tests passed\n',
+    ]);
+    expect(logs.every((l) => l.runId === runId)).toBe(true);
+  });
+
+  it('bounds the retained tail rather than growing it without limit', async () => {
+    const harness = makeHarness();
+    writeVerifyCommand(harness.rootDir, 'echo verifying');
+    const { runId } = await dispatchAndFinish(harness);
+
+    const stub = new StubRunner();
+    // Far more output than the cap, so an unbounded buffer would be obvious.
+    const chunk = 'x'.repeat(1024);
+    const runner = async (
+      cwd: string,
+      cmd: string[],
+      opts?: { onOutput?: (chunk: string) => void }
+    ): Promise<CommandResult> => {
+      if (cmd[0] === 'bash') {
+        for (let i = 0; i < 40; i++) opts?.onOutput?.(chunk);
+        // Fail so the entry keeps its output for inspection.
+        return { ok: false, stdout: '', stderr: 'boom' };
+      }
+      return await stub.run(cwd, cmd);
+    };
+    const queue = new MergeQueue(harness, runner);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+    const entry = queue.snapshot().history[0];
+    expect(entry.state).toBe('failed');
+    // 40KB in; the retained tail must be capped well below that. An unbounded
+    // buffer in a long-lived daemon is a leak, and the full log belongs in the
+    // failure reason rather than in memory.
+    expect((entry.output ?? '').length).toBeLessThanOrEqual(8192);
+    expect((entry.output ?? '').length).toBeGreaterThan(0);
+  });
+});
+
 describe('MergeQueue.enqueue', () => {
   it('enqueues a finished, unreviewed run as queued and broadcasts', async () => {
     const harness = makeHarness();

@@ -36,7 +36,7 @@ export interface CommandResult {
 export type CommandRunner = (
   cwd: string,
   cmd: string[],
-  opts?: { timeoutMs?: number }
+  opts?: { timeoutMs?: number; onOutput?: (chunk: string) => void }
 ) => Promise<CommandResult>;
 
 // Picks whichever of a failed command's stderr/stdout actually has content,
@@ -48,10 +48,40 @@ function commandErrorText(result: CommandResult): string {
   return stderr.length > 0 ? stderr : result.stdout.trim();
 }
 
+// Drains a piped stream to a string, handing each decoded chunk to `onOutput` as
+// it arrives. Used instead of `new Response(stream).text()` when a caller wants
+// progress while a long command runs — that helper only resolves once the stream
+// has ended, which for a multi-minute verify means no output until it is over.
+async function drain(
+  stream: ReadableStream<Uint8Array>,
+  onOutput?: (chunk: string) => void
+): Promise<string> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // `stream: true` so a multi-byte character split across chunk boundaries is
+    // not mangled into replacement characters.
+    const chunk = decoder.decode(value, { stream: true });
+    if (chunk !== '') {
+      text += chunk;
+      onOutput?.(chunk);
+    }
+  }
+  const tail = decoder.decode();
+  if (tail !== '') {
+    text += tail;
+    onOutput?.(tail);
+  }
+  return text;
+}
+
 export async function defaultCommandRunner(
   cwd: string,
   cmd: string[],
-  opts?: { timeoutMs?: number }
+  opts?: { timeoutMs?: number; onOutput?: (chunk: string) => void }
 ): Promise<CommandResult> {
   // Bun.spawn THROWS synchronously when the executable isn't on PATH (e.g.
   // `gh` missing from a Finder-launched app's minimal environment) — an
@@ -61,8 +91,8 @@ export async function defaultCommandRunner(
   try {
     const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' });
     const collect = Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      drain(proc.stdout, opts?.onOutput),
+      drain(proc.stderr, opts?.onOutput),
       proc.exited,
     ]);
     const timeoutMs = opts?.timeoutMs;
