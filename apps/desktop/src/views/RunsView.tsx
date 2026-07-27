@@ -207,7 +207,7 @@ export function RunsView({
                 <Skeleton key={i} className="h-10 rounded-md" />
               ))}
             </div>
-          ) : data.runs.length === 0 ? (
+          ) : data.visibleRuns.length === 0 ? (
             <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
               <GitBranch className="size-5" />
               <p className="text-[13px]">
@@ -215,7 +215,7 @@ export function RunsView({
               </p>
             </div>
           ) : (
-            data.runs.map((run) => {
+            data.visibleRuns.map((run) => {
               const task = taskById.get(run.taskId);
               const epicTitle =
                 task?.meta.parent != null

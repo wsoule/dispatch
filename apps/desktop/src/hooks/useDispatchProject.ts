@@ -113,14 +113,24 @@ export interface DispatchProjectData {
   // Task 9: just the archived subset of `tasksIncludingArchived` (`archivedAt !== undefined`)
   // — feeds the Board/List "Archived (N)" toggle chip and its muted group/column rendering.
   archivedTasks: TaskDoc[];
-  // Task 9: whether archived tasks/runs are currently shown — persisted to localStorage so
-  // the toggle survives a restart. `runs` below is already filtered by this; `tasks` and
-  // `tasksIncludingArchived` are unaffected (callers combine `tasks` with `archivedTasks`
-  // themselves when this is on, e.g. BoardView's column grouping).
+  // Task 9: whether archived tasks/runs are currently shown — persisted to localStorage.
+  // Neither `runs` nor `tasks`/`tasksIncludingArchived` are filtered by this (callers combine
+  // `tasks` with `archivedTasks` themselves when it's on, e.g. BoardView's column grouping) —
+  // see `visibleRuns` below for the one field that *is* filtered by it.
   showArchived: boolean;
   setShowArchived: (value: boolean) => void;
   config: DispatchConfig | null;
+  // The full, unfiltered run list — archivedAt is orthogonal to a task's status (an archived
+  // task need not be done/cancelled), so every eligibility computation here (countMergeReady,
+  // the merge queue) MUST keep reading this rather than `visibleRuns`, or a still-mergeable
+  // run would silently stop being offered the moment its task is archived. Only the Runs
+  // view's own run-*list* rendering should read `visibleRuns` instead.
   runs: RunMeta[];
+  // Task 9: `runs` filtered to hide archived-task runs, unless `showArchived` is on — feeds
+  // only the Runs view's run-list UI (which run rows show up on the left). Every other
+  // consumer of run data (countMergeReady, liveRunStateByTaskId, latestRunByTaskId, the merge
+  // queue) reads the unfiltered `runs` above on purpose.
+  visibleRuns: RunMeta[];
   health: { pr: boolean } | undefined;
   readyIds: Set<string>;
   blockedIds: Set<string>;
@@ -1169,7 +1179,8 @@ export function useDispatchProject(
     showArchived,
     setShowArchived,
     config: config ?? null,
-    runs: visibleRuns,
+    runs: runs ?? [],
+    visibleRuns,
     health,
     readyIds,
     blockedIds,
