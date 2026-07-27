@@ -9,6 +9,7 @@ import {
   Eye,
   Layers,
   Plus,
+  Sparkles,
   Tag,
   Target,
   Waypoints,
@@ -337,6 +338,9 @@ interface TaskDetailDialogProps {
     model?: string
   ) => Promise<void>;
   onOpenRun: (runId: string) => void;
+  /** Starts an AI draft that adds the context an under-specified task is missing. Optional so
+   * the older call sites that never had it keep compiling with the button hidden. */
+  onEnrich?: (id: string) => Promise<void>;
   /** Re-points this dialog at a different task — e.g. clicking another task in `StackRail`.
    * Omitted (the palette/board's older call sites) hides the rail's title links, rendering
    * them as plain text instead. */
@@ -367,6 +371,7 @@ export function TaskDetailDialog({
   onUpdate,
   onMoveStatus,
   onDispatch,
+  onEnrich,
   onOpenRun,
   onOpenTask,
 }: TaskDetailDialogProps) {
@@ -374,6 +379,7 @@ export function TaskDetailDialog({
   const [activityDraft, setActivityDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   // The model this dispatch will use — seeded from the saved default, overridable per-dispatch
   // via the picker beside the Dispatch button.
   const [model, setModel] = useState(readDefaultModel);
@@ -403,6 +409,19 @@ export function TaskDetailDialog({
     () => tasks.filter((t) => t.meta.parent === doc.meta.id),
     [tasks, doc.meta.id]
   );
+
+  async function enrich() {
+    if (onEnrich === undefined) return;
+    setEnriching(true);
+    setError(null);
+    try {
+      await onEnrich(doc.meta.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnriching(false);
+    }
+  }
 
   async function dispatch(executor?: 'fake' | 'claude') {
     setDispatching(true);
@@ -567,6 +586,22 @@ export function TaskDetailDialog({
                   </div>
                 )}
 
+                {onEnrich !== undefined && (
+                  <div className="-mt-2 flex items-center gap-2">
+                    {/* Deliberately outside the ready/hasOpenRun gate below: a blocked or
+                      not-yet-ready task is precisely the one worth specifying properly before
+                      an agent ever gets to it. */}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={enriching}
+                      onClick={() => void enrich()}
+                    >
+                      <Sparkles className="size-3.5" />
+                      {enriching ? 'Reading the repo…' : 'Add detail'}
+                    </Button>
+                  </div>
+                )}
                 {(ready || hasOpenRun) && (
                   <div className="-mt-2 flex items-center gap-2">
                     {ready && (

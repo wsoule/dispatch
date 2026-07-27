@@ -1,4 +1,4 @@
-import { LayoutGrid, Plus, Rows3, Sparkles } from 'lucide-react';
+import { Layers, LayoutGrid, Plus, Rows3, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
@@ -22,7 +22,10 @@ interface BoardViewProps {
   onPlanWork: () => void;
 }
 
-type TasksViewMode = 'board' | 'list';
+// `lanes` is the board's epic-swim-lane layout: same configured status columns, repeated per
+// epic. A third mode rather than a sub-toggle inside Board, so the choice is remembered and
+// reachable the same way the other two are.
+type TasksViewMode = 'board' | 'lanes' | 'list';
 
 // Persists the List/Board choice across restarts — Linear's own display toggle remembers
 // itself the same way. Guarded for `window` even though this is a Tauri/browser-only app
@@ -32,9 +35,8 @@ const VIEW_MODE_STORAGE_KEY = 'dispatch:tasks-view-mode';
 
 function readStoredViewMode(): TasksViewMode {
   if (typeof window === 'undefined') return 'board';
-  return window.localStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'list'
-    ? 'list'
-    : 'board';
+  const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+  return stored === 'list' || stored === 'lanes' ? stored : 'board';
 }
 
 /** Skeleton placeholder for the board while tasks/config are loading — one column's worth of
@@ -197,6 +199,20 @@ export function BoardView({
             >
               <LayoutGrid className="size-3.5" />
             </button>
+            <button
+              type="button"
+              title="Epic swim lanes"
+              aria-pressed={mode === 'lanes'}
+              onClick={() => setMode('lanes')}
+              className={cn(
+                'rounded-[5px] p-1 transition-colors duration-150',
+                mode === 'lanes'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <Layers className="size-3.5" />
+            </button>
           </div>
           <Button variant="secondary" size="sm" onClick={onPlanWork}>
             <Sparkles className="size-3.5" />
@@ -221,7 +237,7 @@ export function BoardView({
             New task
           </Button>
         </div>
-      ) : mode === 'board' ? (
+      ) : mode === 'board' || mode === 'lanes' ? (
         // `tabIndex={0}` puts the track itself in the natural tab order (so someone can
         // Tab/click into the board and start using j/k immediately) — the individual cards
         // remain the real roving-focus targets once `focusedTaskId` moves onto one of them.
@@ -231,6 +247,7 @@ export function BoardView({
           onKeyDown={handleBoardKeyDown}
         >
           <TaskBoard
+            swimLanes={mode === 'lanes'}
             tasks={data.tasks}
             statuses={data.config.statuses}
             readyIds={data.readyIds}

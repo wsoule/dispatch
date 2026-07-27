@@ -137,6 +137,18 @@ export interface DispatchProjectData {
     patch: { kind?: import('@dispatch/client').InboxKind; text?: string }
   ) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
+  /**
+   * Starts an AI draft that adds the detail a one-line capture or a thin task is missing.
+   * Lands on `notePlanRecord` (the second plan slot, kept apart from the Plans view's own so
+   * starting one cannot clobber an open plan) and writes nothing until
+   * `handleConfirmNotePlan`.
+   */
+  handleEnrichInboxItem: (id: string) => Promise<void>;
+  handleEnrichTask: (taskId: string) => Promise<void>;
+  /** Model-backed grouping of related captures. Costs a call, so callers trigger it explicitly. */
+  handleClusterInbox: () => Promise<
+    import('@dispatch/client').InboxClusterGroup[]
+  >;
   /** Returns the per-item outcome so a partial failure can be surfaced, not swallowed. */
   handleConvertInbox: (
     ids: string[]
@@ -1092,6 +1104,30 @@ export function useDispatchProject(
     [client, invalidateInbox, queryClient, tasksQueryKey]
   );
 
+  const handleEnrichInboxItem = useCallback(
+    async (id: string): Promise<void> => {
+      if (client === null) return;
+      const { planId } = await client.enrichInbox(id);
+      setNotePlanId(planId);
+    },
+    [client]
+  );
+
+  const handleEnrichTask = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (client === null) return;
+      const { planId } = await client.enrichTask(taskId);
+      setNotePlanId(planId);
+    },
+    [client]
+  );
+
+  const handleClusterInbox = useCallback(async () => {
+    if (client === null) return [];
+    const { groups } = await client.clusterInbox();
+    return groups;
+  }, [client]);
+
   const handleRecheckMergeQueue = useCallback(async (): Promise<void> => {
     if (client === null) return;
     await client.recheckMergeQueue();
@@ -1183,5 +1219,8 @@ export function useDispatchProject(
     handleUpdateInboxItem,
     handleDismissInbox,
     handleConvertInbox,
+    handleEnrichInboxItem,
+    handleEnrichTask,
+    handleClusterInbox,
   };
 }

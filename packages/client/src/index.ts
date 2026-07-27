@@ -18,6 +18,7 @@ export type {
   EpicProgressChild,
   EpicSession,
   HealthPayload,
+  InboxClusterGroup,
   InboxConvertResponse,
   InboxConvertResult,
   InboxItem,
