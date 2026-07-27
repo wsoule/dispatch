@@ -52,7 +52,7 @@ export function RunDetailHeader({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-3">
-        <RunStatePill state={meta.state} />
+        <RunStatePill meta={meta} />
         {meta.branch !== undefined && (
           <span className="text-muted-foreground truncate font-mono text-[11px]">
             {meta.branch}

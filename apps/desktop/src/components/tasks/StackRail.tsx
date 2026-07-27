@@ -144,7 +144,7 @@ export function StackRail({
               )}
               {run !== undefined && (
                 <span className="flex shrink-0 items-center gap-1">
-                  <RunStatePill state={run.state} />
+                  <RunStatePill meta={run} />
                   {run.prUrl !== undefined && (
                     <GitPullRequest
                       className="text-primary size-3"

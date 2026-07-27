@@ -672,7 +672,7 @@ export function TaskDetailDialog({
                             onClick={() => onOpenRun(r.id)}
                             className="hover:bg-muted/60 border-border/60 flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150"
                           >
-                            <RunStatePill state={r.state} />
+                            <RunStatePill meta={r} />
                             <span className="text-muted-foreground font-mono text-[11px]">
                               {r.id}
                             </span>
