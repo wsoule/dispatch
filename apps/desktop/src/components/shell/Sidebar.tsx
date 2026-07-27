@@ -20,6 +20,7 @@ import { useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
+import { CountChip } from '../ui/CountChip';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -83,7 +84,9 @@ interface SidebarProps {
    * something is live without leaving whatever you're looking at. */
   liveAgentCount: number;
   /** Count of runs with an open PR — the "Pull requests" nav badge. */
-  prCount: number;
+  /** Live per-row counts. A row with no entry, or a zero, renders no badge at all — a rail of
+   * "0"s is noise, and the absence of a number is itself the information. */
+  badges: Partial<Record<ProjectView, number>>;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
   /** Whether the project switcher dropdown is open (its project list is loaded lazily on
@@ -121,7 +124,7 @@ export function Sidebar({
   projectView,
   globalView,
   liveAgentCount,
-  prCount,
+  badges,
   onSetProjectView,
   onSetGlobalView,
   switcherOpen,
@@ -302,11 +305,7 @@ export function Sidebar({
               {!collapsed && (
                 <>
                   <span className="flex-1">{item.label}</span>
-                  {item.id === 'pull-requests' && prCount > 0 && (
-                    <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
-                      {prCount}
-                    </span>
-                  )}
+                  <CountChip count={badges[item.id] ?? 0} />
                 </>
               )}
             </button>
