@@ -386,6 +386,34 @@ export interface EpicProgress {
   liveRuns: RunMeta[];
 }
 
+// Mirrors InboxKind/InboxItem in packages/server/src/inbox.ts — the brain-dump inbox, which
+// replaced the notes store. `createdByRunId` is how "an agent flagged this mid-run" survives.
+export type InboxKind = 'bug' | 'idea' | 'task' | 'note';
+
+export interface InboxItem {
+  id: string;
+  kind: InboxKind;
+  text: string;
+  done: boolean;
+  linkedTaskId: string | null;
+  createdByRunId: string | null;
+  created: string;
+}
+
+/** Per-item outcome of a convert. `taskId` on success, `error` when that one item failed —
+ * a batch that half-succeeds has to be able to say which half. */
+export interface InboxConvertResult {
+  id: string;
+  taskId?: string;
+  error?: string;
+}
+
+export interface InboxConvertResponse {
+  results: InboxConvertResult[];
+  converted: number;
+  failed: number;
+}
+
 // Mirrors MergeQueueEntryState in packages/server/src/orchestrator/mergeQueue.ts.
 export type MergeQueueEntryState =
   | 'queued'
@@ -654,6 +682,21 @@ export interface ApiClient {
   ): Promise<PrDetail>;
   commentRepoPr(number: number, body: string): Promise<PrDetail>;
   // The notes/triage hub.
+  // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
+  // the splitting rule has exactly one implementation. `convertInbox` reports per-item results
+  // rather than throwing on a partial failure.
+  fetchInbox(): Promise<InboxItem[]>;
+  addInbox(input: {
+    text: string;
+    kind?: InboxKind;
+    createdByRunId?: string;
+  }): Promise<InboxItem[]>;
+  updateInbox(
+    id: string,
+    patch: { kind?: InboxKind; text?: string; done?: boolean }
+  ): Promise<InboxItem>;
+  dismissInbox(ids: string[]): Promise<{ dismissed: number }>;
+  convertInbox(ids: string[]): Promise<InboxConvertResponse>;
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, patch: UpdateNotePatch): Promise<Note>;
@@ -814,6 +857,27 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/prs/${number}/comment`, {
         method: 'POST',
         ...jsonBody({ body }),
+      }),
+    fetchInbox: () => request(baseUrl, '/api/inbox'),
+    addInbox: (input) =>
+      request(baseUrl, '/api/inbox', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    updateInbox: (id, patch) =>
+      request(baseUrl, `/api/inbox/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    dismissInbox: (ids) =>
+      request(baseUrl, '/api/inbox/dismiss', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    convertInbox: (ids) =>
+      request(baseUrl, '/api/inbox/convert', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
       }),
     fetchNotes: () => request(baseUrl, '/api/notes'),
     createNote: (input) =>

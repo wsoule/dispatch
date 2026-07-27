@@ -11,6 +11,8 @@ import type { CreateInput, DispatchConfig, UpdatePatch } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import type { InboxKind } from './inbox.js';
+import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import type { EpicEngine } from './orchestrator/epic.js';
@@ -40,6 +42,7 @@ export interface ApiContext {
   prManager: PrManager;
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
+  inboxStore: InboxStore;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
@@ -880,6 +883,144 @@ function promoteNote(ctx: ApiContext, id: string): Response {
   return jsonResponse(task, 201);
 }
 
+// POST /api/inbox — capture raw text. The body's `text` is split server-side into one item
+// per non-empty line, so the splitting rule lives in exactly one place rather than being
+// reimplemented by every client (the desktop composer, the MCP tool, a future CLI).
+async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    text?: unknown;
+    kind?: unknown;
+    createdByRunId?: unknown;
+  };
+  const text = typeof body.text === 'string' ? body.text : '';
+  if (text.trim() === '') return errorResponse(400, 'text is required');
+
+  let kind: InboxKind | undefined;
+  if (typeof body.kind === 'string') {
+    if (!(INBOX_KINDS as readonly string[]).includes(body.kind)) {
+      return errorResponse(400, `unknown inbox kind: ${body.kind}`);
+    }
+    kind = body.kind as InboxKind;
+  }
+
+  const created = ctx.inboxStore.add({
+    text,
+    kind,
+    createdByRunId:
+      typeof body.createdByRunId === 'string' ? body.createdByRunId : null,
+  });
+  ctx.events.broadcast({ type: 'inbox.changed' });
+  return jsonResponse(created, 201);
+}
+
+// PATCH /api/inbox/:id — retype an item, fix its wording, or toggle it done.
+async function updateInbox(
+  req: Request,
+  ctx: ApiContext,
+  id: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    kind?: unknown;
+    text?: unknown;
+    done?: unknown;
+  };
+  if (
+    typeof body.kind === 'string' &&
+    !(INBOX_KINDS as readonly string[]).includes(body.kind)
+  ) {
+    return errorResponse(400, `unknown inbox kind: ${body.kind}`);
+  }
+  try {
+    const item = ctx.inboxStore.update(id, {
+      kind:
+        typeof body.kind === 'string' ? (body.kind as InboxKind) : undefined,
+      text: typeof body.text === 'string' ? body.text : undefined,
+      done: typeof body.done === 'boolean' ? body.done : undefined,
+    });
+    ctx.events.broadcast({ type: 'inbox.changed' });
+    return jsonResponse(item);
+  } catch (err) {
+    return errorResponse(404, (err as Error).message);
+  }
+}
+
+// POST /api/inbox/dismiss — drop items outright. A dismissed thought should not linger in an
+// archive; the point of the inbox is that most of what lands in it is noise.
+async function dismissInbox(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { ids?: unknown };
+  const ids = Array.isArray(body.ids)
+    ? body.ids.filter((v): v is string => typeof v === 'string')
+    : [];
+  if (ids.length === 0) return errorResponse(400, 'ids is required');
+  ctx.inboxStore.remove(ids);
+  ctx.events.broadcast({ type: 'inbox.changed' });
+  return jsonResponse({ dismissed: ids.length });
+}
+
+/**
+ * POST /api/inbox/convert — turn inbox items into real tasks.
+ *
+ * Spans two stores, so partial failure is a real outcome and is reported rather than swallowed:
+ * the response carries a per-item result, and a caller that asked for five conversions and got
+ * three has to be able to see which two did not land. Tasks are created first and the inbox is
+ * linked afterwards, so an interrupted convert leaves an unlinked task (visible, recoverable)
+ * rather than an inbox item pointing at a task that was never written.
+ */
+async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { ids?: unknown };
+  const ids = Array.isArray(body.ids)
+    ? body.ids.filter((v): v is string => typeof v === 'string')
+    : [];
+  if (ids.length === 0) return errorResponse(400, 'ids is required');
+
+  const items = new Map(ctx.inboxStore.list().map((i) => [i.id, i]));
+  const results: {
+    id: string;
+    taskId?: string;
+    error?: string;
+  }[] = [];
+  const links: { id: string; taskId: string }[] = [];
+
+  for (const id of ids) {
+    const item = items.get(id);
+    if (item === undefined) {
+      results.push({ id, error: `inbox item not found: ${id}` });
+      continue;
+    }
+    if (item.linkedTaskId !== null) {
+      // Already converted — report the existing task rather than making a second one.
+      results.push({ id, taskId: item.linkedTaskId });
+      continue;
+    }
+    try {
+      const task = ctx.store.create({ title: item.text, kind: 'task' });
+      links.push({ id, taskId: task.meta.id });
+      results.push({ id, taskId: task.meta.id });
+    } catch (err) {
+      results.push({ id, error: (err as Error).message });
+    }
+  }
+
+  if (links.length > 0) {
+    // Cache first so the ids in the response already resolve for a client that follows them.
+    ctx.cache.rebuild(ctx.store);
+    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.inboxStore.markConverted(links);
+    ctx.events.broadcast({ type: 'inbox.changed' });
+  }
+
+  const failed = results.filter((r) => r.error !== undefined).length;
+  return jsonResponse({ results, converted: links.length, failed });
+}
+
 // The planning prompt behind "draft with AI": what a note is missing is
 // context — which files it touches, what the code does today, what "done"
 // means — so this asks the planner to go read the repo and spend that
@@ -1174,6 +1315,32 @@ export async function handleApi(
         method === 'POST'
       ) {
         return enrichNote(ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'inbox') {
+      if (segments.length === 1 && method === 'GET') {
+        return jsonResponse(ctx.inboxStore.list());
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await addInbox(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'convert' &&
+        method === 'POST'
+      ) {
+        return await convertInbox(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'dismiss' &&
+        method === 'POST'
+      ) {
+        return await dismissInbox(req, ctx);
+      }
+      if (segments.length === 2 && method === 'PATCH') {
+        return await updateInbox(req, ctx, segments[1]);
       }
     }
 

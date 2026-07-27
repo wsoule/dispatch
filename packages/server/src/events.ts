@@ -31,6 +31,8 @@ export type ServerEvent =
   // "go refetch" contract as task.changed. Lets an agent-created triage (via
   // the MCP `dispatch_note` tool) show up live in an open Notes tab.
   | { type: 'note.changed' }
+  // The brain-dump inbox changed (captured, retyped, dismissed or converted).
+  | { type: 'inbox.changed' }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
   | { type: 'merge-queue.changed' }
