@@ -96,6 +96,9 @@ export interface RunMeta {
   // `baseDiscardedReason`, which says which it was.
   baseDiscarded?: boolean;
   baseDiscardedReason?: string;
+  // Present only on merged runs (see decorateRunsWithPushed server-side) —
+  // whether the merge commit has actually reached origin's base branch.
+  pushedToOrigin?: boolean;
 }
 
 // Mirrors BranchEntryStatus in packages/server/src/orchestrator/types.ts.
@@ -125,6 +128,8 @@ export interface BranchEntry {
   baseBranch?: string;
   reviewedAt?: string;
   prUrl?: string;
+  // True only once the run's merge commit is reachable from origin's base.
+  pushedToOrigin: boolean;
   status: BranchEntryStatus;
 }
 

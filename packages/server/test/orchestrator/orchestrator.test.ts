@@ -1975,39 +1975,45 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
   });
 });
 
+// A bare remote to push to — bare because a non-bare repo refuses a push
+// that updates its currently-checked-out branch, which `main` always is here.
+function initBareGitRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dispatch-origin-'));
+  runGitSync(dir, ['init', '--bare', '-b', 'main']);
+  return dir;
+}
+
+// Dispatches one run that writes a commit and finishes, leaving a real
+// worktree + branch behind un-reviewed — the common starting point for both
+// the listBranches and decorateRunsWithPushed suites below.
+async function dispatchFinishedRun(
+  rootDir: string,
+  title = 'Add feature'
+): Promise<{ orchestrator: Orchestrator; store: TaskStore; meta: RunMeta }> {
+  const { orchestrator, store } = makeOrchestrator(rootDir);
+  orchestrator.registerExecutor(
+    'fake',
+    new FakeExecutor({
+      steps: [
+        {
+          write: (cwd) => {
+            writeFileSync(join(cwd, 'feature.txt'), 'done\n');
+          },
+          commitMessage: 'agent: add feature',
+        },
+      ],
+      finish: { state: 'finished' },
+    })
+  );
+  const task = store.create({ title });
+  const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+  await waitFor(() => orchestrator.getRun(meta.id)?.meta.state === 'finished');
+  return { orchestrator, store, meta };
+}
+
 // The Branches surface (spec §§1-4): listBranches() joins git's refs with the
 // run registry, and the two destructive actions refuse anything still in use.
 describe('Orchestrator.listBranches', () => {
-  // Dispatches one run that writes a commit and finishes, leaving a real
-  // worktree + branch behind un-reviewed — the common "leftover" starting
-  // point every case below builds on.
-  async function dispatchFinishedRun(
-    rootDir: string,
-    title = 'Add feature'
-  ): Promise<{ orchestrator: Orchestrator; store: TaskStore; meta: RunMeta }> {
-    const { orchestrator, store } = makeOrchestrator(rootDir);
-    orchestrator.registerExecutor(
-      'fake',
-      new FakeExecutor({
-        steps: [
-          {
-            write: (cwd) => {
-              writeFileSync(join(cwd, 'feature.txt'), 'done\n');
-            },
-            commitMessage: 'agent: add feature',
-          },
-        ],
-        finish: { state: 'finished' },
-      })
-    );
-    const task = store.create({ title });
-    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
-    await waitFor(
-      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
-    );
-    return { orchestrator, store, meta };
-  }
-
   it('reports a finished, un-reviewed run as reviewable with its run and task attached', async () => {
     const { orchestrator, meta } = await dispatchFinishedRun(repo);
 
@@ -2092,6 +2098,66 @@ describe('Orchestrator.listBranches', () => {
     const statuses = orchestrator.listBranches().map((e) => e.status);
 
     expect(statuses).toEqual(['orphan', 'reviewable']);
+  });
+
+  it('reports pushedToOrigin false without a remote, and false-then-true once a merge reaches origin', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+
+    // Merged but nothing pushed anywhere yet.
+    orchestrator.review(meta.id, 'merge');
+    // review() removes the ref on success — recreate it to simulate the
+    // leftover case, same as the existing leftover test above.
+    runGitSync(repo, ['branch', meta.branch, 'main']);
+
+    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(false);
+
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['fetch', 'origin', 'main']);
+
+    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(true);
+  });
+});
+
+// decorateRunsWithPushed backs the runs API decoration: adds
+// `pushedToOrigin` to merged runs only, computed against the live repo.
+describe('Orchestrator.decorateRunsWithPushed', () => {
+  it('leaves non-merged runs untouched', async () => {
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+
+    const [decorated] = orchestrator.decorateRunsWithPushed([
+      orchestrator.getRun(meta.id)!.meta,
+    ]);
+
+    expect(decorated.pushedToOrigin).toBeUndefined();
+  });
+
+  it('reports false for a merged run when the repo has no origin remote', async () => {
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    const reviewed = orchestrator.review(meta.id, 'merge');
+
+    const [decorated] = orchestrator.decorateRunsWithPushed([reviewed]);
+
+    expect(decorated.pushedToOrigin).toBe(false);
+  });
+
+  it('reports true for a merged run once its commit reaches origin', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    const reviewed = orchestrator.review(meta.id, 'merge');
+
+    expect(
+      orchestrator.decorateRunsWithPushed([reviewed])[0].pushedToOrigin
+    ).toBe(false);
+
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['fetch', 'origin', 'main']);
+
+    expect(
+      orchestrator.decorateRunsWithPushed([reviewed])[0].pushedToOrigin
+    ).toBe(true);
   });
 });
 
