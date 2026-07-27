@@ -542,14 +542,6 @@ function App() {
                         dispatchNav({ type: 'openRun', runId });
                         selectProjectView('runs');
                       }}
-                      onOpenTask={(taskId) =>
-                        dispatchNav({ type: 'openPeek', taskId })
-                      }
-                      onOpenPr={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('pull-requests');
-                      }}
-                      onDispatch={(taskId) => data.handleDispatch(taskId)}
                       onGoToBoard={() => selectProjectView('board')}
                     />
                   )}
