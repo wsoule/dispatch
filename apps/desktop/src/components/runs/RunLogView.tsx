@@ -13,7 +13,7 @@ import { groupLogEntries } from '../../lib/runLog';
 import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
-import { ToolCard } from './ToolCard';
+import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
@@ -26,60 +26,6 @@ const SENDABLE_STATES = new Set<RunMeta['state']>([
   'awaiting-approval',
 ]);
 
-const ROLE_LABEL: Record<'assistant' | 'thinking' | 'system', string> = {
-  assistant: 'Agent',
-  thinking: 'Thinking',
-  system: 'System',
-};
-
-// One assistant/thinking/system entry as its own chat-style row. `kind`
-// picks the label and lean (thinking reads as a quieter aside, system as a
-// centered note rather than a message from either side) — per the redesign
-// brief, roles get subtle/muted styling distinctions, not loud colored
-// chat bubbles.
-function MessageBubble({ entry }: { entry: NormalizedEntry }) {
-  const kind = entry.kind as 'assistant' | 'thinking' | 'system';
-
-  if (kind === 'system') {
-    return (
-      <div className="text-muted-foreground flex items-center justify-center gap-1.5 py-1 text-center text-[11px]">
-        <Info className="size-3 shrink-0" />
-        {entry.text ?? ''}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className={cn(
-        'flex max-w-[90%] flex-col gap-0.5 self-start rounded-md px-3 py-2',
-        kind === 'assistant'
-          ? 'border border-border bg-muted/50'
-          : 'text-muted-foreground italic'
-      )}
-    >
-      <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-        {ROLE_LABEL[kind]}
-      </div>
-      <Markdown
-        content={entry.text ?? ''}
-        className="text-foreground text-[13px]"
-      />
-    </div>
-  );
-}
-
-// A `kind: 'message'` entry — the agent-comms identified chat channel,
-// deliberately NOT styled like MessageBubble's muted system/assistant rows:
-// this is an actual conversation turn with a named sender, so it earns a
-// side and a tint. The three channels each read distinctly:
-//   - `from: 'user'` (the run's own human, via the Session composer) —
-//     leans RIGHT as "You" in the accent color.
-//   - `from: 'agent'` + `toUser` (this run's own `message_user`, flagging
-//     something up to the human) — full-width attention row with a Megaphone
-//     and a "To you" badge, so it never reads like a peer message.
-//   - `from: 'agent'` without `toUser` (an inbound `agent_message` from a
-//     DIFFERENT run) — leans LEFT as "↳ <fromLabel>" in an amber tint.
 function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
   const fromUser = entry.from === 'user';
   const toUser = entry.from === 'agent' && entry.toUser === true;
@@ -215,17 +161,22 @@ export function RunLogView({
               </p>
             </div>
           )}
+          {/* A tagged gutter rather than chat bubbles: fixed-width tags turn the transcript
+              into a scannable spine, so the shape of what the agent did is visible without
+              reading it. The user's own turns keep the bubble treatment — they are the one
+              thing you want to pick out of the stream at a glance, and a bubble does that
+              better than a tag. */}
           {groups.map((group, i) =>
             group.kind === 'tools' ? (
-              <div key={i} className="flex flex-col gap-1.5">
+              <div key={i} className="flex flex-col">
                 {group.entries.map((entry, j) => (
-                  <ToolCard key={j} entry={entry} />
+                  <TranscriptRow key={j} entry={entry} />
                 ))}
               </div>
             ) : group.entries[0].kind === 'message' ? (
               <ChatMessageBubble key={i} entry={group.entries[0]} />
             ) : (
-              <MessageBubble key={i} entry={group.entries[0]} />
+              <TranscriptRow key={i} entry={group.entries[0]} />
             )
           )}
         </div>

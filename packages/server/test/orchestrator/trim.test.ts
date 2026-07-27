@@ -58,7 +58,10 @@ describe('trimWorktree', () => {
 
       expect(existsSync(join(wtPath, 'node_modules'))).toBe(false);
       expect(existsSync(join(wtPath, 'packages', 'core', 'dist'))).toBe(false);
-      expect(result.reclaimedBytes).toBeGreaterThan(4096);
+      expect(result.removed.sort()).toEqual([
+        'node_modules',
+        'packages/core/dist',
+      ]);
 
       // The whole point: the checkout survives, so the run is still reviewable.
       // This is the assertion trim exists to protect — free-disk removes the
@@ -80,7 +83,7 @@ describe('trimWorktree', () => {
     worktrees.add(wtPath, 'dispatch/t-trim2-r1', 'main');
     try {
       const result = trimWorktree(wtPath);
-      expect(result.reclaimedBytes).toBe(0);
+      expect(result.removed).toEqual([]);
       expect(existsSync(join(wtPath, 'README.md'))).toBe(true);
     } finally {
       rmSync(wtPath, { recursive: true, force: true });
@@ -92,7 +95,7 @@ describe('trimWorktree', () => {
   // merged — trimming it must not throw, or the caller has to special-case it.
   it('reports zero for a worktree that no longer exists', () => {
     const result = trimWorktree('/tmp/definitely-not-a-worktree-xyz');
-    expect(result.reclaimedBytes).toBe(0);
+    expect(result.removed).toEqual([]);
   });
 
   // Never touch `.git` — a worktree's gitdir link is what makes the checkout a
