@@ -275,7 +275,15 @@ export type ServerEvent =
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed. Mirrors
   // packages/server/src/events.ts exactly.
-  | { type: 'merge-queue.changed' };
+  | { type: 'merge-queue.changed' }
+  // The queue just finished draining and attempted to push origin's base up
+  // to date. Mirrors packages/server/src/events.ts exactly.
+  | {
+      type: 'queue.drained';
+      merged: number;
+      pushed: boolean;
+      pushError?: string;
+    };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's

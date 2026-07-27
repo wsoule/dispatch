@@ -124,6 +124,21 @@ export class MergeQueue {
   // safe to touch. See restackStaleRuns().
   private readonly pendingStaleRuns: string[] = [];
   private readonly jj: JjManager;
+  // Count of entries that reached `merged` since the last drain-push attempt,
+  // plus the base branch the most recent of them merged into — captured at
+  // increment time so a push after the counter resets (see pushOnDrain) still
+  // knows what to push. Both read only by pushOnDrain, at the moment the pump
+  // loop finds the queue fully empty.
+  private mergedSinceIdle = 0;
+  private lastMergeBase: string | undefined;
+  // Set on a drain-push failure, cleared on success — the retry seam pump()
+  // checks on every subsequent idle transition (including one driven by
+  // recheck(), the same "retry now" entry point 'blocked-environment' uses)
+  // so a transient push failure doesn't require a fresh merge to retry.
+  private lastDrainPushFailed = false;
+  // refreshRemote()'s fetch failure is logged once per process, not once per
+  // 60s tick — an offline remote would otherwise spam the log forever.
+  private fetchFailureLogged = false;
 
   constructor(
     private readonly ctx: MergeQueueContext,
@@ -588,7 +603,13 @@ export class MergeQueue {
         // consider, and it is unmergeable until this has run.
         await this.drainRestacks();
         const next = this.nextEligible();
-        if (next === null) return;
+        if (next === null) {
+          // Only once the queue is truly empty (not merely "nothing eligible
+          // right now" — an entry can still be sitting in waiting-blockers) is
+          // this actually a drain worth pushing/reporting on.
+          if (this.entries.length === 0) await this.pushOnDrain();
+          return;
+        }
         this.active = next;
         const outcome = await this.process(next);
         this.active = null;
@@ -705,7 +726,7 @@ export class MergeQueue {
       // filed as merged — means an observer that sees `merged` is looking at
       // a stack that has already been brought back onto the new base.
       await this.drainRestacks();
-      this.finish(entry, 'merged');
+      this.finish(entry, 'merged', meta.baseBranch);
       return 'done';
     } catch (err) {
       entry.reason = (err as Error).message;
@@ -1292,15 +1313,102 @@ export class MergeQueue {
 
   // Removes `entry` from the live queue, stamps it terminal, and files it
   // into history (most-recent-first, capped at HISTORY_LIMIT) — the one
-  // place both `merged` and `failed` outcomes converge.
-  private finish(entry: MergeQueueEntry, state: 'merged' | 'failed'): void {
+  // place both `merged` and `failed` outcomes converge. `mergedBaseBranch` is
+  // supplied only for a 'merged' outcome, and is what feeds pushOnDrain's
+  // eventual `git push origin <base>` once the queue empties out.
+  private finish(
+    entry: MergeQueueEntry,
+    state: 'merged' | 'failed',
+    mergedBaseBranch?: string
+  ): void {
     const idx = this.entries.indexOf(entry);
     if (idx !== -1) this.entries.splice(idx, 1);
     entry.state = state;
     entry.finishedAt = new Date().toISOString();
     this.history.unshift(entry);
     this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
+    if (state === 'merged' && mergedBaseBranch !== undefined) {
+      this.mergedSinceIdle += 1;
+      this.lastMergeBase = mergedBaseBranch;
+    }
     this.broadcast();
+  }
+
+  // Fires once the pump loop finds the queue fully drained: pushes origin's
+  // copy of whatever base branch was just merged into, so a human never has
+  // to remember to `git push` after every merge queue run. A no-op when
+  // nothing merged and no prior push is owed a retry (the common case, most
+  // idle ticks). Never throws — a push failure is reported via the
+  // `queue.drained` event and `lastDrainPushFailed`, not an exception, since
+  // this runs after every entry that needed it has already finished
+  // successfully.
+  private async pushOnDrain(): Promise<void> {
+    if (this.mergedSinceIdle === 0 && !this.lastDrainPushFailed) return;
+    const merged = this.mergedSinceIdle;
+    this.mergedSinceIdle = 0;
+
+    if (
+      !this.ctx.orchestrator.hasOriginRemote() ||
+      this.lastMergeBase === undefined
+    ) {
+      this.lastDrainPushFailed = false;
+      this.ctx.events.broadcast({
+        type: 'queue.drained',
+        merged,
+        pushed: false,
+      });
+      return;
+    }
+
+    const push = await this.run(this.ctx.rootDir, [
+      'git',
+      'push',
+      'origin',
+      this.lastMergeBase,
+    ]);
+    if (push.ok) {
+      this.lastDrainPushFailed = false;
+      this.ctx.orchestrator.reconcileArchives();
+      this.ctx.events.broadcast({
+        type: 'queue.drained',
+        merged,
+        pushed: true,
+      });
+    } else {
+      this.lastDrainPushFailed = true;
+      this.ctx.events.broadcast({
+        type: 'queue.drained',
+        merged,
+        pushed: false,
+        pushError: commandErrorText(push),
+      });
+    }
+  }
+
+  // Whether this project has a configured git remote — the gate refreshRemote
+  // applies internally, and the same check bin.ts's boot-time guard uses to
+  // decide whether the 60s auto-refresh timer is worth creating at all.
+  hasOriginRemote(): boolean {
+    return this.ctx.orchestrator.hasOriginRemote();
+  }
+
+  // Keeps `origin/<base>` current independently of a drain (a teammate can
+  // push to the shared base without ever touching this queue) and reconciles
+  // archives off the freshly-fetched refs. Called on bin.ts's 60s tick.
+  async refreshRemote(): Promise<void> {
+    if (!this.hasOriginRemote()) return;
+    try {
+      await this.fetchBase(this.ctx.orchestrator.defaultBaseBranch());
+    } catch (err) {
+      if (!this.fetchFailureLogged) {
+        this.fetchFailureLogged = true;
+        console.error(
+          `dispatchd: merge queue refreshRemote fetch failed: ${(err as Error).message}`
+        );
+      }
+      return;
+    }
+    this.ctx.orchestrator.reconcileArchives();
   }
 
   // Every state change in this class routes through here, which is exactly

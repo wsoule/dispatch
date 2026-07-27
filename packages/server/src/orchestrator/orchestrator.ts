@@ -196,6 +196,17 @@ export class Orchestrator {
     });
   }
 
+  // Thin passthroughs so MergeQueue can gate its own push-retry/auto-refresh
+  // logic without reaching into WorktreeManager directly (same "queue must
+  // not reach into either directly" rule the restack seam above documents).
+  hasOriginRemote(): boolean {
+    return this.worktrees.hasOriginRemote();
+  }
+
+  defaultBaseBranch(): string {
+    return this.worktrees.defaultBaseBranch();
+  }
+
   // Live runs (and anything hydrated by reconcileOnBoot) come straight from
   // the in-memory registry; a run this process has never seen — the same
   // rootDir after a restart with no reconciliation yet — falls back to
@@ -1400,6 +1411,47 @@ export class Orchestrator {
     this.appendTaskActivity(meta.taskId, text);
   }
 
+  // Stamps `archivedAt` on every `done` task whose newest merged run has
+  // actually landed on origin's copy of its base — the signal that it's safe
+  // to let the task drop out of the visible Done column for good. Called from
+  // reconcileOnBoot() and from MergeQueue.refreshRemote()'s 60s tick, both
+  // after origin's refs are as current as this process can make them.
+  // Idempotent by construction: query()'s default filter already excludes
+  // archived tasks, so a repeat call only ever touches tasks that just became
+  // eligible — never un-archives one that already was.
+  reconcileArchives(): number {
+    if (!this.worktrees.hasOriginRemote()) return 0;
+    const doneTasks = this.ctx.cache.query({ status: 'done' });
+    if (doneTasks.length === 0) return 0;
+    // Newest merged run per task, scanned once against registry.list()'s own
+    // most-recent-first order — mirrors newestRunByBranch()'s same shape.
+    const newestMergedByTask = new Map<string, RunMeta>();
+    for (const run of this.registry.list()) {
+      if (run.reviewAction !== 'merge' || run.mergeCommit === undefined) {
+        continue;
+      }
+      if (!newestMergedByTask.has(run.taskId)) {
+        newestMergedByTask.set(run.taskId, run);
+      }
+    }
+    const now = new Date().toISOString();
+    let count = 0;
+    for (const task of doneTasks) {
+      const run = newestMergedByTask.get(task.meta.id);
+      if (run?.mergeCommit === undefined) continue;
+      if (!this.worktrees.isOnOriginBase(run.mergeCommit, run.baseBranch)) {
+        continue;
+      }
+      this.ctx.store.update(task.meta.id, { archivedAt: now }, now);
+      count++;
+    }
+    if (count > 0) {
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    }
+    return count;
+  }
+
   // Boot-time hygiene: any transcript whose last recorded state isn't
   // terminal represents a run dispatchd crashed mid-flight on — mark it
   // `failed` (both on disk and in the freshly-hydrated registry) so clients
@@ -1465,6 +1517,7 @@ export class Orchestrator {
       }
     }
     this.worktrees.pruneOrphans(worktreesDir(this.ctx.rootDir), keepPaths);
+    this.reconcileArchives();
   }
 
   private requireRun(runId: string): RunMeta {

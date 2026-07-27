@@ -2120,6 +2120,69 @@ describe('Orchestrator.listBranches', () => {
   });
 });
 
+// Task 6: archivedAt is the signal a `done` task can finally drop out of the
+// visible board for good — reconcileArchives() is what decides a task has
+// earned that, based on whether its merge actually reached origin.
+describe('Orchestrator.reconcileArchives', () => {
+  it('stamps archivedAt once the merge reaches origin, is a no-op before that, and never re-touches an archived task', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, store, meta } = await dispatchFinishedRun(repo);
+    orchestrator.review(meta.id, 'merge');
+
+    // Merged locally, but origin still has no idea — nothing to stamp yet.
+    expect(orchestrator.reconcileArchives()).toBe(0);
+    expect(store.get(meta.taskId)?.meta.archivedAt).toBeUndefined();
+
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['fetch', 'origin', 'main']);
+
+    expect(orchestrator.reconcileArchives()).toBe(1);
+    expect(store.get(meta.taskId)?.meta.archivedAt).toBeDefined();
+
+    // Idempotent: query()'s default filter already excludes the task just
+    // archived, so a repeat call finds nothing left to do.
+    expect(orchestrator.reconcileArchives()).toBe(0);
+  });
+
+  it('leaves a done task un-archived with no origin remote configured at all', async () => {
+    const { orchestrator, store, meta } = await dispatchFinishedRun(repo);
+    orchestrator.review(meta.id, 'merge');
+
+    expect(orchestrator.reconcileArchives()).toBe(0);
+    expect(store.get(meta.taskId)?.meta.archivedAt).toBeUndefined();
+  });
+
+  it('runs the same reconciliation from reconcileOnBoot, off a freshly-hydrated registry', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const {
+      orchestrator: first,
+      store,
+      meta,
+    } = await dispatchFinishedRun(repo);
+    first.review(meta.id, 'merge');
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['fetch', 'origin', 'main']);
+
+    // A fresh Orchestrator over the same on-disk project — a daemon restart
+    // — has to re-derive the merged run's mergeCommit/baseBranch from the
+    // replayed transcript alone before it can reconcile anything.
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const events2 = new EventBus();
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: events2,
+    });
+    second.reconcileOnBoot();
+
+    expect(store.get(meta.taskId)?.meta.archivedAt).toBeDefined();
+  });
+});
+
 // decorateRunsWithPushed backs the runs API decoration: adds
 // `pushedToOrigin` to merged runs only, computed against the live repo.
 describe('Orchestrator.decorateRunsWithPushed', () => {
