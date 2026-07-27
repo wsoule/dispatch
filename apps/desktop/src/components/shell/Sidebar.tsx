@@ -5,6 +5,7 @@ import {
   ChevronsUpDown,
   Cog,
   GitBranch,
+  GitMerge,
   GitPullRequest,
   LayoutDashboard,
   ListChecks,
@@ -42,6 +43,7 @@ const PROJECT_VIEWS: {
   { id: 'runs', label: 'Runs', icon: Play },
   { id: 'branches', label: 'Branches', icon: GitBranch },
   { id: 'pull-requests', label: 'Pull requests', icon: GitPullRequest },
+  { id: 'landing', label: 'Landing', icon: GitMerge },
   { id: 'notes', label: 'Notes & triage', icon: StickyNote },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
 ];

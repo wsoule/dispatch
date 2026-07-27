@@ -31,6 +31,7 @@ import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { BranchesView } from './views/BranchesView';
 import { GetStartedView } from './views/GetStartedView';
+import { LandingView } from './views/LandingView';
 import { MilestonesView } from './views/MilestonesView';
 import { NewTaskView } from './views/NewTaskView';
 import { NotesView } from './views/NotesView';
@@ -543,6 +544,15 @@ function App() {
                         selectProjectView('runs');
                       }}
                       onGoToBoard={() => selectProjectView('board')}
+                    />
+                  )}
+                  {navState.projectView === 'landing' && (
+                    <LandingView
+                      data={data}
+                      onOpenRun={(runId) => {
+                        dispatchNav({ type: 'openRun', runId });
+                        selectProjectView('runs');
+                      }}
                     />
                   )}
                   {navState.projectView === 'board' && (

@@ -202,6 +202,8 @@ export interface DispatchProjectData {
   // reviewable runs in this stack" surfaces as a thrown Error).
   handleEnqueueMergeStack: (taskId: string) => Promise<void>;
   handleDequeueMerge: (runId: string) => Promise<void>;
+  /** Retries every entry held on a blocked checkout. Queue-wide, mirroring the server. */
+  handleRecheckMergeQueue: () => Promise<void>;
 }
 
 /**
@@ -1009,6 +1011,16 @@ export function useDispatchProject(
     [client, queryClient, mergeQueueQueryKey]
   );
 
+  // Retries every entry the queue is holding on a `blocked-environment` (a dirty checkout, a
+  // staged index, the wrong branch). Deliberately queue-wide rather than per-entry, because the
+  // server's endpoint is: the block is a property of the shared checkout, not of one entry, so
+  // one fix unblocks all of them at once.
+  const handleRecheckMergeQueue = useCallback(async (): Promise<void> => {
+    if (client === null) return;
+    await client.recheckMergeQueue();
+    void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
+  }, [client, queryClient, mergeQueueQueryKey]);
+
   // Notifies on run finished/failed and merge-queue merged/failed transitions —
   // see useTransitionNotifications's own comment for why it needs the *lists*
   // (not just this render's counts) to diff against what it last saw. `projectPath`
@@ -1088,5 +1100,6 @@ export function useDispatchProject(
     handleEnqueueMerge,
     handleEnqueueMergeStack,
     handleDequeueMerge,
+    handleRecheckMergeQueue,
   };
 }
