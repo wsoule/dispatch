@@ -1,8 +1,9 @@
-import type { EpicProgress } from '@dispatch/client';
+import type { EpicProgress, RunMeta } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import { ChevronDown, ChevronRight, SearchX, Waypoints } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { MergeLadderDot } from '../components/runs/MergeLadderDot';
 import { EpicDagModal } from '../components/tasks/EpicDagModal';
 import {
   AssigneeControl,
@@ -296,6 +297,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                         key={doc.meta.id}
                         doc={doc}
                         tasks={data.tasks}
+                        run={data.latestRunByTaskId.get(doc.meta.id)}
                         epicTitle={
                           doc.meta.parent !== null
                             ? epicTitleById.get(doc.meta.parent)
@@ -336,6 +338,8 @@ interface TaskListRowProps {
   /** Full project task list, passed through to `StackBadge` so it can derive this row's
    * stack position without the list needing its own precomputed map. */
   tasks: TaskDoc[];
+  /** This task's latest run, if it has one — feeds the row's merge-ladder dot. */
+  run: RunMeta | undefined;
   epicTitle?: string;
   statuses: string[];
   focused: boolean;
@@ -355,6 +359,7 @@ interface TaskListRowProps {
 function TaskListRow({
   doc,
   tasks,
+  run,
   epicTitle,
   statuses,
   focused,
@@ -389,6 +394,7 @@ function TaskListRow({
         statuses={statuses}
         onChange={onStatusChange}
       />
+      <MergeLadderDot meta={run} />
       <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
         {doc.meta.title}
         {epicTitle !== undefined && (
