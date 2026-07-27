@@ -32,6 +32,7 @@ import { BoardView } from './views/BoardView';
 import { BranchesView } from './views/BranchesView';
 import { GetStartedView } from './views/GetStartedView';
 import { MilestonesView } from './views/MilestonesView';
+import { NewTaskView } from './views/NewTaskView';
 import { NotesView } from './views/NotesView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
@@ -45,10 +46,12 @@ import { TooltipProvider } from '@/ui/tooltip';
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
-  // Pre-selects `CreateTaskModal`'s Status field when it's opened from a board column's or
-  // list group's hover "+" button (see `BoardView`'s `onNewTask`) — `null` when opened from
-  // the plain "New task" button, which leaves the modal to default to the first configured
-  // status on its own.
+  // Pre-selects the Status field of whichever creator is open — the full-page `NewTaskView` or
+  // the `CreateTaskModal` quick-add — when it's opened from a board column's or list group's
+  // hover "+" button (see `BoardView`'s `onNewTask`). `null` when opened from the plain "New
+  // task" button, which leaves the creator to default to the first configured status on its
+  // own. One piece of state for both, so switching to the quick form mid-flow keeps the column
+  // you started from.
   const [createStatus, setCreateStatus] = useState<string | null>(null);
 
   // Auto-update: check GitHub's `latest.json` once after mount (non-blocking —
@@ -218,11 +221,21 @@ function App() {
     dispatchNav({ type: 'setGlobalView', view });
   }, []);
 
-  // Opens `CreateTaskModal`, optionally pre-set to a status — the single entry point every
-  // "New task"/"+" affordance (the header button, a board column's hover "+", the palette
-  // action) calls through, so the modal's initial status is always explicit rather than a
-  // leftover from whichever column's "+" was clicked last.
+  // Opens the full-page task creator, optionally pre-set to a status — the single entry point
+  // every "New task"/"+" affordance (the header button, a board column's or list group's hover
+  // "+", the palette action, the global "c" shortcut) calls through, so the creator's initial
+  // status is always explicit rather than a leftover from whichever column's "+" was clicked
+  // last. Describing the task in natural language is the primary path now; the structured
+  // modal below is the quick-add fallback.
   const openCreateTask = useCallback((status?: string) => {
+    setCreateStatus(status ?? null);
+    dispatchNav({ type: 'openNewTask' });
+  }, []);
+
+  // The structured quick-add fallback: `CreateTaskModal`, unchanged, for when you already know
+  // the exact fields and don't want to spend an agent round-trip describing them. Reachable
+  // from the palette and from the full-page creator's own "Quick add…" button.
+  const openQuickAddTask = useCallback((status?: string) => {
     setCreateStatus(status ?? null);
     setShowCreate(true);
   }, []);
@@ -301,6 +314,12 @@ function App() {
           run: () => openCreateTask(),
         },
         {
+          id: 'action-quick-add-task',
+          label: 'Quick add task…',
+          kind: 'action',
+          run: () => openQuickAddTask(),
+        },
+        {
           id: 'action-plan-work',
           label: 'Plan work…',
           kind: 'action',
@@ -377,6 +396,7 @@ function App() {
     selectProjectView,
     setGlobalView,
     openCreateTask,
+    openQuickAddTask,
   ]);
 
   // Resolution states for the single active project, checked in order: an outright failure to
@@ -594,6 +614,16 @@ function App() {
                   {navState.projectView === 'plans' && (
                     <PlansView data={data} projectPath={activeProject.path} />
                   )}
+                  {navState.projectView === 'new-task' && (
+                    <NewTaskView
+                      data={data}
+                      initialStatus={createStatus ?? undefined}
+                      onQuickAdd={() =>
+                        openQuickAddTask(createStatus ?? undefined)
+                      }
+                      onClose={() => dispatchNav({ type: 'closeNewTask' })}
+                    />
+                  )}
                 </>
               )}
             </ErrorBoundary>
@@ -630,7 +660,13 @@ function App() {
             statuses={data.config.statuses}
             epics={data.epics}
             initialStatus={createStatus ?? undefined}
-            onCreate={data.handleCreate}
+            onCreate={async (input) => {
+              await data.handleCreate(input);
+              // Quick-added from on top of the full-page creator: that page has nothing left
+              // to do once the task exists, so close it rather than leaving its composer
+              // sitting behind the dismissed modal. A no-op from anywhere else.
+              dispatchNav({ type: 'closeNewTask' });
+            }}
             onClose={() => setShowCreate(false)}
           />
         )}

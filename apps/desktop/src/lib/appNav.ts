@@ -11,7 +11,13 @@
  * its own nav either); Runs is the split log/review layout, Plans is the composer + proposal
  * review. The `board` id is kept (rather than renamed to e.g. `tasks`) so this type, the
  * reducer below, and every test against it stay untouched by the nav collapse — only
- * `Sidebar`'s single nav row and its label changed. */
+ * `Sidebar`'s single nav row and its label changed.
+ *
+ * `new-task` is the odd one out: it's a full-page *destination* (the describe-what-you-want
+ * task creator, Plans' single-task sibling) but not a nav *item* — `Sidebar` lists its rows
+ * explicitly, so it never appears in the rail. You get there from a "New task" affordance and
+ * leave via Escape/Cancel/save, which is why it has its own open/close actions below rather
+ * than being reached through a plain `setProjectView`. */
 export type ProjectView =
   | 'overview'
   | 'board'
@@ -20,7 +26,8 @@ export type ProjectView =
   | 'branches'
   | 'pull-requests'
   | 'notes'
-  | 'plans';
+  | 'plans'
+  | 'new-task';
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar. */
 export type GlobalView = 'all-agents' | 'sessions' | 'settings';
@@ -39,6 +46,11 @@ export interface NavState {
   peekTaskId: string | null;
   /** Run id shown in the Runs view's right pane, or `null` when nothing is selected. */
   activeRunId: string | null;
+  /** Where closing the full-page task creator returns to. Captured when it opens so
+   * Escape/Cancel lands back on whatever you were looking at (a board column's "+" returns to
+   * the board, the "c" shortcut pressed on Runs returns to Runs) instead of always dumping
+   * you on one fixed view. */
+  newTaskReturnView: ProjectView;
   paletteOpen: boolean;
 }
 
@@ -49,6 +61,7 @@ export const initialNavState: NavState = {
   globalView: 'sessions',
   peekTaskId: null,
   activeRunId: null,
+  newTaskReturnView: 'board',
   paletteOpen: false,
 };
 
@@ -60,12 +73,16 @@ export type NavAction =
   | { type: 'closePeek' }
   | { type: 'openRun'; runId: string }
   | { type: 'closeRun' }
+  /** Opens the full-page task creator, remembering the view to come back to. */
+  | { type: 'openNewTask' }
+  | { type: 'closeNewTask' }
   | { type: 'openPalette' }
   | { type: 'closePalette' }
   | { type: 'togglePalette' }
   /** Context-sensitive close: the command palette wins over the task peek (it renders on
-   * top), and either one being open swallows the Escape entirely rather than also
-   * clearing the other — a single Escape press should undo exactly one layer of UI. */
+   * top), which in turn wins over the full-page task creator (a whole view, so the outermost
+   * layer), and each one being open swallows the Escape entirely rather than also clearing
+   * the next — a single Escape press should undo exactly one layer of UI. */
   | { type: 'escape' };
 
 export function navReducer(state: NavState, action: NavAction): NavState {
@@ -114,6 +131,26 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       return { ...state, activeRunId: action.runId };
     case 'closeRun':
       return { ...state, activeRunId: null };
+    case 'openNewTask':
+      // The creator is a project-section destination, so opening it from a global view
+      // (Settings/Sessions/All Agents) also moves back into the project section and returns to
+      // that project's last view on close — `projectView` still holds it, since `setGlobalView`
+      // never overwrites it. `new-task` itself is never recorded as the return target, so a
+      // second "New task" while it's already open can't turn Escape into a no-op that just
+      // reopens the same page.
+      return {
+        ...state,
+        section: 'project',
+        projectView: 'new-task',
+        activeRunId: null,
+        newTaskReturnView:
+          state.projectView !== 'new-task'
+            ? state.projectView
+            : state.newTaskReturnView,
+      };
+    case 'closeNewTask':
+      if (state.projectView !== 'new-task') return state;
+      return { ...state, projectView: state.newTaskReturnView };
     case 'openPalette':
       return { ...state, paletteOpen: true };
     case 'closePalette':
@@ -123,6 +160,8 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'escape':
       if (state.paletteOpen) return { ...state, paletteOpen: false };
       if (state.peekTaskId !== null) return { ...state, peekTaskId: null };
+      if (state.projectView === 'new-task')
+        return { ...state, projectView: state.newTaskReturnView };
       return state;
     default:
       return state;
