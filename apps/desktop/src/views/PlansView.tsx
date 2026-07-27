@@ -432,6 +432,13 @@ function PlanTaskRow({
 interface PlansViewProps {
   data: DispatchProjectData;
   projectPath: string;
+  /**
+   * Text to open the composer with, when the user arrived here from somewhere that already had
+   * the words — "hand it to the planner" in Brain dump, or "plan it" on a single inbox item.
+   * Seeded once on mount rather than kept in sync, so arriving with a seed and then editing it
+   * does not fight the prop on every re-render.
+   */
+  initialPrompt?: string;
 }
 
 /**
@@ -442,11 +449,15 @@ interface PlansViewProps {
  * on screen is whatever the newest turn produced: a follow-up ("split task 3", "drop the
  * migration") re-renders the review list in place rather than starting a second plan.
  */
-export function PlansView({ data, projectPath }: PlansViewProps) {
+export function PlansView({
+  data,
+  projectPath,
+  initialPrompt,
+}: PlansViewProps) {
   const [history, setHistory] = useState<PlanHistoryEntry[]>(() =>
     loadHistory(projectPath)
   );
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(initialPrompt ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // The editable proposal plus its per-row keys and the server proposal it came from — see

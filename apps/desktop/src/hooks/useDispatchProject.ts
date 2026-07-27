@@ -128,6 +128,19 @@ export interface DispatchProjectData {
     branch: string,
     opts?: { force?: boolean }
   ) => Promise<void>;
+  /** The brain-dump inbox — captured, not committed. */
+  inbox: import('@dispatch/client').InboxItem[];
+  /** Splits `text` server-side into one item per non-empty line. */
+  handleCaptureInbox: (text: string) => Promise<void>;
+  handleUpdateInboxItem: (
+    id: string,
+    patch: { kind?: import('@dispatch/client').InboxKind; text?: string }
+  ) => Promise<void>;
+  handleDismissInbox: (ids: string[]) => Promise<void>;
+  /** Returns the per-item outcome so a partial failure can be surfaced, not swallowed. */
+  handleConvertInbox: (
+    ids: string[]
+  ) => Promise<import('@dispatch/client').InboxConvertResponse>;
   notes: import('@dispatch/client').Note[];
   handleCreateNote: (
     input: import('@dispatch/client').CreateNoteInput
@@ -283,6 +296,7 @@ export function useDispatchProject(
   );
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
+  const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
   const epicProgressKeyPrefix = useMemo(
     () => ['dispatch-epic-progress', port],
     [port]
@@ -382,6 +396,15 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchNotes();
+    },
+    enabled: client !== null,
+  });
+
+  const { data: inbox } = useQuery({
+    queryKey: inboxQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchInbox();
     },
     enabled: client !== null,
   });
@@ -547,6 +570,8 @@ export function useDispatchProject(
             });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+          } else if (event.type === 'inbox.changed') {
+            void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
@@ -563,6 +588,7 @@ export function useDispatchProject(
     readyQueryKey,
     runsQueryKey,
     notesQueryKey,
+    inboxQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     branchesQueryKey,
@@ -1019,6 +1045,53 @@ export function useDispatchProject(
   // staged index, the wrong branch). Deliberately queue-wide rather than per-entry, because the
   // server's endpoint is: the block is a property of the shared checkout, not of one entry, so
   // one fix unblocks all of them at once.
+  const invalidateInbox = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
+  }, [queryClient, inboxQueryKey]);
+
+  const handleCaptureInbox = useCallback(
+    async (text: string): Promise<void> => {
+      if (client === null) return;
+      await client.addInbox({ text });
+      invalidateInbox();
+    },
+    [client, invalidateInbox]
+  );
+
+  const handleUpdateInboxItem = useCallback(
+    async (
+      id: string,
+      patch: { kind?: import('@dispatch/client').InboxKind; text?: string }
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.updateInbox(id, patch);
+      invalidateInbox();
+    },
+    [client, invalidateInbox]
+  );
+
+  const handleDismissInbox = useCallback(
+    async (ids: string[]): Promise<void> => {
+      if (client === null || ids.length === 0) return;
+      await client.dismissInbox(ids);
+      invalidateInbox();
+    },
+    [client, invalidateInbox]
+  );
+
+  const handleConvertInbox = useCallback(
+    async (ids: string[]) => {
+      if (client === null) return { results: [], converted: 0, failed: 0 };
+      const res = await client.convertInbox(ids);
+      invalidateInbox();
+      // Converting writes tasks too, so the task list has to refetch or the new tasks only
+      // appear on the next poll.
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      return res;
+    },
+    [client, invalidateInbox, queryClient, tasksQueryKey]
+  );
+
   const handleRecheckMergeQueue = useCallback(async (): Promise<void> => {
     if (client === null) return;
     await client.recheckMergeQueue();
@@ -1105,5 +1178,10 @@ export function useDispatchProject(
     handleEnqueueMergeStack,
     handleDequeueMerge,
     handleRecheckMergeQueue,
+    inbox: inbox ?? [],
+    handleCaptureInbox,
+    handleUpdateInboxItem,
+    handleDismissInbox,
+    handleConvertInbox,
   };
 }

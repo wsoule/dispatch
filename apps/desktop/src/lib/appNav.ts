@@ -26,7 +26,7 @@ export type ProjectView =
   | 'branches'
   | 'pull-requests'
   | 'landing'
-  | 'notes'
+  | 'brain-dump'
   | 'plans'
   | 'new-task';
 

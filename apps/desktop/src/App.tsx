@@ -29,12 +29,12 @@ import {
 import { checkForUpdate } from './lib/updater';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
+import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { GetStartedView } from './views/GetStartedView';
 import { LandingView } from './views/LandingView';
 import { MilestonesView } from './views/MilestonesView';
 import { NewTaskView } from './views/NewTaskView';
-import { NotesView } from './views/NotesView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { PullRequestsView } from './views/PullRequestsView';
@@ -54,6 +54,10 @@ function App() {
   // own. One piece of state for both, so switching to the quick form mid-flow keeps the column
   // you started from.
   const [createStatus, setCreateStatus] = useState<string | null>(null);
+  // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
+  // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
+  // remounts the composer rather than being swallowed by its existing state.
+  const [planSeed, setPlanSeed] = useState<string | null>(null);
 
   // Auto-update: check GitHub's `latest.json` once after mount (non-blocking —
   // `checkForUpdate` is a no-op outside Tauri and swallows its own errors), and
@@ -611,16 +615,25 @@ function App() {
                       }
                     />
                   )}
-                  {navState.projectView === 'notes' && (
-                    <NotesView
+                  {navState.projectView === 'brain-dump' && (
+                    <BrainDumpView
                       data={data}
                       onOpenTask={(taskId) =>
                         dispatchNav({ type: 'openPeek', taskId })
                       }
+                      onPlanText={(text) => {
+                        setPlanSeed(text);
+                        selectProjectView('plans');
+                      }}
                     />
                   )}
                   {navState.projectView === 'plans' && (
-                    <PlansView data={data} projectPath={activeProject.path} />
+                    <PlansView
+                      data={data}
+                      projectPath={activeProject.path}
+                      initialPrompt={planSeed ?? undefined}
+                      key={planSeed ?? 'plans'}
+                    />
                   )}
                   {navState.projectView === 'new-task' && (
                     <NewTaskView

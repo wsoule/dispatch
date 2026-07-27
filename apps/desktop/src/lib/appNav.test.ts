@@ -130,11 +130,11 @@ describe('navReducer', () => {
 
   test('opening the creator twice keeps the original return view', () => {
     let state = navReducer(
-      { ...initialNavState, projectView: 'notes' },
+      { ...initialNavState, projectView: 'brain-dump' },
       { type: 'openNewTask' }
     );
     state = navReducer(state, { type: 'openNewTask' });
-    expect(state.newTaskReturnView).toBe('notes');
+    expect(state.newTaskReturnView).toBe('brain-dump');
   });
 
   test('opening the creator from a global view keeps the last project view as the way back', () => {
