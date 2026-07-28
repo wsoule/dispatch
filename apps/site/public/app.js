@@ -21,21 +21,25 @@
   if (!img || !cap || !nav) return;
 
   const SHOTS = {
-    overview: {
-      alt: 'The Overview screen: work grouped by what it needs — needs review, landing, ready, blocked.',
-      cap: 'Everything grouped by what it needs from you. Nothing is a feed of messages.',
-    },
     tasks: {
       alt: 'The Tasks board: backlog, todo, in-progress, in-review and done columns with task and epic cards.',
       cap: 'A board, with epics as cards and one lane per epic if you want it.',
     },
+    overview: {
+      alt: 'The Overview screen: work grouped by what it needs — needs review, failed, ready, blocked.',
+      cap: 'Everything grouped by what it needs from you. Not a feed of messages.',
+    },
     runs: {
       alt: 'The Runs screen: a list of agent runs with states and costs, and one run open showing its transcript.',
-      cap: 'Every run, what it cost, and exactly what the agent did — including the ones that failed.',
+      cap: 'Every run, what it cost, and what the agent did — including the ones that failed.',
     },
-    'brain-dump': {
-      alt: 'The Brain dump screen: a capture box above an inbox of short captured notes with kind badges.',
-      cap: 'Capture first, decide later. It all lands in .dispatch/inbox.md.',
+    review: {
+      alt: 'The Review screen: a queue of work needing review, above the merge queue it feeds.',
+      cap: 'What needs a look, then what is landing. Approving is what moves one to the other.',
+    },
+    git: {
+      alt: 'The Git screen: branch and worktree counts, disk used, and stale, orphaned and stacked worktrees.',
+      cap: 'A checkout per run costs real disk. This says how much, and what is safe to reclaim.',
     },
   };
 
