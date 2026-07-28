@@ -198,7 +198,9 @@ function Header({
         className="text-muted-foreground hover:text-foreground flex w-fit items-center gap-1.5 text-[11.5px]"
       >
         <ArrowLeft className="size-3" />
-        Control room
+        {/* Closing a review returns to the review queue now that Review has
+            one — it used to go back to the Control room, and kept saying so. */}
+        All reviews
       </button>
       <div className="flex items-center gap-2">
         {run !== undefined && <StateDot state="review" pulse={false} />}
