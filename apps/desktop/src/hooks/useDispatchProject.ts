@@ -201,9 +201,15 @@ export interface DispatchProjectData {
   handleAddReviewComment: (input: {
     file: string;
     line: number;
+    startLine?: number;
     anchorText: string;
     body: string;
   }) => Promise<void>;
+  /** Submits the staged review: publishes its comments, then acts on the verdict. */
+  handleSubmitReview: (
+    verdict: import('@dispatch/client').ReviewVerdict,
+    body: string
+  ) => Promise<{ published: number; error?: string }>;
   handleResolveReviewComment: (
     commentId: string,
     resolved: boolean
@@ -1418,6 +1424,7 @@ export function useDispatchProject(
     async (input: {
       file: string;
       line: number;
+      startLine?: number;
       anchorText: string;
       body: string;
     }): Promise<void> => {
@@ -1444,6 +1451,28 @@ export function useDispatchProject(
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]
+  );
+
+  const handleSubmitReview = useCallback(
+    async (
+      verdict: import('@dispatch/client').ReviewVerdict,
+      body: string
+    ): Promise<{ published: number; error?: string }> => {
+      if (client === null || selectedRunId === null) return { published: 0 };
+      const res = await client.submitReview(selectedRunId, verdict, body);
+      invalidateReview();
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
+      return { published: res.published, error: res.error };
+    },
+    [
+      client,
+      selectedRunId,
+      invalidateReview,
+      queryClient,
+      runsQueryKey,
+      mergeQueueQueryKey,
+    ]
   );
 
   const handleSendBack = useCallback(
@@ -1596,6 +1625,7 @@ export function useDispatchProject(
     handleResolveReviewComment,
     handleReplyReviewComment,
     handleSendBack,
+    handleSubmitReview,
     handleUpdateConfig,
   };
 }

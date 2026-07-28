@@ -1,9 +1,10 @@
 import type { ReviewComment } from '@dispatch/client';
 import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs';
 import { processPatch } from '@pierre/diffs';
+import type { CodeViewHandle } from '@pierre/diffs/react';
 import { CodeView } from '@pierre/diffs/react';
 import { MessageSquarePlus } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
@@ -12,7 +13,12 @@ import { ReviewComposer, ReviewThread } from './ReviewThread';
 /** What each annotation carries, so `renderAnnotation` knows what to draw. */
 type Annotation =
   | { kind: 'threads'; file: string; comments: ReviewComment[] }
-  | { kind: 'composer'; file: string; anchorText: string };
+  | {
+      kind: 'composer';
+      file: string;
+      anchorText: string;
+      startLine?: number;
+    };
 
 interface PierreReviewDiffProps {
   patch: string;
@@ -20,6 +26,7 @@ interface PierreReviewDiffProps {
   onAdd: (input: {
     file: string;
     line: number;
+    startLine?: number;
     anchorText: string;
     body: string;
   }) => Promise<void>;
@@ -29,6 +36,11 @@ interface PierreReviewDiffProps {
   viewed?: ReadonlySet<string>;
   /** Restricts rendering to one file. Omit for the whole patch in one scroller. */
   only?: string;
+  /**
+   * A comment to scroll to. Changing this scrolls the diff; the caller bumps it (rather than
+   * calling a method) so the jump is declarative and survives the view remounting.
+   */
+  scrollTo?: { file: string; line: number; nonce: number } | null;
 }
 
 /**
@@ -51,13 +63,24 @@ export function PierreReviewDiff({
   onReply,
   viewed,
   only,
+  scrollTo,
 }: PierreReviewDiffProps) {
   // Where a composer is currently open, keyed the same way annotations are.
   const [composing, setComposing] = useState<{
     file: string;
     line: number;
+    /** Set when the reviewer had a range selected — the comment covers startLine..line. */
+    startLine?: number;
     anchorText: string;
   } | null>(null);
+  // The live line selection. Pierre owns the drag; this only reads it, so that clicking the
+  // gutter + on a selected range comments on the whole range rather than the one line hovered.
+  const [selection, setSelection] = useState<{
+    start: number;
+    end: number;
+    side?: string;
+  } | null>(null);
+  const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
 
   const files = useMemo(() => {
     try {
@@ -101,6 +124,9 @@ export function PierreReviewDiff({
             kind: 'composer',
             file: composing.file,
             anchorText: composing.anchorText,
+            ...(composing.startLine !== undefined
+              ? { startLine: composing.startLine }
+              : {}),
           },
         });
       }
@@ -125,11 +151,13 @@ export function PierreReviewDiff({
         return (
           <ReviewComposer
             line={composing?.line ?? 0}
+            startLine={meta.startLine}
             onCancel={() => setComposing(null)}
             onSubmit={(body) => {
               void onAdd({
                 file: meta.file,
                 line: composing?.line ?? 0,
+                startLine: meta.startLine,
                 anchorText: meta.anchorText,
                 body,
               });
@@ -172,15 +200,42 @@ export function PierreReviewDiff({
           // Only the additions side can be commented on: a deleted line is not there for the
           // agent to change, so a note anchored to it would point at nothing.
           if (line === undefined || hovered?.side === 'deletions') return;
-          setComposing({ file: item.id, line, anchorText: '' });
+          // If the reviewer dragged a range that contains this line, comment on the whole
+          // range — that is what the selection was for. Otherwise it is a single line.
+          const inRange =
+            selection !== null &&
+            selection.side !== 'deletions' &&
+            line >= Math.min(selection.start, selection.end) &&
+            line <= Math.max(selection.start, selection.end);
+          setComposing({
+            file: item.id,
+            line: inRange ? Math.max(selection.start, selection.end) : line,
+            ...(inRange
+              ? { startLine: Math.min(selection.start, selection.end) }
+              : {}),
+            anchorText: '',
+          });
         }}
         className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center"
       >
         <MessageSquarePlus className="size-3" />
       </button>
     ),
-    []
+    [selection]
   );
+
+  // Declarative jump: the effect fires when `scrollTo` changes identity, so clicking the same
+  // thread twice still scrolls (the caller bumps `nonce`).
+  useEffect(() => {
+    if (scrollTo == null) return;
+    viewRef.current?.scrollTo({
+      type: 'line',
+      id: scrollTo.file,
+      lineNumber: scrollTo.line,
+      side: 'additions',
+      align: 'center',
+    });
+  }, [scrollTo]);
 
   if (files.length === 0) {
     return (
@@ -194,7 +249,19 @@ export function PierreReviewDiff({
     <ErrorBoundary>
       <PierreWorkerPool>
         <CodeView<Annotation>
+          ref={viewRef}
           items={items}
+          onSelectedLinesChange={(sel) =>
+            setSelection(
+              sel === null
+                ? null
+                : {
+                    start: sel.range.start,
+                    end: sel.range.end,
+                    side: sel.range.side,
+                  }
+            )
+          }
           renderAnnotation={renderAnnotation}
           renderGutterUtility={renderGutterUtility}
           className="size-full"

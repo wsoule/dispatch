@@ -104,17 +104,26 @@ export function ReviewThread({
 
 interface ComposerProps {
   line: number;
+  /** First line of a range comment; omitted for a single line. */
+  startLine?: number;
   onSubmit: (body: string) => void;
   onCancel: () => void;
 }
 
 /** The inline "comment on line N" box, anchored beneath the line it targets. */
-export function ReviewComposer({ line, onSubmit, onCancel }: ComposerProps) {
+export function ReviewComposer({
+  line,
+  startLine,
+  onSubmit,
+  onCancel,
+}: ComposerProps) {
   const [body, setBody] = useState('');
   return (
     <div className="bg-card shadow-hairline-strong my-1.5 ml-[90px] rounded-lg p-3">
       <div className="dense-label text-accent-foreground">
-        Comment on line {line}
+        {startLine !== undefined && startLine !== line
+          ? `Comment on lines ${startLine}–${line}`
+          : `Comment on line ${line}`}
       </div>
       <textarea
         autoFocus

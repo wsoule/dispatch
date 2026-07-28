@@ -43,6 +43,13 @@ export function ReviewView({ data, onBack }: ReviewViewProps) {
     readViewed(runId)
   );
   const [unviewedOnly, setUnviewedOnly] = useState(false);
+  // Which thread the diff should scroll to. Carries a nonce so clicking the same thread twice
+  // still jumps — a value-equal object would not re-fire the effect.
+  const [jumpTo, setJumpTo] = useState<{
+    file: string;
+    line: number;
+    nonce: number;
+  } | null>(null);
 
   // Re-read when the run changes, so opening a different review does not inherit the last
   // one's ticks.
@@ -111,6 +118,7 @@ export function ReviewView({ data, onBack }: ReviewViewProps) {
               only={selected}
               comments={data.reviewComments}
               viewed={viewed}
+              scrollTo={jumpTo}
               onAdd={data.handleAddReviewComment}
               onResolve={data.handleResolveReviewComment}
               onReply={data.handleReplyReviewComment}
@@ -123,7 +131,10 @@ export function ReviewView({ data, onBack }: ReviewViewProps) {
             comments={data.reviewComments}
             onResolve={data.handleResolveReviewComment}
             onReply={data.handleReplyReviewComment}
-            onSendBack={data.handleSendBack}
+            onSubmit={data.handleSubmitReview}
+            onJumpTo={(c) =>
+              setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
+            }
           />
         </div>
       </div>
