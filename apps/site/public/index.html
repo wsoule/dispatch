@@ -271,9 +271,9 @@
       }
 
       /* ── the app ─────────────────────────────────────────────────────────
-         A running copy of the product rather than a screenshot. Every view is
-         driven by one state machine, so dispatching on the board shows up in
-         Overview, and approving in Review moves the task into Landing. */
+         A simulation of the product, not the product. Every view is driven by
+         one state machine, so dispatching on the board shows up in Overview,
+         and approving in Review moves the task into Landing. */
       .app {
         display: grid;
         grid-template-columns: 172px minmax(0, 1fr);
@@ -1142,11 +1142,12 @@ there is output. Move to a push model.
 
     <section id="demo">
       <div class="wrap">
-        <p class="eyebrow">The whole thing, running</p>
-        <h2>Click around. It's the real app.</h2>
+        <p class="eyebrow">Demo</p>
+        <h2>The whole flow, simulated.</h2>
         <p class="sub">
-          One state machine behind every screen: dispatch on the board and it
-          shows up in Overview, approve in Review and it moves to Landing.
+          Not the app — a model of it in your browser, running the app's own
+          capture, kind inference and clustering code. Dispatch on the board and
+          it shows in Overview; approve in Review and it lands.
         </p>
 
         <div class="app">
