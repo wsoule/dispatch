@@ -1096,6 +1096,7 @@ export class Orchestrator {
         runState: meta?.state,
         baseBranch: meta?.baseBranch,
         reviewedAt: meta?.reviewedAt,
+        stackParents: meta?.stackParents,
         prUrl: meta?.prUrl,
         pushedToOrigin:
           meta?.mergeCommit !== undefined &&

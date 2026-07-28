@@ -10,11 +10,13 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import type { GitFilter } from '../components/git/GitSummary';
 import { GitSummary } from '../components/git/GitSummary';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { formatBytes } from '../lib/formatBytes';
+import { computeGitHealth } from '../lib/gitHealth';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import {
@@ -63,6 +65,26 @@ const GROUPS: {
     statuses: ['active'],
   },
 ];
+
+/** Narrows the list to one summary bucket. The buckets are defined once in
+ * computeGitHealth so a count and the rows it reveals can never disagree. */
+function matchesFilter(
+  branches: BranchEntry[],
+  filter: GitFilter
+): BranchEntry[] {
+  if (filter === 'all') return branches;
+  const health = computeGitHealth(branches);
+  const picked =
+    filter === 'stale'
+      ? health.stale
+      : filter === 'orphans'
+        ? health.orphans
+        : filter === 'stacked'
+          ? health.stacked
+          : health.onDisk.filter((b) => b.dirty);
+  const ids = new Set(picked.map((b) => b.branch));
+  return branches.filter((b) => ids.has(b.branch));
+}
 
 const STATUS_CHIP: Record<BranchEntryStatus, { label: string; cls: string }> = {
   active: {
@@ -243,14 +265,19 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const [reclaiming, setReclaiming] = useState(false);
+  // Which summary bucket the list is narrowed to. 'all' is the default and the
+  // way back out — every count above is a filter, not just a readout.
+  const [filter, setFilter] = useState<GitFilter>('all');
 
   const grouped = useMemo(
     () =>
       GROUPS.map((group) => ({
         ...group,
-        entries: data.branches.filter((e) => group.statuses.includes(e.status)),
+        entries: matchesFilter(data.branches, filter).filter((e) =>
+          group.statuses.includes(e.status)
+        ),
       })),
-    [data.branches]
+    [data.branches, filter]
   );
 
   // Every orphan whose commits already landed on its base — the only set that
@@ -348,6 +375,8 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
         branches={data.branches}
         reclaiming={reclaiming}
         onReclaimMerged={() => void reclaimMerged()}
+        active={filter}
+        onFocus={(next) => setFilter(next === filter ? 'all' : next)}
       />
 
       {actionError !== null && (

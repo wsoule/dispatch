@@ -129,6 +129,15 @@ export interface BranchEntry {
    * than the thing it is reporting on. See `dirSizeBytes`.
    */
   diskBytes?: number;
+  /**
+   * Branches this one was stacked on at dispatch time.
+   *
+   * A stacked worktree is not independently reclaimable — its commits sit on
+   * top of another branch's unmerged work — so the surface that offers to
+   * delete things has to be able to see the relationship, not just the badge
+   * a task card shows.
+   */
+  stackParents?: string[];
 
   dirty: boolean;
   lastCommitAt?: string;
