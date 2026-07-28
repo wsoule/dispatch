@@ -10,6 +10,7 @@ import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
 import { MiniOverview } from './components/shell/MiniOverview';
 import { Sidebar } from './components/shell/Sidebar';
+import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
 import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
@@ -336,6 +337,14 @@ function App() {
     onCommand: (command) => {
       if (command === 'open-palette') dispatchNav({ type: 'togglePalette' });
       else if (command === 'escape') dispatchNav({ type: 'escape' });
+      else if (command === 'nav-back') dispatchNav({ type: 'back' });
+      else if (command === 'nav-forward') dispatchNav({ type: 'forward' });
+      else if (command.startsWith('goto-')) {
+        // Position in the rail, not an id — the numbers stay learnable because
+        // they match what the sidebar prints next to each entry.
+        const view = PROJECT_VIEW_ORDER[Number(command.slice(5)) - 1];
+        if (view !== undefined) selectProjectView(view);
+      }
     },
   });
 

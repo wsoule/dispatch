@@ -17,7 +17,7 @@ import {
   Radar,
   Target,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
@@ -34,25 +34,42 @@ import {
 // `board` hosts both the Kanban and dense-list layouts behind its own in-view toggle now (see
 // `BoardView`), so it gets one "Tasks" row rather than the old separate Board/Tasks pair —
 // Linear itself doesn't split those into two nav destinations either.
+/**
+ * The rail, in the order work actually moves through the app.
+ *
+ * It used to be a flat list of nine destinations with no stated relationship,
+ * so moving between them felt like nine separate apps sharing a sidebar. The
+ * groups name the stage each one belongs to — you capture, you plan, the agents
+ * work, you land it — and the order matches the pipeline rather than the order
+ * the views happened to get built.
+ *
+ * `shortcut` is the cmd+N that reaches it, assigned by position so the numbers
+ * stay learnable rather than tracking an id.
+ */
 const PROJECT_VIEWS: {
   id: ProjectView;
   label: string;
   icon: typeof ListChecks;
+  /** Starts a new group, rendered above this entry. */
+  group?: string;
 }[] = [
-  // Brain dump and Overview lead the rail because they are the two pages this app is actually
-  // used from — one is where everything gets captured, the other is where everything gets
-  // watched. The design puts them in this order too. Everything below is somewhere you go on
-  // purpose, for one task.
-  { id: 'brain-dump', label: 'Brain dump', icon: Brain },
+  // The two pages this app is actually used from: one is where everything gets
+  // captured, the other is where everything gets watched.
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'brain-dump', label: 'Brain dump', icon: Brain },
+
+  { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },
   { id: 'board', label: 'Tasks', icon: ListChecks },
-  { id: 'runs', label: 'Runs', icon: Play },
+  { id: 'milestones', label: 'Milestones', icon: Target },
+
+  { id: 'runs', label: 'Runs', icon: Play, group: 'Work' },
   { id: 'review', label: 'Review', icon: GitPullRequestArrow },
   { id: 'landing', label: 'Landing', icon: GitMerge },
-  { id: 'plans', label: 'Plans', icon: NotebookPen },
-  { id: 'milestones', label: 'Milestones', icon: Target },
   { id: 'branches', label: 'Branches', icon: GitBranch },
 ];
+
+/** The rail order is the shortcut order — cmd+1 is the first entry, and so on. */
+export const PROJECT_VIEW_ORDER: ProjectView[] = PROJECT_VIEWS.map((v) => v.id);
 
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
   { id: 'all-agents', label: 'All Agents', icon: Radar },
@@ -296,35 +313,54 @@ export function Sidebar({
         </div>
       )}
       <nav className={cn('flex w-full flex-col gap-0.5', collapsed && 'mt-3')}>
-        {PROJECT_VIEWS.map((item) => {
+        {PROJECT_VIEWS.map((item, index) => {
           const Icon = item.icon;
           const active = section === 'project' && projectView === item.id;
           return (
-            <button
-              key={item.id}
-              type="button"
-              title={item.label}
-              aria-label={collapsed ? item.label : undefined}
-              disabled={!hasActiveProject}
-              onClick={() => onSetProjectView(item.id)}
-              className={cn(
-                'flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
-                collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2',
-                active
-                  ? 'bg-accent font-medium text-accent-foreground'
-                  : 'text-foreground/80 hover:bg-accent/60',
-                !hasActiveProject &&
-                  'pointer-events-none text-muted-foreground/50'
+            <Fragment key={item.id}>
+              {item.group !== undefined && !collapsed && (
+                <div className="text-muted-foreground/70 px-2 pt-3 pb-1 text-[10px] font-medium tracking-[0.08em] uppercase">
+                  {item.group}
+                </div>
               )}
-            >
-              <Icon className="size-4 shrink-0" strokeWidth={2} />
-              {!collapsed && (
-                <>
-                  <span className="flex-1">{item.label}</span>
-                  <CountChip count={badges[item.id] ?? 0} />
-                </>
+              {item.group !== undefined && collapsed && (
+                <div
+                  aria-hidden
+                  className="bg-border mx-auto my-2 h-px w-5 shrink-0"
+                />
               )}
-            </button>
+              <button
+                type="button"
+                title={item.label}
+                aria-label={collapsed ? item.label : undefined}
+                disabled={!hasActiveProject}
+                onClick={() => onSetProjectView(item.id)}
+                className={cn(
+                  'flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
+                  collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2',
+                  active
+                    ? 'bg-accent font-medium text-accent-foreground'
+                    : 'text-foreground/80 hover:bg-accent/60',
+                  !hasActiveProject &&
+                    'pointer-events-none text-muted-foreground/50'
+                )}
+              >
+                <Icon className="size-4 shrink-0" strokeWidth={2} />
+                {!collapsed && (
+                  <>
+                    <span className="flex-1">{item.label}</span>
+                    <CountChip count={badges[item.id] ?? 0} />
+                    {/* The shortcut lives on the thing it operates, which is the
+                      only way anyone finds out it exists. */}
+                    {index < 9 && (
+                      <span className="text-muted-foreground/50 font-mono text-[10px]">
+                        ⌘{index + 1}
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+            </Fragment>
           );
         })}
       </nav>

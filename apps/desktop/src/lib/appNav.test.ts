@@ -206,3 +206,67 @@ describe('navReducer', () => {
     expect(state.activeRunId).toBeNull();
   });
 });
+
+describe('history', () => {
+  const view = (state: NavState) => `${state.section}:${state.projectView}`;
+
+  test('back returns to where you came from, not a fixed destination', () => {
+    let state = initialNavState; // overview
+    state = navReducer(state, { type: 'setProjectView', view: 'runs' });
+    state = navReducer(state, { type: 'setProjectView', view: 'review' });
+    expect(view(state)).toBe('project:review');
+
+    state = navReducer(state, { type: 'back' });
+    expect(view(state)).toBe('project:runs');
+    state = navReducer(state, { type: 'back' });
+    expect(view(state)).toBe('project:overview');
+  });
+
+  test('forward works after going back', () => {
+    let state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'runs',
+    });
+    state = navReducer(state, { type: 'back' });
+    expect(view(state)).toBe('project:overview');
+    state = navReducer(state, { type: 'forward' });
+    expect(view(state)).toBe('project:runs');
+  });
+
+  test('navigating after going back discards the forward entries', () => {
+    let state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'runs',
+    });
+    state = navReducer(state, { type: 'setProjectView', view: 'review' });
+    state = navReducer(state, { type: 'back' }); // on runs
+    state = navReducer(state, { type: 'setProjectView', view: 'plans' });
+    // Review is gone from the future; forward must not resurrect it.
+    state = navReducer(state, { type: 'forward' });
+    expect(view(state)).toBe('project:plans');
+  });
+
+  test('back at the start of history is a no-op', () => {
+    const state = navReducer(initialNavState, { type: 'back' });
+    expect(state).toBe(initialNavState);
+  });
+
+  test('re-selecting the current view does not add an entry', () => {
+    const state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'overview',
+    });
+    expect(state.history).toHaveLength(1);
+  });
+
+  test('back restores the run that was open on that entry', () => {
+    let state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'runs',
+    });
+    state = navReducer(state, { type: 'openRun', runId: 'r-1' });
+    state = navReducer(state, { type: 'setProjectView', view: 'plans' });
+    state = navReducer(state, { type: 'back' });
+    expect(state.activeRunId).toBe('r-1');
+  });
+});

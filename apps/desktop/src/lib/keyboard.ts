@@ -32,7 +32,13 @@ export interface GlobalKeyboardContext {
   modalOpen: boolean;
 }
 
-export type GlobalKeyCommand = 'open-palette' | 'escape';
+export type GlobalKeyCommand =
+  | 'open-palette'
+  | 'escape'
+  | 'nav-back'
+  | 'nav-forward'
+  /** Jump straight to the Nth entry in the sidebar's primary rail. */
+  | `goto-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
 /** Maps one keydown to the app-root command it should trigger, or `null` if this keystroke
  * isn't a global shortcut right now. Never resolves a list-navigation command — those are
@@ -45,6 +51,19 @@ export function resolveGlobalKeyCommand(
 
   if (input.key === 'Escape') return ctx.modalOpen ? null : 'escape';
   if (combo && input.key.toLowerCase() === 'k') return 'open-palette';
+
+  // Back/forward through visited views. cmd+[ and cmd+] are what every browser
+  // and every editor already uses for this, so it needs no teaching.
+  if (combo && input.key === '[') return 'nav-back';
+  if (combo && input.key === ']') return 'nav-forward';
+
+  // cmd+1..9 jumps to a rail entry. These work while typing on purpose: they
+  // carry a modifier, so they cannot be confused with entering text, and being
+  // unable to leave a screen because your cursor is in a filter box is exactly
+  // the kind of thing that makes an app feel stuck.
+  if (combo && /^[1-9]$/.test(input.key)) {
+    return `goto-${Number(input.key) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
+  }
 
   // Every other global shortcut below is a bare letter/symbol — never hijack normal typing.
   if (ctx.isTyping) return null;

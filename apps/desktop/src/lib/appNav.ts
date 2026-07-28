@@ -54,6 +54,25 @@ export interface NavState {
    * you on one fixed view. */
   newTaskReturnView: ProjectView;
   paletteOpen: boolean;
+  /**
+   * Where you have been, newest last, and how far back you have stepped.
+   *
+   * Without this every "back" affordance had to name one fixed destination, so
+   * closing a review always went to the same place regardless of where you
+   * opened it from — which is only right for whoever happened to arrive that
+   * way. An index rather than popping, so forward still works after going back.
+   */
+  history: NavEntry[];
+  historyIndex: number;
+}
+
+/** One visited destination. Runs and Review key off a run id, so it travels
+ * with the entry — going back to a review you had open should reopen it. */
+export interface NavEntry {
+  section: 'project' | 'global';
+  projectView: ProjectView;
+  globalView: GlobalView;
+  activeRunId: string | null;
 }
 
 export const initialNavState: NavState = {
@@ -65,7 +84,35 @@ export const initialNavState: NavState = {
   activeRunId: null,
   newTaskReturnView: 'board',
   paletteOpen: false,
+  history: [
+    {
+      section: 'project',
+      projectView: 'overview',
+      globalView: 'sessions',
+      activeRunId: null,
+    },
+  ],
+  historyIndex: 0,
 };
+
+/** Truncates any forward entries and appends — the browser rule: navigating
+ * somewhere new after going back discards what you had gone back from. */
+function pushHistory(state: NavState, next: NavEntry): NavState {
+  const kept = state.history.slice(0, state.historyIndex + 1);
+  const last = kept[kept.length - 1];
+  // Re-selecting the view you are already on is not a new destination.
+  if (
+    last !== undefined &&
+    last.section === next.section &&
+    last.projectView === next.projectView &&
+    last.globalView === next.globalView &&
+    last.activeRunId === next.activeRunId
+  ) {
+    return state;
+  }
+  const history = [...kept, next].slice(-50);
+  return { ...state, history, historyIndex: history.length - 1 };
+}
 
 export type NavAction =
   | { type: 'selectProject'; projectId: string }
@@ -81,6 +128,8 @@ export type NavAction =
   | { type: 'openPalette' }
   | { type: 'closePalette' }
   | { type: 'togglePalette' }
+  | { type: 'back' }
+  | { type: 'forward' }
   /** Context-sensitive close: the command palette wins over the task peek (it renders on
    * top), which in turn wins over the full-page task creator (a whole view, so the outermost
    * layer), and each one being open swallows the Escape entirely rather than also clearing
@@ -101,23 +150,31 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         peekTaskId: null,
         activeRunId: null,
       };
-    case 'setProjectView':
-      return {
-        ...state,
-        section: 'project',
-        projectView: action.view,
+    case 'setProjectView': {
+      const activeRunId =
         // Runs and Pull requests both key their selection off `activeRunId` (a PR is just a
         // run with an open PR), so keep it when moving between those two; any other view
         // clears it so re-entering starts fresh rather than reopening a stale selection.
-        activeRunId:
-          action.view === 'runs' ||
-          action.view === 'pull-requests' ||
-          // Review is a full-page view OF the selected run, so moving into it must keep the
-          // selection rather than clearing it and landing on an empty surface.
-          action.view === 'review'
-            ? state.activeRunId
-            : null,
+        action.view === 'runs' ||
+        action.view === 'pull-requests' ||
+        // Review is a full-page view OF the selected run, so moving into it must keep the
+        // selection rather than clearing it and landing on an empty surface.
+        action.view === 'review'
+          ? state.activeRunId
+          : null;
+      const next: NavState = {
+        ...state,
+        section: 'project',
+        projectView: action.view,
+        activeRunId,
       };
+      return pushHistory(next, {
+        section: 'project',
+        projectView: action.view,
+        globalView: state.globalView,
+        activeRunId,
+      });
+    }
     case 'setGlobalView':
       // A global view (Settings, Sessions, All Agents) isn't showing any project's task
       // list at all, so a task peek left open from whatever project view preceded it has
@@ -134,9 +191,38 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'closePeek':
       return { ...state, peekTaskId: null };
     case 'openRun':
-      return { ...state, activeRunId: action.runId };
+      // Opening a different run is a destination in its own right, so back
+      // returns to the one you were looking at rather than skipping the view.
+      return pushHistory(
+        { ...state, activeRunId: action.runId },
+        {
+          section: state.section,
+          projectView: state.projectView,
+          globalView: state.globalView,
+          activeRunId: action.runId,
+        }
+      );
     case 'closeRun':
       return { ...state, activeRunId: null };
+    case 'back':
+    case 'forward': {
+      const delta = action.type === 'back' ? -1 : 1;
+      const index = state.historyIndex + delta;
+      const entry = state.history[index];
+      if (entry === undefined) return state;
+      return {
+        ...state,
+        historyIndex: index,
+        section: entry.section,
+        projectView: entry.projectView,
+        globalView: entry.globalView,
+        activeRunId: entry.activeRunId,
+        // Moving through history is navigation, not a modal action — anything
+        // layered on top closes rather than following you to the new screen.
+        peekTaskId: null,
+        paletteOpen: false,
+      };
+    }
     case 'openNewTask':
       // The creator is a project-section destination, so opening it from a global view
       // (Settings/Sessions/All Agents) also moves back into the project section and returns to
