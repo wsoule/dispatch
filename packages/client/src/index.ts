@@ -43,6 +43,7 @@ export type {
   RepoPr,
   ReviewComment,
   ReviewReply,
+  ReviewVerdict,
   RunDetail,
   RunMeta,
   VerifyStepResult,

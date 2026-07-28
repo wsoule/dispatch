@@ -540,8 +540,10 @@ async function addReviewComment(
   const body = parsed.value as {
     file?: unknown;
     line?: unknown;
+    startLine?: unknown;
     anchorText?: unknown;
     body?: unknown;
+    pending?: unknown;
   };
   if (typeof body.file !== 'string' || body.file === '') {
     return errorResponse(400, 'file is required');
@@ -555,8 +557,13 @@ async function addReviewComment(
   const comment = ctx.reviewComments.add(runId, {
     file: body.file,
     line: body.line,
+    startLine:
+      typeof body.startLine === 'number' && Number.isInteger(body.startLine)
+        ? body.startLine
+        : undefined,
     anchorText: typeof body.anchorText === 'string' ? body.anchorText : '',
     body: body.body.trim(),
+    pending: body.pending !== false,
   });
   ctx.events.broadcast({ type: 'review.changed', runId });
   return jsonResponse(comment, 201);
@@ -612,6 +619,85 @@ async function replyReviewComment(
   } catch (err) {
     return errorResponse(404, (err as Error).message);
   }
+}
+
+/**
+ * POST /api/runs/:id/review — submit a review: publish its pending comments, then act on the
+ * verdict.
+ *
+ * The three verdicts map onto what this app can already do with a finished run, rather than
+ * inventing a parallel notion of review state:
+ *
+ *   approve         -> the work is good; the caller enqueues it to land
+ *   request-changes -> resume the agent on the same branch with the review attached
+ *   comment         -> publish the notes and change nothing
+ *
+ * Comments are published BEFORE the verdict is acted on, and the count is returned either way,
+ * so a verdict action that fails cannot swallow the reviewer's writing.
+ */
+async function submitReview(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { verdict?: unknown; body?: unknown };
+  const verdict = body.verdict;
+  if (
+    verdict !== 'approve' &&
+    verdict !== 'request-changes' &&
+    verdict !== 'comment'
+  ) {
+    return errorResponse(
+      400,
+      "invalid verdict: expected 'approve', 'request-changes' or 'comment'"
+    );
+  }
+  const summary = typeof body.body === 'string' ? body.body.trim() : '';
+
+  // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
+  // run. The other two verdicts are meaningful on their own.
+  const pendingBefore = ctx.reviewComments.pendingCount(runId);
+  if (verdict === 'request-changes' && summary === '' && pendingBefore === 0) {
+    return errorResponse(
+      400,
+      'nothing to send back — leave a note or a comment first'
+    );
+  }
+
+  const published = ctx.reviewComments.publishPending(runId);
+  ctx.events.broadcast({ type: 'review.changed', runId });
+
+  if (verdict === 'request-changes') {
+    const threads = formatCommentsForAgent(ctx.reviewComments.list(runId));
+    const message = [summary, threads].filter((p) => p !== '').join('\n\n');
+    try {
+      const meta = ctx.orchestrator.sendMessage(runId, message);
+      return jsonResponse({ verdict, published, run: meta });
+    } catch (err) {
+      // The comments are already published — say so, so the caller knows the review landed even
+      // though the resume did not.
+      return jsonResponse(
+        { verdict, published, error: (err as Error).message },
+        409
+      );
+    }
+  }
+
+  if (verdict === 'approve') {
+    try {
+      const entry = ctx.mergeQueue.enqueue(runId);
+      return jsonResponse({ verdict, published, queued: entry });
+    } catch (err) {
+      return jsonResponse(
+        { verdict, published, error: (err as Error).message },
+        409
+      );
+    }
+  }
+
+  return jsonResponse({ verdict, published });
 }
 
 /**
@@ -1583,6 +1669,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await sendBackRun(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review-submit' &&
+        method === 'POST'
+      ) {
+        return await submitReview(req, ctx, segments[1]);
       }
       if (segments.length === 3 && segments[2] === 'pr' && method === 'GET') {
         return await getPr(req, ctx, segments[1]);

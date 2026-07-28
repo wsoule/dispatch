@@ -23,6 +23,7 @@ function comment(over: Partial<ReviewComment> = {}): ReviewComment {
     author: 'You',
     body: 'do not swallow this',
     resolved: false,
+    pending: false,
     created: '2026-07-27T00:00:00.000Z',
     replies: [],
     ...over,
@@ -208,5 +209,114 @@ describe('formatCommentsForAgent', () => {
     const out = formatCommentsForAgent([comment({ anchorText: '' })]);
     expect(out).not.toContain('```');
     expect(out).toContain('do not swallow this');
+  });
+});
+
+describe('pending review batching', () => {
+  test('a new comment is pending by default', () => {
+    const dir = root();
+    const store = new ReviewCommentStore(dir);
+    const c = store.add('r-1', {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'b',
+    });
+    expect(c.pending).toBe(true);
+  });
+
+  test('pending can be opted out of, for a reply-style immediate note', () => {
+    const store = new ReviewCommentStore(root());
+    const c = store.add('r-1', {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'b',
+      pending: false,
+    });
+    expect(c.pending).toBe(false);
+  });
+
+  // The whole point of staging: the agent hears about a review once, when it is submitted.
+  test('a pending comment never reaches the agent', () => {
+    const store = new ReviewCommentStore(root());
+    store.add('r-1', {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'do not send me yet',
+    });
+    expect(formatCommentsForAgent(store.list('r-1'))).toBe('');
+  });
+
+  test('publishing releases them, and then they do reach the agent', () => {
+    const dir = root();
+    const store = new ReviewCommentStore(dir);
+    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'now send' });
+    expect(store.publishPending('r-1')).toBe(1);
+    expect(formatCommentsForAgent(store.list('r-1'))).toContain('now send');
+  });
+
+  test('publishing twice releases nothing the second time', () => {
+    const store = new ReviewCommentStore(root());
+    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
+    expect(store.publishPending('r-1')).toBe(1);
+    expect(store.publishPending('r-1')).toBe(0);
+  });
+
+  test('pendingCount is what the review bar counts down', () => {
+    const store = new ReviewCommentStore(root());
+    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'one' });
+    store.add('r-1', { file: 'a', line: 2, anchorText: 'y', body: 'two' });
+    store.add('r-1', {
+      file: 'a',
+      line: 3,
+      anchorText: 'z',
+      body: 'already sent',
+      pending: false,
+    });
+    expect(store.pendingCount('r-1')).toBe(2);
+  });
+
+  test('publishing one run does not touch another', () => {
+    const dir = root();
+    const store = new ReviewCommentStore(dir);
+    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
+    store.add('r-2', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
+    store.publishPending('r-1');
+    expect(store.pendingCount('r-2')).toBe(1);
+  });
+});
+
+describe('range comments', () => {
+  test('a range is stored and round-trips', () => {
+    const dir = root();
+    const store = new ReviewCommentStore(dir);
+    store.add('r-1', {
+      file: 'a',
+      line: 12,
+      startLine: 8,
+      anchorText: 'x',
+      body: 'this whole block',
+    });
+    expect(new ReviewCommentStore(dir).list('r-1')[0]).toMatchObject({
+      line: 12,
+      startLine: 8,
+    });
+  });
+
+  test('a range renders as a span in the agent handoff', () => {
+    const out = formatCommentsForAgent([
+      comment({ startLine: 8, line: 12, pending: false }),
+    ]);
+    expect(out).toContain('Lines 8-12');
+  });
+
+  test('a single-line comment does not pretend to be a range', () => {
+    const out = formatCommentsForAgent([
+      comment({ startLine: 3, line: 3, pending: false }),
+    ]);
+    expect(out).toContain('Line 3:');
+    expect(out).not.toContain('Lines 3-3');
   });
 });

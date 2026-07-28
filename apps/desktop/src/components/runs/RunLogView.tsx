@@ -147,7 +147,7 @@ export function RunLogView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1">
-        <div ref={contentRef} className="flex min-h-full flex-col gap-2">
+        <div ref={contentRef} className="flex min-h-full flex-col gap-3">
           {meta.resumedFrom !== undefined && (
             <div className="text-muted-foreground flex items-center justify-center gap-1.5 py-1 text-center text-[11px]">
               <Info className="size-3 shrink-0" />
@@ -165,14 +165,17 @@ export function RunLogView({
               </p>
             </div>
           )}
-          {/* A tagged gutter rather than chat bubbles: fixed-width tags turn the transcript
-              into a scannable spine, so the shape of what the agent did is visible without
-              reading it. The user's own turns keep the bubble treatment — they are the one
-              thing you want to pick out of the stream at a glance, and a bubble does that
-              better than a tag. */}
+          {/* Three levels of emphasis, which is what the flat version was missing. What the
+              agent SAID is the transcript's spine and gets full weight. What it DID is
+              subordinate — a run of tool calls collapses into one quiet block behind a rule, so
+              twelve file reads read as one event rather than twelve. What YOU said is a bubble,
+              because finding your own interjections is a different job from reading along. */}
           {groups.map((group, i) =>
             group.kind === 'tools' ? (
-              <div key={i} className="flex flex-col">
+              <div
+                key={i}
+                className="border-border/60 my-0.5 flex flex-col border-l pl-2"
+              >
                 {group.entries.map((entry, j) => (
                   <TranscriptRow key={j} entry={entry} />
                 ))}
@@ -182,6 +185,16 @@ export function RunLogView({
             ) : (
               <TranscriptRow key={i} entry={group.entries[0]} />
             )
+          )}
+
+          {/* A live run that has not printed anything for a moment is indistinguishable from a
+              wedged one without this. Only while genuinely running — never on a paused or
+              finished run, where a spinner would be a lie. */}
+          {meta.state === 'running' && (
+            <div className="text-muted-foreground flex items-center gap-2 px-1 py-1">
+              <span className="bg-state-working size-1.5 shrink-0 rounded-full motion-safe:animate-pulse" />
+              <span className="text-[12px]">Working…</span>
+            </div>
           )}
 
           {/* The gate belongs in the conversation, at the point it was asked: the turns above it

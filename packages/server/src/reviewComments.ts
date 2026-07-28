@@ -25,6 +25,20 @@ export interface ReviewComment {
   file: string;
   /** Line number in the new (post-change) side of the diff, at the time of writing. */
   line: number;
+  /**
+   * First line of a multi-line comment, when the reviewer selected a range. `line` is the last
+   * line either way, matching how GitHub anchors a range comment to its end.
+   */
+  startLine?: number;
+  /**
+   * True while this comment belongs to a review the author has not submitted yet.
+   *
+   * This is what makes a review a review rather than a stream of interruptions: you read the
+   * whole diff, leave notes as you go, and the agent hears about them once — with a verdict —
+   * instead of being pinged per comment. Pending comments are visible to the author and are
+   * excluded from anything that goes to the agent until submitted.
+   */
+  pending: boolean;
   /** What that line said when the comment was written — the anchor. */
   anchorText: string;
   author: string;
@@ -45,10 +59,16 @@ export interface ReviewReply {
 export interface AddCommentInput {
   file: string;
   line: number;
+  startLine?: number;
   anchorText: string;
   body: string;
   author?: string;
+  /** Defaults to true: a comment written during a review is pending until the review is sent. */
+  pending?: boolean;
 }
+
+/** How a submitted review lands. Mirrors the three things a reviewer can actually decide. */
+export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
 
 function newId(prefix: string): string {
   return `${prefix}-${randomBytes(3).toString('hex')}`;
@@ -125,10 +145,12 @@ export class ReviewCommentStore {
       id: newId('rc'),
       file: input.file,
       line: input.line,
+      ...(input.startLine !== undefined ? { startLine: input.startLine } : {}),
       anchorText: input.anchorText,
       author: input.author ?? 'You',
       body: input.body,
       resolved: false,
+      pending: input.pending ?? true,
       created: now,
       replies: [],
     };
@@ -176,6 +198,31 @@ export class ReviewCommentStore {
       this.list(runId).filter((c) => c.id !== commentId)
     );
   }
+
+  /**
+   * Publishes every pending comment on a run, returning how many were released.
+   *
+   * Called when a review is submitted. Deliberately separate from acting on the verdict, and
+   * done first: the comments become real, and only then does the caller resume or enqueue. If
+   * the verdict action fails, the reviewer's writing still survives — the reverse order would
+   * lose it.
+   */
+  publishPending(runId: string): number {
+    const all = this.list(runId);
+    let count = 0;
+    for (const c of all) {
+      if (!c.pending) continue;
+      c.pending = false;
+      count += 1;
+    }
+    if (count > 0) this.write(runId, all);
+    return count;
+  }
+
+  /** How many comments are staged but unsent — the number the review bar counts down. */
+  pendingCount(runId: string): number {
+    return this.list(runId).filter((c) => c.pending).length;
+  }
 }
 
 /**
@@ -187,7 +234,9 @@ export class ReviewCommentStore {
  * because resolving one is exactly how you say "never mind".
  */
 export function formatCommentsForAgent(comments: ReviewComment[]): string {
-  const open = comments.filter((c) => !c.resolved);
+  // Resolved threads are settled, and pending ones have not been sent yet — neither belongs in
+  // what the agent is asked to act on.
+  const open = comments.filter((c) => !c.resolved && !c.pending);
   if (open.length === 0) return '';
 
   const byFile = new Map<string, ReviewComment[]>();
@@ -205,7 +254,11 @@ export function formatCommentsForAgent(comments: ReviewComment[]): string {
     const lines = [`### ${file}`];
     for (const c of [...list].sort((a, b) => a.line - b.line)) {
       lines.push('');
-      lines.push(`Line ${c.line}:`);
+      lines.push(
+        c.startLine !== undefined && c.startLine !== c.line
+          ? `Lines ${c.startLine}-${c.line}:`
+          : `Line ${c.line}:`
+      );
       if (c.anchorText.trim() !== '') {
         lines.push('```');
         lines.push(c.anchorText);

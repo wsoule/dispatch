@@ -421,7 +421,7 @@ export function RunsView({
                       onAddComment={data.handleAddReviewComment}
                       onResolveComment={data.handleResolveReviewComment}
                       onReplyComment={data.handleReplyReviewComment}
-                      onSendBack={data.handleSendBack}
+                      onSubmitReview={data.handleSubmitReview}
                     />
                   )}
                 </TabsContent>

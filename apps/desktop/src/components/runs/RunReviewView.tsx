@@ -58,7 +58,11 @@ interface RunReviewViewProps {
   }) => Promise<void>;
   onResolveComment?: (commentId: string, resolved: boolean) => Promise<void>;
   onReplyComment?: (commentId: string, body: string) => Promise<void>;
-  onSendBack?: (note: string) => Promise<void>;
+  /** Submits the staged review — publishes its comments, then acts on the verdict. */
+  onSubmitReview?: (
+    verdict: import('@dispatch/client').ReviewVerdict,
+    body: string
+  ) => Promise<{ published: number; error?: string }>;
 }
 
 /**
@@ -89,7 +93,7 @@ export function RunReviewView({
   onAddComment,
   onResolveComment,
   onReplyComment,
-  onSendBack,
+  onSubmitReview,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
@@ -203,13 +207,13 @@ export function RunReviewView({
         {onAddComment !== undefined &&
           onResolveComment !== undefined &&
           onReplyComment !== undefined &&
-          onSendBack !== undefined && (
+          onSubmitReview !== undefined && (
             <div className="min-h-0 overflow-auto">
               <ReviewCommentsPanel
                 comments={reviewComments ?? []}
                 onResolve={onResolveComment}
                 onReply={onReplyComment}
-                onSendBack={onSendBack}
+                onSubmit={onSubmitReview}
               />
             </div>
           )}

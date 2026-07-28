@@ -440,10 +440,18 @@ export interface ReviewReply {
   created: string;
 }
 
+/** How a submitted review lands: approve queues the merge, request-changes resumes the agent
+ * with the review attached, comment publishes the notes and changes nothing. */
+export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
+
 export interface ReviewComment {
   id: string;
   file: string;
   line: number;
+  /** First line of a range comment; `line` is the last. Absent for a single-line comment. */
+  startLine?: number;
+  /** True while the comment belongs to a review that has not been submitted. */
+  pending: boolean;
   anchorText: string;
   author: string;
   body: string;
@@ -782,8 +790,22 @@ export interface ApiClient {
   fetchReviewComments(runId: string): Promise<ReviewComment[]>;
   addReviewComment(
     runId: string,
-    input: { file: string; line: number; anchorText: string; body: string }
+    input: {
+      file: string;
+      line: number;
+      startLine?: number;
+      anchorText: string;
+      body: string;
+      /** Defaults to true — a comment is staged until the review is submitted. */
+      pending?: boolean;
+    }
   ): Promise<ReviewComment>;
+  /** Publishes the pending comments and acts on the verdict. Returns how many were published. */
+  submitReview(
+    runId: string,
+    verdict: ReviewVerdict,
+    body: string
+  ): Promise<{ verdict: ReviewVerdict; published: number; error?: string }>;
   resolveReviewComment(
     runId: string,
     commentId: string,
@@ -1025,6 +1047,11 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, '/api/config', {
         method: 'PATCH',
         body: JSON.stringify(patch),
+      }),
+    submitReview: (runId, verdict, body) =>
+      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {
+        method: 'POST',
+        body: JSON.stringify({ verdict, body }),
       }),
     sendBackRun: (runId, note) =>
       request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/send-back`, {
