@@ -2,7 +2,7 @@
 id: t-021643
 title: "Build the Review page shell: header, tabs, and the file list with viewed
   tracking"
-status: cancelled
+status: done
 kind: task
 parent: e-ddd932
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:59:16.695Z
-updated: 2026-07-27T23:10:35.833Z
+updated: 2026-07-28T00:09:18.350Z
 external: null
 ---
 
@@ -43,3 +43,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T23:10:35.833Z Cancelled rather than done — not built, and I do not think it should be built as written. It assumes a full-page Review surface replacing DiffModal, with three tabs and a bespoke file list. The app already reviews a run inside RunsView (RunReviewView: diff, file tree, merge/discard/request-changes, queue controls, PR handoff), and the review comments from t-46b6eb now live there too. Building a second full-page review surface beside it would mean two places to review the same run, which is the exact duplication RunReviewView's own doc comment says it exists to avoid. Two sub-parts are separately worth doing and are NOT covered anywhere: per-file "viewed" tracking persisted per run (genuinely useful on a large diff, and nothing else provides it), and the tabs — though two of the three tabs it names have no data behind them, per the note on t-c14d40. Recommend closing this shape and opening a small task for viewed-tracking inside the existing review surface if it is still wanted.
+- 2026-07-28T00:09:18.350Z Un-cancelled and done in a5d6a9e. Reversing my own call: I argued a full-page Review would duplicate RunReviewView, and it would have if written as a second implementation. Built from the same AnnotatedDiff and ReviewCommentsPanel instead, so the difference is the frame rather than the behaviour — and the frame turned out to be the point. A forty-file diff as one scroll is unreviewable; this shows one file at a time with a list beside it. DONE: full-page surface, its own nav destination with a live badge, breadcrumb back, file list with left-truncated paths (real dir=rtl on the span, filename always visible), +/- counts from the parsed patch, unresolved-comment counts, viewed ticks, unviewed-only filter, N-of-M readout, and the Control room's Review action now lands here rather than on the transcript. Viewed state is localStorage keyed by run, NOT stored with the run: it is one person's reading aid, two reviewers of the same branch have different answers, and a re-dispatch should start clean. The summary counts against files in the current diff so a stale tick cannot exceed the total (tested). NOT done: the three tabs — Conversation is redundant now that the panel indexes every thread beside the diff, and Checks needs the per-step data that only just became configurable (see t-c14d40); worth revisiting once a project actually sets verifySteps.
