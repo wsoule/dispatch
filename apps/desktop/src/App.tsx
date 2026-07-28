@@ -8,6 +8,7 @@ import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
+import { MiniOverview } from './components/shell/MiniOverview';
 import { Sidebar } from './components/shell/Sidebar';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
@@ -62,6 +63,15 @@ function App() {
   // Whether the notification inbox popover (the bell in Sidebar's global section) is open —
   // see toggleInbox below for why opening it also marks everything read.
   const [inboxOpen, setInboxOpen] = useState(false);
+
+  // The overview rail's open/closed state, kept across launches — it is a
+  // layout preference, and re-hiding it every start would make it feel broken.
+  const [railOpen, setRailOpen] = useState<boolean>(
+    () => window.localStorage.getItem('dispatch:overview-rail') !== '0'
+  );
+  useEffect(() => {
+    window.localStorage.setItem('dispatch:overview-rail', railOpen ? '1' : '0');
+  }, [railOpen]);
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -632,7 +642,24 @@ function App() {
                   {navState.projectView === 'review' && (
                     <ReviewView
                       data={data}
-                      onBack={() => selectProjectView('overview')}
+                      onBack={() => dispatchNav({ type: 'closeRun' })}
+                      selectedRunId={navState.activeRunId}
+                      onSelectRun={(runId) =>
+                        dispatchNav({ type: 'openRun', runId })
+                      }
+                      // Pull requests is no longer its own destination — the
+                      // PR surface renders inside Review for a run whose diff
+                      // lives on GitHub.
+                      renderPr={(runId) => (
+                        <PullRequestsView
+                          data={data}
+                          selectedRunId={runId}
+                          onSelectRun={(id) =>
+                            dispatchNav({ type: 'openRun', runId: id })
+                          }
+                          onCloseRun={() => dispatchNav({ type: 'closeRun' })}
+                        />
+                      )}
                     />
                   )}
                   {navState.projectView === 'landing' && (
@@ -663,7 +690,7 @@ function App() {
                       }
                       onViewPr={(runId) => {
                         dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('pull-requests');
+                        selectProjectView('review');
                       }}
                     />
                   )}
@@ -674,16 +701,6 @@ function App() {
                         dispatchNav({ type: 'openRun', runId });
                         selectProjectView('runs');
                       }}
-                    />
-                  )}
-                  {navState.projectView === 'pull-requests' && (
-                    <PullRequestsView
-                      data={data}
-                      selectedRunId={navState.activeRunId}
-                      onSelectRun={(runId) =>
-                        dispatchNav({ type: 'openRun', runId })
-                      }
-                      onCloseRun={() => dispatchNav({ type: 'closeRun' })}
                     />
                   )}
                   {navState.projectView === 'milestones' && (
@@ -728,6 +745,26 @@ function App() {
               )}
             </ErrorBoundary>
           </main>
+
+          {/* The overview, kept in the corner. Every other screen answers a
+              narrower question than "what needs me", so this is the one thing
+              worth carrying between them. Project scope only — the global
+              views have no feed to show. */}
+          {navState.section === 'project' && activeProject !== null && (
+            <MiniOverview
+              data={data}
+              open={railOpen}
+              onToggle={() => setRailOpen((v) => !v)}
+              onOpenRun={(runId) => {
+                dispatchNav({ type: 'openRun', runId });
+                selectProjectView('runs');
+              }}
+              onReviewRun={(runId) => {
+                dispatchNav({ type: 'openRun', runId });
+                selectProjectView('review');
+              }}
+            />
+          )}
         </div>
 
         {selectedDoc !== null && data.config !== null && (

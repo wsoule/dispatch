@@ -8,7 +8,6 @@ import {
   Cog,
   GitBranch,
   GitMerge,
-  GitPullRequest,
   GitPullRequestArrow,
   LayoutDashboard,
   ListChecks,
@@ -53,7 +52,6 @@ const PROJECT_VIEWS: {
   { id: 'plans', label: 'Plans', icon: NotebookPen },
   { id: 'milestones', label: 'Milestones', icon: Target },
   { id: 'branches', label: 'Branches', icon: GitBranch },
-  { id: 'pull-requests', label: 'Pull requests', icon: GitPullRequest },
 ];
 
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
