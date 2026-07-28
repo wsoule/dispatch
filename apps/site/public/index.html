@@ -8,7 +8,7 @@
     </title>
     <meta
       name="description"
-      content="Every AI harness is a chat window. Dispatch is a tracker: a board, plans, a brain dump and a merge queue, all as markdown in your repo, worked by agents instead of people."
+      content="Linear, but the assignees are agents and everything lives in your repo. A board, a brain dump, reviews and a merge queue — all markdown in .dispatch/."
     />
     <meta property="og:title" content="Dispatch" />
     <meta
@@ -23,7 +23,7 @@
     />
     <style>
       :root {
-        /* Taken from the app's own tokens, so the site does not misrepresent what you open. */
+        /* The app's own tokens, so the page does not misrepresent what you open. */
         --ground: #0e0f11;
         --panel: #17181c;
         --raised: #1e1f24;
@@ -75,7 +75,7 @@
         border-radius: 3px;
       }
       .wrap {
-        max-width: 1080px;
+        max-width: 1120px;
         margin: 0 auto;
         padding: 0 24px;
       }
@@ -127,14 +127,14 @@
         grid-template-columns: 1fr 1fr;
         gap: 56px;
         align-items: center;
-        padding: 84px 0 72px;
+        padding: 76px 0 60px;
       }
       h1 {
         font-size: clamp(34px, 4.4vw, 52px);
         line-height: 1.06;
         letter-spacing: -0.035em;
         font-weight: 500;
-        margin: 0 0 20px;
+        margin: 0 0 18px;
         text-wrap: balance;
       }
       h1 em {
@@ -144,8 +144,8 @@
       .lede {
         color: var(--muted);
         font-size: 17px;
-        max-width: 42ch;
-        margin: 0 0 28px;
+        max-width: 40ch;
+        margin: 0 0 26px;
       }
       .cta {
         display: flex;
@@ -183,31 +183,29 @@
         color: var(--ink);
       }
 
-      /* The hero artifact: an actual task file. */
+      /* The hero artifact: an actual task file. A <pre>, not a styled div —
+         its line breaks are load bearing and a formatter will reflow a div. */
       .file {
         background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 10px;
         overflow: hidden;
-        font-family: var(--mono);
-        font-size: 12.5px;
-        line-height: 1.75;
       }
       .file-head {
-        display: flex;
-        align-items: center;
-        gap: 8px;
         padding: 9px 14px;
         background: var(--raised);
         border-bottom: 1px solid var(--line);
         color: var(--muted);
+        font-family: var(--mono);
         font-size: 11.5px;
       }
       .file-body {
         margin: 0;
         padding: 14px;
         overflow-x: auto;
-        white-space: pre;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 1.75;
       }
       .k {
         color: var(--muted);
@@ -228,7 +226,7 @@
       /* ── sections ────────────────────────────────────────────────────── */
       section {
         border-top: 1px solid var(--line);
-        padding: 64px 0;
+        padding: 56px 0;
       }
       .eyebrow {
         font-family: var(--mono);
@@ -236,103 +234,254 @@
         letter-spacing: 0.14em;
         text-transform: uppercase;
         color: var(--dim);
-        margin: 0 0 28px;
+        margin: 0 0 20px;
       }
       h2 {
-        font-size: clamp(24px, 2.6vw, 31px);
+        font-size: clamp(23px, 2.5vw, 30px);
         letter-spacing: -0.025em;
         font-weight: 500;
-        margin: 0 0 12px;
+        margin: 0 0 10px;
         text-wrap: balance;
       }
       .sub {
         color: var(--muted);
         max-width: 58ch;
-        margin: 0 0 36px;
+        margin: 0 0 28px;
       }
 
-      .steps {
+      /* ── the app ─────────────────────────────────────────────────────────
+         A running copy of the product rather than a screenshot. Every view is
+         driven by one state machine, so dispatching on the board shows up in
+         Overview, and approving in Review moves the task into Landing. */
+      .app {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 1px;
-        background: var(--line);
+        grid-template-columns: 172px minmax(0, 1fr);
         border: 1px solid var(--line);
         border-radius: 10px;
         overflow: hidden;
-      }
-      .step {
-        background: var(--ground);
-        padding: 20px 18px;
-      }
-      /* The numbering is real: this IS the order work moves through the system. */
-      .step .n {
-        font-family: var(--mono);
-        font-size: 11px;
-        color: var(--indigo);
-        display: block;
-        margin-bottom: 10px;
-      }
-      .step h3 {
-        font-size: 15px;
-        font-weight: 500;
-        margin: 0 0 6px;
-        letter-spacing: -0.01em;
-      }
-      .step p {
-        margin: 0;
-        font-size: 13.5px;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-
-      /* ── app frames: the board and the brain dump ────────────────────────
-         Rebuilt in HTML rather than screenshotted. A screenshot would be a
-         picture of a moment; this stays legible at any width, selects as text,
-         and cannot drift out of date without someone editing it on purpose.
-         Every colour is the app's own token, so it is not a flattering lie. */
-      .ui {
-        border: 1px solid var(--line);
-        border-radius: 10px;
         background: var(--panel);
-        overflow: hidden;
+        height: 588px;
       }
-      .ui + .ui {
-        margin-top: 20px;
+      .side {
+        background: var(--raised);
+        border-right: 1px solid var(--line);
+        padding: 12px 8px;
+        overflow-y: auto;
       }
-      .ui-head {
+      .proj {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 9px 14px;
-        background: var(--raised);
-        border-bottom: 1px solid var(--line);
+        gap: 7px;
+        padding: 4px 8px 12px;
         font-family: var(--mono);
         font-size: 11.5px;
         color: var(--muted);
       }
-      .ui-head .tag {
-        margin-left: auto;
-        color: var(--dim);
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+      .proj b {
+        color: var(--ink);
+        font-weight: 500;
       }
-      .ui-body {
+      .side button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-family: inherit;
+        font-size: 12.5px;
+        text-align: left;
+        cursor: pointer;
+      }
+      .side button:hover {
+        color: var(--ink);
+        background: color-mix(in srgb, var(--ink) 5%, transparent);
+      }
+      .side button[aria-current='true'] {
+        color: var(--ink);
+        background: color-mix(in srgb, var(--indigo) 16%, transparent);
+      }
+      .side button .n {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--dim);
+      }
+      .side button .n.hot {
+        color: var(--indigo);
+      }
+      .main {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .top {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 11px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .top h3 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .top .say {
+        font-size: 12px;
+        color: var(--dim);
+      }
+      .view {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
         padding: 16px;
       }
 
-      /* Board. Columns scroll inside the frame so the page body never does. */
+      /* shared parts */
+      .lbl {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 18px 0 8px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .lbl:first-child {
+        margin-top: 0;
+      }
+      .lbl .tail {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, var(--line), transparent 70%);
+      }
+      .ct {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+      }
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+      }
+      .dot.live {
+        background: var(--indigo);
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      .dot.ok {
+        background: var(--add);
+      }
+      .dot.idle {
+        border: 1px solid var(--dim);
+      }
+      .dot.warn {
+        background: var(--amber);
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .btn {
+        border: 0;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-family: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .btn.solid {
+        background: var(--indigo);
+        color: #12131a;
+      }
+      .btn.quiet {
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+      }
+      .btn.quiet:hover {
+        color: var(--ink);
+      }
+      .btn.go {
+        background: color-mix(in srgb, var(--add) 20%, transparent);
+        color: var(--add);
+      }
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      /* overview */
+      .feed {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        font-family: inherit;
+        font-size: 13px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .feed:hover {
+        background: color-mix(in srgb, var(--ink) 5%, transparent);
+      }
+      .feed .st {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11.5px;
+      }
+      .feed .rid {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+      }
+      .st.working,
+      .st.landing {
+        color: var(--indigo);
+      }
+      .st.review {
+        color: var(--add);
+      }
+      .st.blocked {
+        color: var(--amber);
+      }
+      .st.ready,
+      .st.done {
+        color: var(--muted);
+      }
+
+      /* board */
       .lane + .lane {
-        margin-top: 20px;
+        margin-top: 18px;
       }
       .lane-head {
         display: flex;
         align-items: center;
         gap: 8px;
-        margin-bottom: 10px;
+        margin-bottom: 9px;
         font-size: 12.5px;
         font-weight: 500;
+      }
+      .lane-head .tail {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, var(--line), transparent 70%);
       }
       .lanego {
         border: 1px solid color-mix(in srgb, var(--indigo) 40%, var(--line));
@@ -348,28 +497,14 @@
       .lanego:hover {
         background: color-mix(in srgb, var(--indigo) 15%, transparent);
       }
-      .lane-head .ct,
-      .ilabel .ct,
-      .col-head .ct {
-        font-family: var(--mono);
-        font-size: 11px;
-        color: var(--dim);
-      }
-      /* Fades out rather than ruling all the way across: the lane heading is a
-         label with a tail, not a divider between two equal things. */
-      .lane-head .tail {
-        flex: 1;
-        height: 1px;
-        background: linear-gradient(to right, var(--line), transparent 70%);
-      }
       .cols {
         display: flex;
-        gap: 14px;
+        gap: 12px;
         overflow-x: auto;
         padding-bottom: 2px;
       }
       .col {
-        width: 196px;
+        width: 178px;
         flex: 0 0 auto;
       }
       .col-head {
@@ -378,7 +513,7 @@
         gap: 6px;
         margin-bottom: 7px;
         font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: 10px;
         letter-spacing: 0.06em;
         text-transform: uppercase;
         color: var(--muted);
@@ -395,88 +530,100 @@
       .col-head.review {
         color: var(--add);
       }
+      .drop {
+        min-height: 32px;
+        border-radius: 8px;
+      }
+      .drop.over {
+        background: color-mix(in srgb, var(--indigo) 12%, transparent);
+        box-shadow: inset 0 0 0 1px
+          color-mix(in srgb, var(--indigo) 45%, transparent);
+      }
       .tile {
         background: var(--raised);
         border: 1px solid var(--line);
         border-radius: 7px;
-        padding: 9px 10px;
-        margin-bottom: 7px;
+        padding: 8px 9px;
+        margin-bottom: 6px;
+        cursor: grab;
+      }
+      .tile:focus-visible {
+        outline: 2px solid var(--indigo);
+        outline-offset: 2px;
       }
       .tile .tid {
         font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: 10px;
         color: var(--dim);
       }
       .tile .tt {
         font-size: 12.5px;
-        line-height: 1.4;
-        margin-top: 3px;
+        line-height: 1.35;
+        margin-top: 2px;
       }
       .tile .tf {
         display: flex;
         align-items: center;
         gap: 6px;
-        margin-top: 8px;
+        margin-top: 7px;
         font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: 10px;
         color: var(--dim);
       }
-      /* A filled dot means a live run; a ring means a task with none yet. The
-         two states are the only run information a card actually carries. */
-      .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        flex: 0 0 auto;
-      }
-      .dot.live {
-        background: var(--indigo);
-      }
-      .dot.ok {
-        background: var(--add);
-      }
-      .dot.idle {
-        border: 1px solid var(--dim);
-      }
-      .tile .blocked {
+      .tile .warnt {
         color: var(--amber);
       }
+      .act {
+        margin-top: 7px;
+        width: 100%;
+        border: 0;
+        border-radius: 5px;
+        padding: 3px 0;
+        font-family: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        background: color-mix(in srgb, var(--indigo) 22%, transparent);
+        color: var(--indigo);
+      }
+      .act.go {
+        background: color-mix(in srgb, var(--add) 20%, transparent);
+        color: var(--add);
+      }
 
-      /* Brain dump. */
+      /* brain dump */
       .dump {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 210px;
-        gap: 20px;
+        grid-template-columns: minmax(0, 1fr) 196px;
+        gap: 18px;
       }
       .capture {
         border: 1px solid var(--line);
         border-radius: 8px;
-        padding: 12px;
+        padding: 11px;
         background: var(--raised);
       }
-      .capture .ph {
-        color: var(--dim);
+      textarea {
+        width: 100%;
+        min-height: 54px;
+        resize: vertical;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--ink);
+        font-family: var(--display);
         font-size: 13.5px;
+        line-height: 1.5;
+        outline: none;
       }
-      .capture .caret {
-        display: inline-block;
-        width: 1px;
-        height: 15px;
-        background: var(--indigo);
-        vertical-align: -3px;
-        animation: blink 1.1s steps(1, end) infinite;
-      }
-      @keyframes blink {
-        50% {
-          opacity: 0;
-        }
+      textarea::placeholder {
+        color: var(--dim);
       }
       .capture-bar {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 8px;
-        margin-top: 26px;
+        margin-top: 10px;
       }
       .capture-bar .hint {
         flex: 1;
@@ -484,67 +631,35 @@
         font-size: 10.5px;
         color: var(--dim);
       }
-      .btn {
-        border-radius: 6px;
-        padding: 4px 9px;
-        font-size: 11.5px;
-        white-space: nowrap;
-      }
-      .btn.quiet {
-        border: 1px solid var(--line);
-        color: var(--muted);
-      }
-      .btn.solid {
-        background: var(--indigo);
-        color: #12131a;
-      }
-      .btn.pick {
-        display: inline-block;
-        margin-top: 9px;
-      }
-      .ilabel {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin: 18px 0 8px;
-        font-family: var(--mono);
-        font-size: 10.5px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      .ilabel .tail {
-        flex: 1;
-        height: 1px;
-        background: linear-gradient(to right, var(--line), transparent 70%);
-      }
       .item {
         display: grid;
-        grid-template-columns: 13px 46px minmax(0, 1fr) auto;
+        grid-template-columns: 13px 44px minmax(0, 1fr) auto;
         align-items: center;
-        gap: 10px;
-        padding: 5px 6px;
+        gap: 9px;
+        padding: 4px 6px;
         border-radius: 6px;
-        font-size: 13px;
+        font-size: 12.5px;
+        cursor: pointer;
+      }
+      .item:hover {
+        background: color-mix(in srgb, var(--ink) 4%, transparent);
       }
       .item.sel {
         background: color-mix(in srgb, var(--indigo) 13%, transparent);
       }
-      .item .tick {
+      .item input {
         width: 12px;
         height: 12px;
-        border-radius: 3px;
-        border: 1px solid var(--dim);
+        margin: 0;
+        accent-color: var(--indigo);
       }
-      .item.sel .tick {
-        background: var(--indigo);
-        border-color: var(--indigo);
+      .item.gone span:not(.kind) {
+        color: var(--dim);
+        text-decoration: line-through;
       }
-      /* Kind badges reuse the app's mapping: a bug is its red, an idea its
-         accent, a task its green. Guessed on capture, never asked for. */
       .kind {
         font-family: var(--mono);
-        font-size: 10px;
+        font-size: 9.5px;
         text-align: center;
         border-radius: 3px;
         padding: 1px 0;
@@ -565,109 +680,22 @@
         color: var(--muted);
         background: color-mix(in srgb, var(--muted) 14%, transparent);
       }
-      .item .by {
+      .by,
+      .link {
         font-family: var(--mono);
         font-size: 10px;
         color: var(--dim);
       }
-      .aside-card {
-        border: 1px solid color-mix(in srgb, var(--indigo) 35%, var(--line));
-        background: color-mix(in srgb, var(--indigo) 8%, transparent);
-        border-radius: 8px;
-        padding: 11px;
-      }
-      .aside-card .ac-t {
+      .link {
         color: var(--indigo);
-        font-size: 11.5px;
-        font-weight: 500;
-      }
-      .aside-card p {
-        margin: 7px 0 0;
-        font-size: 12px;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-      .aside-note {
-        margin-top: 16px;
-        font-size: 12px;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-      .aside-note code {
-        font-family: var(--mono);
-        font-size: 11px;
-        color: var(--ink);
-      }
-
-      /* ── the app surface ─────────────────────────────────────────────────
-         Deliberately not numbered. These are screens you move between, not a
-         sequence you pass through — numbering them would encode an order that
-         does not exist, the way the four steps above genuinely do. */
-      .surface {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 1px;
-        background: var(--line);
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        overflow: hidden;
-      }
-      .sv {
-        background: var(--ground);
-        padding: 15px 16px;
-      }
-      .sv b {
-        display: block;
-        font-size: 13.5px;
-        font-weight: 500;
-        margin-bottom: 4px;
-      }
-      .sv span {
-        font-size: 12.5px;
-        color: var(--muted);
-        line-height: 1.45;
-      }
-      .sv.dim b {
-        color: var(--muted);
-      }
-
-      /* ── the simulation ──────────────────────────────────────────────────
-         The frames above are driven by a small state machine that runs the
-         app's own logic: the same capture split, the same kind inference, the
-         same clustering. Behaviour you can poke is a stronger claim than a
-         picture, and it can only stay honest if it runs the real rules. */
-      #draft {
-        width: 100%;
-        min-height: 62px;
-        resize: vertical;
-        border: 0;
-        padding: 0;
-        background: transparent;
-        color: var(--ink);
-        font-family: var(--display);
-        font-size: 13.5px;
-        line-height: 1.5;
-        outline: none;
-      }
-      #draft::placeholder {
-        color: var(--dim);
-      }
-      button.btn {
-        border: 0;
-        font-family: inherit;
-        cursor: pointer;
-      }
-      button.btn:disabled {
-        opacity: 0.45;
-        cursor: default;
       }
       .selbar {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 8px;
-        margin-top: 12px;
-        padding: 7px 10px;
+        margin: 10px 0;
+        padding: 6px 9px;
         border-radius: 8px;
         background: color-mix(in srgb, var(--indigo) 13%, transparent);
         font-size: 12px;
@@ -675,92 +703,161 @@
       .selbar .n {
         flex: 1;
       }
-      label.item {
-        cursor: pointer;
+      .card {
+        border: 1px solid color-mix(in srgb, var(--indigo) 35%, var(--line));
+        background: color-mix(in srgb, var(--indigo) 8%, transparent);
+        border-radius: 8px;
+        padding: 10px;
       }
-      label.item:hover {
-        background: color-mix(in srgb, var(--ink) 4%, transparent);
-      }
-      label.item.sel:hover {
-        background: color-mix(in srgb, var(--indigo) 17%, transparent);
-      }
-      .item input {
-        width: 12px;
-        height: 12px;
-        margin: 0;
-        accent-color: var(--indigo);
-      }
-      .item.gone span:not(.kind) {
-        color: var(--dim);
-        text-decoration: line-through;
-      }
-      .item .link {
-        font-family: var(--mono);
-        font-size: 10px;
+      .card .t {
         color: var(--indigo);
-        text-decoration: none;
+        font-size: 11.5px;
+        font-weight: 500;
+      }
+      .card p {
+        margin: 6px 0 0;
+        font-size: 11.5px;
+        color: var(--muted);
+        line-height: 1.45;
       }
 
-      /* Cards are drag targets for a mouse and arrow-key movers for a
-         keyboard, because a board you can only drag is a board some people
-         cannot use at all. */
-      .tile {
-        cursor: grab;
-        transition: border-color 0.12s ease;
+      /* runs */
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+        margin-bottom: 14px;
       }
-      .tile:focus-visible {
-        outline: 2px solid var(--indigo);
-        outline-offset: 2px;
+      .turn {
+        margin-bottom: 10px;
       }
-      .tile.dragging {
-        opacity: 0.4;
+      .turn p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.55;
+        max-width: 66ch;
       }
-      .drop {
-        min-height: 34px;
-        border-radius: 8px;
-      }
-      .drop.over {
-        background: color-mix(in srgb, var(--indigo) 12%, transparent);
-        box-shadow: inset 0 0 0 1px
-          color-mix(in srgb, var(--indigo) 45%, transparent);
-      }
-      .act {
-        margin-top: 8px;
-        width: 100%;
-        border: 0;
-        border-radius: 5px;
-        padding: 4px 0;
-        font-family: inherit;
+      .tool {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--line);
+        background: var(--raised);
+        border-radius: 6px;
+        padding: 4px 9px;
+        font-family: var(--mono);
         font-size: 11px;
-        cursor: pointer;
-        background: color-mix(in srgb, var(--indigo) 22%, transparent);
-        color: var(--indigo);
+        color: var(--muted);
       }
-      .act:hover {
-        background: color-mix(in srgb, var(--indigo) 32%, transparent);
+      .tool b {
+        color: var(--ink);
+        font-weight: 500;
       }
-      .act.go {
-        background: color-mix(in srgb, var(--add) 20%, transparent);
+      .tool .plus {
         color: var(--add);
       }
-      .act.go:hover {
-        background: color-mix(in srgb, var(--add) 30%, transparent);
+      .tool .minus {
+        color: var(--del);
       }
-      .dot.live {
-        animation: pulse 1.4s ease-in-out infinite;
-      }
-      @keyframes pulse {
-        50% {
-          opacity: 0.3;
-        }
+      .caret {
+        display: inline-block;
+        width: 7px;
+        height: 13px;
+        background: var(--indigo);
+        vertical-align: -2px;
+        animation: pulse 1.1s steps(1, end) infinite;
       }
 
-      /* The merge queue, which only exists on screen once something is in it. */
-      .qstrip {
-        margin-top: 22px;
-        border-top: 1px solid var(--line);
-        padding-top: 14px;
+      /* review */
+      .code {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 12px;
       }
+      /* Four columns, not three: the comment affordance gets its own, because
+         sharing the sign column made every context line render a "+" and read
+         as an addition. */
+      .cl {
+        display: grid;
+        grid-template-columns: 34px 12px 14px minmax(0, 1fr);
+        gap: 6px;
+        line-height: 1.7;
+      }
+      .cl .ln {
+        text-align: right;
+        color: var(--dim);
+        font-size: 10.5px;
+        background: var(--raised);
+        padding-right: 6px;
+      }
+      .cl .src {
+        white-space: pre;
+        overflow-x: auto;
+        padding-right: 10px;
+      }
+      .cl.add {
+        background: color-mix(in srgb, var(--add) 10%, transparent);
+      }
+      .cl.del {
+        background: color-mix(in srgb, var(--del) 10%, transparent);
+      }
+      .cl.add .sg {
+        color: var(--add);
+      }
+      .cl.del .sg {
+        color: var(--del);
+      }
+      .cl .sg {
+        color: var(--dim);
+      }
+      .cl .cm button {
+        all: unset;
+        cursor: pointer;
+        color: var(--indigo);
+        opacity: 0;
+      }
+      .cl:hover .cm button,
+      .cl .cm button:focus-visible {
+        opacity: 1;
+      }
+      .thread {
+        margin: 6px 0 6px 52px;
+        border: 1px solid var(--line);
+        background: var(--raised);
+        border-radius: 7px;
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+      .thread .who {
+        color: var(--indigo);
+        font-size: 10.5px;
+        font-family: var(--mono);
+      }
+      .thread textarea {
+        min-height: 32px;
+        font-size: 12px;
+        margin-top: 3px;
+      }
+      .verdict {
+        margin-top: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 11px;
+      }
+      .verdict .vrow {
+        display: flex;
+        gap: 8px;
+        margin-top: 9px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      /* landing */
       .qrow {
         display: flex;
         align-items: center;
@@ -768,21 +865,20 @@
         flex-wrap: wrap;
         font-family: var(--mono);
         font-size: 11px;
-        padding: 5px 0;
+        padding: 6px 0;
       }
       .qrow .qid {
         color: var(--dim);
       }
-      .qrow .qstate {
+      .qrow .qs {
         color: var(--indigo);
-        min-width: 74px;
+        min-width: 72px;
       }
-      .qrow .qstate.done {
+      .qrow .qs.done {
         color: var(--add);
       }
       .qstep {
         display: inline-flex;
-        align-items: center;
         gap: 5px;
         color: var(--dim);
       }
@@ -792,7 +888,12 @@
       .qstep.passed {
         color: var(--add);
       }
-      .ui-foot {
+
+      .empty {
+        color: var(--dim);
+        font-size: 12.5px;
+      }
+      .foot {
         display: flex;
         align-items: center;
         gap: 10px;
@@ -803,7 +904,7 @@
         font-size: 10.5px;
         color: var(--dim);
       }
-      .ui-foot button {
+      .foot button {
         margin-left: auto;
         border: 1px solid var(--line);
         background: transparent;
@@ -814,181 +915,153 @@
         font-size: 10.5px;
         cursor: pointer;
       }
-      .ui-foot button:hover {
+      .foot button:hover {
         color: var(--ink);
       }
-      .sr {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip-path: inset(50%);
-        white-space: nowrap;
-      }
 
-      /* ── the diff: the signature ─────────────────────────────────────── */
-      .diff {
+      /* ── old vs new ──────────────────────────────────────────────────────
+         Two columns rather than a stacked diff. The old page listed fifteen
+         rows of prose and nobody was going to read the eleventh; side by side,
+         each pair is one glance and the phrases can be short. */
+      .vs {
         border: 1px solid var(--line);
         border-radius: 10px;
         overflow: hidden;
-        font-family: var(--mono);
-        font-size: 13px;
-        background: var(--panel);
       }
-      .diff-head {
-        padding: 9px 14px;
-        background: var(--raised);
-        border-bottom: 1px solid var(--line);
-        color: var(--muted);
-        font-size: 11.5px;
-      }
-      .row {
+      .vsrow {
         display: grid;
-        grid-template-columns: 22px minmax(0, 1fr);
-        gap: 8px;
-        padding: 3px 14px;
-        line-height: 1.6;
-      }
-      .row.minus {
-        background: color-mix(in srgb, var(--del) 9%, transparent);
-      }
-      .row.plus {
-        background: color-mix(in srgb, var(--add) 9%, transparent);
-      }
-      .row .sign {
-        user-select: none;
-        text-align: center;
-      }
-      .row.minus .sign,
-      .row.minus .txt {
-        color: color-mix(in srgb, var(--del) 88%, var(--ink));
-      }
-      .row.plus .sign,
-      .row.plus .txt {
-        color: color-mix(in srgb, var(--add) 88%, var(--ink));
-      }
-      .row.ctx .sign {
-        color: var(--dim);
-      }
-      .row.ctx .txt {
-        color: var(--muted);
-      }
-      .hunk {
-        padding: 6px 14px;
-        color: var(--dim);
-        background: color-mix(in srgb, var(--indigo) 8%, transparent);
+        grid-template-columns: 1fr 1fr;
         border-top: 1px solid var(--line);
-        border-bottom: 1px solid var(--line);
       }
-      /* Normal wrapping, not pre-wrap. These rows are prose dressed as a
-         diff, so there is no significant whitespace to preserve — and pre-wrap
-         meant a formatter wrapping the source indented every continuation line
-         halfway across the row. */
-      .txt {
-        word-break: break-word;
+      .vsrow:first-child {
+        border-top: 0;
       }
-
-      .note {
-        margin-top: 20px;
-        font-size: 13.5px;
+      .vsrow > * {
+        padding: 11px 16px;
+        font-size: 14px;
+      }
+      .vsrow > :first-child {
         color: var(--muted);
-        max-width: 66ch;
+        background: color-mix(in srgb, var(--del) 5%, transparent);
+      }
+      .vsrow > :last-child {
+        border-left: 1px solid var(--line);
+        background: color-mix(in srgb, var(--add) 5%, transparent);
+      }
+      .vshead > * {
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding-top: 12px;
+        padding-bottom: 12px;
+      }
+      .vshead > :first-child {
+        color: var(--del);
+      }
+      .vshead > :last-child {
+        color: var(--add);
       }
 
       /* ── install ─────────────────────────────────────────────────────── */
       .install {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 32px;
+        gap: 20px;
       }
       .box {
         border: 1px solid var(--line);
         border-radius: 10px;
-        padding: 20px;
+        padding: 18px;
         background: var(--panel);
       }
       .box h3 {
-        margin: 0 0 10px;
+        margin: 0 0 9px;
         font-size: 14px;
         font-weight: 500;
       }
       .box pre {
-        margin: 0;
+        margin: 0 0 9px;
         font-family: var(--mono);
         font-size: 12.5px;
-        color: var(--ink);
         overflow-x: auto;
       }
       .box p {
-        margin: 10px 0 0;
+        margin: 0;
         font-size: 13px;
         color: var(--muted);
       }
-
+      .note {
+        margin-top: 18px;
+        font-size: 13.5px;
+        color: var(--muted);
+        max-width: 68ch;
+      }
       footer {
-        border-top: 1px solid var(--line);
-        padding: 28px 0 48px;
-        color: var(--dim);
-        font-size: 13px;
         display: flex;
         gap: 18px;
-        flex-wrap: wrap;
+        padding: 24px 0 40px;
+        font-size: 12.5px;
+        color: var(--dim);
       }
       footer a {
-        color: var(--muted);
         text-decoration: none;
       }
       footer a:hover {
         color: var(--ink);
       }
 
-      @media (max-width: 860px) {
+      @media (max-width: 900px) {
         .hero,
-        .install,
-        .dump {
+        .install {
           grid-template-columns: 1fr;
-          gap: 36px;
+          gap: 32px;
         }
         .hero {
-          padding: 52px 0 44px;
+          padding: 48px 0 40px;
         }
-        .steps,
-        .surface {
-          grid-template-columns: 1fr 1fr;
+        .facts {
+          grid-template-columns: 1fr;
         }
-        /* The cluster hint reads as a footnote once it is no longer beside the
-           inbox it is talking about. */
+        /* The sidebar becomes a scrolling tab strip: the same navigation, in
+           the only shape that fits a phone. */
+        .app {
+          grid-template-columns: 1fr;
+          height: auto;
+        }
+        .side {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          display: flex;
+          gap: 4px;
+          overflow-x: auto;
+          padding: 8px;
+        }
+        .proj {
+          display: none;
+        }
+        .side button {
+          width: auto;
+          white-space: nowrap;
+        }
+        .side button .n {
+          margin-left: 4px;
+        }
+        .view {
+          height: 440px;
+        }
         .dump {
-          gap: 22px;
+          grid-template-columns: 1fr;
         }
       }
       @media (max-width: 520px) {
-        .steps,
-        .surface {
-          grid-template-columns: 1fr;
-        }
-        /* Give the hint its own row so the two buttons stay on one line
-           together, rather than one trailing the hint and one dropping. */
         .capture-bar .hint {
           flex: 1 1 100%;
-        }
-        /* The run id that marks an agent-filed item is worth a column on a
-           desktop and not worth squeezing the capture itself to three lines on
-           a phone. The badge still says what kind of thing it is. */
-        .item .by {
-          display: none;
         }
         .item {
           grid-template-columns: 13px 42px minmax(0, 1fr);
         }
-        .bar nav {
-          gap: 12px;
-        }
-        /* Six links do not fit a phone. The two dropped are the ones you reach
-           by scrolling anyway; Install and the repo are what someone on a
-           phone is actually after. */
-        .bar nav a[href='#screens'],
-        .bar nav a[href='#surface'] {
+        .item .by {
           display: none;
         }
       }
@@ -999,50 +1072,34 @@
       <div class="wrap bar">
         <span class="logo">dispatch<b>/</b></span>
         <nav>
-          <a href="#how">How it works</a>
-          <a href="#screens">Screens</a>
-          <a href="#surface">What's in it</a>
-          <a href="#diff">vs. chat</a>
+          <a href="#demo">Demo</a>
           <a href="#install">Install</a>
           <a href="https://github.com/wsoule/dispatch">GitHub</a>
         </nav>
       </div>
     </header>
 
-    <main class="wrap">
-      <div class="hero">
-        <div>
-          <h1>Coding agents don't need <em>another chat window</em>.</h1>
-          <p class="lede">
-            They need a tracker. Dispatch is Linear for agents, running on your
-            machine against your checkout: work is markdown in
-            <span class="mono">.dispatch/</span>, agents pick up whatever is
-            ready — several at once, each in its own git worktree — and the
-            result lands through a merge queue that runs your tests first.
-          </p>
-          <div class="cta">
-            <button class="copy" id="copy" type="button">
-              <span class="mono">brew install --cask wsoule/tap/dispatch</span>
-              <span data-state>copy</span>
-            </button>
-            <a
-              class="ghost"
-              href="https://github.com/wsoule/dispatch/releases/latest"
-              >Download for macOS &amp; Linux →</a
-            >
-          </div>
+    <main class="wrap hero">
+      <div>
+        <h1>Coding agents don't need <em>another chat window</em>.</h1>
+        <p class="lede">
+          Linear, but the assignees are agents and everything lives in your
+          repo. Local, git-native, Apache 2.0.
+        </p>
+        <div class="cta">
+          <button class="copy" id="copy" type="button">
+            <span class="mono">brew install --cask wsoule/tap/dispatch</span>
+            <span data-state>copy</span>
+          </button>
+          <a class="ghost" href="#install">macOS &amp; Linux →</a>
         </div>
+      </div>
 
-        <div class="file" aria-label="Example task file">
-          <div class="file-head">
-            <span class="mono"
-              >.dispatch/tasks/t-9f2a41-stream-agent-stdout.md</span
-            >
-          </div>
-          <!-- A <pre>, not a styled div: this is preformatted text, and a
-               formatter will happily reflow a div whose line breaks are load
-               bearing. It did, once. -->
-          <pre class="file-body"><span class="rule">---</span>
+      <div class="file">
+        <div class="file-head">
+          .dispatch/tasks/t-9f2a41-stream-agent-stdout.md
+        </div>
+        <pre class="file-body"><span class="rule">---</span>
 <span class="k">id:</span>        <span class="id">t-9f2a41</span>
 <span class="k">title:</span>     <span class="v">Stream agent stdout over the websocket</span>
 <span class="k">status:</span>    <span class="v">in-progress</span>
@@ -1057,453 +1114,94 @@
 The poller wakes every 500ms whether or not
 there is output. Move to a push model.
 
-<span class="h">## Acceptance Criteria</span>
-
-- Output reaches the client without polling
-- Backpressure is bounded
-
 <span class="h">## Activity</span>
 
 - dispatched (claude, r-b1d725)</pre>
-          </div>
-        </div>
       </div>
     </main>
 
-    <section id="how">
+    <section id="demo">
       <div class="wrap">
-        <p class="eyebrow">How it works</p>
-        <h2>Write a task. Get a branch that passed your tests.</h2>
+        <p class="eyebrow">The whole thing, running</p>
+        <h2>Click around. It's the real app.</h2>
         <p class="sub">
-          Four steps, in the order work actually moves. Everything is a file on
-          disk, so git is the sync layer and there is no database to keep in
-          step.
-        </p>
-        <div class="steps">
-          <div class="step">
-            <span class="n">01</span>
-            <h3>Capture</h3>
-            <p>
-              Dump anything into the inbox — it splits on newlines and files
-              each line. Turn one into a task when you mean it.
-            </p>
-          </div>
-          <div class="step">
-            <span class="n">02</span>
-            <h3>Dispatch</h3>
-            <p>
-              Each run gets its own git worktree, so several go at once. Working
-              an epic starts everything that is ready up to your concurrency
-              cap, and holds the rest until a slot frees.
-            </p>
-          </div>
-          <div class="step">
-            <span class="n">03</span>
-            <h3>Review</h3>
-            <p>
-              Comment on diff lines, then submit the review with a verdict.
-              Requesting changes resumes the same agent on the same branch,
-              carrying your notes.
-            </p>
-          </div>
-          <div class="step">
-            <span class="n">04</span>
-            <h3>Land</h3>
-            <p>
-              Approved work enters a merge queue that rebases, runs your named
-              verify steps, and merges. A failure names the step that broke.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="screens">
-      <div class="wrap">
-        <p class="eyebrow">The two screens</p>
-        <h2>Capture is one screen. Commitment is another.</h2>
-        <p class="sub">
-          Most of what you notice in a day is not work yet. Keeping the two
-          apart is the whole design: nothing you type is a promise until you
-          make it one. Both screens below are live — type into the inbox, drag a
-          card, approve something and watch it land.
+          One state machine behind every screen: dispatch on the board and it
+          shows up in Overview, approve in Review and it moves to Landing.
         </p>
 
-        <div class="ui">
-          <div class="ui-head">
-            Brain dump<span class="tag">.dispatch/inbox.md</span>
+        <div class="app">
+          <div class="side">
+            <div class="proj"><span class="dot ok"></span><b>dispatch</b></div>
+            <div id="nav"></div>
           </div>
-          <div class="ui-body dump">
-            <div>
-              <div class="capture">
-                <label class="sr" for="draft">Capture</label>
-                <textarea
-                  id="draft"
-                  rows="3"
-                  placeholder="Dump it here — bugs, half-ideas, things you noticed, one per line…"
-                ></textarea>
-                <div class="capture-bar">
-                  <span class="hint" id="hint"
-                    >One thought per line. Paste a wall of text and it gets
-                    split.</span
-                  >
-                  <button class="btn quiet" id="plan" type="button" disabled>
-                    Hand it to the planner
-                  </button>
-                  <button class="btn solid" id="drop" type="button" disabled>
-                    Drop into the inbox
-                  </button>
-                </div>
-              </div>
-
-              <div id="selbar"></div>
-
-              <div class="ilabel">
-                Inbox <span class="ct" id="ibn">5</span><i class="tail"></i>
-              </div>
-              <div id="items">
-                <!-- Rendered by the simulation. The rows below are the
-                     no-JavaScript view: the same five captures, static. -->
-                <div class="item">
-                  <span class="tick"></span><span class="kind is-bug">bug</span>
-                  <span
-                    >worktree cleanup leaves the branch behind on cancel</span
-                  >
-                  <span class="by">r-b1d725</span>
-                </div>
-                <div class="item">
-                  <span class="tick"></span
-                  ><span class="kind is-idea">idea</span>
-                  <span>reuse a worktree across runs on the same task</span>
-                  <span class="by"></span>
-                </div>
-                <div class="item">
-                  <span class="tick"></span><span class="kind is-bug">bug</span>
-                  <span>merge queue retries forever if verify times out</span>
-                  <span class="by"></span>
-                </div>
-                <div class="item">
-                  <span class="tick"></span
-                  ><span class="kind is-note">note</span>
-                  <span>worktree disk usage is not reported anywhere</span>
-                  <span class="by"></span>
-                </div>
-                <div class="item">
-                  <span class="tick"></span
-                  ><span class="kind is-task">task</span>
-                  <span>write the release notes for 0.9.1</span>
-                  <span class="by"></span>
-                </div>
-              </div>
-              <div id="sorted"></div>
+          <div class="main">
+            <div class="top">
+              <h3 id="vtitle">Overview</h3>
+              <span class="say" id="vsay"></span>
             </div>
-
-            <aside>
-              <div id="cluster">
-                <div class="aside-card">
-                  <div class="ac-t">These look like one thing</div>
-                  <p>
-                    3 items here are all about worktree. They would make a
-                    better epic than 3 loose tasks.
-                  </p>
-                </div>
-              </div>
-              <p class="aside-note">
-                Nothing here is a commitment. Items sit until you make them
-                tasks, hand them to the planner, or dismiss them — and all of it
-                is <code>.dispatch/inbox.md</code>, editable by hand.
+            <div class="view" id="view">
+              <p class="empty">
+                This demo needs JavaScript. Without it: Dispatch tracks work as
+                markdown in .dispatch/, dispatches agents into isolated git
+                worktrees, and lands the result through a merge queue that runs
+                your verify steps first.
               </p>
-            </aside>
-          </div>
-          <div class="ui-foot" id="dumpfoot" hidden>
-            <span>Type a line, then drop it in. Nothing leaves this page.</span>
-          </div>
-        </div>
-
-        <div class="ui">
-          <div class="ui-head">
-            Board — epic swim lanes<span class="tag">.dispatch/tasks/</span>
-          </div>
-          <div class="ui-body" id="board">
-            <!-- Rendered by the simulation; this is the no-JavaScript view. -->
-            <div class="lane">
-              <div class="lane-head">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--indigo)"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="m12 2 9 5-9 5-9-5 9-5Z" />
-                  <path d="m3 12 9 5 9-5" />
-                </svg>
-                Streaming output <span class="ct">4</span><i class="tail"></i>
-              </div>
-              <div class="cols">
-                <div class="col">
-                  <div class="col-head">
-                    <i class="sq"></i>todo <span class="ct">1</span>
-                  </div>
-                  <div class="tile">
-                    <div class="tid">t-4d10ae</div>
-                    <div class="tt">
-                      Bound the buffer when the client is slow
-                    </div>
-                    <div class="tf">
-                      <span class="dot idle"></span
-                      ><span class="blocked">blocked · t-9f2a41</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="col">
-                  <div class="col-head doing">
-                    <i class="sq"></i>in-progress <span class="ct">1</span>
-                  </div>
-                  <div class="tile">
-                    <div class="tid">t-9f2a41</div>
-                    <div class="tt">Stream agent stdout over the websocket</div>
-                    <div class="tf"><span class="dot live"></span>r-b1d725</div>
-                  </div>
-                </div>
-                <div class="col">
-                  <div class="col-head review">
-                    <i class="sq"></i>in-review <span class="ct">1</span>
-                  </div>
-                  <div class="tile">
-                    <div class="tid">t-77b3e1</div>
-                    <div class="tt">Reconnect without replaying the log</div>
-                    <div class="tf"><span class="dot ok"></span>2 comments</div>
-                  </div>
-                </div>
-                <div class="col">
-                  <div class="col-head">
-                    <i class="sq"></i>done <span class="ct">1</span>
-                  </div>
-                  <div class="tile">
-                    <div class="tid">t-c8954b</div>
-                    <div class="tt">Add a websocket route to the daemon</div>
-                    <div class="tf"><span class="dot ok"></span>merged</div>
-                  </div>
-                </div>
-              </div>
+            </div>
+            <div class="foot">
+              <span id="fhint">In memory only. Nothing leaves this page.</span>
+              <button type="button" id="reset">Reset</button>
             </div>
           </div>
-          <div class="ui-foot" id="boardfoot" hidden>
-            <span id="boardhint"></span>
-            <button type="button" id="reset">Reset</button>
-          </div>
         </div>
-
-        <p class="note">
-          One lane per epic, the same status columns repeated down the page. It
-          answers “which epic is stuck”, which a single flat board cannot. Work
-          a whole lane and three runs open at once, each in its own worktree,
-          with the fourth held until one finishes — the cap is
-          <span class="mono">orchestrator.epicConcurrency</span>, and it exists
-          so a twelve-task epic does not open twelve worktrees. The kind badges,
-          the split into lines and the grouping hint are the app's own functions
-          running here, not a script that imitates them — a demo you can poke is
-          only worth anything if poking it tells you the truth.
-        </p>
       </div>
     </section>
 
-    <section id="surface">
+    <section>
       <div class="wrap">
-        <p class="eyebrow">What's in it</p>
-        <h2>A tracker, not a chat box.</h2>
-        <p class="sub">
-          The two screens above are the ones you live in. The rest is the same
-          idea carried through — every one of them reads and writes files in
-          your repo, so git is the sync layer and there is nothing else to keep
-          in step.
-        </p>
-        <div class="surface">
-          <div class="sv">
-            <b>Brain dump</b
-            ><span>Capture without committing to anything.</span>
+        <p class="eyebrow">Old vs new</p>
+        <h2>Same agent. Different container.</h2>
+        <div class="vs">
+          <div class="vsrow vshead">
+            <div>Chat-first harness</div>
+            <div>Dispatch</div>
           </div>
-          <div class="sv">
-            <b>Overview</b><span>Every run in the project, live.</span>
+          <div class="vsrow">
+            <div>The unit of work is a conversation</div>
+            <div>The unit of work is a file in git</div>
           </div>
-          <div class="sv">
-            <b>Tasks</b><span>The board — statuses, epics, swim lanes.</span>
+          <div class="vsrow">
+            <div>Decisions live in scrollback</div>
+            <div>Decisions live in <span class="mono">.dispatch/</span></div>
           </div>
-          <div class="sv">
-            <b>Plans</b
-            ><span
-              >Say what you want; it writes the tasks and dispatches them.</span
-            >
+          <div class="vsrow">
+            <div>Every session starts by re-explaining</div>
+            <div>
+              <span class="mono">task_next</span> hands over what's ready
+            </div>
           </div>
-          <div class="sv">
-            <b>Runs</b><span>Transcripts, cost, turns, the worktree.</span>
+          <div class="vsrow">
+            <div>You pick what happens next, every time</div>
+            <div>
+              <span class="mono">blockedBy</span> picks, and holds the rest
+            </div>
           </div>
-          <div class="sv">
-            <b>Review</b><span>Line comments, then a verdict.</span>
+          <div class="vsrow">
+            <div>Reviewing means typing a new prompt</div>
+            <div>Comment on lines, submit a verdict, it resumes</div>
           </div>
-          <div class="sv">
-            <b>Landing</b><span>The merge queue and what it is doing.</span>
-          </div>
-          <div class="sv">
-            <b>All agents</b><span>Every project at once.</span>
-          </div>
-          <div class="sv dim">
-            <b>Milestones</b><span>The grouping above epics.</span>
-          </div>
-          <div class="sv dim">
-            <b>Branches</b><span>What each run left behind.</span>
-          </div>
-          <div class="sv dim">
-            <b>Pull requests</b><span>For when you land through GitHub.</span>
-          </div>
-          <div class="sv dim">
-            <b>Sessions</b><span>Resume an agent where it stopped.</span>
+          <div class="vsrow">
+            <div>You merge, one branch at a time</div>
+            <div>A queue rebases, verifies, and names what failed</div>
           </div>
         </div>
-        <p class="note">
-          Work in progress, and used on itself: Dispatch's own backlog lives in
-          this repo's <span class="mono">.dispatch/</span>, and the commits on
-          main tagged <span class="mono">(run r-…)</span> were written by its
-          own agents.
-        </p>
-      </div>
-    </section>
-
-    <section id="diff">
-      <div class="wrap">
-        <p class="eyebrow">vs. chat-first harnesses</p>
-        <h2>The work is not a conversation.</h2>
-        <p class="sub">
-          Almost every agent tool makes the chat the unit of work. So what you
-          decided lives in scrollback, the next session starts by re-explaining
-          it, and nothing knows what to do next but you. Running several agents
-          at once — the thing the newer tools add — makes that worse, not
-          better: now there are four conversations to hold.
-        </p>
-
-        <div class="diff">
-          <div class="diff-head">chat-first.md → dispatch.md</div>
-          <div class="row ctx">
-            <span class="sign"></span
-            ><span class="txt">an agent that reads and edits your repo</span>
-          </div>
-          <div class="row ctx">
-            <span class="sign"></span
-            ><span class="txt">a diff you can read when it finishes</span>
-          </div>
-
-          <div class="row minus">
-            <span class="sign">-</span
-            ><span class="txt">the unit of work is a conversation</span>
-          </div>
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >the unit of work is a task file, in git, readable by both of
-              you</span
-            >
-          </div>
-
-          <div class="row minus">
-            <span class="sign">-</span
-            ><span class="txt">what you decided lives in scrollback</span>
-          </div>
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >it lives in .dispatch/, so it survives the session and shows up
-              in review</span
-            >
-          </div>
-
-          <div class="row minus">
-            <span class="sign">-</span
-            ><span class="txt">every session starts by re-explaining</span>
-          </div>
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >task_next hands over the next ready task; task_save and
-              dispatch_note let the agent file what it noticed on the way
-              past</span
-            >
-          </div>
-
-          <div class="row minus">
-            <span class="sign">-</span
-            ><span class="txt">you decide what to work on, every time</span>
-          </div>
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >tasks declare blockedBy; finishing one unblocks the next
-              automatically</span
-            >
-          </div>
-
-          <div class="row minus">
-            <span class="sign">-</span
-            ><span class="txt"
-              >review means reading a diff and typing a new prompt</span
-            >
-          </div>
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >comment on lines, submit a verdict, and the agent resumes with
-              your review attached</span
-            >
-          </div>
-
-          <div class="row minus">
-            <span class="sign">-</span
-            ><span class="txt"
-              >merging is your problem, one branch at a time</span
-            >
-          </div>
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >a merge queue rebases, runs your verify steps, and merges — or
-              names the step that failed</span
-            >
-          </div>
-
-          <!-- Deliberately unpaired: every other row contrasts a behaviour we
-               can point at in this repo, but licensing and platform support
-               vary per product and change without notice. Stating ours and
-               stopping is the only version of this line that stays true. -->
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >Apache 2.0, macOS and Linux, with a CLI and a headless
-              daemon</span
-            >
-          </div>
-        </div>
-
-        <p class="note">
-          Tools like Conductor already run several agents in parallel worktrees
-          and show you the diffs, and that part is genuinely the easy half.
-          Dispatch does it too — and then handles what decides whether the work
-          was worth anything: what to pick up, in what order, and how it lands.
-        </p>
       </div>
     </section>
 
     <section id="install">
       <div class="wrap">
         <p class="eyebrow">Install</p>
-        <h2>It runs on your machine, against your checkout.</h2>
-        <p class="sub">
-          No account, no server, nothing uploaded. The daemon is local and the
-          tracker is a directory in your repo.
-        </p>
+        <h2>Runs on your machine, against your checkout.</h2>
+        <p class="sub">No account, no server, nothing uploaded.</p>
         <div class="install">
           <div class="box">
             <h3>macOS</h3>
@@ -1524,6 +1222,12 @@ there is output. Move to a push model.
             </p>
           </div>
         </div>
+        <p class="note">
+          Work in progress, and used on itself: Dispatch's own backlog lives in
+          this repo's <span class="mono">.dispatch/</span>, and commits on main
+          tagged <span class="mono">(run r-…)</span> were written by its own
+          agents.
+        </p>
       </div>
     </section>
 
@@ -1554,754 +1258,6 @@ there is output. Move to a push model.
       });
     </script>
 
-    <script>
-      /**
-       * The two frames above, driven for real.
-       *
-       * The capture split, the kind inference and the clustering below are
-       * ported verbatim from the app (packages/server/src/inbox.ts and
-       * apps/desktop/src/lib/inboxCluster.ts). Retyping the rules would have
-       * been quicker and would have made this a puppet show: the value of an
-       * interactive demo is that poking it tells you something true, which
-       * only holds while it runs the same logic the product runs.
-       *
-       * Everything is in memory. Nothing is sent anywhere.
-       */
-      (() => {
-        const $ = (id) => document.getElementById(id);
-        const board = $('board');
-        const items = $('items');
-        if (!board || !items) return;
-
-        // ── the app's rules, ported ──────────────────────────────────────
-        const STOPWORDS = new Set(
-          (
-            'the a an and or but to of in on at for with is are was be been it its ' +
-            'this that when should would could need needs want make add fix from ' +
-            'into per not no if then than so do does task tasks agent agents run ' +
-            'runs dispatch'
-          ).split(' ')
-        );
-
-        const splitCapture = (raw) =>
-          raw
-            .split('\n')
-            .map((l) => l.replace(/^\s*[-*]\s*(\[[ xX]\]\s*)?/, '').trim())
-            .filter((l) => l.length > 0);
-
-        // Order matters: bug-ish words win over task-ish ones, because "fix the
-        // broken thing" is a bug report that happens to contain an imperative.
-        function inferKind(text) {
-          if (
-            /\b(bug|broken|blank|crash|fail|regress|wrong|leak|eating|stuck|hang)/i.test(
-              text
-            )
-          )
-            return 'bug';
-          if (
-            /\b(need|should|add|wire|build|make|implement|support|move|rename)/i.test(
-              text
-            )
-          )
-            return 'task';
-          if (/\b(idea|maybe|what if|consider|could|might|explore)/i.test(text))
-            return 'idea';
-          return 'note';
-        }
-
-        // Crude singularisation matters more than it looks: "worktrees are
-        // eating disk" and "prune the worktree" must land in the same bucket.
-        const terms = (text) =>
-          new Set(
-            text
-              .toLowerCase()
-              .split(/[^a-z0-9]+/)
-              .filter((w) => w.length > 3 && !STOPWORDS.has(w))
-              .map((w) =>
-                w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w
-              )
-              .filter((w) => w.length > 3 && !STOPWORDS.has(w))
-          );
-
-        const MIN_CLUSTER = 3;
-
-        function findCluster(list) {
-          const open = list.filter((i) => !i.done);
-          if (open.length < MIN_CLUSTER) return null;
-          const byTerm = new Map();
-          for (const item of open)
-            for (const t of terms(item.text))
-              byTerm.has(t)
-                ? byTerm.get(t).push(item.id)
-                : byTerm.set(t, [item.id]);
-          let best = null;
-          for (const [term, ids] of byTerm) {
-            if (ids.length < MIN_CLUSTER) continue;
-            if (best === null || ids.length > best.ids.length)
-              best = { term, ids };
-          }
-          if (best === null) return null;
-          const members = new Set(best.ids);
-          const theme = [...byTerm.entries()]
-            .filter(
-              ([, ids]) =>
-                ids.length >= members.size && ids.every((id) => members.has(id))
-            )
-            .map(([t]) => t)
-            .sort();
-          return {
-            ids: best.ids,
-            theme: theme.length > 0 ? theme : [best.term],
-          };
-        }
-
-        const describeCluster = (c) =>
-          `${c.ids.length} items here are all about ${c.theme.slice(0, 3).join(', ')}. ` +
-          `They would make a better epic than ${c.ids.length} loose tasks.`;
-
-        // ── state ────────────────────────────────────────────────────────
-        const STATUSES = ['todo', 'in-progress', 'in-review', 'done'];
-        const VERIFY = ['typecheck', 'test', 'lint'];
-        // orchestrator.epicConcurrency in .dispatch/config.yml. Working an epic
-        // starts this many at once and holds the rest — the cap is the point,
-        // otherwise a twelve-task epic opens twelve worktrees.
-        const CONCURRENCY = 3;
-        const hex = (n) =>
-          Array.from(
-            { length: n },
-            () => '0123456789abcdef'[(Math.random() * 16) | 0]
-          ).join('');
-
-        let state;
-        let timers = [];
-        const after = (ms, fn) => timers.push(setTimeout(fn, ms));
-
-        function seed() {
-          timers.forEach(clearTimeout);
-          timers = [];
-          state = {
-            inbox: [
-              {
-                id: 'in-1',
-                kind: 'bug',
-                text: 'worktree cleanup leaves the branch behind on cancel',
-                by: 'r-b1d725',
-                done: false,
-              },
-              {
-                id: 'in-2',
-                kind: 'idea',
-                text: 'reuse a worktree across runs on the same task',
-                done: false,
-              },
-              {
-                id: 'in-3',
-                kind: 'bug',
-                text: 'merge queue retries forever if verify times out',
-                done: false,
-              },
-              {
-                id: 'in-4',
-                kind: 'note',
-                text: 'worktree disk usage is not reported anywhere',
-                done: false,
-              },
-              {
-                id: 'in-5',
-                kind: 'task',
-                text: 'write the release notes for 0.9.1',
-                done: false,
-              },
-            ],
-            epics: [
-              { id: 'e-9021cd', title: 'Streaming output' },
-              { id: 'e-3f77b0', title: 'Merge queue observability' },
-            ],
-            tasks: [
-              {
-                id: 't-4d10ae',
-                title: 'Bound the buffer when the client is slow',
-                epic: 'e-9021cd',
-                status: 'todo',
-                blockedBy: ['t-9f2a41'],
-              },
-              {
-                id: 't-9f2a41',
-                title: 'Stream agent stdout over the websocket',
-                epic: 'e-9021cd',
-                status: 'in-progress',
-                run: 'r-b1d725',
-                live: true,
-              },
-              {
-                id: 't-77b3e1',
-                title: 'Reconnect without replaying the log',
-                epic: 'e-9021cd',
-                status: 'in-review',
-                note: '2 comments',
-              },
-              {
-                id: 't-c8954b',
-                title: 'Add a websocket route to the daemon',
-                epic: 'e-9021cd',
-                status: 'done',
-                note: 'merged',
-              },
-              {
-                id: 't-2b91cc',
-                title: 'Name each verify step in the queue log',
-                epic: 'e-3f77b0',
-                status: 'todo',
-              },
-              {
-                id: 't-6a1e42',
-                title: 'Surface queue depth in the overview',
-                epic: 'e-3f77b0',
-                status: 'todo',
-              },
-              {
-                id: 't-88c07d',
-                title: 'Show elapsed time per entry',
-                epic: 'e-3f77b0',
-                status: 'todo',
-              },
-              {
-                id: 't-3c50b9',
-                title: 'Log the rebase target',
-                epic: 'e-3f77b0',
-                status: 'todo',
-              },
-              {
-                id: 't-518dd4',
-                title: 'Record per-step duration',
-                epic: 'e-3f77b0',
-                status: 'in-review',
-                run: 'r-4e01af',
-              },
-            ],
-            queue: [],
-            selected: new Set(),
-            pumping: false,
-          };
-        }
-
-        const esc = (t) =>
-          String(t).replace(
-            /[&<>"]/g,
-            (c) =>
-              ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]
-          );
-        const task = (id) => state.tasks.find((t) => t.id === id);
-        // A task is ready when nothing it declares as a blocker is still open.
-        const blockers = (t) =>
-          (t.blockedBy || []).filter((id) => {
-            const b = task(id);
-            return b && b.status !== 'done';
-          });
-
-        // ── inbox ────────────────────────────────────────────────────────
-        function renderInbox() {
-          const open = state.inbox.filter((i) => !i.done);
-          const gone = state.inbox.filter((i) => i.done);
-          $('ibn').textContent = String(open.length);
-
-          items.innerHTML = open
-            .map(
-              (
-                i
-              ) => `<label class="item${state.selected.has(i.id) ? ' sel' : ''}">
-                <input type="checkbox" data-pick="${i.id}"${state.selected.has(i.id) ? ' checked' : ''}
-                  aria-label="Select ${esc(i.text)}">
-                <span class="kind is-${i.kind}">${i.kind}</span>
-                <span>${esc(i.text)}</span>
-                <span class="by">${i.by ? esc(i.by) : ''}</span>
-              </label>`
-            )
-            .join('');
-          if (open.length === 0)
-            items.innerHTML =
-              '<p style="color:var(--dim);font-size:12.5px;padding:6px 2px">Nothing captured. Type above — it costs nothing.</p>';
-
-          $('sorted').innerHTML = gone.length
-            ? `<div class="ilabel" style="margin-top:14px">Sorted <span class="ct">${gone.length}</span><i class="tail"></i></div>` +
-              gone
-                .map(
-                  (
-                    i
-                  ) => `<div class="item gone"><span></span><span class="kind is-${i.kind}">${i.kind}</span>
-                    <span>${esc(i.text)}</span>
-                    <span class="link">${i.taskId ? '→ ' + i.taskId : 'dismissed'}</span></div>`
-                )
-                .join('')
-            : '';
-
-          const c = findCluster(state.inbox);
-          $('cluster').innerHTML = c
-            ? `<div class="aside-card"><div class="ac-t">These look like one thing</div>
-                 <p>${esc(describeCluster(c))}</p>
-                 <button class="btn solid pick" type="button" id="pickall">Select them</button></div>`
-            : '';
-          if (c)
-            $('pickall').onclick = () => {
-              state.selected = new Set(c.ids);
-              renderInbox();
-            };
-
-          renderSide();
-        }
-
-        /**
-         * The parts that depend only on *which* rows are ticked.
-         *
-         * Kept apart from renderInbox because re-rendering the list on every
-         * tick would destroy and recreate the checkbox that was just clicked,
-         * taking keyboard focus with it — you could tick one row and then be
-         * back at the top of the page. Selection changes touch one class and
-         * these two panels, and nothing else moves.
-         */
-        function renderSide() {
-          const n = state.selected.size;
-          $('selbar').innerHTML = n
-            ? `<div class="selbar"><span class="n">${n} selected</span>
-                 <button class="btn quiet" type="button" data-act="tasks">Make tasks</button>
-                 <button class="btn quiet" type="button" data-act="epic">Group into an epic</button>
-                 <button class="btn quiet" type="button" data-act="dismiss">Dismiss</button>
-                 <button class="btn quiet" type="button" data-act="clear">Clear</button></div>`
-            : '';
-        }
-
-        // Turns captures into tasks. With an epic, a lane is created for them
-        // and named from the shared theme — the same words the hint used to
-        // argue they belonged together.
-        function convert(asEpic) {
-          const picked = state.inbox.filter(
-            (i) => state.selected.has(i.id) && !i.done
-          );
-          if (picked.length === 0) return;
-          let epicId = null;
-          if (asEpic) {
-            const c = findCluster(picked.map((i) => ({ ...i, done: false })));
-            const word = c ? c.theme[0] : picked[0].text.split(' ')[0];
-            epicId = 'e-' + hex(6);
-            state.epics.push({
-              id: epicId,
-              title: word[0].toUpperCase() + word.slice(1),
-            });
-          }
-          for (const i of picked) {
-            const id = 't-' + hex(6);
-            i.done = true;
-            i.taskId = id;
-            state.tasks.push({
-              id,
-              title: i.text,
-              epic: epicId,
-              status: 'todo',
-            });
-          }
-          state.selected.clear();
-          renderInbox();
-          renderBoard();
-        }
-
-        // ── board ────────────────────────────────────────────────────────
-        const LAYERS =
-          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/></svg>';
-
-        function lanes() {
-          const out = [];
-          for (const e of state.epics) {
-            const ts = state.tasks.filter((t) => t.epic === e.id);
-            if (ts.length) out.push({ title: e.title, tasks: ts });
-          }
-          const none = state.tasks.filter(
-            (t) => t.epic === null || t.epic === undefined
-          );
-          if (none.length) out.push({ title: 'No epic', tasks: none });
-          return out;
-        }
-
-        function tile(t) {
-          const bl = blockers(t);
-          const foot = t.live
-            ? `<span class="dot live"></span>${esc(t.run)}`
-            : t.waiting
-              ? '<span class="dot idle"></span><span class="blocked">waiting for a slot</span>'
-              : bl.length
-                ? `<span class="dot idle"></span><span class="blocked">blocked · ${esc(bl[0])}</span>`
-                : t.status === 'todo'
-                  ? '<span class="dot idle"></span>ready'
-                  : `<span class="dot ok"></span>${esc(t.note || t.run || '')}`;
-          const queued = state.queue.some((q) => q.taskId === t.id);
-          const act =
-            t.status === 'todo' && bl.length === 0
-              ? '<button class="act" type="button" data-go="' +
-                t.id +
-                '">Dispatch</button>'
-              : t.status === 'in-review' && !queued
-                ? '<button class="act go" type="button" data-ok="' +
-                  t.id +
-                  '">Approve</button>'
-                : '';
-          return `<div class="tile" draggable="true" tabindex="0" data-id="${t.id}"
-              aria-label="${esc(t.title)}, ${t.status}. Arrow keys move it between columns.">
-              <div class="tid">${t.id}</div>
-              <div class="tt">${esc(t.title)}</div>
-              <div class="tf">${foot}</div>${act}</div>`;
-        }
-
-        function renderBoard() {
-          board.innerHTML =
-            lanes()
-              .map(
-                (lane) => `<div class="lane">
-                  <div class="lane-head">${LAYERS}${esc(lane.title)}
-                    <span class="ct">${lane.tasks.length}</span><i class="tail"></i>
-                    ${
-                      lane.tasks.some(
-                        (t) => t.status === 'todo' && blockers(t).length === 0
-                      )
-                        ? `<button class="lanego" type="button" data-epic="${esc(lane.title)}">Work this epic</button>`
-                        : ''
-                    }</div>
-                  <div class="cols">${STATUSES.map((st) => {
-                    const ts = lane.tasks.filter((t) => t.status === st);
-                    const skin =
-                      st === 'in-progress'
-                        ? ' doing'
-                        : st === 'in-review'
-                          ? ' review'
-                          : '';
-                    return `<div class="col"><div class="col-head${skin}"><i class="sq"></i>${st}
-                        <span class="ct">${ts.length}</span></div>
-                        <div class="drop" data-col="${st}">${ts.map(tile).join('')}</div></div>`;
-                  }).join('')}</div></div>`
-              )
-              .join('') + renderQueue();
-        }
-
-        function renderQueue() {
-          if (state.queue.length === 0) return '';
-          return (
-            '<div class="qstrip"><div class="ilabel">Merge queue <span class="ct">' +
-            state.queue.length +
-            '</span><i class="tail"></i></div>' +
-            state.queue
-              .map((q) => {
-                const steps =
-                  q.state === 'verifying' ||
-                  q.state === 'merging' ||
-                  q.state === 'merged'
-                    ? q.steps
-                        .map(
-                          (s) =>
-                            `<span class="qstep ${s.status}">${s.status === 'passed' ? '✓' : s.status === 'running' ? '·' : '○'} ${s.name}${s.ms ? ' ' + s.ms + 'ms' : ''}</span>`
-                        )
-                        .join('')
-                    : '';
-                return `<div class="qrow"><span class="qid">${q.taskId}</span>
-                  <span class="qstate${q.state === 'merged' ? ' done' : ''}">${q.state}</span>${steps}</div>`;
-              })
-              .join('') +
-            '</div>'
-          );
-        }
-
-        // One entry at a time, in order — that is what makes it a queue rather
-        // than several merges racing for the same branch.
-        function pump() {
-          if (state.pumping) return;
-          const entry = state.queue.find((q) => q.state === 'queued');
-          if (!entry) return;
-          state.pumping = true;
-          entry.state = 'rebasing';
-          renderBoard();
-          after(650, () => {
-            entry.state = 'verifying';
-            renderBoard();
-            let i = 0;
-            const step = () => {
-              if (i >= entry.steps.length) {
-                entry.state = 'merging';
-                renderBoard();
-                after(600, () => {
-                  entry.state = 'merged';
-                  const t = task(entry.taskId);
-                  if (t) {
-                    t.status = 'done';
-                    t.note = 'merged';
-                    t.live = false;
-                  }
-                  renderBoard();
-                  fill();
-                  after(1400, () => {
-                    state.queue = state.queue.filter((q) => q !== entry);
-                    state.pumping = false;
-                    renderBoard();
-                    pump();
-                  });
-                });
-                return;
-              }
-              const s = entry.steps[i];
-              s.status = 'running';
-              renderBoard();
-              after(520, () => {
-                s.status = 'passed';
-                s.ms = 300 + i * 210;
-                i += 1;
-                renderBoard();
-                step();
-              });
-            };
-            step();
-          });
-        }
-
-        const running = () => state.tasks.filter((t) => t.live).length;
-
-        /**
-         * Starts one task, if there is a slot.
-         *
-         * Returns false when the concurrency cap is already met, which is what
-         * lets an epic hold work back rather than opening a worktree per task.
-         * Held tasks are marked and picked up by fill() as runs finish.
-         */
-        function dispatch(id, queueIfFull) {
-          const t = task(id);
-          if (!t || blockers(t).length || t.live) return false;
-          if (running() >= CONCURRENCY) {
-            if (queueIfFull) {
-              t.waiting = true;
-              renderBoard();
-            }
-            return false;
-          }
-          t.waiting = false;
-          t.status = 'in-progress';
-          t.run = 'r-' + hex(6);
-          t.live = true;
-          renderBoard();
-          // Staggered so several running at once read as separate pieces of
-          // work rather than one animation.
-          after(2400 + Math.floor(Math.random() * 1800), () => {
-            t.status = 'in-review';
-            t.live = false;
-            t.note = '3 comments';
-            renderBoard();
-            fill();
-          });
-          return true;
-        }
-
-        /** Starts held tasks as slots free up. */
-        function fill() {
-          for (const t of state.tasks)
-            if (t.waiting && running() < CONCURRENCY) dispatch(t.id, true);
-        }
-
-        /** Works a whole epic: everything ready, up to the cap, rest held. */
-        function workEpic(title) {
-          const lane = lanes().find((l) => l.title === title);
-          if (!lane) return;
-          for (const t of lane.tasks)
-            if (t.status === 'todo' && blockers(t).length === 0)
-              dispatch(t.id, true);
-        }
-
-        function approve(id) {
-          const t = task(id);
-          if (!t || state.queue.some((q) => q.taskId === id)) return;
-          state.queue.push({
-            taskId: id,
-            state: 'queued',
-            steps: VERIFY.map((name) => ({ name, status: 'pending' })),
-          });
-          renderBoard();
-          pump();
-        }
-
-        function move(id, status) {
-          const t = task(id);
-          if (!t || t.status === status) return;
-          t.status = status;
-          t.live = false;
-          if (status === 'done') t.note = 'merged';
-          renderBoard();
-        }
-
-        // ── wiring ───────────────────────────────────────────────────────
-        const draft = $('draft');
-        function hint() {
-          const n = splitCapture(draft.value).length;
-          $('hint').textContent = n
-            ? `${n} ${n === 1 ? 'line' : 'lines'} — each becomes one item`
-            : 'One thought per line. Paste a wall of text and it gets split.';
-          $('drop').disabled = n === 0;
-          $('plan').disabled = n === 0;
-        }
-        draft.addEventListener('input', hint);
-        draft.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            capture();
-          }
-        });
-
-        function capture() {
-          const lines = splitCapture(draft.value);
-          if (!lines.length) return;
-          for (const text of lines.reverse())
-            state.inbox.unshift({
-              id: 'in-' + hex(4),
-              kind: inferKind(text),
-              text,
-              done: false,
-            });
-          draft.value = '';
-          hint();
-          renderInbox();
-        }
-        $('drop').onclick = capture;
-        // The planner turns loose text into one specified piece of work, so
-        // here it captures and groups in a single move.
-        $('plan').onclick = () => {
-          const before = new Set(state.inbox.map((i) => i.id));
-          capture();
-          state.selected = new Set(
-            state.inbox.filter((i) => !before.has(i.id)).map((i) => i.id)
-          );
-          convert(true);
-        };
-
-        document.addEventListener('change', (e) => {
-          const id = e.target.dataset && e.target.dataset.pick;
-          if (!id) return;
-          state.selected.has(id)
-            ? state.selected.delete(id)
-            : state.selected.add(id);
-          e.target
-            .closest('.item')
-            .classList.toggle('sel', state.selected.has(id));
-          renderSide();
-        });
-
-        document.addEventListener('click', (e) => {
-          const el = e.target.closest(
-            '[data-act],[data-go],[data-ok],[data-epic]'
-          );
-          if (!el) return;
-          const { act, go, ok, epic } = el.dataset;
-          if (epic) workEpic(epic);
-          else if (go) dispatch(go);
-          else if (ok) approve(ok);
-          else if (act === 'tasks') convert(false);
-          else if (act === 'epic') convert(true);
-          else if (act === 'dismiss') {
-            state.inbox.forEach((i) => {
-              if (state.selected.has(i.id)) i.done = true;
-            });
-            state.selected.clear();
-            renderInbox();
-          } else if (act === 'clear') {
-            state.selected.clear();
-            renderInbox();
-          }
-        });
-
-        // Drag for a mouse; arrow keys for a keyboard. A board only draggable
-        // is a board some people cannot use.
-        let dragId = null;
-        board.addEventListener('dragstart', (e) => {
-          const t = e.target.closest('.tile');
-          if (!t) return;
-          dragId = t.dataset.id;
-          t.classList.add('dragging');
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', dragId);
-        });
-        board.addEventListener('dragend', () => {
-          dragId = null;
-          board
-            .querySelectorAll('.over')
-            .forEach((c) => c.classList.remove('over'));
-        });
-        board.addEventListener('dragover', (e) => {
-          const col = e.target.closest('.drop');
-          if (!col) return;
-          e.preventDefault();
-          col.classList.add('over');
-        });
-        board.addEventListener('dragleave', (e) => {
-          const col = e.target.closest('.drop');
-          if (col) col.classList.remove('over');
-        });
-        board.addEventListener('drop', (e) => {
-          const col = e.target.closest('.drop');
-          if (!col || !dragId) return;
-          e.preventDefault();
-          move(dragId, col.dataset.col);
-        });
-        board.addEventListener('keydown', (e) => {
-          const t = e.target.closest('.tile');
-          if (!t) return;
-          const cur = task(t.dataset.id);
-          if (!cur) return;
-          const i = STATUSES.indexOf(cur.status);
-          if (e.key === 'ArrowRight' && i < STATUSES.length - 1) {
-            e.preventDefault();
-            move(cur.id, STATUSES[i + 1]);
-          }
-          if (e.key === 'ArrowLeft' && i > 0) {
-            e.preventDefault();
-            move(cur.id, STATUSES[i - 1]);
-          }
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            if (cur.status === 'todo') dispatch(cur.id);
-            else if (cur.status === 'in-review') approve(cur.id);
-          }
-        });
-
-        $('reset').onclick = () => {
-          seed();
-          renderInbox();
-          renderBoard();
-        };
-
-        seed();
-        renderInbox();
-        renderBoard();
-        hint();
-        $('dumpfoot').hidden = false;
-        $('boardfoot').hidden = false;
-        $('boardhint').textContent =
-          'Work this epic to start everything ready at once — three, then the rest wait for a slot. Drag a card, or focus one and use ← →.';
-
-        // The seeded run finishes once, the first time the board is actually
-        // on screen — work that happens where nobody is looking is just a
-        // surprise later. A rect check rather than IntersectionObserver: it is
-        // six lines, behaves identically here, and I could verify it running.
-        let started = false;
-        function maybeStart() {
-          if (started) return;
-          const r = board.getBoundingClientRect();
-          if (r.top > window.innerHeight || r.bottom < 0) return;
-          started = true;
-          window.removeEventListener('scroll', maybeStart);
-          after(2200, () => {
-            const t = task('t-9f2a41');
-            if (t && t.live) {
-              t.status = 'in-review';
-              t.live = false;
-              t.note = '2 comments';
-              renderBoard();
-            }
-          });
-        }
-        window.addEventListener('scroll', maybeStart, { passive: true });
-        maybeStart();
-      })();
-    </script>
+    <script src="/app.js"></script>
   </body>
 </html>
