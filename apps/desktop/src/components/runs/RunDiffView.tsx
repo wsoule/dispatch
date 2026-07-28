@@ -124,9 +124,9 @@ export function RunDiffView({
 
   if (diffLoading) {
     return (
-      <div className="grid grid-cols-[14rem_1fr] gap-3">
-        <Skeleton className="h-80 rounded-md" />
-        <Skeleton className="h-80 rounded-md" />
+      <div className="grid h-full min-h-0 grid-cols-[14rem_1fr] gap-3">
+        <Skeleton className="rounded-md" />
+        <Skeleton className="rounded-md" />
       </div>
     );
   }
@@ -141,8 +141,12 @@ export function RunDiffView({
   if (diff === undefined) return null;
 
   return (
-    <div className="grid min-h-80 grid-cols-[14rem_1fr] gap-3">
-      <div className="border-border bg-muted/30 overflow-auto rounded-md border">
+    // h-full + min-h-0, not min-h-80: this sits inside a flex pane, and with
+    // only a minimum it grew to the diff's full height instead of the pane's.
+    // Its overflow-auto columns then had nothing bounding them, so a long diff
+    // simply ran off the bottom with no way to scroll to the rest.
+    <div className="grid h-full min-h-0 grid-cols-[14rem_1fr] gap-3">
+      <div className="border-border bg-muted/30 min-h-0 overflow-auto rounded-md border">
         {diff.files.length === 0 ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
             <FileX className="size-4" />
@@ -152,7 +156,7 @@ export function RunDiffView({
           <ChangedFilesTree files={diff.files} onFileFocus={handleFileFocus} />
         )}
       </div>
-      <div className="border-border overflow-auto rounded-md border">
+      <div className="border-border min-h-0 overflow-auto rounded-md border">
         {parsed === null ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
             <FileX className="size-4" />
