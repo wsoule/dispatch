@@ -134,9 +134,6 @@ export function RunsView({
   const selected = data.runs.find((r) => r.id === selectedRunId);
   const selectedId = selected?.id;
   const selectedState = selected?.state;
-  const runDetail = data.runDetail;
-  const diffLoading = data.diffLoading;
-  const diff = data.diff;
 
   // Built once per `data.tasksIncludingArchived`/`data.epics` change rather than re-scanned
   // per row: a run row's epic breadcrumb needs its task's `parent`, then that parent id's
@@ -167,12 +164,14 @@ export function RunsView({
     // settled one. Wait for this run's own detail first, then for the (now-enabled) diff
     // query to settle, so a run with real changes doesn't flash Session before flipping to
     // Diff.
-    if (runDetail === undefined || runDetail.meta.id !== selectedId) return;
-    if (diffLoading) return;
-    const hasChanges = diff !== undefined && diff.files.length > 0;
-    setTab(hasChanges ? 'diff' : 'session');
+    // Terminal runs open on Session too. This used to jump to Diff whenever a
+    // run had changes, which contradicted this view's own doc comment and meant
+    // opening a run never showed you what the agent said — and reading the diff
+    // now has a screen of its own in Review, so the transcript is the thing
+    // this view is actually for.
+    setTab('session');
     defaultedRunIdRef.current = selectedId;
-  }, [selectedId, selectedState, runDetail, diffLoading, diff]);
+  }, [selectedId, selectedState]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -257,34 +256,42 @@ export function RunsView({
                   type="button"
                   onClick={() => onSelectRun(run.id)}
                   className={cn(
-                    'flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors duration-150',
+                    'flex w-full items-start gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors duration-150',
                     run.id === selectedRunId
                       ? 'border-border bg-accent'
                       : 'hover:bg-muted/60'
                   )}
                 >
-                  <RunStatePill meta={run} className="shrink-0" />
-                  <MergeLadderDot
-                    meta={data.latestRunByTaskId.get(run.taskId)}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-[13px]">
-                    {run.taskTitle}
-                    {epicTitle !== undefined && (
-                      <span className="text-muted-foreground">
-                        {' '}
-                        › {epicTitle}
-                      </span>
-                    )}
-                  </span>
-                  <StackBadge
-                    tasks={data.tasksIncludingArchived}
-                    taskId={run.taskId}
-                  />
-                  {run.costUsd !== undefined && (
-                    <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
-                      ${run.costUsd.toFixed(2)}
+                  {/* Two lines: the title gets the full width, and the state,
+                      stack and cost sit under it. On one line the title was
+                      competing with four other things and lost every time —
+                      "Validate discount codes…" truncated to "Valid…". */}
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="truncate text-[13px] leading-tight">
+                      {run.taskTitle}
                     </span>
-                  )}
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <RunStatePill meta={run} className="shrink-0" />
+                      <MergeLadderDot
+                        meta={data.latestRunByTaskId.get(run.taskId)}
+                      />
+                      <StackBadge
+                        tasks={data.tasksIncludingArchived}
+                        taskId={run.taskId}
+                      />
+                      {epicTitle !== undefined && (
+                        <span className="text-muted-foreground min-w-0 truncate text-[11px]">
+                          {epicTitle}
+                        </span>
+                      )}
+                      <span className="flex-1" />
+                      {run.costUsd !== undefined && (
+                        <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
+                          ${run.costUsd.toFixed(2)}
+                        </span>
+                      )}
+                    </span>
+                  </span>
                 </button>
               );
             })
