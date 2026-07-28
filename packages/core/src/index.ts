@@ -7,6 +7,7 @@ export {
   serializeTaskFile,
   TaskParseError,
   appendActivity,
+  getSection,
   setSection,
 } from './taskfile.js';
 export { TaskStore, DISPATCH_DIR } from './store.js';

@@ -123,6 +123,31 @@ export function serializeTaskFile(doc: TaskDoc): string {
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }
 
+// Splits a body into its `## ` sections: parts = [preamble, "## H1", body1, ...].
+function splitSections(body: string): {
+  preamble: string;
+  sections: { heading: string; content: string }[];
+} {
+  const parts = body.split(/^(## .+)$/m);
+  const sections: { heading: string; content: string }[] = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    sections.push({
+      heading: parts[i].replace(/^## /, '').trim(),
+      content: parts[i + 1] ?? '',
+    });
+  }
+  return { preamble: parts[0], sections };
+}
+
+/**
+ * Reads the text under a `## <heading>` section, trimmed. The read counterpart
+ * of `setSection`; `''` when the heading is absent or has nothing under it.
+ */
+export function getSection(body: string, heading: string): string {
+  const { sections } = splitSections(body);
+  return sections.find((s) => s.heading === heading)?.content.trim() ?? '';
+}
+
 /**
  * Replaces the text under a `## <heading>` section of the body, preserving
  * every other section and their order. Used to make the free-text body
@@ -139,17 +164,7 @@ export function setSection(
   heading: string,
   content: string
 ): string {
-  // Split on section-heading lines, keeping the headings via the capture
-  // group: parts = [preamble, "## H1", body1, "## H2", body2, ...].
-  const parts = body.split(/^(## .+)$/m);
-  const preamble = parts[0];
-  const sections: { heading: string; content: string }[] = [];
-  for (let i = 1; i < parts.length; i += 2) {
-    sections.push({
-      heading: parts[i].replace(/^## /, '').trim(),
-      content: parts[i + 1] ?? '',
-    });
-  }
+  const { preamble, sections } = splitSections(body);
 
   const trimmed = content.trim();
   // The template wraps a section's text in a blank line on each side; an empty
