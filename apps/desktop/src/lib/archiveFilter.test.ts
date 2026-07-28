@@ -102,4 +102,20 @@ describe('hideArchivedRuns vs countMergeReady — archived is not the same as do
     expect(hideArchivedRuns(runs, archivedIds)).toEqual([]);
     expect(countMergeReady(runs, tasks, new Set())).toBe(1);
   });
+
+  // A run archived on its own, with its task untouched — the case that lets you
+  // clear finished work off the list without archiving a task you still want.
+  test('hides a run archived on its own', () => {
+    const runs = [
+      run({ id: 'r-1', taskId: 't-1' }),
+      run({ id: 'r-2', taskId: 't-1', archivedAt: '2026-01-02T00:00:00.000Z' }),
+    ];
+    expect(hideArchivedRuns(runs, new Set()).map((r) => r.id)).toEqual(['r-1']);
+  });
+
+  test('keeps archived runs when nothing is archived at all', () => {
+    const runs = [run({ id: 'r-1' }), run({ id: 'r-2' })];
+    // Same reference back, so callers do not re-render on a no-op filter.
+    expect(hideArchivedRuns(runs, new Set())).toBe(runs);
+  });
 });

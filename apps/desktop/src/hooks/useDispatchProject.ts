@@ -274,6 +274,8 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
   handleCancelRun: (runId: string) => Promise<void>;
+  /** Hides a run from the Runs list, or brings it back. Nothing is deleted. */
+  handleArchiveRun: (runId: string, archived: boolean) => Promise<void>;
   handleReview: (runId: string, action: 'merge' | 'discard') => Promise<void>;
   handleRequestChanges: (runId: string, text: string) => Promise<void>;
   handleOpenPr: (runId: string) => Promise<void>;
@@ -1165,6 +1167,16 @@ export function useDispatchProject(
     [client, queryClient, runsQueryKey, port]
   );
 
+  const handleArchiveRun = useCallback(
+    async (runId: string, archived: boolean): Promise<void> => {
+      if (client === null) return;
+      await client.setRunArchived(runId, archived);
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, runsQueryKey, port]
+  );
+
   const handleReview = useCallback(
     async (runId: string, action: 'merge' | 'discard'): Promise<void> => {
       if (client === null) return;
@@ -1592,6 +1604,7 @@ export function useDispatchProject(
     handleApprove,
     handleSendMessage,
     handleCancelRun,
+    handleArchiveRun,
     handleReview,
     handleRequestChanges,
     handleOpenPr,
