@@ -42,6 +42,11 @@ export interface TranscriptStateLine {
   // Rides along on a state line exactly like reviewedAt/reviewAction — see
   // RunMeta.prUrl's comment for what sets this and when.
   prUrl?: string;
+  // Archiving, unlike every other marker on this line, is reversible. A string
+  // sets it and `null` clears it; `undefined` (the field absent) leaves it
+  // alone. The replay fold below has to distinguish those three, which is why
+  // it cannot use the `?? previous` shorthand the others do.
+  archivedAt?: string | null;
   // Restack bookkeeping (MergeQueue.restackDependents, via
   // Orchestrator.repointRunBase/flagRunRestackFailure). A run's base moves
   // when the blocker it was stacked on merges away, and both the new base and
@@ -107,6 +112,8 @@ export class Transcript {
       error?: string;
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
+      // `null` clears the archive marker; see TranscriptStateLine.archivedAt.
+      archivedAt?: string | null;
       mergeCommit?: string;
       prUrl?: string;
       baseBranch?: string;
@@ -196,6 +203,11 @@ export function replayTranscript(
         reviewAction: line.reviewAction ?? meta.reviewAction,
         mergeCommit: line.mergeCommit ?? meta.mergeCommit,
         prUrl: line.prUrl ?? meta.prUrl,
+        // Three-way, not `??`: absent leaves it, null clears it, a string sets it.
+        archivedAt:
+          line.archivedAt === undefined
+            ? meta.archivedAt
+            : (line.archivedAt ?? undefined),
         baseBranch: line.baseBranch ?? meta.baseBranch,
         stackParents: narrowedStackParents(line, meta),
         baseDiscarded: line.baseDiscarded ?? meta.baseDiscarded,

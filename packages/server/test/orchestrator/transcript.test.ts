@@ -219,4 +219,26 @@ describe('replayTranscript restack bookkeeping', () => {
     expect(replay?.meta.baseBranch).toBe('main');
     expect(replay?.meta.baseDiscarded).toBeUndefined();
   });
+
+  // Archiving is the one marker on a state line that has to be undoable, so it
+  // is the one that cannot use the `?? previous` fold every other field uses.
+  // Without the three-way check, unarchiving silently does nothing.
+  it('replays archivedAt as set, then cleared', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000001.jsonl');
+    const transcript = new Transcript(path);
+    transcript.writeHeader(makeMeta({ state: 'finished' }));
+
+    expect(replayTranscript(path)?.meta.archivedAt).toBeUndefined();
+
+    transcript.appendState('finished', 't1', { archivedAt: 't1' });
+    expect(replayTranscript(path)?.meta.archivedAt).toBe('t1');
+
+    // A state line that says nothing about archiving must leave it alone.
+    transcript.appendState('finished', 't2', { costUsd: 1 });
+    expect(replayTranscript(path)?.meta.archivedAt).toBe('t1');
+
+    transcript.appendState('finished', 't3', { archivedAt: null });
+    expect(replayTranscript(path)?.meta.archivedAt).toBeUndefined();
+  });
 });

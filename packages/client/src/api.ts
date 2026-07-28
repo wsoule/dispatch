@@ -77,6 +77,11 @@ export interface RunMeta {
   // Set on a follow-up run created by request-changes: the id of the
   // finished run whose session this one resumed — the earlier conversation
   // lives on that run's transcript.
+  // Set when a run is archived: it stays on disk and stays reachable, but the
+  // Runs list hides it by default. Archiving is the only marker here that is
+  // meant to be undone, which is why the transcript line carrying it uses
+  // `null` to clear rather than the `?? previous` fold every other field uses.
+  archivedAt?: string;
   resumedFrom?: string;
   // Branches this run's worktree was stacked on at dispatch time (the
   // in-review blockers whose unmerged work it needed). Empty/absent for an
@@ -818,6 +823,8 @@ export interface ApiClient {
   ): Promise<ReviewComment>;
   /** Resumes the agent on the same branch with the note and every unresolved thread attached. */
   sendBackRun(runId: string, note: string): Promise<RunMeta>;
+  /** Hides a run from the default Runs list, or brings it back. Nothing is deleted. */
+  setRunArchived(runId: string, archived: boolean): Promise<RunMeta>;
 
   /** Changes the settings a person is allowed to change. Structural config (statuses) is not
    * editable here — see the server's patchConfig for why. */
@@ -1057,6 +1064,11 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/send-back`, {
         method: 'POST',
         body: JSON.stringify({ note }),
+      }),
+    setRunArchived: (runId, archived) =>
+      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/archive`, {
+        method: 'POST',
+        body: JSON.stringify({ archived }),
       }),
     fetchNotes: () => request(baseUrl, '/api/notes'),
     createNote: (input) =>
