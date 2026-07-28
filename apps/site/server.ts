@@ -47,10 +47,12 @@ Bun.serve({
       const file = Bun.file(path);
       if (await file.exists()) {
         return new Response(file, {
-          headers: {
-            'cache-control':
-              path === INDEX ? 'no-cache' : 'public, max-age=31536000',
-          },
+          // A year of caching is only safe for a filename that changes when its
+          // contents do, and nothing here is content-hashed — app.js keeps its
+          // name across deploys, so a year would pin visitors to whichever
+          // version they happened to load first. Revalidation is cheap at this
+          // size; being wrong about it is not.
+          headers: { 'cache-control': 'no-cache' },
         });
       }
     }

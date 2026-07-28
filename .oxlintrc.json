@@ -115,6 +115,7 @@
   "globals": {},
   "ignorePatterns": [
     "scripts/**",
+    "apps/site/public/**",
     "**/dist/**",
     "{packages,apps}/*/node_modules/**",
     "{packages,apps}/*/.next/**",
