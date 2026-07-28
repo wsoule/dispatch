@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import { TaskBoard } from '../components/tasks/TaskBoard';
+import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { groupTasksByStatus } from '../lib/boardGrouping';
@@ -19,7 +20,6 @@ import { countMergeReady } from '../lib/mergeReady';
 import type { TasksViewMode } from '../lib/tasksViewMode';
 import { parseViewMode, VIEW_MODE_STORAGE_KEY } from '../lib/tasksViewMode';
 import { TasksListView } from './TasksListView';
-import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 
@@ -202,54 +202,28 @@ export function BoardView({
       <div className="flex items-center justify-between">
         <h1 className="text-foreground text-[13px] font-semibold">Tasks</h1>
         <div className="flex items-center gap-2">
-          <div
-            role="group"
-            aria-label="View"
-            className="border-border flex items-center rounded-md border p-0.5"
-          >
-            <button
-              type="button"
-              title="List view"
-              aria-pressed={mode === 'list'}
-              onClick={() => setMode('list')}
-              className={cn(
-                'rounded-[5px] p-1 transition-colors duration-150',
-                mode === 'list'
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Rows3 className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              title="Board view"
-              aria-pressed={mode === 'board'}
-              onClick={() => setMode('board')}
-              className={cn(
-                'rounded-[5px] p-1 transition-colors duration-150',
-                mode === 'board'
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <LayoutGrid className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              title="Epic swim lanes"
-              aria-pressed={mode === 'lanes'}
-              onClick={() => setMode('lanes')}
-              className={cn(
-                'rounded-[5px] p-1 transition-colors duration-150',
-                mode === 'lanes'
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Layers className="size-3.5" />
-            </button>
-          </div>
+          <Segmented<TasksViewMode>
+            label="View"
+            value={mode}
+            onChange={setMode}
+            options={[
+              {
+                value: 'list',
+                label: 'List view',
+                icon: <Rows3 className="size-3.5" />,
+              },
+              {
+                value: 'board',
+                label: 'Board view',
+                icon: <LayoutGrid className="size-3.5" />,
+              },
+              {
+                value: 'lanes',
+                label: 'Epic swim lanes',
+                icon: <Layers className="size-3.5" />,
+              },
+            ]}
+          />
           {data.archivedTasks.length > 0 && (
             <Button
               variant={data.showArchived ? 'secondary' : 'outline'}
