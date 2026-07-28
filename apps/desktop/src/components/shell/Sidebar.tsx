@@ -64,7 +64,7 @@ const PROJECT_VIEWS: {
   // needing a look, and the merge queue that approving them feeds.
   { id: 'review', label: 'Review', icon: GitPullRequestArrow },
 
-  { id: 'branches', label: 'Branches', icon: GitBranch, group: 'Git' },
+  { id: 'branches', label: 'Git', icon: GitBranch, group: 'Git' },
 ];
 
 /** The rail order is the shortcut order — cmd+1 is the first entry, and so on. */

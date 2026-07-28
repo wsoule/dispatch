@@ -10,9 +10,11 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { GitSummary } from '../components/git/GitSummary';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
+import { formatBytes } from '../lib/formatBytes';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import {
@@ -153,6 +155,13 @@ function BranchRow({
           </span>
           {entry.mergedIntoBase && <span>merged</span>}
           {!entry.worktreeExists && <span>no worktree</span>}
+          {/* Per-row size next to the branch it belongs to, so "which one is
+              the big one" is answerable without opening a terminal. */}
+          {entry.diskBytes !== undefined && entry.diskBytes > 0 && (
+            <span title="Disk used by this worktree">
+              {formatBytes(entry.diskBytes)}
+            </span>
+          )}
           {entry.lastCommitAt !== undefined && (
             <span>{formatRelativeTimeFromIso(entry.lastCommitAt)}</span>
           )}
@@ -233,6 +242,7 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     null
   );
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reclaiming, setReclaiming] = useState(false);
 
   const grouped = useMemo(
     () =>
@@ -284,10 +294,28 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     }
   }
 
+  // Reclaims every worktree whose branch already landed and has nothing
+  // uncommitted in it — the two conditions that make it safe to delete.
+  async function reclaimMerged() {
+    setReclaiming(true);
+    try {
+      for (const entry of data.branches) {
+        if (entry.worktreeExists && entry.mergedIntoBase && !entry.dirty) {
+          await data.handleFreeBranchDisk(entry.branch);
+        }
+      }
+    } finally {
+      setReclaiming(false);
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="view-topbar-title">Branches</h1>
+        <h1 className="view-topbar-title">Git</h1>
+        <span className="text-muted-foreground text-[12px]">
+          Branches and worktrees this project has created.
+        </span>
         <div className="flex items-center gap-2">
           {mergedOrphans.length > 0 && (
             <Button
@@ -315,6 +343,12 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
           </Button>
         </div>
       </div>
+
+      <GitSummary
+        branches={data.branches}
+        reclaiming={reclaiming}
+        onReclaimMerged={() => void reclaimMerged()}
+      />
 
       {actionError !== null && (
         <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
