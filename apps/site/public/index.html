@@ -222,6 +222,27 @@
       .h {
         color: var(--amber);
       }
+      /* The frontmatter is the thing that moves in the hero: the file is the
+         database, so watching it get written is the product in one artifact. */
+      #hstatus.doing {
+        color: var(--indigo);
+      }
+      #hstatus.done {
+        color: var(--add);
+      }
+      /* Markdown list syntax, not a diff sign — a green "-" reads as a
+         deletion at a glance, which is the opposite of what happened. */
+      #hact .tick {
+        color: var(--dim);
+      }
+      .hcaret {
+        display: inline-block;
+        width: 7px;
+        height: 12px;
+        background: var(--indigo);
+        vertical-align: -2px;
+        animation: pulse 1.1s steps(1, end) infinite;
+      }
 
       /* ── sections ────────────────────────────────────────────────────── */
       section {
@@ -1081,10 +1102,10 @@
 
     <main class="wrap hero">
       <div>
-        <h1>Coding agents don't need <em>another chat window</em>.</h1>
+        <h1><em>Linear</em>, for coding agents.</h1>
         <p class="lede">
-          Linear, but the assignees are agents and everything lives in your
-          repo. Local, git-native, Apache 2.0.
+          Not another chat window. A board, a backlog, reviews and a merge queue
+          — all markdown in your repo, worked by agents. Local and Apache 2.0.
         </p>
         <div class="cta">
           <button class="copy" id="copy" type="button">
@@ -1102,10 +1123,10 @@
         <pre class="file-body"><span class="rule">---</span>
 <span class="k">id:</span>        <span class="id">t-9f2a41</span>
 <span class="k">title:</span>     <span class="v">Stream agent stdout over the websocket</span>
-<span class="k">status:</span>    <span class="v">in-progress</span>
+<span class="k">status:</span>    <span class="v" id="hstatus">todo</span>
 <span class="k">kind:</span>      <span class="v">task</span>
 <span class="k">parent:</span>    <span class="id">e-9021cd</span>
-<span class="k">blockedBy:</span> [<span class="id">t-c8954b</span>]
+<span class="k">blockedBy:</span> <span class="v" id="hblock">[<span class="id">t-c8954b</span>]</span>
 <span class="k">priority:</span>  <span class="v">high</span>
 <span class="rule">---</span>
 
@@ -1115,8 +1136,7 @@ The poller wakes every 500ms whether or not
 there is output. Move to a push model.
 
 <span class="h">## Activity</span>
-
-- dispatched (claude, r-b1d725)</pre>
+<span id="hact"></span></pre>
       </div>
     </main>
 

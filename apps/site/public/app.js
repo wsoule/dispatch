@@ -1024,3 +1024,75 @@
   window.addEventListener('scroll', maybeStart, { passive: true });
   maybeStart();
 })();
+
+/**
+ * The hero file, writing itself.
+ *
+ * The page's claim is that a task is a file rather than a conversation, so the
+ * hero shows the file being written: the blocker clears, the status walks
+ * todo → in-progress → in-review → done, and the Activity log grows a line at
+ * each step. It is the same lifecycle the demo below lets you drive by hand —
+ * here it just plays once, so the argument lands before anyone clicks.
+ *
+ * Reduced motion gets the finished file immediately. The point is the shape of
+ * the record, and that survives without the animation.
+ */
+(() => {
+  const status = document.getElementById('hstatus');
+  const block = document.getElementById('hblock');
+  const act = document.getElementById('hact');
+  if (!status || !block || !act) return;
+
+  const line = (t) => `<span class="tick">-</span> ${t}\n`;
+  const BEATS = [
+    { st: 'todo', cls: '', blocked: true, log: '' },
+    {
+      st: 'in-progress',
+      cls: 'doing',
+      blocked: false,
+      log: line('dispatched (claude, r-b1d725)'),
+    },
+    {
+      st: 'in-review',
+      cls: 'doing',
+      blocked: false,
+      log: line('review requested (3 comments)'),
+    },
+    {
+      st: 'done',
+      cls: 'done',
+      blocked: false,
+      log: line('merged (typecheck, test, lint)'),
+    },
+  ];
+
+  let log = '';
+  function paint(i, caret) {
+    const b = BEATS[i];
+    status.textContent = b.st;
+    status.className = 'v ' + b.cls;
+    block.innerHTML = b.blocked ? '[<span class="id">t-c8954b</span>]' : '[]';
+    log += b.log;
+    act.innerHTML = log + (caret ? '<span class="hcaret"></span>' : '');
+  }
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    // paint() accumulates into `log` itself, so replay every beat rather than
+    // pre-building the text and painting once — otherwise the log lands twice.
+    for (let b = 0; b < BEATS.length; b++) paint(b, false);
+    return;
+  }
+
+  let i = 0;
+  paint(0, true);
+  const step = () => {
+    i += 1;
+    if (i >= BEATS.length) {
+      act.innerHTML = log;
+      return;
+    }
+    paint(i, i < BEATS.length - 1);
+    setTimeout(step, 1500);
+  };
+  setTimeout(step, 1200);
+})();
