@@ -10,12 +10,14 @@ import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
 import { MiniOverview } from './components/shell/MiniOverview';
 import { Sidebar } from './components/shell/Sidebar';
+import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { TaskDetailDialog } from './components/tasks/TaskDetailDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
+import { withActionFeedback } from './lib/actionFeedback';
 import type { GlobalView, ProjectView } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { deriveFeedState } from './lib/feedState';
@@ -283,10 +285,27 @@ function App() {
     [selectProjectView]
   );
 
-  const data = useDispatchProject(activeProject?.path ?? null, {
+  const toasts = useToasts();
+
+  const rawData = useDispatchProject(activeProject?.path ?? null, {
     selectedRunId: navState.activeRunId,
     onRunDispatched,
   });
+
+  // Wrapped once, here, so a failed action says so instead of the button
+  // appearing to do nothing. See lib/actionFeedback.ts for why this is not done
+  // per handler.
+  const data = useMemo(
+    () =>
+      withActionFeedback(rawData, (action, message) =>
+        toasts.push({
+          title: `${action} failed`,
+          description: message,
+          tone: 'error',
+        })
+      ),
+    [rawData, toasts]
+  );
 
   // Every non-terminal run for this project — the "Agents" view's list and the sidebar's live
   // badge both read from this single project's own run list now, not a cross-project fan-out
