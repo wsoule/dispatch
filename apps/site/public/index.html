@@ -582,6 +582,201 @@
         color: var(--ink);
       }
 
+      /* ── the simulation ──────────────────────────────────────────────────
+         The frames above are driven by a small state machine that runs the
+         app's own logic: the same capture split, the same kind inference, the
+         same clustering. Behaviour you can poke is a stronger claim than a
+         picture, and it can only stay honest if it runs the real rules. */
+      #draft {
+        width: 100%;
+        min-height: 62px;
+        resize: vertical;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--ink);
+        font-family: var(--display);
+        font-size: 13.5px;
+        line-height: 1.5;
+        outline: none;
+      }
+      #draft::placeholder {
+        color: var(--dim);
+      }
+      button.btn {
+        border: 0;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      button.btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .selbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 7px 10px;
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--indigo) 13%, transparent);
+        font-size: 12px;
+      }
+      .selbar .n {
+        flex: 1;
+      }
+      label.item {
+        cursor: pointer;
+      }
+      label.item:hover {
+        background: color-mix(in srgb, var(--ink) 4%, transparent);
+      }
+      label.item.sel:hover {
+        background: color-mix(in srgb, var(--indigo) 17%, transparent);
+      }
+      .item input {
+        width: 12px;
+        height: 12px;
+        margin: 0;
+        accent-color: var(--indigo);
+      }
+      .item.gone span:not(.kind) {
+        color: var(--dim);
+        text-decoration: line-through;
+      }
+      .item .link {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--indigo);
+        text-decoration: none;
+      }
+
+      /* Cards are drag targets for a mouse and arrow-key movers for a
+         keyboard, because a board you can only drag is a board some people
+         cannot use at all. */
+      .tile {
+        cursor: grab;
+        transition: border-color 0.12s ease;
+      }
+      .tile:focus-visible {
+        outline: 2px solid var(--indigo);
+        outline-offset: 2px;
+      }
+      .tile.dragging {
+        opacity: 0.4;
+      }
+      .drop {
+        min-height: 34px;
+        border-radius: 8px;
+      }
+      .drop.over {
+        background: color-mix(in srgb, var(--indigo) 12%, transparent);
+        box-shadow: inset 0 0 0 1px
+          color-mix(in srgb, var(--indigo) 45%, transparent);
+      }
+      .act {
+        margin-top: 8px;
+        width: 100%;
+        border: 0;
+        border-radius: 5px;
+        padding: 4px 0;
+        font-family: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        background: color-mix(in srgb, var(--indigo) 22%, transparent);
+        color: var(--indigo);
+      }
+      .act:hover {
+        background: color-mix(in srgb, var(--indigo) 32%, transparent);
+      }
+      .act.go {
+        background: color-mix(in srgb, var(--add) 20%, transparent);
+        color: var(--add);
+      }
+      .act.go:hover {
+        background: color-mix(in srgb, var(--add) 30%, transparent);
+      }
+      .dot.live {
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      /* The merge queue, which only exists on screen once something is in it. */
+      .qstrip {
+        margin-top: 22px;
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+      }
+      .qrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-family: var(--mono);
+        font-size: 11px;
+        padding: 5px 0;
+      }
+      .qrow .qid {
+        color: var(--dim);
+      }
+      .qrow .qstate {
+        color: var(--indigo);
+        min-width: 74px;
+      }
+      .qrow .qstate.done {
+        color: var(--add);
+      }
+      .qstep {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--dim);
+      }
+      .qstep.running {
+        color: var(--indigo);
+      }
+      .qstep.passed {
+        color: var(--add);
+      }
+      .ui-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 16px;
+        border-top: 1px solid var(--line);
+        background: var(--raised);
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+      }
+      .ui-foot button {
+        margin-left: auto;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        border-radius: 5px;
+        padding: 3px 8px;
+        font-family: inherit;
+        font-size: 10.5px;
+        cursor: pointer;
+      }
+      .ui-foot button:hover {
+        color: var(--ink);
+      }
+      .sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+
       /* ── the diff: the signature ─────────────────────────────────────── */
       .diff {
         border: 1px solid var(--line);
@@ -723,6 +918,15 @@
         .capture-bar .hint {
           flex: 1 1 100%;
         }
+        /* The run id that marks an agent-filed item is worth a column on a
+           desktop and not worth squeezing the capture itself to three lines on
+           a phone. The badge still says what kind of thing it is. */
+        .item .by {
+          display: none;
+        }
+        .item {
+          grid-template-columns: 13px 42px minmax(0, 1fr);
+        }
         .bar nav {
           gap: 12px;
         }
@@ -854,7 +1058,8 @@
         <p class="sub">
           Most of what you notice in a day is not work yet. Keeping the two
           apart is the whole design: nothing you type is a promise until you
-          make it one.
+          make it one. Both screens below are live — type into the inbox, drag a
+          card, approve something and watch it land.
         </p>
 
         <div class="ui">
@@ -864,63 +1069,77 @@
           <div class="ui-body dump">
             <div>
               <div class="capture">
-                <span class="caret"></span
-                ><span class="ph"
-                  >Dump it here — bugs, half-ideas, things you noticed, one per
-                  line…</span
-                >
+                <label class="sr" for="draft">Capture</label>
+                <textarea
+                  id="draft"
+                  rows="3"
+                  placeholder="Dump it here — bugs, half-ideas, things you noticed, one per line…"
+                ></textarea>
                 <div class="capture-bar">
-                  <span class="hint"
+                  <span class="hint" id="hint"
                     >One thought per line. Paste a wall of text and it gets
                     split.</span
                   >
-                  <span class="btn quiet">Hand it to the planner</span>
-                  <span class="btn solid">Drop into the inbox</span>
+                  <button class="btn quiet" id="plan" type="button" disabled>
+                    Hand it to the planner
+                  </button>
+                  <button class="btn solid" id="drop" type="button" disabled>
+                    Drop into the inbox
+                  </button>
                 </div>
               </div>
 
-              <div class="ilabel">
-                Inbox <span class="ct">5</span><i class="tail"></i>
-              </div>
+              <div id="selbar"></div>
 
-              <div class="item sel">
-                <span class="tick"></span><span class="kind is-bug">bug</span>
-                <span>worktree cleanup leaves the branch behind on cancel</span>
-                <!-- Items an agent filed mid-run through dispatch_note are
-                     marked, so you can tell what you noticed from what
-                     something else noticed for you. -->
-                <span class="by">r-b1d725</span>
+              <div class="ilabel">
+                Inbox <span class="ct" id="ibn">5</span><i class="tail"></i>
               </div>
-              <div class="item sel">
-                <span class="tick"></span><span class="kind is-idea">idea</span>
-                <span>reuse a worktree across runs on the same task</span>
-                <span class="by"></span>
+              <div id="items">
+                <!-- Rendered by the simulation. The rows below are the
+                     no-JavaScript view: the same five captures, static. -->
+                <div class="item">
+                  <span class="tick"></span><span class="kind is-bug">bug</span>
+                  <span
+                    >worktree cleanup leaves the branch behind on cancel</span
+                  >
+                  <span class="by">r-b1d725</span>
+                </div>
+                <div class="item">
+                  <span class="tick"></span
+                  ><span class="kind is-idea">idea</span>
+                  <span>reuse a worktree across runs on the same task</span>
+                  <span class="by"></span>
+                </div>
+                <div class="item">
+                  <span class="tick"></span><span class="kind is-bug">bug</span>
+                  <span>merge queue retries forever if verify times out</span>
+                  <span class="by"></span>
+                </div>
+                <div class="item">
+                  <span class="tick"></span
+                  ><span class="kind is-note">note</span>
+                  <span>worktree disk usage is not reported anywhere</span>
+                  <span class="by"></span>
+                </div>
+                <div class="item">
+                  <span class="tick"></span
+                  ><span class="kind is-task">task</span>
+                  <span>write the release notes for 0.9.1</span>
+                  <span class="by"></span>
+                </div>
               </div>
-              <div class="item">
-                <span class="tick"></span><span class="kind is-bug">bug</span>
-                <span>merge queue retries forever if verify times out</span>
-                <span class="by"></span>
-              </div>
-              <div class="item sel">
-                <span class="tick"></span><span class="kind is-note">note</span>
-                <span>worktree disk usage is not reported anywhere</span>
-                <span class="by"></span>
-              </div>
-              <div class="item">
-                <span class="tick"></span><span class="kind is-task">task</span>
-                <span>write the release notes for 0.9.1</span>
-                <span class="by"></span>
-              </div>
+              <div id="sorted"></div>
             </div>
 
             <aside>
-              <div class="aside-card">
-                <div class="ac-t">These look like one thing</div>
-                <p>
-                  3 items here are all about worktree. They would make a better
-                  epic than 3 loose tasks.
-                </p>
-                <span class="btn solid pick">Select them</span>
+              <div id="cluster">
+                <div class="aside-card">
+                  <div class="ac-t">These look like one thing</div>
+                  <p>
+                    3 items here are all about worktree. They would make a
+                    better epic than 3 loose tasks.
+                  </p>
+                </div>
               </div>
               <p class="aside-note">
                 Nothing here is a commitment. Items sit until you make them
@@ -929,13 +1148,17 @@
               </p>
             </aside>
           </div>
+          <div class="ui-foot" id="dumpfoot" hidden>
+            <span>Type a line, then drop it in. Nothing leaves this page.</span>
+          </div>
         </div>
 
         <div class="ui">
           <div class="ui-head">
             Board — epic swim lanes<span class="tag">.dispatch/tasks/</span>
           </div>
-          <div class="ui-body">
+          <div class="ui-body" id="board">
+            <!-- Rendered by the simulation; this is the no-JavaScript view. -->
             <div class="lane">
               <div class="lane-head">
                 <svg
@@ -1002,65 +1225,19 @@
                 </div>
               </div>
             </div>
-
-            <div class="lane">
-              <div class="lane-head">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--indigo)"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="m12 2 9 5-9 5-9-5 9-5Z" />
-                  <path d="m3 12 9 5 9-5" />
-                </svg>
-                Merge queue observability <span class="ct">2</span
-                ><i class="tail"></i>
-              </div>
-              <div class="cols">
-                <div class="col">
-                  <div class="col-head">
-                    <i class="sq"></i>todo <span class="ct">1</span>
-                  </div>
-                  <div class="tile">
-                    <div class="tid">t-2b91cc</div>
-                    <div class="tt">Name each verify step in the queue log</div>
-                    <div class="tf"><span class="dot idle"></span>ready</div>
-                  </div>
-                </div>
-                <div class="col">
-                  <div class="col-head doing">
-                    <i class="sq"></i>in-progress <span class="ct">0</span>
-                  </div>
-                </div>
-                <div class="col">
-                  <div class="col-head review">
-                    <i class="sq"></i>in-review <span class="ct">1</span>
-                  </div>
-                  <div class="tile">
-                    <div class="tid">t-518dd4</div>
-                    <div class="tt">Record per-step duration</div>
-                    <div class="tf"><span class="dot ok"></span>r-4e01af</div>
-                  </div>
-                </div>
-                <div class="col">
-                  <div class="col-head">
-                    <i class="sq"></i>done <span class="ct">0</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+          </div>
+          <div class="ui-foot" id="boardfoot" hidden>
+            <span id="boardhint"></span>
+            <button type="button" id="reset">Reset</button>
           </div>
         </div>
 
         <p class="note">
           One lane per epic, the same status columns repeated down the page. It
-          answers “which epic is stuck”, which a single flat board cannot.
+          answers “which epic is stuck”, which a single flat board cannot. The
+          kind badges, the split into lines and the grouping hint are the app's
+          own functions running here, not a script that imitates them — a demo
+          you can poke is only worth anything if poking it tells you the truth.
         </p>
       </div>
     </section>
@@ -1240,6 +1417,685 @@
         }
         setTimeout(() => (state.textContent = 'copy'), 1600);
       });
+    </script>
+
+    <script>
+      /**
+       * The two frames above, driven for real.
+       *
+       * The capture split, the kind inference and the clustering below are
+       * ported verbatim from the app (packages/server/src/inbox.ts and
+       * apps/desktop/src/lib/inboxCluster.ts). Retyping the rules would have
+       * been quicker and would have made this a puppet show: the value of an
+       * interactive demo is that poking it tells you something true, which
+       * only holds while it runs the same logic the product runs.
+       *
+       * Everything is in memory. Nothing is sent anywhere.
+       */
+      (() => {
+        const $ = (id) => document.getElementById(id);
+        const board = $('board');
+        const items = $('items');
+        if (!board || !items) return;
+
+        // ── the app's rules, ported ──────────────────────────────────────
+        const STOPWORDS = new Set(
+          (
+            'the a an and or but to of in on at for with is are was be been it its ' +
+            'this that when should would could need needs want make add fix from ' +
+            'into per not no if then than so do does task tasks agent agents run ' +
+            'runs dispatch'
+          ).split(' ')
+        );
+
+        const splitCapture = (raw) =>
+          raw
+            .split('\n')
+            .map((l) => l.replace(/^\s*[-*]\s*(\[[ xX]\]\s*)?/, '').trim())
+            .filter((l) => l.length > 0);
+
+        // Order matters: bug-ish words win over task-ish ones, because "fix the
+        // broken thing" is a bug report that happens to contain an imperative.
+        function inferKind(text) {
+          if (
+            /\b(bug|broken|blank|crash|fail|regress|wrong|leak|eating|stuck|hang)/i.test(
+              text
+            )
+          )
+            return 'bug';
+          if (
+            /\b(need|should|add|wire|build|make|implement|support|move|rename)/i.test(
+              text
+            )
+          )
+            return 'task';
+          if (/\b(idea|maybe|what if|consider|could|might|explore)/i.test(text))
+            return 'idea';
+          return 'note';
+        }
+
+        // Crude singularisation matters more than it looks: "worktrees are
+        // eating disk" and "prune the worktree" must land in the same bucket.
+        const terms = (text) =>
+          new Set(
+            text
+              .toLowerCase()
+              .split(/[^a-z0-9]+/)
+              .filter((w) => w.length > 3 && !STOPWORDS.has(w))
+              .map((w) =>
+                w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w
+              )
+              .filter((w) => w.length > 3 && !STOPWORDS.has(w))
+          );
+
+        const MIN_CLUSTER = 3;
+
+        function findCluster(list) {
+          const open = list.filter((i) => !i.done);
+          if (open.length < MIN_CLUSTER) return null;
+          const byTerm = new Map();
+          for (const item of open)
+            for (const t of terms(item.text))
+              byTerm.has(t)
+                ? byTerm.get(t).push(item.id)
+                : byTerm.set(t, [item.id]);
+          let best = null;
+          for (const [term, ids] of byTerm) {
+            if (ids.length < MIN_CLUSTER) continue;
+            if (best === null || ids.length > best.ids.length)
+              best = { term, ids };
+          }
+          if (best === null) return null;
+          const members = new Set(best.ids);
+          const theme = [...byTerm.entries()]
+            .filter(
+              ([, ids]) =>
+                ids.length >= members.size && ids.every((id) => members.has(id))
+            )
+            .map(([t]) => t)
+            .sort();
+          return {
+            ids: best.ids,
+            theme: theme.length > 0 ? theme : [best.term],
+          };
+        }
+
+        const describeCluster = (c) =>
+          `${c.ids.length} items here are all about ${c.theme.slice(0, 3).join(', ')}. ` +
+          `They would make a better epic than ${c.ids.length} loose tasks.`;
+
+        // ── state ────────────────────────────────────────────────────────
+        const STATUSES = ['todo', 'in-progress', 'in-review', 'done'];
+        const VERIFY = ['typecheck', 'test', 'lint'];
+        const hex = (n) =>
+          Array.from(
+            { length: n },
+            () => '0123456789abcdef'[(Math.random() * 16) | 0]
+          ).join('');
+
+        let state;
+        let timers = [];
+        const after = (ms, fn) => timers.push(setTimeout(fn, ms));
+
+        function seed() {
+          timers.forEach(clearTimeout);
+          timers = [];
+          state = {
+            inbox: [
+              {
+                id: 'in-1',
+                kind: 'bug',
+                text: 'worktree cleanup leaves the branch behind on cancel',
+                by: 'r-b1d725',
+                done: false,
+              },
+              {
+                id: 'in-2',
+                kind: 'idea',
+                text: 'reuse a worktree across runs on the same task',
+                done: false,
+              },
+              {
+                id: 'in-3',
+                kind: 'bug',
+                text: 'merge queue retries forever if verify times out',
+                done: false,
+              },
+              {
+                id: 'in-4',
+                kind: 'note',
+                text: 'worktree disk usage is not reported anywhere',
+                done: false,
+              },
+              {
+                id: 'in-5',
+                kind: 'task',
+                text: 'write the release notes for 0.9.1',
+                done: false,
+              },
+            ],
+            epics: [
+              { id: 'e-9021cd', title: 'Streaming output' },
+              { id: 'e-3f77b0', title: 'Merge queue observability' },
+            ],
+            tasks: [
+              {
+                id: 't-4d10ae',
+                title: 'Bound the buffer when the client is slow',
+                epic: 'e-9021cd',
+                status: 'todo',
+                blockedBy: ['t-9f2a41'],
+              },
+              {
+                id: 't-9f2a41',
+                title: 'Stream agent stdout over the websocket',
+                epic: 'e-9021cd',
+                status: 'in-progress',
+                run: 'r-b1d725',
+                live: true,
+              },
+              {
+                id: 't-77b3e1',
+                title: 'Reconnect without replaying the log',
+                epic: 'e-9021cd',
+                status: 'in-review',
+                note: '2 comments',
+              },
+              {
+                id: 't-c8954b',
+                title: 'Add a websocket route to the daemon',
+                epic: 'e-9021cd',
+                status: 'done',
+                note: 'merged',
+              },
+              {
+                id: 't-2b91cc',
+                title: 'Name each verify step in the queue log',
+                epic: 'e-3f77b0',
+                status: 'todo',
+              },
+              {
+                id: 't-518dd4',
+                title: 'Record per-step duration',
+                epic: 'e-3f77b0',
+                status: 'in-review',
+                run: 'r-4e01af',
+              },
+            ],
+            queue: [],
+            selected: new Set(),
+            pumping: false,
+          };
+        }
+
+        const esc = (t) =>
+          String(t).replace(
+            /[&<>"]/g,
+            (c) =>
+              ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]
+          );
+        const task = (id) => state.tasks.find((t) => t.id === id);
+        // A task is ready when nothing it declares as a blocker is still open.
+        const blockers = (t) =>
+          (t.blockedBy || []).filter((id) => {
+            const b = task(id);
+            return b && b.status !== 'done';
+          });
+
+        // ── inbox ────────────────────────────────────────────────────────
+        function renderInbox() {
+          const open = state.inbox.filter((i) => !i.done);
+          const gone = state.inbox.filter((i) => i.done);
+          $('ibn').textContent = String(open.length);
+
+          items.innerHTML = open
+            .map(
+              (
+                i
+              ) => `<label class="item${state.selected.has(i.id) ? ' sel' : ''}">
+                <input type="checkbox" data-pick="${i.id}"${state.selected.has(i.id) ? ' checked' : ''}
+                  aria-label="Select ${esc(i.text)}">
+                <span class="kind is-${i.kind}">${i.kind}</span>
+                <span>${esc(i.text)}</span>
+                <span class="by">${i.by ? esc(i.by) : ''}</span>
+              </label>`
+            )
+            .join('');
+          if (open.length === 0)
+            items.innerHTML =
+              '<p style="color:var(--dim);font-size:12.5px;padding:6px 2px">Nothing captured. Type above — it costs nothing.</p>';
+
+          $('sorted').innerHTML = gone.length
+            ? `<div class="ilabel" style="margin-top:14px">Sorted <span class="ct">${gone.length}</span><i class="tail"></i></div>` +
+              gone
+                .map(
+                  (
+                    i
+                  ) => `<div class="item gone"><span></span><span class="kind is-${i.kind}">${i.kind}</span>
+                    <span>${esc(i.text)}</span>
+                    <span class="link">${i.taskId ? '→ ' + i.taskId : 'dismissed'}</span></div>`
+                )
+                .join('')
+            : '';
+
+          const c = findCluster(state.inbox);
+          $('cluster').innerHTML = c
+            ? `<div class="aside-card"><div class="ac-t">These look like one thing</div>
+                 <p>${esc(describeCluster(c))}</p>
+                 <button class="btn solid pick" type="button" id="pickall">Select them</button></div>`
+            : '';
+          if (c)
+            $('pickall').onclick = () => {
+              state.selected = new Set(c.ids);
+              renderInbox();
+            };
+
+          renderSide();
+        }
+
+        /**
+         * The parts that depend only on *which* rows are ticked.
+         *
+         * Kept apart from renderInbox because re-rendering the list on every
+         * tick would destroy and recreate the checkbox that was just clicked,
+         * taking keyboard focus with it — you could tick one row and then be
+         * back at the top of the page. Selection changes touch one class and
+         * these two panels, and nothing else moves.
+         */
+        function renderSide() {
+          const n = state.selected.size;
+          $('selbar').innerHTML = n
+            ? `<div class="selbar"><span class="n">${n} selected</span>
+                 <button class="btn quiet" type="button" data-act="tasks">Make tasks</button>
+                 <button class="btn quiet" type="button" data-act="epic">Group into an epic</button>
+                 <button class="btn quiet" type="button" data-act="dismiss">Dismiss</button>
+                 <button class="btn quiet" type="button" data-act="clear">Clear</button></div>`
+            : '';
+        }
+
+        // Turns captures into tasks. With an epic, a lane is created for them
+        // and named from the shared theme — the same words the hint used to
+        // argue they belonged together.
+        function convert(asEpic) {
+          const picked = state.inbox.filter(
+            (i) => state.selected.has(i.id) && !i.done
+          );
+          if (picked.length === 0) return;
+          let epicId = null;
+          if (asEpic) {
+            const c = findCluster(picked.map((i) => ({ ...i, done: false })));
+            const word = c ? c.theme[0] : picked[0].text.split(' ')[0];
+            epicId = 'e-' + hex(6);
+            state.epics.push({
+              id: epicId,
+              title: word[0].toUpperCase() + word.slice(1),
+            });
+          }
+          for (const i of picked) {
+            const id = 't-' + hex(6);
+            i.done = true;
+            i.taskId = id;
+            state.tasks.push({
+              id,
+              title: i.text,
+              epic: epicId,
+              status: 'todo',
+            });
+          }
+          state.selected.clear();
+          renderInbox();
+          renderBoard();
+        }
+
+        // ── board ────────────────────────────────────────────────────────
+        const LAYERS =
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/></svg>';
+
+        function lanes() {
+          const out = [];
+          for (const e of state.epics) {
+            const ts = state.tasks.filter((t) => t.epic === e.id);
+            if (ts.length) out.push({ title: e.title, tasks: ts });
+          }
+          const none = state.tasks.filter(
+            (t) => t.epic === null || t.epic === undefined
+          );
+          if (none.length) out.push({ title: 'No epic', tasks: none });
+          return out;
+        }
+
+        function tile(t) {
+          const bl = blockers(t);
+          const foot = t.live
+            ? `<span class="dot live"></span>${esc(t.run)}`
+            : bl.length
+              ? `<span class="dot idle"></span><span class="blocked">blocked · ${esc(bl[0])}</span>`
+              : t.status === 'todo'
+                ? '<span class="dot idle"></span>ready'
+                : `<span class="dot ok"></span>${esc(t.note || t.run || '')}`;
+          const queued = state.queue.some((q) => q.taskId === t.id);
+          const act =
+            t.status === 'todo' && bl.length === 0
+              ? '<button class="act" type="button" data-go="' +
+                t.id +
+                '">Dispatch</button>'
+              : t.status === 'in-review' && !queued
+                ? '<button class="act go" type="button" data-ok="' +
+                  t.id +
+                  '">Approve</button>'
+                : '';
+          return `<div class="tile" draggable="true" tabindex="0" data-id="${t.id}"
+              aria-label="${esc(t.title)}, ${t.status}. Arrow keys move it between columns.">
+              <div class="tid">${t.id}</div>
+              <div class="tt">${esc(t.title)}</div>
+              <div class="tf">${foot}</div>${act}</div>`;
+        }
+
+        function renderBoard() {
+          board.innerHTML =
+            lanes()
+              .map(
+                (lane) => `<div class="lane">
+                  <div class="lane-head">${LAYERS}${esc(lane.title)}
+                    <span class="ct">${lane.tasks.length}</span><i class="tail"></i></div>
+                  <div class="cols">${STATUSES.map((st) => {
+                    const ts = lane.tasks.filter((t) => t.status === st);
+                    const skin =
+                      st === 'in-progress'
+                        ? ' doing'
+                        : st === 'in-review'
+                          ? ' review'
+                          : '';
+                    return `<div class="col"><div class="col-head${skin}"><i class="sq"></i>${st}
+                        <span class="ct">${ts.length}</span></div>
+                        <div class="drop" data-col="${st}">${ts.map(tile).join('')}</div></div>`;
+                  }).join('')}</div></div>`
+              )
+              .join('') + renderQueue();
+        }
+
+        function renderQueue() {
+          if (state.queue.length === 0) return '';
+          return (
+            '<div class="qstrip"><div class="ilabel">Merge queue <span class="ct">' +
+            state.queue.length +
+            '</span><i class="tail"></i></div>' +
+            state.queue
+              .map((q) => {
+                const steps =
+                  q.state === 'verifying' ||
+                  q.state === 'merging' ||
+                  q.state === 'merged'
+                    ? q.steps
+                        .map(
+                          (s) =>
+                            `<span class="qstep ${s.status}">${s.status === 'passed' ? '✓' : s.status === 'running' ? '·' : '○'} ${s.name}${s.ms ? ' ' + s.ms + 'ms' : ''}</span>`
+                        )
+                        .join('')
+                    : '';
+                return `<div class="qrow"><span class="qid">${q.taskId}</span>
+                  <span class="qstate${q.state === 'merged' ? ' done' : ''}">${q.state}</span>${steps}</div>`;
+              })
+              .join('') +
+            '</div>'
+          );
+        }
+
+        // One entry at a time, in order — that is what makes it a queue rather
+        // than several merges racing for the same branch.
+        function pump() {
+          if (state.pumping) return;
+          const entry = state.queue.find((q) => q.state === 'queued');
+          if (!entry) return;
+          state.pumping = true;
+          entry.state = 'rebasing';
+          renderBoard();
+          after(650, () => {
+            entry.state = 'verifying';
+            renderBoard();
+            let i = 0;
+            const step = () => {
+              if (i >= entry.steps.length) {
+                entry.state = 'merging';
+                renderBoard();
+                after(600, () => {
+                  entry.state = 'merged';
+                  const t = task(entry.taskId);
+                  if (t) {
+                    t.status = 'done';
+                    t.note = 'merged';
+                    t.live = false;
+                  }
+                  renderBoard();
+                  after(1400, () => {
+                    state.queue = state.queue.filter((q) => q !== entry);
+                    state.pumping = false;
+                    renderBoard();
+                    pump();
+                  });
+                });
+                return;
+              }
+              const s = entry.steps[i];
+              s.status = 'running';
+              renderBoard();
+              after(520, () => {
+                s.status = 'passed';
+                s.ms = 300 + i * 210;
+                i += 1;
+                renderBoard();
+                step();
+              });
+            };
+            step();
+          });
+        }
+
+        function dispatch(id) {
+          const t = task(id);
+          if (!t || blockers(t).length) return;
+          t.status = 'in-progress';
+          t.run = 'r-' + hex(6);
+          t.live = true;
+          renderBoard();
+          after(2600, () => {
+            t.status = 'in-review';
+            t.live = false;
+            t.note = '3 comments';
+            renderBoard();
+          });
+        }
+
+        function approve(id) {
+          const t = task(id);
+          if (!t || state.queue.some((q) => q.taskId === id)) return;
+          state.queue.push({
+            taskId: id,
+            state: 'queued',
+            steps: VERIFY.map((name) => ({ name, status: 'pending' })),
+          });
+          renderBoard();
+          pump();
+        }
+
+        function move(id, status) {
+          const t = task(id);
+          if (!t || t.status === status) return;
+          t.status = status;
+          t.live = false;
+          if (status === 'done') t.note = 'merged';
+          renderBoard();
+        }
+
+        // ── wiring ───────────────────────────────────────────────────────
+        const draft = $('draft');
+        function hint() {
+          const n = splitCapture(draft.value).length;
+          $('hint').textContent = n
+            ? `${n} ${n === 1 ? 'line' : 'lines'} — each becomes one item`
+            : 'One thought per line. Paste a wall of text and it gets split.';
+          $('drop').disabled = n === 0;
+          $('plan').disabled = n === 0;
+        }
+        draft.addEventListener('input', hint);
+        draft.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            capture();
+          }
+        });
+
+        function capture() {
+          const lines = splitCapture(draft.value);
+          if (!lines.length) return;
+          for (const text of lines.reverse())
+            state.inbox.unshift({
+              id: 'in-' + hex(4),
+              kind: inferKind(text),
+              text,
+              done: false,
+            });
+          draft.value = '';
+          hint();
+          renderInbox();
+        }
+        $('drop').onclick = capture;
+        // The planner turns loose text into one specified piece of work, so
+        // here it captures and groups in a single move.
+        $('plan').onclick = () => {
+          const before = new Set(state.inbox.map((i) => i.id));
+          capture();
+          state.selected = new Set(
+            state.inbox.filter((i) => !before.has(i.id)).map((i) => i.id)
+          );
+          convert(true);
+        };
+
+        document.addEventListener('change', (e) => {
+          const id = e.target.dataset && e.target.dataset.pick;
+          if (!id) return;
+          state.selected.has(id)
+            ? state.selected.delete(id)
+            : state.selected.add(id);
+          e.target
+            .closest('.item')
+            .classList.toggle('sel', state.selected.has(id));
+          renderSide();
+        });
+
+        document.addEventListener('click', (e) => {
+          const el = e.target.closest('[data-act],[data-go],[data-ok]');
+          if (!el) return;
+          const { act, go, ok } = el.dataset;
+          if (go) dispatch(go);
+          else if (ok) approve(ok);
+          else if (act === 'tasks') convert(false);
+          else if (act === 'epic') convert(true);
+          else if (act === 'dismiss') {
+            state.inbox.forEach((i) => {
+              if (state.selected.has(i.id)) i.done = true;
+            });
+            state.selected.clear();
+            renderInbox();
+          } else if (act === 'clear') {
+            state.selected.clear();
+            renderInbox();
+          }
+        });
+
+        // Drag for a mouse; arrow keys for a keyboard. A board only draggable
+        // is a board some people cannot use.
+        let dragId = null;
+        board.addEventListener('dragstart', (e) => {
+          const t = e.target.closest('.tile');
+          if (!t) return;
+          dragId = t.dataset.id;
+          t.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', dragId);
+        });
+        board.addEventListener('dragend', () => {
+          dragId = null;
+          board
+            .querySelectorAll('.over')
+            .forEach((c) => c.classList.remove('over'));
+        });
+        board.addEventListener('dragover', (e) => {
+          const col = e.target.closest('.drop');
+          if (!col) return;
+          e.preventDefault();
+          col.classList.add('over');
+        });
+        board.addEventListener('dragleave', (e) => {
+          const col = e.target.closest('.drop');
+          if (col) col.classList.remove('over');
+        });
+        board.addEventListener('drop', (e) => {
+          const col = e.target.closest('.drop');
+          if (!col || !dragId) return;
+          e.preventDefault();
+          move(dragId, col.dataset.col);
+        });
+        board.addEventListener('keydown', (e) => {
+          const t = e.target.closest('.tile');
+          if (!t) return;
+          const cur = task(t.dataset.id);
+          if (!cur) return;
+          const i = STATUSES.indexOf(cur.status);
+          if (e.key === 'ArrowRight' && i < STATUSES.length - 1) {
+            e.preventDefault();
+            move(cur.id, STATUSES[i + 1]);
+          }
+          if (e.key === 'ArrowLeft' && i > 0) {
+            e.preventDefault();
+            move(cur.id, STATUSES[i - 1]);
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (cur.status === 'todo') dispatch(cur.id);
+            else if (cur.status === 'in-review') approve(cur.id);
+          }
+        });
+
+        $('reset').onclick = () => {
+          seed();
+          renderInbox();
+          renderBoard();
+        };
+
+        seed();
+        renderInbox();
+        renderBoard();
+        hint();
+        $('dumpfoot').hidden = false;
+        $('boardfoot').hidden = false;
+        $('boardhint').textContent =
+          'Drag a card, or focus one and use ← →. Enter dispatches or approves.';
+
+        // The seeded run finishes once, the first time the board is actually
+        // on screen — work that happens where nobody is looking is just a
+        // surprise later. A rect check rather than IntersectionObserver: it is
+        // six lines, behaves identically here, and I could verify it running.
+        let started = false;
+        function maybeStart() {
+          if (started) return;
+          const r = board.getBoundingClientRect();
+          if (r.top > window.innerHeight || r.bottom < 0) return;
+          started = true;
+          window.removeEventListener('scroll', maybeStart);
+          after(2200, () => {
+            const t = task('t-9f2a41');
+            if (t && t.live) {
+              t.status = 'in-review';
+              t.live = false;
+              t.note = '2 comments';
+              renderBoard();
+            }
+          });
+        }
+        window.addEventListener('scroll', maybeStart, { passive: true });
+        maybeStart();
+      })();
     </script>
   </body>
 </html>
