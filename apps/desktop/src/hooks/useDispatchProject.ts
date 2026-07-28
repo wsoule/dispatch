@@ -184,13 +184,22 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
   /**
-   * Starts an AI draft that adds the detail a one-line capture or a thin task is missing.
-   * Lands on `notePlanRecord` (the second plan slot, kept apart from the Plans view's own so
-   * starting one cannot clobber an open plan) and writes nothing until
-   * `handleConfirmNotePlan`.
+   * Starts an AI draft that adds the detail a one-line capture is missing. Lands on
+   * `notePlanRecord` (the second plan slot, kept apart from the Plans view's own so starting
+   * one cannot clobber an open plan) and writes nothing until `handleConfirmNotePlan`.
    */
   handleEnrichInboxItem: (id: string) => Promise<void>;
+  /**
+   * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
+   * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
+   * sections onto `enrichTaskId`, rather than confirming them into a second task.
+   */
   handleEnrichTask: (taskId: string) => Promise<void>;
+  /** Which task the open draft belongs to, so another task's dialog doesn't show it. */
+  enrichTaskId: string | null;
+  enrichPlanRecord: PlanRecord | undefined;
+  /** Drops the open draft — Discard, and the cleanup after it's been applied. */
+  handleDismissEnrich: () => void;
   /** Model-backed grouping of related captures. Costs a call, so callers trigger it explicitly. */
   handleClusterInbox: () => Promise<
     import('@dispatch/client').InboxClusterGroup[]
@@ -352,6 +361,12 @@ export function useDispatchProject(
   // The Notes hub's own plan slot: the AI task draft started off a single note, kept apart
   // from `planId` so the two views never overwrite each other's in-flight proposal.
   const [notePlanId, setNotePlanId] = useState<string | null>(null);
+  // The "Add detail" slot, carrying the task it was started from. Separate from `notePlanId`
+  // because those proposals get confirmed into new tasks and these get patched onto one.
+  const [enrichPlan, setEnrichPlan] = useState<{
+    taskId: string;
+    planId: string;
+  } | null>(null);
   // Task 8: last drain-push failure reported by `queue.drained`, for the
   // RunsView banner — `null` once a later drain pushes successfully.
   const [lastPushError, setLastPushError] = useState<string | null>(null);
@@ -652,6 +667,11 @@ export function useDispatchProject(
 
   const planRecord = usePlanRecord(client, port, planId);
   const notePlanRecord = usePlanRecord(client, port, notePlanId);
+  const enrichPlanRecord = usePlanRecord(
+    client,
+    port,
+    enrichPlan?.planId ?? null
+  );
 
   // Task 6: the merge queue snapshot — same "poll on mount, refetch on the
   // matching WS event" shape as every other query here (see the
@@ -1419,14 +1439,22 @@ export function useDispatchProject(
     [client]
   );
 
+  // The AI half of specifying an existing task: the proposal lands on `enrichPlanRecord` for
+  // the detail dialog to review, and nothing is written until someone accepts it there.
   const handleEnrichTask = useCallback(
     async (taskId: string): Promise<void> => {
-      if (client === null) return;
+      if (client === null) throw new Error('dispatchd client not ready');
+      // Clear first, or the previous pass's draft stays up while this one runs.
+      setEnrichPlan(null);
       const { planId } = await client.enrichTask(taskId);
-      setNotePlanId(planId);
+      setEnrichPlan({ taskId, planId });
     },
     [client]
   );
+
+  const handleDismissEnrich = useCallback((): void => {
+    setEnrichPlan(null);
+  }, []);
 
   const invalidateReview = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
@@ -1632,6 +1660,9 @@ export function useDispatchProject(
     handleConvertInbox,
     handleEnrichInboxItem,
     handleEnrichTask,
+    enrichTaskId: enrichPlan?.taskId ?? null,
+    enrichPlanRecord,
+    handleDismissEnrich,
     handleClusterInbox,
     reviewComments: reviewComments ?? [],
     handleAddReviewComment,

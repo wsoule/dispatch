@@ -800,6 +800,14 @@ function App() {
             onMoveStatus={data.moveTaskStatus}
             onDispatch={data.handleDispatch}
             onEnrich={data.handleEnrichTask}
+            // The slot is app-level so a draft survives closing the dialog; only hand it over
+            // when it belongs to the task being shown.
+            enrichPlan={
+              data.enrichTaskId === selectedDoc.meta.id
+                ? data.enrichPlanRecord
+                : undefined
+            }
+            onDismissEnrich={data.handleDismissEnrich}
             onOpenRun={(runId) => {
               dispatchNav({ type: 'closePeek' });
               selectProjectView('runs');

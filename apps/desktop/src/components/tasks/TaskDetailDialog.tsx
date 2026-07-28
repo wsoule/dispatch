@@ -1,4 +1,4 @@
-import type { RunMeta } from '@dispatch/client';
+import type { PlanRecord, RunMeta } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import { computeStack } from '@dispatch/core/graph';
 import {
@@ -24,6 +24,12 @@ import { mergeLadderLabel, mergeLadderState } from '../../lib/mergeLadder';
 import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
 import { isTerminalRunState } from '../../lib/runState';
 import { parseTaskSections } from '../../lib/taskDisplay';
+import type { TaskEnrichDraft } from '../../lib/taskEnrich';
+import {
+  enrichDraftFromPlan,
+  enrichPatch,
+  enrichPlanError,
+} from '../../lib/taskEnrich';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
@@ -120,6 +126,69 @@ function EditableBodySection({
         }}
       />
     </MainSection>
+  );
+}
+
+// A drafted "Add detail" proposal, shown for a yes/no before anything is written. Read-only:
+// the editors below are where wording gets adjusted, once it has been applied.
+function EnrichReview({
+  draft,
+  applying,
+  onApply,
+  onDiscard,
+}: {
+  draft: TaskEnrichDraft;
+  applying: boolean;
+  onApply: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div className="shadow-hairline bg-card flex flex-col gap-3 rounded-lg p-3.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[12.5px] font-medium">Proposed detail</span>
+        <span className="text-muted-foreground text-[12px]">
+          Applying replaces Description and Acceptance Criteria below.
+        </span>
+      </div>
+
+      {draft.description !== '' && (
+        <div className="flex flex-col gap-1">
+          <h4 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+            Description
+          </h4>
+          <p className="text-foreground/90 text-[13.5px] leading-relaxed whitespace-pre-wrap">
+            {draft.description}
+          </p>
+        </div>
+      )}
+
+      {draft.acceptanceCriteria.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <h4 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+            Acceptance Criteria
+          </h4>
+          <ul className="text-foreground/90 flex list-disc flex-col gap-1 pl-4 text-[13.5px] leading-relaxed">
+            {draft.acceptanceCriteria.map((criterion, i) => (
+              <li key={`${i}-${criterion}`}>{criterion}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={applying} onClick={onApply}>
+          {applying ? 'Applying…' : 'Apply to task'}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={applying}
+          onClick={onDiscard}
+        >
+          Discard
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -343,6 +412,11 @@ interface TaskDetailDialogProps {
   /** Starts an AI draft that adds the context an under-specified task is missing. Optional so
    * the older call sites that never had it keep compiling with the button hidden. */
   onEnrich?: (id: string) => Promise<void>;
+  /** The plan carrying that draft, passed only while it belongs to *this* task. The caller
+   * owns the slot, so a draft survives the dialog being closed and reopened. */
+  enrichPlan?: PlanRecord;
+  /** Drops the draft without applying it (Discard, and the cleanup after Apply). */
+  onDismissEnrich?: () => void;
   /** Re-points this dialog at a different task — e.g. clicking another task in `StackRail`.
    * Omitted (the palette/board's older call sites) hides the rail's title links, rendering
    * them as plain text instead. */
@@ -374,6 +448,8 @@ export function TaskDetailDialog({
   onMoveStatus,
   onDispatch,
   onEnrich,
+  enrichPlan,
+  onDismissEnrich,
   onOpenRun,
   onOpenTask,
 }: TaskDetailDialogProps) {
@@ -381,7 +457,10 @@ export function TaskDetailDialog({
   const [activityDraft, setActivityDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
-  const [enriching, setEnriching] = useState(false);
+  // "Add detail" was clicked. Not cleared when the POST resolves — that 202 only means the
+  // plan started; it clears when a draft or an error actually arrives.
+  const [enrichStarted, setEnrichStarted] = useState(false);
+  const [applyingEnrich, setApplyingEnrich] = useState(false);
   // The model this dispatch will use — seeded from the saved default, overridable per-dispatch
   // via the picker beside the Dispatch button.
   const [model, setModel] = useState(readDefaultModel);
@@ -412,16 +491,45 @@ export function TaskDetailDialog({
     [tasks, doc.meta.id]
   );
 
+  // The caller only passes `enrichPlan` when it belongs to this task, so no id check here.
+  const enrichDraft = enrichDraftFromPlan(enrichPlan);
+  const enrichError = enrichPlanError(enrichPlan);
+  // The `running` arm covers reopening this (per-task keyed, so remounted) dialog mid-pass,
+  // where `enrichStarted` is back to false but the app-level plan is still going.
+  const enriching =
+    enrichPlan?.state === 'running' ||
+    (enrichStarted && enrichDraft === null && enrichError === null);
+
   async function enrich() {
     if (onEnrich === undefined) return;
-    setEnriching(true);
+    setEnrichStarted(true);
     setError(null);
     try {
       await onEnrich(doc.meta.id);
     } catch (err) {
+      setEnrichStarted(false);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function dismissEnrich() {
+    setEnrichStarted(false);
+    onDismissEnrich?.();
+  }
+
+  // Writes the draft through the ordinary update path. Only dropped once that write lands, so
+  // a failed save leaves the proposal on screen to retry.
+  async function applyEnrich() {
+    if (enrichDraft === null) return;
+    setApplyingEnrich(true);
+    setError(null);
+    try {
+      await onUpdate(doc.meta.id, enrichPatch(enrichDraft));
+      dismissEnrich();
+    } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setEnriching(false);
+      setApplyingEnrich(false);
     }
   }
 
@@ -599,19 +707,35 @@ export function TaskDetailDialog({
                 )}
 
                 {onEnrich !== undefined && (
-                  <div className="-mt-2 flex items-center gap-2">
-                    {/* Deliberately outside the ready/hasOpenRun gate below: a blocked or
+                  <div className="-mt-2 flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      {/* Deliberately outside the ready/hasOpenRun gate below: a blocked or
                       not-yet-ready task is precisely the one worth specifying properly before
                       an agent ever gets to it. */}
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={enriching}
-                      onClick={() => void enrich()}
-                    >
-                      <Sparkles className="size-3.5" />
-                      {enriching ? 'Reading the repo…' : 'Add detail'}
-                    </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={enriching}
+                        onClick={() => void enrich()}
+                      >
+                        <Sparkles className="size-3.5" />
+                        {enriching ? 'Reading the repo…' : 'Add detail'}
+                      </Button>
+                      {enrichError !== null && (
+                        <span className="text-state-failed text-[12.5px]">
+                          {enrichError}
+                        </span>
+                      )}
+                    </div>
+
+                    {enrichDraft !== null && (
+                      <EnrichReview
+                        draft={enrichDraft}
+                        applying={applyingEnrich}
+                        onApply={() => void applyEnrich()}
+                        onDiscard={dismissEnrich}
+                      />
+                    )}
                   </div>
                 )}
                 {(ready || hasOpenRun) && (
