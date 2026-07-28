@@ -155,11 +155,8 @@ export function OverviewView({
       <FeedFilterBar
         query={query}
         onQueryChange={setQuery}
-        counts={feed.counts}
         activeStates={activeStates}
-        onToggleState={(state) =>
-          setActiveStates((prev) => toggle(prev, state))
-        }
+        onClearStates={() => setActiveStates(new Set())}
         shown={feed.shown}
         total={feed.total}
         allCollapsed={allCollapsed}
