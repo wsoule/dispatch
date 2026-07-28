@@ -116,11 +116,11 @@ describe('navReducer', () => {
 
   test('closeNewTask returns to the view the creator was opened from', () => {
     let state = navReducer(
-      { ...initialNavState, projectView: 'milestones' },
+      { ...initialNavState, projectView: 'plans' },
       { type: 'openNewTask' }
     );
     state = navReducer(state, { type: 'closeNewTask' });
-    expect(state.projectView).toBe('milestones');
+    expect(state.projectView).toBe('plans');
   });
 
   test('closeNewTask is a no-op when the creator is not the current view', () => {

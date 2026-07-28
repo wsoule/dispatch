@@ -69,7 +69,7 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
       <div className="flex items-baseline gap-2">
-        <h1 className="view-topbar-title">Landing</h1>
+        <h2 className="text-[13px] font-semibold">Landing</h2>
         <span className="text-muted-foreground text-[12px]">
           {entries.length === 0
             ? 'nothing in the queue'

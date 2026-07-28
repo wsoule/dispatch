@@ -7,7 +7,6 @@ import {
   ChevronsUpDown,
   Cog,
   GitBranch,
-  GitMerge,
   GitPullRequestArrow,
   LayoutDashboard,
   ListChecks,
@@ -15,7 +14,6 @@ import {
   Play,
   Plus,
   Radar,
-  Target,
 } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 
@@ -60,12 +58,13 @@ const PROJECT_VIEWS: {
 
   { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },
   { id: 'board', label: 'Tasks', icon: ListChecks },
-  { id: 'milestones', label: 'Milestones', icon: Target },
 
   { id: 'runs', label: 'Runs', icon: Play, group: 'Work' },
+  // Review owns the whole tail of the pipeline now — the queue of things
+  // needing a look, and the merge queue that approving them feeds.
   { id: 'review', label: 'Review', icon: GitPullRequestArrow },
-  { id: 'landing', label: 'Landing', icon: GitMerge },
-  { id: 'branches', label: 'Branches', icon: GitBranch },
+
+  { id: 'branches', label: 'Branches', icon: GitBranch, group: 'Git' },
 ];
 
 /** The rail order is the shortcut order — cmd+1 is the first entry, and so on. */

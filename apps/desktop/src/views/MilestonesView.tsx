@@ -63,7 +63,7 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <h1 className="view-topbar-title">Milestones</h1>
+      <h1 className="sr-only">Milestones</h1>
 
       {groups.length === 0 ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">

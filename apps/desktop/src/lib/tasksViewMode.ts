@@ -6,7 +6,7 @@
  * older flat single-set-of-columns layout, kept for anyone who prefers it. `list` is the dense
  * grouped list.
  */
-export type TasksViewMode = 'board' | 'lanes' | 'list';
+export type TasksViewMode = 'board' | 'lanes' | 'list' | 'milestones';
 
 /**
  * A NEW storage key, not the original `dispatch:tasks-view-mode`.
@@ -20,7 +20,12 @@ export type TasksViewMode = 'board' | 'lanes' | 'list';
 export const VIEW_MODE_STORAGE_KEY = 'dispatch:tasks-view-mode-v2';
 
 export function parseViewMode(stored: string | null): TasksViewMode {
-  if (stored === 'list' || stored === 'board' || stored === 'lanes') {
+  if (
+    stored === 'list' ||
+    stored === 'board' ||
+    stored === 'lanes' ||
+    stored === 'milestones'
+  ) {
     return stored;
   }
   return 'lanes';

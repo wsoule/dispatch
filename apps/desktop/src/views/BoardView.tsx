@@ -5,6 +5,7 @@ import {
   Plus,
   Rows3,
   Sparkles,
+  Target,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -19,6 +20,7 @@ import { resolveListKeyCommand } from '../lib/keyboard';
 import { countMergeReady } from '../lib/mergeReady';
 import type { TasksViewMode } from '../lib/tasksViewMode';
 import { parseViewMode, VIEW_MODE_STORAGE_KEY } from '../lib/tasksViewMode';
+import { MilestonesView } from './MilestonesView';
 import { TasksListView } from './TasksListView';
 import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
@@ -222,6 +224,13 @@ export function BoardView({
                 label: 'Epic swim lanes',
                 icon: <Layers className="size-3.5" />,
               },
+              // Milestones groups the same tasks a different way — it belongs
+              // beside the other groupings, not in the rail as its own place.
+              {
+                value: 'milestones',
+                label: 'Milestones',
+                icon: <Target className="size-3.5" />,
+              },
             ]}
           />
           {data.archivedTasks.length > 0 && (
@@ -265,6 +274,10 @@ export function BoardView({
             <Plus className="size-3.5" />
             New task
           </Button>
+        </div>
+      ) : mode === 'milestones' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <MilestonesView data={data} onOpenTask={onSelectTask} />
         </div>
       ) : mode === 'board' || mode === 'lanes' ? (
         // `tabIndex={0}` puts the track itself in the natural tab order (so someone can
