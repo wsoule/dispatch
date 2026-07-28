@@ -761,21 +761,26 @@ function App() {
               narrower question than "what needs me", so this is the one thing
               worth carrying between them. Project scope only — the global
               views have no feed to show. */}
-          {navState.section === 'project' && activeProject !== null && (
-            <MiniOverview
-              data={data}
-              open={railOpen}
-              onToggle={() => setRailOpen((v) => !v)}
-              onOpenRun={(runId) => {
-                dispatchNav({ type: 'openRun', runId });
-                selectProjectView('runs');
-              }}
-              onReviewRun={(runId) => {
-                dispatchNav({ type: 'openRun', runId });
-                selectProjectView('review');
-              }}
-            />
-          )}
+          {/* Not on Overview: the rail is a compressed copy of that screen, and
+              showing it beside the full version is the same information twice
+              in the same viewport. */}
+          {navState.section === 'project' &&
+            navState.projectView !== 'overview' &&
+            activeProject !== null && (
+              <MiniOverview
+                data={data}
+                open={railOpen}
+                onToggle={() => setRailOpen((v) => !v)}
+                onOpenRun={(runId) => {
+                  dispatchNav({ type: 'openRun', runId });
+                  selectProjectView('runs');
+                }}
+                onReviewRun={(runId) => {
+                  dispatchNav({ type: 'openRun', runId });
+                  selectProjectView('review');
+                }}
+              />
+            )}
         </div>
 
         {selectedDoc !== null && data.config !== null && (

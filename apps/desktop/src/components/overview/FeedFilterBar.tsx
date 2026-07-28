@@ -1,16 +1,13 @@
 import { Search } from 'lucide-react';
 
-import { FEED_GROUPS } from '@/lib/controlRoom';
 import type { FeedState } from '@/lib/feedState';
-import { FEED_STATE_LABEL } from '@/lib/feedState';
-import { cn } from '@/lib/utils';
 
 interface FeedFilterBarProps {
   query: string;
   onQueryChange: (value: string) => void;
-  counts: Record<FeedState, number>;
   activeStates: ReadonlySet<FeedState>;
-  onToggleState: (state: FeedState) => void;
+  /** Clears every state filter — the ribbon toggles them one at a time. */
+  onClearStates: () => void;
   shown: number;
   total: number;
   allCollapsed: boolean;
@@ -28,9 +25,8 @@ interface FeedFilterBarProps {
 export function FeedFilterBar({
   query,
   onQueryChange,
-  counts,
   activeStates,
-  onToggleState,
+  onClearStates,
   shown,
   total,
   allCollapsed,
@@ -48,28 +44,21 @@ export function FeedFilterBar({
         />
       </div>
 
-      {FEED_GROUPS.map((state) => {
-        const active = activeStates.has(state);
-        return (
-          <button
-            key={state}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onToggleState(state)}
-            className={cn(
-              'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] transition-colors duration-150',
-              active
-                ? 'bg-accent text-accent-foreground shadow-hairline-strong'
-                : 'text-muted-foreground shadow-hairline hover:bg-muted/50'
-            )}
-          >
-            {FEED_STATE_LABEL[state]}
-            <span className="dense-meta">{counts[state]}</span>
-          </button>
-        );
-      })}
-
+      {/* The per-state chips used to live here as well as on the ribbon
+          above — two controls, the same counts, the same activeStates, stacked
+          one on top of the other. The ribbon already filters, so this row is
+          now only the things the ribbon cannot say: free-text search, how much
+          the filter is hiding, and collapse-all. */}
       <span className="flex-1" />
+      {activeStates.size > 0 && (
+        <button
+          type="button"
+          onClick={onClearStates}
+          className="text-muted-foreground hover:text-foreground rounded-md px-2 py-1.5 text-[12px]"
+        >
+          Clear filter
+        </button>
+      )}
       <span className="dense-meta">
         {shown} of {total} shown
       </span>
