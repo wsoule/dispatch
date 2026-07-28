@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dispatch — git-native task tracking for AI agents</title>
+    <meta
+      name="description"
+      content="Tasks are markdown files in your repo. Agents read them, work them in isolated worktrees, and land them through a merge queue that runs your tests first."
+    />
+    <meta property="og:title" content="Dispatch" />
+    <meta
+      property="og:description"
+      content="Tasks are markdown files in your repo. Agents read them, work them, and land them."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        /* Taken from the app's own tokens, so the site does not misrepresent what you open. */
+        --ground: #0e0f11;
+        --panel: #17181c;
+        --raised: #1e1f24;
+        --line: #23252a;
+        --ink: #f7f8f8;
+        --muted: #858991;
+        --dim: #5b5f66;
+        --indigo: #7c86e8;
+        --add: #4cb782;
+        --del: #e5595b;
+        --amber: #d3a052;
+
+        --display: 'Space Grotesk', system-ui, sans-serif;
+        --mono: 'IBM Plex Mono', ui-monospace, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--ground);
+        color: var(--ink);
+        font-family: var(--display);
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--indigo);
+        outline-offset: 3px;
+        border-radius: 3px;
+      }
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+
+      /* ── top bar ─────────────────────────────────────────────────────── */
+      header {
+        border-bottom: 1px solid var(--line);
+        position: sticky;
+        top: 0;
+        background: color-mix(in srgb, var(--ground) 92%, transparent);
+        backdrop-filter: blur(8px);
+        z-index: 10;
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        height: 52px;
+      }
+      .logo {
+        font-family: var(--mono);
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+      .logo b {
+        color: var(--indigo);
+        font-weight: 500;
+      }
+      .bar nav {
+        margin-left: auto;
+        display: flex;
+        gap: 18px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .bar nav a {
+        text-decoration: none;
+      }
+      .bar nav a:hover {
+        color: var(--ink);
+      }
+
+      /* ── hero ────────────────────────────────────────────────────────── */
+      .hero {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 56px;
+        align-items: center;
+        padding: 84px 0 72px;
+      }
+      h1 {
+        font-size: clamp(34px, 4.4vw, 52px);
+        line-height: 1.06;
+        letter-spacing: -0.035em;
+        font-weight: 500;
+        margin: 0 0 20px;
+        text-wrap: balance;
+      }
+      h1 em {
+        font-style: normal;
+        color: var(--indigo);
+      }
+      .lede {
+        color: var(--muted);
+        font-size: 17px;
+        max-width: 42ch;
+        margin: 0 0 28px;
+      }
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+      .copy {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 12px;
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .copy:hover {
+        border-color: var(--dim);
+      }
+      .copy span[data-state] {
+        color: var(--dim);
+        font-size: 11px;
+      }
+      .ghost {
+        font-size: 13px;
+        color: var(--muted);
+        text-decoration: none;
+        padding: 9px 4px;
+      }
+      .ghost:hover {
+        color: var(--ink);
+      }
+
+      /* The hero artifact: an actual task file. */
+      .file {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 1.75;
+      }
+      .file-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 14px;
+        background: var(--raised);
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11.5px;
+      }
+      .file-body {
+        padding: 14px;
+        overflow-x: auto;
+        white-space: pre;
+      }
+      .k {
+        color: var(--muted);
+      }
+      .v {
+        color: var(--ink);
+      }
+      .id {
+        color: var(--indigo);
+      }
+      .rule {
+        color: var(--dim);
+      }
+      .h {
+        color: var(--amber);
+      }
+
+      /* ── sections ────────────────────────────────────────────────────── */
+      section {
+        border-top: 1px solid var(--line);
+        padding: 64px 0;
+      }
+      .eyebrow {
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--dim);
+        margin: 0 0 28px;
+      }
+      h2 {
+        font-size: clamp(24px, 2.6vw, 31px);
+        letter-spacing: -0.025em;
+        font-weight: 500;
+        margin: 0 0 12px;
+        text-wrap: balance;
+      }
+      .sub {
+        color: var(--muted);
+        max-width: 58ch;
+        margin: 0 0 36px;
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .step {
+        background: var(--ground);
+        padding: 20px 18px;
+      }
+      /* The numbering is real: this IS the order work moves through the system. */
+      .step .n {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--indigo);
+        display: block;
+        margin-bottom: 10px;
+      }
+      .step h3 {
+        font-size: 15px;
+        font-weight: 500;
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
+      }
+      .step p {
+        margin: 0;
+        font-size: 13.5px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      /* ── the diff: the signature ─────────────────────────────────────── */
+      .diff {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 13px;
+        background: var(--panel);
+      }
+      .diff-head {
+        padding: 9px 14px;
+        background: var(--raised);
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11.5px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        gap: 8px;
+        padding: 3px 14px;
+        line-height: 1.6;
+      }
+      .row.minus {
+        background: color-mix(in srgb, var(--del) 9%, transparent);
+      }
+      .row.plus {
+        background: color-mix(in srgb, var(--add) 9%, transparent);
+      }
+      .row .sign {
+        user-select: none;
+        text-align: center;
+      }
+      .row.minus .sign,
+      .row.minus .txt {
+        color: color-mix(in srgb, var(--del) 88%, var(--ink));
+      }
+      .row.plus .sign,
+      .row.plus .txt {
+        color: color-mix(in srgb, var(--add) 88%, var(--ink));
+      }
+      .row.ctx .sign {
+        color: var(--dim);
+      }
+      .row.ctx .txt {
+        color: var(--muted);
+      }
+      .hunk {
+        padding: 6px 14px;
+        color: var(--dim);
+        background: color-mix(in srgb, var(--indigo) 8%, transparent);
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      .txt {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .note {
+        margin-top: 20px;
+        font-size: 13.5px;
+        color: var(--muted);
+        max-width: 66ch;
+      }
+
+      /* ── install ─────────────────────────────────────────────────────── */
+      .install {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 32px;
+      }
+      .box {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 20px;
+        background: var(--panel);
+      }
+      .box h3 {
+        margin: 0 0 10px;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .box pre {
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        color: var(--ink);
+        overflow-x: auto;
+      }
+      .box p {
+        margin: 10px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 28px 0 48px;
+        color: var(--dim);
+        font-size: 13px;
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+      footer a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      footer a:hover {
+        color: var(--ink);
+      }
+
+      @media (max-width: 860px) {
+        .hero,
+        .install {
+          grid-template-columns: 1fr;
+          gap: 36px;
+        }
+        .hero {
+          padding: 52px 0 44px;
+        }
+        .steps {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 520px) {
+        .steps {
+          grid-template-columns: 1fr;
+        }
+        .bar nav {
+          gap: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap bar">
+        <span class="logo">dispatch<b>/</b></span>
+        <nav>
+          <a href="#how">How it works</a>
+          <a href="#diff">vs. agent runners</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/wsoule/dispatch">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <div class="hero">
+        <div>
+          <h1>Your tasks are <em>files in your repo</em>.</h1>
+          <p class="lede">
+            Dispatch tracks work as markdown in
+            <span class="mono">.dispatch/</span>, sends agents at it in isolated
+            worktrees, and lands the result through a merge queue that runs your
+            tests first.
+          </p>
+          <div class="cta">
+            <button class="copy" id="copy" type="button">
+              <span class="mono">brew install --cask wsoule/tap/dispatch</span>
+              <span data-state>copy</span>
+            </button>
+            <a
+              class="ghost"
+              href="https://github.com/wsoule/dispatch/releases/latest"
+              >Download for macOS &amp; Linux →</a
+            >
+          </div>
+        </div>
+
+        <div class="file" aria-label="Example task file">
+          <div class="file-head">
+            <span class="mono"
+              >.dispatch/tasks/t-9f2a41-stream-agent-stdout.md</span
+            >
+          </div>
+          <div class="file-body">
+            <span class="rule">---</span> <span class="k">id:</span>
+            <span class="id">t-9f2a41</span> <span class="k">title:</span>
+            <span class="v">Stream agent stdout over the websocket</span>
+            <span class="k">status:</span> <span class="v">in-progress</span>
+            <span class="k">kind:</span> <span class="v">task</span>
+            <span class="k">parent:</span> <span class="id">e-9021cd</span>
+            <span class="k">blockedBy:</span> [<span class="id">t-c8954b</span>]
+            <span class="k">priority:</span> <span class="v">high</span>
+            <span class="rule">---</span>
+
+            <span class="h">## Description</span>
+
+            The poller wakes every 500ms whether or not there is output. Move to
+            a push model.
+
+            <span class="h">## Acceptance Criteria</span>
+
+            - Output reaches the client without polling - Backpressure is
+            bounded
+
+            <span class="h">## Activity</span>
+            - dispatched (claude, r-b1d725)
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <section id="how">
+      <div class="wrap">
+        <p class="eyebrow">How it works</p>
+        <h2>Write a task. Get a branch that passed your tests.</h2>
+        <p class="sub">
+          Four steps, in the order work actually moves. Everything is a file on
+          disk, so git is the sync layer and there is no database to keep in
+          step.
+        </p>
+        <div class="steps">
+          <div class="step">
+            <span class="n">01</span>
+            <h3>Capture</h3>
+            <p>
+              Dump anything into the inbox — it splits on newlines and files
+              each line. Turn one into a task when you mean it.
+            </p>
+          </div>
+          <div class="step">
+            <span class="n">02</span>
+            <h3>Dispatch</h3>
+            <p>
+              Each run gets its own git worktree. Tasks declare what blocks
+              them, so an epic starts what is ready and holds the rest.
+            </p>
+          </div>
+          <div class="step">
+            <span class="n">03</span>
+            <h3>Review</h3>
+            <p>
+              Comment on diff lines, then submit the review with a verdict.
+              Requesting changes resumes the same agent on the same branch,
+              carrying your notes.
+            </p>
+          </div>
+          <div class="step">
+            <span class="n">04</span>
+            <h3>Land</h3>
+            <p>
+              Approved work enters a merge queue that rebases, runs your named
+              verify steps, and merges. A failure names the step that broke.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="diff">
+      <div class="wrap">
+        <p class="eyebrow">vs. parallel agent runners</p>
+        <h2>Running agents in parallel is the easy half.</h2>
+        <p class="sub">
+          Tools like Conductor start several agents in worktrees and show you
+          the diffs. Dispatch does that, and then handles the parts that decide
+          whether the work is worth anything: what to work on, in what order,
+          and how it lands.
+        </p>
+
+        <div
+          class="diff"
+          role="img"
+          aria-label="Comparison of a parallel agent runner and Dispatch, shown as a unified diff"
+        >
+          <div class="diff-head">
+            <span class="mono">agent-runner.md → dispatch.md</span>
+          </div>
+          <div class="hunk mono">@@ what you get @@</div>
+
+          <div class="row ctx">
+            <span class="sign"> </span
+            ><span class="txt"
+              >parallel agents, each in its own git worktree</span
+            >
+          </div>
+          <div class="row ctx">
+            <span class="sign"> </span
+            ><span class="txt">a diff you can read when it finishes</span>
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt">work lives in the tool, not the repo</span>
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
+            ><span class="txt"
+              >tasks are markdown in .dispatch/, synced by git and readable by
+              both of you</span
+            >
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt"
+              >you pick what each agent works on, every time</span
+            >
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
+            ><span class="txt"
+              >tasks declare blockedBy; finishing one unblocks the next
+              automatically</span
+            >
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt"
+              >review means reading a diff and typing a new prompt</span
+            >
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
+            ><span class="txt"
+              >comment on lines, submit a verdict, and the agent resumes with
+              your review attached</span
+            >
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt"
+              >merging is your problem, one branch at a time</span
+            >
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
+            ><span class="txt"
+              >a merge queue rebases, runs your verify steps, and merges — or
+              names the step that failed</span
+            >
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt"
+              >the agent cannot file what it noticed on the way past</span
+            >
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
+            ><span class="txt"
+              >agents get task_save, task_next and dispatch_note over MCP</span
+            >
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt">closed source, macOS only</span>
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
+            ><span class="txt"
+              >Apache 2.0, macOS and Linux, with a CLI and a headless
+              daemon</span
+            >
+          </div>
+        </div>
+
+        <p class="note">
+          If you only need several agents going at once, a runner is enough.
+          Dispatch is for when you have more work than you can hold in your
+          head, and you want the finished work to land on its own.
+        </p>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="wrap">
+        <p class="eyebrow">Install</p>
+        <h2>It runs on your machine, against your checkout.</h2>
+        <p class="sub">
+          No account, no server, nothing uploaded. The daemon is local and the
+          tracker is a directory in your repo.
+        </p>
+        <div class="install">
+          <div class="box">
+            <h3>macOS</h3>
+            <pre>brew install --cask wsoule/tap/dispatch</pre>
+            <p>
+              Signed and notarized. Ships the
+              <span class="mono">dispatch</span> CLI on your PATH.
+            </p>
+          </div>
+          <div class="box">
+            <h3>Linux</h3>
+            <pre>.deb · .rpm · .AppImage</pre>
+            <p>
+              From the
+              <a href="https://github.com/wsoule/dispatch/releases/latest"
+                >latest release</a
+              >.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <footer>
+        <span>Apache 2.0</span>
+        <a href="https://github.com/wsoule/dispatch">Source</a>
+        <a href="https://github.com/wsoule/dispatch/releases">Releases</a>
+        <a href="https://github.com/wsoule/dispatch/issues">Issues</a>
+      </footer>
+    </div>
+
+    <script>
+      // The install command is the one thing most visitors came for.
+      const btn = document.getElementById('copy');
+      btn?.addEventListener('click', async () => {
+        const state = btn.querySelector('[data-state]');
+        try {
+          await navigator.clipboard.writeText(
+            'brew install --cask wsoule/tap/dispatch'
+          );
+          state.textContent = 'copied';
+        } catch {
+          // Clipboard can be blocked; say so rather than showing a false success.
+          state.textContent = 'select it';
+        }
+        setTimeout(() => (state.textContent = 'copy'), 1600);
+      });
+    </script>
+  </body>
+</html>

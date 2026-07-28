@@ -1,0 +1,17 @@
+# The repo root is a Bun workspace monorepo, but this app has no dependencies at all —
+# it is a static server plus three files. Installing the whole workspace here would pull
+# Tauri and the desktop toolchain into an image that serves HTML, so the install phase
+# is deliberately empty.
+providers = ["node"]
+
+[phases.setup]
+nixPkgs = ["bun"]
+
+[phases.install]
+cmds = ["echo 'no dependencies'"]
+
+[phases.build]
+cmds = ["echo 'static site, nothing to build'"]
+
+[start]
+cmd = "bun run server.ts"
