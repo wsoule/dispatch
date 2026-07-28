@@ -10,6 +10,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
+import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import { EpicDagModal } from '../components/tasks/EpicDagModal';
 import {
   AssigneeControl,
@@ -86,6 +87,12 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   // `null` when closed. Not lifted to App-level nav state since nothing outside this list needs
   // to know the graph is open.
   const [dagEpicId, setDagEpicId] = useState<string | null>(null);
+  // Multi-select for bulk actions. Kept here rather than lifted: nothing outside this list
+  // needs to know what is ticked, and it should clear when you navigate away.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  const [dispatchOpen, setDispatchOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const epicById = useMemo(() => {
@@ -205,6 +212,26 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
       ),
     [groups, collapsedGroups]
   );
+
+  // The selection, resolved back to tasks — and the subset that can actually start, which is
+  // what the bar's label has to name. Selecting a blocked task is normal; pretending it will
+  // dispatch is not.
+  const selectedTasks = useMemo(
+    () => data.tasks.filter((t) => selectedIds.has(t.meta.id)),
+    [data.tasks, selectedIds]
+  );
+  const selectedReady = useMemo(
+    () => selectedTasks.filter((t) => data.readyIds.has(t.meta.id)),
+    [selectedTasks, data.readyIds]
+  );
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
 
   function toggleGroup(key: string) {
     setCollapsedGroups((prev) => {
@@ -389,6 +416,8 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                         onEditTask={(patch) =>
                           void data.handleUpdate(doc.meta.id, patch)
                         }
+                        selected={selectedIds.has(doc.meta.id)}
+                        onToggleSelect={() => toggleSelected(doc.meta.id)}
                         archived={group.archived === true}
                       />
                     ))}
@@ -398,6 +427,56 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
             );
           })}
         </div>
+      )}
+
+      {/* Only appears once something is ticked, so the list is not permanently wearing a
+          toolbar for an action most visits never take. */}
+      {selectedIds.size > 0 && (
+        <div className="bg-accent/15 shadow-hairline-strong sticky bottom-0 flex items-center gap-2 rounded-lg px-3 py-2">
+          <span className="text-[12.5px]">{selectedIds.size} selected</span>
+          <span className="dense-meta">
+            {selectedReady.length} ready to dispatch
+          </span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            disabled={selectedReady.length === 0}
+            onClick={() => setDispatchOpen(true)}
+            className="bg-accent text-accent-foreground rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
+          >
+            Dispatch {selectedReady.length}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedIds(new Set())}
+            className="shadow-hairline rounded-md px-2.5 py-1 text-[12px]"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {dispatchOpen && (
+        <DispatchDialog
+          title={`Send agents at ${selectedIds.size} selected ${
+            selectedIds.size === 1 ? 'task' : 'tasks'
+          }`}
+          tasks={selectedTasks}
+          readyIds={data.readyIds}
+          runningNow={data.liveRunStateByTaskId.size}
+          defaultConcurrency={data.config?.orchestrator.epicConcurrency ?? 3}
+          onCancel={() => setDispatchOpen(false)}
+          onConfirm={async (concurrency) => {
+            // Dispatched one at a time up to the chosen concurrency, matching what the preview
+            // promised — the per-task endpoint is the only one that takes an arbitrary set.
+            const starting = selectedReady.slice(0, concurrency);
+            for (const task of starting) {
+              await data.handleDispatch(task.meta.id);
+            }
+            setDispatchOpen(false);
+            setSelectedIds(new Set());
+          }}
+        />
       )}
 
       <EpicDagModal
@@ -424,6 +503,8 @@ interface TaskListRowProps {
   onMouseEnter: () => void;
   onStatusChange: (status: string) => void;
   onEditTask: (patch: UpdatePatch) => void;
+  selected: boolean;
+  onToggleSelect: () => void;
   /** Task 9: true for a row in the trailing "Archived" group — dims the row; the underlying
    * `moveTaskStatus` call is gated centrally in `useDispatchProject`, this is purely visual. */
   archived?: boolean;
@@ -447,6 +528,8 @@ function TaskListRow({
   onMouseEnter,
   onStatusChange,
   onEditTask,
+  selected,
+  onToggleSelect,
   archived = false,
 }: TaskListRowProps) {
   const visibleLabels = doc.meta.labels.slice(0, MAX_VISIBLE_LABELS);
@@ -459,10 +542,30 @@ function TaskListRow({
       data-row-id={doc.meta.id}
       onMouseEnter={onMouseEnter}
       onClick={onClick}
-      className={`flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${
-        focused ? 'bg-accent/50' : 'hover:bg-accent/30'
+      className={`group flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${
+        selected
+          ? 'bg-accent/20'
+          : focused
+            ? 'bg-accent/50'
+            : 'hover:bg-accent/30'
       } ${archived ? 'opacity-55 saturate-50' : ''}`}
     >
+      {/* Hidden until you hover or select something, so an unused affordance does not add a
+          column of empty boxes to every row. stopPropagation because selecting a task and
+          opening it are different intents. */}
+      <input
+        type="checkbox"
+        checked={selected}
+        aria-label={`Select ${doc.meta.title}`}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          e.stopPropagation();
+          onToggleSelect();
+        }}
+        className={`accent-accent size-3.5 shrink-0 transition-opacity duration-150 ${
+          selected ? '' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+        }`}
+      />
       <PriorityControl
         value={doc.meta.priority}
         onChange={(p) => onEditTask({ priority: p })}

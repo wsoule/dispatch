@@ -1,6 +1,7 @@
 import { TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
+import { formatRelativeTimeFromIso } from '@/lib/format';
 import { Button } from '@/ui/button';
 
 interface ApprovalCardProps {
@@ -9,6 +10,9 @@ interface ApprovalCardProps {
    * and could still find the matching log entry — see RunLogView's doc comment on
    * `pendingApproval` for why this can legitimately be `null` (e.g. after a reload). */
   toolInput: unknown;
+  /** When the run went into `awaiting-approval`, so the header can say how long it has been
+   * stuck. A frozen run looks identical to a busy one without it. */
+  frozenSince?: string;
   onDecide: (
     allow: boolean,
     opts?: { scope?: 'once' | 'session'; reason?: string }
@@ -38,6 +42,7 @@ function formatInput(toolInput: unknown): string {
 export function ApprovalCard({
   toolName,
   toolInput,
+  frozenSince,
   onDecide,
 }: ApprovalCardProps) {
   const [deciding, setDeciding] = useState(false);
@@ -72,6 +77,11 @@ export function ApprovalCard({
         <span className="dense-label text-state-waiting font-medium">
           Waiting on approval
         </span>
+        {frozenSince !== undefined && (
+          <span className="dense-meta text-state-waiting">
+            frozen {formatRelativeTimeFromIso(frozenSince)}
+          </span>
+        )}
         <span className="text-foreground truncate font-mono text-[12px]">
           {toolName}
         </span>
