@@ -1,4 +1,5 @@
+# Only excludes things that are genuinely not part of the image. The Dockerfile and railway.json
+# are deliberately NOT listed: `railway up` uploads this directory as the build context, and an
+# ignore rule that hides the build config from the uploader would silently drop back to builder
+# autodetection — the exact failure this Dockerfile exists to prevent.
 node_modules
-railway.json
-Dockerfile
-.dockerignore
