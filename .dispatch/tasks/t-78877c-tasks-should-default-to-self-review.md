@@ -1,7 +1,7 @@
 ---
 id: t-78877c
 title: tasks should default to self review
-status: todo
+status: cancelled
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-26T19:24:11.556Z
-updated: 2026-07-27T01:26:59.398Z
+updated: 2026-07-28T19:31:10.643Z
 external: null
 ---
 
