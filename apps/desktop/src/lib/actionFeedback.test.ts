@@ -82,3 +82,35 @@ describe('withActionFeedback', () => {
     expect(api.runs).toBe(runs);
   });
 });
+
+describe('success feedback', () => {
+  test('confirms only the handlers on the list', async () => {
+    const said: string[] = [];
+    const api = withActionFeedback(
+      {
+        handleArchiveRun: () => Promise.resolve('ok'),
+        // Not on the list: moving a card confirms itself on screen, and a
+        // toast for it would train you to ignore the ones that matter.
+        handleUpdate: () => Promise.resolve('ok'),
+      },
+      () => {},
+      (message) => said.push(message)
+    );
+    await api.handleArchiveRun();
+    await api.handleUpdate();
+    expect(said).toEqual(['Run archived']);
+  });
+
+  test('a failed action is not also reported as a success', async () => {
+    const said: string[] = [];
+    const failed: string[] = [];
+    const api = withActionFeedback(
+      { handleArchiveRun: () => Promise.reject(new Error('nope')) },
+      (_action, message) => failed.push(message),
+      (message) => said.push(message)
+    );
+    await api.handleArchiveRun();
+    expect(said).toEqual([]);
+    expect(failed).toEqual(['nope']);
+  });
+});
