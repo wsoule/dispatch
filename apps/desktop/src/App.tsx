@@ -17,6 +17,7 @@ import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import type { GlobalView, ProjectView } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
+import { deriveFeedState } from './lib/feedState';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
 import { basename } from './lib/projectName';
@@ -41,6 +42,7 @@ import { NewTaskView } from './views/NewTaskView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { PullRequestsView } from './views/PullRequestsView';
+import { ReviewView } from './views/ReviewView';
 import { RunsView } from './views/RunsView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
@@ -519,6 +521,8 @@ function App() {
               landing: data.mergeQueue?.entries.length ?? 0,
               board: data.readyIds.size,
               runs: liveRuns.length,
+              review: data.runs.filter((r) => deriveFeedState(r) === 'review')
+                .length,
             }}
             unreadCount={unreadCount(data.notificationInbox)}
             onToggleInbox={toggleInbox}
@@ -618,7 +622,17 @@ function App() {
                         dispatchNav({ type: 'openRun', runId });
                         selectProjectView('runs');
                       }}
+                      onReviewRun={(runId) => {
+                        dispatchNav({ type: 'openRun', runId });
+                        selectProjectView('review');
+                      }}
                       onGoToBoard={() => selectProjectView('board')}
+                    />
+                  )}
+                  {navState.projectView === 'review' && (
+                    <ReviewView
+                      data={data}
+                      onBack={() => selectProjectView('overview')}
                     />
                   )}
                   {navState.projectView === 'landing' && (

@@ -26,6 +26,7 @@ export type ProjectView =
   | 'branches'
   | 'pull-requests'
   | 'landing'
+  | 'review'
   | 'brain-dump'
   | 'plans'
   | 'new-task';
@@ -109,7 +110,11 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         // run with an open PR), so keep it when moving between those two; any other view
         // clears it so re-entering starts fresh rather than reopening a stale selection.
         activeRunId:
-          action.view === 'runs' || action.view === 'pull-requests'
+          action.view === 'runs' ||
+          action.view === 'pull-requests' ||
+          // Review is a full-page view OF the selected run, so moving into it must keep the
+          // selection rather than clearing it and landing on an empty surface.
+          action.view === 'review'
             ? state.activeRunId
             : null,
       };
