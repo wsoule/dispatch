@@ -1,4 +1,10 @@
-import { FileX, GitBranch, MousePointerClick } from 'lucide-react';
+import {
+  Archive,
+  FileX,
+  GitBranch,
+  MousePointerClick,
+  PanelRight,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
@@ -18,7 +24,6 @@ import { isTerminalRunState } from '../lib/runState';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
 
 type RunTab = 'session' | 'diff';
 
@@ -35,6 +40,68 @@ function DiffEmptyState({ message }: { message: string }) {
       <FileX className="size-5" />
       <p className="text-[13px]">{message}</p>
     </div>
+  );
+}
+
+/** A two-option switch small enough to sit on the header row. */
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (next: T) => void;
+  options: { value: T; label: string }[];
+}) {
+  return (
+    <div className="border-border flex items-center gap-0.5 rounded-md border p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          aria-pressed={value === o.value}
+          className={cn(
+            'rounded px-2 py-0.5 text-[11.5px] transition-colors duration-150',
+            value === o.value
+              ? 'bg-accent text-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function IconToggle({
+  on,
+  onClick,
+  label,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      title={label}
+      aria-label={label}
+      className={cn(
+        'border-border rounded-md border p-1 transition-colors duration-150',
+        on
+          ? 'bg-accent text-foreground'
+          : 'text-muted-foreground hover:text-foreground'
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -69,6 +136,10 @@ export function RunsView({
   onViewPr,
 }: RunsViewProps) {
   const [tab, setTab] = useState<RunTab>('session');
+  // The run's own metadata panel, off by default: the transcript is the thing
+  // you came to read, and it was sharing the width with a sidebar nobody asked
+  // for on every run.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // Which run id the tab above was last defaulted for — a default is only applied once per
   // run (on first seeing it, or once its diff resolves), so switching tabs manually never
   // gets clobbered by a later poll of the same run's data.
@@ -115,6 +186,10 @@ export function RunsView({
     DEFAULT_RUN_LIST_WIDTH,
     splitRef
   );
+
+  // How many runs the archive filter is currently holding back — drives the
+  // toggle, which stays hidden entirely when there is nothing to reveal.
+  const hiddenRunCount = data.runs.length - data.visibleRuns.length;
 
   const selected = data.runs.find((r) => r.id === selectedRunId);
   const selectedId = selected?.id;
@@ -171,8 +246,22 @@ export function RunsView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-3">
         <h1 className="view-topbar-title">Runs</h1>
+        <span className="dense-meta">
+          {data.visibleRuns.length} shown
+          {hiddenRunCount > 0 && ` · ${hiddenRunCount} archived`}
+        </span>
+        <div className="flex-1" />
+        {hiddenRunCount > 0 && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => data.setShowArchived(!data.showArchived)}
+          >
+            {data.showArchived ? 'Hide archived' : 'Show archived'}
+          </Button>
+        )}
         <Button
           variant="secondary"
           size="sm"
@@ -306,6 +395,41 @@ export function RunsView({
                 cost={liveCostUsd(data.runDetail.meta, data.runDetail.entries)}
                 live={!isTerminalRunState(selected.state)}
                 onCancel={() => data.handleCancelRun(selected.id)}
+                trailing={
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Segmented<RunTab>
+                      value={tab}
+                      onChange={setTab}
+                      options={[
+                        { value: 'session', label: 'Session' },
+                        { value: 'diff', label: 'Diff' },
+                      ]}
+                    />
+                    <IconToggle
+                      on={detailsOpen}
+                      onClick={() => setDetailsOpen((v) => !v)}
+                      label={detailsOpen ? 'Hide details' : 'Show details'}
+                    >
+                      <PanelRight className="size-3.5" />
+                    </IconToggle>
+                    <IconToggle
+                      on={selected.archivedAt !== undefined}
+                      onClick={() =>
+                        void data.handleArchiveRun(
+                          selected.id,
+                          selected.archivedAt === undefined
+                        )
+                      }
+                      label={
+                        selected.archivedAt === undefined
+                          ? 'Archive this run'
+                          : 'Unarchive this run'
+                      }
+                    >
+                      <Archive className="size-3.5" />
+                    </IconToggle>
+                  </div>
+                }
               />
 
               <StackRail
@@ -318,75 +442,31 @@ export function RunsView({
                 }}
               />
 
-              <Tabs
-                value={tab}
-                onValueChange={(value) => setTab(value as RunTab)}
-                className="flex min-h-0 flex-1 flex-col gap-3"
-              >
-                <TabsList className="self-start">
-                  <TabsTrigger value="session">Session</TabsTrigger>
-                  <TabsTrigger value="diff">Diff</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="session" className="min-h-0">
-                  <div className="flex min-h-0 gap-4">
-                    <div className="min-h-0 min-w-0 flex-1">
-                      <RunLogView
-                        meta={data.runDetail.meta}
-                        entries={data.runDetail.entries}
-                        pendingApproval={
-                          data.pendingApprovals.get(selected.id) ?? null
-                        }
-                        onApprove={(requestId, allow, opts) =>
-                          data.handleApprove(
-                            selected.id,
-                            requestId,
-                            allow,
-                            opts
-                          )
-                        }
-                        onSendMessage={(text) =>
-                          data.handleSendMessage(selected.id, text)
-                        }
-                        onRequestChanges={(text) =>
-                          data.handleRequestChanges(selected.id, text)
-                        }
-                      />
-                    </div>
-                    <RunSidebar
+              {/* One content area, not a tab panel inside a tab list inside a
+                  stack. Every ancestor from here down carries min-h-0 so the
+                  transcript's own scroller gets a bounded height — without
+                  that the log grows the page instead of scrolling, and
+                  stick-to-bottom has nothing to stick to. */}
+              <div className="flex min-h-0 flex-1 gap-4">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  {tab === 'session' ? (
+                    <RunLogView
                       meta={data.runDetail.meta}
-                      diff={data.diff}
-                      task={data.tasks.find(
-                        (t) => t.meta.id === selected.taskId
-                      )}
-                      epicTitle={
-                        data.epics.find(
-                          (e) =>
-                            e.meta.id ===
-                            data.tasks.find(
-                              (t) => t.meta.id === selected.taskId
-                            )?.meta.parent
-                        )?.meta.title ?? null
+                      entries={data.runDetail.entries}
+                      pendingApproval={
+                        data.pendingApprovals.get(selected.id) ?? null
                       }
-                      onOpenTask={(taskId) => {
-                        // The Runs surface has no task peek of its own, so "open the task"
-                        // means jump to that task's latest run — the same thing StackRail
-                        // does above.
-                        const run = data.latestRunByTaskId.get(taskId);
-                        if (run !== undefined) onSelectRun(run.id);
-                      }}
+                      onApprove={(requestId, allow, opts) =>
+                        data.handleApprove(selected.id, requestId, allow, opts)
+                      }
+                      onSendMessage={(text) =>
+                        data.handleSendMessage(selected.id, text)
+                      }
+                      onRequestChanges={(text) =>
+                        data.handleRequestChanges(selected.id, text)
+                      }
                     />
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="diff" className="min-h-0">
-                  {!isTerminalRunState(selected.state) ? (
-                    // A live run's diff is fetchable and now polls (see
-                    // useDispatchProject's diffRefetchInterval) — show the
-                    // plain diff view (RunDiffView handles its own loading/
-                    // empty/error states) rather than the full review
-                    // surface, since merge/discard/PR only make sense once
-                    // the run is actually terminal.
+                  ) : !isTerminalRunState(selected.state) ? (
                     <RunDiffView
                       diff={data.diff}
                       diffLoading={data.diffLoading}
@@ -424,8 +504,33 @@ export function RunsView({
                       onSubmitReview={data.handleSubmitReview}
                     />
                   )}
-                </TabsContent>
-              </Tabs>
+                </div>
+
+                {detailsOpen && (
+                  <div className="min-h-0 w-64 shrink-0 overflow-y-auto">
+                    <RunSidebar
+                      meta={data.runDetail.meta}
+                      diff={data.diff}
+                      task={data.tasks.find(
+                        (t) => t.meta.id === selected.taskId
+                      )}
+                      epicTitle={
+                        data.epics.find(
+                          (e) =>
+                            e.meta.id ===
+                            data.tasks.find(
+                              (t) => t.meta.id === selected.taskId
+                            )?.meta.parent
+                        )?.meta.title ?? null
+                      }
+                      onOpenTask={(taskId) => {
+                        const run = data.latestRunByTaskId.get(taskId);
+                        if (run !== undefined) onSelectRun(run.id);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

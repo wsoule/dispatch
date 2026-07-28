@@ -13,6 +13,16 @@ export function hideArchivedRuns(
   runs: RunMeta[],
   archivedTaskIds: Set<string>
 ): RunMeta[] {
-  if (archivedTaskIds.size === 0) return runs;
-  return runs.filter((run) => !archivedTaskIds.has(run.taskId));
+  // Two independent reasons a run is out of the way: its task was archived, or
+  // the run itself was. The second is what lets you clear a finished run off
+  // the list without touching a task you still care about.
+  const hidden = (run: RunMeta) =>
+    run.archivedAt !== undefined || archivedTaskIds.has(run.taskId);
+  if (
+    archivedTaskIds.size === 0 &&
+    !runs.some((r) => r.archivedAt !== undefined)
+  ) {
+    return runs;
+  }
+  return runs.filter((run) => !hidden(run));
 }

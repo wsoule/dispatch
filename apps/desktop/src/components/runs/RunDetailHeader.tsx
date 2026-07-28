@@ -17,6 +17,10 @@ interface RunDetailHeaderProps {
    * `awaiting-approval`, matching the old per-tab header's own `live` check. */
   live: boolean;
   onCancel: () => Promise<void>;
+  /** Controls that belong on this row rather than on a row of their own — the
+   * Session/Diff switch and the run's own actions. Passed in so the header
+   * stays one line instead of the view stacking a toolbar under it. */
+  trailing?: React.ReactNode;
 }
 
 /**
@@ -33,6 +37,7 @@ export function RunDetailHeader({
   cost,
   live,
   onCancel,
+  trailing,
 }: RunDetailHeaderProps) {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +128,7 @@ export function RunDetailHeader({
           </span>
         )}
         <div className="flex-1" />
+        {trailing}
         {live && (
           <Button
             variant="ghost"
