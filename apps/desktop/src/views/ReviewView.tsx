@@ -11,6 +11,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { deriveFeedState } from '../lib/feedState';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
+import { LandingView } from './LandingView';
 
 interface ReviewViewProps {
   data: DispatchProjectData;
@@ -108,12 +109,16 @@ export function ReviewView({
             Local diffs and open pull requests.
           </span>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
           <ReviewQueue
             items={queue}
             selectedRunId={selectedRunId}
             onSelect={onSelectRun}
           />
+          {/* The merge queue lives here because approving is what puts things
+              in it — as its own destination it split one flow across two
+              screens you had to remember to check. */}
+          <LandingView data={data} onOpenRun={onSelectRun} />
         </div>
       </div>
     );

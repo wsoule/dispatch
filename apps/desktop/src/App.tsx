@@ -40,8 +40,6 @@ import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { GetStartedView } from './views/GetStartedView';
-import { LandingView } from './views/LandingView';
-import { MilestonesView } from './views/MilestonesView';
 import { NewTaskView } from './views/NewTaskView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
@@ -556,7 +554,6 @@ function App() {
             badges={{
               'pull-requests': data.runs.filter((r) => r.prUrl !== undefined)
                 .length,
-              landing: data.mergeQueue?.entries.length ?? 0,
               board: data.readyIds.size,
               runs: liveRuns.length,
               review: data.runs.filter((r) => deriveFeedState(r) === 'review')
@@ -690,15 +687,6 @@ function App() {
                       )}
                     />
                   )}
-                  {navState.projectView === 'landing' && (
-                    <LandingView
-                      data={data}
-                      onOpenRun={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('runs');
-                      }}
-                    />
-                  )}
                   {navState.projectView === 'board' && (
                     <BoardView
                       data={data}
@@ -729,14 +717,6 @@ function App() {
                         dispatchNav({ type: 'openRun', runId });
                         selectProjectView('runs');
                       }}
-                    />
-                  )}
-                  {navState.projectView === 'milestones' && (
-                    <MilestonesView
-                      data={data}
-                      onOpenTask={(taskId) =>
-                        dispatchNav({ type: 'openPeek', taskId })
-                      }
                     />
                   )}
                   {navState.projectView === 'brain-dump' && (

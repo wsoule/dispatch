@@ -21,11 +21,9 @@
 export type ProjectView =
   | 'overview'
   | 'board'
-  | 'milestones'
   | 'runs'
   | 'branches'
   | 'pull-requests'
-  | 'landing'
   | 'review'
   | 'brain-dump'
   | 'plans'
