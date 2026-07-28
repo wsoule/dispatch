@@ -12,6 +12,7 @@ import {
 import { useMemo, useState } from 'react';
 
 import { isTerminalRunState } from '../../lib/runState';
+import { AnnotatedDiff } from './AnnotatedDiff';
 import { QueueMergeControl } from './QueueMergeControl';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 import { RunDiffView } from './RunDiffView';
@@ -177,11 +178,27 @@ export function RunReviewView({
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-4 overflow-hidden">
         <div className="min-h-0 overflow-auto">
-          <RunDiffView
-            diff={diff}
-            diffLoading={diffLoading}
-            diffError={diffError}
-          />
+          {/* Our own renderer rather than RunDiffView's FileDiff, so a comment can sit under
+              the exact line it is about — see AnnotatedDiff for why that required parsing the
+              patch ourselves. */}
+          {onAddComment !== undefined &&
+          onResolveComment !== undefined &&
+          onReplyComment !== undefined &&
+          diff !== undefined ? (
+            <AnnotatedDiff
+              patch={diff.patch}
+              comments={reviewComments ?? []}
+              onAdd={onAddComment}
+              onResolve={onResolveComment}
+              onReply={onReplyComment}
+            />
+          ) : (
+            <RunDiffView
+              diff={diff}
+              diffLoading={diffLoading}
+              diffError={diffError}
+            />
+          )}
         </div>
         {onAddComment !== undefined &&
           onResolveComment !== undefined &&
@@ -190,8 +207,6 @@ export function RunReviewView({
             <div className="min-h-0 overflow-auto">
               <ReviewCommentsPanel
                 comments={reviewComments ?? []}
-                diff={diff}
-                onAdd={onAddComment}
                 onResolve={onResolveComment}
                 onReply={onReplyComment}
                 onSendBack={onSendBack}
