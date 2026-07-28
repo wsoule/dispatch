@@ -282,6 +282,306 @@
         line-height: 1.5;
       }
 
+      /* ── app frames: the board and the brain dump ────────────────────────
+         Rebuilt in HTML rather than screenshotted. A screenshot would be a
+         picture of a moment; this stays legible at any width, selects as text,
+         and cannot drift out of date without someone editing it on purpose.
+         Every colour is the app's own token, so it is not a flattering lie. */
+      .ui {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+      .ui + .ui {
+        margin-top: 20px;
+      }
+      .ui-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 14px;
+        background: var(--raised);
+        border-bottom: 1px solid var(--line);
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--muted);
+      }
+      .ui-head .tag {
+        margin-left: auto;
+        color: var(--dim);
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ui-body {
+        padding: 16px;
+      }
+
+      /* Board. Columns scroll inside the frame so the page body never does. */
+      .lane + .lane {
+        margin-top: 20px;
+      }
+      .lane-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        font-size: 12.5px;
+        font-weight: 500;
+      }
+      .lane-head .ct,
+      .ilabel .ct,
+      .col-head .ct {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--dim);
+      }
+      /* Fades out rather than ruling all the way across: the lane heading is a
+         label with a tail, not a divider between two equal things. */
+      .lane-head .tail {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, var(--line), transparent 70%);
+      }
+      .cols {
+        display: flex;
+        gap: 14px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+      .col {
+        width: 196px;
+        flex: 0 0 auto;
+      }
+      .col-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 7px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .col-head .sq {
+        width: 7px;
+        height: 7px;
+        border-radius: 2px;
+        border: 1px solid currentColor;
+      }
+      .col-head.doing {
+        color: var(--indigo);
+      }
+      .col-head.review {
+        color: var(--add);
+      }
+      .tile {
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 9px 10px;
+        margin-bottom: 7px;
+      }
+      .tile .tid {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+      }
+      .tile .tt {
+        font-size: 12.5px;
+        line-height: 1.4;
+        margin-top: 3px;
+      }
+      .tile .tf {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+      }
+      /* A filled dot means a live run; a ring means a task with none yet. The
+         two states are the only run information a card actually carries. */
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+      }
+      .dot.live {
+        background: var(--indigo);
+      }
+      .dot.ok {
+        background: var(--add);
+      }
+      .dot.idle {
+        border: 1px solid var(--dim);
+      }
+      .tile .blocked {
+        color: var(--amber);
+      }
+
+      /* Brain dump. */
+      .dump {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 210px;
+        gap: 20px;
+      }
+      .capture {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        background: var(--raised);
+      }
+      .capture .ph {
+        color: var(--dim);
+        font-size: 13.5px;
+      }
+      .capture .caret {
+        display: inline-block;
+        width: 1px;
+        height: 15px;
+        background: var(--indigo);
+        vertical-align: -3px;
+        animation: blink 1.1s steps(1, end) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      .capture-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 26px;
+      }
+      .capture-bar .hint {
+        flex: 1;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--dim);
+      }
+      .btn {
+        border-radius: 6px;
+        padding: 4px 9px;
+        font-size: 11.5px;
+        white-space: nowrap;
+      }
+      .btn.quiet {
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+      .btn.solid {
+        background: var(--indigo);
+        color: #12131a;
+      }
+      .btn.pick {
+        display: inline-block;
+        margin-top: 9px;
+      }
+      .ilabel {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 18px 0 8px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .ilabel .tail {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, var(--line), transparent 70%);
+      }
+      .item {
+        display: grid;
+        grid-template-columns: 13px 46px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        padding: 5px 6px;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      .item.sel {
+        background: color-mix(in srgb, var(--indigo) 13%, transparent);
+      }
+      .item .tick {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        border: 1px solid var(--dim);
+      }
+      .item.sel .tick {
+        background: var(--indigo);
+        border-color: var(--indigo);
+      }
+      /* Kind badges reuse the app's mapping: a bug is its red, an idea its
+         accent, a task its green. Guessed on capture, never asked for. */
+      .kind {
+        font-family: var(--mono);
+        font-size: 10px;
+        text-align: center;
+        border-radius: 3px;
+        padding: 1px 0;
+      }
+      .kind.is-bug {
+        color: var(--del);
+        background: color-mix(in srgb, var(--del) 14%, transparent);
+      }
+      .kind.is-idea {
+        color: var(--indigo);
+        background: color-mix(in srgb, var(--indigo) 14%, transparent);
+      }
+      .kind.is-task {
+        color: var(--add);
+        background: color-mix(in srgb, var(--add) 14%, transparent);
+      }
+      .kind.is-note {
+        color: var(--muted);
+        background: color-mix(in srgb, var(--muted) 14%, transparent);
+      }
+      .item .by {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--dim);
+      }
+      .aside-card {
+        border: 1px solid color-mix(in srgb, var(--indigo) 35%, var(--line));
+        background: color-mix(in srgb, var(--indigo) 8%, transparent);
+        border-radius: 8px;
+        padding: 11px;
+      }
+      .aside-card .ac-t {
+        color: var(--indigo);
+        font-size: 11.5px;
+        font-weight: 500;
+      }
+      .aside-card p {
+        margin: 7px 0 0;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .aside-note {
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .aside-note code {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--ink);
+      }
+
       /* ── the diff: the signature ─────────────────────────────────────── */
       .diff {
         border: 1px solid var(--line);
@@ -397,7 +697,8 @@
 
       @media (max-width: 860px) {
         .hero,
-        .install {
+        .install,
+        .dump {
           grid-template-columns: 1fr;
           gap: 36px;
         }
@@ -407,10 +708,20 @@
         .steps {
           grid-template-columns: 1fr 1fr;
         }
+        /* The cluster hint reads as a footnote once it is no longer beside the
+           inbox it is talking about. */
+        .dump {
+          gap: 22px;
+        }
       }
       @media (max-width: 520px) {
         .steps {
           grid-template-columns: 1fr;
+        }
+        /* Give the hint its own row so the two buttons stay on one line
+           together, rather than one trailing the hint and one dropping. */
+        .capture-bar .hint {
+          flex: 1 1 100%;
         }
         .bar nav {
           gap: 12px;
@@ -424,6 +735,7 @@
         <span class="logo">dispatch<b>/</b></span>
         <nav>
           <a href="#how">How it works</a>
+          <a href="#screens">Screens</a>
           <a href="#diff">vs. agent runners</a>
           <a href="#install">Install</a>
           <a href="https://github.com/wsoule/dispatch">GitHub</a>
@@ -532,6 +844,224 @@
             </p>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section id="screens">
+      <div class="wrap">
+        <p class="eyebrow">The two screens</p>
+        <h2>Capture is one screen. Commitment is another.</h2>
+        <p class="sub">
+          Most of what you notice in a day is not work yet. Keeping the two
+          apart is the whole design: nothing you type is a promise until you
+          make it one.
+        </p>
+
+        <div class="ui">
+          <div class="ui-head">
+            Brain dump<span class="tag">.dispatch/inbox.md</span>
+          </div>
+          <div class="ui-body dump">
+            <div>
+              <div class="capture">
+                <span class="caret"></span
+                ><span class="ph"
+                  >Dump it here — bugs, half-ideas, things you noticed, one per
+                  line…</span
+                >
+                <div class="capture-bar">
+                  <span class="hint"
+                    >One thought per line. Paste a wall of text and it gets
+                    split.</span
+                  >
+                  <span class="btn quiet">Hand it to the planner</span>
+                  <span class="btn solid">Drop into the inbox</span>
+                </div>
+              </div>
+
+              <div class="ilabel">
+                Inbox <span class="ct">5</span><i class="tail"></i>
+              </div>
+
+              <div class="item sel">
+                <span class="tick"></span><span class="kind is-bug">bug</span>
+                <span>worktree cleanup leaves the branch behind on cancel</span>
+                <!-- Items an agent filed mid-run through dispatch_note are
+                     marked, so you can tell what you noticed from what
+                     something else noticed for you. -->
+                <span class="by">r-b1d725</span>
+              </div>
+              <div class="item sel">
+                <span class="tick"></span><span class="kind is-idea">idea</span>
+                <span>reuse a worktree across runs on the same task</span>
+                <span class="by"></span>
+              </div>
+              <div class="item">
+                <span class="tick"></span><span class="kind is-bug">bug</span>
+                <span>merge queue retries forever if verify times out</span>
+                <span class="by"></span>
+              </div>
+              <div class="item sel">
+                <span class="tick"></span><span class="kind is-note">note</span>
+                <span>worktree disk usage is not reported anywhere</span>
+                <span class="by"></span>
+              </div>
+              <div class="item">
+                <span class="tick"></span><span class="kind is-task">task</span>
+                <span>write the release notes for 0.9.1</span>
+                <span class="by"></span>
+              </div>
+            </div>
+
+            <aside>
+              <div class="aside-card">
+                <div class="ac-t">These look like one thing</div>
+                <p>
+                  3 items here are all about worktree. They would make a better
+                  epic than 3 loose tasks.
+                </p>
+                <span class="btn solid pick">Select them</span>
+              </div>
+              <p class="aside-note">
+                Nothing here is a commitment. Items sit until you make them
+                tasks, hand them to the planner, or dismiss them — and all of it
+                is <code>.dispatch/inbox.md</code>, editable by hand.
+              </p>
+            </aside>
+          </div>
+        </div>
+
+        <div class="ui">
+          <div class="ui-head">
+            Board — epic swim lanes<span class="tag">.dispatch/tasks/</span>
+          </div>
+          <div class="ui-body">
+            <div class="lane">
+              <div class="lane-head">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--indigo)"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m12 2 9 5-9 5-9-5 9-5Z" />
+                  <path d="m3 12 9 5 9-5" />
+                </svg>
+                Streaming output <span class="ct">4</span><i class="tail"></i>
+              </div>
+              <div class="cols">
+                <div class="col">
+                  <div class="col-head">
+                    <i class="sq"></i>todo <span class="ct">1</span>
+                  </div>
+                  <div class="tile">
+                    <div class="tid">t-4d10ae</div>
+                    <div class="tt">
+                      Bound the buffer when the client is slow
+                    </div>
+                    <div class="tf">
+                      <span class="dot idle"></span
+                      ><span class="blocked">blocked · t-9f2a41</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="col">
+                  <div class="col-head doing">
+                    <i class="sq"></i>in-progress <span class="ct">1</span>
+                  </div>
+                  <div class="tile">
+                    <div class="tid">t-9f2a41</div>
+                    <div class="tt">Stream agent stdout over the websocket</div>
+                    <div class="tf"><span class="dot live"></span>r-b1d725</div>
+                  </div>
+                </div>
+                <div class="col">
+                  <div class="col-head review">
+                    <i class="sq"></i>in-review <span class="ct">1</span>
+                  </div>
+                  <div class="tile">
+                    <div class="tid">t-77b3e1</div>
+                    <div class="tt">Reconnect without replaying the log</div>
+                    <div class="tf"><span class="dot ok"></span>2 comments</div>
+                  </div>
+                </div>
+                <div class="col">
+                  <div class="col-head">
+                    <i class="sq"></i>done <span class="ct">1</span>
+                  </div>
+                  <div class="tile">
+                    <div class="tid">t-c8954b</div>
+                    <div class="tt">Add a websocket route to the daemon</div>
+                    <div class="tf"><span class="dot ok"></span>merged</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lane">
+              <div class="lane-head">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--indigo)"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m12 2 9 5-9 5-9-5 9-5Z" />
+                  <path d="m3 12 9 5 9-5" />
+                </svg>
+                Merge queue observability <span class="ct">2</span
+                ><i class="tail"></i>
+              </div>
+              <div class="cols">
+                <div class="col">
+                  <div class="col-head">
+                    <i class="sq"></i>todo <span class="ct">1</span>
+                  </div>
+                  <div class="tile">
+                    <div class="tid">t-2b91cc</div>
+                    <div class="tt">Name each verify step in the queue log</div>
+                    <div class="tf"><span class="dot idle"></span>ready</div>
+                  </div>
+                </div>
+                <div class="col">
+                  <div class="col-head doing">
+                    <i class="sq"></i>in-progress <span class="ct">0</span>
+                  </div>
+                </div>
+                <div class="col">
+                  <div class="col-head review">
+                    <i class="sq"></i>in-review <span class="ct">1</span>
+                  </div>
+                  <div class="tile">
+                    <div class="tid">t-518dd4</div>
+                    <div class="tt">Record per-step duration</div>
+                    <div class="tf"><span class="dot ok"></span>r-4e01af</div>
+                  </div>
+                </div>
+                <div class="col">
+                  <div class="col-head">
+                    <i class="sq"></i>done <span class="ct">0</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="note">
+          One lane per epic, the same status columns repeated down the page. It
+          answers “which epic is stuck”, which a single flat board cannot.
+        </p>
       </div>
     </section>
 
