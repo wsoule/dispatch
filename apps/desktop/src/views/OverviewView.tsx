@@ -22,6 +22,9 @@ interface OverviewViewProps {
   data: DispatchProjectData;
   projectName: string | null;
   onOpenRun: (runId: string) => void;
+  /** Opens the full-page Review for a run — where a diff gets read and annotated, as opposed
+   * to the Runs surface, which is where a live agent gets watched. */
+  onReviewRun: (runId: string) => void;
   onGoToBoard: () => void;
 }
 
@@ -49,6 +52,7 @@ export function OverviewView({
   data,
   projectName,
   onOpenRun,
+  onReviewRun,
   onGoToBoard,
 }: OverviewViewProps) {
   const [query, setQuery] = useState('');
@@ -122,7 +126,7 @@ export function OverviewView({
       void data.handleApprove(row.runId, pending.requestId, allow);
     },
     onRetry: (row) => void data.handleDispatch(row.taskId),
-    onReview: (row) => onOpenRun(row.runId),
+    onReview: (row) => onReviewRun(row.runId),
     onCancelLanding: (row) => void data.handleDequeueMerge(row.runId),
   };
 
