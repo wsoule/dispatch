@@ -16,6 +16,8 @@ import { RunSidebar } from '../components/runs/RunSidebar';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StackBadge, StackRail } from '../components/tasks/StackRail';
+import { IconToggle } from '../components/ui/IconToggle';
+import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useResizablePane } from '../hooks/useResizablePane';
 import { countMergeReady } from '../lib/mergeReady';
@@ -40,68 +42,6 @@ function DiffEmptyState({ message }: { message: string }) {
       <FileX className="size-5" />
       <p className="text-[13px]">{message}</p>
     </div>
-  );
-}
-
-/** A two-option switch small enough to sit on the header row. */
-function Segmented<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T;
-  onChange: (next: T) => void;
-  options: { value: T; label: string }[];
-}) {
-  return (
-    <div className="border-border flex items-center gap-0.5 rounded-md border p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          aria-pressed={value === o.value}
-          className={cn(
-            'rounded px-2 py-0.5 text-[11.5px] transition-colors duration-150',
-            value === o.value
-              ? 'bg-accent text-foreground'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function IconToggle({
-  on,
-  onClick,
-  label,
-  children,
-}: {
-  on: boolean;
-  onClick: () => void;
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={on}
-      title={label}
-      aria-label={label}
-      className={cn(
-        'border-border rounded-md border p-1 transition-colors duration-150',
-        on
-          ? 'bg-accent text-foreground'
-          : 'text-muted-foreground hover:text-foreground'
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -398,6 +338,7 @@ export function RunsView({
                 trailing={
                   <div className="flex shrink-0 items-center gap-1">
                     <Segmented<RunTab>
+                      label="Run tab"
                       value={tab}
                       onChange={setTab}
                       options={[
