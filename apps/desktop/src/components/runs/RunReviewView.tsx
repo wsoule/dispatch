@@ -12,7 +12,7 @@ import {
 import { useMemo, useState } from 'react';
 
 import { isTerminalRunState } from '../../lib/runState';
-import { AnnotatedDiff } from './AnnotatedDiff';
+import { PierreReviewDiff } from './PierreReviewDiff';
 import { QueueMergeControl } from './QueueMergeControl';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 import { RunDiffView } from './RunDiffView';
@@ -178,14 +178,14 @@ export function RunReviewView({
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-4 overflow-hidden">
         <div className="min-h-0 overflow-auto">
-          {/* Our own renderer rather than RunDiffView's FileDiff, so a comment can sit under
-              the exact line it is about — see AnnotatedDiff for why that required parsing the
-              patch ourselves. */}
+          {/* Pierre's CodeView with comment threads injected as line annotations — same
+              renderer as everywhere else, so syntax highlighting, virtualisation and hunk
+              expansion all come along. */}
           {onAddComment !== undefined &&
           onResolveComment !== undefined &&
           onReplyComment !== undefined &&
           diff !== undefined ? (
-            <AnnotatedDiff
+            <PierreReviewDiff
               patch={diff.patch}
               comments={reviewComments ?? []}
               onAdd={onAddComment}
