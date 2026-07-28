@@ -3,15 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Dispatch — git-native task tracking for AI agents</title>
+    <title>
+      Dispatch — a task tracker for coding agents, not a chat window
+    </title>
     <meta
       name="description"
-      content="Tasks are markdown files in your repo. Agents read them, work them in isolated worktrees, and land them through a merge queue that runs your tests first."
+      content="Every AI harness is a chat window. Dispatch is a tracker: a board, plans, a brain dump and a merge queue, all as markdown in your repo, worked by agents instead of people."
     />
     <meta property="og:title" content="Dispatch" />
     <meta
       property="og:description"
-      content="Tasks are markdown files in your repo. Agents read them, work them, and land them."
+      content="Linear, but the assignees are agents and everything lives in your repo."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -202,6 +204,7 @@
         font-size: 11.5px;
       }
       .file-body {
+        margin: 0;
         padding: 14px;
         overflow-x: auto;
         white-space: pre;
@@ -330,6 +333,20 @@
         margin-bottom: 10px;
         font-size: 12.5px;
         font-weight: 500;
+      }
+      .lanego {
+        border: 1px solid color-mix(in srgb, var(--indigo) 40%, var(--line));
+        background: transparent;
+        color: var(--indigo);
+        border-radius: 5px;
+        padding: 2px 8px;
+        font-family: var(--mono);
+        font-size: 10px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .lanego:hover {
+        background: color-mix(in srgb, var(--indigo) 15%, transparent);
       }
       .lane-head .ct,
       .ilabel .ct,
@@ -582,6 +599,38 @@
         color: var(--ink);
       }
 
+      /* ── the app surface ─────────────────────────────────────────────────
+         Deliberately not numbered. These are screens you move between, not a
+         sequence you pass through — numbering them would encode an order that
+         does not exist, the way the four steps above genuinely do. */
+      .surface {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .sv {
+        background: var(--ground);
+        padding: 15px 16px;
+      }
+      .sv b {
+        display: block;
+        font-size: 13.5px;
+        font-weight: 500;
+        margin-bottom: 4px;
+      }
+      .sv span {
+        font-size: 12.5px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+      .sv.dim b {
+        color: var(--muted);
+      }
+
       /* ── the simulation ──────────────────────────────────────────────────
          The frames above are driven by a small state machine that runs the
          app's own logic: the same capture split, the same kind inference, the
@@ -831,8 +880,11 @@
         border-top: 1px solid var(--line);
         border-bottom: 1px solid var(--line);
       }
+      /* Normal wrapping, not pre-wrap. These rows are prose dressed as a
+         diff, so there is no significant whitespace to preserve — and pre-wrap
+         meant a formatter wrapping the source indented every continuation line
+         halfway across the row. */
       .txt {
-        white-space: pre-wrap;
         word-break: break-word;
       }
 
@@ -900,7 +952,8 @@
         .hero {
           padding: 52px 0 44px;
         }
-        .steps {
+        .steps,
+        .surface {
           grid-template-columns: 1fr 1fr;
         }
         /* The cluster hint reads as a footnote once it is no longer beside the
@@ -910,7 +963,8 @@
         }
       }
       @media (max-width: 520px) {
-        .steps {
+        .steps,
+        .surface {
           grid-template-columns: 1fr;
         }
         /* Give the hint its own row so the two buttons stay on one line
@@ -930,6 +984,13 @@
         .bar nav {
           gap: 12px;
         }
+        /* Six links do not fit a phone. The two dropped are the ones you reach
+           by scrolling anyway; Install and the repo are what someone on a
+           phone is actually after. */
+        .bar nav a[href='#screens'],
+        .bar nav a[href='#surface'] {
+          display: none;
+        }
       }
     </style>
   </head>
@@ -940,7 +1001,8 @@
         <nav>
           <a href="#how">How it works</a>
           <a href="#screens">Screens</a>
-          <a href="#diff">vs. agent runners</a>
+          <a href="#surface">What's in it</a>
+          <a href="#diff">vs. chat</a>
           <a href="#install">Install</a>
           <a href="https://github.com/wsoule/dispatch">GitHub</a>
         </nav>
@@ -950,12 +1012,13 @@
     <main class="wrap">
       <div class="hero">
         <div>
-          <h1>Your tasks are <em>files in your repo</em>.</h1>
+          <h1>Coding agents don't need <em>another chat window</em>.</h1>
           <p class="lede">
-            Dispatch tracks work as markdown in
-            <span class="mono">.dispatch/</span>, sends agents at it in isolated
-            worktrees, and lands the result through a merge queue that runs your
-            tests first.
+            They need a tracker. Dispatch is Linear for agents, running on your
+            machine against your checkout: work is markdown in
+            <span class="mono">.dispatch/</span>, agents pick up whatever is
+            ready — several at once, each in its own git worktree — and the
+            result lands through a merge queue that runs your tests first.
           </p>
           <div class="cta">
             <button class="copy" id="copy" type="button">
@@ -976,29 +1039,32 @@
               >.dispatch/tasks/t-9f2a41-stream-agent-stdout.md</span
             >
           </div>
-          <div class="file-body">
-            <span class="rule">---</span> <span class="k">id:</span>
-            <span class="id">t-9f2a41</span> <span class="k">title:</span>
-            <span class="v">Stream agent stdout over the websocket</span>
-            <span class="k">status:</span> <span class="v">in-progress</span>
-            <span class="k">kind:</span> <span class="v">task</span>
-            <span class="k">parent:</span> <span class="id">e-9021cd</span>
-            <span class="k">blockedBy:</span> [<span class="id">t-c8954b</span>]
-            <span class="k">priority:</span> <span class="v">high</span>
-            <span class="rule">---</span>
+          <!-- A <pre>, not a styled div: this is preformatted text, and a
+               formatter will happily reflow a div whose line breaks are load
+               bearing. It did, once. -->
+          <pre class="file-body"><span class="rule">---</span>
+<span class="k">id:</span>        <span class="id">t-9f2a41</span>
+<span class="k">title:</span>     <span class="v">Stream agent stdout over the websocket</span>
+<span class="k">status:</span>    <span class="v">in-progress</span>
+<span class="k">kind:</span>      <span class="v">task</span>
+<span class="k">parent:</span>    <span class="id">e-9021cd</span>
+<span class="k">blockedBy:</span> [<span class="id">t-c8954b</span>]
+<span class="k">priority:</span>  <span class="v">high</span>
+<span class="rule">---</span>
 
-            <span class="h">## Description</span>
+<span class="h">## Description</span>
 
-            The poller wakes every 500ms whether or not there is output. Move to
-            a push model.
+The poller wakes every 500ms whether or not
+there is output. Move to a push model.
 
-            <span class="h">## Acceptance Criteria</span>
+<span class="h">## Acceptance Criteria</span>
 
-            - Output reaches the client without polling - Backpressure is
-            bounded
+- Output reaches the client without polling
+- Backpressure is bounded
 
-            <span class="h">## Activity</span>
-            - dispatched (claude, r-b1d725)
+<span class="h">## Activity</span>
+
+- dispatched (claude, r-b1d725)</pre>
           </div>
         </div>
       </div>
@@ -1026,8 +1092,9 @@
             <span class="n">02</span>
             <h3>Dispatch</h3>
             <p>
-              Each run gets its own git worktree. Tasks declare what blocks
-              them, so an epic starts what is ready and holds the rest.
+              Each run gets its own git worktree, so several go at once. Working
+              an epic starts everything that is ready up to your concurrency
+              cap, and holds the rest until a slot frees.
             </p>
           </div>
           <div class="step">
@@ -1234,63 +1301,142 @@
 
         <p class="note">
           One lane per epic, the same status columns repeated down the page. It
-          answers “which epic is stuck”, which a single flat board cannot. The
-          kind badges, the split into lines and the grouping hint are the app's
-          own functions running here, not a script that imitates them — a demo
-          you can poke is only worth anything if poking it tells you the truth.
+          answers “which epic is stuck”, which a single flat board cannot. Work
+          a whole lane and three runs open at once, each in its own worktree,
+          with the fourth held until one finishes — the cap is
+          <span class="mono">orchestrator.epicConcurrency</span>, and it exists
+          so a twelve-task epic does not open twelve worktrees. The kind badges,
+          the split into lines and the grouping hint are the app's own functions
+          running here, not a script that imitates them — a demo you can poke is
+          only worth anything if poking it tells you the truth.
+        </p>
+      </div>
+    </section>
+
+    <section id="surface">
+      <div class="wrap">
+        <p class="eyebrow">What's in it</p>
+        <h2>A tracker, not a chat box.</h2>
+        <p class="sub">
+          The two screens above are the ones you live in. The rest is the same
+          idea carried through — every one of them reads and writes files in
+          your repo, so git is the sync layer and there is nothing else to keep
+          in step.
+        </p>
+        <div class="surface">
+          <div class="sv">
+            <b>Brain dump</b
+            ><span>Capture without committing to anything.</span>
+          </div>
+          <div class="sv">
+            <b>Overview</b><span>Every run in the project, live.</span>
+          </div>
+          <div class="sv">
+            <b>Tasks</b><span>The board — statuses, epics, swim lanes.</span>
+          </div>
+          <div class="sv">
+            <b>Plans</b
+            ><span
+              >Say what you want; it writes the tasks and dispatches them.</span
+            >
+          </div>
+          <div class="sv">
+            <b>Runs</b><span>Transcripts, cost, turns, the worktree.</span>
+          </div>
+          <div class="sv">
+            <b>Review</b><span>Line comments, then a verdict.</span>
+          </div>
+          <div class="sv">
+            <b>Landing</b><span>The merge queue and what it is doing.</span>
+          </div>
+          <div class="sv">
+            <b>All agents</b><span>Every project at once.</span>
+          </div>
+          <div class="sv dim">
+            <b>Milestones</b><span>The grouping above epics.</span>
+          </div>
+          <div class="sv dim">
+            <b>Branches</b><span>What each run left behind.</span>
+          </div>
+          <div class="sv dim">
+            <b>Pull requests</b><span>For when you land through GitHub.</span>
+          </div>
+          <div class="sv dim">
+            <b>Sessions</b><span>Resume an agent where it stopped.</span>
+          </div>
+        </div>
+        <p class="note">
+          Work in progress, and used on itself: Dispatch's own backlog lives in
+          this repo's <span class="mono">.dispatch/</span>, and the commits on
+          main tagged <span class="mono">(run r-…)</span> were written by its
+          own agents.
         </p>
       </div>
     </section>
 
     <section id="diff">
       <div class="wrap">
-        <p class="eyebrow">vs. parallel agent runners</p>
-        <h2>Running agents in parallel is the easy half.</h2>
+        <p class="eyebrow">vs. chat-first harnesses</p>
+        <h2>The work is not a conversation.</h2>
         <p class="sub">
-          Tools like Conductor start several agents in worktrees and show you
-          the diffs. Dispatch does that, and then handles the parts that decide
-          whether the work is worth anything: what to work on, in what order,
-          and how it lands.
+          Almost every agent tool makes the chat the unit of work. So what you
+          decided lives in scrollback, the next session starts by re-explaining
+          it, and nothing knows what to do next but you. Running several agents
+          at once — the thing the newer tools add — makes that worse, not
+          better: now there are four conversations to hold.
         </p>
 
-        <div
-          class="diff"
-          role="img"
-          aria-label="Comparison of a parallel agent runner and Dispatch, shown as a unified diff"
-        >
-          <div class="diff-head">
-            <span class="mono">agent-runner.md → dispatch.md</span>
-          </div>
-          <div class="hunk mono">@@ what you get @@</div>
-
+        <div class="diff">
+          <div class="diff-head">chat-first.md → dispatch.md</div>
           <div class="row ctx">
-            <span class="sign"> </span
-            ><span class="txt"
-              >parallel agents, each in its own git worktree</span
-            >
+            <span class="sign"></span
+            ><span class="txt">an agent that reads and edits your repo</span>
           </div>
           <div class="row ctx">
-            <span class="sign"> </span
+            <span class="sign"></span
             ><span class="txt">a diff you can read when it finishes</span>
           </div>
 
           <div class="row minus">
             <span class="sign">-</span
-            ><span class="txt">work lives in the tool, not the repo</span>
+            ><span class="txt">the unit of work is a conversation</span>
           </div>
           <div class="row plus">
             <span class="sign">+</span
             ><span class="txt"
-              >tasks are markdown in .dispatch/, synced by git and readable by
-              both of you</span
+              >the unit of work is a task file, in git, readable by both of
+              you</span
             >
           </div>
 
           <div class="row minus">
             <span class="sign">-</span
+            ><span class="txt">what you decided lives in scrollback</span>
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
             ><span class="txt"
-              >you pick what each agent works on, every time</span
+              >it lives in .dispatch/, so it survives the session and shows up
+              in review</span
             >
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt">every session starts by re-explaining</span>
+          </div>
+          <div class="row plus">
+            <span class="sign">+</span
+            ><span class="txt"
+              >task_next hands over the next ready task; task_save and
+              dispatch_note let the agent file what it noticed on the way
+              past</span
+            >
+          </div>
+
+          <div class="row minus">
+            <span class="sign">-</span
+            ><span class="txt">you decide what to work on, every time</span>
           </div>
           <div class="row plus">
             <span class="sign">+</span
@@ -1328,22 +1474,10 @@
             >
           </div>
 
-          <div class="row minus">
-            <span class="sign">-</span
-            ><span class="txt"
-              >the agent cannot file what it noticed on the way past</span
-            >
-          </div>
-          <div class="row plus">
-            <span class="sign">+</span
-            ><span class="txt"
-              >agents get task_save, task_next and dispatch_note over MCP</span
-            >
-          </div>
-
-          <!-- Deliberately unpaired: every other row contrasts a behaviour we can point at in
-               this repo, but licensing and platform support vary per product and change without
-               notice. Stating ours and stopping is the only version of this line that stays true. -->
+          <!-- Deliberately unpaired: every other row contrasts a behaviour we
+               can point at in this repo, but licensing and platform support
+               vary per product and change without notice. Stating ours and
+               stopping is the only version of this line that stays true. -->
           <div class="row plus">
             <span class="sign">+</span
             ><span class="txt"
@@ -1354,9 +1488,10 @@
         </div>
 
         <p class="note">
-          If you only need several agents going at once, a runner is enough.
-          Dispatch is for when you have more work than you can hold in your
-          head, and you want the finished work to land on its own.
+          Tools like Conductor already run several agents in parallel worktrees
+          and show you the diffs, and that part is genuinely the easy half.
+          Dispatch does it too — and then handles what decides whether the work
+          was worth anything: what to pick up, in what order, and how it lands.
         </p>
       </div>
     </section>
@@ -1527,6 +1662,10 @@
         // ── state ────────────────────────────────────────────────────────
         const STATUSES = ['todo', 'in-progress', 'in-review', 'done'];
         const VERIFY = ['typecheck', 'test', 'lint'];
+        // orchestrator.epicConcurrency in .dispatch/config.yml. Working an epic
+        // starts this many at once and holds the rest — the cap is the point,
+        // otherwise a twelve-task epic opens twelve worktrees.
+        const CONCURRENCY = 3;
         const hex = (n) =>
           Array.from(
             { length: n },
@@ -1611,6 +1750,24 @@
               {
                 id: 't-2b91cc',
                 title: 'Name each verify step in the queue log',
+                epic: 'e-3f77b0',
+                status: 'todo',
+              },
+              {
+                id: 't-6a1e42',
+                title: 'Surface queue depth in the overview',
+                epic: 'e-3f77b0',
+                status: 'todo',
+              },
+              {
+                id: 't-88c07d',
+                title: 'Show elapsed time per entry',
+                epic: 'e-3f77b0',
+                status: 'todo',
+              },
+              {
+                id: 't-3c50b9',
+                title: 'Log the rebase target',
                 epic: 'e-3f77b0',
                 status: 'todo',
               },
@@ -1768,11 +1925,13 @@
           const bl = blockers(t);
           const foot = t.live
             ? `<span class="dot live"></span>${esc(t.run)}`
-            : bl.length
-              ? `<span class="dot idle"></span><span class="blocked">blocked · ${esc(bl[0])}</span>`
-              : t.status === 'todo'
-                ? '<span class="dot idle"></span>ready'
-                : `<span class="dot ok"></span>${esc(t.note || t.run || '')}`;
+            : t.waiting
+              ? '<span class="dot idle"></span><span class="blocked">waiting for a slot</span>'
+              : bl.length
+                ? `<span class="dot idle"></span><span class="blocked">blocked · ${esc(bl[0])}</span>`
+                : t.status === 'todo'
+                  ? '<span class="dot idle"></span>ready'
+                  : `<span class="dot ok"></span>${esc(t.note || t.run || '')}`;
           const queued = state.queue.some((q) => q.taskId === t.id);
           const act =
             t.status === 'todo' && bl.length === 0
@@ -1797,7 +1956,14 @@
               .map(
                 (lane) => `<div class="lane">
                   <div class="lane-head">${LAYERS}${esc(lane.title)}
-                    <span class="ct">${lane.tasks.length}</span><i class="tail"></i></div>
+                    <span class="ct">${lane.tasks.length}</span><i class="tail"></i>
+                    ${
+                      lane.tasks.some(
+                        (t) => t.status === 'todo' && blockers(t).length === 0
+                      )
+                        ? `<button class="lanego" type="button" data-epic="${esc(lane.title)}">Work this epic</button>`
+                        : ''
+                    }</div>
                   <div class="cols">${STATUSES.map((st) => {
                     const ts = lane.tasks.filter((t) => t.status === st);
                     const skin =
@@ -1867,6 +2033,7 @@
                     t.live = false;
                   }
                   renderBoard();
+                  fill();
                   after(1400, () => {
                     state.queue = state.queue.filter((q) => q !== entry);
                     state.pumping = false;
@@ -1891,19 +2058,55 @@
           });
         }
 
-        function dispatch(id) {
+        const running = () => state.tasks.filter((t) => t.live).length;
+
+        /**
+         * Starts one task, if there is a slot.
+         *
+         * Returns false when the concurrency cap is already met, which is what
+         * lets an epic hold work back rather than opening a worktree per task.
+         * Held tasks are marked and picked up by fill() as runs finish.
+         */
+        function dispatch(id, queueIfFull) {
           const t = task(id);
-          if (!t || blockers(t).length) return;
+          if (!t || blockers(t).length || t.live) return false;
+          if (running() >= CONCURRENCY) {
+            if (queueIfFull) {
+              t.waiting = true;
+              renderBoard();
+            }
+            return false;
+          }
+          t.waiting = false;
           t.status = 'in-progress';
           t.run = 'r-' + hex(6);
           t.live = true;
           renderBoard();
-          after(2600, () => {
+          // Staggered so several running at once read as separate pieces of
+          // work rather than one animation.
+          after(2400 + Math.floor(Math.random() * 1800), () => {
             t.status = 'in-review';
             t.live = false;
             t.note = '3 comments';
             renderBoard();
+            fill();
           });
+          return true;
+        }
+
+        /** Starts held tasks as slots free up. */
+        function fill() {
+          for (const t of state.tasks)
+            if (t.waiting && running() < CONCURRENCY) dispatch(t.id, true);
+        }
+
+        /** Works a whole epic: everything ready, up to the cap, rest held. */
+        function workEpic(title) {
+          const lane = lanes().find((l) => l.title === title);
+          if (!lane) return;
+          for (const t of lane.tasks)
+            if (t.status === 'todo' && blockers(t).length === 0)
+              dispatch(t.id, true);
         }
 
         function approve(id) {
@@ -1984,10 +2187,13 @@
         });
 
         document.addEventListener('click', (e) => {
-          const el = e.target.closest('[data-act],[data-go],[data-ok]');
+          const el = e.target.closest(
+            '[data-act],[data-go],[data-ok],[data-epic]'
+          );
           if (!el) return;
-          const { act, go, ok } = el.dataset;
-          if (go) dispatch(go);
+          const { act, go, ok, epic } = el.dataset;
+          if (epic) workEpic(epic);
+          else if (go) dispatch(go);
           else if (ok) approve(ok);
           else if (act === 'tasks') convert(false);
           else if (act === 'epic') convert(true);
@@ -2070,7 +2276,7 @@
         $('dumpfoot').hidden = false;
         $('boardfoot').hidden = false;
         $('boardhint').textContent =
-          'Drag a card, or focus one and use ← →. Enter dispatches or approves.';
+          'Work this epic to start everything ready at once — three, then the rest wait for a slot. Drag a card, or focus one and use ← →.';
 
         // The seeded run finishes once, the first time the board is actually
         // on screen — work that happens where nobody is looking is just a
