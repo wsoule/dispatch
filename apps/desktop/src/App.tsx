@@ -296,12 +296,15 @@ function App() {
   // per handler.
   const data = useMemo(
     () =>
-      withActionFeedback(rawData, (action, message) =>
-        toasts.push({
-          title: `${action} failed`,
-          description: message,
-          tone: 'error',
-        })
+      withActionFeedback(
+        rawData,
+        (action, message) =>
+          toasts.push({
+            title: `${action} failed`,
+            description: message,
+            tone: 'error',
+          }),
+        (message) => toasts.push({ title: message, tone: 'success' })
       ),
     [rawData, toasts]
   );

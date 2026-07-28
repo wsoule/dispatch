@@ -42,9 +42,30 @@ export function describeError(err: unknown): string {
  * fire-and-forget UI actions, and a caller that wants the result already awaits
  * the original.
  */
+/**
+ * Handlers worth confirming, and what to say.
+ *
+ * Deliberately a short list. Most actions confirm themselves — a card moves
+ * column, a row disappears — and a toast for those is noise that trains you to
+ * ignore the ones that matter. These are the actions whose effect happens
+ * somewhere you are not looking: a queue, a remote, a directory on disk.
+ */
+export const SUCCESS_MESSAGES: Record<string, string> = {
+  handleEnqueueMerge: 'Queued to merge',
+  handleEnqueueMergeStack: 'Stack queued to merge',
+  handleMergeAllReady: 'Ready work queued to merge',
+  handleReview: 'Review recorded',
+  handleOpenPr: 'Pull request opened',
+  handleFreeBranchDisk: 'Worktree reclaimed',
+  handleDeleteBranch: 'Branch deleted',
+  handleArchiveRun: 'Run archived',
+  handleCancelRun: 'Run cancelled',
+};
+
 export function withActionFeedback<T extends object>(
   api: T,
-  onError: (action: string, message: string) => void
+  onError: (action: string, message: string) => void,
+  onSuccess?: (message: string) => void
 ): T {
   // `object` rather than Record<string, unknown>: the Record constraint widens
   // every property of the wrapped type to unknown at the call site, which turns
@@ -55,15 +76,23 @@ export function withActionFeedback<T extends object>(
     const original = value as (...args: unknown[]) => unknown;
     out[key] = (...args: unknown[]) => {
       try {
+        const success = SUCCESS_MESSAGES[key];
         const result = original(...args);
         if (result instanceof Promise) {
-          return result.catch((err: unknown) => {
-            onError(describeAction(key), describeError(err));
-            // Swallow deliberately: the failure has been reported, and
-            // re-throwing would still land in an unhandled rejection at the
-            // `void` call sites this exists to protect.
-            return undefined;
-          });
+          return result
+            .then((value: unknown) => {
+              if (success !== undefined && onSuccess !== undefined) {
+                onSuccess(success);
+              }
+              return value;
+            })
+            .catch((err: unknown) => {
+              onError(describeAction(key), describeError(err));
+              // Swallow deliberately: the failure has been reported, and
+              // re-throwing would still land in an unhandled rejection at the
+              // `void` call sites this exists to protect.
+              return undefined;
+            });
         }
         return result;
       } catch (err) {
