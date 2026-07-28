@@ -1,20 +1,12 @@
-import type { DiffResult, ReviewComment } from '@dispatch/client';
-import { MessageSquarePlus } from 'lucide-react';
+import type { ReviewComment } from '@dispatch/client';
 import { useMemo, useState } from 'react';
 
 import { SectionLabel } from '../ui/SectionLabel';
-import { ReviewComposer, ReviewThread } from './ReviewThread';
+import { ReviewThread } from './ReviewThread';
 import { cn } from '@/lib/utils';
 
 interface ReviewCommentsPanelProps {
   comments: ReviewComment[];
-  diff: DiffResult | undefined;
-  onAdd: (input: {
-    file: string;
-    line: number;
-    anchorText: string;
-    body: string;
-  }) => Promise<void>;
   onResolve: (commentId: string, resolved: boolean) => Promise<void>;
   onReply: (commentId: string, body: string) => Promise<void>;
   onSendBack: (note: string) => Promise<void>;
@@ -23,32 +15,22 @@ interface ReviewCommentsPanelProps {
 /**
  * Review comments for a run, beside its diff.
  *
- * The mockup drew these inline, anchored under the exact diff line. The diff itself is rendered
- * by `@pierre/diffs`'s `FileDiff`, which owns its own line markup and exposes no per-line hook —
- * so inline threads would mean forking or overlaying a third-party renderer, and an overlay that
- * drifts out of alignment on a re-render is worse than no inline at all. The threads live in a
- * panel instead: the same capability (comment on a line, reply, resolve, send it all back), one
- * pane over rather than one line down.
+ * Commenting now happens inline, on the diff line itself (see AnnotatedDiff). What is left here
+ * is what a per-line thread cannot do: an index of every thread across every file, so you can
+ * see the shape of a review without scrolling the diff, and the send-back block that ends it.
  *
- * Comments still carry a real line anchor, so if the inline route opens up later — a fork, or an
- * upstream hook — nothing about the stored data has to change.
+ * The file/line picker is gone with it — you click the line.
  */
 export function ReviewCommentsPanel({
   comments,
-  diff,
-  onAdd,
   onResolve,
   onReply,
   onSendBack,
 }: ReviewCommentsPanelProps) {
-  const [composing, setComposing] = useState(false);
-  const [file, setFile] = useState('');
-  const [line, setLine] = useState('1');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const files = useMemo(() => diff?.files.map((f) => f.path) ?? [], [diff]);
   const open = comments.filter((c) => !c.resolved);
   const byFile = useMemo(() => {
     const map = new Map<string, ReviewComment[]>();
@@ -75,24 +57,7 @@ export function ReviewCommentsPanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <SectionLabel
-        rule
-        count={comments.length}
-        trailing={
-          <button
-            type="button"
-            onClick={() => {
-              setComposing(true);
-              if (file === '') setFile(files[0] ?? '');
-            }}
-            disabled={files.length === 0}
-            className="text-accent-foreground inline-flex items-center gap-1 text-[11px] disabled:opacity-40"
-          >
-            <MessageSquarePlus className="size-3" />
-            Comment on a line
-          </button>
-        }
-      >
+      <SectionLabel rule count={comments.length}>
         Review comments
       </SectionLabel>
 
@@ -100,54 +65,10 @@ export function ReviewCommentsPanel({
         <p className="text-state-failed text-[12px]">{error}</p>
       )}
 
-      {composing && (
-        <div className="shadow-hairline rounded-lg p-3">
-          <div className="flex gap-2">
-            <select
-              value={file}
-              onChange={(e) => setFile(e.target.value)}
-              className="shadow-hairline min-w-0 flex-1 rounded-md px-2 py-1 text-[12px]"
-            >
-              {files.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-            <input
-              value={line}
-              onChange={(e) => setLine(e.target.value)}
-              inputMode="numeric"
-              aria-label="Line number"
-              className="shadow-hairline w-16 rounded-md px-2 py-1 text-[12px]"
-            />
-          </div>
-          <ReviewComposer
-            line={Number(line) || 1}
-            onCancel={() => setComposing(false)}
-            onSubmit={(body) =>
-              void guard(async () => {
-                await onAdd({
-                  file,
-                  line: Number(line) || 1,
-                  // The panel cannot read the line's text out of the third-party diff renderer,
-                  // so the anchor is left empty here. resolveAnchor treats an empty anchor as
-                  // never-followable, which means such a comment simply never claims to have
-                  // moved — it stays on the line it was filed against.
-                  anchorText: '',
-                  body,
-                });
-                setComposing(false);
-              })
-            }
-          />
-        </div>
-      )}
-
       {comments.length === 0 ? (
         <p className="text-muted-foreground text-[12.5px]">
-          No comments yet. Anything you leave here goes back to the agent with
-          the work.
+          No comments yet. Hover a diff line and click the ✎ to leave one —
+          anything unresolved goes back to the agent with the work.
         </p>
       ) : (
         [...byFile.entries()].map(([path, list]) => (
