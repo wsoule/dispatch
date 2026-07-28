@@ -1,5 +1,6 @@
 /**
- * A running copy of Dispatch, in one file, in memory.
+ * A simulation of Dispatch, in one file, in memory. Not the product — a model
+ * of it, which is why the page says so rather than calling it the real thing.
  *
  * The capture split, the kind inference and the clustering are ported verbatim
  * from the product (packages/server/src/inbox.ts and
@@ -285,7 +286,7 @@
     { id: 'brain', label: 'Brain dump', say: 'Capture without committing.' },
     { id: 'tasks', label: 'Tasks', say: 'One lane per epic.' },
     { id: 'plans', label: 'Plans', say: 'Say it; it writes the tasks.' },
-    { id: 'runs', label: 'Runs', say: 'What the agent actually did.' },
+    { id: 'runs', label: 'Runs', say: 'Transcript, cost, turns.' },
     { id: 'review', label: 'Review', say: 'Comment, then decide.' },
     { id: 'landing', label: 'Landing', say: 'The merge queue.' },
   ];
