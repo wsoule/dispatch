@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
 import { ReviewCommentsPanel } from '../components/runs/ReviewCommentsPanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
+import { buildReviewQueue, ReviewQueue } from '../components/runs/ReviewQueue';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
@@ -14,6 +15,11 @@ import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 interface ReviewViewProps {
   data: DispatchProjectData;
   onBack: () => void;
+  /** Which run is open. Null shows the queue, which is the screen's real home. */
+  selectedRunId: string | null;
+  onSelectRun: (runId: string) => void;
+  /** Renders a run whose diff lives on GitHub — Pull requests moved in here. */
+  renderPr: (runId: string) => React.ReactNode;
 }
 
 /**
@@ -29,7 +35,14 @@ interface ReviewViewProps {
  * scroll is unreviewable, and "which have I actually read" is the question a reviewer is really
  * tracking.
  */
-export function ReviewView({ data, onBack }: ReviewViewProps) {
+export function ReviewView({
+  data,
+  onBack,
+  selectedRunId,
+  onSelectRun,
+  renderPr,
+}: ReviewViewProps) {
+  const queue = useMemo(() => buildReviewQueue(data.runs), [data.runs]);
   const run = data.runDetail?.meta;
   const runId = run?.id ?? '';
 
@@ -84,22 +97,48 @@ export function ReviewView({ data, onBack }: ReviewViewProps) {
     );
   }
 
-  if (run === undefined) {
+  // No run open: the queue IS the screen. Everything waiting on a human, in
+  // one place, instead of a sentence telling you to go and find it elsewhere.
+  if (selectedRunId === null || run === undefined) {
     return (
-      <div className="flex h-full flex-col gap-3">
-        <Header onBack={onBack} title="Review" />
-        <p className="text-muted-foreground text-[12.5px]">
-          Pick a run from the Control room to review it.
-        </p>
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <div className="flex items-baseline gap-2">
+          <h1 className="view-topbar-title">Review</h1>
+          <span className="text-muted-foreground text-[12px]">
+            Local diffs and open pull requests.
+          </span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ReviewQueue
+            items={queue}
+            selectedRunId={selectedRunId}
+            onSelect={onSelectRun}
+          />
+        </div>
       </div>
     );
+  }
+
+  // A PR's diff lives on GitHub, so it gets the PR surface rather than the
+  // local file-tree review below.
+  if (run.prUrl !== undefined) {
+    return <>{renderPr(run.id)}</>;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <Header onBack={onBack} title={run.taskTitle} run={run} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)_300px] gap-4 overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-[190px_200px_minmax(0,1fr)_290px] gap-4 overflow-hidden">
+        <div className="min-h-0 overflow-y-auto">
+          <ReviewQueue
+            items={queue}
+            selectedRunId={selectedRunId}
+            onSelect={onSelectRun}
+            compact
+          />
+        </div>
+
         <ReviewFileTree
           files={data.diff?.files ?? []}
           selected={selected}
