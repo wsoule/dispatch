@@ -246,6 +246,15 @@ export interface BranchEntry {
   // `worktreeExists`, which is about the directory actually being on disk.
   worktreePath?: string;
   worktreeExists: boolean;
+  /**
+   * Bytes the worktree occupies, when it is still on disk.
+   *
+   * Measured rather than estimated, but capped: a worktree is a full checkout,
+   * and walking a huge one on every branch listing would make the page slower
+   * than the thing it is reporting on. See `dirSizeBytes`.
+   */
+  diskBytes?: number;
+
   dirty: boolean;
   lastCommitAt?: string;
   // Commits on this branch that its base does not have — how much work

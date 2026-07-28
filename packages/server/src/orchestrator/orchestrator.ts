@@ -19,6 +19,7 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { dirSizeBytes } from './dirSize.js';
 import { JjManager } from './jj.js';
 import {
   diffSnapshotPath,
@@ -1076,10 +1077,15 @@ export class Orchestrator {
       const meta = runByBranch.get(ref.branch);
       const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
       const base = meta?.baseBranch ?? fallbackBase;
+      const worktreeExists = wtPath !== undefined && existsSync(wtPath);
       return {
         branch: ref.branch,
         worktreePath: wtPath,
-        worktreeExists: wtPath !== undefined && existsSync(wtPath),
+        worktreeExists,
+        // Only measured when the directory is actually there — a reclaimed
+        // worktree has nothing to weigh, and reporting 0 for it would read as
+        // "measured and empty" rather than "gone".
+        diskBytes: worktreeExists ? dirSizeBytes(wtPath).bytes : undefined,
         dirty: wtPath !== undefined && this.worktrees.isWorktreeDirty(wtPath),
         lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
         ahead: this.worktrees.aheadCount(ref.branch, base),
