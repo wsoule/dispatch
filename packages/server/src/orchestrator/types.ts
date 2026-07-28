@@ -176,6 +176,11 @@ export interface RunMeta {
   // the earlier conversation instead of the new transcript looking like the
   // chat history was wiped. Optional so pre-existing transcripts (which
   // never wrote it) hydrate unchanged.
+  // Set when a run is archived: it stays on disk and stays reachable, but the
+  // Runs list hides it by default. Archiving is the only marker here that is
+  // meant to be undone, which is why the transcript line carrying it uses
+  // `null` to clear rather than the `?? previous` fold every other field uses.
+  archivedAt?: string;
   resumedFrom?: string;
   // Branches this run's worktree was stacked on at dispatch time — the
   // in-review blockers whose unmerged work it needs. Empty/absent for an

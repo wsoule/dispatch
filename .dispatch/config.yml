@@ -7,4 +7,16 @@ autoCommit: false
 # come first or lint/test fail on unresolved workspace imports rather than on
 # anything real. Mirrors what CI gates on (build -> lint -> test); takes ~2 min
 # per entry.
-verifyCommand: "bun install --frozen-lockfile && bun run build && bun run lint && bun run test"
+#
+# Named steps rather than one shell line: a failure then says WHICH gate broke.
+# The whole reason this was hard to diagnose once was that "verify failed" is
+# what you get when four commands share one name.
+verifySteps:
+  - name: install
+    command: bun install --frozen-lockfile
+  - name: build
+    command: bun run build
+  - name: lint
+    command: bun run lint
+  - name: test
+    command: bun run test

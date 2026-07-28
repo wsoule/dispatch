@@ -832,6 +832,33 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
+  /**
+   * Archives or unarchives a run.
+   *
+   * Nothing is deleted and nothing becomes unreachable — the transcript, the
+   * diff snapshot and the review comments all stay exactly where they were.
+   * This only sets a marker the Runs list uses to keep finished work out of
+   * the way, because a project that has done a hundred runs should not have to
+   * scroll past all hundred to find the one that is live.
+   *
+   * Unlike reviewedAt, this is reversible, so it is recorded with the same
+   * same-state append but carries `null` to clear. Archiving is allowed in any
+   * state: a run that failed on dispatch is exactly the kind of thing you want
+   * out of the list, and refusing to hide it until it reaches some tidier
+   * state would be the opposite of the point.
+   */
+  setRunArchived(runId: string, archived: boolean): RunMeta {
+    const meta = this.requireRun(runId);
+    const now = new Date().toISOString();
+    const archivedAt = archived ? now : undefined;
+    this.registry.updateMeta(runId, { archivedAt, updatedAt: now });
+    this.transcriptFor(runId).appendState(meta.state, now, {
+      archivedAt: archived ? now : null,
+    });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return this.registry.get(runId)!;
+  }
+
   // Phase 5 P1: the PR poller's terminal action once GitHub reports a run's
   // PR as merged — mirrors review()'s 'discard' bookkeeping shape (worktree
   // cleanup + a task-file update) but marks the task `done` (the work really

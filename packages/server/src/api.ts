@@ -701,6 +701,32 @@ async function submitReview(
 }
 
 /**
+ * POST /api/runs/:id/archive — hide a finished run from the default Runs list.
+ *
+ * `{ "archived": true | false }`. Nothing is deleted: the transcript, the diff
+ * snapshot and the review comments all stay. This is a display marker, and it
+ * is reversible, which is why the body carries the desired state rather than
+ * this being a one-way "archive" verb.
+ */
+async function archiveRun(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { archived?: unknown };
+  if (typeof body.archived !== 'boolean') {
+    return errorResponse(400, 'archived must be a boolean');
+  }
+  try {
+    return jsonResponse(ctx.orchestrator.setRunArchived(runId, body.archived));
+  } catch (err) {
+    return errorResponse(404, (err as Error).message);
+  }
+}
+
+/**
  * POST /api/runs/:id/send-back — return the work to the agent with the review attached.
  *
  * This is where the review UI's promise gets kept: the unresolved threads are rendered into the
@@ -1676,6 +1702,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await submitReview(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'archive' &&
+        method === 'POST'
+      ) {
+        return await archiveRun(req, ctx, segments[1]);
       }
       if (segments.length === 3 && segments[2] === 'pr' && method === 'GET') {
         return await getPr(req, ctx, segments[1]);

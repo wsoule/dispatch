@@ -62,6 +62,10 @@
         "vite": "catalog:",
       },
     },
+    "apps/site": {
+      "name": "@dispatch/site",
+      "version": "0.0.0",
+    },
     "packages/cli": {
       "name": "@dispatch/cli",
       "version": "0.0.1",
@@ -272,6 +276,8 @@
     "@dispatch/mcp": ["@dispatch/mcp@workspace:packages/mcp"],
 
     "@dispatch/server": ["@dispatch/server@workspace:packages/server"],
+
+    "@dispatch/site": ["@dispatch/site@workspace:apps/site"],
 
     "@dispatch/web": ["@dispatch/web@workspace:packages/web"],
 
