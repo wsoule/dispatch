@@ -11,6 +11,8 @@ line anywhere and Dispatch will pick it up.
 
 ## Sorted
 
+- [x] (task) look at the output run files and see where the agent is repeating a lot of actions, this needs to be consolidated into something somehow- like the agents shouldn’t aways be doing the same thing if they dont have to → t-b4dfdd ^in-278f32
+- [x] (task) the website "Old vs new" section is ass - it need to talk about how everything is chat & word focused and this is visual focused, never forget what you are doing because it is visually there in a kanban board and stuff → t-e29416 ^in-7cdfc4
 - [x] (task) need to be able to discuss with the planner agent → t-9a871a ^in-1f0330
 - [x] (task) bug: clicking on the "diffs" when an agent is running makes the page go blank → t-364075 ^in-770ba1
 - [x] (task) need to add to the notes / triage page to auto generate the task with AI to give more context → t-4a8cce ^in-dc9278
