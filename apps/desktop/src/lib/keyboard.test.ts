@@ -188,3 +188,46 @@ describe('resolveCardKeyAction', () => {
     expect(resolveCardKeyAction('Tab', true)).toBeNull();
   });
 });
+
+describe('navigation shortcuts', () => {
+  const ctx = { isTyping: false, modalOpen: false };
+  const typing = { isTyping: true, modalOpen: false };
+
+  test('cmd+[ and cmd+] move through history', () => {
+    expect(
+      resolveGlobalKeyCommand({ key: '[', metaKey: true, ctrlKey: false }, ctx)
+    ).toBe('nav-back');
+    expect(
+      resolveGlobalKeyCommand({ key: ']', metaKey: true, ctrlKey: false }, ctx)
+    ).toBe('nav-forward');
+  });
+
+  test('cmd+N jumps to a rail entry', () => {
+    expect(
+      resolveGlobalKeyCommand({ key: '3', metaKey: true, ctrlKey: false }, ctx)
+    ).toBe('goto-3');
+  });
+
+  test('modified shortcuts still fire while typing', () => {
+    // Being unable to leave a screen because the cursor is in a filter box is
+    // the kind of thing that makes an app feel stuck.
+    expect(
+      resolveGlobalKeyCommand(
+        { key: '2', metaKey: true, ctrlKey: false },
+        typing
+      )
+    ).toBe('goto-2');
+    expect(
+      resolveGlobalKeyCommand(
+        { key: '[', metaKey: true, ctrlKey: false },
+        typing
+      )
+    ).toBe('nav-back');
+  });
+
+  test('a bare digit is still just a digit', () => {
+    expect(
+      resolveGlobalKeyCommand({ key: '3', metaKey: false, ctrlKey: false }, ctx)
+    ).toBeNull();
+  });
+});
