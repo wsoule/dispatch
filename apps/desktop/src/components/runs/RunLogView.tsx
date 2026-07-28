@@ -183,26 +183,32 @@ export function RunLogView({
               <TranscriptRow key={i} entry={group.entries[0]} />
             )
           )}
+
+          {/* The gate belongs in the conversation, at the point it was asked: the turns above it
+              are the context for the decision. Rendered last inside the scroller rather than
+              pinned below it, so it scrolls with the transcript and the surrounding work stays
+              readable while you decide. */}
+          {meta.state === 'awaiting-approval' &&
+            (pendingApproval !== null ? (
+              <ApprovalCard
+                toolName={pendingApproval.toolName}
+                toolInput={pendingApprovalInput}
+                frozenSince={meta.updatedAt}
+                onDecide={(allow, opts) =>
+                  onApprove(pendingApproval.requestId, allow, opts)
+                }
+              />
+            ) : (
+              <div className="border-border bg-muted/40 text-muted-foreground flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+                <Info className="size-3.5 shrink-0 translate-y-0.5" />
+                This run is waiting on an approval this window didn&rsquo;t see
+                live — reopen it from a session that was connected when the
+                approval was requested, or check the run&rsquo;s process
+                directly.
+              </div>
+            ))}
         </div>
       </div>
-
-      {meta.state === 'awaiting-approval' &&
-        (pendingApproval !== null ? (
-          <ApprovalCard
-            toolName={pendingApproval.toolName}
-            toolInput={pendingApprovalInput}
-            onDecide={(allow, opts) =>
-              onApprove(pendingApproval.requestId, allow, opts)
-            }
-          />
-        ) : (
-          <div className="border-border bg-muted/40 text-muted-foreground flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
-            <Info className="size-3.5 shrink-0 translate-y-0.5" />
-            This run is waiting on an approval this window didn&rsquo;t see live
-            — reopen it from a session that was connected when the approval was
-            requested, or check the run&rsquo;s process directly.
-          </div>
-        ))}
 
       {error !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
