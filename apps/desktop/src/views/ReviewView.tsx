@@ -1,21 +1,15 @@
-import { ArrowLeft, Check } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import { AnnotatedDiff } from '../components/runs/AnnotatedDiff';
+import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
 import { ReviewCommentsPanel } from '../components/runs/ReviewCommentsPanel';
+import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { SectionLabel } from '../components/ui/SectionLabel';
 import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { deriveFeedState } from '../lib/feedState';
-import {
-  readViewed,
-  toggleViewed,
-  viewedSummary,
-  writeViewed,
-} from '../lib/reviewViewed';
-import { parseUnifiedDiff } from '../lib/unifiedDiff';
-import { cn } from '@/lib/utils';
+import { normalizeDiffFilePath } from '../lib/pierreTree';
+import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 
 interface ReviewViewProps {
   data: DispatchProjectData;
@@ -25,7 +19,7 @@ interface ReviewViewProps {
 /**
  * Reviewing one run's work, full-page.
  *
- * Deliberately built from the same pieces the in-Runs review uses — `AnnotatedDiff` and
+ * Deliberately built from the same pieces the in-Runs review uses — `PierreReviewDiff` and
  * `ReviewCommentsPanel` — rather than reimplementing them. The difference is the frame, not the
  * behaviour: a file list with viewed ticks on the left, one file's diff at a time in the middle,
  * threads on the right. That framing is what the split view inside Runs cannot give you, because
@@ -39,11 +33,10 @@ export function ReviewView({ data, onBack }: ReviewViewProps) {
   const run = data.runDetail?.meta;
   const runId = run?.id ?? '';
 
-  const files = useMemo(
-    () => (data.diff === undefined ? [] : parseUnifiedDiff(data.diff.patch)),
+  const paths = useMemo(
+    () => (data.diff?.files ?? []).map((f) => normalizeDiffFilePath(f.path)),
     [data.diff]
   );
-  const paths = useMemo(() => files.map((f) => f.path), [files]);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(() =>
@@ -95,114 +88,29 @@ export function ReviewView({ data, onBack }: ReviewViewProps) {
     );
   }
 
-  const shown = unviewedOnly ? paths.filter((p) => !viewed.has(p)) : paths;
-
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <Header onBack={onBack} title={run.taskTitle} run={run} />
 
       <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)_300px] gap-4 overflow-hidden">
-        <div className="min-h-0 overflow-y-auto">
-          <SectionLabel
-            count={paths.length}
-            trailing={
-              <button
-                type="button"
-                onClick={() => setUnviewedOnly((v) => !v)}
-                className="text-accent-foreground text-[11px]"
-              >
-                {unviewedOnly ? 'All files' : 'Unviewed only'}
-              </button>
-            }
-          >
-            Files changed
-          </SectionLabel>
-          <p className="dense-meta mt-1 mb-1.5">
-            {viewedSummary(viewed, paths)}
-          </p>
-
-          <ul className="flex flex-col">
-            {shown.map((path) => {
-              const file = files.find((f) => f.path === path);
-              const isViewed = viewed.has(path);
-              const comments = commentsByFile.get(path) ?? 0;
-              return (
-                <li key={path}>
-                  <button
-                    type="button"
-                    onClick={() => setSelected(path)}
-                    className={cn(
-                      'flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors duration-150',
-                      path === selected ? 'bg-accent/15' : 'hover:bg-muted/40'
-                    )}
-                  >
-                    {/* Left-truncated so the filename survives on a deep path. */}
-                    <span
-                      dir="rtl"
-                      className={cn(
-                        'dense-meta min-w-0 flex-1 truncate text-left',
-                        isViewed && 'opacity-50'
-                      )}
-                      title={path}
-                    >
-                      {path}
-                    </span>
-                    {comments > 0 && (
-                      <span className="dense-meta text-accent-foreground">
-                        {comments}
-                      </span>
-                    )}
-                    <span className="dense-meta text-state-review">
-                      +{file?.additions ?? 0}
-                    </span>
-                    <span className="dense-meta text-state-failed">
-                      −{file?.deletions ?? 0}
-                    </span>
-                    <span
-                      role="checkbox"
-                      aria-checked={isViewed}
-                      aria-label={`Mark ${path} viewed`}
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setViewed((v) => toggleViewed(v, path));
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setViewed((v) => toggleViewed(v, path));
-                        }
-                      }}
-                      className={cn(
-                        'grid size-3.5 shrink-0 place-items-center rounded-sm',
-                        isViewed
-                          ? 'bg-state-review text-background'
-                          : 'shadow-hairline'
-                      )}
-                    >
-                      {isViewed && <Check className="size-2.5" />}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-            {shown.length === 0 && (
-              <li className="text-muted-foreground px-2 py-2 text-[12px]">
-                {paths.length === 0
-                  ? 'No file changes recorded.'
-                  : 'Every file has been viewed.'}
-              </li>
-            )}
-          </ul>
-        </div>
+        <ReviewFileTree
+          files={data.diff?.files ?? []}
+          selected={selected}
+          onSelect={setSelected}
+          viewed={viewed}
+          onToggleViewed={(path) => setViewed((v) => toggleViewed(v, path))}
+          commentsByFile={commentsByFile}
+          unviewedOnly={unviewedOnly}
+          onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
+        />
 
         <div className="min-h-0 overflow-auto">
           {data.diff !== undefined && selected !== null && (
-            <AnnotatedDiff
+            <PierreReviewDiff
               patch={data.diff.patch}
               only={selected}
               comments={data.reviewComments}
+              viewed={viewed}
               onAdd={data.handleAddReviewComment}
               onResolve={data.handleResolveReviewComment}
               onReply={data.handleReplyReviewComment}

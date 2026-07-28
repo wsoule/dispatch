@@ -74,7 +74,7 @@ function CodeBlock({ text }: { text: string }) {
   );
 }
 
-interface ToolView {
+export interface ToolView {
   icon: ReactNode;
   verb: string;
   /** The one-line target shown next to the verb (a file path, command, or pattern). */
@@ -90,7 +90,9 @@ interface ToolView {
 // Maps one tool entry to how it should render — icon, verb, target line, and optional
 // expandable body — keyed on the SDK tool name. Unknown tools fall back to their name plus a
 // collapsed JSON dump of the input, so a tool this doesn't special-case still renders legibly.
-function toolView(entry: NormalizedEntry): ToolView {
+/** Exported so the transcript row can render the same summary and body without duplicating the
+ * per-tool knowledge, which is the only place that mapping should live. */
+export function toolView(entry: NormalizedEntry): ToolView {
   const name = entry.toolName ?? 'tool';
   const input = entry.toolInput;
   const filePath = field(input, 'file_path');

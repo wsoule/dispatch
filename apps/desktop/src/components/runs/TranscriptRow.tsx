@@ -1,5 +1,9 @@
 import type { NormalizedEntry } from '@dispatch/client';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useState } from 'react';
 
+import { Markdown } from './Markdown';
+import { toolView } from './ToolCard';
 import type { GutterTone } from '@/lib/transcriptGutter';
 import { gutterTag, gutterTone } from '@/lib/transcriptGutter';
 import { cn } from '@/lib/utils';
@@ -12,38 +16,23 @@ const TONE: Record<GutterTone, string> = {
   bad: 'text-state-failed',
 };
 
-/** A one-line summary of a tool call, so the row says what happened without unfolding it. */
-function toolSummary(entry: NormalizedEntry): string {
-  const input = entry.toolInput;
-  if (input !== null && typeof input === 'object') {
-    const obj = input as Record<string, unknown>;
-    // The field that identifies *what* the tool acted on, in the order tools tend to name it.
-    for (const key of [
-      'file_path',
-      'path',
-      'pattern',
-      'command',
-      'url',
-      'query',
-    ]) {
-      const value = obj[key];
-      if (typeof value === 'string' && value !== '') return value;
-    }
-  }
-  return entry.toolName ?? '';
-}
-
 /**
- * One line of the transcript: a fixed-width tag, then the content.
+ * One entry in the transcript.
  *
- * The fixed width is the whole design. It turns the transcript into a scannable spine — you can
- * see five reads, a think, two edits and a test run without reading any of it — which a
- * variable-width chat bubble layout cannot do however it is styled.
+ * The gutter tag is kept because it does something no other layout does: a fixed-width column
+ * of read/edit/run/think makes the *shape* of a session scannable — five reads, a think, two
+ * edits, a test run — without reading any of it.
+ *
+ * What the first version of this got wrong was rendering every kind as raw monospace, which
+ * turned the agent's own prose into a wall of unformatted text and flattened tool calls into
+ * one-liners you could not open. So the two are separated here: tool activity stays terse and
+ * mono (it is machine output, and the point is to skim it), while anything the agent or a human
+ * actually *wrote* renders as prose through Markdown, at a readable measure.
  */
 export function TranscriptRow({ entry }: { entry: NormalizedEntry }) {
   const tag = gutterTag(entry);
   const tone = gutterTone(entry);
-  const text = entry.kind === 'tool' ? toolSummary(entry) : (entry.text ?? '');
+  const isProse = entry.kind === 'assistant' || entry.kind === 'thinking';
 
   return (
     <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-3 py-0.5">
@@ -57,14 +46,66 @@ export function TranscriptRow({ entry }: { entry: NormalizedEntry }) {
       >
         {tag}
       </span>
-      <span
+      {entry.kind === 'tool' ? (
+        <ToolRow entry={entry} tone={tone} />
+      ) : isProse ? (
+        // Prose gets a measure. A transcript that runs the full width of a wide window is
+        // unreadable however well it is typeset.
+        <Markdown
+          content={entry.text ?? ''}
+          className={cn(
+            'max-w-[68ch] text-[13px] leading-relaxed',
+            entry.kind === 'thinking' && 'text-muted-foreground'
+          )}
+        />
+      ) : (
+        <span className={cn('text-[12px] leading-relaxed', TONE[tone])}>
+          {entry.text ?? ''}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A tool call: its one-line summary, expandable to the full input.
+ *
+ * Collapsed by default because the summary — the path read, the command run — is the answer
+ * nine times out of ten, and the tenth is why it opens.
+ */
+function ToolRow({
+  entry,
+  tone,
+}: {
+  entry: NormalizedEntry;
+  tone: GutterTone;
+}) {
+  const view = toolView(entry);
+  const [open, setOpen] = useState(view.defaultOpen ?? false);
+  const hasBody = view.body !== undefined;
+
+  return (
+    <div className="flex min-w-0 flex-col">
+      <button
+        type="button"
+        disabled={!hasBody}
+        onClick={() => setOpen((v) => !v)}
         className={cn(
-          'font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap',
+          'flex min-w-0 items-center gap-1.5 text-left font-mono text-[12px]',
+          hasBody && 'hover:text-foreground',
           TONE[tone]
         )}
       >
-        {text}
-      </span>
+        {hasBody &&
+          (open ? (
+            <ChevronDown className="size-3 shrink-0 opacity-60" />
+          ) : (
+            <ChevronRight className="size-3 shrink-0 opacity-60" />
+          ))}
+        <span className="text-muted-foreground shrink-0">{view.icon}</span>
+        <span className="truncate">{view.target ?? view.verb}</span>
+      </button>
+      {open && hasBody && <div className="mt-1 min-w-0">{view.body}</div>}
     </div>
   );
 }
