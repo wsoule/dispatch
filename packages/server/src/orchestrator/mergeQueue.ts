@@ -242,6 +242,15 @@ export class MergeQueue {
     this.blockedRetryDelayMs =
       opts?.blockedRetryDelayMs ?? DEFAULT_BLOCKED_RETRY_DELAY_MS;
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir, run);
+    // Everything queued holds its worktree. Without this a review of a sibling
+    // run removes the directory the queue is about to rebase in, and the only
+    // symptom is an ENOENT that names git rather than the missing checkout.
+    ctx.orchestrator.onWorktreeClaim((worktreePath) =>
+      this.entries.some((entry) => {
+        const meta = this.ctx.orchestrator.getRun(entry.runId)?.meta;
+        return meta?.worktreePath === worktreePath;
+      })
+    );
     // A review elsewhere (local merge, PR poller) can complete a blocker —
     // re-check waiting entries whenever any run gets reviewed. Note: the
     // queue's OWN merge()/markRunMergedViaPr calls fire this same hook
@@ -940,6 +949,18 @@ export class MergeQueue {
     this.setEntryState(entry, 'rebasing');
     this.broadcast();
     const cwd = meta.worktreePath;
+    // Say what is actually wrong. Spawning git with a cwd that no longer
+    // exists makes posix_spawn return ENOENT, and Bun surfaces that as
+    // "no such file or directory, posix_spawn 'git'" — which reads as a
+    // missing git binary and sent a real debugging session down that path.
+    // The worktree should not be able to disappear from under a queued entry
+    // any more (see the claim registered in the constructor), but a directory
+    // removed outside the app still has to report itself honestly.
+    if (!existsSync(cwd)) {
+      throw new Error(
+        `worktree is gone: ${cwd} — the branch ${meta.branch} still exists, so re-dispatch the task or discard this run`
+      );
+    }
 
     const liveDescendants = await this.hasLiveDescendants(meta.branch);
     if (!liveDescendants && (await this.jj.isColocated())) {
