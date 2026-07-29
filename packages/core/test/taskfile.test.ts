@@ -1,12 +1,43 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  getSection,
   parseTaskFile,
   serializeTaskFile,
   setSection,
   TaskParseError,
 } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
+
+describe('getSection', () => {
+  const body =
+    '\n## Description\n\nold\n\n## Acceptance Criteria\n\n## Activity\n- created\n';
+
+  it('reads a section without its blank-line padding', () => {
+    expect(getSection(body, 'Description')).toBe('old');
+  });
+
+  it('returns empty for a section with nothing under it', () => {
+    expect(getSection(body, 'Acceptance Criteria')).toBe('');
+  });
+
+  it('returns empty for a heading that is not there', () => {
+    expect(getSection(body, 'Notes')).toBe('');
+  });
+
+  it('keeps multi-line content, blank lines and all', () => {
+    const out = getSection(
+      setSection(body, 'Description', 'a\n\nb'),
+      'Description'
+    );
+    expect(out).toBe('a\n\nb');
+  });
+
+  it('round-trips whatever setSection wrote', () => {
+    const written = setSection(body, 'Acceptance Criteria', '- ships green');
+    expect(getSection(written, 'Acceptance Criteria')).toBe('- ships green');
+  });
+});
 
 describe('setSection', () => {
   const body =

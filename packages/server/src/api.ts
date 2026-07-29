@@ -1,6 +1,7 @@
 import {
   ASSIGNEES,
   ConfigError,
+  getSection,
   KINDS,
   loadConfig,
   PRIORITIES,
@@ -1466,8 +1467,15 @@ function enrichInbox(ctx: ApiContext, id: string): Response {
  * failure mode to avoid is an agent helpfully rewriting a carefully-worded acceptance criterion
  * into something vaguer.
  */
-function buildTaskEnrichPrompt(task: TaskDoc, body: string): string {
-  const existing = body.trim();
+function buildTaskEnrichPrompt(task: TaskDoc): string {
+  // The two spec sections only — `task.body` verbatim would carry the template's empty
+  // headings (so no task ever looks empty) and the agent-written Activity log.
+  const existing = [
+    getSection(task.body, 'Description'),
+    getSection(task.body, 'Acceptance Criteria'),
+  ]
+    .filter((section) => section !== '')
+    .join('\n\n');
   return [
     'A task in this repository is under-specified, and someone wants it fleshed out before an ' +
       'agent picks it up.',
@@ -1487,17 +1495,17 @@ function buildTaskEnrichPrompt(task: TaskDoc, body: string): string {
   ].join('\n\n');
 }
 
-// POST /api/tasks/:id/enrich — AI-draft a fuller description for an existing task. Returns a
-// planId; nothing is written until the client confirms the proposal.
+// POST /api/tasks/:id/enrich — AI-draft fuller detail for an existing task. The plan only
+// carries the draft; the client applies it via PATCH /api/tasks/:id, never confirm (which
+// creates new tasks). No sourceNoteId either — that field is for note-derived plans only.
 function enrichTask(ctx: ApiContext, id: string): Response {
   const task = ctx.cache.get(id);
   if (task === null || task === undefined) {
     return errorResponse(404, `task not found: ${id}`);
   }
   const record = ctx.planManager.startPlan(
-    buildTaskEnrichPrompt(task, task.body ?? ''),
-    'claude',
-    task.meta.id
+    buildTaskEnrichPrompt(task),
+    'claude'
   );
   return jsonResponse({ planId: record.id }, 202);
 }
