@@ -9,7 +9,12 @@ import {
 import { join } from 'node:path';
 
 import { WorktreeManager } from '../../src/orchestrator/worktree.js';
-import { initGitRepo, runGitSync, worktreeSiblingPath } from './helpers.js';
+import {
+  initBareRepo,
+  initGitRepo,
+  runGitSync,
+  worktreeSiblingPath,
+} from './helpers.js';
 
 describe('WorktreeManager.defaultBaseBranch', () => {
   it('falls back to the current branch of the main checkout when there is no remote', () => {
@@ -776,7 +781,8 @@ describe('WorktreeManager origin ancestry', () => {
   });
 
   it('answers ancestry against the remote-tracking ref', () => {
-    const origin = initGitRepo();
+    // Bare and empty — see initBareRepo for why initGitRepo is wrong here.
+    const origin = initBareRepo();
     const repo = initGitRepo();
     runGitSync(repo, ['remote', 'add', 'origin', origin]);
     const pushed = runGitSync(repo, ['rev-parse', 'HEAD']).trim();

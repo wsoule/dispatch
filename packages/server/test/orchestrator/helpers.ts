@@ -19,6 +19,27 @@ export function runGitSync(cwd: string, args: string[]): string {
   return result.stdout.toString('utf8');
 }
 
+/**
+ * A bare repo with no commits, for use as an `origin`.
+ *
+ * Using `initGitRepo` as an origin looks right and is not: it makes its own
+ * initial commit, so the "remote" already has an unrelated `main`, and pushing
+ * to it is a non-fast-forward. That test passed only when both repos' initial
+ * commits landed in the same second — same content, author and message mean
+ * the same SHA, so the push was a silent no-op and the assertions held for the
+ * wrong reason. A second boundary between the two calls (more likely on a busy
+ * machine, which is why it failed under full-suite load and never alone) gave
+ * two unrelated histories and a rejected push.
+ *
+ * Bare and empty: the push creates `main` rather than racing an existing one,
+ * and it is a real push rather than a no-op.
+ */
+export function initBareRepo(prefix = 'dispatch-origin-'): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  runGitSync(dir, ['init', '--bare', '-b', 'main']);
+  return dir;
+}
+
 // Creates a fresh temp dir, git-inits it on branch `main`, and makes one
 // commit so there is a real HEAD to base worktrees/branches on — `git
 // worktree add -b <branch> <path> <base>` fails against an empty repo with no
