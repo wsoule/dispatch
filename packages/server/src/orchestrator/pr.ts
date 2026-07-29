@@ -100,23 +100,45 @@ export async function defaultCommandRunner(
       const [stdout, stderr, exitCode] = await collect;
       return { ok: exitCode === 0, stdout, stderr };
     }
-    // SIGKILL rather than a polite signal: the thing being bounded is a command
-    // that has already proven it will not finish, and a build/test tree can
-    // ignore SIGTERM. Killing resolves `collect`, so the reader promises above
-    // never leak.
+    // A genuine race, not "kill it and keep waiting".
+    //
+    // This used to SIGKILL the child and then still `await collect`, on the
+    // assumption that killing it would close the pipes. It does not always:
+    // the child here is `bash -lc "<command>"`, SIGKILL does not reap bash's
+    // descendants, and a surviving grandchild keeps the inherited stdout and
+    // stderr write ends open. `drain()` then never sees EOF, `collect` never
+    // resolves, and the timeout that exists to bound this waits forever with
+    // it. That wedged a real merge queue: a verify step sat "running" with no
+    // process behind it for hours, blocking every entry queued after it, while
+    // the 600s timeout had already fired and changed nothing.
+    //
+    // Racing means the timeout always returns. The reader promises may still
+    // be pending afterwards; they hold a pipe and a closure, which is a leak
+    // worth accepting to avoid a queue that never moves again.
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill('SIGKILL');
-    }, timeoutMs);
+    let onTimeout: (() => void) | undefined;
+    const expiry = new Promise<'timeout'>((resolve) => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill('SIGKILL');
+        resolve('timeout');
+      }, timeoutMs);
+      onTimeout = () => clearTimeout(timer);
+    });
+
     try {
-      const [stdout, stderr, exitCode] = await collect;
-      if (timedOut) {
-        return { ok: false, stdout, stderr: `timed out after ${timeoutMs}ms` };
+      const outcome = await Promise.race([collect, expiry]);
+      if (outcome === 'timeout' || timedOut) {
+        return {
+          ok: false,
+          stdout: '',
+          stderr: `timed out after ${timeoutMs}ms`,
+        };
       }
+      const [stdout, stderr, exitCode] = outcome;
       return { ok: exitCode === 0, stdout, stderr };
     } finally {
-      clearTimeout(timer);
+      onTimeout?.();
     }
   } catch (err) {
     return { ok: false, stdout: '', stderr: (err as Error).message };
