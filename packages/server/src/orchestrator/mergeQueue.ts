@@ -29,7 +29,31 @@ import {
 // for one internal helper.
 function commandErrorText(result: CommandResult): string {
   const stderr = result.stderr.trim();
-  return stderr.length > 0 ? stderr : result.stdout.trim();
+  return truncateReason(stderr.length > 0 ? stderr : result.stdout.trim());
+}
+
+/**
+ * How much of a failure message is kept.
+ *
+ * A failing `bun run test` writes its entire output to stderr, and all of it
+ * used to land in the entry's `reason` — which is persisted, held in memory,
+ * and shipped to every client on every queue broadcast. One real queue file
+ * reached 898 KB, of which 810 KB was three failure reasons.
+ */
+const REASON_LIMIT = 4000;
+
+/**
+ * Keeps the END of an over-long failure message.
+ *
+ * The tail is the useful half: a build or test log puts the summary and the
+ * actual error last, while the head is setup noise. Says how much it dropped
+ * rather than trailing off, so nobody mistakes a truncated log for the whole
+ * failure.
+ */
+export function truncateReason(text: string): string {
+  if (text.length <= REASON_LIMIT) return text;
+  const dropped = text.length - REASON_LIMIT;
+  return `…[${dropped} earlier characters omitted]\n${text.slice(-REASON_LIMIT)}`;
 }
 
 export type MergeQueueEntryState =
@@ -302,6 +326,14 @@ export class MergeQueue {
   //     to failed history instead of kept around forever.
   private hydrate(): void {
     const persisted = this.loadPersistedFile();
+    // Re-cap on the way in, so a file written before reasons were bounded
+    // shrinks on the next boot instead of carrying its old weight forever.
+    // The real one that prompted this was 898 KB, 810 KB of it three reasons.
+    for (const entry of [...persisted.entries, ...persisted.history]) {
+      if (entry.reason !== undefined) {
+        entry.reason = truncateReason(entry.reason);
+      }
+    }
     this.history.push(...persisted.history);
     this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
 
@@ -872,7 +904,9 @@ export class MergeQueue {
       this.finish(entry, 'merged', meta.baseBranch);
       return 'done';
     } catch (err) {
-      entry.reason = (err as Error).message;
+      // Capped here as well as in commandErrorText: not every throw on this
+      // path comes from a command, and `reason` is persisted and broadcast.
+      entry.reason = truncateReason((err as Error).message);
       if (err instanceof MergeEnvironmentError) {
         this.setEntryState(entry, 'blocked-environment');
         this.persist();
