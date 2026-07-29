@@ -788,7 +788,11 @@ export class Orchestrator {
       mergeCommit = this.mergeRun(meta, now);
     } else {
       this.persistDiffSnapshot(meta);
-      this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+      // Not while something else still needs the directory — a sibling run
+      // sitting in the merge queue is about to rebase inside it.
+      if (!this.worktreeIsNeeded(runId)) {
+        this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+      }
       this.ctx.store.update(
         meta.taskId,
         {
@@ -1298,6 +1302,8 @@ export class Orchestrator {
    * therefore answers the wrong question — the thing being protected is the
    * directory, and the directory can have more than one run's name on it.
    */
+  private readonly worktreeClaims: ((worktreePath: string) => boolean)[] = [];
+
   worktreeIsBusy(runId: string): boolean {
     const meta = this.registry.get(runId);
     if (meta === undefined) return false;
@@ -1308,6 +1314,45 @@ export class Orchestrator {
           r.worktreePath === meta.worktreePath &&
           !TERMINAL_RUN_STATES.has(r.state)
       );
+  }
+
+  /**
+   * Whether anything still NEEDS this worktree to exist.
+   *
+   * Deliberately distinct from `worktreeIsBusy`, which asks whether an agent is
+   * writing here right now — the question a restack has to ask before it
+   * rewrites a working copy. This is the weaker, wider question a *deletion*
+   * has to ask, and the two came apart in a real failure: a run waiting in the
+   * merge queue is `finished`, so nothing was live, so reviewing a sibling
+   * removed the directory the queue was about to rebase in. The rebase then
+   * failed with ENOENT from posix_spawn, which reads as a missing git binary
+   * and is nothing of the sort.
+   *
+   * Conflating the two is not harmless in the other direction either: making
+   * queued entries look "busy" stops their dependents from ever being
+   * restacked, because restacking asks the same method.
+   */
+  worktreeIsNeeded(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return false;
+    if (this.worktreeClaims.some((claims) => claims(meta.worktreePath))) {
+      return true;
+    }
+    return this.worktreeIsBusy(runId);
+  }
+
+  /**
+   * Lets another subsystem declare a worktree in use for reasons the run
+   * registry cannot see.
+   *
+   * A callback rather than a direct MergeQueue reference: the orchestrator is
+   * constructed first and the queue is built on top of it, so pointing back at
+   * the queue would be a cycle. This keeps the dependency one-way — the queue
+   * knows about the orchestrator, and the orchestrator only knows that
+   * *something* may hold a claim.
+   */
+  onWorktreeClaim(claims: (worktreePath: string) => boolean): void {
+    this.worktreeClaims.push(claims);
   }
 
   // Reattaches a run's worktree to its branch after a restack moved that
