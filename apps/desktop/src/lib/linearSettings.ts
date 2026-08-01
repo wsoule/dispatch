@@ -9,8 +9,7 @@ import type {
 export const NO_LINEAR_STATE = '__unmapped__';
 
 /** Whether there is enough Linear config to actually run a sync: connected and a team chosen.
- *  Gates the enable toggle and the "Sync now" button so neither fires against a half-set-up
- *  connection. */
+ *  Gates the enable toggle and the "Sync now" button. */
 export function isLinearConfigured(status: LinearStatus | null): boolean {
   return (
     status !== null &&
@@ -20,11 +19,8 @@ export function isLinearConfigured(status: LinearStatus | null): boolean {
   );
 }
 
-/** The workflow-state id a configured status-map name currently resolves to, matched
- *  case-insensitively against `states`. Returns the "unmapped" sentinel both for an empty
- *  entry and for a name that no longer matches any state in `states` — the latter is exactly
- *  what happens right after the team changes, so the editor shows an honest "not mapped"
- *  instead of a stale selection. */
+/** The workflow-state id a configured status-map name resolves to, matched case-insensitively
+ *  against `states` — or the "unmapped" sentinel for an empty or now-stale entry. */
 export function resolveMappedStateId(
   name: string | undefined,
   states: LinearWorkflowState[]
@@ -55,8 +51,7 @@ export function statusMapCompleteness(
 }
 
 /** A short line of what one sync pass did, every zero-valued count omitted — "Nothing changed"
- *  when the pass was a no-op. Errors and the rate-limit flag are the caller's own concern
- *  (a sync can 200 and still carry them), so they are deliberately not folded in here. */
+ *  for a no-op pass. Errors/rate-limit are the caller's own concern, not folded in here. */
 export function formatSyncCounts(summary: LinearSyncSummary): string {
   const parts: string[] = [];
   if (summary.pulled > 0) parts.push(`${summary.pulled} pulled`);
