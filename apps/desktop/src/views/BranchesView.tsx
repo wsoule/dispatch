@@ -179,6 +179,16 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
 
   // Identity is the stash's sha, not its `ref` (`stash@{0}`) — that ref is positional and
   // shifts for other entries whenever one is pushed or dropped.
+  // Panels are short enough that j/k routinely moves the selection out of view; without this
+  // the highlight is invisible and keyboard navigation reads as doing nothing.
+  useEffect(() => {
+    containerRef.current
+      ?.querySelector(
+        `[data-git-panel="${panelState.focused}"] [data-git-selected="true"]`
+      )
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [panelState]);
+
   const prevStashShas = useRef<string[]>([]);
   useEffect(() => {
     const shas = stashes.map((s) => s.sha);
@@ -348,9 +358,16 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     setPendingConfirm({ kind: 'discard-run', runId, branch });
   }
 
+  // The confirm dialog unmounts outright rather than animating closed, so Radix never
+  // restores focus — without this the page's own 1-5/j/k shortcuts go dead.
+  function closeConfirm() {
+    setPendingConfirm(null);
+    requestAnimationFrame(() => containerRef.current?.focus());
+  }
+
   async function confirmPending(forceBranchDelete: boolean) {
     const pending = pendingConfirm;
-    setPendingConfirm(null);
+    closeConfirm();
     if (pending === null) return;
     if (pending.kind === 'discard-file') {
       await runFileMutation(pending.row.path, () =>
@@ -584,11 +601,15 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
               key={panel}
               className={cn(
                 'border-border flex min-h-0 flex-col border-b last:border-b-0',
+                // Weighted so the longest list (branches) gets the most room, with a floor
+                // under each so no panel collapses to a header at small window sizes.
                 panel === 'status'
                   ? 'flex-none'
                   : panel === 'branches'
-                    ? 'flex-[1.6]'
-                    : 'flex-1'
+                    ? 'min-h-[9rem] flex-[2]'
+                    : panel === 'stashes'
+                      ? 'min-h-[5.5rem] flex-[0.8]'
+                      : 'min-h-[5.5rem] flex-[1.2]'
               )}
             >
               <button
@@ -603,8 +624,19 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
                   {PANEL_DIGIT[panel]}
                 </span>
                 {PANEL_LABEL[panel]}
+                {panel !== 'status' && (
+                  <span
+                    data-git-panel-count={panel}
+                    className="text-muted-foreground font-mono normal-case"
+                  >
+                    {listLength(panel)}
+                  </span>
+                )}
               </button>
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <div
+                data-git-panel={panel}
+                className="scroll-affordance min-h-0 flex-1 overflow-y-auto"
+              >
                 {panel === 'status' && (
                   <StatusPanel
                     status={status}
@@ -817,7 +849,7 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
       <ConfirmDialog
         key={pendingConfirmKey(pendingConfirm)}
         pending={pendingConfirm}
-        onCancel={() => setPendingConfirm(null)}
+        onCancel={closeConfirm}
         onConfirm={confirmPending}
       />
     </div>

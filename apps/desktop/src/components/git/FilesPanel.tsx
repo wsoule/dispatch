@@ -54,6 +54,7 @@ export function FilesPanel({
             <div
               role="button"
               tabIndex={-1}
+              data-git-selected={selected ? 'true' : undefined}
               onClick={() => onSelectIndex(index)}
               className={cn(
                 'flex cursor-pointer items-center gap-2 px-3 py-1 text-[12px]',

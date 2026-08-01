@@ -102,6 +102,7 @@ export function BranchesPanel({
             return (
               <div
                 key={row.name}
+                data-git-selected={index === selectedIndex ? 'true' : undefined}
                 onClick={() => onSelectIndex(index)}
                 role="button"
                 tabIndex={-1}
