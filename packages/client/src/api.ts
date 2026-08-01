@@ -316,7 +316,12 @@ export type ServerEvent =
   // The brain-dump inbox changed — captured, retyped, dismissed or converted.
   | { type: 'inbox.changed' }
   | { type: 'review.changed'; runId: string }
-  | { type: 'config.changed' };
+  | { type: 'config.changed' }
+  // A task draft's state changed, or it was dismissed. No id on purpose — a
+  // client can have several drafts running at once, so this is the same
+  // generic "go refetch" signal as task.changed/note.changed. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'draft.changed' };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's
@@ -407,6 +412,23 @@ export interface PlanRecord {
 export interface ConfirmResult {
   epicId?: string;
   taskIds: string[];
+}
+
+// Mirrors DraftRecord in packages/server/src/orchestrator/plan.ts — the body
+// of `POST /api/tasks/draft` (202) and `GET /api/tasks/drafts[/:id]`. A
+// draft is a single-turn planner call that runs in the background: `state`
+// starts `running` and moves to `ready` (with `proposal` set) or `failed`
+// (with `error` set) once the turn completes. Any number of drafts can be
+// running at once — there is no per-draft busy-guard.
+export interface DraftRecord {
+  id: string;
+  prompt: string;
+  state: PlanState;
+  message: string;
+  proposal: PlanProposal | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // Mirrors EpicSession in packages/server/src/orchestrator/epic.ts.
@@ -712,12 +734,21 @@ export interface ApiClient {
   fetchTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
-  // The natural-language single-task creator (`POST /api/tasks/draft`): turns a
-  // free-text description into one structured `TaskDraft` the caller reviews
-  // and then saves via `createTask` (map it with `taskDraftToCreateInput`). The
-  // draft is produced by the same planner/Agent-SDK backend the plan flow uses,
-  // constrained to a single task — it is NOT persisted until createTask runs.
-  draftTask(prompt: string): Promise<TaskDraft>;
+  // The natural-language single-task creator (`POST /api/tasks/draft`): starts
+  // a background planner turn and returns immediately (202) with a
+  // `DraftRecord` in `state: 'running'` — poll `fetchDraft`/`fetchDrafts` or
+  // watch `draft.changed` over WS for it to settle `ready` (with `proposal`
+  // to review and then save via `createTask`) or `failed`. Any number of
+  // drafts can be running at once; nothing here persists until `createTask`
+  // runs on the reviewed result.
+  draftTask(prompt: string): Promise<DraftRecord>;
+  // Every draft currently held in memory (running, ready, or failed — until
+  // dismissed), newest first.
+  fetchDrafts(): Promise<DraftRecord[]>;
+  fetchDraft(id: string): Promise<DraftRecord>;
+  // Dismisses a reviewed draft (saved or discarded) so it stops showing up in
+  // `fetchDrafts`. 404s an unknown id.
+  dismissDraft(id: string): Promise<void>;
   // Orchestrator run endpoints (Phase 4 Slice O1/O2 API, Slice O3 client) —
   // see packages/server/src/api.ts for the exact request/response shapes
   // these mirror. `executor` defaults to 'claude' server-side when omitted;
@@ -955,6 +986,11 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ prompt }),
       }),
+    fetchDrafts: () => request(baseUrl, '/api/tasks/drafts'),
+    fetchDraft: (id) => request(baseUrl, `/api/tasks/drafts/${id}`),
+    dismissDraft: async (id) => {
+      await request(baseUrl, `/api/tasks/drafts/${id}`, { method: 'DELETE' });
+    },
     createRun: (taskId, opts = {}) =>
       request(baseUrl, `/api/tasks/${taskId}/runs`, {
         method: 'POST',

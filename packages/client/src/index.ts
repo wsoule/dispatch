@@ -14,6 +14,7 @@ export type {
   ConnectEventsOptions,
   DiffFile,
   DiffResult,
+  DraftRecord,
   EpicProgress,
   EpicProgressChild,
   EpicSession,

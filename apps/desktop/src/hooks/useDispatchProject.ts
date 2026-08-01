@@ -1,5 +1,6 @@
 import type {
   ApiClient,
+  DraftRecord,
   EpicProgress,
   MergeQueueSnapshot,
   PlanProposal,
@@ -8,7 +9,6 @@ import type {
   RunDetail,
   RunMeta,
   RunState,
-  TaskDraft,
 } from '@dispatch/client';
 import { createApiClient } from '@dispatch/client';
 import type {
@@ -279,12 +279,14 @@ export interface DispatchProjectData {
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
   handleCreate: (input: CreateInput) => Promise<void>;
-  /** Natural-language single-task creation: turns a free-text description into a
-   * structured `TaskDraft` (via the planner/Agent-SDK backend, constrained to one
-   * task) for the caller to review and then persist with `handleCreate` — the
-   * language-driven sibling of the structured `handleCreate` form. Returns the
-   * draft without saving; nothing is written until `handleCreate` runs. */
-  handleDraftTask: (prompt: string) => Promise<TaskDraft>;
+  /** Natural-language single-task creation: starts a background planner turn
+   * (via the planner/Agent-SDK backend, constrained to one task) and returns
+   * immediately with a `DraftRecord` in `state: 'running'` — the caller polls
+   * `client.fetchDraft`/watches `draft.changed` for it to settle, then
+   * reviews the resulting proposal and persists it with `handleCreate`. The
+   * language-driven sibling of the structured `handleCreate` form. Nothing is
+   * written until `handleCreate` runs. */
+  handleDraftTask: (prompt: string) => Promise<DraftRecord>;
   handleDispatch: (
     taskId: string,
     executor?: 'fake' | 'claude',
@@ -497,6 +499,11 @@ export function useDispatchProject(
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
+  // Task 5: the drafts list (`GET /api/tasks/drafts`) — no consumer yet, but
+  // exposed here so a future drafts view can key its query off this and get
+  // `draft.changed` invalidation for free, the same "define the key once,
+  // reuse it" shape every other list query key in this hook follows.
+  const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
   const reviewQueryKey = useMemo(
     () => ['dispatch-review', port, selectedRunId],
     [port, selectedRunId]
@@ -837,6 +844,8 @@ export function useDispatchProject(
             });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+          } else if (event.type === 'draft.changed') {
+            void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
           } else if (event.type === 'review.changed') {
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
           } else if (event.type === 'inbox.changed') {
@@ -924,6 +933,7 @@ export function useDispatchProject(
     readyQueryKey,
     runsQueryKey,
     notesQueryKey,
+    draftsQueryKey,
     inboxQueryKey,
     reviewQueryKey,
     epicProgressKeyPrefix,
@@ -1022,12 +1032,13 @@ export function useDispatchProject(
     [client, queryClient, tasksQueryKey, readyQueryKey]
   );
 
-  // No cache invalidation here on purpose: drafting is read-only (it only asks
-  // the planner to structure the text) and persists nothing — the returned
-  // draft is handed to the caller to review and then save via `handleCreate`,
-  // which is where the task list actually refetches.
+  // No task-list cache invalidation here on purpose: drafting is read-only (it
+  // only asks the planner to structure the text) and persists no task — the
+  // returned record is handed to the caller to poll and then, once ready,
+  // review and save via `handleCreate`, which is where the task list itself
+  // refetches.
   const handleDraftTask = useCallback(
-    async (prompt: string): Promise<TaskDraft> => {
+    async (prompt: string): Promise<DraftRecord> => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.draftTask(prompt);
     },

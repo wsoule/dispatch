@@ -590,26 +590,124 @@ describe('PlanManager multi-turn conversation', () => {
 });
 
 // The natural-language single-task creator reuses the same Planner seam as
-// startPlan/confirm, constrained to one task: draftTask runs the named planner,
-// re-validates its proposal with the same rules, and returns the first task as
-// a review-then-save TaskDraft — no PlanRecord, no confirm step.
-describe('PlanManager.draftTask', () => {
-  it('turns free text into a single structured draft via the fake planner', async () => {
+// startPlan/confirm, constrained to one task, but — unlike the old stateless
+// draftTask — mints a DraftRecord and runs the turn in the background, the
+// same running -> ready|failed shape startPlan already has. Two drafts have
+// no shared busy-guard: each settles independently, on its own timeline.
+describe('PlanManager.startDraft / getDraft / listDrafts / dismissDraft', () => {
+  it('returns immediately with state running, then settles ready with the proposal + reply', async () => {
     const manager = makeManager(
-      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+      new FakePlanner({
+        ok: true,
+        reply: 'here is your task',
+        proposal: SAMPLE_PROPOSAL,
+      })
     );
-    const draft = await manager.draftTask('design the widget please');
-    expect(draft).toEqual({
-      title: 'Design the widget',
-      description: 'Sketch the API.',
-      acceptanceCriteria: ['API sketch reviewed'],
-      priority: 'high',
-    });
-    // A draft carries no blockedByIndices — it is a lone task with no siblings.
-    expect('blockedByIndices' in draft).toBe(false);
+    const started = manager.startDraft('design the widget please');
+    expect(started.state).toBe('running');
+    expect(started.proposal).toBeNull();
+    expect(started.error).toBeNull();
+
+    await waitFor(() => manager.getDraft(started.id).state !== 'running');
+    const record = manager.getDraft(started.id);
+    expect(record.state).toBe('ready');
+    expect(record.proposal).toEqual(SAMPLE_PROPOSAL);
+    expect(record.message).toBe('here is your task');
+    expect(record.error).toBeNull();
   });
 
-  it('re-validates the planner proposal with the same priority rules', async () => {
+  // The whole point of Task 5: no busy-guard between drafts, so two started
+  // back to back run fully concurrently and each settles on its own — one
+  // succeeding never blocks or corrupts the other, and both show up in
+  // listDrafts() once done.
+  it('runs two drafts started back-to-back fully concurrently, both reaching ready independently', async () => {
+    const manager = new PlanManager({ store, cache, events, rootDir: root });
+    const widgetProposal: PlanProposal = {
+      tasks: [
+        {
+          title: 'Widget task',
+          description: 'Build the widget.',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'high',
+        },
+      ],
+    };
+    const gadgetProposal: PlanProposal = {
+      tasks: [
+        {
+          title: 'Gadget task',
+          description: 'Build the gadget.',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'low',
+        },
+      ],
+    };
+    manager.registerPlanner(
+      'widget-planner',
+      new FakePlanner({ ok: true, proposal: widgetProposal })
+    );
+    manager.registerPlanner(
+      'gadget-planner',
+      new FakePlanner({ ok: true, proposal: gadgetProposal })
+    );
+
+    const first = manager.startDraft('a widget', 'widget-planner');
+    const second = manager.startDraft('a gadget', 'gadget-planner');
+    expect(first.id).not.toBe(second.id);
+    expect(first.state).toBe('running');
+    expect(second.state).toBe('running');
+
+    await waitFor(
+      () =>
+        manager.getDraft(first.id).state !== 'running' &&
+        manager.getDraft(second.id).state !== 'running'
+    );
+
+    expect(manager.getDraft(first.id).state).toBe('ready');
+    expect(manager.getDraft(first.id).proposal).toEqual(widgetProposal);
+    expect(manager.getDraft(second.id).state).toBe('ready');
+    expect(manager.getDraft(second.id).proposal).toEqual(gadgetProposal);
+
+    const ids = manager.listDrafts().map((d) => d.id);
+    expect(ids).toContain(first.id);
+    expect(ids).toContain(second.id);
+  });
+
+  // A failing planner turn on one draft must land that one draft `failed`
+  // with `error` set, and must not reach across to a sibling draft running
+  // on a different (successful) planner at the same time.
+  it('lands a failing draft as failed with error set, without affecting a concurrent successful draft', async () => {
+    const manager = new PlanManager({ store, cache, events, rootDir: root });
+    manager.registerPlanner(
+      'claude',
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    manager.registerPlanner(
+      'broken',
+      new FakePlanner({ ok: false, error: 'planner exploded' })
+    );
+
+    const good = manager.startDraft('build a widget feature', 'claude');
+    const bad = manager.startDraft('anything', 'broken');
+
+    await waitFor(
+      () =>
+        manager.getDraft(good.id).state !== 'running' &&
+        manager.getDraft(bad.id).state !== 'running'
+    );
+
+    expect(manager.getDraft(bad.id).state).toBe('failed');
+    expect(manager.getDraft(bad.id).error).toBe('planner exploded');
+    expect(manager.getDraft(bad.id).proposal).toBeNull();
+
+    expect(manager.getDraft(good.id).state).toBe('ready');
+    expect(manager.getDraft(good.id).proposal).toEqual(SAMPLE_PROPOSAL);
+    expect(manager.getDraft(good.id).error).toBeNull();
+  });
+
+  it('re-validates the planner proposal with the same priority rules, landing failed rather than throwing', async () => {
     const invalidProposal = {
       tasks: [
         {
@@ -625,27 +723,115 @@ describe('PlanManager.draftTask', () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: invalidProposal })
     );
-    await expect(manager.draftTask('anything')).rejects.toThrow(
-      OrchestratorClientError
-    );
+    const started = manager.startDraft('anything');
+    await waitFor(() => manager.getDraft(started.id).state !== 'running');
+    const record = manager.getDraft(started.id);
+    expect(record.state).toBe('failed');
+    expect(record.error).toMatch(/invalid priority/);
+    expect(record.proposal).toBeNull();
   });
 
-  it('400s when the planner returns a proposal with no tasks', async () => {
+  it('fails a draft whose planner returns a proposal with no tasks', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: { tasks: [] } })
     );
-    await expect(manager.draftTask('nothing actionable')).rejects.toThrow(
+    const started = manager.startDraft('nothing actionable');
+    await waitFor(() => manager.getDraft(started.id).state !== 'running');
+    const record = manager.getDraft(started.id);
+    expect(record.state).toBe('failed');
+    expect(record.error).toMatch(/no task/);
+  });
+
+  it('throws for an unregistered planner name (same contract as startPlan)', () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    expect(() => manager.startDraft('anything', 'fake')).toThrow(
       OrchestratorClientError
     );
   });
 
-  it('throws for an unregistered planner name (same contract as startPlan)', async () => {
+  it('broadcasts draft.changed on state transitions', async () => {
+    const received: unknown[] = [];
+    events.add({ send: (data: string) => received.push(JSON.parse(data)) });
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    await expect(manager.draftTask('anything', 'fake')).rejects.toThrow(
-      OrchestratorClientError
+    const started = manager.startDraft('design the widget please');
+
+    await waitFor(() => manager.getDraft(started.id).state !== 'running');
+    expect(
+      received.some((e) => (e as { type: string }).type === 'draft.changed')
+    ).toBe(true);
+  });
+
+  it('throws OrchestratorNotFoundError for an unknown draft id', () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
+    expect(() => manager.getDraft('d-000000')).toThrow(
+      OrchestratorNotFoundError
+    );
+  });
+
+  it('dismissDraft removes the record — a subsequent getDraft 404s and it drops out of listDrafts', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const started = manager.startDraft('design the widget please');
+    await waitFor(() => manager.getDraft(started.id).state !== 'running');
+
+    manager.dismissDraft(started.id);
+
+    expect(() => manager.getDraft(started.id)).toThrow(
+      OrchestratorNotFoundError
+    );
+    expect(manager.listDrafts().map((d) => d.id)).not.toContain(started.id);
+  });
+
+  it('dismissDraft is a silent no-op for an unknown id', () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    expect(() => manager.dismissDraft('d-000000')).not.toThrow();
+  });
+
+  it('lists drafts newest first', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const first = manager.startDraft('first');
+    await waitFor(() => manager.getDraft(first.id).state !== 'running');
+    const second = manager.startDraft('second');
+    await waitFor(() => manager.getDraft(second.id).state !== 'running');
+
+    const ids = manager.listDrafts().map((d) => d.id);
+    expect(ids[0]).toBe(second.id);
+    expect(ids[1]).toBe(first.id);
+  });
+
+  // Eviction rule: the map is capped at 50 entries, dropping the oldest
+  // *non-running* drafts once exceeded — a draft still `running` is never
+  // evicted, no matter how far past the cap the map grows, since that would
+  // strand a background turn with nowhere to land its result.
+  it('caps listDrafts at 50 by evicting the oldest settled drafts, never a running one', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    // 55 quick-settling drafts, awaited one at a time so their createdAt
+    // timestamps are strictly increasing (the eviction order key).
+    for (let i = 0; i < 55; i++) {
+      const started = manager.startDraft(`draft ${i}`);
+      await waitFor(() => manager.getDraft(started.id).state !== 'running');
+    }
+    expect(manager.listDrafts()).toHaveLength(50);
+
+    // One more draft, left running (never awaited) while the map is already
+    // at capacity — starting it must not evict itself or any other running
+    // draft, even though it pushes the map size past 50.
+    const stillRunning = manager.startDraft('the 56th, left running');
+    expect(manager.getDraft(stillRunning.id).state).toBe('running');
+    expect(manager.listDrafts().map((d) => d.id)).toContain(stillRunning.id);
   });
 });
 

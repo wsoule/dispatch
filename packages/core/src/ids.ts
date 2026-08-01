@@ -30,3 +30,18 @@ export function generateRunId(
     .slice(0, 6);
   return `r-${hash}`;
 }
+
+// Same shape as generateRunId's id, but for server-side task drafts
+// (PlanManager.startDraft) — no title to mix in yet since a draft has none
+// until the planner produces one, and drafts are minted one per POST
+// /api/tasks/draft call, same low-collision-risk cadence as runs.
+export function generateDraftId(
+  now: string,
+  nonce: string = randomBytes(4).toString('hex')
+): string {
+  const hash = createHash('sha256')
+    .update(`${now}\n${nonce}`)
+    .digest('hex')
+    .slice(0, 6);
+  return `d-${hash}`;
+}
