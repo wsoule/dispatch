@@ -93,6 +93,19 @@ describe('draftTrayViewModel', () => {
     expect(draftTrayViewModel(drafts).badgeCount).toBe(0);
   });
 
+  test('hasRunning is true only while at least one draft is running', () => {
+    expect(
+      draftTrayViewModel([draft({ id: 'r1', state: 'running' })]).hasRunning
+    ).toBe(true);
+    expect(
+      draftTrayViewModel([
+        draft({ id: 'r1', state: 'ready', proposal: READY_PROPOSAL }),
+        draft({ id: 'r2', state: 'failed', error: 'boom' }),
+      ]).hasRunning
+    ).toBe(false);
+    expect(draftTrayViewModel([]).hasRunning).toBe(false);
+  });
+
   test('label prefers the proposal title when ready, the error when failed, and the prompt while running', () => {
     const drafts = [
       draft({ id: 'running', state: 'running', prompt: 'add retries' }),

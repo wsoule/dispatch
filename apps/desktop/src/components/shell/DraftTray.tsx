@@ -17,11 +17,8 @@ interface DraftTrayProps {
   onDismissDraft: (id: string) => void;
 }
 
-/**
- * App-wide popover of in-flight and settled AI task drafts, reachable from the sidebar
- * regardless of which view is open — a draft keeps running server-side after its composer
- * closes, so this is the one place to come back and check on it.
- */
+/** App-wide popover of in-flight and settled AI task drafts, reachable from the sidebar
+ * regardless of which view is open — a draft keeps running after its composer closes. */
 export function DraftTray({
   drafts,
   collapsed,
@@ -30,17 +27,15 @@ export function DraftTray({
 }: DraftTrayProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const { items, badgeCount, hasRunning } = draftTrayViewModel(drafts, now);
 
   // Ticks the elapsed readout once a second, but only while the popover is open and something
-  // is still running — a closed tray, or one where every draft has already settled, has
-  // nothing left to count up.
+  // is still running.
   useEffect(() => {
-    if (!open || !drafts.some((d) => d.state === 'running')) return;
+    if (!open || !hasRunning) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [open, drafts]);
-
-  const { items, badgeCount } = draftTrayViewModel(drafts, now);
+  }, [open, hasRunning]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

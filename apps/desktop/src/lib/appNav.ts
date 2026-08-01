@@ -13,10 +13,8 @@
  * reducer below, and every test against it stay untouched by the nav collapse — only
  * `Sidebar`'s single nav row and its label changed.
  *
- * `new-task` is the odd one out: it never actually renders — App.tsx treats reaching it as a
- * signal to open the AI task composer dialog and immediately hand the view back to
- * `newTaskReturnView`, so a "New task" affordance anywhere in the app can open the composer
- * through one shared `openNewTask` action without `Sidebar` ever listing it as a nav row. */
+ * `new-task` is the odd one out: it never actually renders — App.tsx reads reaching it as a
+ * signal to open the AI task composer dialog and hands the view straight back. */
 export type ProjectView =
   | 'overview'
   | 'board'
@@ -45,9 +43,8 @@ export interface NavState {
   peekTaskId: string | null;
   /** Run id shown in the Runs view's right pane, or `null` when nothing is selected. */
   activeRunId: string | null;
-  /** Which view `openNewTask` briefly passes through on its way to opening the AI composer
-   * dialog, captured so `projectView` snaps back to wherever you actually were (a board
-   * column's "+" returns to the board) rather than to one fixed view. */
+  /** Which view to snap `projectView` back to once the AI composer dialog opens — a board
+   * column's "+" returns to the board, rather than one fixed view. */
   newTaskReturnView: ProjectView;
   paletteOpen: boolean;
   /**
@@ -127,11 +124,8 @@ export type NavAction =
   | { type: 'togglePalette' }
   | { type: 'back' }
   | { type: 'forward' }
-  /** Context-sensitive close: the command palette wins over the task peek, which in turn wins
-   * over `new-task` still being the current view (a moment before App.tsx's own bridge would
-   * hand it back to `newTaskReturnView` anyway), and each one being open swallows the Escape
-   * entirely rather than also clearing the next — a single Escape press should undo exactly
-   * one layer of UI. */
+  /** Context-sensitive close: the command palette wins over the task peek, and each one open
+   * swallows the Escape rather than also clearing the next layer. */
   | { type: 'escape' };
 
 export function navReducer(state: NavState, action: NavAction): NavState {
