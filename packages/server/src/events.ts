@@ -27,12 +27,8 @@ export type ServerEvent =
   // just confirmed — same "go refetch, no payload beyond the id" contract as
   // run.changed.
   | { type: 'plan.changed'; planId: string }
-  // A task draft (PlanManager.startDraft) changed state, or was dismissed —
-  // same "go refetch, no payload" contract as task.changed/note.changed
-  // rather than plan.changed's per-id shape: since a client can have any
-  // number of drafts running at once and is expected to poll the whole list
-  // (GET /api/tasks/drafts), a single generic signal is enough to tell it to
-  // refetch whichever draft(s) it's currently showing.
+  // A task draft changed state or was dismissed — no id, since a client can
+  // have several drafts running and is expected to refetch the whole list.
   | { type: 'draft.changed' }
   // A note/triage/follow-up was created, edited, promoted, or deleted — same
   // "go refetch" contract as task.changed. Lets an agent-created triage (via

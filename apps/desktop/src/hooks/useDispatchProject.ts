@@ -279,13 +279,8 @@ export interface DispatchProjectData {
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
   handleCreate: (input: CreateInput) => Promise<void>;
-  /** Natural-language single-task creation: starts a background planner turn
-   * (via the planner/Agent-SDK backend, constrained to one task) and returns
-   * immediately with a `DraftRecord` in `state: 'running'` — the caller polls
-   * `client.fetchDraft`/watches `draft.changed` for it to settle, then
-   * reviews the resulting proposal and persists it with `handleCreate`. The
-   * language-driven sibling of the structured `handleCreate` form. Nothing is
-   * written until `handleCreate` runs. */
+  /** Starts a background single-task draft; caller polls `client.fetchDraft`
+   * for it to settle, then reviews and persists it with `handleCreate`. */
   handleDraftTask: (prompt: string) => Promise<DraftRecord>;
   handleDispatch: (
     taskId: string,
@@ -499,10 +494,8 @@ export function useDispatchProject(
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
-  // Task 5: the drafts list (`GET /api/tasks/drafts`) — no consumer yet, but
-  // exposed here so a future drafts view can key its query off this and get
-  // `draft.changed` invalidation for free, the same "define the key once,
-  // reuse it" shape every other list query key in this hook follows.
+  // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
+  // on `draft.changed`.
   const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
   const reviewQueryKey = useMemo(
     () => ['dispatch-review', port, selectedRunId],
@@ -1032,11 +1025,8 @@ export function useDispatchProject(
     [client, queryClient, tasksQueryKey, readyQueryKey]
   );
 
-  // No task-list cache invalidation here on purpose: drafting is read-only (it
-  // only asks the planner to structure the text) and persists no task — the
-  // returned record is handed to the caller to poll and then, once ready,
-  // review and save via `handleCreate`, which is where the task list itself
-  // refetches.
+  // No task-list invalidation here — drafting persists nothing; the task
+  // list refetches from `handleCreate` once the reviewed draft is saved.
   const handleDraftTask = useCallback(
     async (prompt: string): Promise<DraftRecord> => {
       if (client === null) throw new Error('dispatchd client not ready');

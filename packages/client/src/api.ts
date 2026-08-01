@@ -317,10 +317,7 @@ export type ServerEvent =
   | { type: 'inbox.changed' }
   | { type: 'review.changed'; runId: string }
   | { type: 'config.changed' }
-  // A task draft's state changed, or it was dismissed. No id on purpose — a
-  // client can have several drafts running at once, so this is the same
-  // generic "go refetch" signal as task.changed/note.changed. Mirrors
-  // packages/server/src/events.ts exactly.
+  // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' };
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
@@ -415,11 +412,7 @@ export interface ConfirmResult {
 }
 
 // Mirrors DraftRecord in packages/server/src/orchestrator/plan.ts — the body
-// of `POST /api/tasks/draft` (202) and `GET /api/tasks/drafts[/:id]`. A
-// draft is a single-turn planner call that runs in the background: `state`
-// starts `running` and moves to `ready` (with `proposal` set) or `failed`
-// (with `error` set) once the turn completes. Any number of drafts can be
-// running at once — there is no per-draft busy-guard.
+// of `POST /api/tasks/draft` and `GET /api/tasks/drafts[/:id]`.
 export interface DraftRecord {
   id: string;
   prompt: string;
@@ -734,13 +727,8 @@ export interface ApiClient {
   fetchTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
-  // The natural-language single-task creator (`POST /api/tasks/draft`): starts
-  // a background planner turn and returns immediately (202) with a
-  // `DraftRecord` in `state: 'running'` — poll `fetchDraft`/`fetchDrafts` or
-  // watch `draft.changed` over WS for it to settle `ready` (with `proposal`
-  // to review and then save via `createTask`) or `failed`. Any number of
-  // drafts can be running at once; nothing here persists until `createTask`
-  // runs on the reviewed result.
+  // Starts a background planner turn (`POST /api/tasks/draft`) and returns
+  // immediately with a `DraftRecord`; poll `fetchDraft` for it to settle.
   draftTask(prompt: string): Promise<DraftRecord>;
   // Every draft currently held in memory (running, ready, or failed — until
   // dismissed), newest first.

@@ -96,14 +96,8 @@ export interface ConfirmResult {
   taskIds: string[];
 }
 
-// One in-flight or settled task draft (the natural-language single-task
-// creator's record) — mirrors PlanRecord's own running/ready/failed shape
-// so `startDraft` can return immediately and let the planner turn finish in
-// the background, the same fix startPlan already has over a synchronous
-// call: an id to poll/list/resume by, so a client that navigates away (or
-// starts a second draft concurrently) doesn't lose or block on the turn.
-// In-memory only, same as PlanRecord — a lost daemon losing in-flight
-// drafts is acceptable.
+// One in-flight or settled task draft, mirroring PlanRecord's shape.
+// In-memory only — a lost daemon losing in-flight drafts is acceptable.
 export interface DraftRecord {
   id: string;
   prompt: string;
@@ -116,12 +110,8 @@ export interface DraftRecord {
   updatedAt: string;
 }
 
-// Drafts are kept in memory until dismissed (so a client can navigate away
-// and come back to a finished draft), but the map must not grow forever —
-// cap it and drop the oldest *non-running* entries once it's exceeded. A
-// running draft is never evicted regardless of how far past the cap the map
-// grows: losing the record for a turn that's still in flight would strand
-// that background work with nothing to report its result to.
+// Cap on how many drafts stay in memory at once; eviction only drops
+// *non-running* entries once exceeded (see evictOldDrafts).
 const MAX_DRAFTS = 50;
 
 export interface PlanManagerContext {
@@ -235,18 +225,8 @@ export class PlanManager {
     return record;
   }
 
-  // The natural-language single-task creator (spec's "Linear-style add"): the
-  // one-task equivalent of startPlan/confirm, reusing the exact same `Planner`
-  // seam and validation rather than a second Agent-SDK path. Mints a
-  // `DraftRecord` and returns it immediately with `state: 'running'` — the
-  // planner call itself happens fire-and-forget (same pattern as startPlan),
-  // landing via runDraftTurn()'s state update + `draft.changed` broadcast.
-  // No busy-guard: any number of drafts can be running at once, each with its
-  // own independent record, which is the whole point of making this
-  // asynchronous rather than the previous await-the-whole-turn-in-the-request
-  // shape. Model comes from `config.models.draft`, re-read fresh per call
-  // (same pattern as resolveModel above) so a settings change takes effect on
-  // the next draft with no restart.
+  // Starts a single-task draft's planner turn in the background and returns
+  // the DraftRecord immediately at `running`; no busy-guard between drafts.
   startDraft(prompt: string, plannerName = 'claude'): DraftRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
@@ -270,14 +250,8 @@ export class PlanManager {
     return record;
   }
 
-  // Runs one draft's opening (and only) planner turn to completion and folds
-  // it into the record: on success, re-validates the proposal with the same
-  // rules confirm() uses (a draft never sits `ready` advertising a proposal
-  // nobody could actually save) and requires at least one task — a draft with
-  // none has nothing for the caller to review; on any error (including that
-  // validation), the record moves to `failed` with `error` set. Deliberately
-  // does not touch any other draft's record, so two drafts started back to
-  // back settle completely independently.
+  // Runs one draft's planner turn to completion, re-validating the proposal
+  // (>=1 task) before marking `ready`; any failure lands `failed` with `error` set.
   private async runDraftTurn(
     draftId: string,
     run: () => Promise<PlannerTurn>
@@ -290,8 +264,6 @@ export class PlanManager {
           'planner produced no task for this description'
         );
       }
-      const current = this.drafts.get(draftId);
-      if (current === undefined) return;
       this.updateDraftRecord(draftId, {
         state: 'ready',
         message: turn.reply,
@@ -336,20 +308,16 @@ export class PlanManager {
     );
   }
 
-  // Removes one draft the caller has reviewed (saved or discarded). Silently
-  // a no-op for an unknown id — dismiss is idempotent from the client's
-  // perspective (api.ts still 404s a dismiss of an id that was never valid;
-  // see DELETE /api/tasks/drafts/:id).
+  // Removes a reviewed draft; a silent no-op for an unknown id (api.ts's
+  // DELETE handler 404s that case itself before calling this).
   dismissDraft(draftId: string): void {
     if (this.drafts.delete(draftId)) {
       this.ctx.events.broadcast({ type: 'draft.changed' });
     }
   }
 
-  // Enforces MAX_DRAFTS by dropping the oldest non-running entries — never a
-  // running one, since that would strand a background turn with nowhere to
-  // land its result. Called after every successful startDraft so the map
-  // never grows past the cap for more than the span of one new draft.
+  // Drops the oldest non-running drafts once over MAX_DRAFTS; a running
+  // draft is never evicted.
   private evictOldDrafts(): void {
     if (this.drafts.size <= MAX_DRAFTS) return;
     const evictable = [...this.drafts.values()]

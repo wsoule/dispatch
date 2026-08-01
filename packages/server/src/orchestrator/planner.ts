@@ -17,15 +17,7 @@ export interface PlannedTask {
 }
 
 // The single-task shape a reviewer edits before saving — a `PlannedTask`
-// minus `blockedByIndices` (a lone draft has no siblings to depend on). Its
-// fields mirror what CreateTaskModal collects by hand, so it's directly
-// mappable to core's `CreateInput` via the existing TaskStore.create path
-// with no schema change (the `acceptanceCriteria` list is joined into the
-// task body's "Acceptance Criteria" section at save time, exactly as
-// buildTaskDescription does for a confirmed plan). PlanManager.startDraft no
-// longer returns this directly (see DraftRecord in plan.ts, whose `proposal`
-// is the full PlanProposal) — a caller narrows `proposal.tasks[0]` down to
-// this shape once the draft settles `ready`.
+// minus `blockedByIndices`, directly mappable to core's `CreateInput`.
 export interface TaskDraft {
   title: string;
   description: string;
