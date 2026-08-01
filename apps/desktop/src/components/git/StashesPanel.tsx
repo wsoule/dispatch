@@ -42,6 +42,7 @@ export function StashesPanel({
       {stashes.map((stash, index) => (
         <div
           key={stash.ref}
+          data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
           role="button"
           tabIndex={-1}
