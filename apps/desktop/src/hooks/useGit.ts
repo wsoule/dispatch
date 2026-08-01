@@ -47,8 +47,9 @@ export interface GitWorkingDiffTarget {
 export interface UseGitOptions {
   client: ApiClient | null;
   port: number | undefined;
-  /** Which branch's commit log to show. `null` shows HEAD's. */
-  logRef: string | null;
+  /** Which branch's commit log to show. `null` shows HEAD's; `undefined` skips fetching a
+   * log at all, for a call site that only wants this hook's other reads. */
+  logRef: string | null | undefined;
   /** The working-tree diff to fetch for the right pane, or `null` to skip. Mutually exclusive
    * with `commitSha` — the view only ever wants one of the two at a time. */
   workingDiffTarget: GitWorkingDiffTarget | null;
@@ -59,8 +60,6 @@ export interface UseGitOptions {
 export interface GitActions {
   stage: (paths: string[]) => Promise<GitOutcome>;
   unstage: (paths: string[]) => Promise<GitOutcome>;
-  stageHunk: (patch: string) => Promise<GitOutcome>;
-  unstageHunk: (patch: string) => Promise<GitOutcome>;
   discard: (paths: string[]) => Promise<GitOutcome>;
   commit: (
     message: string,
@@ -134,12 +133,12 @@ export function useGit({
   });
 
   const { data: logResult, isLoading: logLoading } = useQuery({
-    queryKey: gitLogKey(port, logRef),
+    queryKey: gitLogKey(port, logRef ?? null),
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchGitLog({ ref: logRef ?? undefined, limit: 200 });
     },
-    enabled: client !== null,
+    enabled: client !== null && logRef !== undefined,
   });
 
   const { data: stashesResult, isLoading: stashesLoading } = useQuery({
@@ -189,14 +188,6 @@ export function useGit({
     ),
     unstage: useCallback(
       (paths) => requireClient().gitUnstage(paths),
-      [requireClient]
-    ),
-    stageHunk: useCallback(
-      (patch) => requireClient().gitStageHunk(patch),
-      [requireClient]
-    ),
-    unstageHunk: useCallback(
-      (patch) => requireClient().gitUnstageHunk(patch),
       [requireClient]
     ),
     discard: useCallback(

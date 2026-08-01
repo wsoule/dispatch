@@ -1,14 +1,11 @@
-import type {
-  BranchEntry,
-  BranchEntryStatus,
-  GitBranchWithRun,
-} from '@dispatch/client';
+import type { BranchEntry, BranchEntryStatus } from '@dispatch/client';
 import { Bot, Check, GitBranch, Sparkles } from 'lucide-react';
 import { useMemo } from 'react';
 
-import type { GitFilter } from './GitSummary';
 import { GitSummary } from './GitSummary';
 import { formatRelativeTimeFromIso } from '@/lib/format';
+import type { BranchRowVM } from '@/lib/gitBranchRows';
+import type { GitFilter } from '@/lib/gitHealth';
 import { computeGitHealth } from '@/lib/gitHealth';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -32,85 +29,6 @@ const STATUS_CHIP: Record<BranchEntryStatus, { label: string; cls: string }> = {
   },
 };
 
-// How urgently a row deserves attention, lowest first — mirrors the old BranchesView's
-// orphaned/leftover-worst, then-reviewable, then-active ordering.
-const STATUS_RANK: Record<BranchEntryStatus, number> = {
-  orphan: 0,
-  leftover: 0,
-  reviewable: 1,
-  active: 2,
-};
-
-export interface BranchRowVM {
-  name: string;
-  isCurrent: boolean;
-  isRemote: boolean;
-  isDispatchBranch: boolean;
-  shortSha: string;
-  subject: string;
-  date: string;
-  ahead: number;
-  behind: number;
-  runId?: string;
-  taskTitle?: string;
-  worktree?: BranchEntry;
-}
-
-/** Joins the git-level branch list with dispatch's worktree bookkeeping by branch name, then
- * sorts current-branch-first and neediest-dispatch-branch-next. */
-export function buildBranchRows(
-  gitBranches: GitBranchWithRun[],
-  worktrees: BranchEntry[]
-): BranchRowVM[] {
-  const worktreeByName = new Map(worktrees.map((w) => [w.branch, w]));
-  const rows = gitBranches.map((b) => {
-    const worktree = worktreeByName.get(b.name);
-    return {
-      name: b.name,
-      isCurrent: b.isCurrent,
-      isRemote: b.isRemote,
-      isDispatchBranch: b.isDispatchBranch,
-      shortSha: b.shortSha,
-      subject: b.subject,
-      date: b.date,
-      ahead: b.ahead,
-      behind: b.behind,
-      runId: b.runId ?? worktree?.runId,
-      taskTitle: b.taskTitle ?? worktree?.taskTitle,
-      worktree,
-    };
-  });
-  return rows.sort((a, b) => {
-    if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
-    const rankA = a.worktree !== undefined ? STATUS_RANK[a.worktree.status] : 3;
-    const rankB = b.worktree !== undefined ? STATUS_RANK[b.worktree.status] : 3;
-    if (rankA !== rankB) return rankA - rankB;
-    if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1;
-    return a.name.localeCompare(b.name);
-  });
-}
-
-/** Narrows `rows` to one `GitSummary` bucket, by branch name, so a health chip's count and the
- * rows it reveals can never disagree — mirrors the old BranchesView's `matchesFilter`. */
-export function filterBranchRows(
-  rows: BranchRowVM[],
-  worktrees: BranchEntry[],
-  filter: GitFilter
-): BranchRowVM[] {
-  if (filter === 'all') return rows;
-  const health = computeGitHealth(worktrees);
-  const picked =
-    filter === 'stale'
-      ? health.stale
-      : filter === 'orphans'
-        ? health.orphans
-        : filter === 'stacked'
-          ? health.stacked
-          : health.onDisk.filter((b) => b.dirty);
-  const names = new Set(picked.map((b) => b.branch));
-  return rows.filter((r) => names.has(r.name));
-}
-
 interface BranchesPanelProps {
   rows: BranchRowVM[];
   /** Always the full unfiltered set, so GitSummary's health chips never change as the list
@@ -129,8 +47,8 @@ interface BranchesPanelProps {
   onDispatchAgent: (branch: string) => void;
 }
 
-/** Panel 3: every branch git knows about, dispatch ones badged with their run/task and the
- * same health chips/reclaim capabilities the old standalone Branches surface had. */
+/** Panel 3: every branch git knows about, dispatch ones badged with their run/task, plus
+ * dispatch's worktree health chips and reclaim/bulk-cleanup actions. */
 export function BranchesPanel({
   rows,
   worktrees,
@@ -151,6 +69,7 @@ export function BranchesPanel({
     <div className="flex flex-col gap-2 p-2">
       <GitSummary
         branches={worktrees}
+        health={health}
         reclaiming={reclaiming}
         onReclaimMerged={onReclaimMerged}
         active={filter}

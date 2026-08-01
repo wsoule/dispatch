@@ -9,10 +9,10 @@ import {
   Undo2,
 } from 'lucide-react';
 
-import type { BranchRowVM } from './BranchesPanel';
 import { GitDiffPane } from './GitDiffPane';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { formatBytes } from '@/lib/formatBytes';
+import type { BranchRowVM } from '@/lib/gitBranchRows';
 import type {
   GitFileRow,
   GitRightPane as GitRightPaneState,
@@ -27,6 +27,9 @@ interface GitRightPaneProps {
   workingDiff: string | undefined;
   workingDiffLoading: boolean;
   onToggleStageSelectedFile: () => void;
+  /** Discard is only offered for unstaged/untracked/conflicted rows — a staged change has to
+   * be unstaged first, same as the `d` keyboard shortcut's own guard. */
+  onRequestDiscardFile: (row: GitFileRow) => void;
 
   selectedCommit: GitLogEntry | undefined;
   commitDiff: string | undefined;
@@ -97,13 +100,27 @@ export function GitRightPane(props: GitRightPaneProps) {
       <div className="flex h-full min-h-0 flex-col">
         <div className="border-border flex items-center justify-between gap-2 border-b px-3 py-2">
           <span className="truncate font-mono text-[12px]">{row.path}</span>
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={props.onToggleStageSelectedFile}
-          >
-            {row.section === 'staged' ? 'Unstage' : 'Stage'}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {row.section !== 'staged' && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="hover:text-destructive"
+                onClick={() => props.onRequestDiscardFile(row)}
+                title="Discard (d)"
+              >
+                <Trash2 className="size-3.5" />
+                Discard
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={props.onToggleStageSelectedFile}
+            >
+              {row.section === 'staged' ? 'Unstage' : 'Stage'}
+            </Button>
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
           {row.section === 'untracked' ? (

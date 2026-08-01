@@ -998,9 +998,11 @@ export function useDispatchProject(
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
           } else if (event.type === 'git.changed') {
-            // Prefix match: invalidates every query useGit.ts builds (status/branches/log/
-            // stashes/diff) in one call, since they all key off this same root array.
+            // Prefix match: invalidates every query useGit.ts builds in one call.
             void queryClient.invalidateQueries({ queryKey: gitQueryRootKey });
+            // A git-level mutation can change dispatch's own worktree bookkeeping too, so
+            // the Branches panel's GitSummary chips don't go stale until a manual refresh.
+            void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,

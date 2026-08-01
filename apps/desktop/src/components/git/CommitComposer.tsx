@@ -35,6 +35,7 @@ export function CommitComposer({
     <div className="border-border flex flex-col gap-1.5 border-t pt-2">
       <div className="flex items-end gap-2">
         <Textarea
+          id="git-commit-message"
           rows={2}
           placeholder={
             stagedCount > 0

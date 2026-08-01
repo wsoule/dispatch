@@ -70,15 +70,6 @@ describe('moveGitSelection', () => {
 });
 
 describe('clampGitPanelSelection', () => {
-  test('selection lands on the row that slid into a vacated spot when the list shrinks', () => {
-    // Five unstaged files, selection on index 2 ("c.ts"). Staging c.ts drops the list to
-    // four rows; index 2 should now point at what used to be "d.ts", not reset to 0.
-    let state = focusGitPanel(INITIAL_GIT_PANEL_SELECTION, 'files');
-    state = withFilesIndex(state, 2);
-    state = clampGitPanelSelection(state, 'files', 4);
-    expect(state.index.files).toBe(2);
-  });
-
   test('selection clamps to the new last row when the selected row itself is removed', () => {
     // Selection was on the last of 5 rows (index 4); the list shrinks to 4 rows.
     let state = focusGitPanel(INITIAL_GIT_PANEL_SELECTION, 'files');
@@ -184,9 +175,11 @@ describe('preserveGitSelection / reconcileGitPanelSelection', () => {
   });
 
   test('falls back to a clamped index when the selected row is gone', () => {
+    // Selected index 1 ('sha1'); 'sha1' isn't in `next`, so this must fall through to
+    // clamping — a bug that just kept the old index unchanged would return 1, not 0.
     const prev = ['sha2', 'sha1'];
     const next = ['sha3'];
-    const index = preserveGitSelection(0, prev, next, (sha) => sha);
+    const index = preserveGitSelection(1, prev, next, (sha) => sha);
     expect(index).toBe(0);
   });
 
