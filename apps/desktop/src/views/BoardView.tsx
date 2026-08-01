@@ -15,6 +15,7 @@ import { TaskBoard } from '../components/tasks/TaskBoard';
 import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
+import { showArchiveToggle } from '../lib/archiveToggle';
 import { groupTasksByStatus } from '../lib/boardGrouping';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { countMergeReady } from '../lib/mergeReady';
@@ -233,7 +234,7 @@ export function BoardView({
               },
             ]}
           />
-          {data.archivedTasks.length > 0 && (
+          {showArchiveToggle(data.showArchived, data.archivedTasks.length) && (
             <Button
               variant={data.showArchived ? 'secondary' : 'outline'}
               size="sm"

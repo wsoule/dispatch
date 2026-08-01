@@ -20,6 +20,8 @@ import { IconToggle } from '../components/ui/IconToggle';
 import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useResizablePane } from '../hooks/useResizablePane';
+import { hideArchivedRuns } from '../lib/archiveFilter';
+import { showArchiveToggle } from '../lib/archiveToggle';
 import { countMergeReady } from '../lib/mergeReady';
 import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
@@ -127,9 +129,18 @@ export function RunsView({
     splitRef
   );
 
-  // How many runs the archive filter is currently holding back — drives the
-  // toggle, which stays hidden entirely when there is nothing to reveal.
-  const hiddenRunCount = data.runs.length - data.visibleRuns.length;
+  // How many runs the archive filter is currently holding back — drives the toggle's
+  // visibility and label. Computed independently of `data.visibleRuns` (which stops
+  // excluding anything the moment `showArchived` is true, so its difference from
+  // `data.runs` collapses to 0 right when the toggle is on): without this, the
+  // control gating on "is anything hidden" would delete itself as soon as it's
+  // switched on, leaving no way to switch it back off.
+  const archivedTaskIds = useMemo(
+    () => new Set(data.archivedTasks.map((t) => t.meta.id)),
+    [data.archivedTasks]
+  );
+  const archivedRunCount =
+    data.runs.length - hideArchivedRuns(data.runs, archivedTaskIds).length;
 
   const selected = data.runs.find((r) => r.id === selectedRunId);
   const selectedId = selected?.id;
@@ -189,10 +200,10 @@ export function RunsView({
         <h1 className="view-topbar-title">Runs</h1>
         <span className="dense-meta">
           {data.visibleRuns.length} shown
-          {hiddenRunCount > 0 && ` · ${hiddenRunCount} archived`}
+          {archivedRunCount > 0 && ` · ${archivedRunCount} archived`}
         </span>
         <div className="flex-1" />
-        {hiddenRunCount > 0 && (
+        {showArchiveToggle(data.showArchived, archivedRunCount) && (
           <Button
             variant="ghost"
             size="xs"
