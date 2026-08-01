@@ -442,6 +442,8 @@ export class PlanManager {
       const proposal = validatePlanProposalOrNull(turn.proposal);
       const current = this.plans.get(planId);
       if (current === undefined) return;
+      // Unlike runDraftTurn, an empty turn isn't rejected here — the plan
+      // conversation always has PlansView's free-text composer as an escape hatch.
       this.updateRecord(planId, {
         state: 'ready',
         ...(proposal !== null ? { proposal } : {}),
