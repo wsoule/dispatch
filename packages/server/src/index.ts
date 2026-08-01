@@ -143,7 +143,7 @@ function withCors(res: Response, origin: string | null): Response {
     res.headers.set('access-control-allow-origin', allowed);
     res.headers.set(
       'access-control-allow-methods',
-      'GET, POST, PATCH, OPTIONS'
+      'GET, POST, PATCH, DELETE, OPTIONS'
     );
     res.headers.set('access-control-allow-headers', 'content-type');
     // The allowed origin is request-dependent, so caches must key on it.
