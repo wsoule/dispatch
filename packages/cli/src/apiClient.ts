@@ -1,22 +1,7 @@
 import { CliError } from './context.js';
 
-// ---------------------------------------------------------------------------
-// Type mirrors
-//
-// `@dispatch/server` can't be imported from this package at all (it's
-// Bun-only — bun:sqlite, Bun.serve — and its `exports` map intentionally
-// hides everything but `package.json`; see commands/daemon.ts's own
-// daemon-file-discovery block for the established precedent of duplicating
-// just the pieces this package needs rather than reaching across that
-// boundary). `@dispatch/client` has the same shapes already, but its only
-// export barrel (`index.ts`) re-exports `useTasks`, which imports `react` —
-// pulling that in here would give this Node CLI package a real dependency on
-// React for a handful of type definitions. So these are hand-kept mirrors of
-// packages/server/src/orchestrator/types.ts, planner.ts, epic.ts,
-// worktree.ts, and events.ts — keep them in sync by hand if any of those
-// shapes change, the same maintenance contract packages/client/src/api.ts's
-// own mirrors already carry.
-// ---------------------------------------------------------------------------
+// Hand-kept mirrors of @dispatch/server's orchestrator types: server is Bun-only and
+// unimportable here, and @dispatch/client's barrel would drag React into this Node CLI.
 
 export type RunState =
   | 'provisioning'
@@ -85,11 +70,27 @@ export interface PlanProposal {
   tasks: PlannedTask[];
 }
 
+export interface PlanMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  at: string;
+}
+
+export interface PlannerQuestion {
+  id: string;
+  question: string;
+  options: string[];
+}
+
 export interface PlanRecord {
   id: string;
   prompt: string;
   state: PlanState;
+  messages: PlanMessage[];
   proposal?: PlanProposal;
+  // Clarifying questions from the latest assistant turn. A plan can settle
+  // 'ready' with questions and no proposal — answer them to keep going.
+  questions: PlannerQuestion[];
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -137,14 +138,8 @@ export type ServerEvent =
     }
   | { type: 'plan.changed'; planId: string };
 
-// Thin fetch wrapper: throws a CliError carrying the server's own `{ error }`
-// message (falling back to the raw status code) on any non-2xx response, so
-// every command's catch-all in cli.ts renders API failures — including the
-// 409 "already reviewed"/"has an open PR"/dirty-checkout style conflicts —
-// with the server's own wording, verbatim, and nothing else. Mirrors
-// packages/client/src/api.ts's own `request()` almost exactly; duplicated
-// rather than imported for the same reason the type mirrors above are (see
-// this file's module doc comment).
+// Throws a CliError carrying the server's own `{ error }` message on any non-2xx, so
+// cli.ts renders API failures in the server's wording rather than a bare status code.
 async function request<T>(
   baseUrl: string,
   path: string,
@@ -167,11 +162,8 @@ function jsonBody(value: unknown): RequestInit {
   };
 }
 
-// Bound client shape returned by `createApiClient` — every method already
-// carries `baseUrl`, so callers never repeat it. Covers exactly the
-// endpoints packages/cli's orchestrate/plan commands need; task CRUD reads
-// go straight through `@dispatch/core`'s TaskStore instead (no daemon
-// needed for those — see commands/task.ts).
+// Bound client returned by `createApiClient` — every method carries `baseUrl` already.
+// Task CRUD reads go straight through `@dispatch/core`'s TaskStore instead.
 export interface ApiClient {
   baseUrl: string;
   createRun(taskId: string, executor?: string): Promise<RunMeta>;
@@ -191,6 +183,7 @@ export interface ApiClient {
   ): Promise<RunMeta>;
   startPlan(prompt: string, planner?: string): Promise<{ planId: string }>;
   getPlan(planId: string): Promise<PlanRecord>;
+  sendPlanMessage(planId: string, text: string): Promise<PlanRecord>;
   confirmPlan(planId: string, proposal: PlanProposal): Promise<ConfirmResult>;
   startEpic(
     epicId: string,
@@ -229,6 +222,10 @@ export function createApiClient(baseUrl: string): ApiClient {
         ...jsonBody(planner !== undefined ? { prompt, planner } : { prompt }),
       }),
     getPlan: (planId) => request(baseUrl, `/api/plan/${planId}`),
+    sendPlanMessage: (planId, text) =>
+      request(baseUrl, `/api/plan/${planId}/message`, {
+        ...jsonBody({ text }),
+      }),
     confirmPlan: (planId, proposal) =>
       request(baseUrl, `/api/plan/${planId}/confirm`, {
         ...jsonBody({ proposal }),

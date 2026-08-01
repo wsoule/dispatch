@@ -17,6 +17,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     reviewRun: () => Promise.reject(new Error('not used')),
     startPlan: () => Promise.reject(new Error('not used')),
     getPlan,
+    sendPlanMessage: () => Promise.reject(new Error('not used')),
     confirmPlan: () => Promise.reject(new Error('not used')),
     startEpic: () => Promise.reject(new Error('not used')),
     stopEpic: () => Promise.reject(new Error('not used')),
@@ -29,6 +30,8 @@ function makeRecord(overrides: Partial<PlanRecord> = {}): PlanRecord {
     id: 'plan-1',
     prompt: 'do something',
     state: 'running',
+    messages: [],
+    questions: [],
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     ...overrides,
@@ -48,9 +51,8 @@ describe('pollUntilSettled', () => {
     expect(record.state).toBe('ready');
   });
 
-  // M6: a plan that never settles must throw a message pointing the user
-  // at `dispatch plan show <plan-id>` to check back later, not a bare
-  // "did not settle" dead end.
+  // A plan that never settles must point at `dispatch plan show <plan-id>`
+  // rather than being a bare "did not settle" dead end.
   it('throws a CliError pointing at `dispatch plan show <plan-id>` once the timeout elapses', async () => {
     const client = makeClient(() => Promise.resolve(makeRecord()));
     await expect(pollUntilSettled(client, 'plan-abc123', 100)).rejects.toThrow(
