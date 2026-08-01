@@ -1,5 +1,9 @@
 import type { BranchEntry } from '@dispatch/client';
 
+/** One `GitSummary` health bucket, or `'all'` for no filter — the vocabulary both
+ * `GitSummary`'s chips and the Branches panel's row filter share. */
+export type GitFilter = 'all' | 'stale' | 'orphans' | 'dirty' | 'stacked';
+
 /**
  * How long a worktree sits untouched before it is worth pointing at.
  *

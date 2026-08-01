@@ -1,4 +1,4 @@
-import type { GitFileChange, GitStash } from '@dispatch/client';
+import type { GitStash } from '@dispatch/client';
 import {
   AlertTriangle,
   GitBranch as GitBranchIcon,
@@ -9,25 +9,23 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { BranchRowVM } from '../components/git/BranchesPanel';
-import {
-  BranchesPanel,
-  buildBranchRows,
-  filterBranchRows,
-} from '../components/git/BranchesPanel';
+import { BranchesPanel } from '../components/git/BranchesPanel';
 import { CommitComposer } from '../components/git/CommitComposer';
 import { CommitsPanel } from '../components/git/CommitsPanel';
 import { DispatchAgentDialog } from '../components/git/DispatchAgentDialog';
 import { FilesPanel } from '../components/git/FilesPanel';
 import { GitKeymapDialog } from '../components/git/GitKeymapDialog';
 import { GitRightPane } from '../components/git/GitRightPane';
-import type { GitFilter } from '../components/git/GitSummary';
 import { StashesPanel } from '../components/git/StashesPanel';
 import { StatusPanel } from '../components/git/StatusPanel';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useGit } from '../hooks/useGit';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
+import type { BranchRowVM } from '../lib/gitBranchRows';
+import { buildBranchRows, filterBranchRows } from '../lib/gitBranchRows';
+import { fileRowsFromStatus } from '../lib/gitFileRows';
+import type { GitFilter } from '../lib/gitHealth';
 import type {
   GitFileRow,
   GitPanelId,
@@ -43,7 +41,10 @@ import {
   reconcileGitPanelSelection,
 } from '../lib/gitPanels';
 import type { GitKeyCommand } from '../lib/keyboard';
-import { resolveGitKeyCommand } from '../lib/keyboard';
+import {
+  isInteractiveControlTagName,
+  resolveGitKeyCommand,
+} from '../lib/keyboard';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import {
@@ -85,26 +86,6 @@ type PendingConfirm =
   | { kind: 'delete-branch'; row: BranchRowVM }
   | { kind: 'drop-stash'; stash: GitStash };
 
-function fileRowsFromStatus(
-  staged: GitFileChange[],
-  unstaged: GitFileChange[],
-  untracked: string[],
-  conflicted: string[]
-): GitFileRow[] {
-  const conflictedSet = new Set(conflicted);
-  const rows: GitFileRow[] = conflicted.map((path) => ({
-    section: 'conflicted' as const,
-    path,
-  }));
-  for (const f of staged) rows.push({ section: 'staged', path: f.path });
-  for (const f of unstaged) {
-    if (!conflictedSet.has(f.path))
-      rows.push({ section: 'unstaged', path: f.path });
-  }
-  for (const path of untracked) rows.push({ section: 'untracked', path });
-  return rows;
-}
-
 /** The Git page: a lazygit-style multi-panel workspace plus agent-focused affordances plain
  * git doesn't have. Every keyboard shortcut also has a visible button/menu equivalent. */
 export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
@@ -131,6 +112,13 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
   } | null>(null);
 
   const filterInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Focuses the page's own keydown container on mount, so the keymap works the instant the
+  // page opens rather than only after the user has clicked something inside it.
+  useEffect(() => {
+    containerRef.current?.focus();
+  }, []);
 
   const {
     status,
@@ -369,8 +357,14 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
         actions.discard([pending.row.path])
       );
     } else if (pending.kind === 'delete-branch') {
-      await runBranchMutation(pending.row.name, () =>
-        actions.deleteBranch(pending.row.name, { force: forceBranchDelete })
+      const branch = pending.row.name;
+      // A dispatch worktree branch must go through the dispatch endpoint — plain `git
+      // branch -d/-D` refuses outright while a linked worktree still exists.
+      await runBranchMutation(
+        branch,
+        pending.row.worktree !== undefined
+          ? () => data.handleDeleteBranch(branch, { force: forceBranchDelete })
+          : () => actions.deleteBranch(branch, { force: forceBranchDelete })
       );
     } else if (pending.kind === 'drop-stash') {
       await runMutation(() => actions.stashDrop(pending.stash.index));
@@ -501,6 +495,15 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     ) {
       return;
     }
+    // A keydown landing directly on a button/input belongs to that control's own Space/
+    // Enter activation, not to a Git page command.
+    if (
+      (e.key === ' ' || e.key === 'Enter') &&
+      e.target instanceof HTMLElement &&
+      isInteractiveControlTagName(e.target.tagName)
+    ) {
+      return;
+    }
     const cmd = resolveGitKeyCommand(
       { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
       { isTyping: isTypingTarget(e.target) }
@@ -512,7 +515,9 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col gap-3"
+      ref={containerRef}
+      tabIndex={-1}
+      className="flex h-full min-h-0 flex-col gap-3 outline-none"
       onKeyDown={onRootKeyDown}
     >
       <div className="flex items-center justify-between gap-3">
@@ -579,7 +584,11 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
               key={panel}
               className={cn(
                 'border-border flex min-h-0 flex-col border-b last:border-b-0',
-                panel === 'status' ? 'flex-none' : 'flex-1'
+                panel === 'status'
+                  ? 'flex-none'
+                  : panel === 'branches'
+                    ? 'flex-[1.6]'
+                    : 'flex-1'
               )}
             >
               <button
@@ -737,6 +746,7 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
             onToggleStageSelectedFile={() => {
               if (selectedFileRow !== undefined) toggleStage(selectedFileRow);
             }}
+            onRequestDiscardFile={requestDiscardFile}
             selectedCommit={selectedCommit}
             commitDiff={commitDiff}
             commitDiffLoading={commitDiffLoading}
@@ -805,12 +815,25 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
       <GitKeymapDialog open={keymapOpen} onClose={() => setKeymapOpen(false)} />
 
       <ConfirmDialog
+        key={pendingConfirmKey(pendingConfirm)}
         pending={pendingConfirm}
         onCancel={() => setPendingConfirm(null)}
         onConfirm={confirmPending}
       />
     </div>
   );
+}
+
+// Remounts `ConfirmDialog` fresh for every distinct confirmation, so its `force` checkbox's
+// lazy initial state is always computed from the *current* `pending`, never one render behind.
+function pendingConfirmKey(pending: PendingConfirm | null): string {
+  if (pending === null) return 'none';
+  if (pending.kind === 'discard-file')
+    return `discard-file:${pending.row.section}:${pending.row.path}`;
+  if (pending.kind === 'discard-run') return `discard-run:${pending.runId}`;
+  if (pending.kind === 'delete-branch')
+    return `delete-branch:${pending.row.name}`;
+  return `drop-stash:${pending.stash.sha}`;
 }
 
 // Pulls together `useGit`'s data plus the local file/branch row derivations that need it, so
@@ -826,12 +849,12 @@ function useGitPage({
   branchFilter: GitFilter;
   textFilter: string;
 }) {
-  // Status/branches, fetched independent of selection so the panels render before anything is
-  // selected — a second `useGit` call below (`scoped`) fetches the log/diff selection picks.
+  // Status/branches, independent of selection. `logRef: undefined` skips the log query
+  // entirely — `scoped` below fetches the one the Commits panel actually needs.
   const base = useGit({
     client: data.client,
     port: data.port,
-    logRef: null,
+    logRef: undefined,
     workingDiffTarget: null,
     commitSha: null,
   });
@@ -882,17 +905,31 @@ function useGitPage({
         }
       : null;
 
-  // A second `useGit` call scoped to what's actually selected, so switching the selected
-  // file/branch/commit only triggers the one query that changed.
+  // A second `useGit` call scoped to what's selected — its `log` is the one and only list
+  // the Commits panel renders.
   const scoped = useGit({
     client: data.client,
     port: data.port,
     logRef,
     workingDiffTarget,
-    commitSha:
-      panelState.focused === 'commits'
-        ? (base.log[panelState.index.commits]?.sha ?? null)
-        : null,
+    commitSha: null,
+  });
+
+  // Sourced from `scoped.log`, not any other log fetch, so the sha requested below always
+  // matches the commit the panel is displaying at that index.
+  const commitSha =
+    panelState.focused === 'commits'
+      ? (scoped.log[panelState.index.commits]?.sha ?? null)
+      : null;
+
+  // A third call for just the commit diff — `logRef: undefined` skips fetching a log it
+  // doesn't need, since `scoped.log` above already is one.
+  const commitScoped = useGit({
+    client: data.client,
+    port: data.port,
+    logRef: undefined,
+    workingDiffTarget: null,
+    commitSha,
   });
 
   const selectedCommit = scoped.log[panelState.index.commits];
@@ -908,15 +945,14 @@ function useGitPage({
   return {
     status: base.status,
     statusLoading: base.statusLoading,
-    branches: base.branches,
     log: scoped.log,
     logLoading: scoped.logLoading,
     stashes: scoped.stashes,
     stashesLoading: scoped.stashesLoading,
     workingDiff: scoped.workingDiff,
     workingDiffLoading: scoped.workingDiffLoading,
-    commitDiff: scoped.commitDiff,
-    commitDiffLoading: scoped.commitDiffLoading,
+    commitDiff: commitScoped.commitDiff,
+    commitDiffLoading: commitScoped.commitDiffLoading,
     actions: base.actions,
     refetchAll: base.refetchAll,
     fileRows,
@@ -979,6 +1015,12 @@ function NewBranchDialog({
   );
 }
 
+// A worktree branch's `ahead` is base-relative (dispatch's own concept); a plain branch has
+// no base, so its git-level `ahead` (upstream-relative) is the closest count available.
+function deleteBranchCommitCount(row: BranchRowVM): number {
+  return row.worktree?.ahead ?? row.ahead;
+}
+
 function ConfirmDialog({
   pending,
   onCancel,
@@ -988,15 +1030,13 @@ function ConfirmDialog({
   onCancel: () => void;
   onConfirm: (forceBranchDelete: boolean) => Promise<void>;
 }) {
-  const [force, setForce] = useState(true);
-
-  useEffect(() => {
-    if (pending?.kind === 'delete-branch') {
-      // Pre-checked only when dispatch already knows the branch is unmerged; otherwise
-      // default to a safe (non-force) delete.
-      setForce(pending.row.worktree?.mergedIntoBase === false);
-    }
-  }, [pending]);
+  // Lazy initializer, no effect: the parent remounts this component per distinct `pending`
+  // (see `pendingConfirmKey`), so this runs fresh instead of showing a stale value for a frame.
+  const [force, setForce] = useState(
+    () =>
+      pending?.kind === 'delete-branch' &&
+      pending.row.worktree?.mergedIntoBase === false
+  );
 
   if (pending === null) return null;
 
@@ -1024,13 +1064,21 @@ function ConfirmDialog({
     ) : pending.kind === 'delete-branch' ? (
       <div className="flex flex-col gap-2">
         <span className="font-mono">{pending.row.name}</span>
+        <span>
+          {deleteBranchCommitCount(pending.row)} commit
+          {deleteBranchCommitCount(pending.row) === 1 ? '' : 's'}{' '}
+          {pending.row.worktree !== undefined
+            ? 'that never landed on its base'
+            : 'not reachable from any other branch you have'}
+          .
+        </span>
         <label className="flex items-center gap-1.5 text-[12px]">
           <input
             type="checkbox"
             checked={force}
             onChange={(e) => setForce(e.target.checked)}
           />
-          Force delete (discards commits that never landed on its base)
+          Force delete (destroys them permanently)
         </label>
       </div>
     ) : (

@@ -2,11 +2,15 @@ import type { BranchEntry } from '@dispatch/client';
 import { useMemo } from 'react';
 
 import { formatBytes } from '../../lib/formatBytes';
+import type { GitFilter, GitHealth } from '../../lib/gitHealth';
 import { computeGitHealth } from '../../lib/gitHealth';
 import { cn } from '@/lib/utils';
 
 interface GitSummaryProps {
   branches: BranchEntry[];
+  /** Skips this component's own `computeGitHealth` pass when the caller already has one
+   * (e.g. it also needs the same health data for its own rendering). */
+  health?: GitHealth;
   /** Reclaims every worktree that is safe to reclaim, in one go. */
   onReclaimMerged: () => void;
   /** Filters the list below to one bucket, so a count is a way in and not a fact. */
@@ -15,7 +19,7 @@ interface GitSummaryProps {
   reclaiming?: boolean;
 }
 
-export type GitFilter = 'all' | 'stale' | 'orphans' | 'dirty' | 'stacked';
+export type { GitFilter };
 
 /**
  * What git is actually costing you, above the list of branches.
@@ -30,12 +34,16 @@ export type GitFilter = 'all' | 'stale' | 'orphans' | 'dirty' | 'stacked';
  */
 export function GitSummary({
   branches,
+  health: precomputedHealth,
   onReclaimMerged,
   onFocus,
   active,
   reclaiming = false,
 }: GitSummaryProps) {
-  const health = useMemo(() => computeGitHealth(branches), [branches]);
+  const health = useMemo(
+    () => precomputedHealth ?? computeGitHealth(branches),
+    [precomputedHealth, branches]
+  );
 
   return (
     <div className="border-border flex flex-wrap items-center gap-x-2 gap-y-2 rounded-lg border px-3 py-2.5">
