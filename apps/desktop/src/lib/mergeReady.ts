@@ -1,5 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 // Mirrors mergeQueue.ts's isDone-based checks server-side: a task counts as
 // resolved once it's done OR cancelled — the same semantics enqueueReady's

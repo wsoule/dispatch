@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { Zap } from 'lucide-react';
 import { useMemo, useState } from 'react';
 

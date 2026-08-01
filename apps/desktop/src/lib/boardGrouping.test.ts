@@ -1,4 +1,4 @@
-import type { TaskDoc, TaskMeta } from '@dispatch/core';
+import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { groupTasksByStatus } from './boardGrouping';

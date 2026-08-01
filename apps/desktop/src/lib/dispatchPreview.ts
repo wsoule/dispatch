@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 /**
  * What a bulk dispatch is actually about to do.

@@ -24,7 +24,7 @@ import type {
   ModelConfig,
   TaskDoc,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch/core/browser';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 

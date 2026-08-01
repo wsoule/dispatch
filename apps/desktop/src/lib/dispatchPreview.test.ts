@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { buildDispatchPreview } from './dispatchPreview';

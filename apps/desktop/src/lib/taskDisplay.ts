@@ -1,4 +1,4 @@
-import type { Priority } from '@dispatch/core';
+import type { Priority } from '@dispatch/core/browser';
 
 // Mirrors the `tone` prop `Pill` accepts (see components/ui/Pill.tsx) —
 // duplicated here rather than imported since Pill doesn't export its prop

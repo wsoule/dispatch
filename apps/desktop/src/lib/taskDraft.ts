@@ -6,7 +6,7 @@
 
 import type { TaskDraft } from '@dispatch/client';
 import { taskDraftToCreateInput } from '@dispatch/client';
-import type { CreateInput } from '@dispatch/core';
+import type { CreateInput } from '@dispatch/core/browser';
 
 export interface EditableTaskDraft extends TaskDraft {
   /** Tracker status the task will be created in — seeded from the board column whose "+"

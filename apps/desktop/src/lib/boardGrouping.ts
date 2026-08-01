@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 export interface BoardColumnGroup {
   status: string;
