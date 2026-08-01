@@ -9,7 +9,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import {
@@ -112,19 +112,68 @@ export function NewTaskView({
     );
   }
 
+  // `handleDraftTask` now starts a background planner turn (server-side
+  // DraftRecord) and returns immediately in `state: 'running'` — see Task 5's
+  // server-half fix for why (the old shape awaited the whole turn inside the
+  // request, so navigating away dropped the result). This view polls
+  // `fetchDraft` until it settles, guarded by `mountedRef` so a poll that
+  // resolves after the view unmounts doesn't set state on a gone component;
+  // the draft itself keeps running server-side regardless; a richer surface
+  // for resuming/listing drafts across navigation is future work.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  async function pollDraftUntilSettled(draftId: string): Promise<void> {
+    for (;;) {
+      if (data.client === null) throw new Error('dispatchd client not ready');
+      const record = await data.client.fetchDraft(draftId);
+      if (!mountedRef.current) return;
+      if (record.state === 'running') {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        continue;
+      }
+      if (record.state === 'failed') {
+        throw new Error(record.error ?? 'draft failed');
+      }
+      const task = record.proposal?.tasks[0];
+      if (task === undefined) {
+        throw new Error('planner produced no task for this description');
+      }
+      const status = initialStatus ?? data.config?.statuses[0] ?? 'backlog';
+      setDraft(
+        editableDraftFrom(
+          {
+            title: task.title,
+            description: task.description,
+            acceptanceCriteria: task.acceptanceCriteria,
+            priority: task.priority,
+          },
+          status
+        )
+      );
+      setCriterionKeys(mintCriterionKeys(task.acceptanceCriteria.length));
+      return;
+    }
+  }
+
   async function submitPrompt() {
     if (prompt.trim() === '' || drafting) return;
     setDrafting(true);
     setDraftError(null);
     try {
-      const drafted = await data.handleDraftTask(prompt.trim());
-      const status = initialStatus ?? data.config?.statuses[0] ?? 'backlog';
-      setDraft(editableDraftFrom(drafted, status));
-      setCriterionKeys(mintCriterionKeys(drafted.acceptanceCriteria.length));
+      const started = await data.handleDraftTask(prompt.trim());
+      await pollDraftUntilSettled(started.id);
     } catch (err) {
-      setDraftError(err instanceof Error ? err.message : String(err));
+      if (mountedRef.current) {
+        setDraftError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setDrafting(false);
+      if (mountedRef.current) setDrafting(false);
     }
   }
 

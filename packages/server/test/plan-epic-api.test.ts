@@ -179,26 +179,57 @@ describe('POST /api/plan and GET /api/plan/:id', () => {
   });
 });
 
-describe('POST /api/tasks/draft', () => {
-  it('turns a free-text description into a single structured task draft', async () => {
+describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
+  async function draftedTask(): Promise<{
+    title: string;
+    description: string;
+    acceptanceCriteria: string[];
+    priority: string;
+  }> {
+    const started = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'please design the widget' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
+      );
+      return r.state !== 'running';
+    });
+    const record = await json(
+      await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
+    );
+    return record.proposal.tasks[0];
+  }
+
+  it('202s immediately with state running, then GET settles ready with the proposal', async () => {
     await startWithPlanner(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const res = await fetch(`${baseUrl}/api/tasks/draft`, {
+    const startRes = await fetch(`${baseUrl}/api/tasks/draft`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ prompt: 'please design the widget' }),
     });
-    expect(res.status).toBe(200);
-    const draft = await json(res);
-    // The first task of the proposal, minus blockedByIndices — the same fields
-    // CreateTaskModal collects by hand.
-    expect(draft).toEqual({
-      title: 'Design',
-      description: 'Sketch it.',
-      acceptanceCriteria: ['Sketch reviewed'],
-      priority: 'high',
+    expect(startRes.status).toBe(202);
+    const started = await json(startRes);
+    expect(started.state).toBe('running');
+    expect(typeof started.id).toBe('string');
+
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
+      );
+      return r.state !== 'running';
     });
+    const record = await json(
+      await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
+    );
+    expect(record.state).toBe('ready');
+    expect(record.proposal).toEqual(SAMPLE_PROPOSAL);
   });
 
   it('400s an empty prompt', async () => {
@@ -213,16 +244,173 @@ describe('POST /api/tasks/draft', () => {
     expect(res.status).toBe(400);
   });
 
-  it('400s a proposal the planner returns with no tasks', async () => {
-    await startWithPlanner(
-      new FakePlanner({ ok: true, proposal: { tasks: [] } })
+  it('lands a failing draft as failed with error set, without touching a concurrent successful draft', async () => {
+    // Two independently-registered planners — 'claude' succeeds, 'broken'
+    // errors — so this proves one draft's failure never bleeds into another
+    // draft's record, even when both are in flight at once.
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerPlanners: (planManager) => {
+        planManager.registerPlanner(
+          'claude',
+          new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+        );
+        planManager.registerPlanner(
+          'broken',
+          new FakePlanner({ ok: false, error: 'planner exploded' })
+        );
+      },
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('fake', fakeApprovalExecutor());
+        orchestrator.registerExecutor('claude', fakeApprovalExecutor());
+      },
+    });
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const good = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'please design the widget' }),
+      })
     );
-    const res = await fetch(`${baseUrl}/api/tasks/draft`, {
+    const bad = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'anything', planner: 'broken' }),
+      })
+    );
+
+    await waitFor(async () => {
+      const g = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${good.id}`)
+      );
+      const b = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${bad.id}`)
+      );
+      return g.state !== 'running' && b.state !== 'running';
+    });
+
+    const badRecord = await json(
+      await fetch(`${baseUrl}/api/tasks/drafts/${bad.id}`)
+    );
+    expect(badRecord.state).toBe('failed');
+    expect(badRecord.error).toBe('planner exploded');
+
+    const goodRecord = await json(
+      await fetch(`${baseUrl}/api/tasks/drafts/${good.id}`)
+    );
+    expect(goodRecord.state).toBe('ready');
+    expect(goodRecord.proposal).toEqual(SAMPLE_PROPOSAL);
+  });
+
+  it('GET /api/tasks/drafts lists every draft, newest first', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const first = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'first' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${first.id}`)
+      );
+      return r.state !== 'running';
+    });
+    const second = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'second' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${second.id}`)
+      );
+      return r.state !== 'running';
+    });
+
+    const list = await json(await fetch(`${baseUrl}/api/tasks/drafts`));
+    const ids = list.map((d: { id: string }) => d.id);
+    expect(ids[0]).toBe(second.id);
+    expect(ids).toContain(first.id);
+  });
+
+  it('404s GET /api/tasks/drafts/:id for an unknown id', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/drafts/d-000000`);
+    expect(res.status).toBe(404);
+  });
+
+  it('DELETE /api/tasks/drafts/:id dismisses the draft (subsequent GET 404s), 404s an unknown id', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const started = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'please design the widget' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
+      );
+      return r.state !== 'running';
+    });
+
+    const delRes = await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`, {
+      method: 'DELETE',
+    });
+    expect(delRes.status).toBe(200);
+
+    const getRes = await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`);
+    expect(getRes.status).toBe(404);
+
+    const unknownDelRes = await fetch(`${baseUrl}/api/tasks/drafts/d-000000`, {
+      method: 'DELETE',
+    });
+    expect(unknownDelRes.status).toBe(404);
+  });
+
+  it('broadcasts draft.changed over the websocket', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+    const gotDraftChanged = new Promise<void>((resolve) => {
+      ws.addEventListener('message', (ev) => {
+        const parsed = JSON.parse(ev.data as string) as { type: string };
+        if (parsed.type === 'draft.changed') resolve();
+      });
+    });
+    await new Promise<void>((resolve) =>
+      ws.addEventListener('open', () => resolve())
+    );
+
+    await fetch(`${baseUrl}/api/tasks/draft`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt: 'nothing actionable' }),
+      body: JSON.stringify({ prompt: 'build a widget' }),
     });
-    expect(res.status).toBe(400);
+    await Promise.race([
+      gotDraftChanged,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('WS timeout')), 3000)
+      ),
+    ]);
+    ws.close();
   });
 
   // The load-bearing round trip: a drafted task saves through the SAME
@@ -235,13 +423,7 @@ describe('POST /api/tasks/draft', () => {
     await startWithPlanner(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const draft = await json(
-      await fetch(`${baseUrl}/api/tasks/draft`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: 'please design the widget' }),
-      })
-    );
+    const draft = await draftedTask();
     const description = [
       draft.description.trim(),
       'Acceptance criteria:',

@@ -270,14 +270,17 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
 }
 
 // POST /api/tasks/draft — the natural-language single-task creator: turns a
-// free-text description into one structured task draft (title, description,
-// acceptanceCriteria, priority) the client reviews and then saves through the
-// normal POST /api/tasks path. `planner` is optional and follows createRun's
-// `executor` / startPlan's `planner` contract exactly — a name outside what's
-// registered on this PlanManager is a 400 naming every valid option. Unlike
-// startPlan this awaits the planner and returns the draft directly (no plan
-// record, no confirm step) since a lone draft is reviewed-then-created, not
-// confirmed.
+// free-text description into a `DraftRecord` the client polls (or listens
+// for `draft.changed` on) until the planner turn settles `ready` with a
+// structured proposal to review and save through the normal POST /api/tasks
+// path. `planner` is optional and follows createRun's `executor` /
+// startPlan's `planner` contract exactly — a name outside what's registered
+// on this PlanManager is a 400 naming every valid option. Unlike the old
+// synchronous shape, this returns 202 immediately with `state: 'running'` —
+// the planner call itself runs in the background (PlanManager.startDraft),
+// so navigating away from the request no longer drops the result and any
+// number of drafts can be running at once with no shared busy-guard between
+// them.
 async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -298,8 +301,31 @@ async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   }
   const plannerName =
     typeof body.planner === 'string' ? body.planner : 'claude';
-  const draft = await ctx.planManager.draftTask(body.prompt, plannerName);
-  return jsonResponse(draft);
+  const draft = ctx.planManager.startDraft(body.prompt, plannerName);
+  return jsonResponse(draft, 202);
+}
+
+// GET /api/tasks/drafts — every draft currently held in memory (running,
+// ready, or failed — until dismissed), newest first.
+function listDrafts(ctx: ApiContext): Response {
+  return jsonResponse(ctx.planManager.listDrafts());
+}
+
+// GET /api/tasks/drafts/:id — one draft record. Unknown/already-dismissed
+// ids throw OrchestratorNotFoundError, which handleApi's outer catch maps to
+// 404 (same pattern as GET /api/plan/:id below).
+function getDraft(ctx: ApiContext, id: string): Response {
+  return jsonResponse(ctx.planManager.getDraft(id));
+}
+
+// DELETE /api/tasks/drafts/:id — dismiss a draft the caller has reviewed
+// (saved or discarded). getDraft() first so an unknown id 404s rather than
+// silently no-op'ing, same "you asked for a specific record and it isn't
+// there" contract every other :id 404 in this file follows.
+function dismissDraft(ctx: ApiContext, id: string): Response {
+  ctx.planManager.getDraft(id);
+  ctx.planManager.dismissDraft(id);
+  return jsonResponse({ ok: true });
 }
 
 async function updateTask(
@@ -1619,6 +1645,32 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await draftTask(req, ctx);
+      }
+      // `drafts` (plural, the list/record endpoints) must be checked before
+      // the generic `segments.length === 2 && method === 'GET'` branch below
+      // — otherwise "drafts" would be treated as a task id and 404 as one,
+      // exactly the ordering POST /api/inbox/cluster needs against its own
+      // block's generic `:id` branches.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'drafts' &&
+        method === 'GET'
+      ) {
+        return listDrafts(ctx);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'drafts' &&
+        method === 'GET'
+      ) {
+        return getDraft(ctx, segments[2]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'drafts' &&
+        method === 'DELETE'
+      ) {
+        return dismissDraft(ctx, segments[2]);
       }
       if (
         segments.length === 3 &&
