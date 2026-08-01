@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { ONBOARDING_MARKDOWN } from './onboarding.js';
+import type { QuestionTiming } from './tools.js';
 import { registerDispatchTools } from './tools.js';
 
 export const MCP_SERVER_NAME = 'dispatch';
@@ -12,13 +13,16 @@ export const MCP_SERVER_VERSION = '0.0.1';
 // agent client on how to use them. `rootDir` is fixed at construction time —
 // every tool call operates on it directly via core's TaskStore (no daemon
 // proxy; see the Phase 3 plan for why direct file access is the sync point).
-export function createDispatchMcpServer(rootDir: string): McpServer {
+export function createDispatchMcpServer(
+  rootDir: string,
+  opts: { questionTiming?: QuestionTiming } = {}
+): McpServer {
   const server = new McpServer({
     name: MCP_SERVER_NAME,
     version: MCP_SERVER_VERSION,
   });
 
-  registerDispatchTools(server, rootDir);
+  registerDispatchTools(server, rootDir, opts);
 
   server.registerResource(
     'onboarding',

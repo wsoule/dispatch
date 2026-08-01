@@ -1022,19 +1022,15 @@ async function messageUser(
   return jsonResponse(meta);
 }
 
-// The transcript text a question lands as, so the session log reads as a
-// self-contained record of what was asked rather than pointing at a card the
-// user may already have answered and dismissed.
+// The transcript text a question lands as, so the session log records what
+// was asked without depending on a card the user may already have dismissed.
 function questionEntryText(question: string, options: string[]): string {
   if (options.length === 0) return question;
   return `${question}\n\n${options.map((o) => `- ${o}`).join('\n')}`;
 }
 
-// POST /api/runs/:id/questions — the blocking half of the agent→human
-// channel: the `ask_user` MCP tool posts a question here, then long-polls the
-// GET below until a human answers it. The question is written to the run's
-// transcript through the same `messageUser` path a fire-and-forget message
-// takes, which is also what enforces that only a live run can ask.
+// POST /api/runs/:id/questions — `ask_user` posts here, then long-polls the
+// GET below. `messageUser` writes the entry and gates this to a live run.
 async function askQuestion(
   req: Request,
   ctx: ApiContext,
@@ -1079,12 +1075,8 @@ function questionFor(
   return record !== undefined && record.runId === runId ? record : null;
 }
 
-// GET /api/runs/:id/questions/:qid — with `?wait=1` this parks for up to
-// QUESTION_POLL_MS and resolves the moment an answer lands; without it the
-// current record comes straight back. Returning still-unanswered at the
-// deadline is the normal outcome, not an error: the poll window is short by
-// design so it never races the server's own socket timeout, and the caller
-// polls again.
+// GET /api/runs/:id/questions/:qid — `?wait=1` parks for up to
+// QUESTION_POLL_MS. Coming back unanswered means "poll again", not an error.
 async function getQuestion(
   req: Request,
   ctx: ApiContext,
@@ -1102,9 +1094,8 @@ async function getQuestion(
   );
 }
 
-// POST /api/runs/:id/questions/:qid/answer — records the human's answer,
-// unblocking whatever is parked on the long-poll above. 409s on a second
-// answer: the agent has already been handed the first one.
+// POST /api/runs/:id/questions/:qid/answer — unblocks whatever is parked on
+// the long-poll above. 409s on a second answer: the first one already went.
 async function answerQuestion(
   req: Request,
   ctx: ApiContext,
@@ -1121,10 +1112,31 @@ async function answerQuestion(
     return errorResponse(404, `question not found: ${questionId}`);
   }
   const record = ctx.questions.answer(questionId, body.answer.trim());
-  ctx.orchestrator.recordAnswer(runId, body.answer.trim());
+  // The agent already has the answer by this point, so a run that vanished
+  // out from under the transcript write must not turn this into a failure.
+  try {
+    ctx.orchestrator.recordAnswer(runId, body.answer.trim());
+  } catch (err) {
+    if (!(err instanceof OrchestratorNotFoundError)) throw err;
+  }
   ctx.events.broadcast({ type: 'question.answered', runId, questionId });
   ctx.events.broadcast({ type: 'run.changed' });
   return jsonResponse(record);
+}
+
+// DELETE /api/runs/:id/questions/:qid — the asking agent stopped listening
+// (its tool call was cancelled or gave up), so the card must stop asking.
+function withdrawQuestion(
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): Response {
+  if (questionFor(ctx, runId, questionId) === null) {
+    return errorResponse(404, `question not found: ${questionId}`);
+  }
+  ctx.questions.withdraw(questionId);
+  ctx.events.broadcast({ type: 'question.closed', runId });
+  return new Response(null, { status: 204 });
 }
 
 // POST /api/plan. `planner` is optional (defaults to 'claude'), same
@@ -1944,6 +1956,13 @@ export async function handleApi(
         return await getQuestion(req, ctx, segments[1], segments[3]);
       }
       if (
+        segments.length === 4 &&
+        segments[2] === 'questions' &&
+        method === 'DELETE'
+      ) {
+        return withdrawQuestion(ctx, segments[1], segments[3]);
+      }
+      if (
         segments.length === 5 &&
         segments[2] === 'questions' &&
         segments[4] === 'answer' &&
@@ -1953,8 +1972,8 @@ export async function handleApi(
       }
     }
 
-    // GET /api/questions — every open question across every run, so the app
-    // can badge "an agent is waiting on you" without walking the run list.
+    // GET /api/questions — every open question across every run, for the
+    // app's "an agent is waiting on you" surfaces.
     if (segments[0] === 'questions' && segments.length === 1) {
       if (method === 'GET') return jsonResponse(ctx.questions.listOpen());
     }

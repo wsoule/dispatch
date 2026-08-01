@@ -14,11 +14,8 @@ interface QuestionCardProps {
   onAnswer: (answer: string) => Promise<void>;
 }
 
-/**
- * An agent's blocking question, with the answer form. The agent is parked inside a tool call
- * until this is submitted, so the card is deliberately loud and the options are one click:
- * the common case is picking one of the answers it already offered.
- */
+/** An agent's blocking question and the form that answers it. Loud, and its options are one
+ * click, because the agent is parked inside a tool call until this is submitted. */
 export function QuestionCard({
   question,
   options,

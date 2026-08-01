@@ -272,9 +272,9 @@ export interface DispatchProjectData {
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
   pendingApprovals: Map<string, PendingApproval>;
-  /** Run id -> the question that run's agent is blocked on. One per run: an agent asks from
-   * inside a tool call, so it cannot ask again until the first is answered. */
-  openQuestions: Map<string, RunQuestion>;
+  /** Run id -> every question that run's agent is blocked on, oldest first. Usually one, but
+   * an agent can dispatch several `ask_user` calls in the same turn. */
+  openQuestions: Map<string, RunQuestion[]>;
   handleAnswerQuestion: (
     runId: string,
     questionId: string,
@@ -626,9 +626,8 @@ export function useDispatchProject(
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
 
-  // Every unanswered agent question across every run — refetched on
-  // `question.asked`/`question.answered` in the WS effect below, so a run that asked while a
-  // different view was open still shows up as waiting on you.
+  // Every unanswered agent question across every run, refetched on the
+  // `question.*` events below so one asked in a closed view still surfaces.
   const { data: openQuestionList } = useQuery({
     queryKey: questionsQueryKey,
     queryFn: () => {
@@ -879,7 +878,10 @@ export function useDispatchProject(
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
             void notify('An agent has a question', taskTitle);
-          } else if (event.type === 'question.answered') {
+          } else if (
+            event.type === 'question.answered' ||
+            event.type === 'question.closed'
+          ) {
             void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
@@ -1017,12 +1019,13 @@ export function useDispatchProject(
     return map;
   }, [runs]);
 
-  // Keyed by run so a view holding one run can find its question in one lookup. Oldest wins
-  // if a run somehow has two open at once — that is the one the agent is actually parked on.
+  // Keyed by run so a view holding one run finds its questions in one lookup.
   const openQuestions = useMemo(() => {
-    const map = new Map<string, RunQuestion>();
+    const map = new Map<string, RunQuestion[]>();
     for (const question of openQuestionList ?? []) {
-      if (!map.has(question.runId)) map.set(question.runId, question);
+      const existing = map.get(question.runId);
+      if (existing === undefined) map.set(question.runId, [question]);
+      else existing.push(question);
     }
     return map;
   }, [openQuestionList]);
