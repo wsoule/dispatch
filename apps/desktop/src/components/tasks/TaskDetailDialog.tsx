@@ -413,6 +413,9 @@ export function TaskDetailDialog({
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [pushingLinear, setPushingLinear] = useState(false);
+  // Brief confirmation shown until the tasks cache refetches and `linearLinked` flips the
+  // button into the real chip — the push itself gives no other positive signal.
+  const [pushedLinear, setPushedLinear] = useState(false);
   // "Add detail" was clicked. Not cleared when the POST resolves — that 202 only means the
   // plan started; it clears when a draft or an error actually arrives.
   const [enrichStarted, setEnrichStarted] = useState(false);
@@ -443,7 +446,11 @@ export function TaskDetailDialog({
     setError(null);
     try {
       const result = await onPushToLinear(doc.meta.id);
-      if (result.errors.length > 0) setError(result.errors[0]);
+      if (result.errors.length > 0) {
+        setError(result.errors[0]);
+      } else {
+        setPushedLinear(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -679,18 +686,25 @@ export function TaskDetailDialog({
                 onPushToLinear !== undefined && (
                   <>
                     <span className="text-muted-foreground/40">›</span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void pushToLinear();
-                      }}
-                      disabled={pushingLinear}
-                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] disabled:opacity-50"
-                    >
-                      <Link2 className="size-3" />
-                      {pushingLinear ? 'Pushing…' : 'Push to Linear'}
-                    </button>
+                    {pushedLinear ? (
+                      <span className="text-state-review inline-flex items-center gap-1 text-[11px]">
+                        <Link2 className="size-3" />
+                        Pushed
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void pushToLinear();
+                        }}
+                        disabled={pushingLinear}
+                        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] disabled:opacity-50"
+                      >
+                        <Link2 className="size-3" />
+                        {pushingLinear ? 'Pushing…' : 'Push to Linear'}
+                      </button>
+                    )}
                   </>
                 )}
               <DialogTitle className="sr-only">
