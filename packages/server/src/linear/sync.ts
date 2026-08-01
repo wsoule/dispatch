@@ -286,7 +286,13 @@ export class LinearSync {
         (opts.mode === 'both' && direction !== 'push'));
     let pullFailed = false;
     if (baselining) {
-      state.cursor = new Date().toISOString();
+      const now = new Date().toISOString();
+      state.cursor = now;
+      // Both markers are set BEFORE the push: nothing local has been reconciled yet, and
+      // a fresh clone would otherwise push stale content over the whole linked backlog.
+      state.bootstrappedAt = now;
+      state.lastPushAt = now;
+      await this.backfillLinks(session, state);
     } else if (pulling) {
       pullFailed = !(await this.pull(
         session,
@@ -303,9 +309,8 @@ export class LinearSync {
       direction !== 'pull' &&
       !summary.rateLimited
     ) {
-      // Captured BEFORE the push: a task edited while the loop is uploading must
-      // stay a candidate next pass. Tasks the loop could not send are named in
-      // `pushRetry`, so the cursor advances without dropping any of them.
+      // Captured BEFORE the push so an edit made mid-loop stays a candidate; anything
+      // the loop could not send is named in `pushRetry` rather than dropped.
       const pushStartedAt = new Date().toISOString();
       await this.push(session, state, summary, {
         taskIds: opts.taskIds,
@@ -320,8 +325,8 @@ export class LinearSync {
     // clean — otherwise one persistent error would freeze the integration forever.
     if (state.bootstrappedAt === null) {
       state.bootstrappedAt = new Date().toISOString();
-      // Nothing local has been pushed yet, and nothing local should be: pre-existing
-      // tasks are gated by the marker above and imported ones are Linear's already.
+      // An import establishes the link without ever pushing, so the same rule as the
+      // baseline path applies: nothing predating the link goes up automatically.
       state.lastPushAt ??= state.bootstrappedAt;
     }
     return this.finish(summary, state, session.linear.intervalSec);
@@ -392,6 +397,25 @@ export class LinearSync {
     return failure.error;
   }
 
+  // Fills in display identifiers for tasks that arrive already linked, whose issues may
+  // never change again and so never appear in a pull. Skipped when nothing is linked.
+  private async backfillLinks(
+    session: SyncSession,
+    state: LinearSyncState
+  ): Promise<void> {
+    const linked = new Set<string>();
+    for (const doc of this.deps.store.listSafe().docs) {
+      const id = parseExternal(doc.meta.external);
+      if (id !== null && state.links[id] === undefined) linked.add(id);
+    }
+    if (linked.size === 0) return;
+    const result = await session.client.issueLinks(session.teamId);
+    if (!result.ok) return;
+    for (const issue of result.data) {
+      if (linked.has(issue.id)) this.recordLink(state, issue);
+    }
+  }
+
   // Returns false when the pull failed, which makes the push skip updates to
   // linked issues: without pull data there is no conflict information to act on.
   private async pull(
@@ -441,8 +465,8 @@ export class LinearSync {
           }),
           issue.createdAt
         );
-        // Stamped with the issue's own `updatedAt`: the task's content is exactly
-        // that version, so a later comparison comes out as a tie, not a local edit.
+        // Deliberately the snapshot's `updatedAt`: the task is being replaced with this
+        // exact remote version, which is the invariant the push's in-sync check needs.
         this.deps.store.update(
           doc.meta.id,
           { external: externalId(issue) },
@@ -601,7 +625,15 @@ export class LinearSync {
       summary.pushed++;
     }
 
-    state.pushRetry = [...retry];
+    // Merged, not replaced: an explicit `taskIds` push only ever considers its own
+    // tasks, so overwriting would strand a failure recorded by an earlier pass.
+    const considered = new Set(candidates.map((doc) => doc.meta.id));
+    state.pushRetry = [
+      ...new Set([
+        ...state.pushRetry.filter((id) => !considered.has(id)),
+        ...retry,
+      ]),
+    ];
     if (skippedForFailedPull > 0) {
       summary.errors.push(
         `skipped ${skippedForFailedPull} issue update(s): the pull failed, so no conflict check was possible`
@@ -645,7 +677,10 @@ export class LinearSync {
     this.recordLink(state, issue);
   }
 
-  private recordLink(state: LinearSyncState, issue: LinearIssue): void {
+  private recordLink(
+    state: LinearSyncState,
+    issue: { id: string; identifier: string; url: string }
+  ): void {
     state.links[issue.id] = { identifier: issue.identifier, url: issue.url };
   }
 }

@@ -58,8 +58,8 @@ export function emptyLinearState(): LinearSyncState {
   };
 }
 
-// A missing or corrupt file reads as a fresh state — the worst case is one
-// redundant full pull, which is idempotent.
+// A missing or corrupt file reads as a fresh state, which re-establishes the link from
+// scratch — a pass that reconciles nothing and pushes nothing.
 export function readLinearState(rootDir: string): LinearSyncState {
   const path = linearStatePath(rootDir);
   if (!existsSync(path)) return emptyLinearState();

@@ -15,6 +15,7 @@ import { startServer } from '../src/index.js';
 import type {
   LinearClient,
   LinearIssuePage,
+  LinearIssueRef,
   LinearResult,
   LinearTeam,
   LinearViewer,
@@ -56,6 +57,10 @@ class StubLinearClient implements LinearClient {
 
   async issuesUpdatedSince(): Promise<LinearResult<LinearIssuePage>> {
     return { ok: true, data: { issues: [], truncated: false } };
+  }
+
+  async issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
+    return { ok: true, data: [] };
   }
 
   async createIssue(

@@ -17,6 +17,7 @@ import type {
   LinearClient,
   LinearFailure,
   LinearIssuePage,
+  LinearIssueRef,
   LinearResult,
   LinearTeam,
   LinearViewer,
@@ -58,6 +59,7 @@ class FakeLinearClient implements LinearClient {
   createFailure: LinearFailure | null = null;
   truncated = false;
   sinceSeen: (string | null)[] = [];
+  linkQueries = 0;
   private seq = 0;
   private tick = 0;
 
@@ -102,6 +104,18 @@ class FakeLinearClient implements LinearClient {
         issues: nodes.map((i) => ({ ...i })),
         truncated: this.truncated,
       },
+    };
+  }
+
+  async issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
+    this.linkQueries++;
+    return {
+      ok: true,
+      data: this.issues.map((i) => ({
+        id: i.id,
+        identifier: i.identifier,
+        url: i.url,
+      })),
     };
   }
 
@@ -625,11 +639,109 @@ describe('LinearSync import write-back', () => {
     await sync.importIssues();
 
     const doc = store.list()[0];
-    store.update(doc.meta.id, { title: 'Edited by a person' });
+    store.update(
+      doc.meta.id,
+      { title: 'Edited by a person' },
+      new Date(Date.now() + 1000).toISOString()
+    );
     await sync.syncOnce();
 
     expect(fake.updated).toHaveLength(1);
     expect(fake.updated[0].input.title).toBe('Edited by a person');
+  });
+});
+
+describe('LinearSync fresh state with existing links', () => {
+  // The clone case: `external` and .dispatch/config.yml are committed, but sync
+  // state is per-user in ~/.dispatch, so a teammate's first pass starts blank.
+  function seedClonedRepo(remoteUpdatedAt = '2027-01-01T00:00:00.000Z'): {
+    id: string;
+  } {
+    const remote = fake.issue({
+      title: 'Owned by Linear',
+      state: BLOCKED_STATE,
+      updatedAt: remoteUpdatedAt,
+    });
+    fake.issues = [remote];
+    const doc = store.create({ title: 'Stale committed content' });
+    store.update(doc.meta.id, { external: `linear:${remote.id}` });
+    return { id: doc.meta.id };
+  }
+
+  it('never writes to a linked issue on the first pass', async () => {
+    seedClonedRepo();
+
+    const summary = await makeSync().syncOnce();
+
+    expect(fake.updated).toHaveLength(0);
+    expect(fake.created).toHaveLength(0);
+    expect(summary.pushed).toBe(0);
+    // The remote state is untouched, not re-mapped through in-progress.
+    expect(fake.issues[0].state?.name).toBe('Blocked');
+    expect(fake.issues[0].title).toBe('Owned by Linear');
+  });
+
+  it('sends nothing on the first pass even for many linked tasks', async () => {
+    for (let i = 0; i < 5; i++) {
+      const remote = fake.issue({ updatedAt: '2027-01-01T00:00:00.000Z' });
+      fake.issues.push(remote);
+      const doc = store.create({ title: `Task ${i}` });
+      store.update(doc.meta.id, { external: `linear:${remote.id}` });
+    }
+
+    await makeSync().syncOnce();
+
+    expect(fake.updated).toHaveLength(0);
+  });
+
+  it('lets the user push a stale local edit up by naming it explicitly', async () => {
+    // An older remote, so the local side is the newer one and there is genuinely
+    // something to recover.
+    const { id } = seedClonedRepo('2026-01-01T00:00:00.000Z');
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(fake.updated).toHaveLength(0);
+
+    const summary = await sync.syncOnce([id]);
+
+    expect(summary.pushed).toBe(1);
+    expect(fake.updated).toHaveLength(1);
+  });
+
+  it('fills in chip identifiers for links it inherited from the clone', async () => {
+    seedClonedRepo();
+    const sync = makeSync();
+
+    await sync.syncOnce();
+
+    expect(sync.links()[fake.issues[0].id]).toEqual({
+      identifier: fake.issues[0].identifier,
+      url: fake.issues[0].url,
+    });
+  });
+
+  it('does not pay for a link query when nothing is linked yet', async () => {
+    store.create({ title: 'Unlinked' });
+    await makeSync().syncOnce();
+    expect(fake.linkQueries).toBe(0);
+  });
+
+  it('pushes a linked task once it is edited after the link is established', async () => {
+    const { id } = seedClonedRepo('2026-01-01T00:00:00.000Z');
+    const sync = makeSync();
+    await sync.syncOnce();
+
+    // An explicit timestamp, so the edit is unambiguously after the baseline rather
+    // than racing it inside the same millisecond.
+    store.update(
+      id,
+      { title: 'Edited after cloning' },
+      new Date(Date.now() + 1000).toISOString()
+    );
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Edited after cloning');
   });
 });
 
@@ -640,7 +752,7 @@ describe('LinearSync first pass baseline', () => {
     const summary = await makeSync().syncOnce();
 
     // No issue query at all: a first sync creates nothing, so a full scan of a
-    // large team could only fail (and used to deadlock on truncation).
+    // large team could only cost budget and fail.
     expect(fake.sinceSeen).toHaveLength(0);
     expect(summary.created).toBe(0);
     expect(readLinearState(root).cursor).not.toBeNull();
@@ -710,6 +822,30 @@ describe('LinearSync push cursor', () => {
     const second = await sync.syncOnce();
     expect(second.createdIssues).toBe(1);
     expect(readLinearState(root).pushRetry).toHaveLength(0);
+  });
+
+  it('keeps an earlier failure queued when a later explicit push names other tasks', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    const doomed = store.create({ title: 'Failed earlier' });
+    fake.createFailure = {
+      ok: false,
+      kind: 'graphql',
+      error: 'validation failed',
+    };
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(readLinearState(root).pushRetry).toEqual([doomed.meta.id]);
+
+    // An explicit push of a different task must not clear the queued failure.
+    fake.createFailure = null;
+    const other = store.create({ title: 'Named explicitly' });
+    await sync.syncOnce([other.meta.id]);
+    expect(readLinearState(root).pushRetry).toEqual([doomed.meta.id]);
+
+    // ...and the original task still goes up on the next ordinary pass.
+    const final = await sync.syncOnce();
+    expect(final.createdIssues).toBe(1);
+    expect(readLinearState(root).pushRetry).toEqual([]);
   });
 
   it('stamps lastPushAt from before the push, so a concurrent edit is not lost', async () => {
