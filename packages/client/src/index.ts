@@ -25,6 +25,7 @@ export type {
   InboxItem,
   InboxKind,
   CreateNoteInput,
+  LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
   LinearTeam,

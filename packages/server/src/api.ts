@@ -1846,6 +1846,16 @@ export async function handleApi(
       if (segments[1] === 'teams' && method === 'GET') {
         return await linearTeams(ctx);
       }
+      // GET /api/linear/links — issue UUID -> { identifier, url }, so a client
+      // holding only `TaskMeta.external` can render a real "ENG-123" chip.
+      if (segments[1] === 'links' && method === 'GET') {
+        return jsonResponse(ctx.linearSync.links());
+      }
+      // POST /api/linear/import — bring down Linear issues that have no local
+      // task. Deliberately explicit: an ordinary sync never imports a backlog.
+      if (segments[1] === 'import' && method === 'POST') {
+        return jsonResponse(await ctx.linearSync.importIssues());
+      }
       if (segments[1] === 'states' && method === 'GET') {
         return await linearStates(ctx, url.searchParams.get('teamId'));
       }
