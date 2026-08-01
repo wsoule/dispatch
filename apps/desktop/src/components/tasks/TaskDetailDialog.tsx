@@ -4,8 +4,8 @@ import type {
   PlanRecord,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core';
-import { parseExternal } from '@dispatch/core';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import { parseExternal } from '@dispatch/core/browser';
 import { computeStack } from '@dispatch/core/graph';
 import {
   ArrowUpRight,
@@ -27,7 +27,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { formatRelativeTimeFromIso } from '../../lib/format';
-import { resolveLinearLink } from '../../lib/linearSettings';
+import { pushToLinearError, resolveLinearLink } from '../../lib/linearSettings';
 import { mergeLadderLabel, mergeLadderState } from '../../lib/mergeLadder';
 import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
 import { isTerminalRunState } from '../../lib/runState';
@@ -428,6 +428,13 @@ export function TaskDetailDialog({
   // dialog needs to know the graph is open.
   const [showGraph, setShowGraph] = useState(false);
 
+  // If the link never arrives, drop back to the button rather than claiming "Pushed" forever.
+  useEffect(() => {
+    if (!pushedLinear) return;
+    const timer = setTimeout(() => setPushedLinear(false), 15_000);
+    return () => clearTimeout(timer);
+  }, [pushedLinear]);
+
   // Derived from the run's own state, not the task's status string: the old check compared
   // `doc.meta.status` against the literal built-in strings `'in-progress'`/`'in-review'`,
   // which silently stopped working for any project whose `.dispatch/config.yml` names its
@@ -445,12 +452,9 @@ export function TaskDetailDialog({
     setPushingLinear(true);
     setError(null);
     try {
-      const result = await onPushToLinear(doc.meta.id);
-      if (result.errors.length > 0) {
-        setError(result.errors[0]);
-      } else {
-        setPushedLinear(true);
-      }
+      const failure = pushToLinearError(await onPushToLinear(doc.meta.id));
+      if (failure !== null) setError(failure);
+      else setPushedLinear(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
