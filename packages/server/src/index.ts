@@ -332,6 +332,11 @@ export async function startServer(
       }
 
       if (url.pathname.startsWith('/api/')) {
+        // Bun.serve's default idle timeout (10s) is far shorter than a model turn.
+        // /api/inbox/cluster awaits InboxClusterer.cluster() (up to 60s, see its own
+        // timeout) synchronously in the handler, so without this the socket resets mid-call
+        // and the client sees ECONNRESET well before the model ever answers.
+        if (url.pathname === '/api/inbox/cluster') srv.timeout(req, 65);
         return withCors(await handleApi(req, apiCtx), origin);
       }
 

@@ -1,6 +1,14 @@
 import type { InboxClusterGroup, InboxItem, InboxKind } from '@dispatch/client';
-import { Bot, Combine, Inbox, Sparkles, X } from 'lucide-react';
-import { Fragment, useMemo, useState } from 'react';
+import {
+  Bot,
+  CircleHelp,
+  Combine,
+  Inbox,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { EnrichReview } from '../components/tasks/EnrichReview';
@@ -8,9 +16,20 @@ import { SectionLabel } from '../components/ui/SectionLabel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { EnrichDraft } from '../lib/enrichReview';
 import { enrichViewState, formatEnrichedInboxText } from '../lib/enrichReview';
+import { shouldRecluster } from '../lib/inboxAutoCluster';
 import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
+
+// Anything below this and there is nothing to group — mirrors InboxClusterer's own MIN_ITEMS
+// (packages/server/src/inboxClusterer.ts) so the sidebar's "not enough yet" copy and the
+// auto-cluster trigger agree on the same threshold.
+const CLUSTER_MIN_ITEMS = 3;
+// How long to let captures settle before asking the model to group them — long enough that
+// someone mid-dump doesn't trigger a call per keystroke-adjacent action, short enough that the
+// suggestion still feels like it showed up on its own.
+const CLUSTER_DEBOUNCE_MS = 1500;
 
 interface BrainDumpViewProps {
   data: DispatchProjectData;
@@ -48,15 +67,27 @@ export function BrainDumpView({
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The model-backed grouping is a separate, explicit act from the free local hint below, so it
-  // gets its own state: null until asked, [] once asked and told there is nothing related.
+  // The model-backed grouping runs automatically in the background (see the effect below), so it
+  // gets its own state, separate from the free local hint: null until it has run once, [] once
+  // run and told there is nothing related. `clusterError` is deliberately not routed through the
+  // `error` banner above — a background pass failing must not read as a hard failure.
   const [groups, setGroups] = useState<InboxClusterGroup[] | null>(null);
   const [grouping, setGrouping] = useState(false);
+  const [clusterError, setClusterError] = useState<string | null>(null);
+  // The open-item id set the last successful (or attempted) cluster call covered — `null` until
+  // the first run. Feeds `shouldRecluster` so the effect below only fires on a genuine
+  // membership change, never on every render or on a same-items reorder.
+  const lastClusteredIdsRef = useRef<string[] | null>(null);
+  // Which id set the currently in-flight cluster call was started for. A response is applied
+  // only if this still matches what it was fetched for — otherwise the open set moved on while
+  // the call was in the air, and the result is stale.
+  const inFlightIdsRef = useRef<string[] | null>(null);
 
   const inbox = data.inbox;
   const open = useMemo(() => inbox.filter((i) => !i.done), [inbox]);
   const sorted = useMemo(() => inbox.filter((i) => i.done), [inbox]);
   const cluster = useMemo(() => findCluster(inbox), [inbox]);
+  const openItemIds = useMemo(() => open.map((i) => i.id), [open]);
   const pendingLines = splitCaptureLines(draft).length;
 
   // The one in-flight/last "Add detail" draft this view can show at a time — mirrors
@@ -64,6 +95,33 @@ export function BrainDumpView({
   // belongs to; every other row ignores it.
   const enrichItemId = data.inboxEnrichItemId;
   const enrichState = enrichViewState(data.inboxEnrichPlanRecord);
+
+  // Automatic grouping: debounced ~1.5s after the open-item set genuinely changes (not on every
+  // render, not on a mere reorder — see shouldRecluster). No manual trigger needed; the refresh
+  // icon in the sidebar exists only to force a retry (e.g. after a failed/timed-out pass).
+  // Declared here, above the early return below, because every hook in this component must run
+  // on every render regardless of daemon availability — `runCluster` (defined further down) is
+  // an ordinary hoisted function declaration, so referencing it here before its textual
+  // definition is safe.
+  // `runCluster` intentionally excluded from deps — it only reads refs/props, and depending on
+  // its (re-created every render) identity would defeat the debounce.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (
+      !shouldRecluster(
+        openItemIds,
+        lastClusteredIdsRef.current,
+        CLUSTER_MIN_ITEMS
+      )
+    ) {
+      return;
+    }
+    const timer = setTimeout(
+      () => runCluster(openItemIds),
+      CLUSTER_DEBOUNCE_MS
+    );
+    return () => clearTimeout(timer);
+  }, [openItemIds]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -116,16 +174,29 @@ export function BrainDumpView({
     });
   }
 
-  function findRelated(): void {
+  // Runs one cluster call for a given open-item id set. Shared by the automatic effect below and
+  // the manual refresh icon, so both go through the same staleness guard: if `openItemIds` has
+  // moved on by the time the response lands (items captured/dismissed/converted mid-call), the
+  // result is discarded rather than overwriting state for a set the user can no longer see.
+  function runCluster(ids: string[]): void {
+    inFlightIdsRef.current = ids;
     setGrouping(true);
-    setError(null);
     void (async () => {
       try {
-        setGroups(await data.handleClusterInbox());
+        const { groups: result, error: clusterErr } =
+          await data.handleClusterInbox();
+        if (inFlightIdsRef.current !== ids) return; // superseded — drop it
+        lastClusteredIdsRef.current = ids;
+        setClusterError(clusterErr);
+        // A failed/timed-out background pass keeps whatever grouping was last shown rather
+        // than blanking it out from under the user.
+        if (clusterErr === null) setGroups(result);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (inFlightIdsRef.current !== ids) return;
+        lastClusteredIdsRef.current = ids;
+        setClusterError(err instanceof Error ? err.message : String(err));
       } finally {
-        setGrouping(false);
+        if (inFlightIdsRef.current === ids) setGrouping(false);
       }
     })();
   }
@@ -367,28 +438,53 @@ export function BrainDumpView({
 
         <div>
           {/* Two passes, deliberately distinct. The hint above is free and instant but can only
-              see shared words; this one asks a model and so costs a call and a moment, which is
-              why it is a button rather than something that fires on its own. */}
+              see shared words; this one asks a model, so it runs automatically in the background
+              a moment after the open set changes rather than on every render. The refresh icon
+              is the manual escape hatch — automatic must not mean "no way to retry". */}
           <SectionLabel
             trailing={
-              <button
-                type="button"
-                onClick={findRelated}
-                disabled={grouping || open.length < 3}
-                className="text-accent-foreground text-[11px] disabled:opacity-40"
-              >
-                {grouping ? 'Looking…' : 'Find related'}
-              </button>
+              <span className="flex items-center gap-1.5">
+                {grouping && (
+                  <span className="text-muted-foreground text-[11px]">
+                    Grouping…
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => runCluster(openItemIds)}
+                  disabled={grouping || openItemIds.length < CLUSTER_MIN_ITEMS}
+                  aria-label={
+                    clusterError !== null
+                      ? `Refresh groups (last attempt failed: ${clusterError})`
+                      : 'Refresh groups'
+                  }
+                  title={
+                    clusterError !== null
+                      ? `Last attempt failed: ${clusterError}`
+                      : 'Refresh groups'
+                  }
+                  className={cn(
+                    'rounded p-0.5 disabled:opacity-40',
+                    clusterError !== null
+                      ? 'text-state-failed'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <RefreshCw
+                    className={cn('size-3.5', grouping && 'animate-spin')}
+                  />
+                </button>
+              </span>
             }
           >
             Group into epics
           </SectionLabel>
           {groups === null ? (
-            <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
-              {open.length < 3
-                ? 'Capture a few more and this can look for things that belong together.'
-                : 'Reads your captures and suggests which ones are really one piece of work.'}
-            </p>
+            openItemIds.length < CLUSTER_MIN_ITEMS ? (
+              <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
+                Capture a few more to enable grouping.
+              </p>
+            ) : null
           ) : groups.length === 0 ? (
             <p className="text-muted-foreground mt-2 text-[12.5px]">
               Nothing here looks related.
@@ -433,6 +529,54 @@ export function BrainDumpView({
           )}
         </div>
 
+        {/* The explainer prose (what grouping does, how the inbox works, the key legend) sat
+            here permanently before this task — the second half of the user's complaint. It now
+            lives behind one footer affordance, revealed on hover and on focus/click so it stays
+            keyboard-reachable, instead of occupying space on every visit. */}
+        <div className="mt-auto flex justify-center">
+          <ExplainerPopover />
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+// A single "what is this?" affordance that reveals the explainer prose the sidebar used to show
+// permanently. Controlled (rather than Radix's default click-to-toggle) so it opens on hover
+// too — mouse users never have to click, keyboard users get it for free via focus.
+function ExplainerPopover() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onClick={() => setOpen((v) => !v)}
+          className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]"
+        >
+          <CircleHelp className="size-3.5" />
+          What is this?
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="center"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="flex flex-col gap-3.5"
+      >
+        <div>
+          <SectionLabel>Group into epics</SectionLabel>
+          <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
+            Reads your captures and suggests which ones are really one piece of
+            work — automatically, a moment after what you've captured changes.
+            Use the refresh icon to force another look.
+          </p>
+        </div>
         <div>
           <SectionLabel>How this works</SectionLabel>
           <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
@@ -442,15 +586,14 @@ export function BrainDumpView({
             your repo — edit it by hand any time.
           </p>
         </div>
-
         <div>
           <SectionLabel>Keys</SectionLabel>
           <dl className="mt-2 flex flex-col gap-1.5">
             <Key combo="⌘⏎" what="drop into the inbox" />
           </dl>
         </div>
-      </aside>
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

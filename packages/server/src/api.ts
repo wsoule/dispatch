@@ -1448,18 +1448,19 @@ function buildInboxEnrichPrompt(item: InboxItem): string {
 /**
  * POST /api/inbox/cluster — ask a model which captured items are really one piece of work.
  *
- * Explicitly user-triggered rather than automatic, because unlike the desktop's local heuristic
- * this costs a model call: a suggestion that quietly bills you on every render is not a
- * suggestion. Failures return 502 with the reason rather than an empty list, so "the model is
- * unreachable" never reads as "nothing here is related".
+ * The desktop app runs this automatically in the background (BrainDumpView's auto-recluster
+ * effect), so a failure here must never surface as a hard error the way a user-initiated action's
+ * would: always 200, with `error` set when the model call failed so the UI can go quiet rather
+ * than toast. `InboxClusterer.cluster()` carries its own 60s timeout, so this never blocks the
+ * response open indefinitely.
  */
 async function clusterInbox(ctx: ApiContext): Promise<Response> {
   const clusterer = ctx.inboxClusterer ?? new InboxClusterer(ctx.rootDir);
   try {
     const groups = await clusterer.cluster(ctx.inboxStore.list());
-    return jsonResponse({ groups });
+    return jsonResponse({ groups, error: null });
   } catch (err) {
-    return errorResponse(502, (err as Error).message);
+    return jsonResponse({ groups: [], error: (err as Error).message });
   }
 }
 
