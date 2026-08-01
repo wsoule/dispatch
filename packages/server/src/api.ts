@@ -1473,12 +1473,8 @@ function buildInboxEnrichPrompt(item: InboxItem): string {
 
 /**
  * POST /api/inbox/cluster — ask a model which captured items are really one piece of work.
- *
- * The desktop app runs this automatically in the background (BrainDumpView's auto-recluster
- * effect), so a failure here must never surface as a hard error the way a user-initiated action's
- * would: always 200, with `error` set when the model call failed so the UI can go quiet rather
- * than toast. `InboxClusterer.cluster()` carries its own 60s timeout, so this never blocks the
- * response open indefinitely.
+ * Runs automatically in the background (BrainDumpView), so always 200 with `error` set on
+ * failure rather than a 502 — a background pass must never read as a hard failure.
  */
 async function clusterInbox(ctx: ApiContext): Promise<Response> {
   const clusterer = ctx.inboxClusterer ?? new InboxClusterer(ctx.rootDir);

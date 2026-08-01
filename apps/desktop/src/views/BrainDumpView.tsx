@@ -22,13 +22,10 @@ import { describeCluster, findCluster } from '../lib/inboxCluster';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
 
-// Anything below this and there is nothing to group — mirrors InboxClusterer's own MIN_ITEMS
-// (packages/server/src/inboxClusterer.ts) so the sidebar's "not enough yet" copy and the
-// auto-cluster trigger agree on the same threshold.
+// Mirrors InboxClusterer's own MIN_ITEMS (packages/server/src/inboxClusterer.ts) — the sidebar
+// copy and the auto-cluster trigger must agree on this threshold.
 const CLUSTER_MIN_ITEMS = 3;
-// How long to let captures settle before asking the model to group them — long enough that
-// someone mid-dump doesn't trigger a call per keystroke-adjacent action, short enough that the
-// suggestion still feels like it showed up on its own.
+// Settling time before auto-clustering fires, so a fast typist doesn't trigger a call per line.
 const CLUSTER_DEBOUNCE_MS = 1500;
 
 interface BrainDumpViewProps {
@@ -67,21 +64,18 @@ export function BrainDumpView({
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The model-backed grouping runs automatically in the background (see the effect below), so it
-  // gets its own state, separate from the free local hint: null until it has run once, [] once
-  // run and told there is nothing related. `clusterError` is deliberately not routed through the
-  // `error` banner above — a background pass failing must not read as a hard failure.
+  // Clustering runs automatically (see the effects below); `clusterError` deliberately isn't
+  // routed through `error` above — a background pass failing must not read as a hard failure.
   const [groups, setGroups] = useState<InboxClusterGroup[] | null>(null);
   const [grouping, setGrouping] = useState(false);
   const [clusterError, setClusterError] = useState<string | null>(null);
-  // The open-item id set the last successful (or attempted) cluster call covered — `null` until
-  // the first run. Feeds `shouldRecluster` so the effect below only fires on a genuine
-  // membership change, never on every render or on a same-items reorder.
+  // The id set the last cluster call covered, and the set the current in-flight call is for —
+  // feed `shouldRecluster` and the staleness guard inside `runCluster` below.
   const lastClusteredIdsRef = useRef<string[] | null>(null);
-  // Which id set the currently in-flight cluster call was started for. A response is applied
-  // only if this still matches what it was fetched for — otherwise the open set moved on while
-  // the call was in the air, and the result is stale.
   const inFlightIdsRef = useRef<string[] | null>(null);
+  // Always points at this render's `runCluster`, so the debounce effect can call the latest
+  // closure without listing it as a dependency (its identity churns every render via `data`).
+  const runClusterRef = useRef<(ids: string[]) => void>(() => {});
 
   const inbox = data.inbox;
   const open = useMemo(() => inbox.filter((i) => !i.done), [inbox]);
@@ -90,23 +84,23 @@ export function BrainDumpView({
   const openItemIds = useMemo(() => open.map((i) => i.id), [open]);
   const pendingLines = splitCaptureLines(draft).length;
 
-  // The one in-flight/last "Add detail" draft this view can show at a time — mirrors
-  // `enrichPlanRecord`'s single-slot shape on the task dialog. `enrichItemId` says which row it
-  // belongs to; every other row ignores it.
+  // The one in-flight/last "Add detail" draft this view can show — mirrors `enrichPlanRecord`'s
+  // single-slot shape on the task dialog; `enrichItemId` says which row it belongs to.
   const enrichItemId = data.inboxEnrichItemId;
   const enrichState = enrichViewState(data.inboxEnrichPlanRecord);
 
-  // Automatic grouping: debounced ~1.5s after the open-item set genuinely changes (not on every
-  // render, not on a mere reorder — see shouldRecluster). No manual trigger needed; the refresh
-  // icon in the sidebar exists only to force a retry (e.g. after a failed/timed-out pass).
-  // Declared here, above the early return below, because every hook in this component must run
-  // on every render regardless of daemon availability — `runCluster` (defined further down) is
-  // an ordinary hoisted function declaration, so referencing it here before its textual
-  // definition is safe.
-  // `runCluster` intentionally excluded from deps — it only reads refs/props, and depending on
-  // its (re-created every render) identity would defeat the debounce.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps
+  // Keeps runClusterRef current every render (see its own comment above). Both effects below
+  // must run unconditionally, above the early return, so hook order never depends on the daemon.
   useEffect(() => {
+    runClusterRef.current = runCluster;
+  });
+
+  // Automatic grouping: debounced after the open-item set changes, and skipped entirely below
+  // the minimum, on a mere reorder (see shouldRecluster), or while a call is already in flight —
+  // `grouping` in the dep array re-evaluates once that call settles, picking up any set change
+  // that happened while it was running instead of firing a second, concurrent, billable call.
+  useEffect(() => {
+    if (grouping) return;
     if (
       !shouldRecluster(
         openItemIds,
@@ -117,11 +111,11 @@ export function BrainDumpView({
       return;
     }
     const timer = setTimeout(
-      () => runCluster(openItemIds),
+      () => runClusterRef.current(openItemIds),
       CLUSTER_DEBOUNCE_MS
     );
     return () => clearTimeout(timer);
-  }, [openItemIds]);
+  }, [openItemIds, grouping]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -174,11 +168,10 @@ export function BrainDumpView({
     });
   }
 
-  // Runs one cluster call for a given open-item id set. Shared by the automatic effect below and
-  // the manual refresh icon, so both go through the same staleness guard: if `openItemIds` has
-  // moved on by the time the response lands (items captured/dismissed/converted mid-call), the
-  // result is discarded rather than overwriting state for a set the user can no longer see.
+  // Runs one cluster call, shared by the auto effect and the manual refresh button. Refuses a
+  // second concurrent call, and drops a response once `ids` is no longer the tracked set.
   function runCluster(ids: string[]): void {
+    if (grouping) return; // one call in flight at a time — a second would be a second bill
     inFlightIdsRef.current = ids;
     setGrouping(true);
     void (async () => {
@@ -437,10 +430,8 @@ export function BrainDumpView({
         )}
 
         <div>
-          {/* Two passes, deliberately distinct. The hint above is free and instant but can only
-              see shared words; this one asks a model, so it runs automatically in the background
-              a moment after the open set changes rather than on every render. The refresh icon
-              is the manual escape hatch — automatic must not mean "no way to retry". */}
+          {/* The free hint above is instant; this one asks a model, so it runs automatically
+              rather than on a click. The refresh icon is the manual escape hatch. */}
           <SectionLabel
             trailing={
               <span className="flex items-center gap-1.5">
@@ -529,10 +520,8 @@ export function BrainDumpView({
           )}
         </div>
 
-        {/* The explainer prose (what grouping does, how the inbox works, the key legend) sat
-            here permanently before this task — the second half of the user's complaint. It now
-            lives behind one footer affordance, revealed on hover and on focus/click so it stays
-            keyboard-reachable, instead of occupying space on every visit. */}
+        {/* The explainer prose that used to sit here permanently now lives behind one
+            hover/focus-reachable footer affordance — see ExplainerPopover below. */}
         <div className="mt-auto flex justify-center">
           <ExplainerPopover />
         </div>
@@ -541,9 +530,8 @@ export function BrainDumpView({
   );
 }
 
-// A single "what is this?" affordance that reveals the explainer prose the sidebar used to show
-// permanently. Controlled (rather than Radix's default click-to-toggle) so it opens on hover
-// too — mouse users never have to click, keyboard users get it for free via focus.
+// Reveals the explainer prose on hover, focus, or click — controlled state, since Radix's
+// Popover only opens on click by default.
 function ExplainerPopover() {
   const [open, setOpen] = useState(false);
   return (
