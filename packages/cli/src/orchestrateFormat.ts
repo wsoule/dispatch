@@ -3,21 +3,14 @@ import type {
   EpicProgress,
   NormalizedEntry,
   PlanProposal,
+  PlanRecord,
   RunMeta,
   RunState,
 } from './apiClient.js';
 import { formatTable } from './output.js';
 
-// Renders one streamed NormalizedEntry as a single compact line for
-// `--watch`'s live log, or `null` to skip it entirely — keeping chat-noise
-// low is an explicit design goal for this phase (a scriptable tool first,
-// not a transcript viewer). `thinking` entries (an agent's internal
-// reasoning, not its actual output) are skipped unless `verbose` is set;
-// every other kind always renders. A `tool` entry's glyph reflects its
-// current `status` (defaults to the in-flight glyph — every executor today,
-// including the real ClaudeExecutor, only ever emits `status: 'running'` for
-// tool entries; see claude.ts's own TODO(M7)) rather than a separate line
-// per status transition.
+// Renders one streamed NormalizedEntry as a compact `--watch` line, or `null` to skip it.
+// `thinking` entries are an agent's internal reasoning, so they need `verbose`.
 export function formatEntry(
   entry: NormalizedEntry,
   opts: { verbose?: boolean } = {}
@@ -40,10 +33,8 @@ export function formatEntry(
   }
 }
 
-// Renders an `approval.requested` WS event prominently — the plan
-// explicitly asks `--watch` to make this impossible to miss and to hand the
-// user the exact command to copy, rather than making them reconstruct the
-// run/request ids themselves.
+// Renders an `approval.requested` WS event prominently, with the exact command to copy
+// rather than making the user reconstruct the run/request ids.
 export function formatApprovalRequest(
   runId: string,
   requestId: string,
@@ -60,10 +51,8 @@ export function formatApprovalRequest(
   ].join('\n');
 }
 
-// `dispatch runs`'s table: run id, task, state, branch, cost — a `--json`
-// table row is emitted per RunMeta so a script can grep/sort/pipe on the
-// exact fields the plan calls out, formatted with `output.ts`'s shared
-// column-aligning `formatTable` (same helper `dispatch task list` uses).
+// `dispatch runs`'s table: run id, task, state, branch, cost — column-aligned through
+// `output.ts`'s shared `formatTable`, so a script can grep or sort it.
 export function formatRunsTable(runs: RunMeta[]): string {
   if (runs.length === 0) return '(none)';
   const header = ['RUN', 'TASK', 'STATE', 'BRANCH', 'COST'];
@@ -83,11 +72,8 @@ export function formatDiffFiles(files: DiffFile[]): string {
   return formatTable(files.map((f) => [f.status, f.path]));
 }
 
-// `dispatch plan`'s proposal rendering: a numbered task table plus a
-// dependency-arrow line per task that has one, so a proposal with several
-// interdependent tasks is legible before the user decides to confirm it.
-// Index-based (matching PlannedTask.blockedByIndices — real ids don't exist
-// until confirm) rather than id-based, since a proposal has no ids yet.
+// `dispatch plan`'s proposal rendering: a numbered task list plus a dependency-arrow line
+// per task. Index-based, matching `blockedByIndices` — a proposal has no ids until confirm.
 export function formatProposal(proposal: PlanProposal): string {
   const lines: string[] = [];
   if (proposal.epic !== undefined) {
@@ -99,6 +85,29 @@ export function formatProposal(proposal: PlanProposal): string {
       lines.push(`     ← blocked by ${task.blockedByIndices.join(', ')}`);
     }
   });
+  return lines.join('\n');
+}
+
+// What `dispatch plan` prints when a settled plan has no proposal yet: the
+// planner's last reply, any clarifying questions, and how to answer them.
+export function formatPlanNeedsReply(record: PlanRecord): string {
+  const lines: string[] = [];
+  const reply = record.messages
+    .filter((m) => m.role === 'assistant')
+    .at(-1)?.text;
+  if (reply !== undefined && reply.trim() !== '') lines.push(reply, '');
+  if (record.questions.length > 0) {
+    lines.push('The planner needs answers before it can propose tasks:');
+    record.questions.forEach((question, i) => {
+      lines.push(`  ${i + 1}. ${question.question}`);
+      if (question.options.length > 0) {
+        lines.push(`     options: ${question.options.join(' | ')}`);
+      }
+    });
+  } else {
+    lines.push('The planner did not propose any tasks yet.');
+  }
+  lines.push('', `dispatch plan reply ${record.id} "<your answer>"`);
   return lines.join('\n');
 }
 
@@ -124,12 +133,8 @@ export function formatEpicProgress(progress: EpicProgress): string {
   return lines.join('\n');
 }
 
-// The exit code `dispatch run --watch` uses once a run reaches ANY terminal
-// state — 0 for a clean finish, 1 for a failure, 130 for a cancellation
-// (128 + SIGINT's signal number 2, the conventional shell code for "killed
-// by Ctrl+C", since a cancelled run is exactly that from the CLI's point of
-// view). Returns `null` for a non-terminal state — the watch loop keeps
-// running.
+// The exit code `dispatch run --watch` uses at any terminal state: 0 finished, 1 failed,
+// 130 cancelled (the conventional "killed by Ctrl+C"). `null` while still running.
 export function exitCodeForRunState(state: RunState): number | null {
   switch (state) {
     case 'finished':

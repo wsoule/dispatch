@@ -5,6 +5,7 @@ import type {
   EpicProgress,
   NormalizedEntry,
   PlanProposal,
+  PlanRecord,
   RunMeta,
 } from '../src/apiClient.js';
 import {
@@ -13,6 +14,7 @@ import {
   formatDiffFiles,
   formatEntry,
   formatEpicProgress,
+  formatPlanNeedsReply,
   formatProposal,
   formatRunsTable,
 } from '../src/orchestrateFormat.js';
@@ -238,6 +240,49 @@ describe('formatEpicProgress', () => {
       liveRuns: [],
     };
     expect(formatEpicProgress(progress)).not.toContain('live runs:');
+  });
+});
+
+describe('formatPlanNeedsReply', () => {
+  function record(overrides: Partial<PlanRecord> = {}): PlanRecord {
+    return {
+      id: 'plan-1',
+      prompt: 'add search',
+      state: 'ready',
+      messages: [],
+      questions: [],
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      ...overrides,
+    };
+  }
+
+  it('lists the questions, their options, and the reply command', () => {
+    const text = formatPlanNeedsReply(
+      record({
+        messages: [
+          { role: 'user', text: 'add search', at: '2026-01-01T00:00:00Z' },
+          {
+            role: 'assistant',
+            text: 'A couple of things first.',
+            at: '2026-01-01T00:00:01Z',
+          },
+        ],
+        questions: [
+          { id: 'q1', question: 'Which backend?', options: ['sqlite', 'pg'] },
+        ],
+      })
+    );
+    expect(text).toContain('A couple of things first.');
+    expect(text).toContain('1. Which backend?');
+    expect(text).toContain('sqlite | pg');
+    expect(text).toContain('dispatch plan reply plan-1');
+  });
+
+  it('still points at the reply command when there are no questions', () => {
+    const text = formatPlanNeedsReply(record());
+    expect(text).toContain('did not propose any tasks');
+    expect(text).toContain('dispatch plan reply plan-1');
   });
 });
 
