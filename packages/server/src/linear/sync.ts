@@ -41,8 +41,6 @@ export interface LinearSyncSummary {
   created: number;
   createdIssues: number;
   conflicts: number;
-  /** Linear issues with no local task that the bootstrap gate declined to import. */
-  pendingImport: number;
   errors: string[];
   rateLimited: boolean;
 }
@@ -104,7 +102,6 @@ function emptySummary(at: string): LinearSyncSummary {
     created: 0,
     createdIssues: 0,
     conflicts: 0,
-    pendingImport: 0,
     errors: [],
     rateLimited: false,
   };
@@ -280,10 +277,17 @@ export class LinearSync {
     // Issues the pull decided Linear wins on, so push does not overwrite them.
     const remoteWins = new Set<string>();
 
+    // A first sync reconciles nothing — no task to create, no link to update — so it
+    // takes a cursor instead of scanning a whole team it has no use for.
+    const baselining = state.bootstrappedAt === null && opts.mode !== 'import';
     const pulling =
-      opts.mode === 'import' || (opts.mode === 'both' && direction !== 'push');
+      !baselining &&
+      (opts.mode === 'import' ||
+        (opts.mode === 'both' && direction !== 'push'));
     let pullFailed = false;
-    if (pulling) {
+    if (baselining) {
+      state.cursor = new Date().toISOString();
+    } else if (pulling) {
       pullFailed = !(await this.pull(
         session,
         state,
@@ -300,22 +304,25 @@ export class LinearSync {
       !summary.rateLimited
     ) {
       // Captured BEFORE the push: a task edited while the loop is uploading must
-      // stay a candidate next pass. A redundant re-push is idempotent; a dropped edit is not.
+      // stay a candidate next pass. Tasks the loop could not send are named in
+      // `pushRetry`, so the cursor advances without dropping any of them.
       const pushStartedAt = new Date().toISOString();
-      const errorsBefore = summary.errors.length;
       await this.push(session, state, summary, {
         taskIds: opts.taskIds,
         pulledTaskIds,
         remoteWins,
         createOnly: pullFailed,
       });
-      if (!summary.rateLimited && summary.errors.length === errorsBefore) {
-        state.lastPushAt = pushStartedAt;
-      }
+      state.lastPushAt = pushStartedAt;
     }
 
-    if (state.bootstrappedAt === null && summary.errors.length === 0) {
+    // The link is established once the team answered, not once a data pass came back
+    // clean — otherwise one persistent error would freeze the integration forever.
+    if (state.bootstrappedAt === null) {
       state.bootstrappedAt = new Date().toISOString();
+      // Nothing local has been pushed yet, and nothing local should be: pre-existing
+      // tasks are gated by the marker above and imported ones are Linear's already.
+      state.lastPushAt ??= state.bootstrappedAt;
     }
     return this.finish(summary, state, session.linear.intervalSec);
   }
@@ -415,21 +422,17 @@ export class LinearSync {
     const issues = [...result.data.issues].sort((a, b) =>
       a.updatedAt.localeCompare(b.updatedAt)
     );
-    // Creating local tasks is gated the same way creating issues is: a first sync
-    // links the two sides without importing either backlog into the other.
-    const mayCreate = importing || state.bootstrappedAt !== null;
     let high = state.cursor;
 
     for (const issue of issues) {
       if (high === null || issue.updatedAt > high) high = issue.updatedAt;
-      if (this.isAlreadyApplied(state, issue)) continue;
       const existing = byExternal.get(issue.id);
+      // Recorded before the already-applied check so a linked issue that never
+      // changes again still backfills the identifier its chip needs.
+      if (existing !== undefined) this.recordLink(state, issue);
+      if (this.isAlreadyApplied(state, issue)) continue;
       if (existing === undefined) {
         if (issue.archivedAt !== null) continue;
-        if (!mayCreate) {
-          summary.pendingImport++;
-          continue;
-        }
         const doc = this.deps.store.create(
           taskCreateFromIssue(issue, {
             statusMap: session.linear.statusMap,
@@ -451,7 +454,6 @@ export class LinearSync {
         summary.pulled++;
         continue;
       }
-      this.recordLink(state, issue);
       const verdict = resolveConflict(existing.meta.updated, issue.updatedAt);
       if (verdict === 'local') {
         summary.conflicts++;
@@ -509,6 +511,7 @@ export class LinearSync {
   ): Promise<void> {
     const { taskIds, pulledTaskIds, remoteWins, createOnly } = opts;
     const explicit = taskIds !== undefined;
+    const retryable = new Set(state.pushRetry);
     const candidates = this.deps.store
       .listSafe()
       .docs.filter((doc) =>
@@ -516,21 +519,35 @@ export class LinearSync {
           ? taskIds.includes(doc.meta.id)
           : !pulledTaskIds.has(doc.meta.id) &&
             doc.meta.archivedAt === undefined &&
-            (state.lastPushAt === null ||
+            (retryable.has(doc.meta.id) ||
+              state.lastPushAt === null ||
               Date.parse(doc.meta.updated) > Date.parse(state.lastPushAt))
       );
+    // Tasks this pass could not send — failed outright, or never reached after a
+    // throttle. Carried in state so the cursor can advance without dropping them.
+    const retry = new Set<string>();
     let skippedForFailedPull = 0;
 
-    for (const doc of candidates) {
+    for (const [index, doc] of candidates.entries()) {
       const issueId = parseExternal(doc.meta.external);
       if (issueId !== null && remoteWins.has(issueId)) continue;
       if (issueId !== null && createOnly) {
         skippedForFailedPull++;
+        retry.add(doc.meta.id);
+        continue;
+      }
+      // The task's content is provably the version Linear already holds, so there is
+      // nothing to send — this is what stops an import from writing itself straight back.
+      if (issueId !== null && this.isInSyncWithIssue(state, issueId, doc)) {
         continue;
       }
       if (issueId === null && !explicit && !this.mayAutoCreate(state, doc)) {
         continue;
       }
+      const abandonRest = (): void => {
+        for (const pending of candidates.slice(index))
+          retry.add(pending.meta.id);
+      };
       const input = issueFromTask(doc, {
         teamId: session.teamId,
         statusMap: session.linear.statusMap,
@@ -543,8 +560,10 @@ export class LinearSync {
         const result = await session.client.createIssue(input);
         if (!result.ok) {
           summary.errors.push(this.note(result));
+          retry.add(doc.meta.id);
           if (result.kind === 'rate-limit') {
             summary.rateLimited = true;
+            abandonRest();
             break;
           }
           continue;
@@ -554,7 +573,7 @@ export class LinearSync {
         this.deps.store.update(
           doc.meta.id,
           { external: externalId(result.data) },
-          doc.meta.updated
+          this.currentUpdatedAt(doc)
         );
         this.recordSeen(state, result.data);
         summary.createdIssues++;
@@ -570,8 +589,10 @@ export class LinearSync {
       const result = await session.client.updateIssue(issueId, updateInput);
       if (!result.ok) {
         summary.errors.push(this.note(result));
+        retry.add(doc.meta.id);
         if (result.kind === 'rate-limit') {
           summary.rateLimited = true;
+          abandonRest();
           break;
         }
         continue;
@@ -580,11 +601,30 @@ export class LinearSync {
       summary.pushed++;
     }
 
+    state.pushRetry = [...retry];
     if (skippedForFailedPull > 0) {
       summary.errors.push(
         `skipped ${skippedForFailedPull} issue update(s): the pull failed, so no conflict check was possible`
       );
     }
+  }
+
+  // True when the task still holds the exact issue version already reconciled: pull and
+  // import stamp `updated` with the issue's own, and a real local edit moves it off that.
+  private isInSyncWithIssue(
+    state: LinearSyncState,
+    issueId: string,
+    doc: TaskDoc
+  ): boolean {
+    return state.echoes.some(
+      (e) => e.issueId === issueId && e.updatedAt === doc.meta.updated
+    );
+  }
+
+  // Re-read right before the write-back so a local edit made during the network
+  // round-trip keeps its own timestamp instead of being rolled backwards.
+  private currentUpdatedAt(doc: TaskDoc): string {
+    return this.deps.store.get(doc.meta.id)?.meta.updated ?? doc.meta.updated;
   }
 
   // Whether an unlinked task may be auto-created in Linear. Tasks predating the link

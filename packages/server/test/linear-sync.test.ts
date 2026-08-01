@@ -40,6 +40,14 @@ const STATES: LinearWorkflowState[] = [
 
 const LABELS: LinearLabel[] = [{ id: 'l-web', name: 'web' }];
 
+// A custom state with no entry in the status map. It maps down to in-progress via
+// its `type`, and would map back up to "In Progress" — losing the real state.
+const BLOCKED_STATE: LinearWorkflowState = {
+  id: 's-blocked',
+  name: 'Blocked',
+  type: 'started',
+};
+
 // Stands in for the real GraphQL client: it records every call and serves issues
 // from an in-memory list, so no test here opens a socket.
 class FakeLinearClient implements LinearClient {
@@ -266,7 +274,10 @@ describe('LinearSync.pull', () => {
       { external: `linear:${remote.id}` },
       '2026-07-01T00:00:00.000Z'
     );
-    seedState({ lastPushAt: '2030-01-01T00:00:00.000Z' });
+    seedState({
+      bootstrappedAt: '2020-01-01T00:00:00.000Z',
+      lastPushAt: '2030-01-01T00:00:00.000Z',
+    });
 
     const summary = await makeSync().syncOnce();
 
@@ -525,7 +536,6 @@ describe('LinearSync first sync', () => {
     expect(summary.createdIssues).toBe(0);
     expect(store.list()).toHaveLength(1);
     expect(fake.created).toHaveLength(0);
-    expect(summary.pendingImport).toBe(1);
     // The link is established, so subsequent edits do flow.
     expect(makeSync().status().bootstrappedAt).not.toBeNull();
     expect(makeSync().status().cursor).not.toBeNull();
@@ -568,8 +578,97 @@ describe('LinearSync first sync', () => {
   });
 });
 
+describe('LinearSync import write-back', () => {
+  it('never pushes imported tasks back out on the debounced push that follows', async () => {
+    // Issues newer than the push cursor land inside the candidate window, so only the
+    // in-sync check can hold them back — the ordinary import-after-working-in-Linear case.
+    const recent = new Date(Date.now() + 60_000).toISOString();
+    fake.issues = [
+      fake.issue({
+        title: 'Blocked work',
+        state: BLOCKED_STATE,
+        updatedAt: recent,
+      }),
+      fake.issue({ title: 'Other work', updatedAt: recent }),
+    ];
+    const sync = new LinearSync({
+      rootDir: root,
+      store,
+      cache,
+      events,
+      client: fake,
+      pushDebounceMs: 1,
+    });
+    sync.start();
+    await sync.syncOnce();
+
+    const imported = await sync.importIssues();
+    expect(imported.created).toBe(2);
+
+    // This is the real path: importing broadcasts task.changed, which the daemon
+    // turns into a debounced push a few seconds later.
+    sync.notifyTaskChanged();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await sync.stop();
+
+    expect(fake.updated).toHaveLength(0);
+    expect(fake.created).toHaveLength(0);
+    // The custom state survives: mapping it down to in-progress and back would
+    // have moved the issue to "In Progress".
+    expect(fake.issues[0].state?.name).toBe('Blocked');
+  });
+
+  it('still pushes an imported task once a person actually edits it', async () => {
+    fake.issues = [fake.issue({ title: 'Imported' })];
+    const sync = makeSync();
+    await sync.syncOnce();
+    await sync.importIssues();
+
+    const doc = store.list()[0];
+    store.update(doc.meta.id, { title: 'Edited by a person' });
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Edited by a person');
+  });
+});
+
+describe('LinearSync first pass baseline', () => {
+  it('takes a cursor without scanning a team it has no use for', async () => {
+    fake.issues = [fake.issue(), fake.issue()];
+
+    const summary = await makeSync().syncOnce();
+
+    // No issue query at all: a first sync creates nothing, so a full scan of a
+    // large team could only fail (and used to deadlock on truncation).
+    expect(fake.sinceSeen).toHaveLength(0);
+    expect(summary.created).toBe(0);
+    expect(readLinearState(root).cursor).not.toBeNull();
+    expect(readLinearState(root).bootstrappedAt).not.toBeNull();
+  });
+
+  it('converges on a team too large to page through in one pass', async () => {
+    fake.truncated = true;
+    fake.issues = [fake.issue()];
+    const sync = makeSync();
+
+    // The first pass is a baseline, so truncation cannot block it...
+    const first = await sync.syncOnce();
+    expect(first.errors).toEqual([]);
+    expect(readLinearState(root).bootstrappedAt).not.toBeNull();
+
+    // ...and a later truncated pull holds the cursor without freezing the link,
+    // so local edits still push and the integration keeps working.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    store.create({ title: 'Local work' });
+    const second = await sync.syncOnce();
+    expect(second.errors.some((e) => e.includes('page through'))).toBe(true);
+    expect(second.createdIssues).toBe(1);
+  });
+});
+
 describe('LinearSync push cursor', () => {
-  it('does not advance lastPushAt when a rate limit cuts the push short', async () => {
+  it('re-pushes everything a rate limit cut short, without dropping any of it', async () => {
     seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
     store.create({ title: 'One' });
     store.create({ title: 'Two' });
@@ -582,7 +681,9 @@ describe('LinearSync push cursor', () => {
 
     const sync = makeSync();
     await sync.syncOnce();
-    expect(readLinearState(root).lastPushAt).toBeNull();
+    // The unsent task and the one never reached are both named for retry, so the
+    // cursor advances (no re-push storm) without either being forgotten.
+    expect(readLinearState(root).pushRetry).toHaveLength(2);
 
     // Once the throttle clears, both tasks are still candidates.
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -591,7 +692,7 @@ describe('LinearSync push cursor', () => {
     expect(second.createdIssues).toBe(2);
   });
 
-  it('does not advance lastPushAt when one task fails to push', async () => {
+  it('re-pushes a task whose push failed, and only that task', async () => {
     seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
     store.create({ title: 'Doomed' });
     fake.createFailure = {
@@ -602,11 +703,13 @@ describe('LinearSync push cursor', () => {
 
     const sync = makeSync();
     await sync.syncOnce();
-    expect(readLinearState(root).lastPushAt).toBeNull();
+    expect(readLinearState(root).pushRetry).toHaveLength(1);
+    expect(readLinearState(root).lastPushAt).not.toBeNull();
 
     fake.createFailure = null;
     const second = await sync.syncOnce();
     expect(second.createdIssues).toBe(1);
+    expect(readLinearState(root).pushRetry).toHaveLength(0);
   });
 
   it('stamps lastPushAt from before the push, so a concurrent edit is not lost', async () => {
