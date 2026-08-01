@@ -1,5 +1,5 @@
-// Pure parsers for git plumbing output — testable against fixture strings
-// without spawning. `*_FORMAT` pins the field order commands.ts and these parsers agree on.
+// Pure parsers for git plumbing output — no spawning, testable via fixtures.
+// `*_FORMAT` pins the field order commands.ts and these parsers share.
 
 export interface FileChange {
   path: string;
@@ -46,8 +46,8 @@ function applyChange(
   }
 }
 
-// Parses the `-z` (NUL-delimited) form of `git status --porcelain=v2 --branch
-// --untracked-files=all`, so a path with a literal newline can't break the record boundary.
+// Parses `git status --porcelain=v2`'s `-z` form, so an embedded newline
+// in a path can't be mistaken for a record boundary.
 export function parsePorcelainV2(output: string): GitStatus {
   const status: GitStatus = {
     branch: null,
@@ -121,7 +121,7 @@ export interface GitLogEntry {
   parents: string[];
 }
 
-// \x1f field separator; git guarantees %s is one line, so no record separator is needed.
+// \x1f field separator; %s is guaranteed one line, so none is needed for records.
 export const LOG_FORMAT = '%H\x1f%h\x1f%s\x1f%an\x1f%aI\x1f%P';
 
 export function parseLogLines(output: string): GitLogEntry[] {

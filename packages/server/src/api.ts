@@ -23,6 +23,14 @@ import type { TaskDoc } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import {
+  COMMIT_SHA_UNRESOLVED_PREFIX,
+  CONFIRM_REQUIRED_ERROR,
+  INVALID_REF_ERROR,
+  INVALID_REMOTE_ERROR,
+  INVALID_STASH_INDEX_ERROR,
+  PATH_ESCAPE_ERROR,
+} from './git/commands.js';
 import type { GitOutcome, GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
@@ -225,8 +233,8 @@ function validateTaskFields(
   return null;
 }
 
-// A cross-origin "simple" request can never set this to application/json —
-// requiring it blocks a hostile page's request from being acted on, since CORS alone only blocks reading the response.
+// A hostile cross-origin request can never set this — CORS alone only
+// blocks it from reading the response, not from sending the request.
 function hasJsonContentType(req: Request): boolean {
   const contentType = req.headers.get('content-type');
   return (
@@ -995,18 +1003,28 @@ async function gitBranches(
   return { ok: true, branches };
 }
 
-// Shared by every `/api/git/*` mutation route — broadcasts `git.changed` only
-// on success, so a refetching client never sees stale state from a failure.
-// `alwaysBroadcast` covers ops that can mutate the tree even on `ok: false`
-// (a conflicted pull/cherry-pick/revert/stash-pop, a partially-applied discard).
+// GitRepo's own pre-flight rejections never touch git, so `alwaysBroadcast`
+// below must not fire for them even though they report `ok: false`.
+const PRE_FLIGHT_REJECTIONS: ReadonlySet<string> = new Set([
+  PATH_ESCAPE_ERROR,
+  INVALID_REF_ERROR,
+  INVALID_REMOTE_ERROR,
+  CONFIRM_REQUIRED_ERROR,
+  INVALID_STASH_INDEX_ERROR,
+]);
+
+// Shared by every `/api/git/*` mutation route; `alwaysBroadcast` covers ops
+// that can mutate the tree even on `ok: false` (a conflicted pull or discard).
 function gitMutationResponse(
   ctx: ApiContext,
   result: GitOutcome,
   opts: { alwaysBroadcast?: boolean } = {}
 ): Response {
-  if (result.ok || opts.alwaysBroadcast === true) {
-    ctx.events.broadcast({ type: 'git.changed' });
-  }
+  const mutated =
+    result.ok ||
+    (opts.alwaysBroadcast === true &&
+      !PRE_FLIGHT_REJECTIONS.has(result.stderr));
+  if (mutated) ctx.events.broadcast({ type: 'git.changed' });
   return jsonResponse(result);
 }
 
@@ -1094,13 +1112,15 @@ async function gitCommit(req: Request, ctx: ApiContext): Promise<Response> {
   if (body.amend !== undefined && typeof body.amend !== 'boolean') {
     return errorResponse(400, 'amend must be a boolean');
   }
-  return gitMutationResponse(
-    ctx,
-    await ctx.gitRepo.commit({
-      message: body.message,
-      amend: body.amend === true,
-    })
-  );
+  const result = await ctx.gitRepo.commit({
+    message: body.message,
+    amend: body.amend === true,
+  });
+  // The commit itself can still have landed even when this reports `ok:
+  // false` (rev-parse failed to confirm the sha) — broadcast that case too.
+  const shaUnresolved =
+    !result.ok && result.stderr.startsWith(COMMIT_SHA_UNRESOLVED_PREFIX);
+  return gitMutationResponse(ctx, result, { alwaysBroadcast: shaUnresolved });
 }
 
 // POST /api/git/commit-message — the agent-focused route. 400s when nothing

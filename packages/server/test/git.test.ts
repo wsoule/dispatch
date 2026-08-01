@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -394,6 +400,20 @@ describe('GitRepo: fetch remote validation', () => {
     expect(called).toBe(false);
   });
 
+  it('rejects a leading-dash remote (a valueless flag like --prune) without invoking git', async () => {
+    let called = false;
+    const fakeRun: CommandRunner = async () => {
+      called = true;
+      return { ok: true, stdout: '', stderr: '' };
+    };
+    const unsafeRepo = new GitRepo(root, fakeRun);
+
+    const result = await unsafeRepo.fetch('--prune');
+
+    expect(result.ok).toBe(false);
+    expect(called).toBe(false);
+  });
+
   it('lets a plain remote name reach git (and fail there if it does not exist)', async () => {
     const result = await repo.fetch('origin');
 
@@ -447,6 +467,25 @@ describe('GitRepo: path and ref safety', () => {
 
     expect(result.ok).toBe(false);
     expect(called).toBe(false);
+  });
+
+  it('rejects a path through an in-repo symlink pointing outside the repo root', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'dispatch-outside-'));
+    writeFileSync(join(outside, 'secret.txt'), 'do not touch\n');
+    symlinkSync(outside, join(root, 'escape-link'));
+
+    let called = false;
+    const fakeRun: CommandRunner = async () => {
+      called = true;
+      return { ok: true, stdout: '', stderr: '' };
+    };
+    const guardedRepo = new GitRepo(root, fakeRun);
+
+    const result = await guardedRepo.stage(['escape-link/secret.txt']);
+
+    expect(result.ok).toBe(false);
+    expect(called).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
   });
 });
 

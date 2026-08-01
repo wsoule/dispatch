@@ -5,7 +5,7 @@ import { loadConfig } from '@dispatch/core';
 import { openClaudeQuery } from '../orchestrator/claudeCli.js';
 
 // Generates a Conventional Commits message from a staged diff, mirroring
-// InboxClusterer's invocation shape (`config.models.summarize`, no tools, `json_schema` output).
+// InboxClusterer's invocation shape (Haiku-class model, no tools).
 
 const SCHEMA = {
   type: 'object',
@@ -19,7 +19,7 @@ const SCHEMA = {
 /** Bounds a single generation call the same way InboxClusterer bounds a cluster pass. */
 const COMMIT_MESSAGE_TIMEOUT_MS = 60_000;
 
-// Caps what reaches the model — one staged lockfile could otherwise blow the context window.
+// Caps what reaches the model — one staged lockfile could blow the context.
 const MAX_DIFF_CHARS = 20_000;
 
 function isAbortError(err: unknown): boolean {
