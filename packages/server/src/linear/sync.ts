@@ -17,7 +17,6 @@ import type {
   LinearIssue,
   LinearLabel,
   LinearWorkflowState,
-  ListSafeResult,
   TaskDoc,
   TaskStore,
 } from '@dispatch/core';
@@ -89,6 +88,11 @@ interface SyncSession {
 // 'both' is the ordinary pass; 'push' is the debounced local-edit trigger;
 // 'import' is the explicit "bring existing Linear issues down" action.
 type SyncMode = 'both' | 'push' | 'import';
+
+// One issue-link fetch per pass: `versions` is set once, to null when the fetch failed.
+interface IssueRefCache {
+  versions?: Map<string, string> | null;
+}
 
 interface RunOptions {
   mode: SyncMode;
@@ -281,6 +285,8 @@ export class LinearSync {
     // Issues this pass already holds a remote version for, so an explicit push does
     // not re-fetch what the pull has answered.
     const verifiedIssues = new Set<string>();
+    // One issue-link fetch per pass at most, shared by the baseline backfill and the push.
+    const refs: IssueRefCache = {};
 
     // A first sync reconciles nothing — no task to create, no link to update — so it
     // takes a cursor instead of scanning a whole team it has no use for.
@@ -297,9 +303,7 @@ export class LinearSync {
       // reconciled yet, so a fresh clone must send none of it over a linked issue.
       this.accountForAll(state);
       state.bootstrappedAt = now;
-      if (opts.taskIds === undefined) {
-        await this.refreshIssueRefs(session, state, summary);
-      }
+      await this.refreshIssueRefs(session, state, summary, refs);
     } else if (pulling) {
       pullFailed = !(await this.pull(
         session,
@@ -317,24 +321,14 @@ export class LinearSync {
       direction !== 'pull' &&
       !summary.rateLimited
     ) {
-      if (opts.taskIds !== undefined && !pullFailed) {
-        await this.guardExplicitUpdates(
-          session,
-          state,
-          summary,
-          opts.taskIds,
-          verifiedIssues,
-          remoteWins
-        );
-      }
-      if (!summary.rateLimited) {
-        await this.push(session, state, summary, {
-          taskIds: opts.taskIds,
-          pulledTaskIds,
-          remoteWins,
-          createOnly: pullFailed,
-        });
-      }
+      await this.push(session, state, summary, {
+        taskIds: opts.taskIds,
+        pulledTaskIds,
+        remoteWins,
+        verifiedIssues,
+        createOnly: pullFailed,
+        refs,
+      });
     }
 
     // The link is established once the team answered, not once a data pass came back
@@ -362,12 +356,16 @@ export class LinearSync {
     if (state.lastPushAt === null) return;
     if (Object.keys(state.pushed).length === 0) {
       const mark = Date.parse(state.lastPushAt);
+      // Ids in `pushRetry` were outstanding despite the watermark covering them.
+      const queued = new Set(state.pushRetry ?? []);
       for (const doc of this.deps.store.listSafe().docs) {
+        if (queued.has(doc.meta.id)) continue;
         if (Date.parse(doc.meta.updated) <= mark) {
           state.pushed[doc.meta.id] = doc.meta.updated;
         }
       }
     }
+    delete state.pushRetry;
     state.lastPushAt = null;
   }
 
@@ -441,18 +439,24 @@ export class LinearSync {
   private async refreshIssueRefs(
     session: SyncSession,
     state: LinearSyncState,
-    summary: LinearSyncSummary
+    summary: LinearSyncSummary,
+    cache: IssueRefCache
   ): Promise<Map<string, string> | null> {
+    if (cache.versions !== undefined) return cache.versions;
     const linked = new Set<string>();
     for (const doc of this.deps.store.listSafe().docs) {
       const id = parseExternal(doc.meta.external);
       if (id !== null) linked.add(id);
     }
-    if (linked.size === 0) return new Map();
+    if (linked.size === 0) {
+      cache.versions = new Map();
+      return cache.versions;
+    }
     const result = await session.client.issueLinks(session.teamId);
     if (!result.ok) {
       summary.errors.push(this.note(result));
       summary.rateLimited ||= result.kind === 'rate-limit';
+      cache.versions = null;
       return null;
     }
     const versions = new Map<string, string>();
@@ -461,36 +465,45 @@ export class LinearSync {
       this.recordLink(state, issue);
       versions.set(issue.id, issue.updatedAt);
     }
+    cache.versions = versions;
     return versions;
   }
 
-  // An explicit push names tasks the pull may never have covered, so a linked one is sent
-  // only when the local copy is provably newer. The rest are withheld and reported.
-  private async guardExplicitUpdates(
+  // Linked candidates this pass holds no verdict for: an explicit push names tasks the pull
+  // never covered, and an unrecorded version means the engine has never reconciled the issue.
+  private async verifyBeforeSending(
     session: SyncSession,
     state: LinearSyncState,
     summary: LinearSyncSummary,
-    taskIds: string[],
-    verifiedIssues: Set<string>,
-    remoteWins: Set<string>
-  ): Promise<void> {
-    const unchecked = this.deps.store.listSafe().docs.filter((doc) => {
-      if (!taskIds.includes(doc.meta.id)) return false;
+    candidates: TaskDoc[],
+    opts: {
+      explicit: boolean;
+      verifiedIssues: Set<string>;
+      remoteWins: Set<string>;
+      refs: IssueRefCache;
+    }
+  ): Promise<Set<string>> {
+    const { explicit, verifiedIssues, remoteWins, refs } = opts;
+    // Task ids the check could not answer for. They are skipped without being recorded,
+    // so a failed lookup postpones the decision instead of settling it.
+    const unchecked = new Set<string>();
+    const pending = candidates.filter((doc) => {
       const issueId = parseExternal(doc.meta.external);
-      return (
-        issueId !== null &&
-        !verifiedIssues.has(issueId) &&
-        !remoteWins.has(issueId)
-      );
+      if (issueId === null) return false;
+      if (verifiedIssues.has(issueId) || remoteWins.has(issueId)) return false;
+      return explicit || state.pushed[doc.meta.id] === undefined;
     });
-    if (unchecked.length === 0) return;
+    if (pending.length === 0) return unchecked;
 
-    const versions = await this.refreshIssueRefs(session, state, summary);
+    const versions = await this.refreshIssueRefs(session, state, summary, refs);
     let withheld = 0;
-    for (const doc of unchecked) {
+    for (const doc of pending) {
       const issueId = parseExternal(doc.meta.external) ?? '';
       const remote = versions?.get(issueId);
+      // A version this engine itself wrote is already reconciled, so Linear being ahead only
+      // because of its own stamp must not block a push the user asked for by name.
       if (
+        explicit &&
         remote !== undefined &&
         this.isAlreadyApplied(state, issueId, remote)
       ) {
@@ -499,17 +512,35 @@ export class LinearSync {
       const verdict =
         remote === undefined
           ? 'unknown'
-          : resolveConflict(doc.meta.updated, remote);
+          : this.compareVersions(doc.meta.updated, remote);
       if (verdict === 'local') continue;
-      remoteWins.add(issueId);
-      // A tie means the two sides already agree, so there is nothing to report.
-      if (verdict !== 'none') withheld++;
+      // A tie means the two sides already agree, so there is nothing to send or report.
+      if (verdict === 'none') {
+        remoteWins.add(issueId);
+        continue;
+      }
+      withheld++;
+      if (verdict === 'unknown') unchecked.add(doc.meta.id);
+      else remoteWins.add(issueId);
     }
     if (withheld > 0) {
       summary.errors.push(
         `withheld ${withheld} issue update(s): Linear holds a newer copy, or its version could not be checked`
       );
     }
+    return unchecked;
+  }
+
+  // resolveConflict folds an unreadable timestamp into the same 'none' as a genuine tie,
+  // which would withhold a task silently. Unreadable is surfaced as its own verdict.
+  private compareVersions(
+    local: string,
+    remote: string
+  ): 'local' | 'remote' | 'none' | 'unknown' {
+    if (Number.isNaN(Date.parse(local)) || Number.isNaN(Date.parse(remote))) {
+      return 'unknown';
+    }
+    return resolveConflict(local, remote);
   }
 
   // Returns false when the pull failed, which makes the push skip updates to
@@ -534,10 +565,8 @@ export class LinearSync {
       return false;
     }
 
-    const listing = this.deps.store.listSafe();
-    this.prunePushed(state, listing);
     const byExternal = new Map<string, TaskDoc>();
-    for (const doc of listing.docs) {
+    for (const doc of this.deps.store.listSafe().docs) {
       const id = parseExternal(doc.meta.external);
       if (id !== null) byExternal.set(id, doc);
     }
@@ -633,22 +662,31 @@ export class LinearSync {
       taskIds: string[] | undefined;
       pulledTaskIds: Set<string>;
       remoteWins: Set<string>;
+      verifiedIssues: Set<string>;
       createOnly: boolean;
+      refs: IssueRefCache;
     }
   ): Promise<void> {
     const { taskIds, pulledTaskIds, remoteWins, createOnly } = opts;
     const explicit = taskIds !== undefined;
-    const listing = this.deps.store.listSafe();
-    this.prunePushed(state, listing);
-    // A task is outstanding until the pass records the exact version it accounted for,
-    // so anything this pass never reaches stays outstanding for the next one.
-    const candidates = listing.docs.filter((doc) =>
-      explicit
-        ? taskIds.includes(doc.meta.id)
-        : !pulledTaskIds.has(doc.meta.id) &&
-          doc.meta.archivedAt === undefined &&
-          state.pushed[doc.meta.id] !== doc.meta.updated
-    );
+    const candidates = this.deps.store
+      .listSafe()
+      .docs.filter((doc) =>
+        explicit
+          ? taskIds.includes(doc.meta.id)
+          : !pulledTaskIds.has(doc.meta.id) &&
+            doc.meta.archivedAt === undefined &&
+            this.isOutstanding(state, doc)
+      );
+    const unchecked = createOnly
+      ? new Set<string>()
+      : await this.verifyBeforeSending(session, state, summary, candidates, {
+          explicit,
+          verifiedIssues: opts.verifiedIssues,
+          remoteWins,
+          refs: opts.refs,
+        });
+    if (summary.rateLimited) return;
     let skippedForFailedPull = 0;
 
     for (const doc of candidates) {
@@ -656,6 +694,7 @@ export class LinearSync {
       // edit landing mid-pass moves the task off it and so stays outstanding.
       const version = doc.meta.updated;
       const issueId = parseExternal(doc.meta.external);
+      if (unchecked.has(doc.meta.id)) continue;
       if (issueId !== null && remoteWins.has(issueId)) {
         state.pushed[doc.meta.id] = version;
         continue;
@@ -741,15 +780,12 @@ export class LinearSync {
     return Date.parse(doc.meta.updated) >= Date.parse(state.bootstrappedAt);
   }
 
-  // Drops accounting for tasks whose files are gone. A file that failed to parse still
-  // counts as present: forgetting it would re-send the task once it parses again.
-  private prunePushed(state: LinearSyncState, listing: ListSafeResult): void {
-    const live = new Set(listing.docs.map((doc) => doc.meta.id));
-    for (const id of Object.keys(state.pushed)) {
-      if (live.has(id)) continue;
-      if (listing.errors.some((e) => e.file.startsWith(`${id}-`))) continue;
-      delete state.pushed[id];
-    }
+  // A task is outstanding when its content has moved past the version the push last
+  // accounted for. Never when it moved backwards: a branch switch must not re-send old work.
+  private isOutstanding(state: LinearSyncState, doc: TaskDoc): boolean {
+    const accounted = state.pushed[doc.meta.id];
+    if (accounted === undefined) return true;
+    return Date.parse(doc.meta.updated) > Date.parse(accounted);
   }
 
   // Marks this issue version as reconciled, and keeps its display identifier around
