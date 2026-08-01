@@ -647,10 +647,8 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
-  // Every task draft currently held in memory (running/ready/failed until dismissed), newest
-  // first — feeds the app-wide drafts tray. Refetched on `draft.changed` in the WS effect
-  // below, so a draft's progress shows up here whether or not the composer that started it is
-  // still open.
+  // Feeds the app-wide drafts tray; refetched on `draft.changed` regardless of whether the
+  // composer that started a draft is still open.
   const { data: drafts } = useQuery({
     queryKey: draftsQueryKey,
     queryFn: () => {
@@ -1088,10 +1086,8 @@ export function useDispatchProject(
     [client, queryClient, tasksQueryKey, readyQueryKey]
   );
 
-  // Starts a background planner turn and seeds the drafts query with the 202's record
-  // (`running`) immediately, so the tray shows it without waiting on a refetch — the turn's
-  // own completion arrives via the `draft.changed` WS invalidation below. No task-list
-  // invalidation here: drafting persists nothing until a reviewed draft is saved.
+  // Seeds the drafts query with the 202's `running` record immediately, so the tray shows it
+  // without waiting on a refetch.
   const handleStartDraft = useCallback(
     async (prompt: string): Promise<DraftRecord> => {
       if (client === null) throw new Error('dispatchd client not ready');
@@ -1105,9 +1101,8 @@ export function useDispatchProject(
     [client, queryClient, draftsQueryKey]
   );
 
-  // Dismisses a draft (reviewed, discarded, or just abandoned) so it stops showing up in the
-  // tray. Removed from the cache optimistically, ahead of the round trip, so the tray row
-  // disappears the instant it's actioned rather than waiting on `draft.changed` to arrive.
+  // Removed from the cache optimistically, ahead of the round trip, so the tray row
+  // disappears the instant it's actioned.
   const handleDismissDraft = useCallback(
     async (id: string): Promise<void> => {
       if (client === null) return;

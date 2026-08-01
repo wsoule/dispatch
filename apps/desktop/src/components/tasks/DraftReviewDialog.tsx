@@ -1,5 +1,5 @@
 import type { DraftRecord } from '@dispatch/client';
-import type { Priority } from '@dispatch/core';
+import type { CreateInput, Priority } from '@dispatch/core';
 import {
   Check,
   CircleAlert,
@@ -54,26 +54,20 @@ function PropertyField({
 
 interface DraftReviewDialogProps {
   data: DispatchProjectData;
+  /** The unwrapped create call — rejects on failure (unlike `data.handleCreate`) so a failed
+   * save keeps this dialog open with the draft intact instead of discarding it. */
+  onCreate: (input: CreateInput) => Promise<void>;
   /** A `ready` draft — the drafts tray only ever opens this dialog for one, since a
    * `running`/`failed` draft has no settled proposal to review. */
   draft: DraftRecord;
   onClose: () => void;
 }
 
-/**
- * Reviews one settled AI task draft before it becomes a real task: every field is editable in
- * place, and nothing is written until "Create task" — the same `handleCreate`/`POST /api/tasks`
- * path `CreateTaskModal` uses, so how a task is persisted never depends on which creator
- * produced it.
- *
- * A draft's proposal can carry more than one planned task (`PlanProposal` is shared with the
- * multi-task Plans flow), but `POST /api/tasks/draft` is documented as the single-task
- * creator — this dialog only ever reviews the first task and says so when the planner proposed
- * more, rather than silently dropping the rest or growing a second copy of Plans' multi-task
- * editor for a surface meant to stay "one thing, fast".
- */
+/** Reviews a settled AI task draft — every field editable, nothing written until "Create
+ * task". Reviews only the proposal's first task, since the endpoint is the single-task creator. */
 export function DraftReviewDialog({
   data,
+  onCreate,
   draft,
   onClose,
 }: DraftReviewDialogProps) {
@@ -92,14 +86,14 @@ export function DraftReviewDialog({
       statuses[0] ?? 'backlog'
     )
   );
-  // Stable per-row identity for the acceptance-criteria inputs: index keys would make React
-  // reuse a row's DOM node/focus for whichever criterion slides into that index after a
-  // removal, which reads as your cursor jumping to a different line mid-edit.
+  // Stable per-row identity for the acceptance-criteria inputs, so editing one row never
+  // shifts focus to a different one after a removal.
   const [criterionKeys, setCriterionKeys] = useState<string[]>(() =>
     editable.acceptanceCriteria.map((_, i) => `criterion-${i}`)
   );
   const nextCriterionKey = useRef(editable.acceptanceCriteria.length);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
 
   function editDraft(patch: Partial<EditableTaskDraft>) {
@@ -134,12 +128,19 @@ export function DraftReviewDialog({
     setCriterionKeys((prev) => prev.filter((_, i) => i !== index));
   }
 
-  // Saves the edited draft as a real task, then dismisses the draft — once it is a task it has
-  // no further reason to sit in the tray as something still awaiting review.
+  // Only dismisses the draft once the task actually exists — a failed create leaves it intact
+  // in the tray, with the error shown inline, rather than discarding drafted work.
   async function save() {
     if (!isDraftSaveable(editable)) return;
     setSaving(true);
-    await data.handleCreate(editableDraftToCreateInput(editable));
+    setSaveError(null);
+    try {
+      await onCreate(editableDraftToCreateInput(editable));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+      setSaving(false);
+      return;
+    }
     await data.handleDismissDraft(draft.id);
     onClose();
   }
@@ -169,20 +170,31 @@ export function DraftReviewDialog({
           </div>
         ) : (
           <div className="flex flex-col gap-4">
+            {saveError !== null && (
+              <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+                <CircleAlert className="size-4 shrink-0" />
+                <span>{saveError}</span>
+              </div>
+            )}
+
             <div className="text-muted-foreground flex items-start gap-2 text-[12px]">
               <Sparkles className="mt-0.5 size-3.5 shrink-0" />
               <span className="min-w-0 flex-1 italic">{draft.prompt}</span>
             </div>
 
-            {proposal !== undefined &&
-              proposal !== null &&
-              proposal.tasks.length > 1 && (
-                <div className="border-border bg-secondary/40 text-muted-foreground rounded-md border px-3 py-2 text-[12px]">
-                  The planner proposed {proposal.tasks.length} tasks — only the
-                  first is reviewed here; use Plans for a multi-task body of
-                  work.
-                </div>
-              )}
+            {proposal !== null && proposal.tasks.length > 1 && (
+              <div className="border-border bg-secondary/40 text-muted-foreground rounded-md border px-3 py-2 text-[12px]">
+                <p>
+                  Only the first of {proposal.tasks.length} proposed tasks is
+                  reviewed here; discarding also drops these:
+                </p>
+                <ul className="mt-1 list-disc pl-4">
+                  {proposal.tasks.slice(1).map((t, i) => (
+                    <li key={i}>{t.title}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="border-border bg-card flex flex-col gap-3 rounded-lg border p-4">
               <Input

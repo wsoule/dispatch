@@ -62,10 +62,8 @@ import { TooltipProvider } from '@/ui/tooltip';
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
-  // Pre-selects `CreateTaskModal`'s Status field when it's opened from a board column's or
-  // list group's hover "+" button (see `BoardView`'s `onNewTask`), including via the AI
-  // composer's own "Quick add…" fallback. `null` when opened from the plain "New task" button,
-  // which leaves the modal to default to the first configured status on its own.
+  // Pre-selects `CreateTaskModal`'s Status field from a board/list "+" button; `null` leaves
+  // it to default to the first configured status.
   const [createStatus, setCreateStatus] = useState<string | null>(null);
   // Whether the notification inbox popover (the bell in Sidebar's global section) is open —
   // see toggleInbox below for why opening it also marks everything read.
@@ -73,9 +71,8 @@ function App() {
   // The AI task composer, a dialog rather than a screen — open state lives here (not in
   // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
   const [aiComposerOpen, setAiComposerOpen] = useState(false);
-  // Which draft the tray's click opened for review, or `null` when the review dialog is
-  // closed — a draft id rather than a boolean so App only ever needs one slot regardless of
-  // how many drafts are in flight.
+  // Which draft the tray opened for review, or `null` when closed — an id rather than a
+  // boolean since several drafts can be in flight at once.
   const [reviewingDraftId, setReviewingDraftId] = useState<string | null>(null);
 
   // The overview rail's open/closed state, kept across launches — it is a
@@ -106,11 +103,8 @@ function App() {
 
   useDataChangedEvents();
 
-  // Reaching the `new-task` projectView only opens the AI composer dialog and immediately
-  // hands the view back to `newTaskReturnView` — every entry point that dispatches
-  // `openNewTask` (the palette action, a board column's "+") reaches the composer this way
-  // without `new-task` ever rendering as its own page. `useLayoutEffect` so the flip happens
-  // before the browser paints, rather than a visible blank frame first.
+  // Reaching `new-task` only opens the AI composer dialog and hands the view back to
+  // `newTaskReturnView` — `useLayoutEffect` so this happens before paint, with no blank frame.
   useLayoutEffect(() => {
     if (navState.projectView !== 'new-task') return;
     setAiComposerOpen(true);
@@ -382,9 +376,8 @@ function App() {
         ) ?? null)
       : null;
 
-  // The draft the drafts tray's click opened for review, re-derived from the live query every
-  // render — once it stops being `ready` (dismissed, or created and cleared elsewhere) this
-  // resolves to `null` and the dialog below closes on its own, with no separate effect needed.
+  // Re-derived from the live query every render, so the dialog below closes on its own once
+  // this stops being `ready` — no separate effect needed.
   const reviewingDraft =
     reviewingDraftId !== null
       ? (data.drafts.find(
@@ -857,6 +850,7 @@ function App() {
         {aiComposerOpen && (
           <AiTaskComposer
             data={data}
+            onStartDraft={rawData.handleStartDraft}
             onQuickAdd={() => {
               setAiComposerOpen(false);
               openQuickAddTask(createStatus ?? undefined);
@@ -869,6 +863,7 @@ function App() {
           <DraftReviewDialog
             key={reviewingDraft.id}
             data={data}
+            onCreate={rawData.handleCreate}
             draft={reviewingDraft}
             onClose={() => setReviewingDraftId(null)}
           />

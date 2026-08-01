@@ -20,9 +20,11 @@ export interface DraftTrayItem {
 
 export interface DraftTrayViewModel {
   items: DraftTrayItem[];
-  /** Drafts still worth a look — running (in progress) or ready (awaiting review). A failed
-   * draft needs dismissing, not celebrating, so it does not inflate this count. */
+  /** Drafts still worth a look — running or ready, not failed (which needs dismissing, not
+   * celebrating). */
   badgeCount: number;
+  /** Whether any item is still `running` — gates the tray's elapsed-time ticker. */
+  hasRunning: boolean;
 }
 
 // running sorts above ready sorts above failed — the tray leads with what is still happening,
@@ -49,9 +51,8 @@ export function formatElapsed(ms: number): string {
   return `${hours}h`;
 }
 
-/** Builds the tray's sorted items plus its badge count from the raw drafts list
- * (`GET /api/tasks/drafts`). `now` is a parameter (rather than read internally) so the sort
- * and elapsed strings are pinned to a fixed instant in tests. */
+/** Builds the tray's sorted items, badge count, and running flag from the raw drafts list.
+ * `now` is a parameter so the sort and elapsed strings are pinned to a fixed instant in tests. */
 export function draftTrayViewModel(
   drafts: DraftRecord[],
   now: number = Date.now()
@@ -71,5 +72,6 @@ export function draftTrayViewModel(
   const badgeCount = drafts.filter(
     (d) => d.state === 'running' || d.state === 'ready'
   ).length;
-  return { items, badgeCount };
+  const hasRunning = drafts.some((d) => d.state === 'running');
+  return { items, badgeCount, hasRunning };
 }
