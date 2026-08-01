@@ -1,10 +1,13 @@
 import type { InboxClusterGroup, InboxItem, InboxKind } from '@dispatch/client';
 import { Bot, Combine, Inbox, Sparkles, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { EnrichReview } from '../components/tasks/EnrichReview';
 import { SectionLabel } from '../components/ui/SectionLabel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type { EnrichDraft } from '../lib/enrichReview';
+import { enrichViewState, formatEnrichedInboxText } from '../lib/enrichReview';
 import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
 import { cn } from '@/lib/utils';
@@ -55,6 +58,12 @@ export function BrainDumpView({
   const sorted = useMemo(() => inbox.filter((i) => i.done), [inbox]);
   const cluster = useMemo(() => findCluster(inbox), [inbox]);
   const pendingLines = splitCaptureLines(draft).length;
+
+  // The one in-flight/last "Add detail" draft this view can show at a time — mirrors
+  // `enrichPlanRecord`'s single-slot shape on the task dialog. `enrichItemId` says which row it
+  // belongs to; every other row ignores it.
+  const enrichItemId = data.inboxEnrichItemId;
+  const enrichState = enrichViewState(data.inboxEnrichPlanRecord);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -124,6 +133,16 @@ export function BrainDumpView({
   function addDetail(id: string): void {
     void guard(async () => {
       await data.handleEnrichInboxItem(id);
+    });
+  }
+
+  // Writes the drafted description/criteria back onto the item's `text` and drops the draft.
+  function applyEnrichDraft(id: string, enrichDraft: EnrichDraft): void {
+    void guard(async () => {
+      await data.handleApplyInboxEnrich(
+        id,
+        formatEnrichedInboxText(enrichDraft)
+      );
     });
   }
 
@@ -226,17 +245,55 @@ export function BrainDumpView({
           ) : (
             <ul className="mt-2 flex flex-col gap-1">
               {open.map((it) => (
-                <InboxRow
-                  key={it.id}
-                  item={it}
-                  selected={selected.has(it.id)}
-                  busy={busy}
-                  onToggle={() => toggle(it.id)}
-                  onMakeTask={() => convert([it.id])}
-                  onAddDetail={() => addDetail(it.id)}
-                  onPlan={() => onPlanText(it.text)}
-                  onDismiss={() => dismiss([it.id])}
-                />
+                <Fragment key={it.id}>
+                  <InboxRow
+                    item={it}
+                    selected={selected.has(it.id)}
+                    busy={busy}
+                    enriching={
+                      enrichItemId === it.id && enrichState.kind === 'running'
+                    }
+                    onToggle={() => toggle(it.id)}
+                    onMakeTask={() => convert([it.id])}
+                    onAddDetail={() => addDetail(it.id)}
+                    onPlan={() => onPlanText(it.text)}
+                    onDismiss={() => dismiss([it.id])}
+                  />
+                  {/* The draft belongs to at most one row at a time — rendered right under it,
+                  not in a modal, so applying or dismissing stays in the flow of the list. */}
+                  {enrichItemId === it.id && enrichState.kind !== 'idle' && (
+                    <li className="px-1 pb-1.5">
+                      {enrichState.kind === 'running' && (
+                        <p className="text-muted-foreground text-[12.5px]">
+                          Reading the repo…
+                        </p>
+                      )}
+                      {enrichState.kind === 'failed' && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-state-failed text-[12.5px]">
+                            {enrichState.error}
+                          </span>
+                          <BarButton onClick={data.handleDismissInboxEnrich}>
+                            Dismiss
+                          </BarButton>
+                        </div>
+                      )}
+                      {enrichState.kind === 'ready' && (
+                        <EnrichReview
+                          draft={enrichState.draft}
+                          applying={busy}
+                          applyLabel="Apply"
+                          discardLabel="Dismiss"
+                          note="Applying replaces the captured line above."
+                          onApply={() =>
+                            applyEnrichDraft(it.id, enrichState.draft)
+                          }
+                          onDiscard={data.handleDismissInboxEnrich}
+                        />
+                      )}
+                    </li>
+                  )}
+                </Fragment>
               ))}
             </ul>
           )}
@@ -433,6 +490,7 @@ function InboxRow({
   item,
   selected,
   busy,
+  enriching,
   onToggle,
   onMakeTask,
   onAddDetail,
@@ -442,6 +500,9 @@ function InboxRow({
   item: InboxItem;
   selected: boolean;
   busy: boolean;
+  /** Whether this row's own "Add detail" draft is currently being drafted — disables and
+   * relabels just its button, distinct from `busy` (every button in the view). */
+  enriching: boolean;
   onToggle: () => void;
   onMakeTask: () => void;
   onAddDetail: () => void;
@@ -490,8 +551,8 @@ function InboxRow({
         </BarButton>
         {/* Sends this one line to the planner to be turned into a properly specified task —
             the thing a one-liner is missing is context, not wording. */}
-        <BarButton onClick={onAddDetail} disabled={busy}>
-          Add detail
+        <BarButton onClick={onAddDetail} disabled={busy || enriching}>
+          {enriching ? 'Reading the repo…' : 'Add detail'}
         </BarButton>
         <BarButton onClick={onPlan} disabled={busy}>
           Plan it
