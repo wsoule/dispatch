@@ -225,9 +225,25 @@ function validateTaskFields(
   return null;
 }
 
+// A cross-origin "simple" request can never set this to application/json —
+// requiring it blocks a hostile page's request from being acted on, since CORS alone only blocks reading the response.
+function hasJsonContentType(req: Request): boolean {
+  const contentType = req.headers.get('content-type');
+  return (
+    contentType !== null &&
+    contentType.toLowerCase().startsWith('application/json')
+  );
+}
+
 async function readJsonBody(
   req: Request
 ): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
+  if (!hasJsonContentType(req)) {
+    return {
+      ok: false,
+      response: errorResponse(415, 'expected content-type: application/json'),
+    };
+  }
   try {
     const value = await req.json();
     if (typeof value !== 'object' || value === null) {
@@ -242,10 +258,8 @@ async function readJsonBody(
   }
 }
 
-// Same contract as readJsonBody, but an empty request body is treated as `{}`
-// rather than a 400 — used for endpoints where every field is optional (only
-// POST /api/tasks/:id/runs today: `executor` defaults when omitted), so a
-// client that sends no body at all isn't penalized for it.
+// Same contract as readJsonBody, but an empty body is `{}` rather than a 400
+// — the content-type check only applies once there's a real body to guard.
 async function readJsonBodyOptional(
   req: Request
 ): Promise<
@@ -254,6 +268,12 @@ async function readJsonBodyOptional(
 > {
   const text = await req.text();
   if (text.trim() === '') return { ok: true, value: {} };
+  if (!hasJsonContentType(req)) {
+    return {
+      ok: false,
+      response: errorResponse(415, 'expected content-type: application/json'),
+    };
+  }
   try {
     const value = JSON.parse(text);
     if (typeof value !== 'object' || value === null) {
@@ -977,8 +997,16 @@ async function gitBranches(
 
 // Shared by every `/api/git/*` mutation route — broadcasts `git.changed` only
 // on success, so a refetching client never sees stale state from a failure.
-function gitMutationResponse(ctx: ApiContext, result: GitOutcome): Response {
-  if (result.ok) ctx.events.broadcast({ type: 'git.changed' });
+// `alwaysBroadcast` covers ops that can mutate the tree even on `ok: false`
+// (a conflicted pull/cherry-pick/revert/stash-pop, a partially-applied discard).
+function gitMutationResponse(
+  ctx: ApiContext,
+  result: GitOutcome,
+  opts: { alwaysBroadcast?: boolean } = {}
+): Response {
+  if (result.ok || opts.alwaysBroadcast === true) {
+    ctx.events.broadcast({ type: 'git.changed' });
+  }
   return jsonResponse(result);
 }
 
@@ -1028,7 +1056,9 @@ async function gitDiscard(req: Request, ctx: ApiContext): Promise<Response> {
       'discard is destructive and requires confirm: true'
     );
   }
-  return gitMutationResponse(ctx, await ctx.gitRepo.discard(paths));
+  return gitMutationResponse(ctx, await ctx.gitRepo.discard(paths, true), {
+    alwaysBroadcast: true,
+  });
 }
 
 async function gitStageHunk(req: Request, ctx: ApiContext): Promise<Response> {
@@ -1140,7 +1170,10 @@ async function gitDeleteBranch(
       'deleting an unmerged branch is destructive and requires confirm: true'
     );
   }
-  return gitMutationResponse(ctx, await ctx.gitRepo.deleteBranch(name, force));
+  return gitMutationResponse(
+    ctx,
+    await ctx.gitRepo.deleteBranch(name, force, body.confirm === true)
+  );
 }
 
 async function gitStashPush(req: Request, ctx: ApiContext): Promise<Response> {
@@ -1165,7 +1198,9 @@ async function gitStashPop(req: Request, ctx: ApiContext): Promise<Response> {
   const index = requireStashIndex((parsed.value as { index?: unknown }).index);
   if (index === null)
     return errorResponse(400, 'index is required: a non-negative integer');
-  return gitMutationResponse(ctx, await ctx.gitRepo.stashPop(index));
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashPop(index), {
+    alwaysBroadcast: true,
+  });
 }
 
 // POST /api/git/stash/drop — destructive (the stash entry is gone for good),
@@ -1183,7 +1218,7 @@ async function gitStashDrop(req: Request, ctx: ApiContext): Promise<Response> {
       'dropping a stash is destructive and requires confirm: true'
     );
   }
-  return gitMutationResponse(ctx, await ctx.gitRepo.stashDrop(index));
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashDrop(index, true));
 }
 
 async function gitFetch(req: Request, ctx: ApiContext): Promise<Response> {
@@ -1215,7 +1250,9 @@ async function gitCherryPick(req: Request, ctx: ApiContext): Promise<Response> {
   const sha = (parsed.value as { sha?: unknown }).sha;
   if (typeof sha !== 'string' || sha === '')
     return errorResponse(400, 'sha is required');
-  return gitMutationResponse(ctx, await ctx.gitRepo.cherryPick(sha));
+  return gitMutationResponse(ctx, await ctx.gitRepo.cherryPick(sha), {
+    alwaysBroadcast: true,
+  });
 }
 
 async function gitRevert(req: Request, ctx: ApiContext): Promise<Response> {
@@ -1224,7 +1261,9 @@ async function gitRevert(req: Request, ctx: ApiContext): Promise<Response> {
   const sha = (parsed.value as { sha?: unknown }).sha;
   if (typeof sha !== 'string' || sha === '')
     return errorResponse(400, 'sha is required');
-  return gitMutationResponse(ctx, await ctx.gitRepo.revert(sha));
+  return gitMutationResponse(ctx, await ctx.gitRepo.revert(sha), {
+    alwaysBroadcast: true,
+  });
 }
 
 // Absent -> undefined; a valid non-negative integer -> that number;
@@ -2652,7 +2691,9 @@ export async function handleApi(
         segments[1] === 'pull' &&
         method === 'POST'
       ) {
-        return gitMutationResponse(ctx, await ctx.gitRepo.pull());
+        return gitMutationResponse(ctx, await ctx.gitRepo.pull(), {
+          alwaysBroadcast: true,
+        });
       }
       if (
         segments.length === 2 &&
