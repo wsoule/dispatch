@@ -1,4 +1,4 @@
-import type { NormalizedEntry, RunMeta } from '@dispatch/client';
+import type { NormalizedEntry, RunMeta, RunQuestion } from '@dispatch/client';
 import {
   Info,
   Megaphone,
@@ -13,6 +13,7 @@ import { groupLogEntries } from '../../lib/runLog';
 import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
+import { QuestionCard } from './QuestionCard';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -82,6 +83,10 @@ interface RunLogViewProps {
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
+  /** The question this run's agent is currently blocked on, or `null`. Only ever one at a
+   * time: the agent asks from inside a tool call, so it cannot ask again until answered. */
+  openQuestion: RunQuestion | null;
+  onAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
   /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
    * button drives) — this view offers it too once the run is done, so talking to the agent
    * works the same way (one composer, always in the same place) whether the run is still
@@ -100,6 +105,8 @@ export function RunLogView({
   pendingApproval,
   onApprove,
   onSendMessage,
+  openQuestion,
+  onAnswerQuestion,
   onRequestChanges,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
@@ -222,6 +229,18 @@ export function RunLogView({
             ))}
         </div>
       </div>
+
+      {/* Pinned above the composer rather than left in the scroller like the approval gate: the
+          agent is frozen inside a tool call until this is answered, so it must not be possible
+          to scroll past it. */}
+      {openQuestion !== null && (
+        <QuestionCard
+          question={openQuestion.question}
+          options={openQuestion.options}
+          askedAt={openQuestion.askedAt}
+          onAnswer={(answer) => onAnswerQuestion(openQuestion.id, answer)}
+        />
+      )}
 
       {error !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">

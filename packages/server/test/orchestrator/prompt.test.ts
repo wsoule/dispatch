@@ -70,6 +70,7 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
     expect(prompt).toContain('run_list');
     expect(prompt).toContain('task_comment');
+    expect(prompt).toContain('ask_user');
     expect(prompt).toContain('Commit your work');
   });
 

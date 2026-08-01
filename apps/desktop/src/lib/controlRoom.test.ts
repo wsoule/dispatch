@@ -41,6 +41,7 @@ function input(over: Partial<BuildFeedInput> = {}): BuildFeedInput {
     blockedIds: new Set(),
     mergeQueue: null,
     pendingApprovals: new Map(),
+    openQuestions: new Map(),
     query: '',
     activeStates: new Set(),
     collapsed: new Set(),
@@ -262,6 +263,36 @@ describe('row content', () => {
       reason: 'Wants to run Bash',
       detail: null,
     });
+    expect(model.groups[0]?.rows[0]?.waitingOn).toBe('approval');
+  });
+
+  test('a running run with an open question moves to waiting and quotes it', () => {
+    const model = buildFeed(
+      input({
+        runs: [run({ id: 'r-a', state: 'running' })],
+        openQuestions: new Map([['r-a', { question: 'Which database?' }]]),
+      })
+    );
+    const row = model.groups[0]?.rows[0];
+    expect(row?.state).toBe('waiting');
+    expect(row?.waitingOn).toBe('question');
+    expect(row?.attention).toEqual({
+      reason: 'Asked you a question',
+      detail: 'Which database?',
+    });
+    expect(model.counts.waiting).toBe(1);
+    expect(model.counts.working).toBe(0);
+  });
+
+  test('an open question on a finished run does not drag it back to waiting', () => {
+    const model = buildFeed(
+      input({
+        runs: [run({ id: 'r-a', state: 'finished' })],
+        openQuestions: new Map([['r-a', { question: 'Which database?' }]]),
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.state).toBe('review');
+    expect(model.groups[0]?.rows[0]?.waitingOn).toBeNull();
   });
 
   // After a reload this window never saw the approval.requested event, so the tool name is

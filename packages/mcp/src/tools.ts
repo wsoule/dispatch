@@ -387,6 +387,108 @@ async function messageUser(
   }
 }
 
+// The daemon parks each long-poll for 30s (QUESTION_POLL_MS in
+// @dispatch/server), so this side gives one request a little longer than that
+// before abandoning it and asking again. The total budget exists so a
+// question nobody is around to answer eventually returns instead of wedging
+// the agent for the rest of the run.
+const QUESTION_REQUEST_TIMEOUT_MS = 45_000;
+const QUESTION_TOTAL_WAIT_MS = 30 * 60_000;
+const QUESTION_RETRY_DELAY_MS = 250;
+const QUESTION_ERROR_DELAY_MS = 2000;
+
+interface QuestionRecord {
+  id: string;
+  answer: string | null;
+}
+
+const UNANSWERED_NOTE =
+  'No one answered within 30 minutes. Proceed on your best judgement, ' +
+  'and state the assumption you made in your final summary and in a ' +
+  'task_comment.';
+
+// Proxies `POST /api/runs/:id/questions` and then long-polls
+// `GET /api/runs/:id/questions/:qid?wait=1` until a human answers — the
+// blocking counterpart to `message_user`. Each poll returns after the
+// daemon's own short window whether or not an answer landed, so this loops
+// until either an answer arrives or the total budget runs out; a poll that
+// comes back unanswered is the normal case, not a failure. A question the
+// daemon no longer knows about (it restarted, or the run went terminal) also
+// ends the wait rather than looping forever against a 404.
+async function askUser(
+  rootDir: string,
+  args: { question: string; options?: string[] }
+): Promise<ToolOutcome> {
+  if (args.question.trim() === '') {
+    return toolError('question must not be empty');
+  }
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'ask_user requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — no one to ask');
+  }
+  const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/questions`;
+
+  let question: QuestionRecord;
+  try {
+    const res = await fetch(base, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        question: args.question,
+        options: args.options ?? [],
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `ask_user failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    question = (await res.json()) as QuestionRecord;
+  } catch (err) {
+    return toolError(`ask_user failed: ${(err as Error).message}`);
+  }
+
+  const deadline = Date.now() + QUESTION_TOTAL_WAIT_MS;
+  while (Date.now() < deadline) {
+    let polled: QuestionRecord | null = null;
+    try {
+      const res = await fetch(`${base}/${question.id}?wait=1`, {
+        signal: AbortSignal.timeout(QUESTION_REQUEST_TIMEOUT_MS),
+      });
+      // The question is gone from the daemon's registry — nothing further
+      // will ever answer it, so stop waiting instead of polling a 404.
+      if (res.status === 404) break;
+      if (res.ok) polled = (await res.json()) as QuestionRecord;
+    } catch {
+      // A dropped or timed-out poll says nothing about the answer; ask again.
+    }
+    const answer = polled?.answer ?? null;
+    if (answer !== null) return toolResult({ answer });
+    // A poll that came back cleanly can be repeated straight away; one that
+    // failed outright waits longer, so a daemon that is down or erroring
+    // doesn't get hammered for the rest of the budget.
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        polled !== null ? QUESTION_RETRY_DELAY_MS : QUESTION_ERROR_DELAY_MS
+      )
+    );
+  }
+
+  return {
+    content: [{ type: 'text', text: UNANSWERED_NOTE }],
+    structuredContent: { answer: '' },
+  };
+}
+
 // Proxies `POST /api/notes` — the agent side of the notes/triage hub. Lets an
 // agent capture triage it finds mid-run ("this file is huge, refactor it"), a
 // follow-up to do after merge, or a plain note, without derailing to file a
@@ -719,6 +821,32 @@ export function registerDispatchTools(
       annotations: { readOnlyHint: false },
     },
     ({ text }) => messageUser(rootDir, { text })
+  );
+
+  server.registerTool(
+    'ask_user',
+    {
+      title: 'Ask the human a question and wait',
+      description:
+        'Ask the human running this task a question and block until they ' +
+        'answer — use this whenever a decision would change the shape of ' +
+        'the result and the task does not specify it (ambiguous ' +
+        'requirements, several valid approaches, missing acceptance ' +
+        'criteria). Prefer asking once with several bundled questions over ' +
+        'many round trips. Do not use it for anything you can determine by ' +
+        'reading the repo. Pass `options` for the answers you consider ' +
+        'likely; the human can still reply with anything. Returns their ' +
+        'answer, or an empty answer after 30 minutes with no response, in ' +
+        'which case proceed on your best judgement and note the assumption. ' +
+        'Requires a live dispatch run context.',
+      inputSchema: {
+        question: z.string(),
+        options: z.array(z.string()).optional(),
+      },
+      outputSchema: { answer: z.string() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ question, options }) => askUser(rootDir, { question, options })
   );
 
   server.registerTool(

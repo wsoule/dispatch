@@ -663,6 +663,23 @@ export class Orchestrator {
     return meta;
   }
 
+  // Records the human's reply to an agent's `ask_user` question on that run's
+  // own transcript, so the whole exchange survives in the durable session log.
+  // Unlike `sendMessage` this never touches the executor: the answer reaches
+  // the agent as the return value of the tool call it is blocked in, and
+  // injecting it as well would deliver it twice.
+  recordAnswer(runId: string, text: string): void {
+    this.requireRun(runId);
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: 'user',
+      text,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+  }
+
   // Interrupts a live run's executor and marks it cancelled. The worktree is
   // deliberately left in place — per the plan, only a review action
   // (merge/discard) removes a run's worktree.

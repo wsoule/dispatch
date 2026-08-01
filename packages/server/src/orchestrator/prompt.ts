@@ -42,6 +42,18 @@ export function buildTaskPrompt(
   );
 
   sections.push(
+    'When the task genuinely does not say which way to go — ambiguous ' +
+      'requirements, several valid approaches with different end results, ' +
+      'missing acceptance criteria — call `ask_user`; it blocks until the ' +
+      'human answers and returns their reply. Use it whenever a decision ' +
+      'would change the shape of the result and the task does not specify ' +
+      'it, and bundle everything you are unsure about into one call rather ' +
+      'than asking repeatedly. Do not use it for anything you can settle by ' +
+      'reading the repo (existing conventions, how a helper behaves, where ' +
+      'a file lives) — find that out yourself.'
+  );
+
+  sections.push(
     'Commit your work (git add / git commit) before finishing — an ' +
       'uncommitted worktree cannot be reviewed or merged.'
   );
