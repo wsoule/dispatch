@@ -86,8 +86,7 @@ export interface ApiContext {
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
   prCapability: boolean;
-  // The Git page's backend: status/log/branches/staging/commit/stash/remote
-  // operations against the main checkout. See packages/server/src/git/commands.ts.
+  // The Git page's backend — see packages/server/src/git/commands.ts.
   gitRepo: GitRepo;
   // Test-injection seam only, same as `inboxClusterer` above.
   commitMessageGenerator?: CommitMessageGenerator;

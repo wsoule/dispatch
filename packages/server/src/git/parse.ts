@@ -121,7 +121,7 @@ export interface GitLogEntry {
   parents: string[];
 }
 
-// \x1f field separator; %s is guaranteed one line, so none is needed for records.
+// \x1f field separator; %s is one line, so no record separator is needed.
 export const LOG_FORMAT = '%H\x1f%h\x1f%s\x1f%an\x1f%aI\x1f%P';
 
 export function parseLogLines(output: string): GitLogEntry[] {
