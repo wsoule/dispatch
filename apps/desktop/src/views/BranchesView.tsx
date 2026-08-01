@@ -1,22 +1,49 @@
-import type { BranchEntry, BranchEntryStatus } from '@dispatch/client';
+import type { GitFileChange, GitStash } from '@dispatch/client';
 import {
   AlertTriangle,
-  GitBranch,
-  HardDriveDownload,
-  Loader2,
+  GitBranch as GitBranchIcon,
+  HelpCircle,
+  Plus,
   RefreshCw,
-  Trash2,
-  Undo2,
+  Search,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import type { BranchRowVM } from '../components/git/BranchesPanel';
+import {
+  BranchesPanel,
+  buildBranchRows,
+  filterBranchRows,
+} from '../components/git/BranchesPanel';
+import { CommitComposer } from '../components/git/CommitComposer';
+import { CommitsPanel } from '../components/git/CommitsPanel';
+import { DispatchAgentDialog } from '../components/git/DispatchAgentDialog';
+import { FilesPanel } from '../components/git/FilesPanel';
+import { GitKeymapDialog } from '../components/git/GitKeymapDialog';
+import { GitRightPane } from '../components/git/GitRightPane';
 import type { GitFilter } from '../components/git/GitSummary';
-import { GitSummary } from '../components/git/GitSummary';
+import { StashesPanel } from '../components/git/StashesPanel';
+import { StatusPanel } from '../components/git/StatusPanel';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { formatRelativeTimeFromIso } from '../lib/format';
-import { formatBytes } from '../lib/formatBytes';
-import { computeGitHealth } from '../lib/gitHealth';
+import { useGit } from '../hooks/useGit';
+import { isTypingTarget } from '../hooks/useGlobalKeyboard';
+import type {
+  GitFileRow,
+  GitPanelId,
+  GitPanelSelection,
+} from '../lib/gitPanels';
+import {
+  clampGitPanelSelection,
+  deriveGitRightPane,
+  focusGitPanel,
+  GIT_PANEL_IDS,
+  INITIAL_GIT_PANEL_SELECTION,
+  moveGitSelection,
+  reconcileGitPanelSelection,
+} from '../lib/gitPanels';
+import type { GitKeyCommand } from '../lib/keyboard';
+import { resolveGitKeyCommand } from '../lib/keyboard';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import {
@@ -27,267 +54,157 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/ui/dialog';
+import { Input } from '@/ui/input';
 
 interface BranchesViewProps {
   data: DispatchProjectData;
   onOpenRun: (runId: string) => void;
 }
 
-// The three groups rows are bucketed into, ordered by how much they need a
-// human: unowned refs first, then work awaiting a verdict, then read-only live
-// runs. `leftover` groups with `orphan` rather than with `reviewable` because a
-// leftover run has ALREADY been reviewed — what it shares with an orphan is
-// that nothing owns the ref anymore and no automatic path will reclaim it.
-const GROUPS: {
-  id: 'attention' | 'reviewable' | 'active';
-  label: string;
-  blurb: string;
-  statuses: BranchEntryStatus[];
-}[] = [
-  {
-    id: 'attention',
-    label: 'Orphaned',
-    blurb:
-      'No run claims these refs — left behind by a deleted transcript or a crash. Nothing else will ever clean them up.',
-    statuses: ['orphan', 'leftover'],
-  },
-  {
-    id: 'reviewable',
-    label: 'Needs review',
-    blurb:
-      'The agent finished but nobody merged or discarded the work, so the worktree and branch are still on disk.',
-    statuses: ['reviewable'],
-  },
-  {
-    id: 'active',
-    label: 'Active',
-    blurb: 'An agent is working in these worktrees right now.',
-    statuses: ['active'],
-  },
-];
-
-/** Narrows the list to one summary bucket. The buckets are defined once in
- * computeGitHealth so a count and the rows it reveals can never disagree. */
-function matchesFilter(
-  branches: BranchEntry[],
-  filter: GitFilter
-): BranchEntry[] {
-  if (filter === 'all') return branches;
-  const health = computeGitHealth(branches);
-  const picked =
-    filter === 'stale'
-      ? health.stale
-      : filter === 'orphans'
-        ? health.orphans
-        : filter === 'stacked'
-          ? health.stacked
-          : health.onDisk.filter((b) => b.dirty);
-  const ids = new Set(picked.map((b) => b.branch));
-  return branches.filter((b) => ids.has(b.branch));
-}
-
-const STATUS_CHIP: Record<BranchEntryStatus, { label: string; cls: string }> = {
-  active: {
-    label: 'Live',
-    cls: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-  },
-  reviewable: {
-    label: 'Unreviewed',
-    cls: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
-  },
-  leftover: {
-    label: 'Cleanup failed',
-    cls: 'border-red-500/40 text-red-600 dark:text-red-400',
-  },
-  orphan: {
-    label: 'Orphan',
-    cls: 'border-muted-foreground/40 text-muted-foreground',
-  },
+const PANEL_LABEL: Record<GitPanelId, string> = {
+  status: 'Status',
+  files: 'Files',
+  branches: 'Branches',
+  commits: 'Commits',
+  stashes: 'Stashes',
 };
 
-// What a pending confirmation is about. `force` deletes are the only
-// irreversible action on this surface, so they get an explicit dialog naming
-// the number of commits at stake rather than a one-click button.
-interface PendingDelete {
-  branch: string;
-  ahead: number;
-  force: boolean;
+const PANEL_DIGIT: Record<GitPanelId, string> = {
+  status: '1',
+  files: '2',
+  branches: '3',
+  commits: '4',
+  stashes: '5',
+};
+
+/** What a pending confirmation dialog is about — every destructive action on this page
+ * confirms here rather than firing straight from its button/keystroke. */
+type PendingConfirm =
+  | { kind: 'discard-file'; row: GitFileRow }
+  | { kind: 'discard-run'; runId: string; branch: string }
+  | { kind: 'delete-branch'; row: BranchRowVM }
+  | { kind: 'drop-stash'; stash: GitStash };
+
+function fileRowsFromStatus(
+  staged: GitFileChange[],
+  unstaged: GitFileChange[],
+  untracked: string[],
+  conflicted: string[]
+): GitFileRow[] {
+  const conflictedSet = new Set(conflicted);
+  const rows: GitFileRow[] = conflicted.map((path) => ({
+    section: 'conflicted' as const,
+    path,
+  }));
+  for (const f of staged) rows.push({ section: 'staged', path: f.path });
+  for (const f of unstaged) {
+    if (!conflictedSet.has(f.path))
+      rows.push({ section: 'unstaged', path: f.path });
+  }
+  for (const path of untracked) rows.push({ section: 'untracked', path });
+  return rows;
 }
 
-function BranchRow({
-  entry,
-  busy,
-  onOpenRun,
-  onDiscard,
-  onFreeDisk,
-  onRequestDelete,
-}: {
-  entry: BranchEntry;
-  busy: boolean;
-  onOpenRun: (runId: string) => void;
-  onDiscard: (runId: string) => void;
-  onFreeDisk: () => void;
-  onRequestDelete: (pending: PendingDelete) => void;
-}) {
-  const chip = STATUS_CHIP[entry.status];
-  const canAct = entry.status !== 'active';
-  // Discard is a *review* decision, not a git operation, so it's only offered
-  // where one is still owed: a terminal run nobody has ruled on yet. It routes
-  // through the same endpoint the run's review surface uses, which reopens the
-  // task and records the verdict on top of removing the worktree and branch.
-  const canDiscard = entry.status === 'reviewable' && entry.runId !== undefined;
-  return (
-    <div className="border-border/60 hover:bg-muted/40 flex items-center gap-3 rounded-md border px-3 py-2 transition-colors duration-150">
-      <GitBranch className="text-muted-foreground size-4 shrink-0" />
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-mono text-[12px]">{entry.branch}</span>
-          <span
-            className={cn(
-              'shrink-0 rounded border px-1.5 py-px text-[10px] font-medium',
-              chip.cls
-            )}
-          >
-            {chip.label}
-          </span>
-          {entry.dirty && (
-            <span
-              title="Uncommitted changes in this worktree"
-              className="shrink-0 rounded border border-orange-500/40 px-1.5 py-px text-[10px] font-medium text-orange-600 dark:text-orange-400"
-            >
-              Uncommitted
-            </span>
-          )}
-        </div>
-        <div className="text-muted-foreground/80 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px]">
-          {entry.taskTitle !== undefined && (
-            <span className="truncate">{entry.taskTitle}</span>
-          )}
-          {entry.runId !== undefined && (
-            <button
-              type="button"
-              onClick={() => onOpenRun(entry.runId)}
-              className="hover:text-foreground font-mono underline-offset-2 hover:underline"
-            >
-              {entry.runId}
-            </button>
-          )}
-          <span title="Commits this branch has that its base does not">
-            ↑{entry.ahead}
-          </span>
-          {entry.mergedIntoBase && <span>merged</span>}
-          {!entry.worktreeExists && <span>no worktree</span>}
-          {/* Per-row size next to the branch it belongs to, so "which one is
-              the big one" is answerable without opening a terminal. */}
-          {entry.diskBytes !== undefined && entry.diskBytes > 0 && (
-            <span title="Disk used by this worktree">
-              {formatBytes(entry.diskBytes)}
-            </span>
-          )}
-          {entry.lastCommitAt !== undefined && (
-            <span>{formatRelativeTimeFromIso(entry.lastCommitAt)}</span>
-          )}
-        </div>
-      </div>
-      {busy ? (
-        <Loader2 className="text-muted-foreground size-4 shrink-0 animate-spin" />
-      ) : (
-        canAct && (
-          <div className="flex shrink-0 items-center gap-1">
-            {canDiscard && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 text-[12px]"
-                onClick={() => onDiscard(entry.runId)}
-                title="Reject this work: removes the worktree and branch, and reopens the task"
-              >
-                <Undo2 className="size-3.5" />
-                Discard
-              </Button>
-            )}
-            {entry.worktreeExists && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 text-[12px]"
-                onClick={onFreeDisk}
-                title="Delete the working copy but keep the branch, so the work stays recoverable"
-              >
-                <HardDriveDownload className="size-3.5" />
-                Free disk
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground hover:text-destructive h-7 gap-1.5 text-[12px]"
-              onClick={() =>
-                onRequestDelete({
-                  branch: entry.branch,
-                  ahead: entry.ahead,
-                  force: !entry.mergedIntoBase,
-                })
-              }
-              title="Delete the worktree and the branch ref"
-            >
-              <Trash2 className="size-3.5" />
-              Delete
-            </Button>
-          </div>
-        )
-      )}
-    </div>
-  );
-}
-
-/**
- * The Branches surface: every `dispatch/*` worktree and branch that exists in
- * git right now, joined with whatever run claims it.
- *
- * This exists because run review is the *only* path that cleans a branch up. A
- * run that finished and was never reviewed keeps its worktree forever, and a
- * ref whose worktree directory is already gone is invisible to every automatic
- * code path on the server. Both leak silently; this is where they become
- * visible and actionable.
- *
- * Three actions, in increasing severity: "Free disk" reclaims the working copy
- * but keeps the ref (recoverable via `git worktree add`); "Delete" removes both
- * when the commits already landed on the base branch; and a forced delete —
- * behind a confirmation naming the commit count — destroys unmerged work.
- * Discarding a run is deliberately NOT here: that's a review decision, and it
- * lives on the run's own review surface where the diff is in front of you.
- */
+/** The Git page: a lazygit-style multi-panel workspace plus agent-focused affordances plain
+ * git doesn't have. Every keyboard shortcut also has a visible button/menu equivalent. */
 export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
+  const [panelState, setPanelState] = useState(INITIAL_GIT_PANEL_SELECTION);
+  const [branchFilter, setBranchFilter] = useState<GitFilter>('all');
+  const [textFilter, setTextFilter] = useState('');
+  const [commitMessage, setCommitMessage] = useState('');
+  const [amend, setAmend] = useState(false);
+  const [stashMessage, setStashMessage] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [busyPaths, setBusyPaths] = useState<ReadonlySet<string>>(new Set());
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
+  const [reclaiming, setReclaiming] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
     null
   );
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [reclaiming, setReclaiming] = useState(false);
-  // Which summary bucket the list is narrowed to. 'all' is the default and the
-  // way back out — every count above is a filter, not just a readout.
-  const [filter, setFilter] = useState<GitFilter>('all');
+  const [newBranchOpen, setNewBranchOpen] = useState(false);
+  const [keymapOpen, setKeymapOpen] = useState(false);
+  const [dispatchDialog, setDispatchDialog] = useState<{
+    title: string;
+    prompt: string;
+  } | null>(null);
 
-  const grouped = useMemo(
-    () =>
-      GROUPS.map((group) => ({
-        ...group,
-        entries: matchesFilter(data.branches, filter).filter((e) =>
-          group.statuses.includes(e.status)
-        ),
-      })),
-    [data.branches, filter]
-  );
+  const filterInputRef = useRef<HTMLInputElement>(null);
 
-  // Every orphan whose commits already landed on its base — the only set that
-  // can be deleted in bulk without risking work, since `mergedIntoBase` is
-  // proof there is nothing left to lose.
-  const mergedOrphans = useMemo(
-    () =>
-      data.branches.filter((e) => e.status === 'orphan' && e.mergedIntoBase),
-    [data.branches]
-  );
+  const {
+    status,
+    statusLoading,
+    log,
+    logLoading,
+    stashes,
+    stashesLoading,
+    workingDiff,
+    workingDiffLoading,
+    commitDiff,
+    commitDiffLoading,
+    actions,
+    refetchAll,
+    fileRows,
+    branchRowsFiltered,
+    selectedFileRow,
+    selectedBranchRow,
+    selectedCommit,
+    selectedStash,
+    rightPane,
+  } = useGitPage({ data, panelState, branchFilter, textFilter });
+
+  // ---- selection clamping/reconciliation ----
+  useEffect(() => {
+    setPanelState((s) => clampGitPanelSelection(s, 'files', fileRows.length));
+  }, [fileRows.length]);
+
+  const prevBranchNames = useRef<string[]>([]);
+  useEffect(() => {
+    const names = branchRowsFiltered.map((r) => r.name);
+    setPanelState((s) =>
+      reconcileGitPanelSelection(
+        s,
+        'branches',
+        prevBranchNames.current,
+        names,
+        (n) => n
+      )
+    );
+    prevBranchNames.current = names;
+  }, [branchRowsFiltered]);
+
+  const prevCommitShas = useRef<string[]>([]);
+  useEffect(() => {
+    const shas = log.map((c) => c.sha);
+    setPanelState((s) =>
+      reconcileGitPanelSelection(
+        s,
+        'commits',
+        prevCommitShas.current,
+        shas,
+        (sha) => sha
+      )
+    );
+    prevCommitShas.current = shas;
+  }, [log]);
+
+  // Identity is the stash's sha, not its `ref` (`stash@{0}`) — that ref is positional and
+  // shifts for other entries whenever one is pushed or dropped.
+  const prevStashShas = useRef<string[]>([]);
+  useEffect(() => {
+    const shas = stashes.map((s) => s.sha);
+    setPanelState((s) =>
+      reconcileGitPanelSelection(
+        s,
+        'stashes',
+        prevStashShas.current,
+        shas,
+        (sha) => sha
+      )
+    );
+    prevStashShas.current = shas;
+  }, [stashes]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -299,14 +216,60 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     );
   }
 
-  // Wraps every branch action so a server 409 (live run, open PR, stacked
-  // dependent, unmerged without force) is shown verbatim instead of vanishing
-  // into an unhandled rejection.
-  async function run(branch: string, action: () => Promise<void>) {
+  function listLength(panel: GitPanelId): number {
+    if (panel === 'status') return 0;
+    if (panel === 'files') return fileRows.length;
+    if (panel === 'branches') return branchRowsFiltered.length;
+    if (panel === 'commits') return log.length;
+    return stashes.length;
+  }
+
+  async function runMutation(
+    action: () => Promise<{ ok: boolean; stderr?: string }>
+  ) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const result = await action();
+      if (!result.ok) setActionError(result.stderr ?? 'That failed.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runFileMutation(
+    path: string,
+    action: () => Promise<{ ok: boolean; stderr?: string }>
+  ) {
+    setBusyPaths((prev) => new Set(prev).add(path));
+    setActionError(null);
+    try {
+      const result = await action();
+      if (!result.ok) setActionError(result.stderr ?? 'That failed.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+    }
+  }
+
+  async function runBranchMutation(
+    branch: string,
+    action: () => Promise<{ ok: boolean; stderr?: string } | void>
+  ) {
     setBusyBranch(branch);
     setActionError(null);
     try {
-      await action();
+      const result = await action();
+      if (result !== undefined && typeof result === 'object' && !result.ok) {
+        setActionError(result.stderr ?? 'That failed.');
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -314,15 +277,122 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     }
   }
 
-  async function deleteAllMergedOrphans() {
+  function toggleStage(row: GitFileRow) {
+    void runFileMutation(row.path, () =>
+      row.section === 'staged'
+        ? actions.unstage([row.path])
+        : actions.stage([row.path])
+    );
+  }
+
+  function stageAll() {
+    const paths = fileRows
+      .filter((r) => r.section !== 'staged')
+      .map((r) => r.path);
+    if (paths.length === 0) return;
+    void runMutation(() => actions.stage(paths));
+  }
+
+  function focusComposer() {
+    document.getElementById('git-commit-message')?.focus();
+  }
+
+  async function submitCommit() {
+    if (commitMessage.trim() === '') return;
+    await runMutation(async () => {
+      const result = await actions.commit(commitMessage.trim(), { amend });
+      if (result.ok) {
+        setCommitMessage('');
+        setAmend(false);
+      }
+      return result;
+    });
+  }
+
+  async function generateMessage() {
+    setGenerating(true);
     setActionError(null);
-    for (const entry of mergedOrphans) {
-      await run(entry.branch, () => data.handleDeleteBranch(entry.branch));
+    try {
+      const { message } = await actions.generateCommitMessage();
+      setCommitMessage(message);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
     }
   }
 
-  // Reclaims every worktree whose branch already landed and has nothing
-  // uncommitted in it — the two conditions that make it safe to delete.
+  function openDispatchForBranch(branch: string) {
+    setDispatchDialog({
+      title: `Work on ${branch}`,
+      prompt: `Continue the work on branch \`${branch}\`. Review what's already there before making changes.`,
+    });
+  }
+
+  function openDispatchForConflicts() {
+    const files = status?.conflicted ?? [];
+    setDispatchDialog({
+      title: 'Resolve merge conflicts',
+      prompt: `Resolve the merge conflicts in the working tree${
+        files.length > 0 ? `:\n${files.map((f) => `- ${f}`).join('\n')}` : '.'
+      }`,
+    });
+  }
+
+  function openDispatchGeneral() {
+    setDispatchDialog({ title: '', prompt: '' });
+  }
+
+  function requestDeleteBranch(row: BranchRowVM) {
+    setPendingConfirm({ kind: 'delete-branch', row });
+  }
+
+  function requestDiscardFile(row: GitFileRow) {
+    if (row.section === 'staged') return;
+    setPendingConfirm({ kind: 'discard-file', row });
+  }
+
+  function requestDropStash(stash: GitStash) {
+    setPendingConfirm({ kind: 'drop-stash', stash });
+  }
+
+  function requestDiscardRun(runId: string, branch: string) {
+    setPendingConfirm({ kind: 'discard-run', runId, branch });
+  }
+
+  async function confirmPending(forceBranchDelete: boolean) {
+    const pending = pendingConfirm;
+    setPendingConfirm(null);
+    if (pending === null) return;
+    if (pending.kind === 'discard-file') {
+      await runFileMutation(pending.row.path, () =>
+        actions.discard([pending.row.path])
+      );
+    } else if (pending.kind === 'delete-branch') {
+      await runBranchMutation(pending.row.name, () =>
+        actions.deleteBranch(pending.row.name, { force: forceBranchDelete })
+      );
+    } else if (pending.kind === 'drop-stash') {
+      await runMutation(() => actions.stashDrop(pending.stash.index));
+    } else {
+      await runBranchMutation(pending.branch, () =>
+        data.handleReview(pending.runId, 'discard')
+      );
+    }
+  }
+
+  const mergedOrphans = data.branches.filter(
+    (e) => e.status === 'orphan' && e.mergedIntoBase
+  );
+
+  async function deleteAllMergedOrphans() {
+    for (const entry of mergedOrphans) {
+      await runBranchMutation(entry.branch, () =>
+        data.handleDeleteBranch(entry.branch)
+      );
+    }
+  }
+
   async function reclaimMerged() {
     setReclaiming(true);
     try {
@@ -336,48 +406,164 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     }
   }
 
+  function handleGitCommand(cmd: GitKeyCommand) {
+    if (cmd.kind === 'focus-panel') {
+      setPanelState((s) => focusGitPanel(s, cmd.panel));
+      return;
+    }
+    if (cmd.kind === 'move') {
+      setPanelState((s) =>
+        moveGitSelection(s, listLength(s.focused), cmd.delta)
+      );
+      return;
+    }
+    if (cmd.kind === 'toggle-stage') {
+      if (panelState.focused !== 'files') return;
+      const row = fileRows[panelState.index.files];
+      if (row !== undefined) toggleStage(row);
+      return;
+    }
+    if (cmd.kind === 'stage-all') {
+      stageAll();
+      return;
+    }
+    if (cmd.kind === 'commit') {
+      focusComposer();
+      return;
+    }
+    if (cmd.kind === 'amend') {
+      setAmend(true);
+      focusComposer();
+      return;
+    }
+    if (cmd.kind === 'discard') {
+      if (panelState.focused !== 'files') return;
+      const row = fileRows[panelState.index.files];
+      if (row !== undefined) requestDiscardFile(row);
+      return;
+    }
+    if (cmd.kind === 'new-branch') {
+      setNewBranchOpen(true);
+      return;
+    }
+    if (cmd.kind === 'checkout') {
+      if (panelState.focused !== 'branches') return;
+      const row = branchRowsFiltered[panelState.index.branches];
+      if (row !== undefined && !row.isCurrent) {
+        void runMutation(() => actions.checkout(row.name));
+      }
+      return;
+    }
+    if (cmd.kind === 'stash') {
+      void runMutation(async () => {
+        const result = await actions.stashPush(
+          stashMessage.trim() || undefined
+        );
+        if (result.ok) setStashMessage('');
+        return result;
+      });
+      return;
+    }
+    if (cmd.kind === 'stash-pop') {
+      if (panelState.focused !== 'stashes') return;
+      const stash = stashes[panelState.index.stashes];
+      if (stash !== undefined)
+        void runMutation(() => actions.stashPop(stash.index));
+      return;
+    }
+    if (cmd.kind === 'fetch') {
+      void runMutation(() => actions.fetch());
+      return;
+    }
+    if (cmd.kind === 'pull') {
+      void runMutation(() => actions.pull());
+      return;
+    }
+    if (cmd.kind === 'push') {
+      void runMutation(() => actions.push());
+      return;
+    }
+    if (cmd.kind === 'filter') {
+      filterInputRef.current?.focus();
+      return;
+    }
+    if (cmd.kind === 'help') {
+      setKeymapOpen(true);
+    }
+  }
+
+  function onRootKeyDown(e: React.KeyboardEvent) {
+    if (
+      keymapOpen ||
+      dispatchDialog !== null ||
+      newBranchOpen ||
+      pendingConfirm !== null
+    ) {
+      return;
+    }
+    const cmd = resolveGitKeyCommand(
+      { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
+      { isTyping: isTypingTarget(e.target) }
+    );
+    if (cmd === null) return;
+    e.preventDefault();
+    handleGitCommand(cmd);
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
+    <div
+      className="flex h-full min-h-0 flex-col gap-3"
+      onKeyDown={onRootKeyDown}
+    >
       <div className="flex items-center justify-between gap-3">
         <h1 className="view-topbar-title">Git</h1>
-        <span className="text-muted-foreground text-[12px]">
-          Branches and worktrees this project has created.
-        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
+          <Search className="text-muted-foreground size-3.5 shrink-0" />
+          <Input
+            ref={filterInputRef}
+            value={textFilter}
+            onChange={(e) => setTextFilter(e.target.value)}
+            placeholder="Filter files and branches (/)"
+            className="h-7 max-w-64 text-[12px]"
+          />
+        </div>
         <div className="flex items-center gap-2">
-          {mergedOrphans.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 text-[12px]"
-              onClick={() => void deleteAllMergedOrphans()}
-            >
-              <Trash2 className="size-3.5" />
-              Delete {mergedOrphans.length} merged orphan
-              {mergedOrphans.length === 1 ? '' : 's'}
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-[12px]"
+            onClick={openDispatchGeneral}
+          >
+            <GitBranchIcon className="size-3.5" />
+            Dispatch agent
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Keyboard shortcuts (?)"
+            onClick={() => setKeymapOpen(true)}
+          >
+            <HelpCircle className="size-4" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5 text-[12px]"
-            onClick={() => void data.handleRefreshBranches()}
-            title="Git state can change outside the app"
+            onClick={() => {
+              void data.handleRefreshBranches();
+              void refetchAll();
+            }}
           >
             <RefreshCw
-              className={cn('size-3.5', data.branchesLoading && 'animate-spin')}
+              className={cn(
+                'size-3.5',
+                (data.branchesLoading || statusLoading) && 'animate-spin'
+              )}
             />
             Refresh
           </Button>
         </div>
       </div>
-
-      <GitSummary
-        branches={data.branches}
-        reclaiming={reclaiming}
-        onReclaimMerged={() => void reclaimMerged()}
-        active={filter}
-        onFocus={(next) => setFilter(next === filter ? 'all' : next)}
-      />
 
       {actionError !== null && (
         <div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
@@ -386,113 +572,492 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
         </div>
       )}
 
-      {data.branches.length === 0 ? (
-        <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-[13px]">
-          <GitBranch className="size-5" />
-          <span>No dispatch branches on disk.</span>
-          <span className="text-[12px]">
-            Every run's branch has been merged, discarded, or cleaned up.
-          </span>
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
-          {grouped.map(
-            (group) =>
-              group.entries.length > 0 && (
-                <section key={group.id} className="flex flex-col gap-2">
-                  <div className="flex flex-col gap-0.5">
-                    <h2 className="text-[13px] font-medium">
-                      {group.label}
-                      <span className="text-muted-foreground ml-1.5 font-normal">
-                        {group.entries.length}
-                      </span>
-                    </h2>
-                    <p className="text-muted-foreground/80 text-[11px]">
-                      {group.blurb}
-                    </p>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    {group.entries.map((entry) => (
-                      <BranchRow
-                        key={entry.branch}
-                        entry={entry}
-                        busy={busyBranch === entry.branch}
-                        onOpenRun={onOpenRun}
-                        onDiscard={(runId) =>
-                          void run(entry.branch, () =>
-                            data.handleReview(runId, 'discard')
-                          )
-                        }
-                        onFreeDisk={() =>
-                          void run(entry.branch, () =>
-                            data.handleFreeBranchDisk(entry.branch)
-                          )
-                        }
-                        onRequestDelete={setPendingDelete}
-                      />
-                    ))}
-                  </div>
-                </section>
-              )
-          )}
-        </div>
-      )}
-
-      <Dialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {pendingDelete?.force === true
-                ? 'Delete unmerged branch?'
-                : 'Delete branch?'}
-            </DialogTitle>
-            <DialogDescription>
-              {pendingDelete?.force === true ? (
-                <>
-                  <span className="font-mono">{pendingDelete.branch}</span> has{' '}
-                  {pendingDelete.ahead} commit
-                  {pendingDelete.ahead === 1 ? '' : 's'} that never landed on
-                  its base branch. Deleting it destroys that work permanently.
-                  Use “Free disk” instead if you only want the space back.
-                </>
-              ) : (
-                <>
-                  <span className="font-mono">{pendingDelete?.branch}</span> is
-                  already merged into its base, so deleting it removes the
-                  worktree and ref without losing any commits.
-                </>
+      <div className="grid min-h-0 flex-1 grid-cols-[19rem_minmax(0,1fr)] gap-3 overflow-hidden">
+        <div className="border-border flex min-h-0 flex-col overflow-hidden rounded-md border">
+          {GIT_PANEL_IDS.map((panel) => (
+            <div
+              key={panel}
+              className={cn(
+                'border-border flex min-h-0 flex-col border-b last:border-b-0',
+                panel === 'status' ? 'flex-none' : 'flex-1'
               )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                const pending = pendingDelete;
-                setPendingDelete(null);
-                if (pending === null) return;
-                void run(pending.branch, () =>
-                  data.handleDeleteBranch(pending.branch, {
-                    force: pending.force,
-                  })
-                );
-              }}
             >
-              {pendingDelete?.force === true
-                ? 'Delete anyway'
-                : 'Delete branch'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <button
+                type="button"
+                onClick={() => setPanelState((s) => focusGitPanel(s, panel))}
+                className={cn(
+                  'bg-muted/40 flex items-center gap-2 px-3 py-1.5 text-left text-[10.5px] font-medium tracking-wide uppercase',
+                  panelState.focused === panel && 'bg-accent/60'
+                )}
+              >
+                <span className="text-muted-foreground font-mono normal-case">
+                  {PANEL_DIGIT[panel]}
+                </span>
+                {PANEL_LABEL[panel]}
+              </button>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {panel === 'status' && (
+                  <StatusPanel
+                    status={status}
+                    loading={statusLoading}
+                    busy={busy}
+                    onFetch={() => void runMutation(() => actions.fetch())}
+                    onPull={() => void runMutation(() => actions.pull())}
+                    onPush={() => void runMutation(() => actions.push())}
+                    onResolveConflicts={openDispatchForConflicts}
+                  />
+                )}
+                {panel === 'files' && (
+                  <>
+                    <div className="flex justify-end px-2 pt-1.5">
+                      <Button variant="ghost" size="xs" onClick={stageAll}>
+                        Stage all
+                      </Button>
+                    </div>
+                    <FilesPanel
+                      rows={fileRows}
+                      selectedIndex={panelState.index.files}
+                      busyPaths={busyPaths}
+                      onSelectIndex={(index) =>
+                        setPanelState((s) => ({
+                          ...focusGitPanel(s, 'files'),
+                          index: { ...s.index, files: index },
+                        }))
+                      }
+                      onToggleStage={toggleStage}
+                    />
+                  </>
+                )}
+                {panel === 'branches' && (
+                  <>
+                    <div className="flex justify-end px-2 pt-1.5">
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setNewBranchOpen(true)}
+                      >
+                        <Plus className="size-3" />
+                        New branch
+                      </Button>
+                    </div>
+                    <BranchesPanel
+                      rows={branchRowsFiltered}
+                      worktrees={data.branches}
+                      selectedIndex={panelState.index.branches}
+                      filter={branchFilter}
+                      onFilterChange={(next) =>
+                        setBranchFilter(next === branchFilter ? 'all' : next)
+                      }
+                      reclaiming={reclaiming}
+                      onReclaimMerged={() => void reclaimMerged()}
+                      mergedOrphans={mergedOrphans}
+                      onDeleteAllMergedOrphans={() =>
+                        void deleteAllMergedOrphans()
+                      }
+                      onSelectIndex={(index) =>
+                        setPanelState((s) => ({
+                          ...focusGitPanel(s, 'branches'),
+                          index: { ...s.index, branches: index },
+                        }))
+                      }
+                      onOpenRun={onOpenRun}
+                      onDispatchAgent={openDispatchForBranch}
+                    />
+                  </>
+                )}
+                {panel === 'commits' && (
+                  <CommitsPanel
+                    commits={log}
+                    loading={logLoading}
+                    selectedIndex={panelState.index.commits}
+                    onSelectIndex={(index) =>
+                      setPanelState((s) => ({
+                        ...focusGitPanel(s, 'commits'),
+                        index: { ...s.index, commits: index },
+                      }))
+                    }
+                  />
+                )}
+                {panel === 'stashes' && (
+                  <>
+                    <div className="flex items-center gap-1.5 px-2 pt-1.5">
+                      <Input
+                        value={stashMessage}
+                        onChange={(e) => setStashMessage(e.target.value)}
+                        placeholder="Stash message (optional)"
+                        className="h-7 flex-1 text-[11px]"
+                      />
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        disabled={busy}
+                        onClick={() =>
+                          void runMutation(async () => {
+                            const result = await actions.stashPush(
+                              stashMessage.trim() || undefined
+                            );
+                            if (result.ok) setStashMessage('');
+                            return result;
+                          })
+                        }
+                      >
+                        Stash
+                      </Button>
+                    </div>
+                    <StashesPanel
+                      stashes={stashes}
+                      loading={stashesLoading}
+                      busy={busy}
+                      selectedIndex={panelState.index.stashes}
+                      onSelectIndex={(index) =>
+                        setPanelState((s) => ({
+                          ...focusGitPanel(s, 'stashes'),
+                          index: { ...s.index, stashes: index },
+                        }))
+                      }
+                      onPop={(index) =>
+                        void runMutation(() => actions.stashPop(index))
+                      }
+                      onRequestDrop={requestDropStash}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="border-border min-h-0 overflow-hidden rounded-md border">
+          <GitRightPane
+            pane={rightPane}
+            status={status}
+            selectedFileRow={selectedFileRow}
+            workingDiff={workingDiff}
+            workingDiffLoading={workingDiffLoading}
+            onToggleStageSelectedFile={() => {
+              if (selectedFileRow !== undefined) toggleStage(selectedFileRow);
+            }}
+            selectedCommit={selectedCommit}
+            commitDiff={commitDiff}
+            commitDiffLoading={commitDiffLoading}
+            onCherryPick={(sha) =>
+              void runMutation(() => actions.cherryPick(sha))
+            }
+            onRevert={(sha) => void runMutation(() => actions.revert(sha))}
+            selectedBranch={selectedBranchRow}
+            onCheckout={(name) =>
+              void runMutation(() => actions.checkout(name))
+            }
+            onRequestDeleteBranch={requestDeleteBranch}
+            onFreeDisk={(branch) =>
+              void runBranchMutation(branch, () =>
+                data.handleFreeBranchDisk(branch)
+              )
+            }
+            onDiscardRun={(runId) => {
+              if (selectedBranchRow !== undefined) {
+                requestDiscardRun(runId, selectedBranchRow.name);
+              }
+            }}
+            onOpenRun={onOpenRun}
+            onDispatchAgent={openDispatchForBranch}
+            selectedStash={selectedStash}
+            onPopStash={(index) =>
+              void runMutation(() => actions.stashPop(index))
+            }
+            onRequestDropStash={requestDropStash}
+            busy={busy || busyBranch !== null}
+          />
+        </div>
+      </div>
+
+      <CommitComposer
+        message={commitMessage}
+        onMessageChange={setCommitMessage}
+        stagedCount={fileRows.filter((r) => r.section === 'staged').length}
+        amend={amend}
+        onAmendChange={setAmend}
+        busy={busy}
+        generating={generating}
+        onGenerate={() => void generateMessage()}
+        onCommit={() => void submitCommit()}
+      />
+
+      <NewBranchDialog
+        open={newBranchOpen}
+        onClose={() => setNewBranchOpen(false)}
+        currentBranch={status?.branch ?? undefined}
+        onCreate={async (name, from) => {
+          await runMutation(() => actions.createBranch(name, from));
+          setNewBranchOpen(false);
+        }}
+      />
+
+      <DispatchAgentDialog
+        open={dispatchDialog !== null}
+        onClose={() => setDispatchDialog(null)}
+        defaultTitle={dispatchDialog?.title ?? ''}
+        defaultPrompt={dispatchDialog?.prompt ?? ''}
+        client={data.client}
+        onDispatch={(taskId) => data.handleDispatch(taskId)}
+      />
+
+      <GitKeymapDialog open={keymapOpen} onClose={() => setKeymapOpen(false)} />
+
+      <ConfirmDialog
+        pending={pendingConfirm}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={confirmPending}
+      />
     </div>
+  );
+}
+
+// Pulls together `useGit`'s data plus the local file/branch row derivations that need it, so
+// BranchesView's body reads top-to-bottom instead of interleaving the two.
+function useGitPage({
+  data,
+  panelState,
+  branchFilter,
+  textFilter,
+}: {
+  data: DispatchProjectData;
+  panelState: GitPanelSelection;
+  branchFilter: GitFilter;
+  textFilter: string;
+}) {
+  // Status/branches, fetched independent of selection so the panels render before anything is
+  // selected — a second `useGit` call below (`scoped`) fetches the log/diff selection picks.
+  const base = useGit({
+    client: data.client,
+    port: data.port,
+    logRef: null,
+    workingDiffTarget: null,
+    commitSha: null,
+  });
+
+  const fileRowsAll = useMemo(() => {
+    if (base.status === undefined) return [];
+    return fileRowsFromStatus(
+      base.status.staged,
+      base.status.unstaged,
+      base.status.untracked,
+      base.status.conflicted
+    );
+  }, [base.status]);
+
+  const fileRows = useMemo(() => {
+    const needle = textFilter.trim().toLowerCase();
+    if (needle === '') return fileRowsAll;
+    return fileRowsAll.filter((r) => r.path.toLowerCase().includes(needle));
+  }, [fileRowsAll, textFilter]);
+
+  const branchRowsAll = useMemo(
+    () => buildBranchRows(base.branches, data.branches),
+    [base.branches, data.branches]
+  );
+
+  const branchRowsFilteredByBucket = useMemo(
+    () => filterBranchRows(branchRowsAll, data.branches, branchFilter),
+    [branchRowsAll, data.branches, branchFilter]
+  );
+
+  const branchRowsFiltered = useMemo(() => {
+    const needle = textFilter.trim().toLowerCase();
+    if (needle === '') return branchRowsFilteredByBucket;
+    return branchRowsFilteredByBucket.filter((r) =>
+      r.name.toLowerCase().includes(needle)
+    );
+  }, [branchRowsFilteredByBucket, textFilter]);
+
+  const selectedFileRow = fileRows[panelState.index.files];
+  const selectedBranchRow = branchRowsFiltered[panelState.index.branches];
+
+  const logRef = selectedBranchRow?.name ?? null;
+  const workingDiffTarget =
+    selectedFileRow !== undefined && selectedFileRow.section !== 'untracked'
+      ? {
+          staged: selectedFileRow.section === 'staged',
+          path: selectedFileRow.path,
+        }
+      : null;
+
+  // A second `useGit` call scoped to what's actually selected, so switching the selected
+  // file/branch/commit only triggers the one query that changed.
+  const scoped = useGit({
+    client: data.client,
+    port: data.port,
+    logRef,
+    workingDiffTarget,
+    commitSha:
+      panelState.focused === 'commits'
+        ? (base.log[panelState.index.commits]?.sha ?? null)
+        : null,
+  });
+
+  const selectedCommit = scoped.log[panelState.index.commits];
+  const selectedStash = scoped.stashes[panelState.index.stashes];
+
+  const rightPane = deriveGitRightPane(panelState, {
+    files: fileRows,
+    branches: branchRowsFiltered.map((r) => r.name),
+    commits: scoped.log.map((c) => c.sha),
+    stashes: scoped.stashes.map((s) => s.index),
+  });
+
+  return {
+    status: base.status,
+    statusLoading: base.statusLoading,
+    branches: base.branches,
+    log: scoped.log,
+    logLoading: scoped.logLoading,
+    stashes: scoped.stashes,
+    stashesLoading: scoped.stashesLoading,
+    workingDiff: scoped.workingDiff,
+    workingDiffLoading: scoped.workingDiffLoading,
+    commitDiff: scoped.commitDiff,
+    commitDiffLoading: scoped.commitDiffLoading,
+    actions: base.actions,
+    refetchAll: base.refetchAll,
+    fileRows,
+    branchRowsFiltered,
+    selectedFileRow,
+    selectedBranchRow,
+    selectedCommit,
+    selectedStash,
+    rightPane,
+  };
+}
+
+function NewBranchDialog({
+  open,
+  onClose,
+  currentBranch,
+  onCreate,
+}: {
+  open: boolean;
+  onClose: () => void;
+  currentBranch: string | undefined;
+  onCreate: (name: string, from?: string) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+
+  useEffect(() => {
+    if (open) setName('');
+  }, [open]);
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New branch</DialogTitle>
+          <DialogDescription>
+            {currentBranch !== undefined
+              ? `Branches from ${currentBranch}.`
+              : 'Branches from the current HEAD.'}
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="branch-name"
+          autoFocus
+        />
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            disabled={name.trim() === ''}
+            onClick={() => void onCreate(name.trim())}
+          >
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ConfirmDialog({
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  pending: PendingConfirm | null;
+  onCancel: () => void;
+  onConfirm: (forceBranchDelete: boolean) => Promise<void>;
+}) {
+  const [force, setForce] = useState(true);
+
+  useEffect(() => {
+    if (pending?.kind === 'delete-branch') {
+      // Pre-checked only when dispatch already knows the branch is unmerged; otherwise
+      // default to a safe (non-force) delete.
+      setForce(pending.row.worktree?.mergedIntoBase === false);
+    }
+  }, [pending]);
+
+  if (pending === null) return null;
+
+  const title =
+    pending.kind === 'discard-file'
+      ? 'Discard changes?'
+      : pending.kind === 'discard-run'
+        ? 'Discard this run?'
+        : pending.kind === 'delete-branch'
+          ? 'Delete branch?'
+          : 'Drop stash?';
+
+  const description =
+    pending.kind === 'discard-file' ? (
+      <>
+        <span className="font-mono">{pending.row.path}</span> — this reverts the
+        file to its last committed state and cannot be undone.
+      </>
+    ) : pending.kind === 'discard-run' ? (
+      <>
+        Removes the worktree and branch{' '}
+        <span className="font-mono">{pending.branch}</span> and reopens its
+        task. The work is not recoverable once the branch is gone.
+      </>
+    ) : pending.kind === 'delete-branch' ? (
+      <div className="flex flex-col gap-2">
+        <span className="font-mono">{pending.row.name}</span>
+        <label className="flex items-center gap-1.5 text-[12px]">
+          <input
+            type="checkbox"
+            checked={force}
+            onChange={(e) => setForce(e.target.checked)}
+          />
+          Force delete (discards commits that never landed on its base)
+        </label>
+      </div>
+    ) : (
+      <>
+        <span className="font-mono">{pending.stash.message}</span> — dropping a
+        stash discards it permanently.
+      </>
+    );
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription asChild>
+            <div>{description}</div>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={() => void onConfirm(force)}>
+            Confirm
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -35,6 +35,7 @@ import { notify } from '../lib/notifications';
 import { isTerminalRunState } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd } from '../lib/tauri';
+import { gitQueryRootKey } from './useGit';
 import { useTransitionNotifications } from './useTransitionNotifications';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
@@ -113,6 +114,9 @@ export interface DispatchProjectData {
    * loading/empty state while this is `null` — callers should show a project-level "starting
    * the task daemon…" state, matching the previous TasksPanel behavior. */
   client: ApiClient | null;
+  /** The active project's dispatchd port, `undefined` until it resolves — exposed so a view
+   * can scope its own query keys (e.g. `useGit`) the same way this hook's queries do. */
+  port: number | undefined;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -972,6 +976,10 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
+          } else if (event.type === 'git.changed') {
+            // Prefix match: invalidates every query useGit.ts builds (status/branches/log/
+            // stashes/diff) in one call, since they all key off this same root array.
+            void queryClient.invalidateQueries({ queryKey: gitQueryRootKey });
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
@@ -1855,6 +1863,7 @@ export function useDispatchProject(
 
   return {
     client,
+    port,
     portLoading,
     portError,
     portErrorDetail,

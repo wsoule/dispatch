@@ -129,6 +129,95 @@ export function isInteractiveControlTagName(tagName: string): boolean {
   );
 }
 
+export type GitPanelId =
+  | 'status'
+  | 'files'
+  | 'branches'
+  | 'commits'
+  | 'stashes';
+
+const GIT_PANEL_BY_DIGIT: Record<string, GitPanelId> = {
+  '1': 'status',
+  '2': 'files',
+  '3': 'branches',
+  '4': 'commits',
+  '5': 'stashes',
+};
+
+export type GitKeyCommand =
+  | { kind: 'focus-panel'; panel: GitPanelId }
+  | { kind: 'move'; delta: -1 | 1 }
+  | { kind: 'toggle-stage' }
+  | { kind: 'stage-all' }
+  | { kind: 'commit' }
+  | { kind: 'amend' }
+  | { kind: 'discard' }
+  | { kind: 'new-branch' }
+  | { kind: 'checkout' }
+  | { kind: 'stash' }
+  | { kind: 'stash-pop' }
+  | { kind: 'fetch' }
+  | { kind: 'pull' }
+  | { kind: 'push' }
+  | { kind: 'filter' }
+  | { kind: 'help' };
+
+export interface GitKeyboardContext {
+  /** Same meaning as elsewhere in this module — the Git page's own filter input and the
+   * commit-message textarea both count. */
+  isTyping: boolean;
+}
+
+/** Maps one keydown to the Git page's own command, or `null`. Every command here also has a
+ * button/menu equivalent in BranchesView.tsx. */
+export function resolveGitKeyCommand(
+  input: KeyInput,
+  ctx: GitKeyboardContext
+): GitKeyCommand | null {
+  if (input.metaKey || input.ctrlKey) return null;
+  if (ctx.isTyping) return null;
+
+  const panel = GIT_PANEL_BY_DIGIT[input.key];
+  if (panel !== undefined) return { kind: 'focus-panel', panel };
+
+  switch (input.key) {
+    case 'j':
+      return { kind: 'move', delta: 1 };
+    case 'k':
+      return { kind: 'move', delta: -1 };
+    case ' ':
+      return { kind: 'toggle-stage' };
+    case 'a':
+      return { kind: 'stage-all' };
+    case 'c':
+      return { kind: 'commit' };
+    case 'A':
+      return { kind: 'amend' };
+    case 'd':
+      return { kind: 'discard' };
+    case 'b':
+      return { kind: 'new-branch' };
+    case 'Enter':
+      return { kind: 'checkout' };
+    case 's':
+      return { kind: 'stash' };
+    case 'S':
+      return { kind: 'stash-pop' };
+    case 'f':
+      return { kind: 'fetch' };
+    case 'p':
+      return { kind: 'pull' };
+    case 'P':
+      return { kind: 'push' };
+    case '/':
+      return { kind: 'filter' };
+    case '?':
+      return { kind: 'help' };
+    default:
+      return null;
+  }
+}
+
 export type CardKeyAction = 'activate' | null;
 
 /** Decides what a keydown on a Board card's root element should do, given which key was
