@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -90,7 +90,7 @@ describe('GitRepo: unstage and discard', () => {
   it('discard removes an untracked file entirely', async () => {
     writeFileSync(join(root, 'scratch.txt'), 'temp\n');
 
-    const result = await repo.discard(['scratch.txt']);
+    const result = await repo.discard(['scratch.txt'], true);
     expect(result.ok).toBe(true);
 
     const status = await repo.status();
@@ -104,12 +104,62 @@ describe('GitRepo: unstage and discard', () => {
     await repo.commit({ message: 'chore: seed a.txt' });
     writeFileSync(join(root, 'a.txt'), 'v2\n');
 
-    const result = await repo.discard(['a.txt']);
+    const result = await repo.discard(['a.txt'], true);
     expect(result.ok).toBe(true);
 
     const status = await repo.status();
     if (!status.ok) throw new Error(status.stderr);
     expect(status.unstaged).toEqual([]);
+  });
+
+  it('refuses to run without confirm: true', async () => {
+    writeFileSync(join(root, 'scratch.txt'), 'temp\n');
+
+    const result = await repo.discard(['scratch.txt'], false);
+
+    expect(result.ok).toBe(false);
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.untracked).toEqual(['scratch.txt']);
+  });
+
+  it('removes an untracked directory too (clean -d), not just files', async () => {
+    mkdirSync(join(root, 'scratch-dir'));
+    writeFileSync(join(root, 'scratch-dir', 'nested.txt'), 'temp\n');
+
+    const result = await repo.discard(['scratch-dir'], true);
+    expect(result.ok).toBe(true);
+
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.untracked).toEqual([]);
+  });
+
+  it('does not expand pathspec magic — a literal "*" never wipes the tree', async () => {
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed a.txt' });
+    writeFileSync(join(root, 'b.txt'), 'untracked\n');
+
+    const result = await repo.discard(['*'], true);
+    expect(result.ok).toBe(true);
+
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    // Neither file was touched — `*` was treated as a literal (nonexistent)
+    // filename, not a wildcard, thanks to --literal-pathspecs.
+    expect(status.untracked).toEqual(['b.txt']);
+  });
+
+  it('does not over-reject a real filename that merely starts with ".."', async () => {
+    writeFileSync(join(root, '..foo.txt'), 'v1\n');
+
+    const result = await repo.discard(['..foo.txt'], true);
+
+    expect(result.ok).toBe(true);
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.untracked).toEqual([]);
   });
 });
 
@@ -155,6 +205,57 @@ describe('GitRepo: branches and checkout', () => {
     const deleted = await repo.deleteBranch('feature/x', false);
     expect(deleted.ok).toBe(true);
   });
+
+  it('refuses a force delete without confirm: true, even in-process', async () => {
+    writeFileSync(join(root, 'a.txt'), 'hello\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed' });
+    await repo.createBranch('feature/y');
+
+    const result = await repo.deleteBranch('feature/y', true, false);
+
+    expect(result.ok).toBe(false);
+    const listed = await repo.branches();
+    if (!listed.ok) throw new Error(listed.stderr);
+    expect(listed.branches.map((b) => b.name)).toContain('feature/y');
+  });
+
+  it('force-deletes an unmerged branch once confirmed', async () => {
+    writeFileSync(join(root, 'a.txt'), 'hello\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed' });
+    await repo.createBranch('feature/z');
+    await repo.checkout('feature/z');
+    writeFileSync(join(root, 'unmerged.txt'), 'v1\n');
+    await repo.stage(['unmerged.txt']);
+    await repo.commit({ message: 'feat: unmerged work' });
+    await repo.checkout('main');
+
+    const result = await repo.deleteBranch('feature/z', true, true);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('checking out a name that collides with a directory fails rather than restoring paths', async () => {
+    // "src" is a directory with an uncommitted file, not a branch — without
+    // `--`, checkout would silently restore paths under it instead of refusing.
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'app.ts'), 'export const x = 1;\n');
+    await repo.stage(['src/app.ts']);
+    await repo.commit({ message: 'chore: seed src/app.ts' });
+    writeFileSync(
+      join(root, 'src', 'app.ts'),
+      'export const x = 2; // uncommitted\n'
+    );
+
+    const result = await repo.checkout('src');
+
+    expect(result.ok).toBe(false);
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    // The uncommitted edit must still be there — not silently reverted.
+    expect(status.unstaged).toEqual([{ path: 'src/app.ts', status: 'M' }]);
+  });
 });
 
 describe('GitRepo: stash', () => {
@@ -182,6 +283,127 @@ describe('GitRepo: stash', () => {
     const restored = await repo.status();
     if (!restored.ok) throw new Error(restored.stderr);
     expect(restored.unstaged).toEqual([{ path: 'a.txt', status: 'M' }]);
+  });
+
+  it('refuses to drop a stash without confirm: true, even in-process', async () => {
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed' });
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    await repo.stashPush('wip');
+
+    const result = await repo.stashDrop(0, false);
+
+    expect(result.ok).toBe(false);
+    const list = await repo.stashList();
+    if (!list.ok) throw new Error(list.stderr);
+    expect(list.stashes).toHaveLength(1);
+  });
+
+  it('drops a stash once confirmed', async () => {
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed' });
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    await repo.stashPush('wip');
+
+    const result = await repo.stashDrop(0, true);
+
+    expect(result.ok).toBe(true);
+    const list = await repo.stashList();
+    if (!list.ok) throw new Error(list.stderr);
+    expect(list.stashes).toEqual([]);
+  });
+});
+
+describe('GitRepo: stage-hunk and unstage-hunk', () => {
+  it('stages a hunk by applying a real patch to the index', async () => {
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed' });
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    const diff = await repo.diff({ staged: false });
+    if (!diff.ok) throw new Error(diff.stderr);
+
+    const result = await repo.stageHunk(diff.patch);
+
+    expect(result.ok).toBe(true);
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.staged).toEqual([{ path: 'a.txt', status: 'M' }]);
+    expect(status.unstaged).toEqual([]);
+  });
+
+  it('unstages a hunk by applying the staged patch in reverse to the index', async () => {
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed' });
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    const diff = await repo.diff({ staged: false });
+    if (!diff.ok) throw new Error(diff.stderr);
+    await repo.stageHunk(diff.patch);
+    const stagedDiff = await repo.diff({ staged: true });
+    if (!stagedDiff.ok) throw new Error(stagedDiff.stderr);
+
+    const result = await repo.unstageHunk(stagedDiff.patch);
+
+    expect(result.ok).toBe(true);
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.staged).toEqual([]);
+    expect(status.unstaged).toEqual([{ path: 'a.txt', status: 'M' }]);
+  });
+
+  it('returns ok:false for a patch that does not apply', async () => {
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    await repo.stage(['a.txt']);
+    await repo.commit({ message: 'chore: seed' });
+
+    const result = await repo.stageHunk('not a real patch\n');
+
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('GitRepo: fetch remote validation', () => {
+  it('rejects a URL/transport remote without invoking git', async () => {
+    let called = false;
+    const fakeRun: CommandRunner = async () => {
+      called = true;
+      return { ok: true, stdout: '', stderr: '' };
+    };
+    const unsafeRepo = new GitRepo(root, fakeRun);
+
+    const result = await unsafeRepo.fetch('https://attacker.example/x.git');
+
+    expect(result.ok).toBe(false);
+    expect(called).toBe(false);
+  });
+
+  it('rejects an ext:: transport spec without invoking git', async () => {
+    let called = false;
+    const fakeRun: CommandRunner = async () => {
+      called = true;
+      return { ok: true, stdout: '', stderr: '' };
+    };
+    const unsafeRepo = new GitRepo(root, fakeRun);
+
+    const result = await unsafeRepo.fetch('ext::sh -c touch /tmp/pwned');
+
+    expect(result.ok).toBe(false);
+    expect(called).toBe(false);
+  });
+
+  it('lets a plain remote name reach git (and fail there if it does not exist)', async () => {
+    const result = await repo.fetch('origin');
+
+    // No such remote exists here — the point is the request reached real
+    // git rather than being rejected by the name-shape check itself.
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.stderr).not.toBe(
+        'invalid remote: expected a plain remote name'
+      );
   });
 });
 
@@ -225,5 +447,22 @@ describe('GitRepo: path and ref safety', () => {
 
     expect(result.ok).toBe(false);
     expect(called).toBe(false);
+  });
+});
+
+describe('GitRepo: commit sha resolution', () => {
+  it('reports ok:false rather than an empty sha when rev-parse fails after a successful commit', async () => {
+    const fakeRun: CommandRunner = async (_cwd, cmd) => {
+      if (cmd.includes('commit')) return { ok: true, stdout: '', stderr: '' };
+      if (cmd.includes('rev-parse')) {
+        return { ok: false, stdout: '', stderr: 'fatal: ambiguous HEAD' };
+      }
+      return { ok: true, stdout: '', stderr: '' };
+    };
+    const fakeRepo = new GitRepo(root, fakeRun);
+
+    const result = await fakeRepo.commit({ message: 'feat: x' });
+
+    expect(result.ok).toBe(false);
   });
 });

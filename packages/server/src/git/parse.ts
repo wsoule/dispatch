@@ -46,8 +46,8 @@ function applyChange(
   }
 }
 
-// Parses `git status --porcelain=v2 --branch --untracked-files=all`, including
-// renames, conflicts, a detached HEAD, and an unborn/empty repo.
+// Parses the `-z` (NUL-delimited) form of `git status --porcelain=v2 --branch
+// --untracked-files=all`, so a path with a literal newline can't break the record boundary.
 export function parsePorcelainV2(output: string): GitStatus {
   const status: GitStatus = {
     branch: null,
@@ -60,49 +60,53 @@ export function parsePorcelainV2(output: string): GitStatus {
     conflicted: [],
   };
 
-  for (const line of output.split('\n')) {
-    if (line === '') continue;
-    if (line.startsWith('# branch.head ')) {
-      const head = line.slice('# branch.head '.length).trim();
+  const tokens = output.split('\0');
+  for (let i = 0; i < tokens.length; i++) {
+    const record = tokens[i];
+    if (record === '') continue;
+    if (record.startsWith('# branch.head ')) {
+      const head = record.slice('# branch.head '.length).trim();
       status.branch = head === '(detached)' ? null : head;
       continue;
     }
-    if (line.startsWith('# branch.upstream ')) {
-      status.upstream = line.slice('# branch.upstream '.length).trim();
+    if (record.startsWith('# branch.upstream ')) {
+      status.upstream = record.slice('# branch.upstream '.length).trim();
       continue;
     }
-    if (line.startsWith('# branch.ab ')) {
-      const match = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line);
+    if (record.startsWith('# branch.ab ')) {
+      const match = /^# branch\.ab \+(\d+) -(\d+)$/.exec(record);
       if (match !== null) {
         status.ahead = Number(match[1]);
         status.behind = Number(match[2]);
       }
       continue;
     }
-    if (line.startsWith('#')) continue; // branch.oid or any other header line
+    if (record.startsWith('#')) continue; // branch.oid or any other header
 
-    const kind = line[0];
+    const kind = record[0];
     if (kind === '1') {
       // 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
-      const fields = line.split(' ');
+      const fields = record.split(' ');
       const xy = fields[1] ?? '..';
       const path = fields.slice(8).join(' ');
       applyChange(status, xy[0] ?? '.', xy[1] ?? '.', path);
     } else if (kind === '2') {
-      // 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path><TAB><origPath>
-      const fields = line.split(' ');
+      // 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>, origPath is
+      // the NEXT token entirely under -z (consumed here, hence `i++`).
+      const fields = record.split(' ');
       const xy = fields[1] ?? '..';
-      const rest = fields.slice(9).join(' ');
-      const [path, origPath] = rest.split('\t');
-      applyChange(status, xy[0] ?? '.', xy[1] ?? '.', path ?? '', origPath);
+      const path = fields.slice(9).join(' ');
+      const origPath = tokens[i + 1];
+      i++;
+      applyChange(status, xy[0] ?? '.', xy[1] ?? '.', path, origPath);
     } else if (kind === 'u') {
       // u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
-      const fields = line.split(' ');
+      const fields = record.split(' ');
       status.conflicted.push(fields.slice(10).join(' '));
     } else if (kind === '?') {
-      status.untracked.push(line.slice(2));
+      status.untracked.push(record.slice(2));
     }
-    // '!' (ignored) lines are dropped — nothing in GitStatus surfaces them.
+    // '!' (ignored) records are dropped — nothing in GitStatus surfaces them.
   }
 
   return status;

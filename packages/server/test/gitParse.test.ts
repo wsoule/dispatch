@@ -7,6 +7,7 @@ import {
   parseStashList,
 } from '../src/git/parse.js';
 
+// parsePorcelainV2 consumes the `-z` (NUL-delimited) form, so fixtures join records with `\0`.
 describe('parsePorcelainV2', () => {
   it('parses staged, unstaged, and both-sides changes on a normal branch', () => {
     const output = [
@@ -19,7 +20,7 @@ describe('parsePorcelainV2', () => {
       '1 MM N... 100644 100644 100644 5555555555555555555555555555555555555555 6666666666666666666666666666666666666666 both.txt',
       '? new-file.txt',
       '! ignored.txt',
-    ].join('\n');
+    ].join('\0');
 
     const status = parsePorcelainV2(output);
 
@@ -39,12 +40,13 @@ describe('parsePorcelainV2', () => {
     expect(status.conflicted).toEqual([]);
   });
 
-  it('parses a rename with its origin path', () => {
+  it('parses a rename whose origin path is a separate NUL-delimited token', () => {
     const output = [
       '# branch.oid abc123',
       '# branch.head main',
-      '2 R. N... 100644 100644 100644 7777777777777777777777777777777777777777 8888888888888888888888888888888888888888 R100 new-name.txt\told-name.txt',
-    ].join('\n');
+      '2 R. N... 100644 100644 100644 7777777777777777777777777777777777777777 8888888888888888888888888888888888888888 R100 new-name.txt',
+      'old-name.txt',
+    ].join('\0');
 
     const status = parsePorcelainV2(output);
 
@@ -54,12 +56,26 @@ describe('parsePorcelainV2', () => {
     expect(status.unstaged).toEqual([]);
   });
 
+  it('parses a path containing a literal newline without misreading the record boundary', () => {
+    const output = [
+      '# branch.oid abc123',
+      '# branch.head main',
+      '1 M. N... 100644 100644 100644 1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 line one\nline two.txt',
+    ].join('\0');
+
+    const status = parsePorcelainV2(output);
+
+    expect(status.staged).toEqual([
+      { path: 'line one\nline two.txt', status: 'M' },
+    ]);
+  });
+
   it('parses an unmerged (conflicted) file as a conflict, not a staged/unstaged change', () => {
     const output = [
       '# branch.oid abc123',
       '# branch.head main',
       'u UU N... 100644 100644 100644 100644 9999999999999999999999999999999999999999 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb conflict.txt',
-    ].join('\n');
+    ].join('\0');
 
     const status = parsePorcelainV2(output);
 
@@ -70,7 +86,7 @@ describe('parsePorcelainV2', () => {
 
   it('reports a detached HEAD as a null branch', () => {
     const output = ['# branch.oid abc123', '# branch.head (detached)'].join(
-      '\n'
+      '\0'
     );
 
     const status = parsePorcelainV2(output);
@@ -81,7 +97,7 @@ describe('parsePorcelainV2', () => {
   });
 
   it('returns a clean empty status for a fresh repo with no commits', () => {
-    const output = ['# branch.oid (initial)', '# branch.head main'].join('\n');
+    const output = ['# branch.oid (initial)', '# branch.head main'].join('\0');
 
     const status = parsePorcelainV2(output);
 

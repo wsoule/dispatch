@@ -19,6 +19,9 @@ const SCHEMA = {
 /** Bounds a single generation call the same way InboxClusterer bounds a cluster pass. */
 const COMMIT_MESSAGE_TIMEOUT_MS = 60_000;
 
+// Caps what reaches the model — one staged lockfile could otherwise blow the context window.
+const MAX_DIFF_CHARS = 20_000;
+
 function isAbortError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -28,10 +31,14 @@ function isAbortError(err: unknown): boolean {
 }
 
 function buildPrompt(diff: string): string {
+  const truncated = diff.length > MAX_DIFF_CHARS;
+  const diffText = truncated
+    ? `${diff.slice(0, MAX_DIFF_CHARS)}\n... (diff truncated)`
+    : diff;
   return [
     'Write a git commit message for the staged changes below, in Conventional ' +
       'Commits form (`type(scope): subject`).',
-    `Diff of staged changes:\n${diff}`,
+    `Diff of staged changes:\n${diffText}`,
     'Return only the commit message: a single-line subject, optionally followed ' +
       'by a blank line and a short body. No commentary, no markdown fences.',
   ].join('\n\n');

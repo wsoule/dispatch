@@ -1,4 +1,4 @@
-import { relative, resolve } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 
 import type { CommandResult, CommandRunner } from '../orchestrator/pr.js';
 import { defaultCommandRunner } from '../orchestrator/pr.js';
@@ -21,6 +21,12 @@ export type GitOutcome<T extends object = object> =
 
 const PATH_ESCAPE_ERROR = 'path escapes the repository root';
 const INVALID_REF_ERROR = 'invalid ref: must not start with "-"';
+const INVALID_REMOTE_ERROR = 'invalid remote: expected a plain remote name';
+const CONFIRM_REQUIRED_ERROR =
+  'this operation is destructive and requires confirm: true';
+
+// A plain remote name only — never a URL or transport spec (see fetch() below).
+const REMOTE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 // Prefers stderr, falling back to stdout — git prints some failures
 // (e.g. "nothing to commit") to stdout instead.
@@ -29,7 +35,7 @@ function commandErrorText(result: CommandResult): string {
   return stderr.length > 0 ? stderr : result.stdout.trim();
 }
 
-// Refuses a ref/branch/commit/remote argument starting with '-' — git would
+// Refuses a ref/branch/commit argument starting with '-' — git would
 // otherwise parse it as a flag (e.g. `--upload-pack=...`).
 function isSafeRef(name: string): boolean {
   return name.trim() !== '' && !name.startsWith('-');
@@ -43,8 +49,10 @@ export class GitRepo {
     private readonly run: CommandRunner = defaultCommandRunner
   ) {}
 
+  // `--literal-pathspecs` disables git's pathspec magic, so a caller-supplied
+  // path is always a literal file, never a pattern like `*`.
   private async runGit(args: string[]): Promise<CommandResult> {
-    return this.run(this.cwd, ['git', ...args]);
+    return this.run(this.cwd, ['git', '--literal-pathspecs', ...args]);
   }
 
   // Refuses a path that resolves outside the repo root or starts with '-';
@@ -54,7 +62,7 @@ export class GitRepo {
     const root = resolve(this.cwd);
     const resolved = resolve(this.cwd, rawPath);
     const rel = relative(root, resolved);
-    if (rel.startsWith('..')) return null;
+    if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
     return rawPath;
   }
 
@@ -68,12 +76,15 @@ export class GitRepo {
     return safe;
   }
 
+  // `-z` NUL-delimits every record, so a path containing a literal newline
+  // can't be mistaken for a record boundary — see parsePorcelainV2.
   async status(): Promise<GitOutcome<GitStatus>> {
     const result = await this.runGit([
       'status',
       '--porcelain=v2',
       '--branch',
       '--untracked-files=all',
+      '-z',
     ]);
     if (!result.ok) return { ok: false, stderr: commandErrorText(result) };
     return { ok: true, ...parsePorcelainV2(result.stdout) };
@@ -158,7 +169,7 @@ export class GitRepo {
     patch: string
   ): Promise<CommandResult> {
     try {
-      const proc = Bun.spawn(['git', ...args, '-'], {
+      const proc = Bun.spawn(['git', '--literal-pathspecs', ...args, '-'], {
         cwd: this.cwd,
         stdin: 'pipe',
         stdout: 'pipe',
@@ -194,17 +205,20 @@ export class GitRepo {
       : { ok: false, stderr: commandErrorText(result) };
   }
 
-  // Removes untracked paths, then restores tracked ones — `checkout --` errors
-  // on a purely-untracked path already removed by `clean`, so that's expected.
-  async discard(paths: string[]): Promise<GitOutcome> {
+  // Removes untracked paths first, then restores tracked ones — via
+  // `ls-files` rather than pattern-matching checkout's (locale-dependent) error text.
+  async discard(paths: string[], confirm: boolean): Promise<GitOutcome> {
+    if (!confirm) return { ok: false, stderr: CONFIRM_REQUIRED_ERROR };
     const safe = this.safePaths(paths);
     if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
-    const clean = await this.runGit(['clean', '-f', '--', ...safe]);
+    const clean = await this.runGit(['clean', '-f', '-d', '--', ...safe]);
     if (!clean.ok) return { ok: false, stderr: commandErrorText(clean) };
-    const checkout = await this.runGit(['checkout', '--', ...safe]);
-    if (!checkout.ok && !/did not match any file/.test(checkout.stderr)) {
-      return { ok: false, stderr: commandErrorText(checkout) };
-    }
+    const tracked = await this.runGit(['ls-files', '-z', '--', ...safe]);
+    if (!tracked.ok) return { ok: false, stderr: commandErrorText(tracked) };
+    const trackedPaths = tracked.stdout.split('\0').filter((p) => p !== '');
+    if (trackedPaths.length === 0) return { ok: true };
+    const checkout = await this.runGit(['checkout', '--', ...trackedPaths]);
+    if (!checkout.ok) return { ok: false, stderr: commandErrorText(checkout) };
     return { ok: true };
   }
 
@@ -218,12 +232,20 @@ export class GitRepo {
     const result = await this.runGit(args);
     if (!result.ok) return { ok: false, stderr: commandErrorText(result) };
     const head = await this.runGit(['rev-parse', 'HEAD']);
-    return { ok: true, sha: head.ok ? head.stdout.trim() : '' };
+    if (!head.ok) {
+      return {
+        ok: false,
+        stderr: `commit succeeded but could not resolve its sha: ${commandErrorText(head)}`,
+      };
+    }
+    return { ok: true, sha: head.stdout.trim() };
   }
 
+  // `--` disambiguates a branch from a pathspec — without it, an invalid ref
+  // silently falls back to restoring paths under that name instead.
   async checkout(branch: string): Promise<GitOutcome> {
     if (!isSafeRef(branch)) return { ok: false, stderr: INVALID_REF_ERROR };
-    const result = await this.runGit(['checkout', branch]);
+    const result = await this.runGit(['checkout', branch, '--']);
     return result.ok
       ? { ok: true }
       : { ok: false, stderr: commandErrorText(result) };
@@ -240,10 +262,15 @@ export class GitRepo {
       : { ok: false, stderr: commandErrorText(result) };
   }
 
-  // `force` selects `-D` over `-d`; the caller gates `-D` behind confirmation,
-  // since only that path can lose commits.
-  async deleteBranch(name: string, force: boolean): Promise<GitOutcome> {
+  // `force` selects `-D` over `-d`; `confirm` gates `-D` independently of the
+  // HTTP route, so an in-process caller can't reach it by accident.
+  async deleteBranch(
+    name: string,
+    force: boolean,
+    confirm = false
+  ): Promise<GitOutcome> {
     if (!isSafeRef(name)) return { ok: false, stderr: INVALID_REF_ERROR };
+    if (force && !confirm) return { ok: false, stderr: CONFIRM_REQUIRED_ERROR };
     const result = await this.runGit(['branch', force ? '-D' : '-d', name]);
     return result.ok
       ? { ok: true }
@@ -279,7 +306,8 @@ export class GitRepo {
       : { ok: false, stderr: commandErrorText(result) };
   }
 
-  async stashDrop(index: number): Promise<GitOutcome> {
+  async stashDrop(index: number, confirm: boolean): Promise<GitOutcome> {
+    if (!confirm) return { ok: false, stderr: CONFIRM_REQUIRED_ERROR };
     if (!Number.isInteger(index) || index < 0) {
       return { ok: false, stderr: 'invalid stash index' };
     }
@@ -289,9 +317,11 @@ export class GitRepo {
       : { ok: false, stderr: commandErrorText(result) };
   }
 
+  // `git fetch <repository>` accepts a URL or transport spec too — rejecting
+  // anything but a plain name keeps this from reaching an attacker's host.
   async fetch(remote?: string): Promise<GitOutcome> {
-    if (remote !== undefined && !isSafeRef(remote)) {
-      return { ok: false, stderr: INVALID_REF_ERROR };
+    if (remote !== undefined && !REMOTE_NAME_PATTERN.test(remote)) {
+      return { ok: false, stderr: INVALID_REMOTE_ERROR };
     }
     const args = remote !== undefined ? ['fetch', remote] : ['fetch'];
     const result = await this.runGit(args);
