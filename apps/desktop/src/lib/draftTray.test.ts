@@ -8,9 +8,11 @@ function draft(overrides: Partial<DraftRecord>): DraftRecord {
   return {
     id: 'draft-1',
     prompt: 'add a retry button',
+    plannerName: 'claude',
     state: 'running',
     message: '',
     proposal: null,
+    questions: [],
     error: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
