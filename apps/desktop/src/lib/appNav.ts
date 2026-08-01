@@ -13,11 +13,10 @@
  * reducer below, and every test against it stay untouched by the nav collapse — only
  * `Sidebar`'s single nav row and its label changed.
  *
- * `new-task` is the odd one out: it's a full-page *destination* (the describe-what-you-want
- * task creator, Plans' single-task sibling) but not a nav *item* — `Sidebar` lists its rows
- * explicitly, so it never appears in the rail. You get there from a "New task" affordance and
- * leave via Escape/Cancel/save, which is why it has its own open/close actions below rather
- * than being reached through a plain `setProjectView`. */
+ * `new-task` is the odd one out: it never actually renders — App.tsx treats reaching it as a
+ * signal to open the AI task composer dialog and immediately hand the view back to
+ * `newTaskReturnView`, so a "New task" affordance anywhere in the app can open the composer
+ * through one shared `openNewTask` action without `Sidebar` ever listing it as a nav row. */
 export type ProjectView =
   | 'overview'
   | 'board'
@@ -46,10 +45,9 @@ export interface NavState {
   peekTaskId: string | null;
   /** Run id shown in the Runs view's right pane, or `null` when nothing is selected. */
   activeRunId: string | null;
-  /** Where closing the full-page task creator returns to. Captured when it opens so
-   * Escape/Cancel lands back on whatever you were looking at (a board column's "+" returns to
-   * the board, the "c" shortcut pressed on Runs returns to Runs) instead of always dumping
-   * you on one fixed view. */
+  /** Which view `openNewTask` briefly passes through on its way to opening the AI composer
+   * dialog, captured so `projectView` snaps back to wherever you actually were (a board
+   * column's "+" returns to the board) rather than to one fixed view. */
   newTaskReturnView: ProjectView;
   paletteOpen: boolean;
   /**
@@ -120,7 +118,8 @@ export type NavAction =
   | { type: 'closePeek' }
   | { type: 'openRun'; runId: string }
   | { type: 'closeRun' }
-  /** Opens the full-page task creator, remembering the view to come back to. */
+  /** Routes to `new-task`, remembering the view to come back to — App.tsx reads reaching this
+   * state as "open the AI composer dialog". */
   | { type: 'openNewTask' }
   | { type: 'closeNewTask' }
   | { type: 'openPalette' }
@@ -128,10 +127,11 @@ export type NavAction =
   | { type: 'togglePalette' }
   | { type: 'back' }
   | { type: 'forward' }
-  /** Context-sensitive close: the command palette wins over the task peek (it renders on
-   * top), which in turn wins over the full-page task creator (a whole view, so the outermost
-   * layer), and each one being open swallows the Escape entirely rather than also clearing
-   * the next — a single Escape press should undo exactly one layer of UI. */
+  /** Context-sensitive close: the command palette wins over the task peek, which in turn wins
+   * over `new-task` still being the current view (a moment before App.tsx's own bridge would
+   * hand it back to `newTaskReturnView` anyway), and each one being open swallows the Escape
+   * entirely rather than also clearing the next — a single Escape press should undo exactly
+   * one layer of UI. */
   | { type: 'escape' };
 
 export function navReducer(state: NavState, action: NavAction): NavState {

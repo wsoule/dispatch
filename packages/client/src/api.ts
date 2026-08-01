@@ -728,7 +728,8 @@ export interface ApiClient {
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   // Starts a background planner turn (`POST /api/tasks/draft`) and returns
-  // immediately with a `DraftRecord`; poll `fetchDraft` for it to settle.
+  // immediately with a `DraftRecord` in `running` state; watch it settle via
+  // `fetchDraft`/`fetchDrafts` or the `draft.changed` WS event.
   draftTask(prompt: string): Promise<DraftRecord>;
   // Every draft currently held in memory (running, ready, or failed — until
   // dismissed), newest first.
