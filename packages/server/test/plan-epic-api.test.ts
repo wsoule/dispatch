@@ -7,7 +7,11 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
-import type { PlanProposal } from '../src/orchestrator/planner.js';
+import type {
+  Planner,
+  PlannerTurn,
+  PlanProposal,
+} from '../src/orchestrator/planner.js';
 import { FakePlanner } from '../src/orchestrator/planners/fake.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
 import type { Executor, ExecutorRun } from '../src/orchestrator/types.js';
@@ -444,6 +448,134 @@ describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
     expect(created.meta.title).toBe('Design');
     expect(created.body).toContain('Sketch it.');
     expect(created.body).toContain('Sketch reviewed');
+  });
+});
+
+describe('POST /api/tasks/drafts/:id/message', () => {
+  function questionThenAnswerPlanner(): FakePlanner {
+    return new FakePlanner({
+      ok: true,
+      turns: [
+        {
+          reply: 'quick question first',
+          proposal: null,
+          questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+        },
+        { reply: 'here you go', proposal: SAMPLE_PROPOSAL },
+      ],
+    });
+  }
+
+  async function startedDraftAwaitingAnswer(): Promise<string> {
+    await startWithPlanner(questionThenAnswerPlanner());
+    const started = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'please design something' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
+      );
+      return r.state !== 'running';
+    });
+    return started.id;
+  }
+
+  it('202s a follow-up, clears the questions, and settles ready with the proposal', async () => {
+    const draftId = await startedDraftAwaitingAnswer();
+
+    const res = await fetch(`${baseUrl}/api/tasks/drafts/${draftId}/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'desktop only' }),
+    });
+    expect(res.status).toBe(202);
+    const accepted = await json(res);
+    expect(accepted.state).toBe('running');
+    expect(accepted.questions).toEqual([]);
+
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${draftId}`)
+      );
+      return r.state !== 'running';
+    });
+    const record = await json(
+      await fetch(`${baseUrl}/api/tasks/drafts/${draftId}`)
+    );
+    expect(record.state).toBe('ready');
+    expect(record.proposal).toEqual(SAMPLE_PROPOSAL);
+    expect(record.message).toBe('here you go');
+  });
+
+  it('400s an empty message text', async () => {
+    const draftId = await startedDraftAwaitingAnswer();
+    const res = await fetch(`${baseUrl}/api/tasks/drafts/${draftId}/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: '   ' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('404s a follow-up to an unknown draft', async () => {
+    await startWithPlanner(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/drafts/d-000000/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hello' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  // A FakePlanner script settles too fast to race an HTTP call against — this
+  // stand-in never resolves `start`, so the draft sits `running` for the test.
+  it('409s a follow-up while a turn is still running', async () => {
+    const neverSettles: Planner = {
+      start: () => new Promise<PlannerTurn>(() => {}),
+      sendMessage: () => new Promise<PlannerTurn>(() => {}),
+    };
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerPlanners: (planManager) => {
+        planManager.registerPlanner('claude', neverSettles);
+      },
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('claude', fakeApprovalExecutor());
+      },
+    });
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const started = await json(
+      await fetch(`${baseUrl}/api/tasks/draft`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'please design something' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
+      );
+      return r.state === 'running';
+    });
+
+    const res = await fetch(
+      `${baseUrl}/api/tasks/drafts/${started.id}/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'too soon' }),
+      }
+    );
+    expect(res.status).toBe(409);
   });
 });
 
