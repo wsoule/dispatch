@@ -21,12 +21,12 @@ export interface LinearSyncState {
   cursor: string | null;
   /** Set once the first sync has established the link, gating automatic issue creation. */
   bootstrappedAt: string | null;
-  /** Stamped at the end of each push; a task edited before this is not re-pushed. */
+  /** Task id -> the `updated` value the push has accounted for. Absent means outstanding. */
+  pushed: Record<string, string>;
+  /** Watermark written by versions predating `pushed`; folded into it once, then cleared. */
   lastPushAt: string | null;
   lastSyncAt: string | null;
   lastError: string | null;
-  /** Task ids a push could not send; re-included next pass so the cursor can still advance. */
-  pushRetry: string[];
   echoes: EchoRecord[];
   /** Issue UUID -> its display identifier and URL, for clients that only hold `external`. */
   links: Record<string, LinearIssueLink>;
@@ -49,10 +49,10 @@ export function emptyLinearState(): LinearSyncState {
   return {
     cursor: null,
     bootstrappedAt: null,
+    pushed: {},
     lastPushAt: null,
     lastSyncAt: null,
     lastError: null,
-    pushRetry: [],
     echoes: [],
     links: {},
   };

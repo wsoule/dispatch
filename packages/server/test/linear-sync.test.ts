@@ -6,7 +6,13 @@ import type {
   LinearWorkflowState,
 } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -57,6 +63,9 @@ class FakeLinearClient implements LinearClient {
   updated: { id: string; input: LinearIssueInput }[] = [];
   issuesFailure: LinearFailure | null = null;
   createFailure: LinearFailure | null = null;
+  linkFailure: LinearFailure | null = null;
+  /** Runs inside createIssue, standing in for a local edit landing mid-round-trip. */
+  onCreate: (() => void) | null = null;
   truncated = false;
   sinceSeen: (string | null)[] = [];
   linkQueries = 0;
@@ -108,6 +117,7 @@ class FakeLinearClient implements LinearClient {
   }
 
   async issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
+    if (this.linkFailure !== null) return this.linkFailure;
     this.linkQueries++;
     return {
       ok: true,
@@ -115,6 +125,7 @@ class FakeLinearClient implements LinearClient {
         id: i.id,
         identifier: i.identifier,
         url: i.url,
+        updatedAt: i.updatedAt,
       })),
     };
   }
@@ -123,6 +134,7 @@ class FakeLinearClient implements LinearClient {
     input: LinearIssueInput
   ): Promise<LinearResult<LinearIssue>> {
     if (this.createFailure !== null) return this.createFailure;
+    this.onCreate?.();
     this.created.push(input);
     const issue = this.materialize(
       `issue-${++this.seq}`,
@@ -651,23 +663,35 @@ describe('LinearSync import write-back', () => {
   });
 });
 
-describe('LinearSync fresh state with existing links', () => {
-  // The clone case: `external` and .dispatch/config.yml are committed, but sync
-  // state is per-user in ~/.dispatch, so a teammate's first pass starts blank.
-  function seedClonedRepo(remoteUpdatedAt = '2027-01-01T00:00:00.000Z'): {
-    id: string;
-  } {
-    const remote = fake.issue({
-      title: 'Owned by Linear',
-      state: BLOCKED_STATE,
-      updatedAt: remoteUpdatedAt,
-    });
-    fake.issues = [remote];
-    const doc = store.create({ title: 'Stale committed content' });
-    store.update(doc.meta.id, { external: `linear:${remote.id}` });
-    return { id: doc.meta.id };
-  }
+// The clone case: `external` and .dispatch/config.yml are committed, but sync
+// state is per-user in ~/.dispatch, so a teammate's first pass starts blank.
+function seedClonedRepo(
+  remoteUpdatedAt = '2027-01-01T00:00:00.000Z',
+  localUpdatedAt?: string
+): { id: string } {
+  const remote = fake.issue({
+    title: 'Owned by Linear',
+    state: BLOCKED_STATE,
+    updatedAt: remoteUpdatedAt,
+  });
+  fake.issues = [remote];
+  const doc = store.create({ title: 'Stale committed content' });
+  store.update(
+    doc.meta.id,
+    { external: `linear:${remote.id}` },
+    localUpdatedAt
+  );
+  return { id: doc.meta.id };
+}
 
+// Locates a task's markdown file so a test can delete it behind the store's back.
+function taskFilePath(id: string): string {
+  const dir = join(root, '.dispatch', 'tasks');
+  const name = readdirSync(dir).find((f) => f.startsWith(`${id}-`)) ?? '';
+  return join(dir, name);
+}
+
+describe('LinearSync fresh state with existing links', () => {
   it('never writes to a linked issue on the first pass', async () => {
     seedClonedRepo();
 
@@ -678,6 +702,20 @@ describe('LinearSync fresh state with existing links', () => {
     expect(summary.pushed).toBe(0);
     // The remote state is untouched, not re-mapped through in-progress.
     expect(fake.issues[0].state?.name).toBe('Blocked');
+    expect(fake.issues[0].title).toBe('Owned by Linear');
+  });
+
+  it('never writes to a linked issue whose local file is stamped in the future', async () => {
+    // A teammate's clock ran ahead, so the committed task looks newer than any
+    // watermark this pass could take.
+    seedClonedRepo(
+      '2027-01-01T00:00:00.000Z',
+      new Date(Date.now() + 60_000).toISOString()
+    );
+
+    await makeSync().syncOnce();
+
+    expect(fake.updated).toHaveLength(0);
     expect(fake.issues[0].title).toBe('Owned by Linear');
   });
 
@@ -779,7 +817,7 @@ describe('LinearSync first pass baseline', () => {
   });
 });
 
-describe('LinearSync push cursor', () => {
+describe('LinearSync push accounting', () => {
   it('re-pushes everything a rate limit cut short, without dropping any of it', async () => {
     seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
     store.create({ title: 'One' });
@@ -793,11 +831,9 @@ describe('LinearSync push cursor', () => {
 
     const sync = makeSync();
     await sync.syncOnce();
-    // The unsent task and the one never reached are both named for retry, so the
-    // cursor advances (no re-push storm) without either being forgotten.
-    expect(readLinearState(root).pushRetry).toHaveLength(2);
+    // Neither the unsent task nor the one never reached is recorded as handled.
+    expect(readLinearState(root).pushed).toEqual({});
 
-    // Once the throttle clears, both tasks are still candidates.
     await new Promise((resolve) => setTimeout(resolve, 5));
     fake.createFailure = null;
     const second = await sync.syncOnce();
@@ -806,7 +842,8 @@ describe('LinearSync push cursor', () => {
 
   it('re-pushes a task whose push failed, and only that task', async () => {
     seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
-    store.create({ title: 'Doomed' });
+    const doomed = store.create({ title: 'Doomed' });
+    const fine = store.create({ title: 'Fine' });
     fake.createFailure = {
       ok: false,
       kind: 'graphql',
@@ -815,51 +852,214 @@ describe('LinearSync push cursor', () => {
 
     const sync = makeSync();
     await sync.syncOnce();
-    expect(readLinearState(root).pushRetry).toHaveLength(1);
-    expect(readLinearState(root).lastPushAt).not.toBeNull();
-
     fake.createFailure = null;
-    const second = await sync.syncOnce();
-    expect(second.createdIssues).toBe(1);
-    expect(readLinearState(root).pushRetry).toHaveLength(0);
-  });
+    // The task that failed is still outstanding; nothing else is.
+    expect(Object.keys(readLinearState(root).pushed)).toEqual([]);
 
-  it('keeps an earlier failure queued when a later explicit push names other tasks', async () => {
-    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
-    const doomed = store.create({ title: 'Failed earlier' });
-    fake.createFailure = {
-      ok: false,
-      kind: 'graphql',
-      error: 'validation failed',
-    };
-    const sync = makeSync();
     await sync.syncOnce();
-    expect(readLinearState(root).pushRetry).toEqual([doomed.meta.id]);
-
-    // An explicit push of a different task must not clear the queued failure.
-    fake.createFailure = null;
-    const other = store.create({ title: 'Named explicitly' });
-    await sync.syncOnce([other.meta.id]);
-    expect(readLinearState(root).pushRetry).toEqual([doomed.meta.id]);
-
-    // ...and the original task still goes up on the next ordinary pass.
-    const final = await sync.syncOnce();
-    expect(final.createdIssues).toBe(1);
-    expect(readLinearState(root).pushRetry).toEqual([]);
-  });
-
-  it('stamps lastPushAt from before the push, so a concurrent edit is not lost', async () => {
-    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
-    store.create({ title: 'Clean push' });
-    const before = new Date().toISOString();
-
-    await makeSync().syncOnce();
-
-    const stamped = readLinearState(root).lastPushAt;
-    expect(stamped).not.toBeNull();
-    expect(Date.parse(stamped ?? '')).toBeGreaterThanOrEqual(
-      Date.parse(before) - 1
+    expect(fake.created).toHaveLength(2);
+    const third = await sync.syncOnce();
+    expect(third.createdIssues).toBe(0);
+    expect(Object.keys(readLinearState(root).pushed).sort()).toEqual(
+      [doomed.meta.id, fine.meta.id].sort()
     );
+  });
+
+  it('leaves an unrelated pending edit pending when an explicit push names one task', async () => {
+    const remoteA = fake.issue({ updatedAt: '2026-01-01T00:00:00.000Z' });
+    const remoteB = fake.issue({ updatedAt: '2026-01-01T00:00:00.000Z' });
+    fake.issues = [remoteA, remoteB];
+    const a = store.create({ title: 'Named explicitly' });
+    store.update(a.meta.id, { external: `linear:${remoteA.id}` });
+    const b = store.create({ title: 'Edited moments ago' });
+    store.update(b.meta.id, { external: `linear:${remoteB.id}` });
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+
+    const sync = makeSync();
+    await sync.syncOnce([a.meta.id]);
+    expect(fake.updated.map((u) => u.id)).toEqual([remoteA.id]);
+
+    // The explicit pass never considered B, so it must not have accounted for it.
+    await sync.syncOnce();
+
+    expect(fake.updated.map((u) => u.id)).toEqual([remoteA.id, remoteB.id]);
+  });
+
+  it('leaves everything pending when an explicit push names nothing', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    store.create({ title: 'Waiting' });
+
+    const sync = makeSync();
+    const explicit = await sync.syncOnce([]);
+    expect(explicit.pushed).toBe(0);
+    expect(fake.created).toHaveLength(0);
+
+    const ordinary = await sync.syncOnce();
+    expect(ordinary.createdIssues).toBe(1);
+  });
+
+  it('re-sends a task edited while its own push was in flight', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    const doc = store.create({ title: 'Original' });
+    const sync = makeSync();
+    fake.onCreate = (): void => {
+      store.update(
+        doc.meta.id,
+        { title: 'Edited mid-flight' },
+        new Date(Date.now() + 1000).toISOString()
+      );
+    };
+
+    await sync.syncOnce();
+    fake.onCreate = null;
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Edited mid-flight');
+  });
+
+  it('creates an issue for a task stamped at the exact moment the link was established', async () => {
+    const at = '2026-07-20T00:00:00.000Z';
+    seedState({ bootstrappedAt: at });
+    store.create({ title: 'Same instant as the link' }, at);
+
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.createdIssues).toBe(1);
+  });
+
+  it('forgets a task that no longer exists', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    const keep = store.create({ title: 'Keeper' });
+    const gone = store.create({ title: 'Deleted later' });
+
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(Object.keys(readLinearState(root).pushed).sort()).toEqual(
+      [gone.meta.id, keep.meta.id].sort()
+    );
+
+    rmSync(taskFilePath(gone.meta.id));
+    await sync.syncOnce();
+
+    expect(Object.keys(readLinearState(root).pushed)).toEqual([keep.meta.id]);
+  });
+
+  it('keeps accounting for a task whose file momentarily fails to parse', async () => {
+    const remote = fake.issue({ updatedAt: '2026-01-01T00:00:00.000Z' });
+    fake.issues = [remote];
+    const doc = store.create({ title: 'Linked' });
+    store.update(doc.meta.id, { external: `linear:${remote.id}` });
+
+    const sync = makeSync();
+    await sync.syncOnce();
+    const path = taskFilePath(doc.meta.id);
+    const original = readFileSync(path, 'utf8');
+    writeFileSync(path, 'not a task file at all');
+    await sync.syncOnce();
+    writeFileSync(path, original);
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(0);
+  });
+
+  it('does not re-send work an earlier version already pushed', async () => {
+    const remote = fake.issue({ updatedAt: '2026-01-01T00:00:00.000Z' });
+    fake.issues = [remote];
+    const doc = store.create({ title: 'Sent by an earlier version' });
+    store.update(doc.meta.id, { external: `linear:${remote.id}` });
+    // A state file from before per-task accounting: a watermark and nothing else.
+    seedState({
+      bootstrappedAt: '2020-01-01T00:00:00.000Z',
+      lastPushAt: new Date(Date.now() + 1000).toISOString(),
+    });
+
+    const sync = makeSync();
+    await sync.syncOnce();
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(0);
+  });
+});
+
+describe('LinearSync explicit push conflict check', () => {
+  it('withholds an explicit update when Linear holds a newer copy', async () => {
+    const { id } = seedClonedRepo();
+
+    const summary = await makeSync().syncOnce([id]);
+
+    expect(fake.updated).toHaveLength(0);
+    expect(fake.issues[0].title).toBe('Owned by Linear');
+    expect(fake.issues[0].state?.name).toBe('Blocked');
+    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+  });
+
+  it('sends an explicit update when the local copy is the newer one', async () => {
+    const { id } = seedClonedRepo('2026-01-01T00:00:00.000Z');
+
+    const summary = await makeSync().syncOnce([id]);
+
+    expect(summary.pushed).toBe(1);
+    expect(fake.updated).toHaveLength(1);
+  });
+
+  it('sends an explicit update when Linear is only ahead because of our own write', async () => {
+    // Linear stamps a write with its own clock, which runs ahead of the local file.
+    writeConfig('push');
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    const doc = store.create({ title: 'First' });
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(fake.created).toHaveLength(1);
+
+    store.update(doc.meta.id, { title: 'Second' });
+    await sync.syncOnce([doc.meta.id]);
+
+    expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Second');
+  });
+
+  it('withholds an explicit update when the check itself failed', async () => {
+    const { id } = seedClonedRepo('2026-01-01T00:00:00.000Z');
+    fake.linkFailure = {
+      ok: false,
+      kind: 'graphql',
+      error: 'link query blew up',
+    };
+
+    const summary = await makeSync().syncOnce([id]);
+
+    expect(fake.updated).toHaveLength(0);
+    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+  });
+
+  it('does not pay for a check when the named task is not linked yet', async () => {
+    const doc = store.create({ title: 'Brand new' });
+
+    await makeSync().syncOnce([doc.meta.id]);
+
+    expect(fake.linkQueries).toBe(0);
+    expect(fake.created).toHaveLength(1);
+  });
+});
+
+describe('LinearSync link query failures', () => {
+  it('arms the backoff when the link query is throttled', async () => {
+    seedClonedRepo();
+    fake.linkFailure = {
+      ok: false,
+      kind: 'rate-limit',
+      error: 'linear rate limit reached',
+      retryAfterMs: 30_000,
+    };
+
+    const sync = makeSync();
+    const summary = await sync.syncOnce();
+    expect(summary.rateLimited).toBe(true);
+    expect(summary.errors).toContain('linear rate limit reached');
+
+    const retry = await sync.syncOnce();
+    expect(retry.errors).toEqual(['linear rate limit backoff in effect']);
   });
 });
 
