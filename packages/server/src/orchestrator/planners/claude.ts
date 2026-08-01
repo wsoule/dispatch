@@ -2,7 +2,13 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
-import type { Planner, PlannerTurn, PlanProposal } from '../planner.js';
+import type {
+  Planner,
+  PlannerMode,
+  PlannerQuestion,
+  PlannerTurn,
+  PlanProposal,
+} from '../planner.js';
 
 // The proposal half of the structured output: mirrors PlanProposal/PlannedTask
 // in planner.ts field-for-field. Kept as a standalone object so it can be
@@ -49,26 +55,36 @@ const PROPOSAL_JSON_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-// The full JSON Schema handed to the SDK's `outputFormat: { type:
-// 'json_schema', schema }` for every turn. A plan is now a conversation, so
-// each turn carries BOTH a natural-language `message` (the assistant's reply
-// the user reads) and the `proposal` it is working toward — since a
-// json_schema output leaves no separate assistant-text stream to read, the two
-// have to travel together in one structured object.
+// One clarifying question in the turn schema — mirrors PlannerQuestion.
+const QUESTION_JSON_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    question: { type: 'string' },
+    options: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['id', 'question', 'options'],
+  additionalProperties: false,
+};
+
+// The JSON Schema for the SDK's `outputFormat: { type: 'json_schema' }` on
+// every turn: `message` plus `proposal` (nullable — a turn may only ask) and `questions`.
 const TURN_JSON_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
     message: { type: 'string' },
-    proposal: PROPOSAL_JSON_SCHEMA,
+    proposal: { anyOf: [PROPOSAL_JSON_SCHEMA, { type: 'null' }] },
+    questions: { type: 'array', items: QUESTION_JSON_SCHEMA },
   },
-  required: ['message', 'proposal'],
+  required: ['message', 'proposal', 'questions'],
   additionalProperties: false,
 };
 
 // The `structured_output` shape TURN_JSON_SCHEMA produces.
 interface PlannerTurnOutput {
   message: string;
-  proposal: PlanProposal;
+  proposal: PlanProposal | null;
+  questions: PlannerQuestion[];
 }
 
 // Shared invariants every turn's `proposal` must honor, restated on both the
@@ -81,7 +97,34 @@ const PROPOSAL_RULES =
   'this plan) naming which other proposed tasks must land first. Leave ' +
   'blockedByIndices empty for tasks with no dependency on another proposed ' +
   'task. Put a short conversational reply to the user in `message`, and the ' +
-  'FULL current plan (not a diff) in `proposal` on every turn.';
+  'FULL current plan (not a diff) in `proposal` once you have one — set ' +
+  '`proposal` to null only on a turn where you have nothing worth proposing ' +
+  'yet (see the question rules below).';
+
+// Shared clarifying-questions instruction for both plan and draft prompts;
+// `roundLimit` supplies the caller's own cap so drafts stay tighter than plans.
+function buildQuestionRules(roundLimit: string): string {
+  return (
+    'Before proposing, judge whether you actually have enough information to ' +
+    'plan responsibly. If something is genuinely ambiguous and would change ' +
+    'the shape of the work, ask about it in `questions` rather than guessing ' +
+    '— the kinds of things worth asking about are scope boundaries (what is ' +
+    'explicitly in vs. out), existing code or patterns this should build on, ' +
+    'the user-facing behaviour expected, how you would know each task is ' +
+    'done (acceptance criteria), and explicit non-goals. Each question needs ' +
+    'a short stable `id` (e.g. "q1"), the `question` text, and an `options` ' +
+    "array of short suggested answers (leave it empty when there isn't a " +
+    'good fixed set of answers). ' +
+    roundLimit +
+    ' Most requests are clear enough to need zero questions — do not ask out ' +
+    'of habit, and once you have enough to propose a reasonable plan, stop ' +
+    'asking: return an empty `questions` array and propose. When you do ' +
+    'still have an open question, propose your best-effort plan under a ' +
+    'clearly stated working assumption AND ask, unless the unanswered point ' +
+    "would change the plan's shape entirely — only then leave `proposal` " +
+    'null instead of guessing.'
+  );
+}
 
 // The opening instruction wrapping a user's first planning prompt: asks for a
 // breakdown into an (optional) epic plus a set of tasks, and leans on the
@@ -96,6 +139,10 @@ function buildPlannerPrompt(userPrompt: string): string {
       'tasks, or a flat list of tasks with no epic if the request is small ' +
       'enough that an epic wrapper would add no value:',
     userPrompt,
+    buildQuestionRules(
+      'Ask at most 4 questions in a single turn, picking the ones that would ' +
+        'most change the resulting tasks.'
+    ),
     PROPOSAL_RULES,
   ].join('\n\n');
 }
@@ -106,10 +153,50 @@ function buildPlannerPrompt(userPrompt: string): string {
 // new user message and re-states that the whole updated plan must come back.
 function buildFollowupPrompt(userMessage: string): string {
   return [
-    'The user is refining the plan you are already working on. Apply their ' +
-      'feedback and return the updated plan. Stay in read-only planning mode ' +
-      '— do not write, edit, or run anything.',
+    'The user is refining the plan you are already working on, or answering ' +
+      'questions you asked. Apply their feedback and return the updated plan. ' +
+      'Stay in read-only planning mode — do not write, edit, or run anything.',
     userMessage,
+    buildQuestionRules(
+      'Ask at most 4 questions in a single turn, picking the ones that would ' +
+        'most change the resulting tasks.'
+    ),
+    PROPOSAL_RULES,
+  ].join('\n\n');
+}
+
+// Opening instruction for a single-task draft (startDraft) — buildPlannerPrompt's
+// contract scaled to one task and a much tighter question budget.
+function buildDraftPrompt(userPrompt: string): string {
+  return [
+    'You are turning a short request into a single well-formed task for a ' +
+      'git-native task tracker, not implementing it. Do not write, edit, or ' +
+      'run anything — you are in read-only planning mode.',
+    'Produce exactly one task (no epic) for this request:',
+    userPrompt,
+    buildQuestionRules(
+      'You get at most one round of questions for this single task — ask at ' +
+        'most 4 now if truly needed, but once the user has replied (or if ' +
+        'nothing is genuinely ambiguous) propose the task from what you know ' +
+        'and do not ask again.'
+    ),
+    PROPOSAL_RULES +
+      ' This draft proposes exactly one task, so `proposal.tasks` must have ' +
+      'at most one entry and `epic` must be omitted.',
+  ].join('\n\n');
+}
+
+// Follow-up instruction for a draft conversation — reiterates that the one
+// round of questions is used up, so this turn must propose.
+function buildDraftFollowupPrompt(userMessage: string): string {
+  return [
+    'The user is answering the question(s) you asked about this single task. ' +
+      'You have used your one round of questions — propose the task now from ' +
+      'what you know rather than asking again. Stay in read-only planning ' +
+      'mode — do not write, edit, or run anything.',
+    userMessage,
+    'Return an empty `questions` array and a non-null `proposal` with at ' +
+      'most one task.',
     PROPOSAL_RULES,
   ].join('\n\n');
 }
@@ -134,16 +221,24 @@ export class ClaudePlanner implements Planner {
     private readonly queryFn: typeof query = query
   ) {}
 
-  start(prompt: string, model?: string): Promise<PlannerTurn> {
-    return this.runTurn(buildPlannerPrompt(prompt), undefined, model);
+  start(
+    prompt: string,
+    model?: string,
+    mode: PlannerMode = 'plan'
+  ): Promise<PlannerTurn> {
+    const builder = mode === 'draft' ? buildDraftPrompt : buildPlannerPrompt;
+    return this.runTurn(builder(prompt), undefined, model);
   }
 
   sendMessage(
     sessionId: string | undefined,
     message: string,
-    model?: string
+    model?: string,
+    mode: PlannerMode = 'plan'
   ): Promise<PlannerTurn> {
-    return this.runTurn(buildFollowupPrompt(message), sessionId, model);
+    const builder =
+      mode === 'draft' ? buildDraftFollowupPrompt : buildFollowupPrompt;
+    return this.runTurn(builder(message), sessionId, model);
   }
 
   // Runs one turn to completion: issues a single `query()` (resuming `resume`
@@ -207,6 +302,7 @@ export class ClaudePlanner implements Planner {
         return {
           reply: output.message,
           proposal: output.proposal,
+          questions: output.questions,
           sessionId: message.session_id ?? sessionId,
         };
       }

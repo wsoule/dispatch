@@ -321,6 +321,22 @@ function dismissDraft(ctx: ApiContext, id: string): Response {
   return jsonResponse({ ok: true });
 }
 
+// POST /api/tasks/drafts/:id/message — mirrors sendPlanMessage's shape for a draft.
+async function sendDraftMessage(
+  req: Request,
+  ctx: ApiContext,
+  draftId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const record = ctx.planManager.sendDraftMessage(draftId, body.text);
+  return jsonResponse(record, 202);
+}
+
 async function updateTask(
   req: Request,
   ctx: ApiContext,
@@ -1774,6 +1790,14 @@ export async function handleApi(
         method === 'DELETE'
       ) {
         return dismissDraft(ctx, segments[2]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[1] === 'drafts' &&
+        segments[3] === 'message' &&
+        method === 'POST'
+      ) {
+        return await sendDraftMessage(req, ctx, segments[2]);
       }
       if (
         segments.length === 3 &&

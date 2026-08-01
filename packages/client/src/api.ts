@@ -400,6 +400,13 @@ export interface PlanMessage {
   at: string;
 }
 
+// Mirrors PlannerQuestion in packages/server/src/orchestrator/planner.ts.
+export interface PlannerQuestion {
+  id: string;
+  question: string;
+  options: string[];
+}
+
 // Mirrors PlanRecord in packages/server/src/orchestrator/plan.ts — the body
 // of `GET /api/plan/:id`. A plan is a multi-turn conversation: `messages` is
 // the running transcript, `proposal` the latest working proposal, and
@@ -412,6 +419,8 @@ export interface PlanRecord {
   state: PlanState;
   messages: PlanMessage[];
   proposal?: PlanProposal;
+  /** Clarifying questions from the latest assistant turn, answerable via `sendPlanMessage`. */
+  questions: PlannerQuestion[];
   sessionId?: string;
   error?: string;
   createdAt: string;
@@ -434,9 +443,13 @@ export interface ConfirmResult {
 export interface DraftRecord {
   id: string;
   prompt: string;
+  plannerName: string;
   state: PlanState;
   message: string;
   proposal: PlanProposal | null;
+  /** Clarifying questions from the latest turn, answerable via `sendDraftMessage`. */
+  questions: PlannerQuestion[];
+  sessionId?: string;
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -755,6 +768,8 @@ export interface ApiClient {
   // Dismisses a reviewed draft (saved or discarded) so it stops showing up in
   // `fetchDrafts`. 404s an unknown id.
   dismissDraft(id: string): Promise<void>;
+  // Mirrors sendPlanMessage's shape for a draft's follow-up message.
+  sendDraftMessage(draftId: string, text: string): Promise<DraftRecord>;
   // Orchestrator run endpoints (Phase 4 Slice O1/O2 API, Slice O3 client) —
   // see packages/server/src/api.ts for the exact request/response shapes
   // these mirror. `executor` defaults to 'claude' server-side when omitted;
@@ -1005,6 +1020,11 @@ export function createApiClient(baseUrl: string): ApiClient {
     dismissDraft: async (id) => {
       await request(baseUrl, `/api/tasks/drafts/${id}`, { method: 'DELETE' });
     },
+    sendDraftMessage: (draftId, text) =>
+      request(baseUrl, `/api/tasks/drafts/${draftId}/message`, {
+        method: 'POST',
+        ...jsonBody({ text }),
+      }),
     createRun: (taskId, opts = {}) =>
       request(baseUrl, `/api/tasks/${taskId}/runs`, {
         method: 'POST',

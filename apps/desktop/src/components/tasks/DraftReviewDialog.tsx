@@ -8,7 +8,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { EditableTaskDraft } from '../../lib/taskDraft';
@@ -17,6 +17,7 @@ import {
   editableDraftToCreateInput,
   isDraftSaveable,
 } from '../../lib/taskDraft';
+import { PlanQuestionsForm } from '../plans/PlanQuestionsForm';
 import {
   EpicControl,
   PriorityControl,
@@ -96,6 +97,27 @@ export function DraftReviewDialog({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
 
+  // Hydrates `editable` from `task` the first time it appears — needed when a draft opens
+  // still asking questions, so a proposal that lands later populates the form once.
+  const [hydrated, setHydrated] = useState(task !== undefined);
+  useEffect(() => {
+    if (hydrated || task === undefined) return;
+    setEditable(
+      editableDraftFrom(
+        {
+          title: task.title,
+          description: task.description,
+          acceptanceCriteria: task.acceptanceCriteria,
+          priority: task.priority,
+        },
+        statuses[0] ?? 'backlog'
+      )
+    );
+    setCriterionKeys(task.acceptanceCriteria.map((_, i) => `criterion-${i}`));
+    nextCriterionKey.current = task.acceptanceCriteria.length;
+    setHydrated(true);
+  }, [hydrated, task, statuses]);
+
   function editDraft(patch: Partial<EditableTaskDraft>) {
     setEditable((prev) => ({ ...prev, ...patch }));
   }
@@ -163,10 +185,24 @@ export function DraftReviewDialog({
           <DialogTitle>Review draft</DialogTitle>
         </DialogHeader>
 
+        {draft.questions.length > 0 && (
+          <PlanQuestionsForm
+            questions={draft.questions}
+            disabled={draft.state === 'running'}
+            onSend={async (text) => {
+              await data.handleSendDraftMessage(draft.id, text);
+            }}
+          />
+        )}
+
         {task === undefined ? (
           <div className="text-muted-foreground flex items-center gap-2 text-[13px]">
             <CircleAlert className="size-4 shrink-0" />
-            <span>This draft has no proposed task to review.</span>
+            <span>
+              {draft.questions.length > 0
+                ? 'Answer the question above to get a proposed task.'
+                : 'This draft has no proposed task to review.'}
+            </span>
           </div>
         ) : (
           <div className="flex flex-col gap-4">

@@ -589,6 +589,80 @@ describe('PlanManager multi-turn conversation', () => {
   });
 });
 
+describe('PlanManager questions-only turns', () => {
+  it('accepts a turn that asks questions with a null proposal, landing ready (not failed)', async () => {
+    const questions = [
+      {
+        id: 'q1',
+        question: 'Scope: mobile too, or desktop only?',
+        options: [],
+      },
+    ];
+    const manager = makeManager(
+      new FakePlanner({
+        ok: true,
+        proposal: null,
+        reply: 'A couple of things first.',
+        questions,
+      })
+    );
+    const started = manager.startPlan('build something vague');
+
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    const record = manager.get(started.id);
+    expect(record.state).toBe('ready');
+    expect(record.error).toBeUndefined();
+    expect(record.proposal).toBeUndefined();
+    expect(record.questions).toEqual(questions);
+    expect(record.messages[1].text).toBe('A couple of things first.');
+  });
+
+  it('keeps the prior working proposal when a later turn only asks more questions', async () => {
+    const manager = makeManager(
+      new FakePlanner({
+        ok: true,
+        turns: [
+          { reply: 'first pass', proposal: SAMPLE_PROPOSAL },
+          {
+            reply: 'one more thing',
+            proposal: null,
+            questions: [{ id: 'q1', question: 'And non-goals?', options: [] }],
+          },
+        ],
+      })
+    );
+    const started = await startAndSettle(manager, 'build a widget feature');
+    manager.sendMessage(started.id, 'looks good, keep going');
+    await waitFor(() => manager.get(started.id).questions.length > 0);
+
+    const record = manager.get(started.id);
+    expect(record.state).toBe('ready');
+    expect(record.proposal).toEqual(SAMPLE_PROPOSAL);
+    expect(record.questions).toHaveLength(1);
+  });
+
+  it('clears the prior turn’s questions once a follow-up message is sent', async () => {
+    const manager = makeManager(
+      new FakePlanner({
+        ok: true,
+        turns: [
+          {
+            reply: 'a question first',
+            proposal: null,
+            questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+          },
+          { reply: 'thanks, here is the plan', proposal: SAMPLE_PROPOSAL },
+        ],
+      })
+    );
+    const started = await startAndSettle(manager, 'build something vague');
+    expect(started.questions).toHaveLength(1);
+
+    const sent = manager.sendMessage(started.id, 'desktop only');
+    expect(sent.questions).toEqual([]);
+  });
+});
+
 // The natural-language single-task creator: mints a DraftRecord and runs the
 // turn in the background, the same running -> ready|failed shape as a plan.
 describe('PlanManager.startDraft / getDraft / listDrafts / dismissDraft', () => {

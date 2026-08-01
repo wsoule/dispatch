@@ -7,10 +7,11 @@ import type { EventBus } from '../events.js';
 import type {
   PlannedTask,
   Planner,
+  PlannerQuestion,
   PlannerTurn,
   PlanProposal,
 } from './planner.js';
-import { validatePlanProposal } from './planner.js';
+import { validatePlanProposal, validatePlanProposalOrNull } from './planner.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -72,6 +73,9 @@ export interface PlanRecord {
   // The latest *working* proposal — refined across turns and the target
   // confirm() validates against. Undefined until the first turn settles ready.
   proposal?: PlanProposal;
+  // Clarifying questions from the latest assistant turn, answerable via
+  // sendMessage; empty once the planner has enough to propose without them.
+  questions: PlannerQuestion[];
   // The planner's opaque resume handle from the most recent turn (the Agent
   // SDK session id for ClaudePlanner). Threaded back into the next
   // sendMessage so follow-ups retain prior context.
@@ -101,10 +105,17 @@ export interface ConfirmResult {
 export interface DraftRecord {
   id: string;
   prompt: string;
+  // Which registered planner this draft is talking to (mirrors PlanRecord.plannerName).
+  plannerName: string;
   state: 'running' | 'ready' | 'failed';
   /** The planner's conversational reply for this turn (may contain questions). */
   message: string;
   proposal: PlanProposal | null;
+  /** Clarifying questions from the latest turn, answerable via sendDraftMessage. */
+  questions: PlannerQuestion[];
+  // The planner's opaque resume handle from the most recent turn, threaded
+  // into the next sendDraftMessage — mirrors PlanRecord.sessionId.
+  sessionId?: string;
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -215,13 +226,14 @@ export class PlanManager {
       role,
       state: 'running',
       messages: [{ role: 'user', text: prompt, at: now }],
+      questions: [],
       createdAt: now,
       updatedAt: now,
       sourceNoteId,
     };
     this.plans.set(record.id, record);
     const model = this.resolveModel(role);
-    void this.runTurn(record.id, () => planner.start(prompt, model));
+    void this.runTurn(record.id, () => planner.start(prompt, model, 'plan'));
     return record;
   }
 
@@ -236,9 +248,11 @@ export class PlanManager {
     const record: DraftRecord = {
       id: generateDraftId(now),
       prompt,
+      plannerName,
       state: 'running',
       message: '',
       proposal: null,
+      questions: [],
       error: null,
       createdAt: now,
       updatedAt: now,
@@ -246,20 +260,55 @@ export class PlanManager {
     this.drafts.set(record.id, record);
     this.evictOldDrafts();
     const model = loadConfig(this.ctx.rootDir).models.draft;
-    void this.runDraftTurn(record.id, () => planner.start(prompt, model));
+    void this.runDraftTurn(record.id, () =>
+      planner.start(prompt, model, 'draft')
+    );
     return record;
   }
 
-  // Runs one draft's planner turn to completion, re-validating the proposal
-  // (>=1 task) before marking `ready`; any failure lands `failed` with `error` set.
+  // Mirrors sendMessage for a draft's follow-up (typically an answer to its
+  // questions), minus the `confirmedAt` guard — a draft has no confirm step.
+  sendDraftMessage(draftId: string, message: string): DraftRecord {
+    const record = this.getDraft(draftId);
+    if (record.state === 'running') {
+      throw new OrchestratorConflictError(
+        `draft is busy: a turn is already in progress: ${draftId}`
+      );
+    }
+    const planner = this.planners.get(record.plannerName);
+    if (planner === undefined) {
+      throw new OrchestratorClientError(
+        `unknown planner: ${record.plannerName}`
+      );
+    }
+    this.updateDraftRecord(draftId, {
+      state: 'running',
+      error: null,
+      questions: [],
+    });
+    const sessionId = record.sessionId;
+    const model = loadConfig(this.ctx.rootDir).models.draft;
+    void this.runDraftTurn(draftId, () =>
+      planner.sendMessage(sessionId, message, model, 'draft')
+    );
+    return this.getDraft(draftId);
+  }
+
+  // Runs one draft turn to completion; a turn with neither a proposal nor
+  // questions is a failure (the planner produced nothing to act on).
   private async runDraftTurn(
     draftId: string,
     run: () => Promise<PlannerTurn>
   ): Promise<void> {
     try {
       const turn = await run();
-      const proposal = validatePlanProposal(turn.proposal);
-      if (proposal.tasks.length === 0) {
+      const proposal = validatePlanProposalOrNull(turn.proposal);
+      const current = this.drafts.get(draftId);
+      if (current === undefined) return;
+      if (
+        (proposal === null || proposal.tasks.length === 0) &&
+        turn.questions.length === 0
+      ) {
         throw new OrchestratorClientError(
           'planner produced no task for this description'
         );
@@ -267,7 +316,9 @@ export class PlanManager {
       this.updateDraftRecord(draftId, {
         state: 'ready',
         message: turn.reply,
-        proposal,
+        ...(proposal !== null ? { proposal } : {}),
+        questions: turn.questions,
+        sessionId: turn.sessionId ?? current.sessionId,
       });
     } catch (err) {
       this.updateDraftRecord(draftId, {
@@ -361,6 +412,8 @@ export class PlanManager {
       // A new turn supersedes any prior failure — clear the stale error so a
       // retry after a failed turn doesn't keep advertising the old message.
       error: undefined,
+      // Superseded by this new message — clear so a stale form doesn't linger.
+      questions: [],
       updatedAt: now,
     };
     this.plans.set(planId, updated);
@@ -368,15 +421,13 @@ export class PlanManager {
     const sessionId = record.sessionId;
     const model = this.resolveModel(record.role);
     void this.runTurn(planId, () =>
-      planner.sendMessage(sessionId, message, model)
+      planner.sendMessage(sessionId, message, model, 'plan')
     );
     return updated;
   }
 
-  // Runs one planner turn (opening or follow-up) to completion and folds it
-  // into the record: on success, appends the assistant reply, stores the
-  // (re-validated) working proposal and the planner's resume session, and
-  // moves to `ready`; on any error, moves to `failed`.
+  // Runs one planner turn and folds it into the record; a `null` turn
+  // proposal (questions-only) leaves the prior working proposal untouched.
   private async runTurn(
     planId: string,
     run: () => Promise<PlannerTurn>
@@ -388,12 +439,13 @@ export class PlanManager {
       // uses) so a plan never sits at `ready` advertising a proposal nobody
       // could actually confirm; an invalid one downgrades to `failed` with the
       // validation message instead.
-      const proposal = validatePlanProposal(turn.proposal);
+      const proposal = validatePlanProposalOrNull(turn.proposal);
       const current = this.plans.get(planId);
       if (current === undefined) return;
       this.updateRecord(planId, {
         state: 'ready',
-        proposal,
+        ...(proposal !== null ? { proposal } : {}),
+        questions: turn.questions,
         sessionId: turn.sessionId ?? current.sessionId,
         messages: [
           ...current.messages,

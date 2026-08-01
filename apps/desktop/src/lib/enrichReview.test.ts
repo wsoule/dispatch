@@ -23,6 +23,7 @@ function planRecord(over: Partial<PlanRecord> = {}): PlanRecord {
     state: 'ready',
     messages: [],
     proposal: { tasks: [plannedTask()] },
+    questions: [],
     createdAt: '2026-07-31T00:00:00.000Z',
     updatedAt: '2026-07-31T00:00:00.000Z',
     ...over,

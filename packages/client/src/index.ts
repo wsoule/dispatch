@@ -32,6 +32,7 @@ export type {
   NoteKind,
   NormalizedEntry,
   PlannedTask,
+  PlannerQuestion,
   PlanMessage,
   PlanProposal,
   PlanRecord,

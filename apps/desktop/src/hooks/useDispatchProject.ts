@@ -297,6 +297,12 @@ export interface DispatchProjectData {
   /** Dismisses a draft so it stops appearing in the tray — used both for "Discard" in the
    * review dialog and for "Create task", once a ready draft has become a real task. */
   handleDismissDraft: (id: string) => Promise<void>;
+  /** Post a follow-up message (typically answers to its clarifying questions) on an existing
+   * draft. Returns the 202 record, already back in `running`. */
+  handleSendDraftMessage: (
+    draftId: string,
+    text: string
+  ) => Promise<DraftRecord>;
   handleDispatch: (
     taskId: string,
     executor?: 'fake' | 'claude',
@@ -1118,6 +1124,21 @@ export function useDispatchProject(
     [client, queryClient, draftsQueryKey]
   );
 
+  // Seeds the drafts cache with the 202's `running` record (mirrors handleSendPlanMessage),
+  // then invalidates to re-sync once the follow-up turn settles via `draft.changed`.
+  const handleSendDraftMessage = useCallback(
+    async (draftId: string, text: string): Promise<DraftRecord> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const record = await client.sendDraftMessage(draftId, text);
+      queryClient.setQueryData<DraftRecord[]>(draftsQueryKey, (prev) =>
+        prev?.map((d) => (d.id === draftId ? record : d))
+      );
+      void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+      return record;
+    },
+    [client, queryClient, draftsQueryKey]
+  );
+
   const handleCreateNote = useCallback(
     async (
       input: import('@dispatch/client').CreateNoteInput
@@ -1781,6 +1802,7 @@ export function useDispatchProject(
     drafts: drafts ?? [],
     handleStartDraft,
     handleDismissDraft,
+    handleSendDraftMessage,
     handleDispatch,
     handleApprove,
     handleSendMessage,

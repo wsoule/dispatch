@@ -1,11 +1,16 @@
-import type { Planner, PlannerTurn, PlanProposal } from '../planner.js';
+import type {
+  Planner,
+  PlannerQuestion,
+  PlannerTurn,
+  PlanProposal,
+} from '../planner.js';
 
-// One scripted assistant turn: the natural-language `reply` and the working
-// `proposal` after that turn. `reply` is optional — when omitted a canned
-// stand-in string is used, since most tests only assert on the proposal.
+// One scripted assistant turn — `proposal` may be `null` for a questions-only
+// turn; `reply` defaults to a canned stand-in when omitted.
 export interface FakePlannerTurn {
   reply?: string;
-  proposal: PlanProposal;
+  proposal: PlanProposal | null;
+  questions?: PlannerQuestion[];
 }
 
 // A scriptable stand-in for ClaudePlanner (mirrors executors/fake.ts's
@@ -18,7 +23,12 @@ export interface FakePlannerTurn {
 //     deterministically.
 //   - `{ ok: false, error }`    — every turn rejects with this message.
 export type FakePlannerScript =
-  | { ok: true; proposal: PlanProposal; reply?: string }
+  | {
+      ok: true;
+      proposal: PlanProposal | null;
+      reply?: string;
+      questions?: PlannerQuestion[];
+    }
   | { ok: true; turns: FakePlannerTurn[] }
   | { ok: false; error: string };
 
@@ -42,14 +52,19 @@ const DEFAULT_REPLY = '(fake planner turn)';
 export class FakePlanner implements Planner {
   constructor(private readonly script: FakePlannerScript) {}
 
-  async start(_prompt: string, _model?: string): Promise<PlannerTurn> {
+  async start(
+    _prompt: string,
+    _model?: string,
+    _mode?: 'plan' | 'draft'
+  ): Promise<PlannerTurn> {
     return this.turnAt(0);
   }
 
   async sendMessage(
     sessionId: string | undefined,
     _message: string,
-    _model?: string
+    _model?: string,
+    _mode?: 'plan' | 'draft'
   ): Promise<PlannerTurn> {
     const consumed =
       sessionId === undefined ? 0 : Number.parseInt(sessionId, 10);
@@ -72,12 +87,14 @@ export class FakePlanner implements Planner {
       return {
         reply: turn.reply ?? DEFAULT_REPLY,
         proposal: turn.proposal,
+        questions: turn.questions ?? [],
         sessionId: nextSessionId,
       };
     }
     return {
       reply: this.script.reply ?? DEFAULT_REPLY,
       proposal: this.script.proposal,
+      questions: this.script.questions ?? [],
       sessionId: nextSessionId,
     };
   }

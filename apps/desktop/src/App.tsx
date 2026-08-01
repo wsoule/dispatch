@@ -376,13 +376,11 @@ function App() {
         ) ?? null)
       : null;
 
-  // Re-derived from the live query every render, so the dialog below closes on its own once
-  // this stops being `ready` — no separate effect needed.
+  // Re-derived from the live query every render — stays open across a follow-up turn
+  // (running -> ready) and closes once the draft is dismissed and drops out of the list.
   const reviewingDraft =
     reviewingDraftId !== null
-      ? (data.drafts.find(
-          (d) => d.id === reviewingDraftId && d.state === 'ready'
-        ) ?? null)
+      ? (data.drafts.find((d) => d.id === reviewingDraftId) ?? null)
       : null;
 
   // Destructured to bare locals rather than referenced as `data.tasks`/`data.readyIds`/
