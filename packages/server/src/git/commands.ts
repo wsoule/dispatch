@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 
 import type { CommandResult, CommandRunner } from '../orchestrator/pr.js';
@@ -19,14 +20,21 @@ export type GitOutcome<T extends object = object> =
   | ({ ok: true } & T)
   | { ok: false; stderr: string };
 
-const PATH_ESCAPE_ERROR = 'path escapes the repository root';
-const INVALID_REF_ERROR = 'invalid ref: must not start with "-"';
-const INVALID_REMOTE_ERROR = 'invalid remote: expected a plain remote name';
-const CONFIRM_REQUIRED_ERROR =
+// Exported so api.ts can tell a pre-flight rejection (git never ran) apart
+// from a real git failure, for its `alwaysBroadcast` decision.
+export const PATH_ESCAPE_ERROR = 'path escapes the repository root';
+export const INVALID_REF_ERROR = 'invalid ref: must not start with "-"';
+export const INVALID_REMOTE_ERROR =
+  'invalid remote: expected a plain remote name';
+export const CONFIRM_REQUIRED_ERROR =
   'this operation is destructive and requires confirm: true';
+export const INVALID_STASH_INDEX_ERROR = 'invalid stash index';
+// Prefix only — marks a commit that landed but whose sha couldn't be confirmed.
+export const COMMIT_SHA_UNRESOLVED_PREFIX =
+  'commit succeeded but could not resolve its sha: ';
 
 // A plain remote name only — never a URL or transport spec (see fetch() below).
-const REMOTE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+const REMOTE_NAME_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._-]*$/;
 
 // Prefers stderr, falling back to stdout — git prints some failures
 // (e.g. "nothing to commit") to stdout instead.
@@ -41,8 +49,8 @@ function isSafeRef(name: string): boolean {
   return name.trim() !== '' && !name.startsWith('-');
 }
 
-// Every git operation the Git page needs against one repo checkout, via the
-// injected async `CommandRunner` — distinct from `WorktreeManager`'s dispatch-worktree lifecycle.
+// Every git operation the Git page needs, via the injected `CommandRunner`
+// — distinct from `WorktreeManager`'s dispatch-worktree lifecycle.
 export class GitRepo {
   constructor(
     private readonly cwd: string,
@@ -55,12 +63,24 @@ export class GitRepo {
     return this.run(this.cwd, ['git', '--literal-pathspecs', ...args]);
   }
 
-  // Refuses a path that resolves outside the repo root or starts with '-';
-  // returns the original relative string so git resolves it the same way.
+  // A nonexistent path (e.g. unstaging an already-deleted file) has nothing
+  // on disk to resolve, so this falls back to the plain resolved path.
+  private realOrSelf(path: string): string {
+    try {
+      return realpathSync(path);
+    } catch {
+      return path;
+    }
+  }
+
+  // Refuses a path outside the repo root (following symlinks, so one can't
+  // point out of it) or starting with '-'; returns the original relative string.
   private safePath(rawPath: string): string | null {
     if (rawPath === '' || rawPath.startsWith('-')) return null;
-    const root = resolve(this.cwd);
-    const resolved = resolve(this.cwd, rawPath);
+    // Resolved from the already-real `root`, not raw `this.cwd` — keeps a
+    // nonexistent target's prefix consistent even when cwd itself is symlinked.
+    const root = this.realOrSelf(resolve(this.cwd));
+    const resolved = this.realOrSelf(resolve(root, rawPath));
     const rel = relative(root, resolved);
     if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
     return rawPath;
@@ -205,8 +225,8 @@ export class GitRepo {
       : { ok: false, stderr: commandErrorText(result) };
   }
 
-  // Removes untracked paths first, then restores tracked ones — via
-  // `ls-files` rather than pattern-matching checkout's (locale-dependent) error text.
+  // Removes untracked paths, then restores tracked ones (checked via
+  // `ls-files`, not checkout's locale-dependent error text).
   async discard(paths: string[], confirm: boolean): Promise<GitOutcome> {
     if (!confirm) return { ok: false, stderr: CONFIRM_REQUIRED_ERROR };
     const safe = this.safePaths(paths);
@@ -235,7 +255,7 @@ export class GitRepo {
     if (!head.ok) {
       return {
         ok: false,
-        stderr: `commit succeeded but could not resolve its sha: ${commandErrorText(head)}`,
+        stderr: `${COMMIT_SHA_UNRESOLVED_PREFIX}${commandErrorText(head)}`,
       };
     }
     return { ok: true, sha: head.stdout.trim() };
@@ -298,7 +318,7 @@ export class GitRepo {
 
   async stashPop(index: number): Promise<GitOutcome> {
     if (!Number.isInteger(index) || index < 0) {
-      return { ok: false, stderr: 'invalid stash index' };
+      return { ok: false, stderr: INVALID_STASH_INDEX_ERROR };
     }
     const result = await this.runGit(['stash', 'pop', `stash@{${index}}`]);
     return result.ok
@@ -309,7 +329,7 @@ export class GitRepo {
   async stashDrop(index: number, confirm: boolean): Promise<GitOutcome> {
     if (!confirm) return { ok: false, stderr: CONFIRM_REQUIRED_ERROR };
     if (!Number.isInteger(index) || index < 0) {
-      return { ok: false, stderr: 'invalid stash index' };
+      return { ok: false, stderr: INVALID_STASH_INDEX_ERROR };
     }
     const result = await this.runGit(['stash', 'drop', `stash@{${index}}`]);
     return result.ok

@@ -744,7 +744,13 @@ async function request<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(`${baseUrl}${path}`, init);
+  // Defaults content-type here (not per call site), so a bare `{ body: ... }`
+  // still passes the server's Content-Type gate.
+  const headers = new Headers(init?.headers);
+  if (init?.body !== undefined && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
+  const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `request failed: ${res.status}`);

@@ -1,7 +1,33 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { TaskDraft } from '../src/api';
-import { httpToWs, taskDraftToCreateInput, taskQueryString } from '../src/api';
+import {
+  createApiClient,
+  httpToWs,
+  taskDraftToCreateInput,
+  taskQueryString,
+} from '../src/api';
+
+// Captures the (url, init) a stubbed `fetch` was called with, so a test can
+// inspect exactly what a client method sent without a real network call.
+function stubFetch(): {
+  calls: Array<{ url: string; init?: RequestInit }>;
+  restore: () => void;
+} {
+  const original = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (
+    url: string | URL,
+    init?: RequestInit
+  ): Promise<Response> => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+  return { calls, restore: () => (globalThis.fetch = original) };
+}
 
 describe('httpToWs', () => {
   it('swaps http for ws and appends /ws', () => {
@@ -72,5 +98,45 @@ describe('taskDraftToCreateInput', () => {
       priority: 'none',
       description: 'Just do the thing.',
     });
+  });
+});
+
+// Regression coverage: several ApiClient methods skip jsonBody() and pass a
+// bare `body`, relying entirely on request() to default the header.
+describe('request() defaults content-type: application/json for a JSON body', () => {
+  it('adds the header for a POST built without jsonBody() (addInbox)', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').addInbox({ text: 'hi' });
+      expect(stub.calls).toHaveLength(1);
+      const headers = new Headers(stub.calls[0].init?.headers);
+      expect(headers.get('content-type')).toBe('application/json');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('adds the header for a PATCH built without jsonBody() (updateConfig)', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').updateConfig({});
+      expect(stub.calls).toHaveLength(1);
+      const headers = new Headers(stub.calls[0].init?.headers);
+      expect(headers.get('content-type')).toBe('application/json');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('leaves a bodyless request with no content-type header at all', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').clusterInbox();
+      expect(stub.calls).toHaveLength(1);
+      const headers = new Headers(stub.calls[0].init?.headers);
+      expect(headers.has('content-type')).toBe(false);
+    } finally {
+      stub.restore();
+    }
   });
 });

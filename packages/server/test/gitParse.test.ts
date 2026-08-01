@@ -7,7 +7,7 @@ import {
   parseStashList,
 } from '../src/git/parse.js';
 
-// parsePorcelainV2 consumes the `-z` (NUL-delimited) form, so fixtures join records with `\0`.
+// parsePorcelainV2 takes the `-z` form, so fixtures join records with `\0`.
 describe('parsePorcelainV2', () => {
   it('parses staged, unstaged, and both-sides changes on a normal branch', () => {
     const output = [
