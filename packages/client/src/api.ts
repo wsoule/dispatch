@@ -313,6 +313,9 @@ export type ServerEvent =
       pushed: boolean;
       pushError?: string;
     }
+  // A Linear sync pass finished, carrying its own summary. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'linear.changed'; summary: LinearSyncSummary }
   // The brain-dump inbox changed — captured, retyped, dismissed or converted.
   | { type: 'inbox.changed' }
   | { type: 'review.changed'; runId: string }
@@ -610,6 +613,55 @@ export interface MergeQueueSnapshot {
   entries: MergeQueueEntry[];
   /** Terminal entries (merged/failed), most-recent-first, capped at 20. */
   history: MergeQueueEntry[];
+}
+
+// Mirrors LinearSyncSummary in packages/server/src/linear/sync.ts: `created`
+// counts new local tasks, `createdIssues` counts new Linear issues.
+export interface LinearSyncSummary {
+  at: string;
+  pulled: number;
+  pushed: number;
+  created: number;
+  createdIssues: number;
+  conflicts: number;
+  errors: string[];
+  rateLimited: boolean;
+}
+
+// Mirrors LinearStatus in packages/server/src/linear/sync.ts. Carries no API key
+// — `keySource` says where the daemon found one, never what it is.
+export interface LinearStatus {
+  enabled: boolean;
+  connected: boolean;
+  keySource: 'env' | 'file' | null;
+  teamId: string | null;
+  direction: 'both' | 'pull' | 'push';
+  intervalSec: number;
+  statusMap: Record<string, string>;
+  cursor: string | null;
+  bootstrappedAt: string | null;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  lastSummary: LinearSyncSummary | null;
+  syncing: boolean;
+}
+
+export interface LinearTeam {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface LinearWorkflowState {
+  id: string;
+  name: string;
+  type: string;
+}
+
+export interface LinearViewer {
+  id: string;
+  name: string;
+  email: string;
 }
 
 // Shared fetch wrapper: resolves against `baseUrl`, throws with the server's
@@ -911,7 +963,27 @@ export interface ApiClient {
     verifyTimeoutSec?: number;
     permissionMode?: string;
     models?: Partial<ModelConfig>;
+    linear?: {
+      enabled?: boolean;
+      teamId?: string | null;
+      statusMap?: Record<string, string>;
+      intervalSec?: number;
+      direction?: 'both' | 'pull' | 'push';
+    };
   }): Promise<DispatchConfig>;
+  // Linear sync. `connectLinear` posts the key once and never gets it back; every later
+  // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.
+  fetchLinearStatus(): Promise<LinearStatus>;
+  connectLinear(apiKey: string): Promise<{
+    connected: boolean;
+    viewer: LinearViewer;
+  }>;
+  disconnectLinear(): Promise<LinearStatus>;
+  fetchLinearTeams(): Promise<LinearTeam[]>;
+  fetchLinearStates(teamId: string): Promise<LinearWorkflowState[]>;
+  // Runs a pass now. `taskIds` pushes exactly those tasks, bypassing the gate
+  // that stops a first sync from creating an issue for every pre-existing task.
+  syncLinear(taskIds?: string[]): Promise<LinearSyncSummary>;
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, patch: UpdateNotePatch): Promise<Note>;
@@ -1149,6 +1221,25 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, '/api/config', {
         method: 'PATCH',
         body: JSON.stringify(patch),
+      }),
+    fetchLinearStatus: () => request(baseUrl, '/api/linear/status'),
+    connectLinear: (apiKey) =>
+      request(baseUrl, '/api/linear/connect', {
+        method: 'POST',
+        ...jsonBody({ apiKey }),
+      }),
+    disconnectLinear: () =>
+      request(baseUrl, '/api/linear/disconnect', { method: 'POST' }),
+    fetchLinearTeams: () => request(baseUrl, '/api/linear/teams'),
+    fetchLinearStates: (teamId) =>
+      request(
+        baseUrl,
+        `/api/linear/states?teamId=${encodeURIComponent(teamId)}`
+      ),
+    syncLinear: (taskIds) =>
+      request(baseUrl, '/api/linear/sync', {
+        method: 'POST',
+        ...jsonBody(taskIds === undefined ? {} : { taskIds }),
       }),
     submitReview: (runId, verdict, body) =>
       request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {

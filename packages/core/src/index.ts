@@ -33,15 +33,52 @@ export {
   updateConfig,
   ConfigError,
   DEFAULT_MODELS,
+  DEFAULT_LINEAR,
+  LINEAR_DIRECTIONS,
   MODEL_ROLES,
 } from './config.js';
 export type {
   ConfigPatch,
   DispatchConfig,
+  LinearConfig,
   ModelConfig,
   OrchestratorConfig,
   VerifyStep,
 } from './config.js';
+export {
+  clearCredential,
+  credentialsPath,
+  readCredentials,
+  resolveLinearApiKey,
+  writeCredential,
+} from './credentials.js';
+export type {
+  CredentialName,
+  CredentialSource,
+  CredentialsFile,
+} from './credentials.js';
+export {
+  DEFAULT_STATUS_MAP,
+  externalId,
+  issueFromTask,
+  LINEAR_EXTERNAL_PREFIX,
+  parseExternal,
+  priorityFromLinear,
+  priorityToLinear,
+  resolveConflict,
+  resolveWorkflowState,
+  statusFromState,
+  taskCreateFromIssue,
+  taskPatchFromIssue,
+} from './linearMap.js';
+export type {
+  IssueMapContext,
+  LinearIssue,
+  LinearIssueInput,
+  LinearLabel,
+  LinearWorkflowState,
+  TaskMapContext,
+} from './linearMap.js';
 export {
   readRegistry,
   registryPath,

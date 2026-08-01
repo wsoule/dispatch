@@ -53,6 +53,8 @@ export interface UpdatePatch {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  // The id of this task in an external tracker (`linear:<uuid>`), or null to unlink it.
+  external?: string | null;
   // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
   archivedAt?: string | null;
   appendActivity?: string;

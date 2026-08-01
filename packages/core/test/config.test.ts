@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ConfigError, DEFAULT_MODELS, loadConfig } from '../src/config.js';
+import {
+  ConfigError,
+  DEFAULT_LINEAR,
+  DEFAULT_MODELS,
+  loadConfig,
+} from '../src/config.js';
 
 let root: string;
 beforeEach(() => {
@@ -28,6 +33,7 @@ describe('loadConfig', () => {
         verifyTimeoutSec: 600,
       },
       models: DEFAULT_MODELS,
+      linear: DEFAULT_LINEAR,
     });
   });
   it('merges file values over defaults', () => {

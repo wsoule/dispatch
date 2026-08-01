@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
+import { DEFAULT_STATUS_MAP } from './linearMap.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
 
@@ -79,7 +80,28 @@ export interface DispatchConfig {
   verifySteps?: VerifyStep[];
   orchestrator: OrchestratorConfig;
   models: ModelConfig;
+  linear: LinearConfig;
 }
+
+/** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
+export interface LinearConfig {
+  enabled: boolean;
+  teamId: string | null;
+  /** dispatch status -> Linear workflow state name (a state `type` also matches). */
+  statusMap: Record<string, string>;
+  intervalSec: number;
+  direction: 'both' | 'pull' | 'push';
+}
+
+export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
+
+export const DEFAULT_LINEAR: LinearConfig = {
+  enabled: false,
+  teamId: null,
+  statusMap: { ...DEFAULT_STATUS_MAP },
+  intervalSec: 300,
+  direction: 'both',
+};
 
 /** Per-role model ids. Each role is a distinct kind of agent work, so cheap
  *  roles can run on a cheap model without downgrading coding runs. */
@@ -132,6 +154,7 @@ const DEFAULTS: DispatchConfig = {
   autoCommit: false,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   models: { ...DEFAULT_MODELS },
+  linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
 };
 
 // Validates and normalizes the optional `orchestrator:` block. `raw` is
@@ -253,6 +276,89 @@ function parseModelConfig(raw: unknown): ModelConfig {
   return result;
 }
 
+// Validates the optional `linear:` block, same contract as the blocks above. `statusMap`
+// merges over the default, so remapping one status does not unmap the other five.
+function parseLinearConfig(raw: unknown): LinearConfig {
+  const defaults: LinearConfig = {
+    ...DEFAULT_LINEAR,
+    statusMap: { ...DEFAULT_LINEAR.statusMap },
+  };
+  if (raw === undefined) return defaults;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { enabled } = obj;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.enabled must be a boolean'
+    );
+  }
+
+  const { teamId } = obj;
+  if (teamId !== undefined && teamId !== null && typeof teamId !== 'string') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.teamId must be a string or null'
+    );
+  }
+
+  const { intervalSec } = obj;
+  if (
+    intervalSec !== undefined &&
+    (typeof intervalSec !== 'number' ||
+      !Number.isFinite(intervalSec) ||
+      intervalSec < 30)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.intervalSec must be a number >= 30'
+    );
+  }
+
+  const { direction } = obj;
+  if (
+    direction !== undefined &&
+    (typeof direction !== 'string' ||
+      !LINEAR_DIRECTIONS.includes(direction as LinearConfig['direction']))
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: linear.direction must be one of ${LINEAR_DIRECTIONS.join('|')}`
+    );
+  }
+
+  const { statusMap } = obj;
+  const mergedStatusMap = { ...defaults.statusMap };
+  if (statusMap !== undefined) {
+    if (
+      typeof statusMap !== 'object' ||
+      statusMap === null ||
+      Array.isArray(statusMap)
+    ) {
+      throw new ConfigError(
+        'invalid .dispatch/config.yml: linear.statusMap must be an object'
+      );
+    }
+    for (const [key, value] of Object.entries(statusMap)) {
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: linear.statusMap.${key} must be a non-empty string`
+        );
+      }
+      mergedStatusMap[key] = value;
+    }
+  }
+
+  return {
+    enabled: enabled ?? defaults.enabled,
+    teamId: teamId ?? defaults.teamId,
+    statusMap: mergedStatusMap,
+    intervalSec: intervalSec ?? defaults.intervalSec,
+    direction: (direction as LinearConfig['direction']) ?? defaults.direction,
+  };
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -261,6 +367,10 @@ export function loadConfig(rootDir: string): DispatchConfig {
       autoCommit: DEFAULTS.autoCommit,
       orchestrator: { ...DEFAULTS.orchestrator },
       models: { ...DEFAULTS.models },
+      linear: {
+        ...DEFAULTS.linear,
+        statusMap: { ...DEFAULTS.linear.statusMap },
+      },
     };
   }
   let parsed: unknown;
@@ -322,6 +432,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verifySteps: raw.verifySteps,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
     models: parseModelConfig(raw.models),
+    linear: parseLinearConfig(raw.linear),
   };
 }
 
@@ -335,6 +446,58 @@ export interface ConfigPatch {
   verifyTimeoutSec?: number;
   permissionMode?: OrchestratorConfig['permissionMode'];
   models?: Partial<ModelConfig>;
+  linear?: Partial<LinearConfig>;
+}
+
+// Writes the `linear:` keys a patch names, validating each before it reaches disk.
+// `statusMap` is written key-by-key so an entry the patch omits survives.
+function applyLinearPatch(
+  doc: YAML.Document,
+  patch: Partial<LinearConfig>
+): void {
+  if (patch.enabled !== undefined) {
+    if (typeof patch.enabled !== 'boolean') {
+      throw new ConfigError('invalid linear.enabled: must be a boolean');
+    }
+    doc.setIn(['linear', 'enabled'], patch.enabled);
+  }
+  if (patch.teamId !== undefined) {
+    if (patch.teamId !== null && typeof patch.teamId !== 'string') {
+      throw new ConfigError('invalid linear.teamId: must be a string or null');
+    }
+    doc.setIn(['linear', 'teamId'], patch.teamId);
+  }
+  if (patch.intervalSec !== undefined) {
+    if (!Number.isFinite(patch.intervalSec) || patch.intervalSec < 30) {
+      throw new ConfigError('invalid linear.intervalSec: must be >= 30');
+    }
+    doc.setIn(['linear', 'intervalSec'], patch.intervalSec);
+  }
+  if (patch.direction !== undefined) {
+    if (!LINEAR_DIRECTIONS.includes(patch.direction)) {
+      throw new ConfigError(
+        `invalid linear.direction: must be one of ${LINEAR_DIRECTIONS.join('|')}`
+      );
+    }
+    doc.setIn(['linear', 'direction'], patch.direction);
+  }
+  if (patch.statusMap !== undefined) {
+    if (
+      typeof patch.statusMap !== 'object' ||
+      patch.statusMap === null ||
+      Array.isArray(patch.statusMap)
+    ) {
+      throw new ConfigError('invalid linear.statusMap: must be an object');
+    }
+    for (const [status, state] of Object.entries(patch.statusMap)) {
+      if (typeof state !== 'string' || state.trim() === '') {
+        throw new ConfigError(
+          `invalid linear.statusMap.${status}: must be a non-empty string`
+        );
+      }
+      doc.setIn(['linear', 'statusMap', status], state.trim());
+    }
+  }
 }
 
 /**
@@ -407,6 +570,7 @@ export function updateConfig(
       doc.setIn(['models', role], value.trim());
     }
   }
+  if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
 
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, doc.toString());
