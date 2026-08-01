@@ -1,5 +1,5 @@
 import type { EpicProgress } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,

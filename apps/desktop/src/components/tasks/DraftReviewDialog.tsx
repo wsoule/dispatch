@@ -1,5 +1,5 @@
 import type { DraftRecord } from '@dispatch/client';
-import type { CreateInput, Priority } from '@dispatch/core';
+import type { CreateInput, Priority } from '@dispatch/core/browser';
 import {
   Check,
   CircleAlert,

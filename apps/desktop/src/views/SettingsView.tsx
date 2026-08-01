@@ -3,8 +3,8 @@ import type {
   LinearViewer,
   LinearWorkflowState,
 } from '@dispatch/client';
-import type { DispatchConfig, ModelConfig } from '@dispatch/core';
-import { MODEL_ROLES } from '@dispatch/core';
+import type { DispatchConfig, ModelConfig } from '@dispatch/core/browser';
+import { MODEL_ROLES } from '@dispatch/core/browser';
 import {
   AlertCircle,
   CheckCircle2,

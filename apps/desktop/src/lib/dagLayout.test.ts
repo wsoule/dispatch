@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import { DAG_NODE_HEIGHT, DAG_NODE_WIDTH, dagLayout } from './dagLayout';

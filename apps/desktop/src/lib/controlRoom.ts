@@ -1,5 +1,5 @@
 import type { MergeQueueSnapshot, RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
 import { deriveFeedState, FEED_STATE_ORDER } from './feedState';

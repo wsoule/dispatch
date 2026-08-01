@@ -1,5 +1,5 @@
 import type { RunMeta, RunState } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,

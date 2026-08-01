@@ -1,5 +1,5 @@
 import type { PlanRecord } from '@dispatch/client';
-import type { UpdatePatch } from '@dispatch/core';
+import type { UpdatePatch } from '@dispatch/core/browser';
 
 /** The sections an "Add detail" pass proposes for a task that already exists. */
 export interface TaskEnrichDraft {

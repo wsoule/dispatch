@@ -1,4 +1,4 @@
-import type { Assignee } from '@dispatch/core';
+import type { Assignee } from '@dispatch/core/browser';
 import { Bot, User } from 'lucide-react';
 
 import { cn } from '@/lib/utils';

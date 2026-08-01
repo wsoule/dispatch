@@ -4,7 +4,7 @@ import type {
   PlanState,
   ProposalAction,
 } from '@dispatch/client';
-import type { Priority } from '@dispatch/core';
+import type { Priority } from '@dispatch/core/browser';
 import {
   AlertTriangle,
   Check,

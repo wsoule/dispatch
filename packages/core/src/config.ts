@@ -2,9 +2,23 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
-import { DEFAULT_STATUS_MAP } from './linearMap.js';
+import type {
+  ConfigPatch,
+  DispatchConfig,
+  LinearConfig,
+  ModelConfig,
+  OrchestratorConfig,
+} from './configTypes.js';
+import {
+  DEFAULT_LINEAR,
+  DEFAULT_MODELS,
+  LINEAR_DIRECTIONS,
+  MODEL_ROLES,
+} from './configTypes.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
+
+export * from './configTypes.js';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -13,12 +27,8 @@ export class ConfigError extends Error {
   }
 }
 
-// The exact set of Claude Agent SDK `PermissionMode` values, duplicated here
-// (rather than imported) so core stays executor-agnostic — @dispatch/server
-// is the only package that knows the Agent SDK exists. Keep this list in
-// sync with the SDK's `PermissionMode` union if it ever changes; a value
-// outside this set is a loud ConfigError rather than a confusing 400 from
-// the SDK itself at dispatch time.
+// The Claude Agent SDK's `PermissionMode` values, duplicated so core stays
+// executor-agnostic. An unknown mode is a ConfigError, not an SDK 400 later.
 const KNOWN_PERMISSION_MODES = [
   'default',
   'acceptEdits',
@@ -28,124 +38,13 @@ const KNOWN_PERMISSION_MODES = [
   'auto',
 ] as const;
 
-// Per-run caps/defaults for the orchestrator's executors (spec's Slice O2):
-// how many turns an agent gets, an optional USD spend cap, and which
-// permission mode it starts in. `maxBudgetUsd` has no default — omitting it
-// means "no budget cap" — everything else always has a concrete value.
-// `epicConcurrency` (Phase 5) is the default cap the epic dispatch engine
-// applies when starting an epic without an explicit override -- how many of
-// an epic's ready children may have a live run at once.
-//
-// `permissionMode: 'auto'` is the default rather than `'acceptEdits'`: the
-// SDK's own model-classifier auto-approves the whole run (edits and every
-// other tool), not just file edits, so a dispatched agent proceeds
-// unattended instead of stalling on the first non-edit tool call (a Bash
-// command, an MCP tool) waiting for a human who isn't watching. Verified
-// against the installed SDK (0.3.207)'s `PermissionMode` union, which
-// includes `'auto'`.
-export interface OrchestratorConfig {
-  maxTurns?: number;
-  // How long the merge queue lets `verifyCommand` run before killing it and
-  // failing the entry. A ceiling, not a budget: the queue is strictly serial, so
-  // a verify that never returns holds up every entry behind it — which is
-  // exactly how an entry once sat in `verifying` for 11 minutes with no process
-  // behind it at all.
-  verifyTimeoutSec: number;
-  maxBudgetUsd?: number;
-  permissionMode: string;
-  epicConcurrency: number;
-}
-
-/** One named gate in the verify pipeline. */
-export interface VerifyStep {
-  name: string;
-  command: string;
-}
-
-export interface DispatchConfig {
-  statuses: string[];
-  autoCommit: boolean;
-  verifyCommand?: string;
-  /**
-   * Verify as named steps rather than one opaque command.
-   *
-   * `verifyCommand` runs a single shell line, which means a failure can only ever be reported
-   * as "verify failed" — the queue genuinely does not know whether typecheck or the tests broke.
-   * Listing steps here is what makes per-check reporting possible at all: each runs in order,
-   * each is recorded pass/fail with its duration, and the first failure stops the rest.
-   *
-   * Takes precedence over `verifyCommand` when both are set. Absent, the single command is run
-   * as one step called "verify", so nothing changes for a project that has not opted in.
-   */
-  verifySteps?: VerifyStep[];
-  orchestrator: OrchestratorConfig;
-  models: ModelConfig;
-  linear: LinearConfig;
-}
-
-/** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
-export interface LinearConfig {
-  enabled: boolean;
-  teamId: string | null;
-  /** dispatch status -> Linear workflow state name (a state `type` also matches). */
-  statusMap: Record<string, string>;
-  intervalSec: number;
-  direction: 'both' | 'pull' | 'push';
-}
-
-export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
-
-export const DEFAULT_LINEAR: LinearConfig = {
-  enabled: false,
-  teamId: null,
-  statusMap: { ...DEFAULT_STATUS_MAP },
-  intervalSec: 300,
-  direction: 'both',
-};
-
-/** Per-role model ids. Each role is a distinct kind of agent work, so cheap
- *  roles can run on a cheap model without downgrading coding runs. */
-export interface ModelConfig {
-  /** Coding runs — the agent that edits the repo. */
-  execute: string;
-  /** Multi-turn planning conversations. */
-  plan: string;
-  /** One-shot natural-language task drafting. */
-  draft: string;
-  /** Filling in description / acceptance criteria for a task or inbox item. */
-  enrich: string;
-  /** Grouping inbox captures into suggested epics. */
-  cluster: string;
-  /** Short mechanical text: titles, summaries, commit messages. */
-  summarize: string;
-}
-
-export const DEFAULT_MODELS: ModelConfig = {
-  execute: 'claude-opus-5',
-  plan: 'claude-sonnet-5',
-  draft: 'claude-haiku-4-5-20251001',
-  enrich: 'claude-haiku-4-5-20251001',
-  cluster: 'claude-haiku-4-5-20251001',
-  summarize: 'claude-haiku-4-5-20251001',
-};
-
-/** Every valid key of `ModelConfig`, in the order the Settings UI renders them. */
-export const MODEL_ROLES: readonly (keyof ModelConfig)[] = [
-  'execute',
-  'plan',
-  'draft',
-  'enrich',
-  'cluster',
-  'summarize',
-];
-
+// `permissionMode: 'auto'` lets the SDK's own classifier approve every tool, so a
+// dispatched agent proceeds unattended instead of stalling on the first Bash call.
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   // No default turn cap — maxBudgetUsd is the real guard.
   permissionMode: 'auto',
   epicConcurrency: 3,
-  // 10 minutes: comfortably above a real install+build+test verify (~2-3 min
-  // measured on this repo) while still bounded, so a hang is caught in minutes
-  // rather than never.
+  // 10 minutes: above a real install+build+test verify, still bounded.
   verifyTimeoutSec: 600,
 };
 
@@ -157,11 +56,8 @@ const DEFAULTS: DispatchConfig = {
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
 };
 
-// Validates and normalizes the optional `orchestrator:` block. `raw` is
-// whatever YAML.parse produced for that key — `undefined` (key omitted) is
-// the only shape that skips validation entirely and falls back to defaults;
-// anything else that isn't a plain object is a loud ConfigError rather than
-// being silently ignored.
+// Validates the optional `orchestrator:` block. Only `undefined` falls back to
+// defaults; any other non-object is a ConfigError rather than silently ignored.
 function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
   if (raw === undefined) return { ...DEFAULT_ORCHESTRATOR };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -241,12 +137,8 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
   };
 }
 
-// Validates and normalizes the optional `models:` block, same shape of contract as
-// parseOrchestratorConfig: `undefined` (key omitted) falls back to DEFAULT_MODELS entirely; any
-// other non-object is a loud ConfigError; an unrecognized role key is a ConfigError rather than
-// a silently-ignored typo (e.g. `excute:` would otherwise leave `execute` on the SDK default
-// forever with no indication why); each provided value must be a non-empty string; a role left
-// out of the block keeps its default.
+// Validates the optional `models:` block, same contract as parseOrchestratorConfig.
+// An unknown role key is a ConfigError so a typo can't leave a role on its default.
 function parseModelConfig(raw: unknown): ModelConfig {
   if (raw === undefined) return { ...DEFAULT_MODELS };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -436,19 +328,6 @@ export function loadConfig(rootDir: string): DispatchConfig {
   };
 }
 
-/** The subset of config the Settings screen can change. Everything else in the file — statuses
- * chief among them — is structural, and editing it from a settings form would silently
- * invalidate every task already carrying an old status. */
-export interface ConfigPatch {
-  verifyCommand?: string | null;
-  autoCommit?: boolean;
-  epicConcurrency?: number;
-  verifyTimeoutSec?: number;
-  permissionMode?: OrchestratorConfig['permissionMode'];
-  models?: Partial<ModelConfig>;
-  linear?: Partial<LinearConfig>;
-}
-
 // Writes the `linear:` keys a patch names, validating each before it reaches disk.
 // `statusMap` is written key-by-key so an entry the patch omits survives.
 function applyLinearPatch(
@@ -500,17 +379,8 @@ function applyLinearPatch(
   }
 }
 
-/**
- * Applies a partial change to `.dispatch/config.yml`, preserving everything it does not touch.
- *
- * Re-serialising a parsed object would be simpler and wrong: this file is hand-written and
- * checked in, so it carries comments and key ordering someone chose. YAML's document API is used
- * so an edit changes the one value asked for and leaves the rest of the file — comments
- * included — exactly as it was found.
- *
- * `verifyCommand: null` clears the key rather than writing an empty string, since an empty
- * verify command and no verify command mean different things to the merge queue.
- */
+/** Applies a partial change to `.dispatch/config.yml` through YAML's document API, so the
+ *  hand-written file keeps its comments and ordering. `verifyCommand: null` clears the key. */
 export function updateConfig(
   rootDir: string,
   patch: ConfigPatch
@@ -538,9 +408,8 @@ export function updateConfig(
     doc.setIn(['orchestrator', key], value);
   }
   if (patch.permissionMode !== undefined) {
-    // Validated BEFORE the write, not after. updateConfig re-reads through loadConfig to return
-    // its result, and loadConfig throws on an unknown mode — so validating only there would
-    // leave a file on disk that the daemon then refuses to load.
+    // Validated before the write: an unknown mode on disk would make every
+    // later loadConfig throw.
     if (
       !KNOWN_PERMISSION_MODES.includes(
         patch.permissionMode as (typeof KNOWN_PERMISSION_MODES)[number]
@@ -553,9 +422,8 @@ export function updateConfig(
     doc.setIn(['orchestrator', 'permissionMode'], patch.permissionMode);
   }
   if (patch.models !== undefined) {
-    // Same validate-before-write reasoning as permissionMode above: an unknown role or a
-    // non-string value must never reach disk, since loadConfig would then refuse to read the
-    // file back at all on the very next request.
+    // Same validate-before-write rule as permissionMode: a bad role must never
+    // reach disk, or loadConfig refuses the whole file afterwards.
     for (const [role, value] of Object.entries(patch.models)) {
       if (!MODEL_ROLES.includes(role as keyof ModelConfig)) {
         throw new ConfigError(
