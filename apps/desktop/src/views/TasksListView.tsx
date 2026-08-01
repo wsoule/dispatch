@@ -20,6 +20,7 @@ import {
 import { StackBadge } from '../components/tasks/StackRail';
 import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { showArchiveToggle } from '../lib/archiveToggle';
 import { deriveEpicPulse } from '../lib/epicPulse';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { resolveListKeyCommand } from '../lib/keyboard';
@@ -293,7 +294,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        {data.archivedTasks.length > 0 && (
+        {showArchiveToggle(data.showArchived, data.archivedTasks.length) && (
           <Button
             variant={data.showArchived ? 'secondary' : 'outline'}
             size="sm"
