@@ -23,6 +23,9 @@ import type { TaskDoc } from '@dispatch/core';
 
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import type { GitOutcome, GitRepo } from './git/commands.js';
+import { CommitMessageGenerator } from './git/commitMessage.js';
+import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { InboxClusterer } from './inboxClusterer.js';
@@ -75,6 +78,11 @@ export interface ApiContext {
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
   prCapability: boolean;
+  // The Git page's backend: status/log/branches/staging/commit/stash/remote
+  // operations against the main checkout. See packages/server/src/git/commands.ts.
+  gitRepo: GitRepo;
+  // Test-injection seam only, same as `inboxClusterer` above.
+  commitMessageGenerator?: CommitMessageGenerator;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -935,6 +943,296 @@ function deleteBranch(ctx: ApiContext, branch: string, url: URL): Response {
   const force = url.searchParams.get('force') === '1';
   ctx.orchestrator.deleteBranch(branch, { force });
   return jsonResponse({ ok: true });
+}
+
+// A `GitBranch` joined with whatever run claims that name, mirroring
+// Orchestrator.listBranches' join but for every branch, not just dispatch/*.
+export interface GitBranchWithRun extends GitBranch {
+  runId?: string;
+  taskId?: string;
+  taskTitle?: string;
+}
+
+// GET /api/git/branches's core: every local/remote branch git knows about,
+// annotated with the run that owns it when one does.
+async function gitBranches(
+  ctx: ApiContext
+): Promise<GitOutcome<{ branches: GitBranchWithRun[] }>> {
+  const result = await ctx.gitRepo.branches();
+  if (!result.ok) return result;
+  const runByBranch = new Map(
+    ctx.orchestrator.list().map((r) => [r.branch, r])
+  );
+  const branches = result.branches.map((branch) => {
+    const run = runByBranch.get(branch.name);
+    return {
+      ...branch,
+      runId: run?.id,
+      taskId: run?.taskId,
+      taskTitle: run?.taskTitle,
+    };
+  });
+  return { ok: true, branches };
+}
+
+// Shared by every `/api/git/*` mutation route — broadcasts `git.changed` only
+// on success, so a refetching client never sees stale state from a failure.
+function gitMutationResponse(ctx: ApiContext, result: GitOutcome): Response {
+  if (result.ok) ctx.events.broadcast({ type: 'git.changed' });
+  return jsonResponse(result);
+}
+
+// Shared shape check for the routes that take a list of file paths (stage,
+// unstage, discard) — requires a non-empty array of non-empty strings.
+function requirePathList(value: unknown): string[] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((v) => typeof v === 'string' && v !== '')
+  ) {
+    return null;
+  }
+  return value as string[];
+}
+
+async function gitStage(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const paths = requirePathList((parsed.value as { paths?: unknown }).paths);
+  if (paths === null)
+    return errorResponse(400, 'paths is required: a non-empty list of strings');
+  return gitMutationResponse(ctx, await ctx.gitRepo.stage(paths));
+}
+
+async function gitUnstage(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const paths = requirePathList((parsed.value as { paths?: unknown }).paths);
+  if (paths === null)
+    return errorResponse(400, 'paths is required: a non-empty list of strings');
+  return gitMutationResponse(ctx, await ctx.gitRepo.unstage(paths));
+}
+
+// POST /api/git/discard — destructive (drops uncommitted work with no undo),
+// so it 400s outright unless the body carries `confirm: true`.
+async function gitDiscard(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { paths?: unknown; confirm?: unknown };
+  const paths = requirePathList(body.paths);
+  if (paths === null)
+    return errorResponse(400, 'paths is required: a non-empty list of strings');
+  if (body.confirm !== true) {
+    return errorResponse(
+      400,
+      'discard is destructive and requires confirm: true'
+    );
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.discard(paths));
+}
+
+async function gitStageHunk(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const patch = (parsed.value as { patch?: unknown }).patch;
+  if (typeof patch !== 'string' || patch === '') {
+    return errorResponse(400, 'patch is required');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.stageHunk(patch));
+}
+
+async function gitUnstageHunk(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const patch = (parsed.value as { patch?: unknown }).patch;
+  if (typeof patch !== 'string' || patch === '') {
+    return errorResponse(400, 'patch is required');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.unstageHunk(patch));
+}
+
+async function gitCommit(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { message?: unknown; amend?: unknown };
+  if (typeof body.message !== 'string' || body.message.trim() === '') {
+    return errorResponse(400, 'message is required');
+  }
+  if (body.amend !== undefined && typeof body.amend !== 'boolean') {
+    return errorResponse(400, 'amend must be a boolean');
+  }
+  return gitMutationResponse(
+    ctx,
+    await ctx.gitRepo.commit({
+      message: body.message,
+      amend: body.amend === true,
+    })
+  );
+}
+
+// POST /api/git/commit-message — the agent-focused route. 400s when nothing
+// is staged; 502s a model failure rather than a generic 500.
+async function gitCommitMessage(
+  _req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const diff = await ctx.gitRepo.diff({ staged: true });
+  if (!diff.ok) return errorResponse(409, diff.stderr);
+  if (diff.patch.trim() === '') {
+    return errorResponse(400, 'no staged changes to summarize');
+  }
+  const generator =
+    ctx.commitMessageGenerator ?? new CommitMessageGenerator(ctx.rootDir);
+  try {
+    const message = await generator.generate(diff.patch);
+    return jsonResponse({ message });
+  } catch (err) {
+    return errorResponse(502, (err as Error).message);
+  }
+}
+
+async function gitCheckout(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const branch = (parsed.value as { branch?: unknown }).branch;
+  if (typeof branch !== 'string' || branch === '') {
+    return errorResponse(400, 'branch is required');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.checkout(branch));
+}
+
+async function gitCreateBranch(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { name?: unknown; from?: unknown };
+  if (typeof body.name !== 'string' || body.name === '') {
+    return errorResponse(400, 'name is required');
+  }
+  if (body.from !== undefined && typeof body.from !== 'string') {
+    return errorResponse(400, 'from must be a string');
+  }
+  return gitMutationResponse(
+    ctx,
+    await ctx.gitRepo.createBranch(body.name, body.from)
+  );
+}
+
+// DELETE /api/git/branch/:name — `force: true` (git's `-D`) 400s unless the
+// body also carries `confirm: true`; a plain `-d` delete needs no confirm.
+async function gitDeleteBranch(
+  req: Request,
+  ctx: ApiContext,
+  name: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { force?: unknown; confirm?: unknown };
+  const force = body.force === true;
+  if (force && body.confirm !== true) {
+    return errorResponse(
+      400,
+      'deleting an unmerged branch is destructive and requires confirm: true'
+    );
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.deleteBranch(name, force));
+}
+
+async function gitStashPush(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const message = (parsed.value as { message?: unknown }).message;
+  if (message !== undefined && typeof message !== 'string') {
+    return errorResponse(400, 'message must be a string');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashPush(message));
+}
+
+function requireStashIndex(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+async function gitStashPop(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const index = requireStashIndex((parsed.value as { index?: unknown }).index);
+  if (index === null)
+    return errorResponse(400, 'index is required: a non-negative integer');
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashPop(index));
+}
+
+// POST /api/git/stash/drop — destructive (the stash entry is gone for good),
+// so it 400s outright unless the body carries `confirm: true`.
+async function gitStashDrop(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { index?: unknown; confirm?: unknown };
+  const index = requireStashIndex(body.index);
+  if (index === null)
+    return errorResponse(400, 'index is required: a non-negative integer');
+  if (body.confirm !== true) {
+    return errorResponse(
+      400,
+      'dropping a stash is destructive and requires confirm: true'
+    );
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashDrop(index));
+}
+
+async function gitFetch(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const remote = (parsed.value as { remote?: unknown }).remote;
+  if (remote !== undefined && typeof remote !== 'string') {
+    return errorResponse(400, 'remote must be a string');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.fetch(remote));
+}
+
+async function gitPush(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const setUpstream = (parsed.value as { setUpstream?: unknown }).setUpstream;
+  if (setUpstream !== undefined && typeof setUpstream !== 'boolean') {
+    return errorResponse(400, 'setUpstream must be a boolean');
+  }
+  return gitMutationResponse(
+    ctx,
+    await ctx.gitRepo.push({ setUpstream: setUpstream === true })
+  );
+}
+
+async function gitCherryPick(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const sha = (parsed.value as { sha?: unknown }).sha;
+  if (typeof sha !== 'string' || sha === '')
+    return errorResponse(400, 'sha is required');
+  return gitMutationResponse(ctx, await ctx.gitRepo.cherryPick(sha));
+}
+
+async function gitRevert(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const sha = (parsed.value as { sha?: unknown }).sha;
+  if (typeof sha !== 'string' || sha === '')
+    return errorResponse(400, 'sha is required');
+  return gitMutationResponse(ctx, await ctx.gitRepo.revert(sha));
+}
+
+// Absent -> undefined; a valid non-negative integer -> that number;
+// otherwise -> null so the route can 400 instead of passing NaN to git.
+function parseCountParam(raw: string | null): number | undefined | null {
+  if (raw === null) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 // GET /api/runs/:id/pr — the run's GitHub PR status + conversation, read live
@@ -2190,6 +2488,192 @@ export async function handleApi(
           .map((part) => decodeURIComponent(part))
           .join('/');
         return deleteBranch(ctx, branch, url);
+      }
+    }
+
+    // The Git page — status/log/branches/diff reads plus staging, committing,
+    // checkout, stash, and remote mutations against the main checkout.
+    if (segments[0] === 'git') {
+      if (
+        segments.length === 2 &&
+        segments[1] === 'status' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(await ctx.gitRepo.status());
+      }
+      if (segments.length === 2 && segments[1] === 'log' && method === 'GET') {
+        const limit = parseCountParam(url.searchParams.get('limit'));
+        if (limit === null)
+          return errorResponse(400, 'limit must be a non-negative integer');
+        const skip = parseCountParam(url.searchParams.get('skip'));
+        if (skip === null)
+          return errorResponse(400, 'skip must be a non-negative integer');
+        return jsonResponse(
+          await ctx.gitRepo.log({
+            ref: url.searchParams.get('ref') ?? undefined,
+            limit,
+            skip,
+          })
+        );
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'branches' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(await gitBranches(ctx));
+      }
+      if (segments.length === 2 && segments[1] === 'diff' && method === 'GET') {
+        return jsonResponse(
+          await ctx.gitRepo.diff({
+            staged: url.searchParams.get('staged') === '1',
+            path: url.searchParams.get('path') ?? undefined,
+          })
+        );
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'commit' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(
+          await ctx.gitRepo.diffCommit(decodeURIComponent(segments[2]))
+        );
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stage' &&
+        method === 'POST'
+      ) {
+        return await gitStage(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'unstage' &&
+        method === 'POST'
+      ) {
+        return await gitUnstage(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stage-hunk' &&
+        method === 'POST'
+      ) {
+        return await gitStageHunk(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'unstage-hunk' &&
+        method === 'POST'
+      ) {
+        return await gitUnstageHunk(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'discard' &&
+        method === 'POST'
+      ) {
+        return await gitDiscard(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'commit' &&
+        method === 'POST'
+      ) {
+        return await gitCommit(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'commit-message' &&
+        method === 'POST'
+      ) {
+        return await gitCommitMessage(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'checkout' &&
+        method === 'POST'
+      ) {
+        return await gitCheckout(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'branch' &&
+        method === 'POST'
+      ) {
+        return await gitCreateBranch(req, ctx);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'branch' &&
+        method === 'DELETE'
+      ) {
+        return await gitDeleteBranch(req, ctx, decodeURIComponent(segments[2]));
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stash' &&
+        method === 'POST'
+      ) {
+        return await gitStashPush(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stash' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(await ctx.gitRepo.stashList());
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'stash' &&
+        segments[2] === 'pop' &&
+        method === 'POST'
+      ) {
+        return await gitStashPop(req, ctx);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'stash' &&
+        segments[2] === 'drop' &&
+        method === 'POST'
+      ) {
+        return await gitStashDrop(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'fetch' &&
+        method === 'POST'
+      ) {
+        return await gitFetch(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'pull' &&
+        method === 'POST'
+      ) {
+        return gitMutationResponse(ctx, await ctx.gitRepo.pull());
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'push' &&
+        method === 'POST'
+      ) {
+        return await gitPush(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'cherry-pick' &&
+        method === 'POST'
+      ) {
+        return await gitCherryPick(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'revert' &&
+        method === 'POST'
+      ) {
+        return await gitRevert(req, ctx);
       }
     }
 

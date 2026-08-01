@@ -196,6 +196,68 @@ export interface DiffResult {
   files: DiffFile[];
 }
 
+// The Git page (`/api/git/*`) — mirrors packages/server/src/git/*.ts. `ok:
+// false` is a normal git result, not a `request()`-thrown HTTP error.
+export type GitOutcome<T extends object = object> =
+  | ({ ok: true } & T)
+  | { ok: false; stderr: string };
+
+export interface GitFileChange {
+  path: string;
+  status: string;
+  origPath?: string;
+}
+
+export interface GitStatus {
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  staged: GitFileChange[];
+  unstaged: GitFileChange[];
+  untracked: string[];
+  conflicted: string[];
+}
+
+export interface GitLogEntry {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  author: string;
+  date: string;
+  parents: string[];
+}
+
+export interface GitBranch {
+  name: string;
+  isRemote: boolean;
+  isCurrent: boolean;
+  isDispatchBranch: boolean;
+  sha: string;
+  shortSha: string;
+  subject: string;
+  date: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+}
+
+// `GitBranch` joined with whatever dispatch run claims that branch name, when
+// one does — mirrors GitBranchWithRun in packages/server/src/api.ts.
+export interface GitBranchWithRun extends GitBranch {
+  runId?: string;
+  taskId?: string;
+  taskTitle?: string;
+}
+
+export interface GitStash {
+  index: number;
+  ref: string;
+  sha: string;
+  message: string;
+  date: string;
+}
+
 // GitHub PR status + conversation for a run's PR — mirrors PrStatus /
 // PrConversationItem / PrDetail in packages/server/src/orchestrator/pr.ts. The
 // body of `GET /api/runs/:id/pr` (and what the review/comment POSTs return).
@@ -326,7 +388,10 @@ export type ServerEvent =
   // packages/server/src/events.ts.
   | { type: 'question.asked'; runId: string; questionId: string }
   | { type: 'question.answered'; runId: string; questionId: string }
-  | { type: 'question.closed'; runId: string };
+  | { type: 'question.closed'; runId: string }
+  // The repo's git state changed via one of the `/api/git/*` mutation
+  // routes. Mirrors packages/server/src/events.ts.
+  | { type: 'git.changed' };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -867,6 +932,47 @@ export interface ApiClient {
   fetchBranches(): Promise<BranchEntry[]>;
   freeBranchDisk(branch: string): Promise<BranchEntry>;
   deleteBranch(branch: string, opts?: { force?: boolean }): Promise<void>;
+  // The Git page. `gitDiscard`/`gitStashDrop`/a force `gitDeleteBranch` take
+  // `confirm` because the matching server route 400s outright without it.
+  fetchGitStatus(): Promise<GitOutcome<GitStatus>>;
+  fetchGitLog(opts?: {
+    ref?: string;
+    limit?: number;
+    skip?: number;
+  }): Promise<GitOutcome<{ commits: GitLogEntry[] }>>;
+  fetchGitBranches(): Promise<GitOutcome<{ branches: GitBranchWithRun[] }>>;
+  fetchGitDiff(opts?: {
+    staged?: boolean;
+    path?: string;
+  }): Promise<GitOutcome<{ patch: string }>>;
+  fetchGitCommitDiff(sha: string): Promise<GitOutcome<{ patch: string }>>;
+  gitStage(paths: string[]): Promise<GitOutcome>;
+  gitUnstage(paths: string[]): Promise<GitOutcome>;
+  gitStageHunk(patch: string): Promise<GitOutcome>;
+  gitUnstageHunk(patch: string): Promise<GitOutcome>;
+  gitDiscard(paths: string[], confirm: boolean): Promise<GitOutcome>;
+  gitCommit(
+    message: string,
+    opts?: { amend?: boolean }
+  ): Promise<GitOutcome<{ sha: string }>>;
+  /** `POST /api/git/commit-message` — an AI-generated Conventional Commits message
+   * from the currently staged diff. Throws when nothing is staged. */
+  generateCommitMessage(): Promise<{ message: string }>;
+  gitCheckout(branch: string): Promise<GitOutcome>;
+  gitCreateBranch(name: string, from?: string): Promise<GitOutcome>;
+  gitDeleteBranch(
+    name: string,
+    opts?: { force?: boolean; confirm?: boolean }
+  ): Promise<GitOutcome>;
+  gitStashPush(message?: string): Promise<GitOutcome>;
+  fetchGitStashList(): Promise<GitOutcome<{ stashes: GitStash[] }>>;
+  gitStashPop(index: number): Promise<GitOutcome>;
+  gitStashDrop(index: number, confirm: boolean): Promise<GitOutcome>;
+  gitFetch(remote?: string): Promise<GitOutcome>;
+  gitPull(): Promise<GitOutcome>;
+  gitPush(opts?: { setUpstream?: boolean }): Promise<GitOutcome>;
+  gitCherryPick(sha: string): Promise<GitOutcome>;
+  gitRevert(sha: string): Promise<GitOutcome>;
   // GitHub PR review surface (items 3+4): read a run's PR status + conversation,
   // submit a review verdict (approve/request-changes/comment), or add a
   // PR-level comment — each POST returns the refreshed PrDetail. All 409 a run
@@ -1155,6 +1261,106 @@ export function createApiClient(baseUrl: string): ApiClient {
         { method: 'DELETE' }
       );
     },
+    fetchGitStatus: () => request(baseUrl, '/api/git/status'),
+    fetchGitLog: (opts = {}) => {
+      const params = new URLSearchParams();
+      if (opts.ref !== undefined) params.set('ref', opts.ref);
+      if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+      if (opts.skip !== undefined) params.set('skip', String(opts.skip));
+      const query = params.size > 0 ? `?${params.toString()}` : '';
+      return request(baseUrl, `/api/git/log${query}`);
+    },
+    fetchGitBranches: () => request(baseUrl, '/api/git/branches'),
+    fetchGitDiff: (opts = {}) => {
+      const params = new URLSearchParams();
+      if (opts.staged === true) params.set('staged', '1');
+      if (opts.path !== undefined) params.set('path', opts.path);
+      const query = params.size > 0 ? `?${params.toString()}` : '';
+      return request(baseUrl, `/api/git/diff${query}`);
+    },
+    fetchGitCommitDiff: (sha) =>
+      request(baseUrl, `/api/git/commit/${encodeURIComponent(sha)}`),
+    gitStage: (paths) =>
+      request(baseUrl, '/api/git/stage', {
+        method: 'POST',
+        ...jsonBody({ paths }),
+      }),
+    gitUnstage: (paths) =>
+      request(baseUrl, '/api/git/unstage', {
+        method: 'POST',
+        ...jsonBody({ paths }),
+      }),
+    gitStageHunk: (patch) =>
+      request(baseUrl, '/api/git/stage-hunk', {
+        method: 'POST',
+        ...jsonBody({ patch }),
+      }),
+    gitUnstageHunk: (patch) =>
+      request(baseUrl, '/api/git/unstage-hunk', {
+        method: 'POST',
+        ...jsonBody({ patch }),
+      }),
+    gitDiscard: (paths, confirm) =>
+      request(baseUrl, '/api/git/discard', {
+        method: 'POST',
+        ...jsonBody({ paths, confirm }),
+      }),
+    gitCommit: (message, opts = {}) =>
+      request(baseUrl, '/api/git/commit', {
+        method: 'POST',
+        ...jsonBody({ message, ...opts }),
+      }),
+    generateCommitMessage: () =>
+      request(baseUrl, '/api/git/commit-message', { method: 'POST' }),
+    gitCheckout: (branch) =>
+      request(baseUrl, '/api/git/checkout', {
+        method: 'POST',
+        ...jsonBody({ branch }),
+      }),
+    gitCreateBranch: (name, from) =>
+      request(baseUrl, '/api/git/branch', {
+        method: 'POST',
+        ...jsonBody(from !== undefined ? { name, from } : { name }),
+      }),
+    gitDeleteBranch: (name, opts = {}) =>
+      request(baseUrl, `/api/git/branch/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+        ...jsonBody(opts),
+      }),
+    gitStashPush: (message) =>
+      request(baseUrl, '/api/git/stash', {
+        method: 'POST',
+        ...jsonBody(message !== undefined ? { message } : {}),
+      }),
+    fetchGitStashList: () => request(baseUrl, '/api/git/stash'),
+    gitStashPop: (index) =>
+      request(baseUrl, '/api/git/stash/pop', {
+        method: 'POST',
+        ...jsonBody({ index }),
+      }),
+    gitStashDrop: (index, confirm) =>
+      request(baseUrl, '/api/git/stash/drop', {
+        method: 'POST',
+        ...jsonBody({ index, confirm }),
+      }),
+    gitFetch: (remote) =>
+      request(baseUrl, '/api/git/fetch', {
+        method: 'POST',
+        ...jsonBody(remote !== undefined ? { remote } : {}),
+      }),
+    gitPull: () => request(baseUrl, '/api/git/pull', { method: 'POST' }),
+    gitPush: (opts = {}) =>
+      request(baseUrl, '/api/git/push', { method: 'POST', ...jsonBody(opts) }),
+    gitCherryPick: (sha) =>
+      request(baseUrl, '/api/git/cherry-pick', {
+        method: 'POST',
+        ...jsonBody({ sha }),
+      }),
+    gitRevert: (sha) =>
+      request(baseUrl, '/api/git/revert', {
+        method: 'POST',
+        ...jsonBody({ sha }),
+      }),
     fetchPrDetail: (runId) => request(baseUrl, `/api/runs/${runId}/pr`),
     reviewPr: (runId, event, body) =>
       request(baseUrl, `/api/runs/${runId}/pr/review`, {

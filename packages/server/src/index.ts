@@ -8,6 +8,7 @@ import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
+import { GitRepo } from './git/commands.js';
 import { InboxStore } from './inbox.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
@@ -317,6 +318,9 @@ export async function startServer(
   });
   linearSync.start();
 
+  // Shares PrManager/MergeQueue's command-runner seam (opts.prCommandRunner).
+  const gitRepo = new GitRepo(rootDir, opts.prCommandRunner);
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -334,6 +338,7 @@ export async function startServer(
     reviewComments: new ReviewCommentStore(rootDir),
     questions,
     linearSync,
+    gitRepo,
   };
 
   const server = Bun.serve({
