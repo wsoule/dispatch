@@ -25,6 +25,8 @@ export interface LinearSyncState {
   lastPushAt: string | null;
   lastSyncAt: string | null;
   lastError: string | null;
+  /** Task ids a push could not send; re-included next pass so the cursor can still advance. */
+  pushRetry: string[];
   echoes: EchoRecord[];
   /** Issue UUID -> its display identifier and URL, for clients that only hold `external`. */
   links: Record<string, LinearIssueLink>;
@@ -50,6 +52,7 @@ export function emptyLinearState(): LinearSyncState {
     lastPushAt: null,
     lastSyncAt: null,
     lastError: null,
+    pushRetry: [],
     echoes: [],
     links: {},
   };

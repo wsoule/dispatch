@@ -7,8 +7,8 @@ import type {
 
 export const LINEAR_API_URL = 'https://api.linear.app/graphql';
 
-// Ceiling on a single page walk. At 50 issues a page this is 2,000 issues, well
-// past a normal poll window; hitting it is reported rather than silently ignored.
+// Ceiling on a single page walk. At Linear's 250-per-page maximum this is 10,000
+// issues; hitting it is reported rather than silently dropping the rest.
 const MAX_PAGES = 40;
 
 /** Why a call failed, so callers can back off on `rate-limit` instead of retrying blindly. */
@@ -99,7 +99,7 @@ const LABELS_QUERY = `query IssueLabels($teamId: String!) {
 const ISSUES_QUERY = `query IssuesUpdatedSince($teamId: String!, $since: DateTimeOrDuration, $after: String) {
   issues(
     filter: { team: { id: { eq: $teamId } }, updatedAt: { gt: $since } }
-    first: 50
+    first: 250
     after: $after
     orderBy: updatedAt
     includeArchived: true
@@ -112,7 +112,7 @@ const ISSUES_QUERY = `query IssuesUpdatedSince($teamId: String!, $since: DateTim
 const ISSUES_QUERY_ALL = `query IssuesAll($teamId: String!, $after: String) {
   issues(
     filter: { team: { id: { eq: $teamId } } }
-    first: 50
+    first: 250
     after: $after
     orderBy: updatedAt
     includeArchived: true

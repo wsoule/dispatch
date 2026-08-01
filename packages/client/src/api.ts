@@ -624,8 +624,6 @@ export interface LinearSyncSummary {
   created: number;
   createdIssues: number;
   conflicts: number;
-  /** Linear issues with no local task that the bootstrap gate declined to import. */
-  pendingImport: number;
   errors: string[];
   rateLimited: boolean;
 }
