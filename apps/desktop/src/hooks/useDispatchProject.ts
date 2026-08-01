@@ -1860,9 +1860,20 @@ export function useDispatchProject(
       const result = await client.syncLinear(taskIds);
       void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
       void queryClient.invalidateQueries({ queryKey: linearLinksQueryKey });
+      // A push-only pass never broadcasts task.changed (that only fires on a pull), so the
+      // tasks caches need their own invalidation here too — same shape as handleImportLinear.
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
       return result;
     },
-    [client, queryClient, linearStatusQueryKey, linearLinksQueryKey]
+    [
+      client,
+      queryClient,
+      linearStatusQueryKey,
+      linearLinksQueryKey,
+      tasksQueryKey,
+      allTasksQueryKey,
+    ]
   );
 
   const handleImportLinear =
