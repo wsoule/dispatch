@@ -42,13 +42,14 @@ const DEFAULT_REPLY = '(fake planner turn)';
 export class FakePlanner implements Planner {
   constructor(private readonly script: FakePlannerScript) {}
 
-  async start(_prompt: string): Promise<PlannerTurn> {
+  async start(_prompt: string, _model?: string): Promise<PlannerTurn> {
     return this.turnAt(0);
   }
 
   async sendMessage(
     sessionId: string | undefined,
-    _message: string
+    _message: string,
+    _model?: string
   ): Promise<PlannerTurn> {
     const consumed =
       sessionId === undefined ? 0 : Number.parseInt(sessionId, 10);

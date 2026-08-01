@@ -1,3 +1,4 @@
+import { loadConfig } from '@dispatch/core';
 import type { TaskStore } from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -57,6 +58,14 @@ export interface PlanRecord {
   // (sendMessage) re-resolves the same planner the opening turn used — a plan
   // is one continuous conversation with one backend.
   plannerName: string;
+  // Which config.models role this conversation resolves its model from —
+  // 'plan' for the ordinary plan flow, 'enrich' for task/inbox/note
+  // enrichment (api.ts's enrichTask/enrichInbox/enrichNote). Stored (rather
+  // than resolved once at startPlan and forgotten) so a follow-up sendMessage
+  // re-reads `config.models` for the SAME role, matching orchestrator.ts's
+  // own "a follow-up answers on the same model the conversation started
+  // with" rule for run resumes.
+  role: 'plan' | 'enrich';
   state: PlanState;
   // The full conversation transcript, appended to on every turn: the user
   // message first, then the assistant reply once the turn settles.
@@ -89,6 +98,7 @@ export interface ConfirmResult {
 }
 
 export interface PlanManagerContext {
+  rootDir: string;
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
@@ -152,17 +162,28 @@ export class PlanManager {
     return [...this.planners.keys()];
   }
 
+  // Fresh per-call read of `config.models` (same pattern mergeQueue.ts uses
+  // for `verifyCommand`, so a settings change takes effect on the very next
+  // call with no restart) resolved to the one role's model id.
+  private resolveModel(role: 'plan' | 'enrich'): string {
+    const { models } = loadConfig(this.ctx.rootDir);
+    return role === 'enrich' ? models.enrich : models.plan;
+  }
+
   // Opens a plan conversation against `prompt` on the named planner (defaults
   // to 'claude') and returns its id immediately — the actual Planner call
   // happens fire-and-forget (mirrors Orchestrator.dispatch()'s
   // executor.start() pattern), with the opening turn landing via runTurn()'s
   // state update + `plan.changed` broadcast. `sourceNoteId` is carried
   // through onto the record untouched for note-derived plans (see the field's
-  // comment) — it changes nothing about how the plan itself runs.
+  // comment) — it changes nothing about how the plan itself runs. `role`
+  // (default 'plan') picks which `config.models` entry this conversation
+  // runs on — api.ts's enrichTask/enrichInbox/enrichNote pass 'enrich'.
   startPlan(
     prompt: string,
     plannerName = 'claude',
-    sourceNoteId?: string
+    sourceNoteId?: string,
+    role: 'plan' | 'enrich' = 'plan'
   ): PlanRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
@@ -173,6 +194,7 @@ export class PlanManager {
       id: generatePlanId(now),
       prompt,
       plannerName,
+      role,
       state: 'running',
       messages: [{ role: 'user', text: prompt, at: now }],
       createdAt: now,
@@ -180,7 +202,8 @@ export class PlanManager {
       sourceNoteId,
     };
     this.plans.set(record.id, record);
-    void this.runTurn(record.id, () => planner.start(prompt));
+    const model = this.resolveModel(role);
+    void this.runTurn(record.id, () => planner.start(prompt, model));
     return record;
   }
 
@@ -199,7 +222,8 @@ export class PlanManager {
     if (planner === undefined) {
       throw new OrchestratorClientError(`unknown planner: ${plannerName}`);
     }
-    const turn = await planner.start(prompt);
+    const model = loadConfig(this.ctx.rootDir).models.draft;
+    const turn = await planner.start(prompt, model);
     const proposal = validatePlanProposal(turn.proposal);
     const [task] = proposal.tasks;
     if (task === undefined) {
@@ -250,7 +274,10 @@ export class PlanManager {
     this.plans.set(planId, updated);
     this.ctx.events.broadcast({ type: 'plan.changed', planId });
     const sessionId = record.sessionId;
-    void this.runTurn(planId, () => planner.sendMessage(sessionId, message));
+    const model = this.resolveModel(record.role);
+    void this.runTurn(planId, () =>
+      planner.sendMessage(sessionId, message, model)
+    );
     return updated;
   }
 

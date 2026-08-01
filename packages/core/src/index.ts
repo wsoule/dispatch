@@ -28,10 +28,17 @@ export {
   computeStack,
 } from './graph.js';
 export type { TaskStack } from './graph.js';
-export { loadConfig, updateConfig, ConfigError } from './config.js';
+export {
+  loadConfig,
+  updateConfig,
+  ConfigError,
+  DEFAULT_MODELS,
+  MODEL_ROLES,
+} from './config.js';
 export type {
   ConfigPatch,
   DispatchConfig,
+  ModelConfig,
   OrchestratorConfig,
   VerifyStep,
 } from './config.js';

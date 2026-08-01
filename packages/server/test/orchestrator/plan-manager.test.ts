@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 function makeManager(planner: FakePlanner): PlanManager {
-  const manager = new PlanManager({ store, cache, events });
+  const manager = new PlanManager({ store, cache, events, rootDir: root });
   manager.registerPlanner('claude', planner);
   return manager;
 }
@@ -656,12 +656,12 @@ describe('PlanManager.draftTask', () => {
 // the registry directly, independent of api.ts's HTTP-layer validation.
 describe('PlanManager planner registry', () => {
   it('starts with no planners registered', () => {
-    const manager = new PlanManager({ store, cache, events });
+    const manager = new PlanManager({ store, cache, events, rootDir: root });
     expect(manager.registeredPlannerNames()).toEqual([]);
   });
 
   it('lists every registered planner name', () => {
-    const manager = new PlanManager({ store, cache, events });
+    const manager = new PlanManager({ store, cache, events, rootDir: root });
     manager.registerPlanner(
       'claude',
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
@@ -674,7 +674,7 @@ describe('PlanManager planner registry', () => {
   });
 
   it('throws OrchestratorClientError for an unregistered planner name', () => {
-    const manager = new PlanManager({ store, cache, events });
+    const manager = new PlanManager({ store, cache, events, rootDir: root });
     manager.registerPlanner(
       'claude',
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
@@ -686,7 +686,7 @@ describe('PlanManager planner registry', () => {
 
   it('runs the named planner, not just whichever was registered first', async () => {
     const claudeProposal: PlanProposal = { tasks: [] };
-    const manager = new PlanManager({ store, cache, events });
+    const manager = new PlanManager({ store, cache, events, rootDir: root });
     manager.registerPlanner(
       'claude',
       new FakePlanner({ ok: true, proposal: claudeProposal })
