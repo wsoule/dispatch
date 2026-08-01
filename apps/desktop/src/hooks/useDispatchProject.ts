@@ -279,9 +279,15 @@ export interface DispatchProjectData {
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
   handleCreate: (input: CreateInput) => Promise<void>;
-  /** Starts a background single-task draft; caller polls `client.fetchDraft`
-   * for it to settle, then reviews and persists it with `handleCreate`. */
-  handleDraftTask: (prompt: string) => Promise<DraftRecord>;
+  /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
+   * tray. Running and ready drafts survive navigation and a tray reopen; see `drafts`. */
+  drafts: DraftRecord[];
+  /** Starts a background single-task draft and returns immediately with its `running`
+   * record; the tray/`drafts` picks up its progress via `draft.changed`. */
+  handleStartDraft: (prompt: string) => Promise<DraftRecord>;
+  /** Dismisses a draft so it stops appearing in the tray — used both for "Discard" in the
+   * review dialog and for "Create task", once a ready draft has become a real task. */
+  handleDismissDraft: (id: string) => Promise<void>;
   handleDispatch: (
     taskId: string,
     executor?: 'fake' | 'claude',
@@ -615,6 +621,19 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchNotes();
+    },
+    enabled: client !== null,
+  });
+
+  // Every task draft currently held in memory (running/ready/failed until dismissed), newest
+  // first — feeds the app-wide drafts tray. Refetched on `draft.changed` in the WS effect
+  // below, so a draft's progress shows up here whether or not the composer that started it is
+  // still open.
+  const { data: drafts } = useQuery({
+    queryKey: draftsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchDrafts();
     },
     enabled: client !== null,
   });
@@ -1025,14 +1044,36 @@ export function useDispatchProject(
     [client, queryClient, tasksQueryKey, readyQueryKey]
   );
 
-  // No task-list invalidation here — drafting persists nothing; the task
-  // list refetches from `handleCreate` once the reviewed draft is saved.
-  const handleDraftTask = useCallback(
+  // Starts a background planner turn and seeds the drafts query with the 202's record
+  // (`running`) immediately, so the tray shows it without waiting on a refetch — the turn's
+  // own completion arrives via the `draft.changed` WS invalidation below. No task-list
+  // invalidation here: drafting persists nothing until a reviewed draft is saved.
+  const handleStartDraft = useCallback(
     async (prompt: string): Promise<DraftRecord> => {
       if (client === null) throw new Error('dispatchd client not ready');
-      return client.draftTask(prompt);
+      const record = await client.draftTask(prompt);
+      queryClient.setQueryData<DraftRecord[]>(draftsQueryKey, (prev) => [
+        record,
+        ...(prev ?? []),
+      ]);
+      return record;
     },
-    [client]
+    [client, queryClient, draftsQueryKey]
+  );
+
+  // Dismisses a draft (reviewed, discarded, or just abandoned) so it stops showing up in the
+  // tray. Removed from the cache optimistically, ahead of the round trip, so the tray row
+  // disappears the instant it's actioned rather than waiting on `draft.changed` to arrive.
+  const handleDismissDraft = useCallback(
+    async (id: string): Promise<void> => {
+      if (client === null) return;
+      queryClient.setQueryData<DraftRecord[]>(draftsQueryKey, (prev) =>
+        prev?.filter((d) => d.id !== id)
+      );
+      await client.dismissDraft(id);
+      void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+    },
+    [client, queryClient, draftsQueryKey]
   );
 
   const handleCreateNote = useCallback(
@@ -1679,7 +1720,9 @@ export function useDispatchProject(
     handleUpdate,
     moveTaskStatus,
     handleCreate,
-    handleDraftTask,
+    drafts: drafts ?? [],
+    handleStartDraft,
+    handleDismissDraft,
     handleDispatch,
     handleApprove,
     handleSendMessage,
