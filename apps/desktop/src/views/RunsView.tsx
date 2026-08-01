@@ -1,3 +1,4 @@
+import type { RunQuestion } from '@dispatch/client';
 import {
   Archive,
   FileX,
@@ -34,6 +35,10 @@ type RunTab = 'session' | 'diff';
 // The run-list column's width before any manual resize, and what double-clicking the drag
 // handle resets it back to — matches the old fixed `w-72`.
 const DEFAULT_RUN_LIST_WIDTH = 288;
+
+// Shared empty array so a run with no open questions keeps the same prop
+// identity across renders.
+const NO_QUESTIONS: RunQuestion[] = [];
 
 // A muted centered placeholder for the Diff tab when there's nothing to review yet — a run
 // that's still going (no worktree diff exposed until it's terminal) or a terminal run whose
@@ -421,7 +426,14 @@ export function RunsView({
                       onSendMessage={(text) =>
                         data.handleSendMessage(selected.id, text)
                       }
-                      openQuestion={data.openQuestions.get(selected.id) ?? null}
+                      openQuestions={
+                        // Terminal check as well as the list: a dropped socket must not
+                        // leave a dead run still asking for an answer.
+                        isTerminalRunState(selected.state)
+                          ? NO_QUESTIONS
+                          : (data.openQuestions.get(selected.id) ??
+                            NO_QUESTIONS)
+                      }
                       onAnswerQuestion={(questionId, answer) =>
                         data.handleAnswerQuestion(
                           selected.id,

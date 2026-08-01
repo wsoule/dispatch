@@ -232,11 +232,14 @@ export async function startServer(
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
   }
-  // Questions an agent raised mid-run and is blocked on. Cleared per run the
-  // moment that run goes terminal, so a cancelled agent's question doesn't
-  // sit in the UI asking for an answer nobody can deliver any more.
+  // Questions an agent raised mid-run. A run going terminal drops its own, so
+  // the app never shows a card whose answer nobody is listening for.
   const questions = new QuestionRegistry();
-  orchestrator.onRunTerminal((meta) => questions.closeRun(meta.id));
+  orchestrator.onRunTerminal((meta) => {
+    if (questions.closeRun(meta.id) > 0) {
+      events.broadcast({ type: 'question.closed', runId: meta.id });
+    }
+  });
 
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching

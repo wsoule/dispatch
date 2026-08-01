@@ -122,8 +122,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
         </span>
 
         <span className="flex justify-end gap-1.5">
-          {/* A question has no yes/no to answer from here — the answer is free text, and the
-              form for it lives on the run's own Session tab. */}
+          {/* A question's answer is free text, so it can only be given on the Session tab. */}
           {row.waitingOn === 'question' && (
             <RowButton
               tone="urgent-waiting"

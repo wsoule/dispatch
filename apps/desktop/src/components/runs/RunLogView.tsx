@@ -83,9 +83,9 @@ interface RunLogViewProps {
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
-  /** The question this run's agent is currently blocked on, or `null`. Only ever one at a
-   * time: the agent asks from inside a tool call, so it cannot ask again until answered. */
-  openQuestion: RunQuestion | null;
+  /** Questions this run's agent is blocked on, oldest first. Usually one, but an agent can
+   * dispatch several `ask_user` calls in a single turn, and each parks its own tool call. */
+  openQuestions: RunQuestion[];
   onAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
   /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
    * button drives) — this view offers it too once the run is done, so talking to the agent
@@ -105,7 +105,7 @@ export function RunLogView({
   pendingApproval,
   onApprove,
   onSendMessage,
-  openQuestion,
+  openQuestions,
   onAnswerQuestion,
   onRequestChanges,
 }: RunLogViewProps) {
@@ -230,17 +230,17 @@ export function RunLogView({
         </div>
       </div>
 
-      {/* Pinned above the composer rather than left in the scroller like the approval gate: the
-          agent is frozen inside a tool call until this is answered, so it must not be possible
-          to scroll past it. */}
-      {openQuestion !== null && (
+      {/* Pinned above the composer, not left in the scroller like the approval gate: the agent
+          is frozen inside a tool call, so it must not be possible to scroll past this. */}
+      {openQuestions.map((question) => (
         <QuestionCard
-          question={openQuestion.question}
-          options={openQuestion.options}
-          askedAt={openQuestion.askedAt}
-          onAnswer={(answer) => onAnswerQuestion(openQuestion.id, answer)}
+          key={question.id}
+          question={question.question}
+          options={question.options}
+          askedAt={question.askedAt}
+          onAnswer={(answer) => onAnswerQuestion(question.id, answer)}
         />
-      )}
+      ))}
 
       {error !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">

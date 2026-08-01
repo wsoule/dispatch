@@ -387,15 +387,25 @@ async function messageUser(
   }
 }
 
-// The daemon parks each long-poll for 30s (QUESTION_POLL_MS in
-// @dispatch/server), so this side gives one request a little longer than that
-// before abandoning it and asking again. The total budget exists so a
-// question nobody is around to answer eventually returns instead of wedging
-// the agent for the rest of the run.
-const QUESTION_REQUEST_TIMEOUT_MS = 45_000;
-const QUESTION_TOTAL_WAIT_MS = 30 * 60_000;
-const QUESTION_RETRY_DELAY_MS = 250;
-const QUESTION_ERROR_DELAY_MS = 2000;
+/** How long `ask_user` waits, and how hard it polls while waiting. */
+export interface QuestionTiming {
+  /** Total budget across every poll before giving up on an answer. */
+  totalWaitMs: number;
+  /** Per-request timeout; longer than the daemon's own 30s poll window. */
+  requestTimeoutMs: number;
+  /** Pause after a clean unanswered poll, and after a failed one. */
+  retryDelayMs: number;
+  errorDelayMs: number;
+}
+
+// The MCP client aborts a tool call at its own tool timeout, so the executor
+// sets that ceiling above `totalWaitMs` for this server — see claude.ts.
+export const DEFAULT_QUESTION_TIMING: QuestionTiming = {
+  totalWaitMs: 30 * 60_000,
+  requestTimeoutMs: 45_000,
+  retryDelayMs: 250,
+  errorDelayMs: 2000,
+};
 
 interface QuestionRecord {
   id: string;
@@ -403,21 +413,33 @@ interface QuestionRecord {
 }
 
 const UNANSWERED_NOTE =
-  'No one answered within 30 minutes. Proceed on your best judgement, ' +
-  'and state the assumption you made in your final summary and in a ' +
-  'task_comment.';
+  'No one answered in time. Proceed on your best judgement, and state the ' +
+  'assumption you made in your final summary and in a task_comment.';
 
-// Proxies `POST /api/runs/:id/questions` and then long-polls
-// `GET /api/runs/:id/questions/:qid?wait=1` until a human answers — the
-// blocking counterpart to `message_user`. Each poll returns after the
-// daemon's own short window whether or not an answer landed, so this loops
-// until either an answer arrives or the total budget runs out; a poll that
-// comes back unanswered is the normal case, not a failure. A question the
-// daemon no longer knows about (it restarted, or the run went terminal) also
-// ends the wait rather than looping forever against a 404.
+// One poll's abort signal: its own timeout, plus the client's cancellation
+// when there is one, so a cancelled tool call doesn't sit out the full poll.
+function pollSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
+}
+
+// Best-effort DELETE of a question this tool has stopped waiting on, so the
+// app stops offering an answer box nothing is listening to.
+async function withdrawQuestion(base: string, id: string): Promise<void> {
+  try {
+    await fetch(`${base}/${id}`, { method: 'DELETE' });
+  } catch {
+    // The daemon being unreachable is exactly one of the reasons we gave up.
+  }
+}
+
+// Posts the question, then long-polls `?wait=1` until a human answers. An
+// unanswered poll is normal; a 404 means the daemon forgot the question.
 async function askUser(
   rootDir: string,
-  args: { question: string; options?: string[] }
+  args: { question: string; options?: string[] },
+  timing: QuestionTiming,
+  signal?: AbortSignal
 ): Promise<ToolOutcome> {
   if (args.question.trim() === '') {
     return toolError('question must not be empty');
@@ -456,33 +478,40 @@ async function askUser(
     return toolError(`ask_user failed: ${(err as Error).message}`);
   }
 
-  const deadline = Date.now() + QUESTION_TOTAL_WAIT_MS;
-  while (Date.now() < deadline) {
+  const deadline = Date.now() + timing.totalWaitMs;
+  // Set when the daemon has already forgotten the question, so the give-up
+  // path below knows there is nothing left to retract.
+  let gone = false;
+  while (Date.now() < deadline && signal?.aborted !== true) {
     let polled: QuestionRecord | null = null;
     try {
       const res = await fetch(`${base}/${question.id}?wait=1`, {
-        signal: AbortSignal.timeout(QUESTION_REQUEST_TIMEOUT_MS),
+        signal: pollSignal(timing.requestTimeoutMs, signal),
       });
-      // The question is gone from the daemon's registry — nothing further
-      // will ever answer it, so stop waiting instead of polling a 404.
-      if (res.status === 404) break;
+      if (res.status === 404) {
+        gone = true;
+        break;
+      }
       if (res.ok) polled = (await res.json()) as QuestionRecord;
     } catch {
       // A dropped or timed-out poll says nothing about the answer; ask again.
     }
     const answer = polled?.answer ?? null;
     if (answer !== null) return toolResult({ answer });
-    // A poll that came back cleanly can be repeated straight away; one that
-    // failed outright waits longer, so a daemon that is down or erroring
-    // doesn't get hammered for the rest of the budget.
+    if (signal !== undefined && signal.aborted) break;
+    // A clean poll can be repeated at once; a failed one backs off so a
+    // down daemon isn't hammered for the rest of the budget.
     await new Promise((resolve) =>
       setTimeout(
         resolve,
-        polled !== null ? QUESTION_RETRY_DELAY_MS : QUESTION_ERROR_DELAY_MS
+        polled !== null ? timing.retryDelayMs : timing.errorDelayMs
       )
     );
   }
 
+  // Nobody is listening for an answer any more — whether the budget ran out
+  // or the client cancelled the call — so retract the question.
+  if (!gone) await withdrawQuestion(base, question.id);
   return {
     content: [{ type: 'text', text: UNANSWERED_NOTE }],
     structuredContent: { answer: '' },
@@ -552,8 +581,10 @@ async function dispatchNote(
 // that starts or stops after this MCP server started is picked up too).
 export function registerDispatchTools(
   server: McpServer,
-  rootDir: string
+  rootDir: string,
+  opts: { questionTiming?: QuestionTiming } = {}
 ): void {
+  const questionTiming = opts.questionTiming ?? DEFAULT_QUESTION_TIMING;
   server.registerTool(
     'task_list',
     {
@@ -836,8 +867,8 @@ export function registerDispatchTools(
         'many round trips. Do not use it for anything you can determine by ' +
         'reading the repo. Pass `options` for the answers you consider ' +
         'likely; the human can still reply with anything. Returns their ' +
-        'answer, or an empty answer after 30 minutes with no response, in ' +
-        'which case proceed on your best judgement and note the assumption. ' +
+        'answer, or an empty answer if nobody responds in time, in which ' +
+        'case proceed on your best judgement and note the assumption. ' +
         'Requires a live dispatch run context.',
       inputSchema: {
         question: z.string(),
@@ -846,7 +877,8 @@ export function registerDispatchTools(
       outputSchema: { answer: z.string() },
       annotations: { readOnlyHint: false },
     },
-    ({ question, options }) => askUser(rootDir, { question, options })
+    ({ question, options }, extra) =>
+      askUser(rootDir, { question, options }, questionTiming, extra.signal)
   );
 
   server.registerTool(

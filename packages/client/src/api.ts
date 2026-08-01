@@ -319,13 +319,14 @@ export type ServerEvent =
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' }
-  // A run agent asked the human a question and is blocked on the answer, or
-  // that question was just answered. Mirrors packages/server/src/events.ts.
+  // A run agent's question was asked, answered, or withdrawn. Mirrors
+  // packages/server/src/events.ts.
   | { type: 'question.asked'; runId: string; questionId: string }
-  | { type: 'question.answered'; runId: string; questionId: string };
+  | { type: 'question.answered'; runId: string; questionId: string }
+  | { type: 'question.closed'; runId: string };
 
-// Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts — one
-// question an agent raised mid-run, blocking until the human answers it.
+// Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
+// question an agent is blocked on until the human answers it.
 export interface RunQuestion {
   id: string;
   runId: string;
@@ -917,10 +918,8 @@ export interface ApiClient {
   // transcript rather than delivering into any executor. 409s when the run
   // isn't currently `running`.
   messageUser(runId: string, text: string): Promise<RunMeta>;
-  // The blocking agent→human channel (`ask_user`'s daemon-side landing spot).
-  // `fetchOpenQuestions` is every unanswered question across every run, which
-  // is what the app badges "waiting on you" from; `answerQuestion` unblocks
-  // the agent parked on one. 409s on a second answer to the same question.
+  // The blocking agent→human channel (`ask_user`'s landing spot):
+  // every unanswered question, and the call that unblocks the agent on one.
   fetchOpenQuestions(): Promise<RunQuestion[]>;
   answerQuestion(
     runId: string,

@@ -49,11 +49,8 @@ export interface FeedRowModel {
    * rows. `detail` is the tool or command involved, when we know it.
    */
   attention: { reason: string; detail: string | null } | null;
-  /**
-   * What a `waiting` row is waiting on, since the two need different actions: an approval can
-   * be answered from the row itself, a question has to be answered in the run. `null` on every
-   * other state.
-   */
+  /** What a `waiting` row wants: an approval (answerable from the row) or a question
+   * (answerable only in the run). `null` on every other state. */
   waitingOn: 'approval' | 'question' | null;
 }
 
@@ -87,8 +84,8 @@ export interface BuildFeedInput {
   mergeQueue: MergeQueueSnapshot | null;
   /** Run id -> the tool name a run is paused on, when this window saw the request. */
   pendingApprovals: ReadonlyMap<string, { toolName: string }>;
-  /** Run id -> the question its agent is blocked on, for runs waiting on an answer. */
-  openQuestions: ReadonlyMap<string, { question: string }>;
+  /** Run id -> the questions its agent is blocked on, oldest first. */
+  openQuestions: ReadonlyMap<string, readonly { question: string }[]>;
   query: string;
   /** Empty means "no chip selected", which shows everything rather than nothing. */
   activeStates: ReadonlySet<FeedState>;
@@ -119,9 +116,15 @@ function attentionFor(
   openQuestions: BuildFeedInput['openQuestions']
 ): FeedRowModel['attention'] {
   if (state === 'waiting') {
-    const asked = openQuestions.get(run.id);
-    if (asked !== undefined) {
-      return { reason: 'Asked you a question', detail: asked.question };
+    const asked = openQuestions.get(run.id) ?? [];
+    if (asked.length > 0) {
+      return {
+        reason:
+          asked.length === 1
+            ? 'Asked you a question'
+            : `Asked you ${asked.length} questions`,
+        detail: asked[0].question,
+      };
     }
     const pending = pendingApprovals.get(run.id);
     return {
@@ -167,11 +170,11 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
   for (const run of runs) {
     const derived = deriveFeedState(run, queueByRunId.get(run.id));
     if (derived === null) continue;
-    // A run blocked on an unanswered question is still 'running' as far as its own metadata
-    // goes, so it would otherwise sit in the calm part of the feed looking busy. Same
-    // reasoning as an approval gate: nothing moves until a human acts.
+    // A run blocked on a question still reads as 'running' in its own metadata, so without
+    // this it would sit in the calm part of the feed looking busy.
+    const asked = openQuestions.get(run.id) ?? [];
     const state =
-      derived === 'working' && openQuestions.has(run.id) ? 'waiting' : derived;
+      derived === 'working' && asked.length > 0 ? 'waiting' : derived;
 
     const task = taskById.get(run.taskId);
     const parentId = task?.meta.parent ?? null;
@@ -193,11 +196,7 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
       activity,
       attention: attentionFor(state, run, pendingApprovals, openQuestions),
       waitingOn:
-        state !== 'waiting'
-          ? null
-          : openQuestions.has(run.id)
-            ? 'question'
-            : 'approval',
+        state !== 'waiting' ? null : asked.length > 0 ? 'question' : 'approval',
     });
   }
 

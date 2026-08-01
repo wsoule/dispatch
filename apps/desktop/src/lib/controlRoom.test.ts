@@ -270,7 +270,7 @@ describe('row content', () => {
     const model = buildFeed(
       input({
         runs: [run({ id: 'r-a', state: 'running' })],
-        openQuestions: new Map([['r-a', { question: 'Which database?' }]]),
+        openQuestions: new Map([['r-a', [{ question: 'Which database?' }]]]),
       })
     );
     const row = model.groups[0]?.rows[0];
@@ -284,11 +284,29 @@ describe('row content', () => {
     expect(model.counts.working).toBe(0);
   });
 
+  test('two open questions on one run count in the reason and show the first', () => {
+    const model = buildFeed(
+      input({
+        runs: [run({ id: 'r-a', state: 'running' })],
+        openQuestions: new Map([
+          [
+            'r-a',
+            [{ question: 'Which database?' }, { question: 'Which ORM?' }],
+          ],
+        ]),
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.attention).toEqual({
+      reason: 'Asked you 2 questions',
+      detail: 'Which database?',
+    });
+  });
+
   test('an open question on a finished run does not drag it back to waiting', () => {
     const model = buildFeed(
       input({
         runs: [run({ id: 'r-a', state: 'finished' })],
-        openQuestions: new Map([['r-a', { question: 'Which database?' }]]),
+        openQuestions: new Map([['r-a', [{ question: 'Which database?' }]]]),
       })
     );
     expect(model.groups[0]?.rows[0]?.state).toBe('review');

@@ -8,9 +8,22 @@ import { dirname, join } from 'node:path';
 
 import { daemonFilePath } from '../src/daemon.js';
 import { createDispatchMcpServer } from '../src/index.js';
+import type { QuestionTiming } from '../src/index.js';
 
-async function connectClient(rootDir: string): Promise<Client> {
-  const server = createDispatchMcpServer(rootDir);
+// Milliseconds everywhere instead of the production minutes, so the loop's
+// real exit conditions run in test time.
+const FAST_TIMING: QuestionTiming = {
+  totalWaitMs: 400,
+  requestTimeoutMs: 200,
+  retryDelayMs: 10,
+  errorDelayMs: 10,
+};
+
+async function connectClient(
+  rootDir: string,
+  timing: QuestionTiming = FAST_TIMING
+): Promise<Client> {
+  const server = createDispatchMcpServer(rootDir, { questionTiming: timing });
   const client = new Client({ name: 'test-client', version: '1.0' });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -27,16 +40,17 @@ interface ToolCallResult {
   content: { type: string; text?: string }[];
 }
 
-// A stand-in for dispatchd's questions routes, shaped like the real ones but
-// answering every long-poll immediately: `answerAfterPolls` is how many polls
-// come back unanswered before one carries an answer, which is what lets a
-// test exercise the tool's re-poll loop in milliseconds.
+// A stand-in for dispatchd's questions routes. `answerAfterPolls` polls come
+// back unanswered first, which is what exercises the tool's re-poll loop.
 class FakeDaemon {
   askStatus = 201;
   askBody: unknown = { id: 'q-abc123', runId: 'r-self1', answer: null };
   answerAfterPolls = 1;
   pollStatus = 200;
+  /** Holds each poll open this long, to test a client cancelling mid-poll. */
+  pollDelayMs = 0;
   asked: { runId: string; question: string; options: string[] }[] = [];
+  deleted: string[] = [];
   polls = 0;
   private server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -62,11 +76,18 @@ class FakeDaemon {
           return Response.json(this.askBody, { status: this.askStatus });
         }
 
-        const poll = /^\/api\/runs\/([^/]+)\/questions\/([^/]+)$/.exec(
+        const one = /^\/api\/runs\/([^/]+)\/questions\/([^/]+)$/.exec(
           url.pathname
         );
-        if (poll !== null && req.method === 'GET') {
+        if (one !== null && req.method === 'DELETE') {
+          this.deleted.push(one[2]);
+          return new Response(null, { status: 204 });
+        }
+        if (one !== null && req.method === 'GET') {
           this.polls += 1;
+          if (this.pollDelayMs > 0) {
+            await new Promise((r) => setTimeout(r, this.pollDelayMs));
+          }
           if (this.pollStatus !== 200) {
             return Response.json(
               { error: 'question not found' },
@@ -74,8 +95,8 @@ class FakeDaemon {
             );
           }
           return Response.json({
-            id: poll[2],
-            runId: poll[1],
+            id: one[2],
+            runId: one[1],
             answer: this.polls > this.answerAfterPolls ? 'postgres' : null,
           });
         }
@@ -189,6 +210,27 @@ describe('ask_user (fake daemon)', () => {
       },
     ]);
     expect(daemon.polls).toBe(3);
+    expect(daemon.deleted).toEqual([]);
+  });
+
+  it('gives up at the total budget, withdrawing the question on the way out', async () => {
+    process.env.DISPATCH_RUN_ID = 'r-self1';
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool(
+      { name: 'ask_user', arguments: { question: 'Which database?' } },
+      undefined,
+      { timeout: 10_000 }
+    )) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual({ answer: '' });
+    expect(result.content[0]?.text).toMatch(/best judgement/);
+    expect(daemon.polls).toBeGreaterThan(1);
+    expect(daemon.deleted).toEqual(['q-abc123']);
   });
 
   it('stops waiting with an empty answer when the daemon no longer knows the question', async () => {
@@ -207,6 +249,34 @@ describe('ask_user (fake daemon)', () => {
     expect(result.structuredContent).toEqual({ answer: '' });
     expect(result.content[0]?.text).toMatch(/best judgement/);
     expect(daemon.polls).toBe(1);
+    // Already gone from the daemon's registry — nothing to retract.
+    expect(daemon.deleted).toEqual([]);
+  });
+
+  // The exact shape of a claude CLI whose MCP_TOOL_TIMEOUT elapses: the client
+  // sends notifications/cancelled, which aborts the tool handler's signal.
+  it('withdraws the question when the client cancels the tool call', async () => {
+    process.env.DISPATCH_RUN_ID = 'r-self1';
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    daemon.pollDelayMs = 5_000;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root, {
+      ...FAST_TIMING,
+      totalWaitMs: 60_000,
+      requestTimeoutMs: 30_000,
+    });
+
+    await expect(
+      client.callTool(
+        { name: 'ask_user', arguments: { question: 'Which database?' } },
+        undefined,
+        { timeout: 300 }
+      )
+    ).rejects.toThrow();
+
+    await Bun.sleep(200);
+    expect(daemon.deleted).toEqual(['q-abc123']);
   });
 
   it("surfaces the daemon's own error when the question can't be posted", async () => {

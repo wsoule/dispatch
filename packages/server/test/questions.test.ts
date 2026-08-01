@@ -62,7 +62,7 @@ describe('QuestionRegistry', () => {
     expect(() => registry.answer('q-nope1', 'x')).toThrow(
       OrchestratorNotFoundError
     );
-    expect(registry.waitForAnswer('q-nope1', 5000)).rejects.toThrow(
+    await expect(registry.waitForAnswer('q-nope1', 5000)).rejects.toThrow(
       OrchestratorNotFoundError
     );
   });
