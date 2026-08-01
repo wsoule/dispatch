@@ -41,6 +41,13 @@ export interface LinearTeam {
   name: string;
 }
 
+/** The three display fields a chip needs, without paying for a whole issue. */
+export interface LinearIssueRef {
+  id: string;
+  identifier: string;
+  url: string;
+}
+
 /** A page walk's result. `truncated` means the page cap stopped the walk before the last page. */
 export interface LinearIssuePage {
   issues: LinearIssue[];
@@ -57,6 +64,8 @@ export interface LinearClient {
     teamId: string,
     since: string | null
   ): Promise<LinearResult<LinearIssuePage>>;
+  /** Just the display fields, for filling in chips on issues that may never change again. */
+  issueLinks(teamId: string): Promise<LinearResult<LinearIssueRef[]>>;
   createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>>;
   updateIssue(
     id: string,
@@ -118,6 +127,18 @@ const ISSUES_QUERY_ALL = `query IssuesAll($teamId: String!, $after: String) {
     includeArchived: true
   ) {
     nodes { ${ISSUE_FIELDS} }
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+
+const ISSUE_LINKS_QUERY = `query IssueLinks($teamId: String!, $after: String) {
+  issues(
+    filter: { team: { id: { eq: $teamId } } }
+    first: 250
+    after: $after
+    includeArchived: true
+  ) {
+    nodes { id identifier url }
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -376,6 +397,15 @@ export class HttpLinearClient implements LinearClient {
           },
         }
       : result;
+  }
+
+  async issueLinks(teamId: string): Promise<LinearResult<LinearIssueRef[]>> {
+    const result = await this.paginate<LinearIssueRef>(
+      ISSUE_LINKS_QUERY,
+      { teamId },
+      (data) => (data as { issues?: Connection<LinearIssueRef> }).issues
+    );
+    return result.ok ? { ok: true, data: result.data.nodes } : result;
   }
 
   async createIssue(
