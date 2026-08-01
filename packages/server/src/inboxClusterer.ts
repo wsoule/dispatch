@@ -74,9 +74,20 @@ function buildPrompt(items: InboxItem[]): string {
 /** Anything below this and there is nothing to group. */
 const MIN_ITEMS = 3;
 
-/** A hung model call must not pin the request open forever — this runs automatically now
- * (see BrainDumpView's auto-recluster effect), so nothing is watching a spinner to notice. */
+/** A hung model call must not pin the request open forever now that clustering runs
+ * automatically, with nothing watching a spinner to cancel it by hand. */
 const CLUSTER_TIMEOUT_MS = 60_000;
+
+// The SDK itself tests for abort this way internally (name === 'AbortError', or a fetch
+// cancellation message) — matched here so a real cancellation is never confused with a
+// same-timing but unrelated failure.
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === 'AbortError' ||
+      err.message.includes('FetchRequestCanceledException'))
+  );
+}
 
 export class InboxClusterer {
   constructor(
@@ -126,7 +137,9 @@ export class InboxClusterer {
       }
       return [];
     } catch (err) {
-      if (abortController.signal.aborted) {
+      // Checking the signal alone would mislabel a genuine failure that happens to land right
+      // at the 60s mark — only an error the abort itself caused is a timeout.
+      if (isAbortError(err)) {
         throw new Error(
           `clustering timed out after ${CLUSTER_TIMEOUT_MS / 1000}s`
         );

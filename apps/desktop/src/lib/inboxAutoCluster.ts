@@ -1,11 +1,5 @@
-/**
- * Decides whether the background clustering pass should re-run. This is a pure decision so the
- * `useEffect` driving it in BrainDumpView has exactly one thing to get right: it fires only when
- * there is enough to group AND the open-item id set genuinely differs from what was last
- * clustered. Comparing as sets (not arrays) means a pure reorder — same items, new order — never
- * re-triggers a call, and a `null` baseline (nothing clustered yet) always does once the minimum
- * is met.
- */
+/** True when there's enough to group and the open-item id set (compared as a set, so a pure
+ * reorder doesn't count) differs from what was last clustered. */
 export function shouldRecluster(
   openItemIds: string[],
   lastClusteredIds: string[] | null,
