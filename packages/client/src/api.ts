@@ -1,6 +1,7 @@
 import type {
   CreateInput,
   DispatchConfig,
+  ModelConfig,
   Priority,
   TaskDoc,
   UpdatePatch,
@@ -852,6 +853,7 @@ export interface ApiClient {
     epicConcurrency?: number;
     verifyTimeoutSec?: number;
     permissionMode?: string;
+    models?: Partial<ModelConfig>;
   }): Promise<DispatchConfig>;
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;

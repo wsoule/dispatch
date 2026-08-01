@@ -78,7 +78,44 @@ export interface DispatchConfig {
    */
   verifySteps?: VerifyStep[];
   orchestrator: OrchestratorConfig;
+  models: ModelConfig;
 }
+
+/** Per-role model ids. Each role is a distinct kind of agent work, so cheap
+ *  roles can run on a cheap model without downgrading coding runs. */
+export interface ModelConfig {
+  /** Coding runs — the agent that edits the repo. */
+  execute: string;
+  /** Multi-turn planning conversations. */
+  plan: string;
+  /** One-shot natural-language task drafting. */
+  draft: string;
+  /** Filling in description / acceptance criteria for a task or inbox item. */
+  enrich: string;
+  /** Grouping inbox captures into suggested epics. */
+  cluster: string;
+  /** Short mechanical text: titles, summaries, commit messages. */
+  summarize: string;
+}
+
+export const DEFAULT_MODELS: ModelConfig = {
+  execute: 'claude-opus-5',
+  plan: 'claude-sonnet-5',
+  draft: 'claude-haiku-4-5-20251001',
+  enrich: 'claude-haiku-4-5-20251001',
+  cluster: 'claude-haiku-4-5-20251001',
+  summarize: 'claude-haiku-4-5-20251001',
+};
+
+/** Every valid key of `ModelConfig`, in the order the Settings UI renders them. */
+export const MODEL_ROLES: readonly (keyof ModelConfig)[] = [
+  'execute',
+  'plan',
+  'draft',
+  'enrich',
+  'cluster',
+  'summarize',
+];
 
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   // No default turn cap — maxBudgetUsd is the real guard.
@@ -94,6 +131,7 @@ const DEFAULTS: DispatchConfig = {
   statuses: [...STATUSES],
   autoCommit: false,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
+  models: { ...DEFAULT_MODELS },
 };
 
 // Validates and normalizes the optional `orchestrator:` block. `raw` is
@@ -180,6 +218,41 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
   };
 }
 
+// Validates and normalizes the optional `models:` block, same shape of contract as
+// parseOrchestratorConfig: `undefined` (key omitted) falls back to DEFAULT_MODELS entirely; any
+// other non-object is a loud ConfigError; an unrecognized role key is a ConfigError rather than
+// a silently-ignored typo (e.g. `excute:` would otherwise leave `execute` on the SDK default
+// forever with no indication why); each provided value must be a non-empty string; a role left
+// out of the block keeps its default.
+function parseModelConfig(raw: unknown): ModelConfig {
+  if (raw === undefined) return { ...DEFAULT_MODELS };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: models must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!MODEL_ROLES.includes(key as keyof ModelConfig)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown models role "${key}" (expected ${MODEL_ROLES.join('|')})`
+      );
+    }
+  }
+  const result = { ...DEFAULT_MODELS };
+  for (const role of MODEL_ROLES) {
+    const value = obj[role];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: models.${role} must be a non-empty string`
+      );
+    }
+    result[role] = value;
+  }
+  return result;
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -187,6 +260,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       statuses: [...DEFAULTS.statuses],
       autoCommit: DEFAULTS.autoCommit,
       orchestrator: { ...DEFAULTS.orchestrator },
+      models: { ...DEFAULTS.models },
     };
   }
   let parsed: unknown;
@@ -247,6 +321,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
+    models: parseModelConfig(raw.models),
   };
 }
 
@@ -259,6 +334,7 @@ export interface ConfigPatch {
   epicConcurrency?: number;
   verifyTimeoutSec?: number;
   permissionMode?: OrchestratorConfig['permissionMode'];
+  models?: Partial<ModelConfig>;
 }
 
 /**
@@ -312,6 +388,24 @@ export function updateConfig(
       );
     }
     doc.setIn(['orchestrator', 'permissionMode'], patch.permissionMode);
+  }
+  if (patch.models !== undefined) {
+    // Same validate-before-write reasoning as permissionMode above: an unknown role or a
+    // non-string value must never reach disk, since loadConfig would then refuse to read the
+    // file back at all on the very next request.
+    for (const [role, value] of Object.entries(patch.models)) {
+      if (!MODEL_ROLES.includes(role as keyof ModelConfig)) {
+        throw new ConfigError(
+          `invalid models role: ${role} (expected ${MODEL_ROLES.join('|')})`
+        );
+      }
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new ConfigError(
+          `invalid models.${role}: must be a non-empty string`
+        );
+      }
+      doc.setIn(['models', role], value.trim());
+    }
   }
 
   mkdirSync(dirname(path), { recursive: true });

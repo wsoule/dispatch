@@ -241,7 +241,7 @@ export async function startServer(
   // via `registerPlanners`) and the epic dispatch engine, both wired against
   // the same store/cache/events/orchestrator every other request handler
   // shares.
-  const planManager = new PlanManager({ store, cache, events });
+  const planManager = new PlanManager({ rootDir, store, cache, events });
   if (opts.registerPlanners !== undefined) {
     opts.registerPlanners(planManager);
   } else {

@@ -134,15 +134,16 @@ export class ClaudePlanner implements Planner {
     private readonly queryFn: typeof query = query
   ) {}
 
-  start(prompt: string): Promise<PlannerTurn> {
-    return this.runTurn(buildPlannerPrompt(prompt), undefined);
+  start(prompt: string, model?: string): Promise<PlannerTurn> {
+    return this.runTurn(buildPlannerPrompt(prompt), undefined, model);
   }
 
   sendMessage(
     sessionId: string | undefined,
-    message: string
+    message: string,
+    model?: string
   ): Promise<PlannerTurn> {
-    return this.runTurn(buildFollowupPrompt(message), sessionId);
+    return this.runTurn(buildFollowupPrompt(message), sessionId, model);
   }
 
   // Runs one turn to completion: issues a single `query()` (resuming `resume`
@@ -152,7 +153,8 @@ export class ClaudePlanner implements Planner {
   // 'result' omits one.
   private async runTurn(
     prompt: string,
-    resume: string | undefined
+    resume: string | undefined,
+    model: string | undefined
   ): Promise<PlannerTurn> {
     const options: Options = {
       cwd: this.rootDir,
@@ -168,6 +170,7 @@ export class ClaudePlanner implements Planner {
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
       ...(resume !== undefined ? { resume } : {}),
+      ...(model !== undefined ? { model } : {}),
     };
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
     // PATH `claude` -> install hint) ClaudeExecutor.openQuery uses — see

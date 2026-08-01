@@ -1,13 +1,20 @@
-import { AlertCircle, Check, FolderSearch } from 'lucide-react';
-import { useState } from 'react';
+import type { DispatchConfig, ModelConfig } from '@dispatch/core';
+import { MODEL_ROLES } from '@dispatch/core';
+import { AlertCircle, FolderSearch } from 'lucide-react';
 
 import { describeDaemonError } from '../components/shell/DaemonUnavailable';
 import { ProjectSettingsSection } from '../components/shell/ProjectSettingsSection';
 import { StatTile } from '../components/ui/StatTile';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { MODELS, readDefaultModel, writeDefaultModel } from '../lib/models';
-import { cn } from '@/lib/utils';
+import { MODELS } from '../lib/models';
 import { Badge } from '@/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
 import { Separator } from '@/ui/separator';
 
 interface SettingsViewProps {
@@ -31,45 +38,83 @@ function daemonStatusLabel(data: DispatchProjectData): string {
   return data.client !== null ? 'running' : 'not running';
 }
 
-// The one writable setting: which Claude model new dispatches use by default. Persisted to
-// localStorage (see lib/models.ts) and read by useDispatchProject.handleDispatch, so changing
-// it here changes what every subsequent "Dispatch" runs with — overridable per-dispatch from
-// the task detail's model picker.
-function DefaultModelSection() {
-  const [selected, setSelected] = useState(readDefaultModel);
+// One row per config.models role, mirroring the doc comments on ModelConfig in
+// packages/core/src/config.ts so picking a cheap model for a cheap role doesn't require reading
+// the config schema.
+const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
+  execute: { label: 'Coding runs', hint: 'The agent that edits the repo.' },
+  plan: { label: 'Planning', hint: 'Multi-turn planning conversations.' },
+  draft: {
+    label: 'Task drafting',
+    hint: 'One-shot natural-language task drafting.',
+  },
+  enrich: {
+    label: 'Enrichment',
+    hint: 'Filling in description / acceptance criteria for a task or inbox item.',
+  },
+  cluster: {
+    label: 'Inbox clustering',
+    hint: 'Grouping inbox captures into suggested epics.',
+  },
+  summarize: {
+    label: 'Summaries',
+    hint: 'Short mechanical text: titles, summaries, commit messages.',
+  },
+};
+
+// The models section: one dropdown per agent role in `config.models`, persisted straight to
+// `.dispatch/config.yml` via handleUpdateConfig — so the CLI and daemon see the same choice, not
+// just this browser. `execute` (coding runs) is still overridable per-dispatch and per-device
+// (localStorage, see lib/models.ts's resolveExecuteModel) — this is what that override layers
+// on top of.
+function ModelRolesSection({
+  config,
+  onSave,
+}: {
+  config: DispatchConfig;
+  onSave: DispatchProjectData['handleUpdateConfig'];
+}) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-        Default model
+        Models
       </h2>
-      <div className="flex flex-col gap-1.5">
-        {MODELS.map((model) => {
-          const active = model.id === selected;
+      <div className="flex flex-col gap-0.5">
+        {MODEL_ROLES.map((role) => {
+          const info = ROLE_INFO[role];
           return (
-            <button
-              key={model.id}
-              type="button"
-              onClick={() => {
-                writeDefaultModel(model.id);
-                setSelected(model.id);
-              }}
-              className={cn(
-                'flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors duration-150',
-                active
-                  ? 'border-primary/50 bg-primary/5'
-                  : 'border-border hover:bg-muted/40'
-              )}
+            <div
+              key={role}
+              className="border-border flex items-center gap-3 border-b py-2 last:border-b-0"
             >
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="text-foreground text-[13px] font-medium">
-                  {model.label}
+                  {info.label}
                 </span>
                 <span className="text-muted-foreground text-[11px]">
-                  {model.hint}
+                  {info.hint}
                 </span>
               </div>
-              {active && <Check className="text-primary size-4 shrink-0" />}
-            </button>
+              <Select
+                value={config.models[role]}
+                onValueChange={(id) => void onSave({ models: { [role]: id } })}
+              >
+                <SelectTrigger
+                  size="sm"
+                  aria-label={`${info.label} model`}
+                  className="w-[168px] shrink-0 text-[12px]"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODELS.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           );
         })}
       </div>
@@ -79,10 +124,10 @@ function DefaultModelSection() {
 
 /**
  * Settings for the active project: the writable half (verify command, auto-commit, epic
- * concurrency, permission posture — all persisted to `.dispatch/config.yml` in the repo, so the
- * CLI and daemon see the same values), the app-local default model, and read-only daemon status.
- * The daemon stays read-only deliberately: the sidecar is process-managed, not something this
- * view should be able to kill or restart. No placeholder sections — only what exists renders.
+ * concurrency, permission posture, per-role models — all persisted to `.dispatch/config.yml` in
+ * the repo, so the CLI and daemon see the same values), and read-only daemon status. The daemon
+ * stays read-only deliberately: the sidecar is process-managed, not something this view should
+ * be able to kill or restart. No placeholder sections — only what exists renders.
  */
 export function SettingsView({ activeProject, data }: SettingsViewProps) {
   if (activeProject === null) {
@@ -109,9 +154,15 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
         onSave={data.handleUpdateConfig}
       />
 
-      <Separator />
-
-      <DefaultModelSection />
+      {data.config !== null && (
+        <>
+          <Separator />
+          <ModelRolesSection
+            config={data.config}
+            onSave={data.handleUpdateConfig}
+          />
+        </>
+      )}
 
       <Separator />
 

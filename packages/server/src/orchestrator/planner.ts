@@ -65,11 +65,15 @@ export interface PlannerTurn {
 // implement this so PlanManager never branches on which one is running. A
 // rejected promise means the turn failed — the registry maps that straight to
 // `state: 'failed'`.
+// `model` is optional on both methods — PlanManager resolves it fresh from
+// `config.models` per call (see plan.ts) and passes it through; a caller that
+// omits it (a test double, mostly) leaves the backend's own default in play.
 export interface Planner {
-  start(prompt: string): Promise<PlannerTurn>;
+  start(prompt: string, model?: string): Promise<PlannerTurn>;
   sendMessage(
     sessionId: string | undefined,
-    message: string
+    message: string,
+    model?: string
   ): Promise<PlannerTurn>;
 }
 

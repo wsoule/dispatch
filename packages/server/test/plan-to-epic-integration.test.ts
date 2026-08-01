@@ -107,7 +107,12 @@ describe('plan -> confirm -> startEpic integration', () => {
       })
     );
 
-    const planManager = new PlanManager({ store, cache, events });
+    const planManager = new PlanManager({
+      store,
+      cache,
+      events,
+      rootDir: repo,
+    });
     planManager.registerPlanner(
       'claude',
       new FakePlanner({ ok: true, proposal: PROPOSAL })

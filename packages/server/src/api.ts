@@ -13,6 +13,7 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  ModelConfig,
   UpdatePatch,
 } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
@@ -372,8 +373,17 @@ async function createRun(
 
   const executorName =
     typeof executorField === 'string' ? executorField : 'claude';
+  // A request that omits `model` falls back to the project's configured
+  // `models.execute` rather than leaving it undefined — a client that never
+  // sends one (a script, an older UI build) still runs on the model the
+  // project actually chose in settings, not whatever the SDK happens to
+  // default to.
+  const model =
+    typeof modelField === 'string'
+      ? modelField
+      : loadConfig(ctx.rootDir).models.execute;
   const meta = await ctx.orchestrator.dispatch(taskId, executorName, {
-    model: modelField,
+    model,
   });
   return jsonResponse(meta, 201);
 }
@@ -507,6 +517,19 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // would be a second list to keep in step. updateConfig rejects an unknown one before it
     // writes anything, and that ConfigError becomes the 400 below.
     patch.permissionMode = body.permissionMode;
+  }
+  if ('models' in body) {
+    if (
+      typeof body.models !== 'object' ||
+      body.models === null ||
+      Array.isArray(body.models)
+    ) {
+      return errorResponse(400, 'models must be an object');
+    }
+    // Same deal as permissionMode: the valid role set and per-role string check live in core
+    // next to updateConfig, which rejects an unknown role or bad value before writing anything —
+    // that ConfigError becomes the 400 below.
+    patch.models = body.models as Partial<ModelConfig>;
   }
 
   try {
@@ -1453,7 +1476,8 @@ function enrichInbox(ctx: ApiContext, id: string): Response {
   const record = ctx.planManager.startPlan(
     buildInboxEnrichPrompt(item),
     'claude',
-    item.id
+    item.id,
+    'enrich'
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -1505,7 +1529,9 @@ function enrichTask(ctx: ApiContext, id: string): Response {
   }
   const record = ctx.planManager.startPlan(
     buildTaskEnrichPrompt(task),
-    'claude'
+    'claude',
+    undefined,
+    'enrich'
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -1524,7 +1550,8 @@ function enrichNote(ctx: ApiContext, id: string): Response {
   const record = ctx.planManager.startPlan(
     buildNoteEnrichPrompt(note),
     'claude',
-    note.id
+    note.id,
+    'enrich'
   );
   return jsonResponse({ planId: record.id }, 202);
 }

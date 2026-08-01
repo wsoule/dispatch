@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { loadConfig } from '@dispatch/core';
 
 import type { InboxItem } from './inbox.js';
 import { openClaudeQuery } from './orchestrator/claudeCli.js';
@@ -16,13 +17,12 @@ import { openClaudeQuery } from './orchestrator/claudeCli.js';
  * - This pass costs a call and a couple of seconds, so it is explicitly user-triggered. It sees
  *   meaning.
  *
- * Haiku, deliberately. This is a short classification over a handful of one-line strings — the
- * cheapest, fastest model in the family is the right tool, and paying Opus rates to sort a todo
- * list would be indefensible. No tools are granted either: clustering is about the text in front
- * of it, so letting it read the repo would only add latency and a way to go wrong.
+ * Haiku by default (`config.models.cluster`, see packages/core/src/config.ts's DEFAULT_MODELS).
+ * This is a short classification over a handful of one-line strings — the cheapest, fastest model
+ * in the family is the right tool, and paying Opus rates to sort a todo list would be
+ * indefensible. No tools are granted either: clustering is about the text in front of it, so
+ * letting it read the repo would only add latency and a way to go wrong.
  */
-
-const CLUSTER_MODEL = 'claude-haiku-4-5-20251001';
 
 export interface InboxClusterGroup {
   /** A title for the epic these items would become. */
@@ -85,9 +85,12 @@ export class InboxClusterer {
     const open = items.filter((i) => !i.done);
     if (open.length < MIN_ITEMS) return [];
 
+    // Fresh per-call read (same pattern PlanManager and mergeQueue.ts use for their own
+    // config.yml-sourced settings), so a settings change takes effect on the next cluster
+    // request with no daemon restart.
     const options: Options = {
       cwd: this.rootDir,
-      model: CLUSTER_MODEL,
+      model: loadConfig(this.rootDir).models.cluster,
       permissionMode: 'plan',
       // No tools: this is a judgement about the strings above, not about the repo.
       allowedTools: [],

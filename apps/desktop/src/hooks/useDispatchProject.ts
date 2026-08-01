@@ -14,6 +14,7 @@ import { createApiClient } from '@dispatch/client';
 import type {
   CreateInput,
   DispatchConfig,
+  ModelConfig,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core';
@@ -23,7 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
-import { readDefaultModel } from '../lib/models';
+import { resolveExecuteModel } from '../lib/models';
 import { notify } from '../lib/notifications';
 import { isTerminalRunState } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
@@ -233,6 +234,7 @@ export interface DispatchProjectData {
     epicConcurrency?: number;
     verifyTimeoutSec?: number;
     permissionMode?: string;
+    models?: Partial<ModelConfig>;
   }) => Promise<void>;
   /** Returns the per-item outcome so a partial failure can be surfaced, not swallowed. */
   handleConvertInbox: (
@@ -1128,10 +1130,11 @@ export function useDispatchProject(
     ): Promise<void> => {
       if (client === null) return;
       // A real ('claude') dispatch always carries a model — the per-dispatch override if given,
-      // otherwise the user's saved default. The fake executor ignores it.
+      // otherwise the user's stored localStorage override layered over the project's configured
+      // `models.execute` (see lib/models.ts's resolveExecuteModel). The fake executor ignores it.
       const meta = await client.createRun(taskId, {
         executor,
-        model: model ?? readDefaultModel(),
+        model: model ?? resolveExecuteModel(config),
       });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
@@ -1140,6 +1143,7 @@ export function useDispatchProject(
     },
     [
       client,
+      config,
       queryClient,
       runsQueryKey,
       tasksQueryKey,
@@ -1532,6 +1536,7 @@ export function useDispatchProject(
       epicConcurrency?: number;
       verifyTimeoutSec?: number;
       permissionMode?: string;
+      models?: Partial<ModelConfig>;
     }): Promise<void> => {
       if (client === null) return;
       await client.updateConfig(patch);
