@@ -530,20 +530,31 @@ export function BrainDumpView({
   );
 }
 
-// Reveals the explainer prose on hover, focus, or click — controlled state, since Radix's
-// Popover only opens on click by default.
+// Reveals the explainer prose on hover, click, or keyboard focus — controlled state, since
+// Radix's Popover only opens on click by default. Escape or a click outside dismisses it.
 function ExplainerPopover() {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Moving the pointer away must not close an explainer the user tabbed or clicked into,
+  // which would otherwise leave a focused trigger with nothing showing.
+  function closeUnlessTriggerFocused() {
+    if (document.activeElement !== triggerRef.current) setOpen(false);
+  }
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
+          onMouseLeave={closeUnlessTriggerFocused}
           onFocus={() => setOpen(true)}
           onBlur={() => setOpen(false)}
-          onClick={() => setOpen((v) => !v)}
+          // Suppresses Radix's own click-to-toggle, which would close a popover that
+          // hovering or focusing the button has already opened.
+          onClick={(e) => e.preventDefault()}
           className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]"
         >
           <CircleHelp className="size-3.5" />
@@ -553,8 +564,12 @@ function ExplainerPopover() {
       <PopoverContent
         side="top"
         align="center"
+        // Radix would focus the content on open, blurring the trigger and closing this
+        // straight back up; keeping focus on the trigger is what makes Tab reveal it.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
         onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
+        onMouseLeave={closeUnlessTriggerFocused}
         className="flex flex-col gap-3.5"
       >
         <div>
