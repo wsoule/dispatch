@@ -242,9 +242,15 @@ function LinearSection({ data }: { data: DispatchProjectData }) {
   // identity, just where a key was found, so this is the one place a viewer name can come from.
   const [viewer, setViewer] = useState<LinearViewer | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<LinearSyncSummary | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<LinearSyncSummary | null>(
+    null
+  );
 
   if (config === null || linearStatus === null) return null;
 
@@ -266,12 +272,27 @@ function LinearSection({ data }: { data: DispatchProjectData }) {
 
   async function disconnect() {
     setDisconnecting(true);
+    setDisconnectError(null);
     try {
       await data.handleDisconnectLinear();
       setViewer(null);
       setSyncResult(null);
+    } catch (err) {
+      setDisconnectError(err instanceof Error ? err.message : String(err));
     } finally {
       setDisconnecting(false);
+    }
+  }
+
+  async function importFromLinear() {
+    setImporting(true);
+    setImportError(null);
+    try {
+      setImportResult(await data.handleImportLinear());
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -298,6 +319,12 @@ function LinearSection({ data }: { data: DispatchProjectData }) {
   // Whichever summary is freshest: this session's own "Sync now" result, or the last pass the
   // daemon ran (on a timer, on a task edit, or before this window opened).
   const summary = syncResult ?? linearStatus.lastSummary;
+  // `lastError` is disk-persisted and outlives a daemon restart, unlike `summary` (in-memory,
+  // reset on restart) — shown on its own unless the current summary already carries it.
+  const lastErrorInSummary =
+    summary !== null &&
+    linearStatus.lastError !== null &&
+    summary.errors.includes(linearStatus.lastError);
 
   return (
     <section className="flex flex-col gap-3">
@@ -348,6 +375,11 @@ function LinearSection({ data }: { data: DispatchProjectData }) {
               {disconnecting ? 'Disconnecting…' : 'Disconnect'}
             </Button>
           </div>
+          {disconnectError !== null && (
+            <span className="text-destructive text-[12px]">
+              {disconnectError}
+            </span>
+          )}
 
           <label className="flex items-center gap-2">
             <input
@@ -453,6 +485,34 @@ function LinearSection({ data }: { data: DispatchProjectData }) {
             </div>
           )}
 
+          <div className="flex flex-col gap-1.5 pt-1">
+            <p className="text-muted-foreground text-[12px]">
+              Sync only moves what changes after a task is linked — it never
+              bulk-imports the backlog on its own. Import brings down every
+              issue in this team that has no matching task yet.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={importing || !configured}
+                onClick={() => void importFromLinear()}
+              >
+                {importing ? 'Importing…' : 'Import from Linear'}
+              </Button>
+              {importResult !== null && (
+                <span className="dense-meta">
+                  {formatSyncCounts(importResult)}
+                </span>
+              )}
+            </div>
+            {importError !== null && (
+              <span className="text-destructive text-[12px]">
+                {importError}
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center gap-2 pt-1">
             <Button
               size="sm"
@@ -474,6 +534,11 @@ function LinearSection({ data }: { data: DispatchProjectData }) {
               </span>
             )}
           </div>
+          {linearStatus.lastError !== null && !lastErrorInSummary && (
+            <span className="text-destructive text-[12px]">
+              {linearStatus.lastError}
+            </span>
+          )}
 
           {summary !== null && (
             <div className="flex flex-col gap-1">

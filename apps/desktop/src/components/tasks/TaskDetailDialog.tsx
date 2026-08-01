@@ -1,4 +1,9 @@
-import type { PlanRecord, RunMeta } from '@dispatch/client';
+import type {
+  LinearIssueLink,
+  LinearSyncSummary,
+  PlanRecord,
+  RunMeta,
+} from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
 import { parseExternal } from '@dispatch/core';
 import { computeStack } from '@dispatch/core/graph';
@@ -22,6 +27,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import { formatRelativeTimeFromIso } from '../../lib/format';
+import { resolveLinearLink } from '../../lib/linearSettings';
 import { mergeLadderLabel, mergeLadderState } from '../../lib/mergeLadder';
 import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
 import { isTerminalRunState } from '../../lib/runState';
@@ -360,6 +366,13 @@ interface TaskDetailDialogProps {
    * Omitted (the palette/board's older call sites) hides the rail's title links, rendering
    * them as plain text instead. */
   onOpenTask?: (taskId: string) => void;
+  /** Issue UUID -> display identifier/URL, for turning `doc.meta.external` into a real chip. */
+  linearLinks: Record<string, LinearIssueLink>;
+  /** Whether Linear is connected with a team chosen — gates the "Push to Linear" action. */
+  linearConfigured: boolean;
+  /** Pushes this task to Linear now (creating the issue if unlinked). Optional so a caller
+   * without Linear plumbing gets no push affordance. */
+  onPushToLinear?: (id: string) => Promise<LinearSyncSummary>;
 }
 
 /**
@@ -391,11 +404,15 @@ export function TaskDetailDialog({
   onDismissEnrich,
   onOpenRun,
   onOpenTask,
+  linearLinks,
+  linearConfigured,
+  onPushToLinear,
 }: TaskDetailDialogProps) {
   const [title, setTitle] = useState(doc.meta.title);
   const [activityDraft, setActivityDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  const [pushingLinear, setPushingLinear] = useState(false);
   // "Add detail" was clicked. Not cleared when the POST resolves — that 202 only means the
   // plan started; it clears when a draft or an error actually arrives.
   const [enrichStarted, setEnrichStarted] = useState(false);
@@ -414,6 +431,25 @@ export function TaskDetailDialog({
   // in-flight statuses something else. A run that isn't in a terminal state *is* an "open
   // run" regardless of what the task's own status happens to be called.
   const hasOpenRun = run !== undefined && !isTerminalRunState(run.state);
+
+  // The Linear issue this task is linked to, if any — null both when unlinked and when linked
+  // but the display map has no entry for its UUID yet.
+  const linearLink = resolveLinearLink(doc.meta.external, linearLinks);
+  const linearLinked = parseExternal(doc.meta.external) !== null;
+
+  async function pushToLinear() {
+    if (onPushToLinear === undefined) return;
+    setPushingLinear(true);
+    setError(null);
+    try {
+      const result = await onPushToLinear(doc.meta.id);
+      if (result.errors.length > 0) setError(result.errors[0]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPushingLinear(false);
+    }
+  }
 
   // Whether this task belongs to a stack (a connected chain of blockedBy edges) — gates
   // whether the "Stack" rail section renders at all, so a lone task (the common case) never
@@ -609,21 +645,54 @@ export function TaskDetailDialog({
                   run?.prUrl
                 )}
               </span>
-              {parseExternal(doc.meta.external) !== null && (
+              {linearLinked && (
                 <>
                   <span className="text-muted-foreground/40">›</span>
-                  {/* Only the Linear issue's UUID is stored, so this can say "linked" but not
-                  name or link to the issue itself. */}
-                  <Badge
-                    variant="outline"
-                    className="gap-1 text-[11px]"
-                    title="Linked to a Linear issue"
-                  >
-                    <Link2 className="size-3" />
-                    Linear
-                  </Badge>
+                  {linearLink !== null ? (
+                    <a
+                      href={linearLink.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Badge variant="outline" className="gap-1 text-[11px]">
+                        <Link2 className="size-3" />
+                        {linearLink.identifier}
+                      </Badge>
+                    </a>
+                  ) : (
+                    // The display map has no entry for this UUID yet (a baseline pass hasn't
+                    // covered it) — say "linked" without naming or linking to the issue.
+                    <Badge
+                      variant="outline"
+                      className="gap-1 text-[11px]"
+                      title="Linked to a Linear issue"
+                    >
+                      <Link2 className="size-3" />
+                      Linear
+                    </Badge>
+                  )}
                 </>
               )}
+              {!linearLinked &&
+                linearConfigured &&
+                onPushToLinear !== undefined && (
+                  <>
+                    <span className="text-muted-foreground/40">›</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void pushToLinear();
+                      }}
+                      disabled={pushingLinear}
+                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] disabled:opacity-50"
+                    >
+                      <Link2 className="size-3" />
+                      {pushingLinear ? 'Pushing…' : 'Push to Linear'}
+                    </button>
+                  </>
+                )}
               <DialogTitle className="sr-only">
                 {doc.meta.title || 'Task detail'}
               </DialogTitle>

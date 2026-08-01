@@ -33,6 +33,7 @@ import { initialNavState, navReducer } from './lib/appNav';
 import { deriveFeedState } from './lib/feedState';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
+import { isLinearConfigured } from './lib/linearSettings';
 import { basename } from './lib/projectName';
 import { isTerminalRunState } from './lib/runState';
 import {
@@ -832,6 +833,9 @@ function App() {
               dispatchNav({ type: 'openRun', runId });
             }}
             onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
+            linearLinks={data.linearLinks}
+            linearConfigured={isLinearConfigured(data.linearStatus)}
+            onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}
           />
         )}
 

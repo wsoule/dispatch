@@ -1,8 +1,10 @@
 import type {
+  LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
   LinearWorkflowState,
 } from '@dispatch/client';
+import { parseExternal } from '@dispatch/core';
 
 /** Sentinel for "no team state chosen" in the status-map editor's `<select>` — native select
  *  values can't be the empty string, matching PropertyControls' `NO_EPIC` convention. */
@@ -64,4 +66,14 @@ export function formatSyncCounts(summary: LinearSyncSummary): string {
     parts.push(`${summary.conflicts} conflict(s) kept local`);
   }
   return parts.length === 0 ? 'Nothing changed' : parts.join(' · ');
+}
+
+/** A task's Linear display link, resolved from its `external` field (`linear:<uuid>`) against
+ *  the links map — null when unlinked, or when linked but the map has no entry yet. */
+export function resolveLinearLink(
+  external: string | null,
+  links: Record<string, LinearIssueLink>
+): LinearIssueLink | null {
+  const uuid = parseExternal(external);
+  return uuid === null ? null : (links[uuid] ?? null);
 }
