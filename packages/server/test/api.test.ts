@@ -85,6 +85,10 @@ describe('GET /api/health', () => {
   });
 });
 
+// Every method @dispatch/client sends. A method missing from the preflight
+// response makes the browser drop the real request before it is ever sent.
+const CLIENT_METHODS = ['GET', 'POST', 'PATCH', 'DELETE'] as const;
+
 describe('CORS preflight', () => {
   it('answers a trusted OPTIONS preflight with 204 and the allow headers', async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, {
@@ -95,11 +99,27 @@ describe('CORS preflight', () => {
     expect(res.headers.get('access-control-allow-origin')).toBe(
       'http://localhost:5173'
     );
-    expect(res.headers.get('access-control-allow-methods')).toContain('PATCH');
     expect(res.headers.get('access-control-allow-headers')).toContain(
       'content-type'
     );
   });
+
+  for (const method of CLIENT_METHODS) {
+    it(`allows ${method} in the preflight response`, async () => {
+      const res = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'http://localhost:5173',
+          'access-control-request-method': method,
+        },
+      });
+      expect(res.status).toBe(204);
+      const allowed = (res.headers.get('access-control-allow-methods') ?? '')
+        .split(',')
+        .map((value) => value.trim());
+      expect(allowed).toContain(method);
+    });
+  }
 
   it('gives an untrusted preflight no CORS header (browser will block it)', async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, {
