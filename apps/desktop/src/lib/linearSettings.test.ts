@@ -1,4 +1,5 @@
 import type {
+  LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
   LinearWorkflowState,
@@ -9,6 +10,7 @@ import {
   formatSyncCounts,
   isLinearConfigured,
   NO_LINEAR_STATE,
+  resolveLinearLink,
   resolveMappedStateId,
   statusMapCompleteness,
 } from './linearSettings';
@@ -150,5 +152,33 @@ describe('formatSyncCounts', () => {
     ).toBe(
       '1 pulled · 2 pushed · 3 created locally · 4 created in Linear · 5 conflict(s) kept local'
     );
+  });
+});
+
+describe('resolveLinearLink', () => {
+  const links: Record<string, LinearIssueLink> = {
+    'uuid-1': {
+      identifier: 'ENG-123',
+      url: 'https://linear.app/x/issue/ENG-123',
+    },
+  };
+
+  test('null for an unlinked task', () => {
+    expect(resolveLinearLink(null, links)).toBeNull();
+  });
+
+  test('null for a non-Linear external value', () => {
+    expect(resolveLinearLink('jira:ABC-1', links)).toBeNull();
+  });
+
+  test('resolves a linked uuid present in the map', () => {
+    expect(resolveLinearLink('linear:uuid-1', links)).toEqual({
+      identifier: 'ENG-123',
+      url: 'https://linear.app/x/issue/ENG-123',
+    });
+  });
+
+  test('null for a linked uuid the map has no entry for yet', () => {
+    expect(resolveLinearLink('linear:uuid-2', links)).toBeNull();
   });
 });

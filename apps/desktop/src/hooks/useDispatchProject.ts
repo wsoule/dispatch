@@ -2,6 +2,7 @@ import type {
   ApiClient,
   DraftRecord,
   EpicProgress,
+  LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
   LinearTeam,
@@ -274,12 +275,18 @@ export interface DispatchProjectData {
   /** The configured team's workflow states — the status-map editor's per-row `<select>`
    * options. Empty until a team is chosen. */
   linearStates: LinearWorkflowState[];
+  /** Issue UUID -> display identifier/URL, for resolving `TaskMeta.external` into a real chip. */
+  linearLinks: Record<string, LinearIssueLink>;
   handleConnectLinear: (
     apiKey: string
   ) => Promise<{ connected: boolean; viewer: LinearViewer }>;
   handleDisconnectLinear: () => Promise<void>;
-  /** Runs a sync pass now, returning its summary — Settings' "Sync now" button. */
-  handleSyncLinear: () => Promise<LinearSyncSummary>;
+  /** Runs a sync pass now, returning its summary. With `taskIds`, pushes exactly those tasks
+   * regardless of the cursor filter — the task dialog's "Push to Linear" action. */
+  handleSyncLinear: (taskIds?: string[]) => Promise<LinearSyncSummary>;
+  /** Brings down every Linear issue in the configured team that has no local task yet — the
+   * explicit opt-in a fresh clone or new machine needs, since sync never bulk-imports on its own. */
+  handleImportLinear: () => Promise<LinearSyncSummary>;
   /** Returns the per-item outcome so a partial failure can be surfaced, not swallowed. */
   handleConvertInbox: (
     ids: string[]
@@ -578,6 +585,10 @@ export function useDispatchProject(
     () => ['dispatch-linear-teams', port],
     [port]
   );
+  const linearLinksQueryKey = useMemo(
+    () => ['dispatch-linear-links', port],
+    [port]
+  );
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
@@ -624,6 +635,16 @@ export function useDispatchProject(
       return client.fetchLinearTeams();
     },
     enabled: client !== null && linearStatus?.connected === true,
+  });
+  // Reads from disk, not the Linear API, so it stays available for chip rendering even while
+  // disconnected — a task linked before a key was removed should still show its identifier.
+  const { data: linearLinks } = useQuery({
+    queryKey: linearLinksQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLinearLinks();
+    },
+    enabled: client !== null,
   });
   const linearTeamId = config?.linear.teamId ?? null;
   const { data: linearStates } = useQuery({
@@ -990,6 +1011,11 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: linearStatusQueryKey,
             });
+            // The pass may have linked a new issue — refetch so a chip appears without
+            // waiting for this window's own action to trigger it.
+            void queryClient.invalidateQueries({
+              queryKey: linearLinksQueryKey,
+            });
           } else if (event.type === 'queue.drained') {
             // The drain reviewed runs (tasks/runs move to done) and may have
             // pushed origin (branches' pushedToOrigin flips) — refetch all
@@ -1077,6 +1103,7 @@ export function useDispatchProject(
     branchesQueryKey,
     questionsQueryKey,
     linearStatusQueryKey,
+    linearLinksQueryKey,
     port,
     onRecordInbox,
   ]);
@@ -1825,12 +1852,34 @@ export function useDispatchProject(
     void queryClient.invalidateQueries({ queryKey: linearTeamsQueryKey });
   }, [client, queryClient, linearStatusQueryKey, linearTeamsQueryKey]);
 
-  const handleSyncLinear = useCallback(async (): Promise<LinearSyncSummary> => {
-    if (client === null) throw new Error('dispatchd client not ready');
-    const result = await client.syncLinear();
-    void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
-    return result;
-  }, [client, queryClient, linearStatusQueryKey]);
+  const handleSyncLinear = useCallback(
+    async (taskIds?: string[]): Promise<LinearSyncSummary> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const result = await client.syncLinear(taskIds);
+      void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
+      void queryClient.invalidateQueries({ queryKey: linearLinksQueryKey });
+      return result;
+    },
+    [client, queryClient, linearStatusQueryKey, linearLinksQueryKey]
+  );
+
+  const handleImportLinear =
+    useCallback(async (): Promise<LinearSyncSummary> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const result = await client.importLinearIssues();
+      void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
+      void queryClient.invalidateQueries({ queryKey: linearLinksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
+      return result;
+    }, [
+      client,
+      queryClient,
+      linearStatusQueryKey,
+      linearLinksQueryKey,
+      tasksQueryKey,
+      allTasksQueryKey,
+    ]);
 
   const handleClusterInbox = useCallback(async () => {
     if (client === null) return { groups: [], error: null };
@@ -1975,8 +2024,10 @@ export function useDispatchProject(
     linearStatus: linearStatus ?? null,
     linearTeams: linearTeams ?? [],
     linearStates: linearStates ?? [],
+    linearLinks: linearLinks ?? {},
     handleConnectLinear,
     handleDisconnectLinear,
     handleSyncLinear,
+    handleImportLinear,
   };
 }
