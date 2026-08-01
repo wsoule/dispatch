@@ -589,11 +589,8 @@ describe('PlanManager multi-turn conversation', () => {
   });
 });
 
-// The natural-language single-task creator reuses the same Planner seam as
-// startPlan/confirm, constrained to one task, but — unlike the old stateless
-// draftTask — mints a DraftRecord and runs the turn in the background, the
-// same running -> ready|failed shape startPlan already has. Two drafts have
-// no shared busy-guard: each settles independently, on its own timeline.
+// The natural-language single-task creator: mints a DraftRecord and runs the
+// turn in the background, the same running -> ready|failed shape as a plan.
 describe('PlanManager.startDraft / getDraft / listDrafts / dismissDraft', () => {
   it('returns immediately with state running, then settles ready with the proposal + reply', async () => {
     const manager = makeManager(
@@ -616,10 +613,8 @@ describe('PlanManager.startDraft / getDraft / listDrafts / dismissDraft', () => 
     expect(record.error).toBeNull();
   });
 
-  // The whole point of Task 5: no busy-guard between drafts, so two started
-  // back to back run fully concurrently and each settles on its own — one
-  // succeeding never blocks or corrupts the other, and both show up in
-  // listDrafts() once done.
+  // No busy-guard between drafts: two started back to back run fully
+  // concurrently and both show up in listDrafts() once done.
   it('runs two drafts started back-to-back fully concurrently, both reaching ready independently', async () => {
     const manager = new PlanManager({ store, cache, events, rootDir: root });
     const widgetProposal: PlanProposal = {
@@ -675,9 +670,8 @@ describe('PlanManager.startDraft / getDraft / listDrafts / dismissDraft', () => 
     expect(ids).toContain(second.id);
   });
 
-  // A failing planner turn on one draft must land that one draft `failed`
-  // with `error` set, and must not reach across to a sibling draft running
-  // on a different (successful) planner at the same time.
+  // A failing turn must land only that draft `failed`, without affecting a
+  // sibling draft running on a different planner at the same time.
   it('lands a failing draft as failed with error set, without affecting a concurrent successful draft', async () => {
     const manager = new PlanManager({ store, cache, events, rootDir: root });
     manager.registerPlanner(
@@ -810,10 +804,8 @@ describe('PlanManager.startDraft / getDraft / listDrafts / dismissDraft', () => 
     expect(ids[1]).toBe(first.id);
   });
 
-  // Eviction rule: the map is capped at 50 entries, dropping the oldest
-  // *non-running* drafts once exceeded — a draft still `running` is never
-  // evicted, no matter how far past the cap the map grows, since that would
-  // strand a background turn with nowhere to land its result.
+  // The map is capped at 50, dropping the oldest *non-running* drafts once
+  // exceeded — a `running` draft is never evicted.
   it('caps listDrafts at 50 by evicting the oldest settled drafts, never a running one', async () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
@@ -826,9 +818,7 @@ describe('PlanManager.startDraft / getDraft / listDrafts / dismissDraft', () => 
     }
     expect(manager.listDrafts()).toHaveLength(50);
 
-    // One more draft, left running (never awaited) while the map is already
-    // at capacity — starting it must not evict itself or any other running
-    // draft, even though it pushes the map size past 50.
+    // A 56th, left running past the cap — must not evict itself or anything else.
     const stillRunning = manager.startDraft('the 56th, left running');
     expect(manager.getDraft(stillRunning.id).state).toBe('running');
     expect(manager.listDrafts().map((d) => d.id)).toContain(stillRunning.id);

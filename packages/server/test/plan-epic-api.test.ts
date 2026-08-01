@@ -245,9 +245,7 @@ describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
   });
 
   it('lands a failing draft as failed with error set, without touching a concurrent successful draft', async () => {
-    // Two independently-registered planners — 'claude' succeeds, 'broken'
-    // errors — so this proves one draft's failure never bleeds into another
-    // draft's record, even when both are in flight at once.
+    // Two independently-registered planners: 'claude' succeeds, 'broken' errors.
     handle = await startServer({
       rootDir: root,
       port: 0,

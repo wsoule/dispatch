@@ -112,14 +112,8 @@ export function NewTaskView({
     );
   }
 
-  // `handleDraftTask` now starts a background planner turn (server-side
-  // DraftRecord) and returns immediately in `state: 'running'` — see Task 5's
-  // server-half fix for why (the old shape awaited the whole turn inside the
-  // request, so navigating away dropped the result). This view polls
-  // `fetchDraft` until it settles, guarded by `mountedRef` so a poll that
-  // resolves after the view unmounts doesn't set state on a gone component;
-  // the draft itself keeps running server-side regardless; a richer surface
-  // for resuming/listing drafts across navigation is future work.
+  // Guards state updates from a poll that resolves after this view unmounts
+  // — the draft itself keeps running server-side regardless.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -128,13 +122,18 @@ export function NewTaskView({
     };
   }, []);
 
+  const POLL_INTERVAL_MS = 1500;
+  // ~5 minutes of polling, well past any real planner turn — bounds a draft
+  // that somehow never settles instead of polling forever.
+  const MAX_POLL_ATTEMPTS = 200;
+
   async function pollDraftUntilSettled(draftId: string): Promise<void> {
-    for (;;) {
+    for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
       if (data.client === null) throw new Error('dispatchd client not ready');
       const record = await data.client.fetchDraft(draftId);
       if (!mountedRef.current) return;
       if (record.state === 'running') {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
         continue;
       }
       if (record.state === 'failed') {
@@ -159,6 +158,7 @@ export function NewTaskView({
       setCriterionKeys(mintCriterionKeys(task.acceptanceCriteria.length));
       return;
     }
+    throw new Error('draft is taking too long — please try again');
   }
 
   async function submitPrompt() {
