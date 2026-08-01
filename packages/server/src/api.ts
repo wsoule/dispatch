@@ -1,5 +1,6 @@
 import {
   ASSIGNEES,
+  clearCredential,
   ConfigError,
   getSection,
   KINDS,
@@ -8,11 +9,13 @@ import {
   TaskParseError,
   TaskStore,
   updateConfig,
+  writeCredential,
 } from '@dispatch/core';
 import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  LinearConfig,
   ModelConfig,
   UpdatePatch,
 } from '@dispatch/core';
@@ -23,6 +26,8 @@ import type { EventBus } from './events.js';
 import type { InboxItem, InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { InboxClusterer } from './inboxClusterer.js';
+import { HttpLinearClient } from './linear/client.js';
+import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import type { EpicEngine } from './orchestrator/epic.js';
@@ -65,6 +70,7 @@ export interface ApiContext {
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
   questions: QuestionRegistry;
+  linearSync: LinearSync;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
@@ -566,14 +572,94 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // that ConfigError becomes the 400 below.
     patch.models = body.models as Partial<ModelConfig>;
   }
+  if ('linear' in body) {
+    if (
+      typeof body.linear !== 'object' ||
+      body.linear === null ||
+      Array.isArray(body.linear)
+    ) {
+      return errorResponse(400, 'linear must be an object');
+    }
+    if ('apiKey' in (body.linear as Record<string, unknown>)) {
+      return errorResponse(
+        400,
+        'the Linear API key is set through POST /api/linear/connect, not config'
+      );
+    }
+    // Same deal as models: core validates each field before writing, and that
+    // ConfigError becomes the 400 below.
+    patch.linear = body.linear as Partial<LinearConfig>;
+  }
 
   try {
     const config = updateConfig(ctx.rootDir, patch);
     ctx.events.broadcast({ type: 'config.changed' });
+    // A changed interval or enabled flag only takes effect once the poll timer is rebuilt.
+    ctx.linearSync.start();
     return jsonResponse(config);
   } catch (err) {
     return errorResponse(400, (err as Error).message);
   }
+}
+
+// Maps a Linear client failure onto a status code: a bad key is the caller's
+// problem, a throttle is worth surfacing distinctly, anything else is upstream.
+function linearErrorResponse(failure: {
+  kind: string;
+  error: string;
+}): Response {
+  const status =
+    failure.kind === 'auth' ? 401 : failure.kind === 'rate-limit' ? 429 : 502;
+  return errorResponse(status, failure.error);
+}
+
+// POST /api/linear/connect — check the key against `viewer` before storing it in
+// `~/.dispatch/credentials.json`. The response carries the authenticated user, never the key.
+async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { apiKey?: unknown };
+  if (typeof body.apiKey !== 'string' || body.apiKey.trim() === '') {
+    return errorResponse(400, 'apiKey must be a non-empty string');
+  }
+  const apiKey = body.apiKey.trim();
+  const result = await new HttpLinearClient(apiKey).viewer();
+  if (!result.ok) return linearErrorResponse(result);
+  writeCredential('linear', { apiKey });
+  ctx.events.broadcast({ type: 'config.changed' });
+  return jsonResponse({ connected: true, viewer: result.data });
+}
+
+// POST /api/linear/disconnect — forget the stored key. A LINEAR_API_KEY in the
+// environment still wins afterwards, which `status.keySource` makes visible.
+function disconnectLinear(ctx: ApiContext): Response {
+  clearCredential('linear');
+  ctx.events.broadcast({ type: 'config.changed' });
+  return jsonResponse(ctx.linearSync.status());
+}
+
+// GET /api/linear/teams — the team picker's options.
+async function linearTeams(ctx: ApiContext): Promise<Response> {
+  const client = ctx.linearSync.client();
+  if (client === null)
+    return errorResponse(409, 'no Linear API key configured');
+  const result = await client.teams();
+  return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
+}
+
+// GET /api/linear/states?teamId= — the workflow states a status map can point at.
+async function linearStates(
+  ctx: ApiContext,
+  teamId: string | null
+): Promise<Response> {
+  if (teamId === null || teamId.trim() === '') {
+    return errorResponse(400, 'teamId is required');
+  }
+  const client = ctx.linearSync.client();
+  if (client === null)
+    return errorResponse(409, 'no Linear API key configured');
+  const result = await client.workflowStates(teamId);
+  return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
 }
 
 // GET /api/runs/:id/comments — every review comment on this run's diff.
@@ -1745,6 +1831,38 @@ export async function handleApi(
       method === 'PATCH'
     ) {
       return await patchConfig(req, ctx);
+    }
+
+    if (segments[0] === 'linear' && segments.length === 2) {
+      if (segments[1] === 'status' && method === 'GET') {
+        return jsonResponse(ctx.linearSync.status());
+      }
+      if (segments[1] === 'connect' && method === 'POST') {
+        return await connectLinear(req, ctx);
+      }
+      if (segments[1] === 'disconnect' && method === 'POST') {
+        return disconnectLinear(ctx);
+      }
+      if (segments[1] === 'teams' && method === 'GET') {
+        return await linearTeams(ctx);
+      }
+      if (segments[1] === 'states' && method === 'GET') {
+        return await linearStates(ctx, url.searchParams.get('teamId'));
+      }
+      // POST /api/linear/sync — run a pass now. An optional `taskIds` array pushes exactly
+      // those tasks, bypassing the gate that keeps a first sync from flooding the workspace.
+      if (segments[1] === 'sync' && method === 'POST') {
+        const parsed = await readJsonBodyOptional(req);
+        if (!parsed.ok) return parsed.response;
+        const raw = parsed.value.taskIds;
+        if (
+          raw !== undefined &&
+          (!Array.isArray(raw) || !raw.every((v) => typeof v === 'string'))
+        ) {
+          return errorResponse(400, 'taskIds must be a list of strings');
+        }
+        return jsonResponse(await ctx.linearSync.syncOnce(raw));
+      }
     }
 
     if (segments[0] === 'tasks') {

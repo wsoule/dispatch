@@ -9,6 +9,8 @@ import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
 import { InboxStore } from './inbox.js';
+import type { LinearClient } from './linear/client.js';
+import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
@@ -72,6 +74,9 @@ export interface StartServerOptions {
   // How often PrManager polls open PRs for a merged state. Defaults to the
   // plan's 60s; tests pass something much shorter.
   prPollIntervalMs?: number;
+  // Replaces credential lookup with a ready-made Linear client, so no sync test
+  // ever reaches the network.
+  linearClient?: LinearClient;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -298,6 +303,20 @@ export async function startServer(
     );
   }
 
+  // Bidirectional Linear sync. The poll timer only starts when the config enables it; the
+  // debounced push rides the same `task.changed` signal the UI listens to.
+  const linearSync = new LinearSync({
+    rootDir,
+    store,
+    cache,
+    events,
+    client: opts.linearClient,
+  });
+  const unsubscribeLinear = events.subscribe((event) => {
+    if (event.type === 'task.changed') linearSync.notifyTaskChanged();
+  });
+  linearSync.start();
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -314,6 +333,7 @@ export async function startServer(
     inboxStore,
     reviewComments: new ReviewCommentStore(rootDir),
     questions,
+    linearSync,
   };
 
   const server = Bun.serve({
@@ -413,6 +433,8 @@ export async function startServer(
       watcher.close();
       prManager.stopPolling();
       mergeQueue.stop();
+      unsubscribeLinear();
+      linearSync.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on

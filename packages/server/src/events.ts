@@ -1,3 +1,4 @@
+import type { LinearSyncSummary } from './linear/sync.js';
 import type { NormalizedEntry } from './orchestrator/types.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
@@ -63,7 +64,10 @@ export type ServerEvent =
       merged: number;
       pushed: boolean;
       pushError?: string;
-    };
+    }
+  // A Linear sync pass finished. Carries its own summary so the settings screen
+  // can show the outcome without a follow-up fetch.
+  | { type: 'linear.changed'; summary: LinearSyncSummary };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
@@ -79,6 +83,7 @@ export interface BroadcastClient {
 // forever on Bun 1.3.14, so `stop(true)` is left to own the close.
 export class EventBus {
   private readonly clients = new Set<BroadcastClient>();
+  private readonly listeners = new Set<(event: ServerEvent) => void>();
 
   add(client: BroadcastClient): void {
     this.clients.add(client);
@@ -88,8 +93,16 @@ export class EventBus {
     this.clients.delete(client);
   }
 
+  // In-process listener, for daemon components that need to react to an event
+  // rather than forward it to a socket. Returns its own unsubscribe.
+  subscribe(listener: (event: ServerEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   broadcast(event: ServerEvent): void {
     const payload = JSON.stringify(event);
     for (const client of this.clients) client.send(payload);
+    for (const listener of this.listeners) listener(event);
   }
 }
