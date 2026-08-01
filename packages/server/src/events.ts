@@ -67,7 +67,10 @@ export type ServerEvent =
     }
   // A Linear sync pass finished. Carries its own summary so the settings screen
   // can show the outcome without a follow-up fetch.
-  | { type: 'linear.changed'; summary: LinearSyncSummary };
+  | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // The repo's git state changed via an `/api/git/*` mutation — same
+  // "go refetch" contract as `run.changed`.
+  | { type: 'git.changed' };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
