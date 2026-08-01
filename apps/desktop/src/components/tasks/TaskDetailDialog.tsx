@@ -1,5 +1,6 @@
 import type { PlanRecord, RunMeta } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core';
+import { parseExternal } from '@dispatch/core';
 import { computeStack } from '@dispatch/core/graph';
 import {
   ArrowUpRight,
@@ -8,6 +9,7 @@ import {
   ChevronDown,
   Eye,
   Layers,
+  Link2,
   Plus,
   Sparkles,
   Tag,
@@ -607,6 +609,21 @@ export function TaskDetailDialog({
                   run?.prUrl
                 )}
               </span>
+              {parseExternal(doc.meta.external) !== null && (
+                <>
+                  <span className="text-muted-foreground/40">›</span>
+                  {/* Only the Linear issue's UUID is stored, so this can say "linked" but not
+                  name or link to the issue itself. */}
+                  <Badge
+                    variant="outline"
+                    className="gap-1 text-[11px]"
+                    title="Linked to a Linear issue"
+                  >
+                    <Link2 className="size-3" />
+                    Linear
+                  </Badge>
+                </>
+              )}
               <DialogTitle className="sr-only">
                 {doc.meta.title || 'Task detail'}
               </DialogTitle>
