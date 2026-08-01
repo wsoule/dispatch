@@ -23,6 +23,8 @@ export interface LinearSyncState {
   bootstrappedAt: string | null;
   /** Task id -> the `updated` value the push has accounted for. Absent means outstanding. */
   pushed: Record<string, string>;
+  /** Legacy retry queue, read once by the fold below and then dropped. */
+  pushRetry?: string[];
   /** Watermark written by versions predating `pushed`; folded into it once, then cleared. */
   lastPushAt: string | null;
   lastSyncAt: string | null;

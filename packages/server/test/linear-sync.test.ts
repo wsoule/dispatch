@@ -606,8 +606,8 @@ describe('LinearSync first sync', () => {
 
 describe('LinearSync import write-back', () => {
   it('never pushes imported tasks back out on the debounced push that follows', async () => {
-    // Issues newer than the push cursor land inside the candidate window, so only the
-    // in-sync check can hold them back — the ordinary import-after-working-in-Linear case.
+    // Issues stamped after the tasks were written, so nothing but the recorded version
+    // holds them back — the ordinary import-after-working-in-Linear case.
     const recent = new Date(Date.now() + 60_000).toISOString();
     fake.issues = [
       fake.issue({
@@ -642,6 +642,25 @@ describe('LinearSync import write-back', () => {
     // The custom state survives: mapping it down to in-progress and back would
     // have moved the issue to "In Progress".
     expect(fake.issues[0].state?.name).toBe('Blocked');
+  });
+
+  it('does not pay for a link check after an import it already reconciled', async () => {
+    writeConfig('push');
+    fake.issues = [
+      fake.issue({
+        title: 'Imported',
+        updatedAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ];
+    const sync = makeSync();
+    await sync.syncOnce();
+    await sync.importIssues();
+    const before = fake.linkQueries;
+
+    await sync.syncOnce();
+
+    expect(fake.linkQueries).toBe(before);
+    expect(fake.updated).toHaveLength(0);
   });
 
   it('still pushes an imported task once a person actually edits it', async () => {
@@ -928,39 +947,17 @@ describe('LinearSync push accounting', () => {
     expect(summary.createdIssues).toBe(1);
   });
 
-  it('forgets a task that no longer exists', async () => {
-    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
-    const keep = store.create({ title: 'Keeper' });
-    const gone = store.create({ title: 'Deleted later' });
+  it('still retries a task the previous version left queued', async () => {
+    const doc = store.create({ title: 'Queued before the upgrade' });
+    seedState({
+      bootstrappedAt: '2020-01-01T00:00:00.000Z',
+      lastPushAt: new Date(Date.now() + 1000).toISOString(),
+      pushRetry: [doc.meta.id],
+    });
 
-    const sync = makeSync();
-    await sync.syncOnce();
-    expect(Object.keys(readLinearState(root).pushed).sort()).toEqual(
-      [gone.meta.id, keep.meta.id].sort()
-    );
+    const summary = await makeSync().syncOnce();
 
-    rmSync(taskFilePath(gone.meta.id));
-    await sync.syncOnce();
-
-    expect(Object.keys(readLinearState(root).pushed)).toEqual([keep.meta.id]);
-  });
-
-  it('keeps accounting for a task whose file momentarily fails to parse', async () => {
-    const remote = fake.issue({ updatedAt: '2026-01-01T00:00:00.000Z' });
-    fake.issues = [remote];
-    const doc = store.create({ title: 'Linked' });
-    store.update(doc.meta.id, { external: `linear:${remote.id}` });
-
-    const sync = makeSync();
-    await sync.syncOnce();
-    const path = taskFilePath(doc.meta.id);
-    const original = readFileSync(path, 'utf8');
-    writeFileSync(path, 'not a task file at all');
-    await sync.syncOnce();
-    writeFileSync(path, original);
-    await sync.syncOnce();
-
-    expect(fake.updated).toHaveLength(0);
+    expect(summary.createdIssues).toBe(1);
   });
 
   it('does not re-send work an earlier version already pushed', async () => {
@@ -979,6 +976,119 @@ describe('LinearSync push accounting', () => {
     await sync.syncOnce();
 
     expect(fake.updated).toHaveLength(0);
+  });
+});
+
+// `.dispatch/tasks/*.md` are committed, and the daemon turns any on-disk change into a
+// debounced push. Branch switches therefore hand the push older content routinely.
+describe('LinearSync branch switches', () => {
+  function seedLinkedAndPushed(): { id: string; file: string } {
+    const remote = fake.issue({ updatedAt: '2026-01-01T00:00:00.000Z' });
+    fake.issues = [remote];
+    const doc = store.create({ title: 'Current work' });
+    store.update(doc.meta.id, { external: `linear:${remote.id}` });
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    return { id: doc.meta.id, file: taskFilePath(doc.meta.id) };
+  }
+
+  it('does not push an older revision of a task file back into Linear', async () => {
+    const { id } = seedLinkedAndPushed();
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(fake.updated).toHaveLength(1);
+
+    // Checking out a branch that holds an older revision of the same task file.
+    store.update(id, { title: 'Older revision' }, '2026-02-01T00:00:00.000Z');
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(1);
+    expect(fake.issues[0].title).toBe('Current work');
+  });
+
+  it('remembers a task that a branch switch removed from disk', async () => {
+    const { id, file } = seedLinkedAndPushed();
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(fake.updated).toHaveLength(1);
+    const restored = readFileSync(file, 'utf8');
+
+    // The task file is absent on the other branch, then back when we switch home.
+    rmSync(file);
+    await sync.syncOnce();
+    writeFileSync(file, restored);
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(1);
+    expect(readLinearState(root).pushed[id]).toBeDefined();
+  });
+});
+
+describe('LinearSync unrecorded links', () => {
+  // A linked task the engine holds no recorded version for: it cannot know whether the
+  // local file is ahead of the issue, so it must ask before writing.
+  function seedUnrecordedLink(remoteUpdatedAt: string): { id: string } {
+    const remote = fake.issue({
+      title: 'Owned by Linear',
+      state: BLOCKED_STATE,
+      updatedAt: remoteUpdatedAt,
+    });
+    fake.issues = [remote];
+    const doc = store.create({ title: 'Local content' });
+    store.update(doc.meta.id, { external: `linear:${remote.id}` });
+    seedState({
+      bootstrappedAt: '2020-01-01T00:00:00.000Z',
+      cursor: '2030-01-01T00:00:00.000Z',
+    });
+    return { id: doc.meta.id };
+  }
+
+  it('checks Linear before writing to a link it has no recorded version for', async () => {
+    seedUnrecordedLink('2027-01-01T00:00:00.000Z');
+
+    const summary = await makeSync().syncOnce();
+
+    expect(fake.updated).toHaveLength(0);
+    expect(fake.issues[0].title).toBe('Owned by Linear');
+    expect(fake.issues[0].state?.name).toBe('Blocked');
+    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+  });
+
+  it('sends it once the check shows the local copy is newer', async () => {
+    seedUnrecordedLink('2026-01-01T00:00:00.000Z');
+
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.pushed).toBe(1);
+    expect(fake.updated).toHaveLength(1);
+  });
+
+  it('leaves it outstanding when the check could not be made', async () => {
+    seedUnrecordedLink('2026-01-01T00:00:00.000Z');
+    fake.linkFailure = {
+      ok: false,
+      kind: 'graphql',
+      error: 'link query blew up',
+    };
+
+    const sync = makeSync();
+    const first = await sync.syncOnce();
+    expect(fake.updated).toHaveLength(0);
+    expect(first.errors.some((e) => e.includes('withheld'))).toBe(true);
+
+    fake.linkFailure = null;
+    await sync.syncOnce();
+
+    expect(fake.updated).toHaveLength(1);
+  });
+
+  it('reports a remote version it cannot read rather than skipping it silently', async () => {
+    writeConfig('push');
+    seedUnrecordedLink('not a timestamp');
+
+    const summary = await makeSync().syncOnce();
+
+    expect(fake.updated).toHaveLength(0);
+    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
   });
 });
 
@@ -1040,6 +1150,20 @@ describe('LinearSync explicit push conflict check', () => {
 
     expect(fake.linkQueries).toBe(0);
     expect(fake.created).toHaveLength(1);
+  });
+
+  it('backfills chip identifiers even when the first pass is an explicit push', async () => {
+    seedClonedRepo('2026-01-01T00:00:00.000Z');
+    const inherited = fake.issues[0];
+    const fresh = store.create({ title: 'Push me by name' });
+
+    const sync = makeSync();
+    await sync.syncOnce([fresh.meta.id]);
+
+    expect(sync.links()[inherited.id]).toEqual({
+      identifier: inherited.identifier,
+      url: inherited.url,
+    });
   });
 });
 
