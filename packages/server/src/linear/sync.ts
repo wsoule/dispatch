@@ -17,6 +17,7 @@ import type {
   LinearIssue,
   LinearLabel,
   LinearWorkflowState,
+  ListSafeResult,
   TaskDoc,
   TaskStore,
 } from '@dispatch/core';
@@ -270,12 +271,16 @@ export class LinearSync {
     }
     const session = opened.session;
     const state = readLinearState(this.deps.rootDir);
+    this.foldLegacyWatermark(state);
     const direction = session.linear.direction;
     // Local tasks this pass just wrote from Linear — never pushed straight back
     // out in the same pass.
     const pulledTaskIds = new Set<string>();
     // Issues the pull decided Linear wins on, so push does not overwrite them.
     const remoteWins = new Set<string>();
+    // Issues this pass already holds a remote version for, so an explicit push does
+    // not re-fetch what the pull has answered.
+    const verifiedIssues = new Set<string>();
 
     // A first sync reconciles nothing — no task to create, no link to update — so it
     // takes a cursor instead of scanning a whole team it has no use for.
@@ -288,11 +293,13 @@ export class LinearSync {
     if (baselining) {
       const now = new Date().toISOString();
       state.cursor = now;
-      // Both markers are set BEFORE the push: nothing local has been reconciled yet, and
-      // a fresh clone would otherwise push stale content over the whole linked backlog.
+      // Everything on disk is accounted for BEFORE the push: nothing local has been
+      // reconciled yet, so a fresh clone must send none of it over a linked issue.
+      this.accountForAll(state);
       state.bootstrappedAt = now;
-      state.lastPushAt = now;
-      await this.backfillLinks(session, state);
+      if (opts.taskIds === undefined) {
+        await this.refreshIssueRefs(session, state, summary);
+      }
     } else if (pulling) {
       pullFailed = !(await this.pull(
         session,
@@ -300,6 +307,7 @@ export class LinearSync {
         summary,
         pulledTaskIds,
         remoteWins,
+        verifiedIssues,
         opts.mode === 'import'
       ));
     }
@@ -309,27 +317,58 @@ export class LinearSync {
       direction !== 'pull' &&
       !summary.rateLimited
     ) {
-      // Captured BEFORE the push so an edit made mid-loop stays a candidate; anything
-      // the loop could not send is named in `pushRetry` rather than dropped.
-      const pushStartedAt = new Date().toISOString();
-      await this.push(session, state, summary, {
-        taskIds: opts.taskIds,
-        pulledTaskIds,
-        remoteWins,
-        createOnly: pullFailed,
-      });
-      state.lastPushAt = pushStartedAt;
+      if (opts.taskIds !== undefined && !pullFailed) {
+        await this.guardExplicitUpdates(
+          session,
+          state,
+          summary,
+          opts.taskIds,
+          verifiedIssues,
+          remoteWins
+        );
+      }
+      if (!summary.rateLimited) {
+        await this.push(session, state, summary, {
+          taskIds: opts.taskIds,
+          pulledTaskIds,
+          remoteWins,
+          createOnly: pullFailed,
+        });
+      }
     }
 
     // The link is established once the team answered, not once a data pass came back
     // clean — otherwise one persistent error would freeze the integration forever.
     if (state.bootstrappedAt === null) {
-      state.bootstrappedAt = new Date().toISOString();
       // An import establishes the link without ever pushing, so the same rule as the
-      // baseline path applies: nothing predating the link goes up automatically.
-      state.lastPushAt ??= state.bootstrappedAt;
+      // baseline path applies: nothing already on disk goes up automatically.
+      this.accountForAll(state);
+      state.bootstrappedAt = new Date().toISOString();
     }
     return this.finish(summary, state, session.linear.intervalSec);
+  }
+
+  // Records every task on disk at its current version, so establishing the link leaves
+  // nothing outstanding for the push to send.
+  private accountForAll(state: LinearSyncState): void {
+    for (const doc of this.deps.store.listSafe().docs) {
+      state.pushed[doc.meta.id] = doc.meta.updated;
+    }
+  }
+
+  // A state file written before per-task accounting carries only a watermark. Everything at
+  // or before it is recorded once, so an upgrade neither re-sends work nor strands it.
+  private foldLegacyWatermark(state: LinearSyncState): void {
+    if (state.lastPushAt === null) return;
+    if (Object.keys(state.pushed).length === 0) {
+      const mark = Date.parse(state.lastPushAt);
+      for (const doc of this.deps.store.listSafe().docs) {
+        if (Date.parse(doc.meta.updated) <= mark) {
+          state.pushed[doc.meta.id] = doc.meta.updated;
+        }
+      }
+    }
+    state.lastPushAt = null;
   }
 
   // Records the pass: persists cursor/echo state, refreshes the read cache when local
@@ -397,22 +436,79 @@ export class LinearSync {
     return failure.error;
   }
 
-  // Fills in display identifiers for tasks that arrive already linked, whose issues may
-  // never change again and so never appear in a pull. Skipped when nothing is linked.
-  private async backfillLinks(
+  // Current version and display fields for every issue a local task links to, so chips fill
+  // in and an explicit push can see whether Linear is ahead. Null when the fetch failed.
+  private async refreshIssueRefs(
     session: SyncSession,
-    state: LinearSyncState
-  ): Promise<void> {
+    state: LinearSyncState,
+    summary: LinearSyncSummary
+  ): Promise<Map<string, string> | null> {
     const linked = new Set<string>();
     for (const doc of this.deps.store.listSafe().docs) {
       const id = parseExternal(doc.meta.external);
-      if (id !== null && state.links[id] === undefined) linked.add(id);
+      if (id !== null) linked.add(id);
     }
-    if (linked.size === 0) return;
+    if (linked.size === 0) return new Map();
     const result = await session.client.issueLinks(session.teamId);
-    if (!result.ok) return;
+    if (!result.ok) {
+      summary.errors.push(this.note(result));
+      summary.rateLimited ||= result.kind === 'rate-limit';
+      return null;
+    }
+    const versions = new Map<string, string>();
     for (const issue of result.data) {
-      if (linked.has(issue.id)) this.recordLink(state, issue);
+      if (!linked.has(issue.id)) continue;
+      this.recordLink(state, issue);
+      versions.set(issue.id, issue.updatedAt);
+    }
+    return versions;
+  }
+
+  // An explicit push names tasks the pull may never have covered, so a linked one is sent
+  // only when the local copy is provably newer. The rest are withheld and reported.
+  private async guardExplicitUpdates(
+    session: SyncSession,
+    state: LinearSyncState,
+    summary: LinearSyncSummary,
+    taskIds: string[],
+    verifiedIssues: Set<string>,
+    remoteWins: Set<string>
+  ): Promise<void> {
+    const unchecked = this.deps.store.listSafe().docs.filter((doc) => {
+      if (!taskIds.includes(doc.meta.id)) return false;
+      const issueId = parseExternal(doc.meta.external);
+      return (
+        issueId !== null &&
+        !verifiedIssues.has(issueId) &&
+        !remoteWins.has(issueId)
+      );
+    });
+    if (unchecked.length === 0) return;
+
+    const versions = await this.refreshIssueRefs(session, state, summary);
+    let withheld = 0;
+    for (const doc of unchecked) {
+      const issueId = parseExternal(doc.meta.external) ?? '';
+      const remote = versions?.get(issueId);
+      if (
+        remote !== undefined &&
+        this.isAlreadyApplied(state, issueId, remote)
+      ) {
+        continue;
+      }
+      const verdict =
+        remote === undefined
+          ? 'unknown'
+          : resolveConflict(doc.meta.updated, remote);
+      if (verdict === 'local') continue;
+      remoteWins.add(issueId);
+      // A tie means the two sides already agree, so there is nothing to report.
+      if (verdict !== 'none') withheld++;
+    }
+    if (withheld > 0) {
+      summary.errors.push(
+        `withheld ${withheld} issue update(s): Linear holds a newer copy, or its version could not be checked`
+      );
     }
   }
 
@@ -424,6 +520,7 @@ export class LinearSync {
     summary: LinearSyncSummary,
     pulledTaskIds: Set<string>,
     remoteWins: Set<string>,
+    verifiedIssues: Set<string>,
     importing: boolean
   ): Promise<boolean> {
     // An import considers the whole team, not just what changed since the cursor.
@@ -437,8 +534,10 @@ export class LinearSync {
       return false;
     }
 
+    const listing = this.deps.store.listSafe();
+    this.prunePushed(state, listing);
     const byExternal = new Map<string, TaskDoc>();
-    for (const doc of this.deps.store.listSafe().docs) {
+    for (const doc of listing.docs) {
       const id = parseExternal(doc.meta.external);
       if (id !== null) byExternal.set(id, doc);
     }
@@ -450,11 +549,12 @@ export class LinearSync {
 
     for (const issue of issues) {
       if (high === null || issue.updatedAt > high) high = issue.updatedAt;
+      verifiedIssues.add(issue.id);
       const existing = byExternal.get(issue.id);
       // Recorded before the already-applied check so a linked issue that never
       // changes again still backfills the identifier its chip needs.
       if (existing !== undefined) this.recordLink(state, issue);
-      if (this.isAlreadyApplied(state, issue)) continue;
+      if (this.isAlreadyApplied(state, issue.id, issue.updatedAt)) continue;
       if (existing === undefined) {
         if (issue.archivedAt !== null) continue;
         const doc = this.deps.store.create(
@@ -465,13 +565,12 @@ export class LinearSync {
           }),
           issue.createdAt
         );
-        // Deliberately the snapshot's `updatedAt`: the task is being replaced with this
-        // exact remote version, which is the invariant the push's in-sync check needs.
         this.deps.store.update(
           doc.meta.id,
           { external: externalId(issue) },
           issue.updatedAt
         );
+        state.pushed[doc.meta.id] = issue.updatedAt;
         this.recordSeen(state, issue);
         pulledTaskIds.add(doc.meta.id);
         summary.created++;
@@ -491,7 +590,10 @@ export class LinearSync {
         fallbackStatus: existing.meta.status,
       });
       if (issue.archivedAt !== null) patch.archivedAt = issue.archivedAt;
+      // Stamped with the snapshot's `updatedAt` rather than a fresh clock: the task now
+      // holds exactly this remote version, so the push has nothing left to send for it.
       this.deps.store.update(existing.meta.id, patch, issue.updatedAt);
+      state.pushed[existing.meta.id] = issue.updatedAt;
       this.recordSeen(state, issue);
       pulledTaskIds.add(existing.meta.id);
       summary.pulled++;
@@ -515,10 +617,11 @@ export class LinearSync {
   // written by this engine or applied locally on an earlier pass.
   private isAlreadyApplied(
     state: LinearSyncState,
-    issue: LinearIssue
+    issueId: string,
+    updatedAt: string
   ): boolean {
     return state.echoes.some(
-      (e) => e.issueId === issue.id && e.updatedAt === issue.updatedAt
+      (e) => e.issueId === issueId && e.updatedAt === updatedAt
     );
   }
 
@@ -535,43 +638,38 @@ export class LinearSync {
   ): Promise<void> {
     const { taskIds, pulledTaskIds, remoteWins, createOnly } = opts;
     const explicit = taskIds !== undefined;
-    const retryable = new Set(state.pushRetry);
-    const candidates = this.deps.store
-      .listSafe()
-      .docs.filter((doc) =>
-        explicit
-          ? taskIds.includes(doc.meta.id)
-          : !pulledTaskIds.has(doc.meta.id) &&
-            doc.meta.archivedAt === undefined &&
-            (retryable.has(doc.meta.id) ||
-              state.lastPushAt === null ||
-              Date.parse(doc.meta.updated) > Date.parse(state.lastPushAt))
-      );
-    // Tasks this pass could not send — failed outright, or never reached after a
-    // throttle. Carried in state so the cursor can advance without dropping them.
-    const retry = new Set<string>();
+    const listing = this.deps.store.listSafe();
+    this.prunePushed(state, listing);
+    // A task is outstanding until the pass records the exact version it accounted for,
+    // so anything this pass never reaches stays outstanding for the next one.
+    const candidates = listing.docs.filter((doc) =>
+      explicit
+        ? taskIds.includes(doc.meta.id)
+        : !pulledTaskIds.has(doc.meta.id) &&
+          doc.meta.archivedAt === undefined &&
+          state.pushed[doc.meta.id] !== doc.meta.updated
+    );
     let skippedForFailedPull = 0;
 
-    for (const [index, doc] of candidates.entries()) {
+    for (const doc of candidates) {
+      // The version being decided on. Recording it is what marks the task handled; an
+      // edit landing mid-pass moves the task off it and so stays outstanding.
+      const version = doc.meta.updated;
       const issueId = parseExternal(doc.meta.external);
-      if (issueId !== null && remoteWins.has(issueId)) continue;
-      if (issueId !== null && createOnly) {
-        skippedForFailedPull++;
-        retry.add(doc.meta.id);
+      if (issueId !== null && remoteWins.has(issueId)) {
+        state.pushed[doc.meta.id] = version;
         continue;
       }
-      // The task's content is provably the version Linear already holds, so there is
-      // nothing to send — this is what stops an import from writing itself straight back.
-      if (issueId !== null && this.isInSyncWithIssue(state, issueId, doc)) {
+      if (issueId !== null && createOnly) {
+        // Left outstanding on purpose: with no conflict information there is no safe
+        // decision to record, so the next pass reconsiders it.
+        skippedForFailedPull++;
         continue;
       }
       if (issueId === null && !explicit && !this.mayAutoCreate(state, doc)) {
+        state.pushed[doc.meta.id] = version;
         continue;
       }
-      const abandonRest = (): void => {
-        for (const pending of candidates.slice(index))
-          retry.add(pending.meta.id);
-      };
       const input = issueFromTask(doc, {
         teamId: session.teamId,
         statusMap: session.linear.statusMap,
@@ -584,10 +682,8 @@ export class LinearSync {
         const result = await session.client.createIssue(input);
         if (!result.ok) {
           summary.errors.push(this.note(result));
-          retry.add(doc.meta.id);
           if (result.kind === 'rate-limit') {
             summary.rateLimited = true;
-            abandonRest();
             break;
           }
           continue;
@@ -600,6 +696,7 @@ export class LinearSync {
           this.currentUpdatedAt(doc)
         );
         this.recordSeen(state, result.data);
+        state.pushed[doc.meta.id] = version;
         summary.createdIssues++;
         summary.pushed++;
         continue;
@@ -613,44 +710,22 @@ export class LinearSync {
       const result = await session.client.updateIssue(issueId, updateInput);
       if (!result.ok) {
         summary.errors.push(this.note(result));
-        retry.add(doc.meta.id);
         if (result.kind === 'rate-limit') {
           summary.rateLimited = true;
-          abandonRest();
           break;
         }
         continue;
       }
       this.recordSeen(state, result.data);
+      state.pushed[doc.meta.id] = version;
       summary.pushed++;
     }
 
-    // Merged, not replaced: an explicit `taskIds` push only ever considers its own
-    // tasks, so overwriting would strand a failure recorded by an earlier pass.
-    const considered = new Set(candidates.map((doc) => doc.meta.id));
-    state.pushRetry = [
-      ...new Set([
-        ...state.pushRetry.filter((id) => !considered.has(id)),
-        ...retry,
-      ]),
-    ];
     if (skippedForFailedPull > 0) {
       summary.errors.push(
         `skipped ${skippedForFailedPull} issue update(s): the pull failed, so no conflict check was possible`
       );
     }
-  }
-
-  // True when the task still holds the exact issue version already reconciled: pull and
-  // import stamp `updated` with the issue's own, and a real local edit moves it off that.
-  private isInSyncWithIssue(
-    state: LinearSyncState,
-    issueId: string,
-    doc: TaskDoc
-  ): boolean {
-    return state.echoes.some(
-      (e) => e.issueId === issueId && e.updatedAt === doc.meta.updated
-    );
   }
 
   // Re-read right before the write-back so a local edit made during the network
@@ -663,7 +738,18 @@ export class LinearSync {
   // are left alone so connecting a tracker does not dump a whole backlog; explicit pushes still do.
   private mayAutoCreate(state: LinearSyncState, doc: TaskDoc): boolean {
     if (state.bootstrappedAt === null) return false;
-    return Date.parse(doc.meta.updated) > Date.parse(state.bootstrappedAt);
+    return Date.parse(doc.meta.updated) >= Date.parse(state.bootstrappedAt);
+  }
+
+  // Drops accounting for tasks whose files are gone. A file that failed to parse still
+  // counts as present: forgetting it would re-send the task once it parses again.
+  private prunePushed(state: LinearSyncState, listing: ListSafeResult): void {
+    const live = new Set(listing.docs.map((doc) => doc.meta.id));
+    for (const id of Object.keys(state.pushed)) {
+      if (live.has(id)) continue;
+      if (listing.errors.some((e) => e.file.startsWith(`${id}-`))) continue;
+      delete state.pushed[id];
+    }
   }
 
   // Marks this issue version as reconciled, and keeps its display identifier around

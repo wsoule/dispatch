@@ -41,11 +41,12 @@ export interface LinearTeam {
   name: string;
 }
 
-/** The three display fields a chip needs, without paying for a whole issue. */
+/** A chip's display fields plus the remote version, without paying for a whole issue. */
 export interface LinearIssueRef {
   id: string;
   identifier: string;
   url: string;
+  updatedAt: string;
 }
 
 /** A page walk's result. `truncated` means the page cap stopped the walk before the last page. */
@@ -138,7 +139,7 @@ const ISSUE_LINKS_QUERY = `query IssueLinks($teamId: String!, $after: String) {
     after: $after
     includeArchived: true
   ) {
-    nodes { id identifier url }
+    nodes { id identifier url updatedAt }
     pageInfo { hasNextPage endCursor }
   }
 }`;
