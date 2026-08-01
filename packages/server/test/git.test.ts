@@ -487,6 +487,41 @@ describe('GitRepo: path and ref safety', () => {
     expect(called).toBe(false);
     rmSync(outside, { recursive: true, force: true });
   });
+
+  it('rejects a nonexistent leaf under a symlinked directory pointing outside the repo', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'dispatch-outside-'));
+    symlinkSync(outside, join(root, 'escape-dir'));
+
+    let called = false;
+    const fakeRun: CommandRunner = async () => {
+      called = true;
+      return { ok: true, stdout: '', stderr: '' };
+    };
+    const guardedRepo = new GitRepo(root, fakeRun);
+
+    // The leaf doesn't exist yet — only the symlinked parent has to resolve.
+    const result = await guardedRepo.stage(['escape-dir/newfile.txt']);
+
+    expect(result.ok).toBe(false);
+    expect(called).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('allows staging a tracked symlink whose own target lives outside the repo', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'dispatch-outside-'));
+    writeFileSync(join(outside, 'secret.txt'), 'do not touch\n');
+    // The symlink *file* sits inside the repo — only what it points to is
+    // outside. `git add` on the link itself is a normal, supported op.
+    symlinkSync(join(outside, 'secret.txt'), join(root, 'escape-file'));
+
+    const result = await repo.stage(['escape-file']);
+
+    expect(result.ok).toBe(true);
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.staged).toEqual([{ path: 'escape-file', status: 'A' }]);
+    rmSync(outside, { recursive: true, force: true });
+  });
 });
 
 describe('GitRepo: commit sha resolution', () => {

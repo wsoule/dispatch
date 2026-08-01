@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 import type { CommandResult, CommandRunner } from '../orchestrator/pr.js';
 import { defaultCommandRunner } from '../orchestrator/pr.js';
@@ -63,8 +63,8 @@ export class GitRepo {
     return this.run(this.cwd, ['git', '--literal-pathspecs', ...args]);
   }
 
-  // A nonexistent path (e.g. unstaging an already-deleted file) has nothing
-  // on disk to resolve, so this falls back to the plain resolved path.
+  // Falls back to the plain path when there's nothing on disk to resolve
+  // (e.g. a deleted parent, or the repo root itself).
   private realOrSelf(path: string): string {
     try {
       return realpathSync(path);
@@ -73,14 +73,27 @@ export class GitRepo {
     }
   }
 
-  // Refuses a path outside the repo root (following symlinks, so one can't
-  // point out of it) or starting with '-'; returns the original relative string.
+  private realRootCache: string | undefined;
+
+  // Memoized: `this.cwd` never changes, so a batch of paths shouldn't repeat
+  // the same realpath syscall once per entry.
+  private realRoot(): string {
+    this.realRootCache ??= this.realOrSelf(resolve(this.cwd));
+    return this.realRootCache;
+  }
+
+  // Resolves symlinks in every segment but the last, so a symlinked
+  // directory can't escape the repo while `git add`ing a symlink file works.
+  private resolveParent(path: string): string {
+    return join(this.realOrSelf(dirname(path)), basename(path));
+  }
+
+  // Refuses a path outside the repo root or starting with '-'; returns the
+  // original relative string so git resolves it the same way.
   private safePath(rawPath: string): string | null {
     if (rawPath === '' || rawPath.startsWith('-')) return null;
-    // Resolved from the already-real `root`, not raw `this.cwd` — keeps a
-    // nonexistent target's prefix consistent even when cwd itself is symlinked.
-    const root = this.realOrSelf(resolve(this.cwd));
-    const resolved = this.realOrSelf(resolve(root, rawPath));
+    const root = this.realRoot();
+    const resolved = this.resolveParent(resolve(root, rawPath));
     const rel = relative(root, resolved);
     if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
     return rawPath;
