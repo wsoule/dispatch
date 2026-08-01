@@ -185,11 +185,21 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
   /**
-   * Starts an AI draft that adds the detail a one-line capture is missing. Lands on
-   * `notePlanRecord` (the second plan slot, kept apart from the Plans view's own so starting
-   * one cannot clobber an open plan) and writes nothing until `handleConfirmNotePlan`.
+   * Starts an AI draft that adds the detail a one-line capture is missing. Its own slot,
+   * `inboxEnrich` — kept apart from `enrichPlan` (a task's own draft) and `notePlanId` (the
+   * unbuilt note-promotion feature's slot) so none of the three can clobber another's in-flight
+   * draft. The proposal lands on `inboxEnrichPlanRecord` for that row to review; nothing is
+   * written until `handleApplyInboxEnrich`.
    */
   handleEnrichInboxItem: (id: string) => Promise<void>;
+  /** Which inbox item the open draft belongs to, so another row doesn't show it. */
+  inboxEnrichItemId: string | null;
+  inboxEnrichPlanRecord: PlanRecord | undefined;
+  /** Drops the open draft without writing anything — Dismiss, and the cleanup after Apply. */
+  handleDismissInboxEnrich: () => void;
+  /** Writes the drafted body back onto the inbox item via the ordinary PATCH /api/inbox/:id
+   * update path, then drops the draft. */
+  handleApplyInboxEnrich: (itemId: string, text: string) => Promise<void>;
   /**
    * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
    * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
@@ -367,6 +377,14 @@ export function useDispatchProject(
   // because those proposals get confirmed into new tasks and these get patched onto one.
   const [enrichPlan, setEnrichPlan] = useState<{
     taskId: string;
+    planId: string;
+  } | null>(null);
+  // The brain dump row's "Add detail" slot — carries the inbox item it was started from, same
+  // shape as `enrichPlan` and for the same reason: its proposal gets written back onto that
+  // item (via PATCH /api/inbox/:id), not confirmed into a second task, so it can't share
+  // `notePlanId` (the unbuilt note-promotion feature's slot) or `enrichPlan` (a task's own).
+  const [inboxEnrich, setInboxEnrich] = useState<{
+    itemId: string;
     planId: string;
   } | null>(null);
   // Task 8: last drain-push failure reported by `queue.drained`, for the
@@ -673,6 +691,11 @@ export function useDispatchProject(
     client,
     port,
     enrichPlan?.planId ?? null
+  );
+  const inboxEnrichPlanRecord = usePlanRecord(
+    client,
+    port,
+    inboxEnrich?.planId ?? null
   );
 
   // Task 6: the merge queue snapshot — same "poll on mount, refetch on the
@@ -1434,13 +1457,34 @@ export function useDispatchProject(
     [client, invalidateInbox, queryClient, tasksQueryKey]
   );
 
+  // The AI half of "Add detail" on a brain dump row: the proposal lands on
+  // `inboxEnrichPlanRecord` for that row to review inline, and nothing is written until
+  // `handleApplyInboxEnrich` patches it onto the item.
   const handleEnrichInboxItem = useCallback(
     async (id: string): Promise<void> => {
-      if (client === null) return;
+      if (client === null) throw new Error('dispatchd client not ready');
+      // Clear first, or the previous pass's draft stays up while this one runs.
+      setInboxEnrich(null);
       const { planId } = await client.enrichInbox(id);
-      setNotePlanId(planId);
+      setInboxEnrich({ itemId: id, planId });
     },
     [client]
+  );
+
+  const handleDismissInboxEnrich = useCallback((): void => {
+    setInboxEnrich(null);
+  }, []);
+
+  // Writes the drafted body back onto the inbox item through the ordinary update path (the same
+  // PATCH /api/inbox/:id route the row's other edits use), then drops the draft.
+  const handleApplyInboxEnrich = useCallback(
+    async (itemId: string, text: string): Promise<void> => {
+      if (client === null) return;
+      await client.updateInbox(itemId, { text });
+      invalidateInbox();
+      setInboxEnrich(null);
+    },
+    [client, invalidateInbox]
   );
 
   // The AI half of specifying an existing task: the proposal lands on `enrichPlanRecord` for
@@ -1664,6 +1708,10 @@ export function useDispatchProject(
     handleDismissInbox,
     handleConvertInbox,
     handleEnrichInboxItem,
+    inboxEnrichItemId: inboxEnrich?.itemId ?? null,
+    inboxEnrichPlanRecord,
+    handleDismissInboxEnrich,
+    handleApplyInboxEnrich,
     handleEnrichTask,
     enrichTaskId: enrichPlan?.taskId ?? null,
     enrichPlanRecord,
