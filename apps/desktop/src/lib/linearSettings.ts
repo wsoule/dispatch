@@ -4,7 +4,7 @@ import type {
   LinearSyncSummary,
   LinearWorkflowState,
 } from '@dispatch/client';
-import { parseExternal } from '@dispatch/core';
+import { parseExternal } from '@dispatch/core/browser';
 
 /** Sentinel for "no team state chosen" in the status-map editor's `<select>` — native select
  *  values can't be the empty string, matching PropertyControls' `NO_EPIC` convention. */
@@ -66,6 +66,16 @@ export function formatSyncCounts(summary: LinearSyncSummary): string {
     parts.push(`${summary.conflicts} conflict(s) kept local`);
   }
   return parts.length === 0 ? 'Nothing changed' : parts.join(' · ');
+}
+
+/** What a finished "Push to Linear" should report, or null when an issue really went up. A
+ *  clean summary that pushed nothing means the push was skipped (pull-only, rate limited). */
+export function pushToLinearError(summary: LinearSyncSummary): string | null {
+  if (summary.errors.length > 0) return summary.errors[0];
+  if (summary.pushed + summary.createdIssues === 0) {
+    return 'Nothing was pushed. Check the Linear sync direction in Settings.';
+  }
+  return null;
 }
 
 /** A task's Linear display link, resolved from its `external` field (`linear:<uuid>`) against

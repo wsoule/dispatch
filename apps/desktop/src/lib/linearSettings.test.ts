@@ -10,6 +10,7 @@ import {
   formatSyncCounts,
   isLinearConfigured,
   NO_LINEAR_STATE,
+  pushToLinearError,
   resolveLinearLink,
   resolveMappedStateId,
   statusMapCompleteness,
@@ -180,5 +181,32 @@ describe('resolveLinearLink', () => {
 
   test('null for a linked uuid the map has no entry for yet', () => {
     expect(resolveLinearLink('linear:uuid-2', links)).toBeNull();
+  });
+});
+
+describe('pushToLinearError', () => {
+  test('reports the first error when the push failed', () => {
+    expect(pushToLinearError(summary({ errors: ['team not found'] }))).toBe(
+      'team not found'
+    );
+  });
+
+  // A pull-only project skips the push entirely and still returns a clean summary.
+  test('reports a skipped push rather than claiming success', () => {
+    expect(pushToLinearError(summary({}))).toContain('Nothing was pushed');
+  });
+
+  test('reports a rate-limited pass that pushed nothing', () => {
+    expect(pushToLinearError(summary({ rateLimited: true }))).toContain(
+      'Nothing was pushed'
+    );
+  });
+
+  test('null when an issue was created in Linear', () => {
+    expect(pushToLinearError(summary({ createdIssues: 1 }))).toBeNull();
+  });
+
+  test('null when an existing issue was updated', () => {
+    expect(pushToLinearError(summary({ pushed: 1 }))).toBeNull();
   });
 });
