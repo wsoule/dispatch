@@ -806,8 +806,13 @@ export interface ApiClient {
   enrichInbox(id: string): Promise<{ planId: string }>;
   /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
   enrichTask(id: string): Promise<{ planId: string }>;
-  /** Model-backed grouping of related captures. Costs a call, so it is user-triggered. */
-  clusterInbox(): Promise<{ groups: InboxClusterGroup[] }>;
+  /** Model-backed grouping of related captures, run automatically in the background. Always
+   * resolves with a 200 — `error` carries a failed model call rather than throwing, so an
+   * automatic call never surfaces as a hard failure. */
+  clusterInbox(): Promise<{
+    groups: InboxClusterGroup[];
+    error: string | null;
+  }>;
 
   // Line-level review comments on a run's diff, and the send-back that carries the unresolved
   // ones to the agent.

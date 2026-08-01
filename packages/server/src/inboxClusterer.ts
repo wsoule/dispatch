@@ -74,6 +74,10 @@ function buildPrompt(items: InboxItem[]): string {
 /** Anything below this and there is nothing to group. */
 const MIN_ITEMS = 3;
 
+/** A hung model call must not pin the request open forever — this runs automatically now
+ * (see BrainDumpView's auto-recluster effect), so nothing is watching a spinner to notice. */
+const CLUSTER_TIMEOUT_MS = 60_000;
+
 export class InboxClusterer {
   constructor(
     private readonly rootDir: string,
@@ -88,35 +92,49 @@ export class InboxClusterer {
     // Fresh per-call read (same pattern PlanManager and mergeQueue.ts use for their own
     // config.yml-sourced settings), so a settings change takes effect on the next cluster
     // request with no daemon restart.
-    const options: Options = {
-      cwd: this.rootDir,
-      model: loadConfig(this.rootDir).models.cluster,
-      permissionMode: 'plan',
-      // No tools: this is a judgement about the strings above, not about the repo.
-      allowedTools: [],
-      outputFormat: { type: 'json_schema', schema: SCHEMA },
-    };
-
-    const sdkQuery: Query = openClaudeQuery(
-      this.queryFn,
-      buildPrompt(open),
-      options
-    );
-
-    for await (const message of sdkQuery) {
-      if (message.type !== 'result') continue;
-      if (message.subtype !== 'success') {
-        throw new Error(`clustering failed: ${message.subtype}`);
-      }
-      if (message.structured_output === undefined) {
-        throw new Error('clustering returned no structured output');
-      }
-      const parsed = message.structured_output as {
-        groups?: InboxClusterGroup[];
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), CLUSTER_TIMEOUT_MS);
+    try {
+      const options: Options = {
+        cwd: this.rootDir,
+        model: loadConfig(this.rootDir).models.cluster,
+        permissionMode: 'plan',
+        // No tools: this is a judgement about the strings above, not about the repo.
+        allowedTools: [],
+        outputFormat: { type: 'json_schema', schema: SCHEMA },
+        abortController,
       };
-      return sanitize(parsed.groups ?? [], open);
+
+      const sdkQuery: Query = openClaudeQuery(
+        this.queryFn,
+        buildPrompt(open),
+        options
+      );
+
+      for await (const message of sdkQuery) {
+        if (message.type !== 'result') continue;
+        if (message.subtype !== 'success') {
+          throw new Error(`clustering failed: ${message.subtype}`);
+        }
+        if (message.structured_output === undefined) {
+          throw new Error('clustering returned no structured output');
+        }
+        const parsed = message.structured_output as {
+          groups?: InboxClusterGroup[];
+        };
+        return sanitize(parsed.groups ?? [], open);
+      }
+      return [];
+    } catch (err) {
+      if (abortController.signal.aborted) {
+        throw new Error(
+          `clustering timed out after ${CLUSTER_TIMEOUT_MS / 1000}s`
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return [];
   }
 }
 

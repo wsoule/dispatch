@@ -211,10 +211,13 @@ export interface DispatchProjectData {
   enrichPlanRecord: PlanRecord | undefined;
   /** Drops the open draft — Discard, and the cleanup after it's been applied. */
   handleDismissEnrich: () => void;
-  /** Model-backed grouping of related captures. Costs a call, so callers trigger it explicitly. */
-  handleClusterInbox: () => Promise<
-    import('@dispatch/client').InboxClusterGroup[]
-  >;
+  /** Model-backed grouping of related captures, run automatically in the background by
+   * BrainDumpView. Always resolves — `error` carries a failed/timed-out model call rather than
+   * throwing, so a background pass never surfaces as a hard failure. */
+  handleClusterInbox: () => Promise<{
+    groups: import('@dispatch/client').InboxClusterGroup[];
+    error: string | null;
+  }>;
 
   /** Line-level review comments on the selected run's diff. */
   reviewComments: import('@dispatch/client').ReviewComment[];
@@ -1590,9 +1593,8 @@ export function useDispatchProject(
   );
 
   const handleClusterInbox = useCallback(async () => {
-    if (client === null) return [];
-    const { groups } = await client.clusterInbox();
-    return groups;
+    if (client === null) return { groups: [], error: null };
+    return await client.clusterInbox();
   }, [client]);
 
   // Retries every entry the queue is holding on a `blocked-environment` (a dirty checkout, a
