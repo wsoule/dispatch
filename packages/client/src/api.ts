@@ -318,7 +318,24 @@ export type ServerEvent =
   | { type: 'review.changed'; runId: string }
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
-  | { type: 'draft.changed' };
+  | { type: 'draft.changed' }
+  // A run agent asked the human a question and is blocked on the answer, or
+  // that question was just answered. Mirrors packages/server/src/events.ts.
+  | { type: 'question.asked'; runId: string; questionId: string }
+  | { type: 'question.answered'; runId: string; questionId: string };
+
+// Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts — one
+// question an agent raised mid-run, blocking until the human answers it.
+export interface RunQuestion {
+  id: string;
+  runId: string;
+  question: string;
+  /** Suggested answers rendered as one-click chips; free text always allowed. */
+  options: string[];
+  askedAt: string;
+  answer: string | null;
+  answeredAt: string | null;
+}
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
 // `blockedByIndices` refers to *other entries in this same proposal's
@@ -901,6 +918,16 @@ export interface ApiClient {
   // transcript rather than delivering into any executor. 409s when the run
   // isn't currently `running`.
   messageUser(runId: string, text: string): Promise<RunMeta>;
+  // The blocking agent→human channel (`ask_user`'s daemon-side landing spot).
+  // `fetchOpenQuestions` is every unanswered question across every run, which
+  // is what the app badges "waiting on you" from; `answerQuestion` unblocks
+  // the agent parked on one. 409s on a second answer to the same question.
+  fetchOpenQuestions(): Promise<RunQuestion[]>;
+  answerQuestion(
+    runId: string,
+    questionId: string,
+    answer: string
+  ): Promise<RunQuestion>;
   // Phase 5 P2: the big-prompt plan flow. `startPlan` returns immediately
   // (202) with the plan's id — poll `fetchPlan`/watch `plan.changed` over WS
   // for it to move to `ready`/`failed`. `confirmPlan` sends the (possibly
@@ -1144,6 +1171,12 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/runs/${runId}/message-user`, {
         method: 'POST',
         ...jsonBody({ text }),
+      }),
+    fetchOpenQuestions: () => request(baseUrl, '/api/questions'),
+    answerQuestion: (runId, questionId, answer) =>
+      request(baseUrl, `/api/runs/${runId}/questions/${questionId}/answer`, {
+        method: 'POST',
+        ...jsonBody({ answer }),
       }),
     startPlan: (prompt) =>
       request(baseUrl, '/api/plan', {

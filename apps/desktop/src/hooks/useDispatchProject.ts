@@ -8,6 +8,7 @@ import type {
   RepoPr,
   RunDetail,
   RunMeta,
+  RunQuestion,
   RunState,
 } from '@dispatch/client';
 import { createApiClient } from '@dispatch/client';
@@ -271,6 +272,14 @@ export interface DispatchProjectData {
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
   pendingApprovals: Map<string, PendingApproval>;
+  /** Run id -> the question that run's agent is blocked on. One per run: an agent asks from
+   * inside a tool call, so it cannot ask again until the first is answered. */
+  openQuestions: Map<string, RunQuestion>;
+  handleAnswerQuestion: (
+    runId: string,
+    questionId: string,
+    answer: string
+  ) => Promise<void>;
 
   planId: string | null;
   setPlanId: (planId: string | null) => void;
@@ -517,6 +526,7 @@ export function useDispatchProject(
   );
   const repoPrsQueryKey = useMemo(() => ['dispatch-repo-prs', port], [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
+  const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
   // countMergeReady's own-task/blocker lookups — `tasks` below stays the
   // default board-view (archived-excluded) list every other consumer here
@@ -615,6 +625,18 @@ export function useDispatchProject(
   });
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
+
+  // Every unanswered agent question across every run — refetched on
+  // `question.asked`/`question.answered` in the WS effect below, so a run that asked while a
+  // different view was open still shows up as waiting on you.
+  const { data: openQuestionList } = useQuery({
+    queryKey: questionsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchOpenQuestions();
+    },
+    enabled: client !== null,
+  });
 
   const { data: notes } = useQuery({
     queryKey: notesQueryKey,
@@ -850,6 +872,17 @@ export function useDispatchProject(
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
             void notify('Approval needed', `${event.toolName} — ${taskTitle}`);
+          } else if (event.type === 'question.asked') {
+            void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+            // Same cache-read reason as approval.requested above: this effect's
+            // captured `runs` can be stale, so the title comes from the query cache.
+            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+            const taskTitle =
+              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+              event.runId;
+            void notify('An agent has a question', taskTitle);
+          } else if (event.type === 'question.answered') {
+            void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
@@ -951,6 +984,7 @@ export function useDispatchProject(
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     branchesQueryKey,
+    questionsQueryKey,
     port,
     onRecordInbox,
   ]);
@@ -984,6 +1018,16 @@ export function useDispatchProject(
     }
     return map;
   }, [runs]);
+
+  // Keyed by run so a view holding one run can find its question in one lookup. Oldest wins
+  // if a run somehow has two open at once — that is the one the agent is actually parked on.
+  const openQuestions = useMemo(() => {
+    const map = new Map<string, RunQuestion>();
+    for (const question of openQuestionList ?? []) {
+      if (!map.has(question.runId)) map.set(question.runId, question);
+    }
+    return map;
+  }, [openQuestionList]);
 
   const latestRunByTaskId = useMemo(() => {
     const map = new Map<string, RunMeta>();
@@ -1238,6 +1282,20 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, runsQueryKey, port]
+  );
+
+  const handleAnswerQuestion = useCallback(
+    async (
+      runId: string,
+      questionId: string,
+      answer: string
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.answerQuestion(runId, questionId, answer);
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, questionsQueryKey, port]
   );
 
   const handleSendMessage = useCallback(
@@ -1712,6 +1770,8 @@ export function useDispatchProject(
     setNotePlanId,
     notePlanRecord,
     pendingApprovals,
+    openQuestions,
+    handleAnswerQuestion,
 
     planId,
     setPlanId,

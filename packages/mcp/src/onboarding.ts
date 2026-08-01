@@ -53,7 +53,7 @@ valid fallback — just keep the YAML frontmatter's required fields (\`id\`,
 ## Talking to other agents and the human
 
 Other dispatch runs may be working in parallel, and a human may be watching
-this run's Session tab. Three channels cover every direction:
+this run's Session tab. Four channels cover every direction:
 
 - **Agent -> agent**: call \`run_list\` to see who else is live right now
   (id, task, state), then \`agent_message\` with exactly one of
@@ -68,4 +68,9 @@ this run's Session tab. Three channels cover every direction:
   whenever you want to flag a question, a blocker, or a notable update to
   the human beyond your normal assistant output — it lands on your own
   Session tab, badged as coming from you.
+- **Agent -> app/user, waiting for a reply**: call \`ask_user\` with a
+  \`question\` (and \`options\` for the answers you think likely) when a
+  decision would change the shape of your result and the task doesn't
+  specify it. Unlike \`message_user\` it blocks until the human answers and
+  returns their reply. Bundle everything you're unsure about into one call.
 `;

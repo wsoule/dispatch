@@ -47,6 +47,7 @@ export type {
   ReviewVerdict,
   RunDetail,
   RunMeta,
+  RunQuestion,
   VerifyStepResult,
   RunState,
   ServerEvent,

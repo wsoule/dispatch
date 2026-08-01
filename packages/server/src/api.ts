@@ -30,6 +30,11 @@ import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager } from './orchestrator/pr.js';
+import type {
+  QuestionRegistry,
+  RunQuestion,
+} from './orchestrator/questions.js';
+import { QUESTION_POLL_MS } from './orchestrator/questions.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -59,6 +64,7 @@ export interface ApiContext {
   inboxStore: InboxStore;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
+  questions: QuestionRegistry;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
@@ -1016,6 +1022,111 @@ async function messageUser(
   return jsonResponse(meta);
 }
 
+// The transcript text a question lands as, so the session log reads as a
+// self-contained record of what was asked rather than pointing at a card the
+// user may already have answered and dismissed.
+function questionEntryText(question: string, options: string[]): string {
+  if (options.length === 0) return question;
+  return `${question}\n\n${options.map((o) => `- ${o}`).join('\n')}`;
+}
+
+// POST /api/runs/:id/questions — the blocking half of the agent→human
+// channel: the `ask_user` MCP tool posts a question here, then long-polls the
+// GET below until a human answers it. The question is written to the run's
+// transcript through the same `messageUser` path a fire-and-forget message
+// takes, which is also what enforces that only a live run can ask.
+async function askQuestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { question?: unknown; options?: unknown };
+  if (typeof body.question !== 'string' || body.question.trim() === '') {
+    return errorResponse(400, 'invalid question: question is required');
+  }
+  if (
+    body.options !== undefined &&
+    (!Array.isArray(body.options) ||
+      body.options.some((o) => typeof o !== 'string'))
+  ) {
+    return errorResponse(400, 'invalid options: expected an array of strings');
+  }
+  const question = body.question.trim();
+  const options = ((body.options as string[] | undefined) ?? [])
+    .map((o) => o.trim())
+    .filter((o) => o !== '');
+
+  ctx.orchestrator.messageUser(runId, questionEntryText(question, options));
+  const record = ctx.questions.ask(runId, question, options);
+  ctx.events.broadcast({
+    type: 'question.asked',
+    runId,
+    questionId: record.id,
+  });
+  return jsonResponse(record, 201);
+}
+
+// Resolves a question id against its own run, so one run can never read or
+// answer another run's question by guessing an id.
+function questionFor(
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): RunQuestion | null {
+  const record = ctx.questions.get(questionId);
+  return record !== undefined && record.runId === runId ? record : null;
+}
+
+// GET /api/runs/:id/questions/:qid — with `?wait=1` this parks for up to
+// QUESTION_POLL_MS and resolves the moment an answer lands; without it the
+// current record comes straight back. Returning still-unanswered at the
+// deadline is the normal outcome, not an error: the poll window is short by
+// design so it never races the server's own socket timeout, and the caller
+// polls again.
+async function getQuestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): Promise<Response> {
+  const record = questionFor(ctx, runId, questionId);
+  if (record === null) {
+    return errorResponse(404, `question not found: ${questionId}`);
+  }
+  const wait = new URL(req.url).searchParams.get('wait') === '1';
+  if (!wait) return jsonResponse(record);
+  return jsonResponse(
+    await ctx.questions.waitForAnswer(questionId, QUESTION_POLL_MS)
+  );
+}
+
+// POST /api/runs/:id/questions/:qid/answer — records the human's answer,
+// unblocking whatever is parked on the long-poll above. 409s on a second
+// answer: the agent has already been handed the first one.
+async function answerQuestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { answer?: unknown };
+  if (typeof body.answer !== 'string' || body.answer.trim() === '') {
+    return errorResponse(400, 'invalid answer: answer is required');
+  }
+  if (questionFor(ctx, runId, questionId) === null) {
+    return errorResponse(404, `question not found: ${questionId}`);
+  }
+  const record = ctx.questions.answer(questionId, body.answer.trim());
+  ctx.orchestrator.recordAnswer(runId, body.answer.trim());
+  ctx.events.broadcast({ type: 'question.answered', runId, questionId });
+  ctx.events.broadcast({ type: 'run.changed' });
+  return jsonResponse(record);
+}
+
 // POST /api/plan. `planner` is optional (defaults to 'claude'), same
 // contract as createRun's `executor` field above: a name outside what's
 // actually registered on this PlanManager instance (Phase 7's
@@ -1811,6 +1922,41 @@ export async function handleApi(
       ) {
         return await messageUser(req, ctx, segments[1]);
       }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'questions' &&
+        method === 'POST'
+      ) {
+        return await askQuestion(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'questions' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(ctx.questions.listOpen(segments[1]));
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'questions' &&
+        method === 'GET'
+      ) {
+        return await getQuestion(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'questions' &&
+        segments[4] === 'answer' &&
+        method === 'POST'
+      ) {
+        return await answerQuestion(req, ctx, segments[1], segments[3]);
+      }
+    }
+
+    // GET /api/questions — every open question across every run, so the app
+    // can badge "an agent is waiting on you" without walking the run list.
+    if (segments[0] === 'questions' && segments.length === 1) {
+      if (method === 'GET') return jsonResponse(ctx.questions.listOpen());
     }
 
     // GET /api/prs (item B): every open PR in the repo — see

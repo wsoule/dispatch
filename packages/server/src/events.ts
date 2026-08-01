@@ -40,6 +40,11 @@ export type ServerEvent =
   | { type: 'review.changed'; runId: string }
   // .dispatch/config.yml changed through the Settings screen.
   | { type: 'config.changed' }
+  // A run agent asked the human a question and is blocked on the answer, or
+  // that question just got answered — same "go refetch the open questions"
+  // contract as the *.changed events.
+  | { type: 'question.asked'; runId: string; questionId: string }
+  | { type: 'question.answered'; runId: string; questionId: string }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
   | { type: 'merge-queue.changed' }

@@ -19,6 +19,7 @@ import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
+import { QuestionRegistry } from './orchestrator/questions.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { watchTasks } from './watcher.js';
 
@@ -231,6 +232,12 @@ export async function startServer(
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
   }
+  // Questions an agent raised mid-run and is blocked on. Cleared per run the
+  // moment that run goes terminal, so a cancelled agent's question doesn't
+  // sit in the UI asking for an answer nobody can deliver any more.
+  const questions = new QuestionRegistry();
+  orchestrator.onRunTerminal((meta) => questions.closeRun(meta.id));
+
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
@@ -303,6 +310,7 @@ export async function startServer(
     noteStore: new NoteStore(rootDir),
     inboxStore,
     reviewComments: new ReviewCommentStore(rootDir),
+    questions,
   };
 
   const server = Bun.serve({

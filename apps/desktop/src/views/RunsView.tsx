@@ -421,6 +421,14 @@ export function RunsView({
                       onSendMessage={(text) =>
                         data.handleSendMessage(selected.id, text)
                       }
+                      openQuestion={data.openQuestions.get(selected.id) ?? null}
+                      onAnswerQuestion={(questionId, answer) =>
+                        data.handleAnswerQuestion(
+                          selected.id,
+                          questionId,
+                          answer
+                        )
+                      }
                       onRequestChanges={(text) =>
                         data.handleRequestChanges(selected.id, text)
                       }

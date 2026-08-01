@@ -122,7 +122,17 @@ export function FeedRow({ row, actions }: FeedRowProps) {
         </span>
 
         <span className="flex justify-end gap-1.5">
-          {row.state === 'waiting' && (
+          {/* A question has no yes/no to answer from here — the answer is free text, and the
+              form for it lives on the run's own Session tab. */}
+          {row.waitingOn === 'question' && (
+            <RowButton
+              tone="urgent-waiting"
+              onClick={() => actions.onOpen(row)}
+            >
+              Answer
+            </RowButton>
+          )}
+          {row.waitingOn === 'approval' && (
             <>
               <RowButton onClick={() => actions.onApprove(row, false)}>
                 Deny
