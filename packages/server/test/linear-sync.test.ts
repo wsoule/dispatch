@@ -16,12 +16,17 @@ import type { ServerEvent } from '../src/events.js';
 import type {
   LinearClient,
   LinearFailure,
+  LinearIssuePage,
   LinearResult,
   LinearTeam,
   LinearViewer,
 } from '../src/linear/client.js';
 import type { LinearSyncState } from '../src/linear/state.js';
-import { emptyLinearState, writeLinearState } from '../src/linear/state.js';
+import {
+  emptyLinearState,
+  readLinearState,
+  writeLinearState,
+} from '../src/linear/state.js';
 import { LinearSync } from '../src/linear/sync.js';
 
 const STATES: LinearWorkflowState[] = [
@@ -43,6 +48,8 @@ class FakeLinearClient implements LinearClient {
   updated: { id: string; input: LinearIssueInput }[] = [];
   issuesFailure: LinearFailure | null = null;
   createFailure: LinearFailure | null = null;
+  truncated = false;
+  sinceSeen: (string | null)[] = [];
   private seq = 0;
   private tick = 0;
 
@@ -74,13 +81,20 @@ class FakeLinearClient implements LinearClient {
   async issuesUpdatedSince(
     _teamId: string,
     since: string | null
-  ): Promise<LinearResult<LinearIssue[]>> {
+  ): Promise<LinearResult<LinearIssuePage>> {
     if (this.issuesFailure !== null) return this.issuesFailure;
+    this.sinceSeen.push(since);
     const nodes =
       since === null
         ? this.issues
         : this.issues.filter((i) => i.updatedAt > since);
-    return { ok: true, data: nodes.map((i) => ({ ...i })) };
+    return {
+      ok: true,
+      data: {
+        issues: nodes.map((i) => ({ ...i })),
+        truncated: this.truncated,
+      },
+    };
   }
 
   async createIssue(
@@ -223,6 +237,7 @@ afterEach(() => {
 
 describe('LinearSync.pull', () => {
   it('creates a local task for an unseen issue and joins on the UUID', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
     fake.issues = [fake.issue({ title: 'Ship the thing' })];
     const summary = await makeSync().syncOnce();
 
@@ -497,6 +512,245 @@ describe('LinearSync echo suppression', () => {
   });
 });
 
+describe('LinearSync first sync', () => {
+  it('imports neither backlog into the other, and reports what is waiting', async () => {
+    store.create({ title: 'Pre-existing local task' });
+    fake.issues = [fake.issue({ title: 'Pre-existing Linear issue' })];
+
+    const summary = await makeSync().syncOnce();
+
+    // Nothing was created on either side — .dispatch/tasks is committed, so a
+    // first sync must not produce a surprise 60-file diff.
+    expect(summary.created).toBe(0);
+    expect(summary.createdIssues).toBe(0);
+    expect(store.list()).toHaveLength(1);
+    expect(fake.created).toHaveLength(0);
+    expect(summary.pendingImport).toBe(1);
+    // The link is established, so subsequent edits do flow.
+    expect(makeSync().status().bootstrappedAt).not.toBeNull();
+    expect(makeSync().status().cursor).not.toBeNull();
+  });
+
+  it('imports Linear issues only when asked explicitly', async () => {
+    fake.issues = [fake.issue({ title: 'Existing issue' })];
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(store.list()).toHaveLength(0);
+
+    const summary = await sync.importIssues();
+
+    expect(summary.created).toBe(1);
+    const docs = store.list();
+    expect(docs).toHaveLength(1);
+    expect(docs[0].meta.title).toBe('Existing issue');
+    expect(docs[0].meta.external).toBe(`linear:${fake.issues[0].id}`);
+  });
+
+  it('scans the whole team on an import, ignoring the stored cursor', async () => {
+    seedState({ cursor: '2030-01-01T00:00:00.000Z' });
+    fake.issues = [fake.issue({ updatedAt: '2026-01-01T00:00:00.000Z' })];
+
+    await makeSync().importIssues();
+
+    expect(fake.sinceSeen.at(-1)).toBeNull();
+    expect(store.list()).toHaveLength(1);
+  });
+
+  it('does not create a duplicate local task once a link exists', async () => {
+    const remote = fake.issue();
+    fake.issues = [remote];
+    const doc = store.create({ title: 'Already linked' });
+    store.update(doc.meta.id, { external: `linear:${remote.id}` });
+
+    await makeSync().importIssues();
+
+    expect(store.list()).toHaveLength(1);
+  });
+});
+
+describe('LinearSync push cursor', () => {
+  it('does not advance lastPushAt when a rate limit cuts the push short', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    store.create({ title: 'One' });
+    store.create({ title: 'Two' });
+    fake.createFailure = {
+      ok: false,
+      kind: 'rate-limit',
+      error: 'linear rate limit reached',
+      retryAfterMs: 1,
+    };
+
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(readLinearState(root).lastPushAt).toBeNull();
+
+    // Once the throttle clears, both tasks are still candidates.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    fake.createFailure = null;
+    const second = await sync.syncOnce();
+    expect(second.createdIssues).toBe(2);
+  });
+
+  it('does not advance lastPushAt when one task fails to push', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    store.create({ title: 'Doomed' });
+    fake.createFailure = {
+      ok: false,
+      kind: 'graphql',
+      error: 'validation failed',
+    };
+
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(readLinearState(root).lastPushAt).toBeNull();
+
+    fake.createFailure = null;
+    const second = await sync.syncOnce();
+    expect(second.createdIssues).toBe(1);
+  });
+
+  it('stamps lastPushAt from before the push, so a concurrent edit is not lost', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    store.create({ title: 'Clean push' });
+    const before = new Date().toISOString();
+
+    await makeSync().syncOnce();
+
+    const stamped = readLinearState(root).lastPushAt;
+    expect(stamped).not.toBeNull();
+    expect(Date.parse(stamped ?? '')).toBeGreaterThanOrEqual(
+      Date.parse(before) - 1
+    );
+  });
+});
+
+describe('LinearSync degraded pull', () => {
+  it('will not overwrite a linked issue when the pull failed', async () => {
+    const remote = fake.issue({ updatedAt: '2026-07-01T00:00:00.000Z' });
+    fake.issues = [remote];
+    const linked = store.create({ title: 'Linked and edited' });
+    store.update(linked.meta.id, { external: `linear:${remote.id}` });
+    store.create({ title: 'Brand new' });
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    fake.issuesFailure = {
+      ok: false,
+      kind: 'graphql',
+      error: 'issues query blew up',
+    };
+
+    const summary = await makeSync().syncOnce();
+
+    // No conflict information was available, so the update is withheld and said so.
+    expect(fake.updated).toHaveLength(0);
+    expect(summary.errors.some((e) => e.includes('no conflict check'))).toBe(
+      true
+    );
+    // Creating a genuinely new issue is still safe and still happens.
+    expect(summary.createdIssues).toBe(1);
+  });
+
+  it('holds the cursor when the issue walk was truncated', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    fake.issues = [fake.issue()];
+    fake.truncated = true;
+
+    const summary = await makeSync().syncOnce();
+
+    expect(readLinearState(root).cursor).toBeNull();
+    expect(summary.errors.some((e) => e.includes('page through'))).toBe(true);
+  });
+});
+
+describe('LinearSync malformed config', () => {
+  function writeBadConfig(): void {
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'linear:\n  enabled: true\n  teamId: team-1\n  intervalSec: 1\n'
+    );
+  }
+
+  it('does not throw from start(), and reports the problem in status', () => {
+    writeBadConfig();
+    const sync = makeSync();
+    expect(() => sync.start()).not.toThrow();
+    const status = sync.status();
+    expect(status.enabled).toBe(false);
+    expect(status.lastError).toContain('invalid config');
+  });
+
+  it('reports the problem in the summary rather than rejecting', async () => {
+    writeBadConfig();
+    const summary = await makeSync().syncOnce();
+    expect(summary.errors[0]).toContain('invalid config');
+    expect(fake.created).toHaveLength(0);
+  });
+
+  it('does not throw out of the debounced push timer', async () => {
+    const sync = makeSync();
+    sync.start();
+    writeBadConfig();
+    sync.notifyTaskChanged();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await sync.stop();
+    expect(fake.created).toHaveLength(0);
+  });
+});
+
+describe('LinearSync issue links', () => {
+  it('records the display identifier and url a client needs for a chip', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    const remote = fake.issue({ identifier: 'HYD-77' });
+    fake.issues = [remote];
+
+    const sync = makeSync();
+    await sync.syncOnce();
+
+    expect(sync.links()[remote.id]).toEqual({
+      identifier: 'HYD-77',
+      url: remote.url,
+    });
+    // The join key itself is untouched — still the UUID.
+    expect(store.list()[0].meta.external).toBe(`linear:${remote.id}`);
+  });
+
+  it('records a link for an issue this engine created', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    store.create({ title: 'Pushed up' });
+    const sync = makeSync();
+    await sync.syncOnce();
+    expect(sync.links()['issue-1'].identifier).toBe('HYD-1');
+  });
+});
+
+describe('LinearSync repeat passes', () => {
+  it('stops reporting a conflict for a task it created itself', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    fake.issues = [fake.issue()];
+    const sync = makeSync();
+
+    await sync.syncOnce();
+    const second = await sync.syncOnce();
+    const third = await sync.syncOnce();
+
+    expect(second.conflicts).toBe(0);
+    expect(third.conflicts).toBe(0);
+  });
+
+  it('runs an explicit push behind an in-flight pass instead of discarding it', async () => {
+    seedState({ bootstrappedAt: '2030-01-01T00:00:00.000Z' });
+    const doc = store.create({ title: 'Explicit' });
+    const sync = makeSync();
+
+    const [, explicit] = await Promise.all([
+      sync.syncOnce(),
+      sync.syncOnce([doc.meta.id]),
+    ]);
+
+    expect(explicit.createdIssues).toBe(1);
+    expect(store.get(doc.meta.id)?.meta.external).toBe('linear:issue-1');
+  });
+});
+
 describe('LinearSync task-change trigger', () => {
   it('pushes shortly after a local change, without waiting for a poll', async () => {
     seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
@@ -512,7 +766,7 @@ describe('LinearSync task-change trigger', () => {
     store.create({ title: 'Edited locally' });
     sync.notifyTaskChanged();
     await waitFor(() => fake.created.length === 1);
-    sync.stop();
+    await sync.stop();
     expect(fake.created).toHaveLength(1);
   });
 
@@ -533,7 +787,7 @@ describe('LinearSync task-change trigger', () => {
     store.create({ title: 'Stays local' });
     sync.notifyTaskChanged();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    sync.stop();
+    await sync.stop();
     expect(fake.created).toHaveLength(0);
   });
 });
@@ -541,6 +795,7 @@ describe('LinearSync task-change trigger', () => {
 describe('LinearSync reporting', () => {
   it('broadcasts a summary and reports status without ever exposing a key', async () => {
     process.env.LINEAR_API_KEY = 'lin_api_do_not_leak';
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
     fake.issues = [fake.issue()];
     const sync = makeSync();
     await sync.syncOnce();

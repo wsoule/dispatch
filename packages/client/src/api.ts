@@ -624,8 +624,16 @@ export interface LinearSyncSummary {
   created: number;
   createdIssues: number;
   conflicts: number;
+  /** Linear issues with no local task that the bootstrap gate declined to import. */
+  pendingImport: number;
   errors: string[];
   rateLimited: boolean;
+}
+
+/** Display data for a linked issue, keyed by issue UUID. `TaskMeta.external` holds the UUID. */
+export interface LinearIssueLink {
+  identifier: string;
+  url: string;
 }
 
 // Mirrors LinearStatus in packages/server/src/linear/sync.ts. Carries no API key
@@ -984,6 +992,12 @@ export interface ApiClient {
   // Runs a pass now. `taskIds` pushes exactly those tasks, bypassing the gate
   // that stops a first sync from creating an issue for every pre-existing task.
   syncLinear(taskIds?: string[]): Promise<LinearSyncSummary>;
+  // Issue UUID -> { identifier, url }. `TaskMeta.external` is `linear:<uuid>`;
+  // look the uuid up here to render an "ENG-123" chip that links out.
+  fetchLinearLinks(): Promise<Record<string, LinearIssueLink>>;
+  // Creates local tasks for Linear issues that have none. An ordinary sync never
+  // imports a backlog, so this is the explicit first-sync action.
+  importLinearIssues(): Promise<LinearSyncSummary>;
   fetchNotes(): Promise<Note[]>;
   createNote(input: CreateNoteInput): Promise<Note>;
   updateNote(id: string, patch: UpdateNotePatch): Promise<Note>;
@@ -1241,6 +1255,9 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody(taskIds === undefined ? {} : { taskIds }),
       }),
+    fetchLinearLinks: () => request(baseUrl, '/api/linear/links'),
+    importLinearIssues: () =>
+      request(baseUrl, '/api/linear/import', { method: 'POST' }),
     submitReview: (runId, verdict, body) =>
       request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {
         method: 'POST',

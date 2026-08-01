@@ -14,6 +14,7 @@ import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type {
   LinearClient,
+  LinearIssuePage,
   LinearResult,
   LinearTeam,
   LinearViewer,
@@ -53,8 +54,8 @@ class StubLinearClient implements LinearClient {
     return { ok: true, data: [] };
   }
 
-  async issuesUpdatedSince(): Promise<LinearResult<LinearIssue[]>> {
-    return { ok: true, data: [] };
+  async issuesUpdatedSince(): Promise<LinearResult<LinearIssuePage>> {
+    return { ok: true, data: { issues: [], truncated: false } };
   }
 
   async createIssue(
@@ -204,6 +205,20 @@ describe('POST /api/linear/sync', () => {
       body: JSON.stringify({ taskIds: 't-abc123' }),
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/linear/links', () => {
+  it('returns an empty map before anything is linked', async () => {
+    expect(await json(await fetch(`${baseUrl}/api/linear/links`))).toEqual({});
+  });
+});
+
+describe('POST /api/linear/import', () => {
+  it('reports why an unconfigured project cannot import', async () => {
+    const res = await fetch(`${baseUrl}/api/linear/import`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect((await json(res)).errors).toEqual(['no Linear team selected']);
   });
 });
 

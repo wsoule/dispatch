@@ -10,6 +10,12 @@ export interface EchoRecord {
   recordedAt: string;
 }
 
+/** Display-only data for a linked issue. The UUID stays the join key; this is what a chip shows. */
+export interface LinearIssueLink {
+  identifier: string;
+  url: string;
+}
+
 export interface LinearSyncState {
   /** High-water mark for the pull filter; null until the first successful pull. */
   cursor: string | null;
@@ -20,6 +26,8 @@ export interface LinearSyncState {
   lastSyncAt: string | null;
   lastError: string | null;
   echoes: EchoRecord[];
+  /** Issue UUID -> its display identifier and URL, for clients that only hold `external`. */
+  links: Record<string, LinearIssueLink>;
 }
 
 // Sync state is user-level, not project-level: `.dispatch/` is committed to the
@@ -43,6 +51,7 @@ export function emptyLinearState(): LinearSyncState {
     lastSyncAt: null,
     lastError: null,
     echoes: [],
+    links: {},
   };
 }
 
@@ -70,12 +79,22 @@ export function writeLinearState(
   writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-const ECHO_TTL_MS = 60 * 60 * 1000;
+const MIN_ECHO_TTL_MS = 60 * 60 * 1000;
 
-// Echo records only matter until the pull that would have re-applied them, so an
-// hour is generous; dropping the rest keeps the file from growing without bound.
-export function pruneEchoes(echoes: EchoRecord[], now: number): EchoRecord[] {
+// An echo only has to survive until the pull that would re-apply it, so the TTL
+// tracks the poll interval — a floor of an hour, and never fewer than 3 polls.
+export function echoTtlMs(intervalSec: number): number {
+  return Math.max(MIN_ECHO_TTL_MS, intervalSec * 3 * 1000);
+}
+
+// Drops records past the TTL so the file cannot grow without bound, keeping the
+// most recent ones when a single pass writes an unusual number of issues.
+export function pruneEchoes(
+  echoes: EchoRecord[],
+  now: number,
+  ttlMs: number = MIN_ECHO_TTL_MS
+): EchoRecord[] {
   return echoes
-    .filter((e) => now - Date.parse(e.recordedAt) < ECHO_TTL_MS)
-    .slice(-500);
+    .filter((e) => now - Date.parse(e.recordedAt) < ttlMs)
+    .slice(-2000);
 }

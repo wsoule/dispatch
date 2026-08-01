@@ -1,4 +1,5 @@
 import {
+  DEFAULT_LINEAR,
   externalId,
   getSection,
   issueFromTask,
@@ -24,8 +25,13 @@ import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import type { LinearClient, LinearFailure } from './client.js';
 import { HttpLinearClient } from './client.js';
-import type { LinearSyncState } from './state.js';
-import { pruneEchoes, readLinearState, writeLinearState } from './state.js';
+import type { LinearIssueLink, LinearSyncState } from './state.js';
+import {
+  echoTtlMs,
+  pruneEchoes,
+  readLinearState,
+  writeLinearState,
+} from './state.js';
 
 /** One sync's outcome. `created` counts new local tasks; `createdIssues` counts new Linear issues. */
 export interface LinearSyncSummary {
@@ -35,6 +41,8 @@ export interface LinearSyncSummary {
   created: number;
   createdIssues: number;
   conflicts: number;
+  /** Linear issues with no local task that the bootstrap gate declined to import. */
+  pendingImport: number;
   errors: string[];
   rateLimited: boolean;
 }
@@ -79,6 +87,15 @@ interface SyncSession {
   labels: LinearLabel[];
 }
 
+// 'both' is the ordinary pass; 'push' is the debounced local-edit trigger;
+// 'import' is the explicit "bring existing Linear issues down" action.
+type SyncMode = 'both' | 'push' | 'import';
+
+interface RunOptions {
+  mode: SyncMode;
+  taskIds?: string[];
+}
+
 function emptySummary(at: string): LinearSyncSummary {
   return {
     at,
@@ -87,6 +104,7 @@ function emptySummary(at: string): LinearSyncSummary {
     created: 0,
     createdIssues: 0,
     conflicts: 0,
+    pendingImport: 0,
     errors: [],
     rateLimited: false,
   };
@@ -108,30 +126,52 @@ export class LinearSync {
   // Mirrors config.linear.enabled as of the last start(), so a task change on a
   // project with no Linear sync costs nothing and schedules no timer.
   private enabled = false;
+  // Set when .dispatch/config.yml cannot be parsed. Sync stands down rather than
+  // throwing out of a timer or blocking daemon boot.
+  private configError: string | null = null;
 
   constructor(deps: LinearSyncDeps) {
     this.deps = deps;
   }
 
+  // Config is read on every pass, from a file a person edits by hand, so a parse
+  // failure is a normal state to be in rather than an exception to propagate.
+  private safeConfig(): DispatchConfig | null {
+    try {
+      const config = loadConfig(this.deps.rootDir);
+      this.configError = null;
+      return config;
+    } catch (err) {
+      this.configError = `invalid config, Linear sync paused: ${(err as Error).message}`;
+      return null;
+    }
+  }
+
   status(): LinearStatus {
-    const config = loadConfig(this.deps.rootDir);
+    const config = this.safeConfig();
+    const linear = config?.linear ?? DEFAULT_LINEAR;
     const state = readLinearState(this.deps.rootDir);
     const { source } = resolveLinearApiKey();
     return {
-      enabled: config.linear.enabled,
+      enabled: config !== null && linear.enabled,
       connected: this.deps.client !== undefined || source !== null,
       keySource: source,
-      teamId: config.linear.teamId,
-      direction: config.linear.direction,
-      intervalSec: config.linear.intervalSec,
-      statusMap: config.linear.statusMap,
+      teamId: linear.teamId,
+      direction: linear.direction,
+      intervalSec: linear.intervalSec,
+      statusMap: linear.statusMap,
       cursor: state.cursor,
       bootstrappedAt: state.bootstrappedAt,
       lastSyncAt: state.lastSyncAt,
-      lastError: state.lastError,
+      lastError: this.configError ?? state.lastError,
       lastSummary: this.lastSummary,
       syncing: this.inFlight !== null,
     };
+  }
+
+  /** Issue UUID -> display identifier and URL, for clients holding only `TaskMeta.external`. */
+  links(): Record<string, LinearIssueLink> {
+    return readLinearState(this.deps.rootDir).links;
   }
 
   /** Builds a client for ad-hoc reads (the team/state pickers), or null when no key is available. */
@@ -146,20 +186,28 @@ export class LinearSync {
 
   /** Starts the poll timer when the config enables it. Safe to call repeatedly. */
   start(): void {
-    this.stop();
-    const config = loadConfig(this.deps.rootDir);
-    this.enabled = config.linear.enabled;
-    if (!config.linear.enabled) return;
+    this.stopTimers();
+    const config = this.safeConfig();
+    this.enabled = config?.linear.enabled ?? false;
+    if (config === null || !config.linear.enabled) return;
     this.timer = setInterval(() => {
       void this.syncOnce().catch(() => undefined);
     }, config.linear.intervalSec * 1000);
   }
 
-  stop(): void {
+  private stopTimers(): void {
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = null;
+  }
+
+  // Clears both timers and waits for any pass already running, so shutdown cannot
+  // race a sync that is still writing task files and broadcasting.
+  async stop(): Promise<void> {
+    this.stopTimers();
+    const pending = this.inFlight;
+    if (pending !== null) await pending.catch(() => undefined);
   }
 
   // A local task changed: push it up shortly, coalescing a burst of edits into
@@ -170,45 +218,58 @@ export class LinearSync {
     const delay = this.deps.pushDebounceMs ?? DEFAULT_PUSH_DEBOUNCE_MS;
     this.debounce = setTimeout(() => {
       this.debounce = null;
-      const config = loadConfig(this.deps.rootDir);
+      const config = this.safeConfig();
+      if (config === null) return;
       if (!config.linear.enabled || config.linear.direction === 'pull') return;
-      void this.runPushOnly().catch(() => undefined);
+      void this.enqueue({ mode: 'push' }).catch(() => undefined);
     }, delay);
   }
 
   /** Pull then push, per the configured direction. Concurrent callers share one pass. */
   async syncOnce(taskIds?: string[]): Promise<LinearSyncSummary> {
-    if (this.inFlight !== null) return this.inFlight;
-    this.inFlight = this.run(taskIds, 'both').finally(() => {
-      this.inFlight = null;
-    });
-    return this.inFlight;
+    // An explicit push carries tasks the in-flight pass never considered, so it
+    // queues behind that pass instead of being answered by it.
+    if (taskIds === undefined && this.inFlight !== null) return this.inFlight;
+    return this.enqueue({ mode: 'both', taskIds });
   }
 
-  private async runPushOnly(): Promise<LinearSyncSummary> {
-    if (this.inFlight !== null) return this.inFlight;
-    this.inFlight = this.run(undefined, 'push').finally(() => {
-      this.inFlight = null;
-    });
-    return this.inFlight;
+  /** Creates local tasks for Linear issues that have none — the explicit first-sync import. */
+  async importIssues(): Promise<LinearSyncSummary> {
+    return this.enqueue({ mode: 'import' });
   }
 
-  private async run(
-    taskIds: string[] | undefined,
-    only: 'both' | 'push'
-  ): Promise<LinearSyncSummary> {
+  private enqueue(opts: RunOptions): Promise<LinearSyncSummary> {
+    const previous = this.inFlight;
+    const settled =
+      previous === null
+        ? Promise.resolve()
+        : previous.then(
+            () => undefined,
+            () => undefined
+          );
+    const next = settled.then(() => this.run(opts));
+    this.inFlight = next;
+    void next
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.inFlight === next) this.inFlight = null;
+      });
+    return next;
+  }
+
+  private async run(opts: RunOptions): Promise<LinearSyncSummary> {
     const summary = emptySummary(new Date().toISOString());
     if (Date.now() < this.backoffUntil) {
       summary.rateLimited = true;
       summary.errors.push('linear rate limit backoff in effect');
-      return this.finish(summary, null);
+      return this.finish(summary, readLinearState(this.deps.rootDir), 300);
     }
 
     const opened = await this.openSession();
     if (!opened.ok) {
       summary.errors.push(opened.error);
       // Persisted so `status().lastError` explains a misconfiguration, not just the summary.
-      return this.finish(summary, readLinearState(this.deps.rootDir));
+      return this.finish(summary, readLinearState(this.deps.rootDir), 300);
     }
     const session = opened.session;
     const state = readLinearState(this.deps.rootDir);
@@ -219,38 +280,61 @@ export class LinearSync {
     // Issues the pull decided Linear wins on, so push does not overwrite them.
     const remoteWins = new Set<string>();
 
-    if (only === 'both' && direction !== 'push') {
-      await this.pull(session, state, summary, pulledTaskIds, remoteWins);
-    }
-    if (direction !== 'pull' && !summary.rateLimited) {
-      await this.push(
+    const pulling =
+      opts.mode === 'import' || (opts.mode === 'both' && direction !== 'push');
+    let pullFailed = false;
+    if (pulling) {
+      pullFailed = !(await this.pull(
         session,
         state,
         summary,
-        taskIds,
         pulledTaskIds,
-        remoteWins
-      );
-      state.lastPushAt = new Date().toISOString();
+        remoteWins,
+        opts.mode === 'import'
+      ));
     }
+
+    if (
+      opts.mode !== 'import' &&
+      direction !== 'pull' &&
+      !summary.rateLimited
+    ) {
+      // Captured BEFORE the push: a task edited while the loop is uploading must
+      // stay a candidate next pass. A redundant re-push is idempotent; a dropped edit is not.
+      const pushStartedAt = new Date().toISOString();
+      const errorsBefore = summary.errors.length;
+      await this.push(session, state, summary, {
+        taskIds: opts.taskIds,
+        pulledTaskIds,
+        remoteWins,
+        createOnly: pullFailed,
+      });
+      if (!summary.rateLimited && summary.errors.length === errorsBefore) {
+        state.lastPushAt = pushStartedAt;
+      }
+    }
+
     if (state.bootstrappedAt === null && summary.errors.length === 0) {
       state.bootstrappedAt = new Date().toISOString();
     }
-    return this.finish(summary, state);
+    return this.finish(summary, state, session.linear.intervalSec);
   }
 
   // Records the pass: persists cursor/echo state, refreshes the read cache when local
   // files changed, and tells connected clients the sync ran.
   private finish(
     summary: LinearSyncSummary,
-    state: LinearSyncState | null
+    state: LinearSyncState,
+    intervalSec: number
   ): LinearSyncSummary {
-    if (state !== null) {
-      state.lastSyncAt = summary.at;
-      state.lastError = summary.errors[0] ?? null;
-      state.echoes = pruneEchoes(state.echoes, Date.now());
-      writeLinearState(this.deps.rootDir, state);
-    }
+    state.lastSyncAt = summary.at;
+    state.lastError = summary.errors[0] ?? null;
+    state.echoes = pruneEchoes(
+      state.echoes,
+      Date.now(),
+      echoTtlMs(intervalSec)
+    );
+    writeLinearState(this.deps.rootDir, state);
     this.lastSummary = summary;
     if (summary.pulled > 0 || summary.created > 0) {
       this.deps.cache.rebuild(this.deps.store);
@@ -263,7 +347,10 @@ export class LinearSync {
   private async openSession(): Promise<
     { ok: true; session: SyncSession } | { ok: false; error: string }
   > {
-    const config = loadConfig(this.deps.rootDir);
+    const config = this.safeConfig();
+    if (config === null) {
+      return { ok: false, error: this.configError ?? 'invalid config' };
+    }
     const teamId = config.linear.teamId;
     if (teamId === null || teamId.trim() === '') {
       return { ok: false, error: 'no Linear team selected' };
@@ -298,53 +385,73 @@ export class LinearSync {
     return failure.error;
   }
 
+  // Returns false when the pull failed, which makes the push skip updates to
+  // linked issues: without pull data there is no conflict information to act on.
   private async pull(
     session: SyncSession,
     state: LinearSyncState,
     summary: LinearSyncSummary,
     pulledTaskIds: Set<string>,
-    remoteWins: Set<string>
-  ): Promise<void> {
+    remoteWins: Set<string>,
+    importing: boolean
+  ): Promise<boolean> {
+    // An import considers the whole team, not just what changed since the cursor.
     const result = await session.client.issuesUpdatedSince(
       session.teamId,
-      state.cursor
+      importing ? null : state.cursor
     );
     if (!result.ok) {
       summary.errors.push(this.note(result));
       summary.rateLimited ||= result.kind === 'rate-limit';
-      return;
+      return false;
     }
 
     const byExternal = new Map<string, TaskDoc>();
-    for (const doc of this.deps.store.list()) {
+    for (const doc of this.deps.store.listSafe().docs) {
       const id = parseExternal(doc.meta.external);
       if (id !== null) byExternal.set(id, doc);
     }
     const statuses = session.config.statuses;
-    const issues = [...result.data].sort((a, b) =>
+    const issues = [...result.data.issues].sort((a, b) =>
       a.updatedAt.localeCompare(b.updatedAt)
     );
+    // Creating local tasks is gated the same way creating issues is: a first sync
+    // links the two sides without importing either backlog into the other.
+    const mayCreate = importing || state.bootstrappedAt !== null;
     let high = state.cursor;
 
     for (const issue of issues) {
       if (high === null || issue.updatedAt > high) high = issue.updatedAt;
-      if (this.isEcho(state, issue)) continue;
+      if (this.isAlreadyApplied(state, issue)) continue;
       const existing = byExternal.get(issue.id);
       if (existing === undefined) {
         if (issue.archivedAt !== null) continue;
+        if (!mayCreate) {
+          summary.pendingImport++;
+          continue;
+        }
         const doc = this.deps.store.create(
           taskCreateFromIssue(issue, {
             statusMap: session.linear.statusMap,
             statuses,
             fallbackStatus: statuses[0] ?? 'todo',
-          })
+          }),
+          issue.createdAt
         );
-        this.deps.store.update(doc.meta.id, { external: externalId(issue) });
+        // Stamped with the issue's own `updatedAt`: the task's content is exactly
+        // that version, so a later comparison comes out as a tie, not a local edit.
+        this.deps.store.update(
+          doc.meta.id,
+          { external: externalId(issue) },
+          issue.updatedAt
+        );
+        this.recordSeen(state, issue);
         pulledTaskIds.add(doc.meta.id);
         summary.created++;
         summary.pulled++;
         continue;
       }
+      this.recordLink(state, issue);
       const verdict = resolveConflict(existing.meta.updated, issue.updatedAt);
       if (verdict === 'local') {
         summary.conflicts++;
@@ -358,20 +465,32 @@ export class LinearSync {
         fallbackStatus: existing.meta.status,
       });
       if (issue.archivedAt !== null) patch.archivedAt = issue.archivedAt;
-      this.deps.store.update(existing.meta.id, patch);
+      this.deps.store.update(existing.meta.id, patch, issue.updatedAt);
+      this.recordSeen(state, issue);
       pulledTaskIds.add(existing.meta.id);
       summary.pulled++;
     }
 
+    if (result.data.truncated) {
+      // The cursor must not move past issues this walk never reached.
+      summary.errors.push(
+        'linear returned more issues than one sync could page through; cursor held'
+      );
+      return false;
+    }
     // Rewound a second before the newest issue seen: `gt` would otherwise drop any
     // issue that shares that exact timestamp, and re-reading one issue is free.
     state.cursor =
       high === null ? null : new Date(Date.parse(high) - 1000).toISOString();
+    return true;
   }
 
-  // True when this issue's current version is one this engine just wrote, in which
-  // case applying it locally would be re-applying our own edit.
-  private isEcho(state: LinearSyncState, issue: LinearIssue): boolean {
+  // True when this exact version of the issue has already been reconciled — either
+  // written by this engine or applied locally on an earlier pass.
+  private isAlreadyApplied(
+    state: LinearSyncState,
+    issue: LinearIssue
+  ): boolean {
     return state.echoes.some(
       (e) => e.issueId === issue.id && e.updatedAt === issue.updatedAt
     );
@@ -381,14 +500,18 @@ export class LinearSync {
     session: SyncSession,
     state: LinearSyncState,
     summary: LinearSyncSummary,
-    taskIds: string[] | undefined,
-    pulledTaskIds: Set<string>,
-    remoteWins: Set<string>
+    opts: {
+      taskIds: string[] | undefined;
+      pulledTaskIds: Set<string>;
+      remoteWins: Set<string>;
+      createOnly: boolean;
+    }
   ): Promise<void> {
+    const { taskIds, pulledTaskIds, remoteWins, createOnly } = opts;
     const explicit = taskIds !== undefined;
     const candidates = this.deps.store
-      .list()
-      .filter((doc) =>
+      .listSafe()
+      .docs.filter((doc) =>
         explicit
           ? taskIds.includes(doc.meta.id)
           : !pulledTaskIds.has(doc.meta.id) &&
@@ -396,10 +519,15 @@ export class LinearSync {
             (state.lastPushAt === null ||
               Date.parse(doc.meta.updated) > Date.parse(state.lastPushAt))
       );
+    let skippedForFailedPull = 0;
 
     for (const doc of candidates) {
       const issueId = parseExternal(doc.meta.external);
       if (issueId !== null && remoteWins.has(issueId)) continue;
+      if (issueId !== null && createOnly) {
+        skippedForFailedPull++;
+        continue;
+      }
       if (issueId === null && !explicit && !this.mayAutoCreate(state, doc)) {
         continue;
       }
@@ -417,14 +545,18 @@ export class LinearSync {
           summary.errors.push(this.note(result));
           if (result.kind === 'rate-limit') {
             summary.rateLimited = true;
-            return;
+            break;
           }
           continue;
         }
-        this.deps.store.update(doc.meta.id, {
-          external: externalId(result.data),
-        });
-        this.recordEcho(state, result.data);
+        // Recording the link is bookkeeping, not a user edit, so the task's own
+        // `updated` is preserved — bumping it would re-queue the task next pass.
+        this.deps.store.update(
+          doc.meta.id,
+          { external: externalId(result.data) },
+          doc.meta.updated
+        );
+        this.recordSeen(state, result.data);
         summary.createdIssues++;
         summary.pushed++;
         continue;
@@ -440,12 +572,18 @@ export class LinearSync {
         summary.errors.push(this.note(result));
         if (result.kind === 'rate-limit') {
           summary.rateLimited = true;
-          return;
+          break;
         }
         continue;
       }
-      this.recordEcho(state, result.data);
+      this.recordSeen(state, result.data);
       summary.pushed++;
+    }
+
+    if (skippedForFailedPull > 0) {
+      summary.errors.push(
+        `skipped ${skippedForFailedPull} issue update(s): the pull failed, so no conflict check was possible`
+      );
     }
   }
 
@@ -456,11 +594,18 @@ export class LinearSync {
     return Date.parse(doc.meta.updated) > Date.parse(state.bootstrappedAt);
   }
 
-  private recordEcho(state: LinearSyncState, issue: LinearIssue): void {
+  // Marks this issue version as reconciled, and keeps its display identifier around
+  // for clients that only hold the UUID in `TaskMeta.external`.
+  private recordSeen(state: LinearSyncState, issue: LinearIssue): void {
     state.echoes.push({
       issueId: issue.id,
       updatedAt: issue.updatedAt,
       recordedAt: new Date().toISOString(),
     });
+    this.recordLink(state, issue);
+  }
+
+  private recordLink(state: LinearSyncState, issue: LinearIssue): void {
+    state.links[issue.id] = { identifier: issue.identifier, url: issue.url };
   }
 }

@@ -434,7 +434,7 @@ export async function startServer(
       prManager.stopPolling();
       mergeQueue.stop();
       unsubscribeLinear();
-      linearSync.stop();
+      await linearSync.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on

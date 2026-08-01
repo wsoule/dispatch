@@ -7,6 +7,10 @@ import type {
 
 export const LINEAR_API_URL = 'https://api.linear.app/graphql';
 
+// Ceiling on a single page walk. At 50 issues a page this is 2,000 issues, well
+// past a normal poll window; hitting it is reported rather than silently ignored.
+const MAX_PAGES = 40;
+
 /** Why a call failed, so callers can back off on `rate-limit` instead of retrying blindly. */
 export type LinearErrorKind =
   | 'auth'
@@ -37,6 +41,12 @@ export interface LinearTeam {
   name: string;
 }
 
+/** A page walk's result. `truncated` means the page cap stopped the walk before the last page. */
+export interface LinearIssuePage {
+  issues: LinearIssue[];
+  truncated: boolean;
+}
+
 /** The surface the sync engine talks to. Implemented for real below, faked in tests. */
 export interface LinearClient {
   viewer(): Promise<LinearResult<LinearViewer>>;
@@ -46,7 +56,7 @@ export interface LinearClient {
   issuesUpdatedSince(
     teamId: string,
     since: string | null
-  ): Promise<LinearResult<LinearIssue[]>>;
+  ): Promise<LinearResult<LinearIssuePage>>;
   createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>>;
   updateIssue(
     id: string,
@@ -292,10 +302,15 @@ export class HttpLinearClient implements LinearClient {
     query: string,
     variables: Record<string, unknown>,
     pick: (data: unknown) => Connection<N> | null | undefined
-  ): Promise<LinearResult<N[]>> {
+  ): Promise<LinearResult<{ nodes: N[]; truncated: boolean }>> {
     const nodes: N[] = [];
     let after: string | null = null;
-    for (let page = 0; page < 40; page++) {
+    let truncated = false;
+    for (let page = 0; ; page++) {
+      if (page >= MAX_PAGES) {
+        truncated = true;
+        break;
+      }
       const result = await this.request<unknown>(query, {
         ...variables,
         after,
@@ -308,7 +323,7 @@ export class HttpLinearClient implements LinearClient {
       after = connection.pageInfo.endCursor;
       if (after === null) break;
     }
-    return { ok: true, data: nodes };
+    return { ok: true, data: { nodes, truncated } };
   }
 
   async viewer(): Promise<LinearResult<LinearViewer>> {
@@ -317,11 +332,12 @@ export class HttpLinearClient implements LinearClient {
   }
 
   async teams(): Promise<LinearResult<LinearTeam[]>> {
-    return this.paginate<LinearTeam>(
+    const result = await this.paginate<LinearTeam>(
       TEAMS_QUERY,
       {},
       (data) => (data as { teams?: Connection<LinearTeam> }).teams
     );
+    return result.ok ? { ok: true, data: result.data.nodes } : result;
   }
 
   async workflowStates(
@@ -345,13 +361,21 @@ export class HttpLinearClient implements LinearClient {
   async issuesUpdatedSince(
     teamId: string,
     since: string | null
-  ): Promise<LinearResult<LinearIssue[]>> {
+  ): Promise<LinearResult<LinearIssuePage>> {
     const result = await this.paginate<IssueNode>(
       since === null ? ISSUES_QUERY_ALL : ISSUES_QUERY,
       since === null ? { teamId } : { teamId, since },
       (data) => (data as { issues?: Connection<IssueNode> }).issues
     );
-    return result.ok ? { ok: true, data: result.data.map(toIssue) } : result;
+    return result.ok
+      ? {
+          ok: true,
+          data: {
+            issues: result.data.nodes.map(toIssue),
+            truncated: result.data.truncated,
+          },
+        }
+      : result;
   }
 
   async createIssue(
