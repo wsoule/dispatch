@@ -505,10 +505,7 @@ function FixLoopSection({
   escalation: EscalationStep[];
 }) {
   const capped = fixLoop.state === 'capped';
-  const escalates =
-    fixLoop.state !== 'capped' &&
-    fixLoop.state !== 'complete' &&
-    willEscalateNextRound(fixLoop, escalation);
+  const escalates = willEscalateNextRound(fixLoop, escalation);
   return (
     <MainSection title="Fix loop">
       <div
@@ -531,10 +528,8 @@ function FixLoopSection({
   );
 }
 
-// `exercised` (the app actually ran) stays visually distinct from whatever
-// review status the header already shows — the two answer different asks.
-// Self-hides when there is nothing to say (never exercised, no result, no
-// error) so an ordinary task doesn't permanently grow an empty block.
+// `exercised` stays visually distinct from review status; self-hides when
+// there is nothing to say (never exercised, no result, no error).
 function VerificationSection({
   exercised,
   result,
@@ -737,8 +732,8 @@ interface TaskDetailDialogProps {
   /** The dispatchd client — this dialog fetches its own findings/fix-loop/
    * verification/ledger data rather than going through the app-level hook. */
   client: ApiClient | null;
-  /** The active project's daemon port — namespaces this dialog's own query keys, same as
-   * every other per-project query in the app (see useOrchestration.ts). */
+  /** The active project's daemon port, for namespacing this dialog's own
+   * query keys — see useOrchestration.ts. */
   port: number | undefined;
   /** The project's escalation ladder, for the "fresh implementer" hint. */
   fixLoopEscalation: EscalationStep[];
@@ -819,7 +814,11 @@ export function TaskDetailDialog({
   const linearLink = resolveLinearLink(doc.meta.external, linearLinks);
   const linearLinked = parseExternal(doc.meta.external) !== null;
 
-  const { findings } = useTaskFindings(client, port, doc.meta.id);
+  const { findings, error: findingsError } = useTaskFindings(
+    client,
+    port,
+    doc.meta.id
+  );
   const { fixLoop, error: fixLoopError } = useFixLoop(
     client,
     port,
@@ -829,7 +828,7 @@ export function TaskDetailDialog({
     useTaskVerification(client, port, doc.meta.id);
   // Only ever meaningful for an epic — `useEpicLedger` no-ops (empty,
   // disabled) when `epicId` is undefined, so this is safe on a plain task.
-  const { entries: ledgerEntries } = useEpicLedger(
+  const { entries: ledgerEntries, error: ledgerError } = useEpicLedger(
     client,
     port,
     doc.meta.kind === 'epic' ? doc.meta.id : undefined
@@ -1137,6 +1136,11 @@ export function TaskDetailDialog({
                   </div>
                 )}
 
+                {doc.meta.kind === 'epic' && ledgerError !== null && (
+                  <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12.5px]">
+                    Couldn&rsquo;t load the ledger: {ledgerError}
+                  </div>
+                )}
                 {doc.meta.kind === 'epic' && (
                   <LedgerSection entries={ledgerEntries} />
                 )}
@@ -1258,6 +1262,13 @@ export function TaskDetailDialog({
                   />
                 )}
 
+                {findingsError !== null && (
+                  <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12.5px]">
+                    Couldn&rsquo;t load findings: {findingsError}
+                    {fixLoopNeedsRuling(fixLoop) &&
+                      ' — any open findings can’t be ruled on right now.'}
+                  </div>
+                )}
                 <FindingsPanel
                   findings={findings}
                   needsRuling={fixLoopNeedsRuling(fixLoop)}

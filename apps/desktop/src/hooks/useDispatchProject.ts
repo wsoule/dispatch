@@ -319,8 +319,8 @@ export interface DispatchProjectData {
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
   pendingApprovals: Map<string, PendingApproval>;
-  /** Run id -> the scope request that run's agent is blocked on, seen live via
-   * `scope.requested` — see `pendingApprovals` for why there's no other way to get the id. */
+  /** Run id -> the scope request its agent is blocked on, seen live via
+   * `scope.requested` — see `pendingApprovals` for why. */
   pendingScopeRequests: Map<string, PendingScopeRequest>;
   handleDecideScopeRequest: (
     runId: string,
@@ -1063,9 +1063,8 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: fixLoopKey(port, event.taskId),
             });
-            // A capped loop needs a human — same "tell them" treatment as an
-            // approval or an agent's question, plus a durable inbox row (a
-            // toast alone vanishes, and nothing labels a freshly capped loop).
+            // A capped loop needs a human — a toast plus a durable inbox row,
+            // since nothing else labels a freshly capped loop.
             const liveTasks =
               queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
             const taskTitle =
@@ -1203,9 +1202,8 @@ export function useDispatchProject(
     });
   }, [runs]);
 
-  // Same cleanup as the pendingApprovals effect above, but keyed on the run reaching a
-  // terminal state rather than a specific `meta.state` — a scope request doesn't move
-  // `meta.state` the way an approval gate does, so "still running" is the only signal.
+  // Same cleanup as pendingApprovals above, but keyed on the run going
+  // terminal — a scope request doesn't move `meta.state` like an approval.
   useEffect(() => {
     if (runs === undefined) return;
     setPendingScopeRequests((prev) => {
