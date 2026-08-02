@@ -29,6 +29,7 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
       writes: [],
       risk: 'routine',
       model: null,
+      exercised: false,
       ...partial,
     },
     body: '',

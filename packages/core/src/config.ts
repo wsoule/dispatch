@@ -10,6 +10,7 @@ import type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  VerifyConfig,
 } from './configTypes.js';
 import {
   DEFAULT_FIX_LOOP,
@@ -179,6 +180,45 @@ function parseModelConfig(raw: unknown): ModelConfig {
       );
     }
     result[role] = value;
+  }
+  return result;
+}
+
+// Declared as `readonly string[]` (not the literal union) so a membership
+// check against an unvalidated `unknown` never needs an `as` cast.
+const VERIFY_FIELDS: readonly (keyof VerifyConfig)[] = [
+  'command',
+  'url',
+  'notes',
+];
+
+// Validates the optional `verify:` block. Unlike models, an absent block
+// stays absent — no recipe means the verify stage has nothing to dispatch.
+function parseVerifyConfig(raw: unknown): VerifyConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: verify must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!VERIFY_FIELDS.includes(key as keyof VerifyConfig)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown verify field "${key}" (expected ${VERIFY_FIELDS.join('|')})`
+      );
+    }
+  }
+  const result: VerifyConfig = {};
+  for (const field of VERIFY_FIELDS) {
+    const value = obj[field];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: verify.${field} must be a non-empty string`
+      );
+    }
+    result[field] = value;
   }
   return result;
 }
@@ -410,6 +450,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     models: parseModelConfig(raw.models),
     linear: parseLinearConfig(raw.linear),
     fixLoop: parseFixLoopConfig(raw.fixLoop),
+    verify: parseVerifyConfig(raw.verify),
   };
 }
 
@@ -548,6 +589,23 @@ export function updateConfig(
   }
   if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
   if (patch.fixLoop !== undefined) applyFixLoopPatch(doc, patch.fixLoop);
+  if (patch.verify !== undefined) {
+    // Same validate-before-write rule as models: a bad field must never reach
+    // disk, or loadConfig refuses the whole file afterwards.
+    for (const [field, value] of Object.entries(patch.verify)) {
+      if (!VERIFY_FIELDS.includes(field as keyof VerifyConfig)) {
+        throw new ConfigError(
+          `invalid verify field: ${field} (expected ${VERIFY_FIELDS.join('|')})`
+        );
+      }
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new ConfigError(
+          `invalid verify.${field}: must be a non-empty string`
+        );
+      }
+      doc.setIn(['verify', field], value.trim());
+    }
+  }
 
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, doc.toString());

@@ -32,6 +32,17 @@ export interface DispatchConfig {
   models: ModelConfig;
   linear: LinearConfig;
   fixLoop: FixLoopConfig;
+  /** How to run this project for a `verify` run to exercise it. Absent means
+   *  the verify stage has nothing to dispatch, so a task simply skips it. */
+  verify?: VerifyConfig;
+}
+
+/** The run recipe a `verify` run exercises the project with — none of these
+ *  are required, since a project may need only one of them explained. */
+export interface VerifyConfig {
+  command?: string;
+  url?: string;
+  notes?: string;
 }
 
 /** One rung of the fix-loop escalation ladder: how round `round`, and every
@@ -131,4 +142,5 @@ export interface ConfigPatch {
   models?: Partial<ModelConfig>;
   linear?: Partial<LinearConfig>;
   fixLoop?: Partial<FixLoopConfig>;
+  verify?: Partial<VerifyConfig>;
 }

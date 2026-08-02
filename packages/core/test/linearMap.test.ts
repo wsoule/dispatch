@@ -73,6 +73,7 @@ function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
       writes: [],
       risk: 'routine',
       model: null,
+      exercised: false,
       ...overrides,
     },
     body: '\n## Description\n\nThe PR review page blocks on a serial fetch.\n\n## Activity\n',

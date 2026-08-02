@@ -65,6 +65,9 @@ export interface UpdatePatch {
   external?: string | null;
   // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
   archivedAt?: string | null;
+  // Set once a verify run passes. Never cleared by a patch — a later failing
+  // verify run leaves it exactly as it was.
+  exercised?: boolean;
   appendActivity?: string;
   // Free-text body sections (edited as whole-section replacements via
   // taskfile.ts's setSection), so the app can edit a task's Description and
@@ -136,6 +139,7 @@ export class TaskStore {
       writes: input.writes ?? [],
       risk: input.risk ?? 'routine',
       model: input.model ?? null,
+      exercised: false,
     };
     const body = `\n## Description\n\n${input.description ?? ''}\n\n## Acceptance Criteria\n\n## Activity\n`;
     const doc: TaskDoc = { meta, body };

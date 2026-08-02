@@ -27,6 +27,7 @@ import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
 import { QuestionRegistry } from './orchestrator/questions.js';
 import { ReviewRunner } from './orchestrator/review.js';
+import { VerificationRunner } from './orchestrator/verify.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { watchTasks } from './watcher.js';
 
@@ -346,6 +347,16 @@ export async function startServer(
     orchestrator,
   });
 
+  // Verification as its own dispatched run kind, exercising finished work
+  // rather than reading its diff.
+  const verificationRunner = new VerificationRunner({
+    rootDir,
+    store,
+    cache,
+    events,
+    orchestrator,
+  });
+
   // Constructed after ReviewRunner on purpose: terminal hooks fire in
   // registration order, so a review's findings land before the loop reacts.
   const fixLoop = new FixLoop({
@@ -382,6 +393,7 @@ export async function startServer(
     findingStore,
     ledgerStore,
     reviewRunner,
+    verificationRunner,
     fixLoop,
     reviewComments: new ReviewCommentStore(rootDir),
     questions,

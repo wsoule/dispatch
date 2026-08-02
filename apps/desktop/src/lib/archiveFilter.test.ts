@@ -50,6 +50,7 @@ function makeTask(
       writes: [],
       risk: 'routine',
       model: null,
+      exercised: false,
       archivedAt,
     },
     body: '',

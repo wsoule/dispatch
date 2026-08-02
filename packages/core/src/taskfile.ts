@@ -63,6 +63,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw['archived-at'] != null && typeof raw['archived-at'] !== 'string') {
     throw new TaskParseError(`invalid archived-at: expected a string`, file);
   }
+  if (raw.exercised != null && typeof raw.exercised !== 'boolean') {
+    throw new TaskParseError(`invalid exercised: expected a boolean`, file);
+  }
   if (raw.risk != null && !TASK_RISKS.includes(raw.risk as TaskRisk)) {
     throw new TaskParseError(`invalid risk: ${String(raw.risk)}`, file);
   }
@@ -101,6 +104,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     writes: (raw.writes as string[] | undefined) ?? [],
     risk: (raw.risk as TaskRisk | undefined) ?? 'routine',
     model: raw.model ?? null,
+    exercised: (raw.exercised as boolean | undefined) ?? false,
     ...(raw['archived-at'] == null ? {} : { archivedAt: raw['archived-at'] }),
   };
   return { meta, body: content.slice(m[0].length) };
@@ -134,6 +138,7 @@ export function serializeTaskFile(doc: TaskDoc): string {
     ...(meta.archivedAt === undefined
       ? {}
       : { 'archived-at': meta.archivedAt }),
+    ...(meta.exercised ? { exercised: true } : {}),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }
