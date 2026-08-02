@@ -1,6 +1,14 @@
 export const CORE_VERSION = '0.0.1';
 export * from './types.js';
-export { generateDraftId, generateRunId, generateTaskId } from './ids.js';
+export {
+  generateDraftId,
+  generateFindingId,
+  generateLedgerId,
+  generateRunId,
+  generateTaskId,
+} from './ids.js';
+export type { Finding, FindingSeverity, FindingVerdict } from './findings.js';
+export type { LedgerEntry, LedgerKind } from './ledger.js';
 export { slugify } from './slug.js';
 export {
   parseTaskFile,

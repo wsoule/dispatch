@@ -23,6 +23,9 @@ function fixtureTask(): TaskDoc {
       updated: '2026-07-20T00:00:00.000Z',
       external: null,
       selfReview: false,
+      writes: [],
+      risk: 'routine',
+      model: null,
     },
     body:
       '\n## Description\n\nAdd a rate limiter to the login endpoint.\n\n' +
@@ -48,6 +51,9 @@ function fixtureEpic(): TaskDoc {
       updated: '2026-07-01T00:00:00.000Z',
       external: null,
       selfReview: false,
+      writes: [],
+      risk: 'routine',
+      model: null,
     },
     body: '\n## Description\n\nMake the auth system resistant to abuse.\n\n## Activity\n',
   };

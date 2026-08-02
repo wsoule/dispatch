@@ -8,6 +8,7 @@ export type TaskStatus =
 export type TaskKind = 'task' | 'epic';
 export type Priority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
 export type Assignee = 'agent' | 'human' | 'none';
+export type TaskRisk = 'routine' | 'elevated' | 'critical';
 
 export interface TaskMeta {
   id: string;
@@ -33,6 +34,12 @@ export interface TaskMeta {
   // "tests pass." Defaults to true — the extra pass is cheap next to reviewing (or merging) a
   // half-checked diff, so tasks opt out of it rather than into it.
   selfReview: boolean;
+  /** Paths or globs this task is expected to modify, declared by the planner. */
+  writes: string[];
+  /** Drives review depth and model tier. */
+  risk: TaskRisk;
+  /** Per-task model override, layered over config.models. */
+  model: string | null;
   // Set once a reconciler determines the task's merge landed; absent otherwise.
   archivedAt?: string;
 }
@@ -59,3 +66,8 @@ export const PRIORITIES: readonly Priority[] = [
 ];
 export const KINDS: readonly TaskKind[] = ['task', 'epic'];
 export const ASSIGNEES: readonly Assignee[] = ['agent', 'human', 'none'];
+export const TASK_RISKS: readonly TaskRisk[] = [
+  'routine',
+  'elevated',
+  'critical',
+];
