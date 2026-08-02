@@ -79,7 +79,7 @@ export function reviewOutputPath(rootDir: string, runId: string): string {
 }
 
 // A verify run's own directory: its structured result and any artifacts it
-// records (screenshots, logs), beside the transcript so both outlive its worktree.
+// records, beside the transcript so both outlive the worktree.
 export function verifyDir(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.verify`);
 }
