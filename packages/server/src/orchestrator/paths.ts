@@ -61,6 +61,23 @@ export function mergeQueuePath(rootDir: string): string {
   return join(runsDir(rootDir), 'merge-queue.json');
 }
 
+// A review run's own directory: the diff package it is handed and the findings
+// JSON it writes back. Beside the transcript, so both outlive its worktree.
+export function reviewDir(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.review`);
+}
+
+// The diff package file: commit list, stat and full diff, referenced by path
+// from the prompt and never pasted into it.
+export function reviewPackagePath(rootDir: string, runId: string): string {
+  return join(reviewDir(rootDir, runId), 'diff-package.md');
+}
+
+// Where the review agent must write its structured findings.
+export function reviewOutputPath(rootDir: string, runId: string): string {
+  return join(reviewDir(rootDir, runId), 'findings.json');
+}
+
 export function worktreesDir(rootDir: string): string {
   return join(dispatchHome(), '.dispatch', 'worktrees', rootHash(rootDir));
 }

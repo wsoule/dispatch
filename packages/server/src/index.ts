@@ -25,6 +25,7 @@ import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
 import { QuestionRegistry } from './orchestrator/questions.js';
+import { ReviewRunner } from './orchestrator/review.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { watchTasks } from './watcher.js';
 
@@ -333,6 +334,17 @@ export async function startServer(
   // Shares PrManager/MergeQueue's command-runner seam (opts.prCommandRunner).
   const gitRepo = new GitRepo(rootDir, opts.prCommandRunner);
 
+  // Review dispatched as its own run kind. Built at boot because it subscribes
+  // to the terminal hook that ingests a review's findings.
+  const findingStore = new FindingStore(rootDir);
+  const reviewRunner = new ReviewRunner({
+    rootDir,
+    store,
+    findingStore,
+    events,
+    orchestrator,
+  });
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -347,8 +359,9 @@ export async function startServer(
     prCapability,
     noteStore: new NoteStore(rootDir),
     inboxStore,
-    findingStore: new FindingStore(rootDir),
+    findingStore,
     ledgerStore,
+    reviewRunner,
     reviewComments: new ReviewCommentStore(rootDir),
     questions,
     linearSync,
