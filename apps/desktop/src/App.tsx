@@ -422,6 +422,14 @@ function App() {
   // would linger after the user just acted on the newest entry.
   const navigateFromInbox = useCallback(
     (target: InboxTarget) => {
+      if (target.kind === 'task') {
+        // The peek panel overlays whichever view is active, so this doesn't
+        // need a view switch the way the run/queue targets below do.
+        dispatchNav({ type: 'openPeek', taskId: target.taskId });
+        markNotificationInboxRead();
+        setInboxOpen(false);
+        return;
+      }
       selectProjectView('runs');
       if (target.kind === 'run') {
         dispatchNav({ type: 'openRun', runId: target.runId });
@@ -837,6 +845,7 @@ function App() {
             linearConfigured={isLinearConfigured(data.linearStatus)}
             onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}
             client={data.client}
+            port={data.port}
             fixLoopEscalation={data.config.fixLoop.escalation}
           />
         )}

@@ -1,6 +1,6 @@
+import type { RunKind } from '@dispatch/client';
 import { FlaskConical, GitPullRequestArrow, Hammer } from 'lucide-react';
 
-import type { RunKind } from '../../lib/apiTypes';
 import { runKindLabel } from '../../lib/runKind';
 
 const RUN_KIND_ICON: Record<RunKind, typeof Hammer> = {

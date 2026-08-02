@@ -1,4 +1,9 @@
-import type { NormalizedEntry, RunMeta, RunQuestion } from '@dispatch/client';
+import type {
+  NormalizedEntry,
+  RunMeta,
+  RunQuestion,
+  RunScopeRequest,
+} from '@dispatch/client';
 import {
   Info,
   Megaphone,
@@ -14,6 +19,7 @@ import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './QuestionCard';
+import { ScopeRequestCard } from './ScopeRequestCard';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -87,6 +93,10 @@ interface RunLogViewProps {
    * dispatch several `ask_user` calls in a single turn, and each parks its own tool call. */
   openQuestions: RunQuestion[];
   onAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
+  /** The scope request this window has seen live via `scope.requested`, fetched in full (paths
+   * + reason) once its id arrives — `null` while there isn't one or it hasn't loaded yet. */
+  pendingScopeRequest: RunScopeRequest | null;
+  onDecideScopeRequest: (granted: boolean) => Promise<void>;
   /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
    * button drives) — this view offers it too once the run is done, so talking to the agent
    * works the same way (one composer, always in the same place) whether the run is still
@@ -107,6 +117,8 @@ export function RunLogView({
   onSendMessage,
   openQuestions,
   onAnswerQuestion,
+  pendingScopeRequest,
+  onDecideScopeRequest,
   onRequestChanges,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
@@ -241,6 +253,14 @@ export function RunLogView({
           onAnswer={(answer) => onAnswerQuestion(question.id, answer)}
         />
       ))}
+
+      {pendingScopeRequest !== null && pendingScopeRequest.granted === null && (
+        <ScopeRequestCard
+          paths={pendingScopeRequest.paths}
+          reason={pendingScopeRequest.reason}
+          onDecide={onDecideScopeRequest}
+        />
+      )}
 
       {error !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">

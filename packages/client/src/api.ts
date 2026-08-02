@@ -15,6 +15,16 @@ import type {
   TaskRisk,
   UpdatePatch,
 } from '@dispatch/core';
+// Re-exported (not just imported) so a consumer of this package can name
+// these types directly, the same way it already can with `ApiClient`.
+export type {
+  Finding,
+  FindingRecommendation,
+  FindingSeverity,
+  FindingVerdict,
+  LedgerEntry,
+  LedgerKind,
+} from '@dispatch/core';
 
 // Extracted from @dispatch/web (Phase 2R Slice R2) so the same dispatchd
 // client can serve both @dispatch/web (baseUrl '' == same origin, since
@@ -919,6 +929,19 @@ export interface LinearViewer {
   email: string;
 }
 
+/** Thrown by `request()` on a non-2xx response. `message` is unchanged from
+ *  a plain `Error` (existing callers read it the same way); `status` is
+ *  additive, for a caller that needs to tell e.g. a 404 from a 500. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 // Shared fetch wrapper: resolves against `baseUrl`, throws with the server's
 // `{ error }` message (falling back to the status code) on any non-2xx
 // response, and parses the body as JSON on success. Every typed fetcher below
@@ -937,7 +960,10 @@ async function request<T>(
   const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `request failed: ${res.status}`);
+    throw new ApiError(
+      body.error ?? `request failed: ${res.status}`,
+      res.status
+    );
   }
   return (await res.json()) as T;
 }

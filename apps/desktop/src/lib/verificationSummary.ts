@@ -1,4 +1,4 @@
-import type { VerificationResult } from './apiTypes';
+import type { VerificationResult } from '@dispatch/client';
 
 export interface VerificationSummary {
   passCount: number;
