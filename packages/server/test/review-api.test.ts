@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -109,6 +110,10 @@ beforeEach(async () => {
     writeDaemonFile: false,
     registerExecutors: (orchestrator) => {
       orchestrator.registerExecutor('claude', reviewer);
+      orchestrator.registerExecutor(
+        'fake',
+        new FakeExecutor({ finish: { state: 'finished' } })
+      );
     },
   });
   baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -155,12 +160,18 @@ describe('POST /api/tasks/:id/review', () => {
   });
 
   it('builds a rubric naming the risk tier and the destructive write', async () => {
-    await startReview({
+    const res = await startReview({
       base,
       head,
       extraRisks: ['confirm the first-run path cannot bulk-overwrite'],
     });
-    await waitFor(async () => reviewer.lastPrompt !== '');
+    const meta = await json<{ id: string }>(res);
+    await waitFor(async () => {
+      const run = await json<{ meta: { state: string } }>(
+        await fetch(`${baseUrl}/api/runs/${meta.id}`)
+      );
+      return run.meta.state === 'finished';
+    });
     expect(reviewer.lastPrompt).toContain('## Risk-derived checks');
     expect(reviewer.lastPrompt).toContain('is `critical`');
     expect(reviewer.lastPrompt).toContain(
@@ -183,6 +194,55 @@ describe('POST /api/tasks/:id/review', () => {
       body: JSON.stringify({ base, head }),
     });
     expect(res.status).toBe(404);
+  });
+
+  // The manual/API trigger reviews a task's own implementation run — the
+  // path record_evidence/record_mutation actually feed, unlike the fix loop.
+  it("renders the implementation run's evidence when runId is supplied", async () => {
+    const runRes = await fetch(`${baseUrl}/api/tasks/${taskId}/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'fake' }),
+    });
+    const implRun = await json<{ id: string }>(runRes);
+    await fetch(`${baseUrl}/api/runs/${implRun.id}/evidence`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        command: 'bun test',
+        exitCode: 0,
+        durationMs: 4200,
+        summary: '158 pass, 0 fail',
+      }),
+    });
+    await fetch(`${baseUrl}/api/runs/${implRun.id}/mutations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        guard: 'null check on foo()',
+        file: 'src/foo.ts',
+        testsFailed: 0,
+      }),
+    });
+
+    const reviewRes = await startReview({ base, head, runId: implRun.id });
+    const reviewMeta = await json<{ id: string }>(reviewRes);
+    await waitFor(async () => {
+      const run = await json<{ meta: { state: string } }>(
+        await fetch(`${baseUrl}/api/runs/${reviewMeta.id}`)
+      );
+      return run.meta.state === 'finished';
+    });
+
+    expect(reviewer.lastPrompt).toContain(
+      '- `bun test` — exit 0, 4200ms: 158 pass, 0 fail'
+    );
+    expect(reviewer.lastPrompt).toContain(
+      '- `null check on foo()` in src/foo.ts: 0 test(s) failed — RED FLAG: 0 tests failed'
+    );
+    expect(reviewer.lastPrompt).toContain(
+      'A mutation record with `testsFailed: 0` is a red flag'
+    );
   });
 });
 
