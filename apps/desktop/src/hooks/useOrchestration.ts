@@ -50,13 +50,14 @@ function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;
 }
 
-/** A task's findings, for the detail dialog's findings panel. */
+/** A task's findings, for the findings panel. Check `error` before reading
+ *  an empty `findings` as "nothing open" — see `useFixLoop`. */
 export function useTaskFindings(
   client: ApiClient | null,
   port: number | undefined,
   taskId: string | undefined
 ) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: taskFindingsKey(port, taskId),
     queryFn: () => {
       if (client === null || taskId === undefined) {
@@ -65,8 +66,13 @@ export function useTaskFindings(
       return client.fetchTaskFindings(taskId);
     },
     enabled: client !== null && taskId !== undefined,
+    retry: false,
   });
-  return { findings: data ?? [], loading: isLoading };
+  return {
+    findings: data ?? [],
+    loading: isLoading,
+    error: error instanceof Error ? error.message : null,
+  };
 }
 
 /** A task's fix-loop state: `null` means no loop opened; `error` means the
@@ -90,6 +96,7 @@ export function useFixLoop(
       }
     },
     enabled: client !== null && taskId !== undefined,
+    retry: false,
   });
   return {
     fixLoop: data ?? null,
@@ -118,6 +125,7 @@ export function useTaskVerification(
       }
     },
     enabled: client !== null && taskId !== undefined,
+    retry: false,
   });
   return {
     result: data ?? null,
@@ -126,13 +134,14 @@ export function useTaskVerification(
   };
 }
 
-/** An epic's ledger — findings/decisions carried forward to its tasks. */
+/** An epic's ledger — findings/decisions carried forward to its tasks.
+ *  `error` must be checked the same way as `useTaskFindings`'s. */
 export function useEpicLedger(
   client: ApiClient | null,
   port: number | undefined,
   epicId: string | undefined
 ) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: epicLedgerKey(port, epicId),
     queryFn: () => {
       if (client === null || epicId === undefined) {
@@ -141,8 +150,13 @@ export function useEpicLedger(
       return client.fetchLedger({ epicId });
     },
     enabled: client !== null && epicId !== undefined,
+    retry: false,
   });
-  return { entries: data ?? [], loading: isLoading };
+  return {
+    entries: data ?? [],
+    loading: isLoading,
+    error: error instanceof Error ? error.message : null,
+  };
 }
 
 /** Rules on an open finding — the one write this surface needs, since a

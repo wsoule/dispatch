@@ -74,4 +74,21 @@ describe('willEscalateNextRound', () => {
       false
     );
   });
+
+  test('never escalates a capped or complete loop, even with round < cap', () => {
+    // A blocking ruling can cap a loop before round hits cap (fixLoop.ts's
+    // canSettle branch) — round 3 would otherwise read rung 4 as upcoming.
+    expect(
+      willEscalateNextRound(
+        state({ round: 3, cap: 5, state: 'capped' }),
+        escalation
+      )
+    ).toBe(false);
+    expect(
+      willEscalateNextRound(
+        state({ round: 3, cap: 5, state: 'complete' }),
+        escalation
+      )
+    ).toBe(false);
+  });
 });

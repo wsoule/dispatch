@@ -930,8 +930,7 @@ export interface LinearViewer {
 }
 
 /** Thrown by `request()` on a non-2xx response. `message` is unchanged from
- *  a plain `Error` (existing callers read it the same way); `status` is
- *  additive, for a caller that needs to tell e.g. a 404 from a 500. */
+ *  a plain `Error`; `status` is additive, for telling e.g. 404 from 500. */
 export class ApiError extends Error {
   constructor(
     message: string,

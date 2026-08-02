@@ -39,11 +39,12 @@ function rungFor(
 }
 
 /** Whether the loop's *next* round hands off to a fresh implementer — false
- *  once `round >= cap`, since `openRound` caps the loop there instead. */
+ *  once stopped (`capped`/`complete`) or `round >= cap`. */
 export function willEscalateNextRound(
   state: FixLoopState,
   escalation: readonly EscalationStep[]
 ): boolean {
+  if (state.state === 'capped' || state.state === 'complete') return false;
   if (state.round >= state.cap) return false;
   return rungFor(state.round + 1, escalation).strategy === 'fresh';
 }

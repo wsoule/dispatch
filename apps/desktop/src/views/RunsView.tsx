@@ -152,14 +152,18 @@ export function RunsView({
   const selected = data.runs.find((r) => r.id === selectedRunId);
   const selectedId = selected?.id;
   const selectedState = selected?.state;
-  // The WS event only carries the id — this resolves the paths/reason RunLogView renders.
+  // Read once and reused below for both the fetch and the decide call, so the
+  // two can never disagree about which request is pending.
+  const scopeRequestId =
+    selectedId !== undefined
+      ? data.pendingScopeRequests.get(selectedId)?.requestId
+      : undefined;
+  // The WS event only carries the id — this fetches the paths/reason.
   const { request: pendingScopeRequest } = useScopeRequest(
     data.client,
     data.port,
     selectedId,
-    selectedId !== undefined
-      ? data.pendingScopeRequests.get(selectedId)?.requestId
-      : undefined
+    scopeRequestId
   );
 
   // Built once per `data.tasksIncludingArchived`/`data.epics` change rather than re-scanned
@@ -459,12 +463,14 @@ export function RunsView({
                           : pendingScopeRequest
                       }
                       onDecideScopeRequest={(granted) =>
-                        data.handleDecideScopeRequest(
-                          selected.id,
-                          data.pendingScopeRequests.get(selected.id)
-                            ?.requestId ?? '',
-                          granted
-                        )
+                        // Undefined means it raced closed — nothing to send.
+                        scopeRequestId === undefined
+                          ? Promise.resolve()
+                          : data.handleDecideScopeRequest(
+                              selected.id,
+                              scopeRequestId,
+                              granted
+                            )
                       }
                       onRequestChanges={(text) =>
                         data.handleRequestChanges(selected.id, text)

@@ -93,8 +93,8 @@ interface RunLogViewProps {
    * dispatch several `ask_user` calls in a single turn, and each parks its own tool call. */
   openQuestions: RunQuestion[];
   onAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
-  /** The scope request this window has seen live via `scope.requested`, fetched in full (paths
-   * + reason) once its id arrives — `null` while there isn't one or it hasn't loaded yet. */
+  /** The scope request seen live via `scope.requested`, fetched in full
+   * (paths + reason) once its id arrives — `null` when there isn't one. */
   pendingScopeRequest: RunScopeRequest | null;
   onDecideScopeRequest: (granted: boolean) => Promise<void>;
   /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
