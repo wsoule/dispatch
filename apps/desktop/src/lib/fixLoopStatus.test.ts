@@ -1,0 +1,69 @@
+import type { EscalationStep } from '@dispatch/core/browser';
+import { describe, expect, test } from 'bun:test';
+
+import type { FixLoopState } from './apiTypes';
+import {
+  fixLoopNeedsRuling,
+  fixLoopStatusLabel,
+  willEscalateNextRound,
+} from './fixLoopStatus';
+
+function state(overrides: Partial<FixLoopState>): FixLoopState {
+  return {
+    taskId: 't-1',
+    round: 1,
+    cap: 5,
+    state: 'implementing',
+    baseSha: 'abc123',
+    lastReviewedSha: null,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('fixLoopStatusLabel', () => {
+  test('labels every state', () => {
+    expect(fixLoopStatusLabel(state({ state: 'idle', round: 0 }))).toBe(
+      'Not started'
+    );
+    expect(
+      fixLoopStatusLabel(state({ state: 'implementing', round: 2, cap: 5 }))
+    ).toBe('Round 2/5 · Implementing');
+    expect(
+      fixLoopStatusLabel(state({ state: 'reviewing', round: 2, cap: 5 }))
+    ).toBe('Round 2/5 · Reviewing');
+    expect(
+      fixLoopStatusLabel(state({ state: 'capped', round: 5, cap: 5 }))
+    ).toBe('Capped at 5/5 — needs a ruling');
+    expect(fixLoopStatusLabel(state({ state: 'complete' }))).toBe('Complete');
+  });
+});
+
+describe('fixLoopNeedsRuling', () => {
+  test('true only for a capped loop', () => {
+    expect(fixLoopNeedsRuling(null)).toBe(false);
+    expect(fixLoopNeedsRuling(state({ state: 'implementing' }))).toBe(false);
+    expect(fixLoopNeedsRuling(state({ state: 'capped' }))).toBe(true);
+  });
+});
+
+describe('willEscalateNextRound', () => {
+  const escalation: EscalationStep[] = [
+    { round: 1, strategy: 'resume', modelTier: 'standard' },
+    { round: 4, strategy: 'fresh', modelTier: 'high' },
+  ];
+
+  test('resumes below the escalation rung', () => {
+    expect(willEscalateNextRound(state({ round: 1 }), escalation)).toBe(false);
+    expect(willEscalateNextRound(state({ round: 2 }), escalation)).toBe(false);
+  });
+
+  test('escalates once the next round reaches the fresh rung', () => {
+    expect(willEscalateNextRound(state({ round: 3 }), escalation)).toBe(true);
+    expect(willEscalateNextRound(state({ round: 4 }), escalation)).toBe(true);
+  });
+
+  test('an empty table never escalates', () => {
+    expect(willEscalateNextRound(state({ round: 9 }), [])).toBe(false);
+  });
+});

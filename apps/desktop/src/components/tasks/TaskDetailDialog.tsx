@@ -1,10 +1,17 @@
 import type {
+  ApiClient,
   LinearIssueLink,
   LinearSyncSummary,
   PlanRecord,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type {
+  EscalationStep,
+  Finding,
+  LedgerEntry,
+  TaskDoc,
+  UpdatePatch,
+} from '@dispatch/core/browser';
 import { parseExternal } from '@dispatch/core/browser';
 import { computeStack } from '@dispatch/core/graph';
 import {
@@ -13,9 +20,11 @@ import {
   Check,
   ChevronDown,
   Eye,
+  FlaskConical,
   Layers,
   Link2,
   Plus,
+  ShieldAlert,
   Sparkles,
   Tag,
   Target,
@@ -25,7 +34,28 @@ import {
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import {
+  useAdjudicateFinding,
+  useEpicLedger,
+  useFixLoop,
+  useTaskFindings,
+  useTaskVerification,
+} from '../../hooks/useOrchestration';
+import type {
+  AdjudicateFindingInput,
+  FixLoopState,
+  VerificationResult,
+} from '../../lib/apiTypes';
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
+import {
+  countOpenFindings,
+  groupOpenFindingsBySeverity,
+} from '../../lib/findings';
+import {
+  fixLoopNeedsRuling,
+  fixLoopStatusLabel,
+  willEscalateNextRound,
+} from '../../lib/fixLoopStatus';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { pushToLinearError, resolveLinearLink } from '../../lib/linearSettings';
 import { mergeLadderLabel, mergeLadderState } from '../../lib/mergeLadder';
@@ -37,6 +67,8 @@ import {
   enrichPatch,
   enrichPlanError,
 } from '../../lib/taskEnrich';
+import { revealInFinder } from '../../lib/tauri';
+import { summarizeVerification } from '../../lib/verificationSummary';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
@@ -50,6 +82,7 @@ import {
 } from './PropertyControls';
 import { StackRail } from './StackRail';
 import { StatusIcon } from './StatusIcon';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
@@ -326,6 +359,307 @@ function BlockedByEditor({
   );
 }
 
+// Two explicit actions, never a bare "submit" — both disabled until a
+// reason is actually typed, so the ruling requirement can't be missed.
+function AdjudicateFindingForm({
+  onSubmit,
+}: {
+  onSubmit: (input: AdjudicateFindingInput) => Promise<void>;
+}) {
+  const [ruling, setRuling] = useState('');
+  const [pending, setPending] = useState<'parked' | 'blocked' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const empty = ruling.trim() === '';
+
+  async function submit(verdict: 'parked' | 'blocked') {
+    setPending(verdict);
+    setError(null);
+    try {
+      await onSubmit({ verdict, ruling: ruling.trim() });
+      setRuling('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <div className="border-border mt-1.5 flex flex-col gap-1.5 rounded-md border border-dashed p-2">
+      <Textarea
+        value={ruling}
+        onChange={(e) => setRuling(e.target.value)}
+        placeholder="Ruling — required to park or block this finding"
+        className="min-h-[44px] text-[12px]"
+      />
+      {error !== null && (
+        <div className="text-destructive text-[11px]">{error}</div>
+      )}
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={empty || pending !== null}
+          onClick={() => void submit('parked')}
+        >
+          {pending === 'parked' ? 'Parking…' : 'Park'}
+        </Button>
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={empty || pending !== null}
+          onClick={() => void submit('blocked')}
+        >
+          {pending === 'blocked' ? 'Blocking…' : 'Block'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+const SEVERITY_TONE: Record<Finding['severity'], string> = {
+  critical: 'text-state-failed',
+  important: 'text-state-waiting',
+  minor: 'text-muted-foreground',
+};
+
+// The adjudication form only attaches while the fix loop is capped — that
+// is the one moment a ruling actually does anything.
+function FindingsPanel({
+  findings,
+  needsRuling,
+  onAdjudicate,
+}: {
+  findings: Finding[];
+  needsRuling: boolean;
+  onAdjudicate: (
+    findingId: string,
+    input: AdjudicateFindingInput
+  ) => Promise<void>;
+}) {
+  const groups = groupOpenFindingsBySeverity(findings);
+  const counts = countOpenFindings(findings);
+  if (groups.length === 0) return null;
+  return (
+    <MainSection title={`Findings · ${counts.open} open`}>
+      <div className="flex flex-col gap-3">
+        {groups.map((group) => (
+          <div key={group.severity} className="flex flex-col gap-1.5">
+            <span
+              className={cn(
+                'text-[11px] font-medium tracking-wide uppercase',
+                SEVERITY_TONE[group.severity]
+              )}
+            >
+              {group.severity} · {group.findings.length}
+            </span>
+            <ul className="flex flex-col gap-2">
+              {group.findings.map((finding) => (
+                <li
+                  key={finding.id}
+                  className="border-border/60 rounded-md border px-2.5 py-2"
+                >
+                  <div className="text-[13px] font-medium">{finding.title}</div>
+                  {finding.file !== null && (
+                    <div className="text-muted-foreground font-mono text-[11px]">
+                      {finding.file}
+                      {finding.line !== null ? `:${finding.line}` : ''}
+                    </div>
+                  )}
+                  <p className="text-muted-foreground mt-1 text-[12.5px] whitespace-pre-wrap">
+                    {finding.detail}
+                  </p>
+                  {needsRuling && (
+                    <AdjudicateFindingForm
+                      onSubmit={(input) => onAdjudicate(finding.id, input)}
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </MainSection>
+  );
+}
+
+// Capped renders with the same "needs you" amber treatment as an agent's
+// question — that is exactly what it is.
+function FixLoopSection({
+  fixLoop,
+  escalation,
+}: {
+  fixLoop: FixLoopState;
+  escalation: EscalationStep[];
+}) {
+  const capped = fixLoop.state === 'capped';
+  const escalates =
+    fixLoop.state !== 'capped' &&
+    fixLoop.state !== 'complete' &&
+    willEscalateNextRound(fixLoop, escalation);
+  return (
+    <MainSection title="Fix loop">
+      <div
+        className={cn(
+          'flex items-center gap-2 rounded-md border px-2.5 py-2 text-[13px]',
+          capped
+            ? 'border-state-waiting-edge bg-state-waiting-surface text-state-waiting'
+            : 'border-border/60'
+        )}
+      >
+        <ShieldAlert className="size-3.5 shrink-0" />
+        <span>{fixLoopStatusLabel(fixLoop)}</span>
+        {escalates && (
+          <span className="text-muted-foreground ml-auto text-[11px]">
+            Next round hands off to a fresh implementer
+          </span>
+        )}
+      </div>
+    </MainSection>
+  );
+}
+
+// `exercised` (the app actually ran) stays visually distinct from whatever
+// review status the header already shows — the two answer different asks.
+function VerificationSection({
+  exercised,
+  result,
+}: {
+  exercised: boolean;
+  result: VerificationResult | null;
+}) {
+  const summary = summarizeVerification(result);
+  return (
+    <MainSection title="Verification">
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-[13px]">
+          <FlaskConical
+            className={cn(
+              'size-3.5',
+              exercised ? 'text-state-review' : 'text-muted-foreground'
+            )}
+          />
+          <span
+            className={
+              exercised
+                ? 'text-state-review font-medium'
+                : 'text-muted-foreground'
+            }
+          >
+            {exercised ? 'Exercised' : 'Not exercised'}
+          </span>
+          <span className="text-muted-foreground text-[12px]">
+            · {summary.label}
+          </span>
+        </div>
+        {result !== null && result.checks.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {result.checks.map((check, i) => (
+              <li key={i} className="text-[12px]">
+                <span
+                  className={
+                    check.pass ? 'text-state-review' : 'text-state-failed'
+                  }
+                >
+                  {check.pass ? '✓' : '✗'}
+                </span>{' '}
+                <span className="text-foreground/90">{check.check}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {result !== null && result.artifacts.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {result.artifacts.map((path) =>
+              path.startsWith('/') ? (
+                <button
+                  key={path}
+                  type="button"
+                  onClick={() => {
+                    revealInFinder(path).catch((err: unknown) => {
+                      console.error(`Failed to reveal ${path}:`, err);
+                    });
+                  }}
+                  className="border-border/60 text-muted-foreground hover:text-foreground rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                >
+                  {path}
+                </button>
+              ) : (
+                <span
+                  key={path}
+                  className="text-muted-foreground rounded border border-transparent px-1.5 py-0.5 font-mono text-[11px]"
+                >
+                  {path}
+                </span>
+              )
+            )}
+          </div>
+        )}
+      </div>
+    </MainSection>
+  );
+}
+
+const LEDGER_KIND_ORDER: readonly LedgerEntry['kind'][] = [
+  'constraint',
+  'hazard',
+  'decision',
+  'handoff',
+];
+
+const LEDGER_KIND_LABEL: Record<LedgerEntry['kind'], string> = {
+  constraint: 'Constraint',
+  hazard: 'Hazard',
+  decision: 'Decision',
+  handoff: 'Handoff',
+};
+
+// An epic's carried-forward findings/decisions, grouped by kind and
+// attributed to the task that raised each one.
+function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
+  if (entries.length === 0) return null;
+  const groups = LEDGER_KIND_ORDER.map((kind) => ({
+    kind,
+    entries: entries.filter((e) => e.kind === kind),
+  })).filter((group) => group.entries.length > 0);
+  return (
+    <MainSection title={`Ledger · ${entries.length}`}>
+      <div className="flex flex-col gap-3">
+        {groups.map((group) => (
+          <div key={group.kind} className="flex flex-col gap-1.5">
+            <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+              {LEDGER_KIND_LABEL[group.kind]} · {group.entries.length}
+            </span>
+            <ul className="flex flex-col gap-2">
+              {group.entries.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="border-border/60 rounded-md border px-2.5 py-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-medium">
+                      {entry.title}
+                    </span>
+                    {entry.sourceTaskId !== null && (
+                      <span className="text-muted-foreground ml-auto font-mono text-[11px]">
+                        {entry.sourceTaskId}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-muted-foreground mt-1 text-[12.5px] whitespace-pre-wrap">
+                    {entry.detail}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </MainSection>
+  );
+}
+
 interface TaskDetailDialogProps {
   doc: TaskDoc;
   statuses: string[];
@@ -373,6 +707,11 @@ interface TaskDetailDialogProps {
   /** Pushes this task to Linear now (creating the issue if unlinked). Optional so a caller
    * without Linear plumbing gets no push affordance. */
   onPushToLinear?: (id: string) => Promise<LinearSyncSummary>;
+  /** The dispatchd client — this dialog fetches its own findings/fix-loop/
+   * verification/ledger data rather than going through the app-level hook. */
+  client: ApiClient | null;
+  /** The project's escalation ladder, for the "fresh implementer" hint. */
+  fixLoopEscalation: EscalationStep[];
 }
 
 /**
@@ -407,6 +746,8 @@ export function TaskDetailDialog({
   linearLinks,
   linearConfigured,
   onPushToLinear,
+  client,
+  fixLoopEscalation,
 }: TaskDetailDialogProps) {
   const [title, setTitle] = useState(doc.meta.title);
   const [activityDraft, setActivityDraft] = useState('');
@@ -446,6 +787,17 @@ export function TaskDetailDialog({
   // but the display map has no entry for its UUID yet.
   const linearLink = resolveLinearLink(doc.meta.external, linearLinks);
   const linearLinked = parseExternal(doc.meta.external) !== null;
+
+  const { findings } = useTaskFindings(client, doc.meta.id);
+  const { fixLoop } = useFixLoop(client, doc.meta.id);
+  const { result: verification } = useTaskVerification(client, doc.meta.id);
+  // Only ever meaningful for an epic — `useEpicLedger` no-ops (empty,
+  // disabled) when `epicId` is undefined, so this is safe on a plain task.
+  const { entries: ledgerEntries } = useEpicLedger(
+    client,
+    doc.meta.kind === 'epic' ? doc.meta.id : undefined
+  );
+  const adjudicateFinding = useAdjudicateFinding(client);
 
   async function pushToLinear() {
     if (onPushToLinear === undefined) return;
@@ -606,6 +958,7 @@ export function TaskDetailDialog({
   const sections = parseTaskSections(doc.body);
   const description = sections.get('Description') ?? '';
   const acceptance = sections.get('Acceptance Criteria') ?? '';
+  const amendments = sections.get('Amendments') ?? '';
   // The Activity section body is append-only free text, one line per entry (see
   // core/store.ts's template) — split it into a feed of entries rather than one flat block.
   const activityEntries = (sections.get('Activity') ?? '')
@@ -747,6 +1100,10 @@ export function TaskDetailDialog({
                   </div>
                 )}
 
+                {doc.meta.kind === 'epic' && (
+                  <LedgerSection entries={ledgerEntries} />
+                )}
+
                 {onEnrich !== undefined && (
                   <div className="-mt-2 flex flex-col gap-2">
                     <div className="flex items-center gap-2">
@@ -852,6 +1209,21 @@ export function TaskDetailDialog({
                   </div>
                 )}
 
+                {fixLoop !== null && (
+                  <FixLoopSection
+                    fixLoop={fixLoop}
+                    escalation={fixLoopEscalation}
+                  />
+                )}
+
+                <FindingsPanel
+                  findings={findings}
+                  needsRuling={fixLoopNeedsRuling(fixLoop)}
+                  onAdjudicate={async (findingId, input) => {
+                    await adjudicateFinding(doc.meta.id, findingId, input);
+                  }}
+                />
+
                 <EditableBodySection
                   title="Description"
                   value={description}
@@ -867,6 +1239,14 @@ export function TaskDetailDialog({
                     void runUpdate({ acceptanceCriteria: next })
                   }
                 />
+
+                {amendments !== '' && (
+                  <MainSection title="Amendments">
+                    <p className="text-muted-foreground text-[13px] whitespace-pre-wrap">
+                      {amendments}
+                    </p>
+                  </MainSection>
+                )}
 
                 <MainSection
                   title={`Sessions${runs.length > 0 ? ` · ${runs.length}` : ''}`}
@@ -899,6 +1279,11 @@ export function TaskDetailDialog({
                     </ul>
                   )}
                 </MainSection>
+
+                <VerificationSection
+                  exercised={doc.meta.exercised}
+                  result={verification}
+                />
 
                 <MainSection title="Activity">
                   {activityEntries.length === 0 ? (

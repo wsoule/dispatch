@@ -836,6 +836,8 @@ function App() {
             linearLinks={data.linearLinks}
             linearConfigured={isLinearConfigured(data.linearStatus)}
             onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}
+            client={data.client}
+            fixLoopEscalation={data.config.fixLoop.escalation}
           />
         )}
 
