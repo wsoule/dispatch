@@ -1,4 +1,5 @@
 import type {
+  FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
   LedgerKind,
@@ -11,6 +12,7 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 // check against an unvalidated `unknown` never needs an `as` cast.
 const SEVERITIES: readonly string[] = ['critical', 'important', 'minor'];
 const VERDICTS: readonly string[] = ['open', 'addressed', 'parked', 'blocked'];
+const RECOMMENDATIONS: readonly string[] = ['blocks', 'park'];
 const LEDGER_KINDS: readonly string[] = [
   'constraint',
   'hazard',
@@ -53,6 +55,7 @@ export async function createFinding(
     file?: unknown;
     line?: unknown;
     round?: unknown;
+    recommendation?: unknown;
   };
   if (typeof body.taskId !== 'string' || body.taskId.trim() === '') {
     return errorResponse(400, 'invalid taskId: taskId is required');
@@ -72,6 +75,16 @@ export async function createFinding(
   if (typeof body.detail !== 'string' || body.detail.trim() === '') {
     return errorResponse(400, 'invalid detail: detail is required');
   }
+  if (
+    body.recommendation !== undefined &&
+    (typeof body.recommendation !== 'string' ||
+      !RECOMMENDATIONS.includes(body.recommendation))
+  ) {
+    return errorResponse(
+      400,
+      `invalid recommendation: ${String(body.recommendation)} (expected ${RECOMMENDATIONS.join('|')})`
+    );
+  }
   const finding = ctx.findingStore.add({
     taskId: body.taskId,
     runId: typeof body.runId === 'string' ? body.runId : null,
@@ -81,6 +94,7 @@ export async function createFinding(
     file: typeof body.file === 'string' ? body.file : null,
     line: typeof body.line === 'number' ? body.line : null,
     round: typeof body.round === 'number' ? body.round : undefined,
+    recommendation: body.recommendation as FindingRecommendation | undefined,
   });
   ctx.events.broadcast({ type: 'finding.changed' });
   return jsonResponse(finding, 201);

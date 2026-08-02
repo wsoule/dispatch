@@ -26,7 +26,12 @@ class ScriptedReviewer implements Executor {
     this.lastPrompt = opts.prompt;
     const match = /as one JSON object: (\S+)/.exec(opts.prompt);
     setTimeout(() => {
-      if (match !== null) writeFileSync(match[1], this.output);
+      try {
+        if (match !== null) writeFileSync(match[1], this.output);
+      } catch {
+        // The run directory can be torn down before this fires; the finish
+        // below still has to happen so nothing hangs.
+      }
       events.onFinish({ state: 'finished' });
     }, 0);
     return { interrupt: async () => {}, send: () => {}, approve: () => {} };
@@ -144,7 +149,8 @@ describe('POST /api/tasks/:id/review', () => {
     );
     expect(findings[0].severity).toBe('critical');
     expect(findings[0].verdict).toBe('open');
-    expect(findings[0].detail).toContain('Recommendation: blocks');
+    expect(findings[0].recommendation).toBe('blocks');
+    expect(findings[0].detail).toBe('reproduced against a scratch copy');
     expect(findings[0].runId).toBe(meta.id);
   });
 
