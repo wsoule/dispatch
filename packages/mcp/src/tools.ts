@@ -5,6 +5,7 @@ import {
   loadConfig,
   PRIORITIES,
   readyTasks,
+  TASK_RISKS,
   TaskParseError,
   TaskStore,
 } from '@dispatch/core';
@@ -76,18 +77,24 @@ function validate<T extends string>(
   return value as T;
 }
 
-// TaskSummary: TaskMeta minus `external`, used by task_list/task_next to keep
-// list payloads small (bodies are never included in a list response).
+// TaskSummary: the fields task_list/task_next return, chosen to keep list
+// payloads small (no body, and none of taskMetaShape's extras below).
 const taskSummaryShape = {
   id: z.string(),
   title: z.string(),
   status: z.string(),
   kind: z.enum(KINDS as unknown as [string, ...string[]]),
   parent: z.string().nullable(),
+  // The grouping above epics, free-form and `null` when unassigned.
+  milestone: z.string().nullable(),
   blockedBy: z.array(z.string()),
   labels: z.array(z.string()),
   priority: z.enum(PRIORITIES as unknown as [string, ...string[]]),
   assignee: z.enum(ASSIGNEES as unknown as [string, ...string[]]),
+  // Drives review depth and model tier, so an agent picking work needs it.
+  risk: z.enum(TASK_RISKS as unknown as [string, ...string[]]),
+  // Set once a verify run has actually exercised this task's work.
+  exercised: z.boolean(),
   created: z.string(),
   updated: z.string(),
 };
@@ -96,6 +103,10 @@ const taskMetaShape = {
   ...taskSummaryShape,
   external: z.string().nullable(),
   writes: z.array(z.string()),
+  selfReview: z.boolean(),
+  model: z.string().nullable(),
+  // Only present once a reconciler decided the task's merge landed.
+  archivedAt: z.string().optional(),
 };
 
 function toSummary(doc: TaskDoc) {
@@ -105,10 +116,13 @@ function toSummary(doc: TaskDoc) {
     status,
     kind,
     parent,
+    milestone,
     blockedBy,
     labels,
     priority,
     assignee,
+    risk,
+    exercised,
     created,
     updated,
   } = doc.meta;
@@ -118,10 +132,13 @@ function toSummary(doc: TaskDoc) {
     status,
     kind,
     parent,
+    milestone,
     blockedBy,
     labels,
     priority,
     assignee,
+    risk,
+    exercised,
     created,
     updated,
   };
@@ -211,11 +228,15 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
   }
 }
 
-// Mirrors @dispatch/server's orchestrator/types.ts TERMINAL_RUN_STATES —
-// kept as a plain local copy (like run_list's loosely-typed RunMeta) since
-// @dispatch/mcp intentionally has no dependency on the Bun-only
-// @dispatch/server package.
-const TERMINAL_RUN_STATES = new Set(['finished', 'failed', 'cancelled']);
+// A plain local copy of @dispatch/server's TERMINAL_RUN_STATES, since
+// @dispatch/mcp has no dependency on that Bun-only package. `interrupted-dirty`
+// counts: a failed run holding uncommitted work, with nothing to inject into.
+const TERMINAL_RUN_STATES = new Set([
+  'finished',
+  'failed',
+  'cancelled',
+  'interrupted-dirty',
+]);
 
 interface LiveRunLike {
   id: string;
@@ -655,7 +676,9 @@ async function requestScope(
     } catch {
       // A dropped or timed-out poll says nothing about the decision; ask again.
     }
-    if (polled !== null && polled.granted !== null) {
+    // `typeof`, not a not-null check: anything that isn't a boolean must keep
+    // waiting and end at the self-deny rather than escape as a grant.
+    if (polled !== null && typeof polled.granted === 'boolean') {
       return toolResult({
         granted: polled.granted,
         reason: polled.decisionReason ?? '',
@@ -730,7 +753,16 @@ async function dispatchNote(
       );
     }
     const created = (await res.json()) as { id: string }[];
-    return toolResult({ ok: true, id: created[0]?.id ?? null });
+    // The inbox can 201 and still store nothing (a title of pure bullet
+    // punctuation), and no id breaks this tool's own `id: string` schema.
+    const id = created[0]?.id;
+    if (id === undefined) {
+      return toolError(
+        'dispatch_note failed: nothing was captured from that title — ' +
+          'give it some words, not just punctuation'
+      );
+    }
+    return toolResult({ ok: true, id });
   } catch (err) {
     return toolError(`dispatch_note failed: ${(err as Error).message}`);
   }

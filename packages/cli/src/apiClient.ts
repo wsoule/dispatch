@@ -5,14 +5,19 @@ import { CliError } from './context.js';
 // Hand-kept mirrors of @dispatch/server's orchestrator types: server is Bun-only and
 // unimportable here. CommandEvidence/MutationEvidence are pure core types instead.
 
-export type RunState =
-  | 'provisioning'
-  | 'running'
-  | 'awaiting-approval'
-  | 'finished'
-  | 'failed'
-  | 'cancelled'
-  | 'interrupted-dirty';
+// An array, not a bare union, so the member list exists at runtime for
+// run-state-mirror.test.ts to compare against the server's own RunState.
+export const RUN_STATES = [
+  'provisioning',
+  'running',
+  'awaiting-approval',
+  'finished',
+  'failed',
+  'cancelled',
+  'interrupted-dirty',
+] as const;
+
+export type RunState = (typeof RUN_STATES)[number];
 
 export interface RunMeta {
   id: string;
@@ -29,18 +34,36 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
+  model?: string;
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';
+  mergeCommit?: string;
   prUrl?: string;
+  archivedAt?: string;
+  resumedFrom?: string;
+  stackParents?: string[];
+  stackBaseCommit?: string;
+  baseDiscarded?: boolean;
+  baseDiscardedReason?: string;
+  // What a `failed`/`interrupted-dirty` run left uncommitted. Loosely typed:
+  // no CLI surface reads inside it yet.
+  survey?: unknown;
+  kind?: 'execute' | 'review' | 'verify';
+  claims?: string[];
 }
 
 export interface NormalizedEntry {
   ts: string;
-  kind: 'assistant' | 'tool' | 'thinking' | 'system' | 'usage';
+  kind: 'assistant' | 'tool' | 'thinking' | 'system' | 'usage' | 'message';
   text?: string;
   toolName?: string;
   toolInput?: unknown;
   status?: 'running' | 'done' | 'error';
+  // `kind: 'message'` only: this run's human (`user`), another run's
+  // agent_message (`fromLabel`), or this run's own message_user (`toUser`).
+  from?: 'user' | 'agent';
+  fromLabel?: string;
+  toUser?: boolean;
 }
 
 export interface RunDetail {
@@ -130,8 +153,8 @@ export interface EpicProgress {
   liveRuns: RunMeta[];
 }
 
-// Mirrors packages/server/src/events.ts's ServerEvent union exactly — the
-// WS message shape `--watch` parses.
+// The subset of packages/server/src/events.ts's ServerEvent union that
+// `--watch` acts on — deliberately partial; any other event is ignored.
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
