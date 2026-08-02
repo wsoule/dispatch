@@ -518,6 +518,166 @@ async function askUser(
   };
 }
 
+/** How long `request_scope` waits, and how hard it polls while waiting. */
+export interface ScopeTiming {
+  /** Total budget across every poll before self-denying. */
+  totalWaitMs: number;
+  /** Per-request timeout; longer than the daemon's own 30s poll window. */
+  requestTimeoutMs: number;
+  /** Pause after a clean undecided poll, and after a failed one. */
+  retryDelayMs: number;
+  errorDelayMs: number;
+}
+
+// Same numbers as DEFAULT_QUESTION_TIMING, and the same reasoning: the
+// executor's MCP client timeout sits above totalWaitMs (see claude.ts).
+export const DEFAULT_SCOPE_TIMING: ScopeTiming = {
+  totalWaitMs: 30 * 60_000,
+  requestTimeoutMs: 45_000,
+  retryDelayMs: 250,
+  errorDelayMs: 2000,
+};
+
+interface ScopeRequestRecord {
+  id: string;
+  granted: boolean | null;
+  decisionReason: string | null;
+}
+
+const EXPIRED_SCOPE_REASON =
+  'No one decided in time. Treat this as denied: proceed within your ' +
+  'original fence, and report the blocker in your final summary and in a ' +
+  'task_comment.';
+
+// Reached the total budget with no decision — denies on the agent's behalf,
+// unless a decision landed in the instant before this call, which wins instead.
+async function selfDenyExpiredScope(
+  base: string,
+  id: string,
+  timing: ScopeTiming
+): Promise<{ granted: boolean; reason: string }> {
+  try {
+    const res = await fetch(`${base}/${id}/decide`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        granted: false,
+        reason: EXPIRED_SCOPE_REASON,
+      }),
+      signal: AbortSignal.timeout(timing.requestTimeoutMs),
+    });
+    if (res.ok) {
+      const record = (await res.json()) as ScopeRequestRecord;
+      return {
+        granted: record.granted ?? false,
+        reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
+      };
+    }
+    if (res.status === 409) {
+      const current = await fetch(`${base}/${id}`);
+      if (current.ok) {
+        const record = (await current.json()) as ScopeRequestRecord;
+        return {
+          granted: record.granted ?? false,
+          reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
+        };
+      }
+    }
+  } catch {
+    // The daemon is unreachable at the very end of the budget — deny locally.
+  }
+  return { granted: false, reason: EXPIRED_SCOPE_REASON };
+}
+
+// Posts the scope request, then long-polls `?wait=1` until it is decided. An
+// undecided poll is normal; a 404 means the daemon forgot the request.
+async function requestScope(
+  rootDir: string,
+  args: { paths: string[]; reason: string },
+  timing: ScopeTiming,
+  signal?: AbortSignal
+): Promise<ToolOutcome> {
+  if (args.paths.length === 0) {
+    return toolError('paths must not be empty');
+  }
+  if (args.reason.trim() === '') {
+    return toolError('reason must not be empty');
+  }
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'request_scope requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — no one to ask');
+  }
+  const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/scope-requests`;
+
+  let request: ScopeRequestRecord;
+  try {
+    const res = await fetch(base, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: args.paths, reason: args.reason }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `request_scope failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    request = (await res.json()) as ScopeRequestRecord;
+  } catch (err) {
+    return toolError(`request_scope failed: ${(err as Error).message}`);
+  }
+
+  const deadline = Date.now() + timing.totalWaitMs;
+  // Set when the daemon has already forgotten the request (its run closed),
+  // so the give-up path below knows there is nothing left to decide.
+  let gone = false;
+  while (Date.now() < deadline && signal?.aborted !== true) {
+    let polled: ScopeRequestRecord | null = null;
+    try {
+      const res = await fetch(`${base}/${request.id}?wait=1`, {
+        signal: pollSignal(timing.requestTimeoutMs, signal),
+      });
+      if (res.status === 404) {
+        gone = true;
+        break;
+      }
+      if (res.ok) polled = (await res.json()) as ScopeRequestRecord;
+    } catch {
+      // A dropped or timed-out poll says nothing about the decision; ask again.
+    }
+    if (polled !== null && polled.granted !== null) {
+      return toolResult({
+        granted: polled.granted,
+        reason: polled.decisionReason ?? '',
+      });
+    }
+    if (signal !== undefined && signal.aborted) break;
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        polled !== null ? timing.retryDelayMs : timing.errorDelayMs
+      )
+    );
+  }
+
+  // Budget exhausted (or the client cancelled): a timeout must never read as
+  // permission, so this denies rather than leaving the agent blocked forever.
+  const outcome = gone
+    ? { granted: false, reason: EXPIRED_SCOPE_REASON }
+    : await selfDenyExpiredScope(base, request.id, timing);
+  return {
+    content: [{ type: 'text', text: outcome.reason }],
+    structuredContent: outcome,
+  };
+}
+
 // Proxies `POST /api/notes` — the agent side of the notes/triage hub. Lets an
 // agent capture triage it finds mid-run ("this file is huge, refactor it"), a
 // follow-up to do after merge, or a plain note, without derailing to file a
@@ -739,9 +899,10 @@ async function recordMutation(
 export function registerDispatchTools(
   server: McpServer,
   rootDir: string,
-  opts: { questionTiming?: QuestionTiming } = {}
+  opts: { questionTiming?: QuestionTiming; scopeTiming?: ScopeTiming } = {}
 ): void {
   const questionTiming = opts.questionTiming ?? DEFAULT_QUESTION_TIMING;
+  const scopeTiming = opts.scopeTiming ?? DEFAULT_SCOPE_TIMING;
   server.registerTool(
     'task_list',
     {
@@ -1036,6 +1197,31 @@ export function registerDispatchTools(
     },
     ({ question, options }, extra) =>
       askUser(rootDir, { question, options }, questionTiming, extra.signal)
+  );
+
+  server.registerTool(
+    'request_scope',
+    {
+      title: 'Ask to edit outside your fence, and wait',
+      description:
+        'Ask to make a specific out-of-scope edit and block until it is ' +
+        'granted or denied — use this when your assigned scope cannot ' +
+        'compile or complete correctly without touching a file outside it ' +
+        '(e.g. a shared barrel that never re-exported a type your own code ' +
+        'needs). Do not use it to expand scope for convenience; only for a ' +
+        'genuine dead end. List every path you need in `paths` and explain ' +
+        'why in `reason`. If nobody decides in time, this returns denied — ' +
+        'proceed within your original fence and report the blocker in your ' +
+        'final summary and in a task_comment. Requires a live dispatch run context.',
+      inputSchema: {
+        paths: z.array(z.string()),
+        reason: z.string(),
+      },
+      outputSchema: { granted: z.boolean(), reason: z.string() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ paths, reason }, extra) =>
+      requestScope(rootDir, { paths, reason }, scopeTiming, extra.signal)
   );
 
   server.registerTool(

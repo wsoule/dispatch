@@ -107,6 +107,7 @@ describe('dispatch-mcp stdio e2e', () => {
         'record_decision',
         'record_evidence',
         'record_mutation',
+        'request_scope',
         'run_list',
         'task_comment',
         'task_get',

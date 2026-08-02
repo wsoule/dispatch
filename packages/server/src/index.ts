@@ -28,6 +28,7 @@ import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
 import { QuestionRegistry } from './orchestrator/questions.js';
 import { ReviewRunner } from './orchestrator/review.js';
+import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
@@ -269,6 +270,12 @@ export async function startServer(
       events.broadcast({ type: 'question.closed', runId: meta.id });
     }
   });
+  // Same lifecycle for out-of-scope edit requests: a run that ends still
+  // holding one open should not leave it dangling for a human to find later.
+  const scopeRequests = new ScopeRequestRegistry();
+  orchestrator.onRunTerminal((meta) => {
+    scopeRequests.closeRun(meta.id);
+  });
 
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching
@@ -407,6 +414,7 @@ export async function startServer(
     fixLoop,
     reviewComments: new ReviewCommentStore(rootDir),
     questions,
+    scopeRequests,
     linearSync,
     gitRepo,
   };
