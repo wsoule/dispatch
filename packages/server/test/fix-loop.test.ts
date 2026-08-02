@@ -91,6 +91,27 @@ class GatedAgent implements Executor {
   }
 }
 
+// Commits a file the task's writes don't cover, once — a resumed round
+// reuses the same worktree, where a second commit would find nothing changed.
+class UndeclaredWriteAgent implements Executor {
+  private committed = false;
+
+  start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+    const match = /as one JSON object: (\S+)/.exec(opts.prompt);
+    setTimeout(() => {
+      if (match === null && !this.committed) {
+        this.committed = true;
+        writeFileSync(join(opts.cwd, 'undeclared.ts'), 'export const y = 1;\n');
+        runGitSync(opts.cwd, ['add', '-A']);
+        runGitSync(opts.cwd, ['commit', '-m', 'touch an undeclared file']);
+      }
+      if (match !== null) writeFileSync(match[1], '{"findings": []}');
+      events.onFinish({ state: 'finished', sessionId: 'session-1' });
+    }, 0);
+    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+  }
+}
+
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
@@ -590,5 +611,27 @@ describe('POST /api/tasks/:id/findings/:fid/adjudicate', () => {
     expect(task.meta.labels).toContain('blocked');
     expect(task.body).toContain('blocked by finding');
     expect((await fixLoopState()).state).toBe('capped');
+  }, 30000);
+});
+
+describe('an undeclared write', () => {
+  it('is filed once and still lets the loop reach complete', async () => {
+    new TaskStore(root).update(taskId, { writes: ['docs/**'] });
+    await restartWith(new UndeclaredWriteAgent());
+    await seedFinding();
+    await advance({ baseSha });
+
+    const state = await settle();
+    expect(state.state).toBe('complete');
+
+    const findings = await fetch(
+      `${baseUrl}/api/findings?taskId=${taskId}`
+    ).then((res) => json<Finding[]>(res));
+    const undeclared = findings.filter((f) =>
+      f.title.includes('outside declared writes')
+    );
+    expect(undeclared).toHaveLength(1);
+    expect(undeclared[0].file).toBe('undeclared.ts');
+    expect(undeclared[0].severity).toBe('minor');
   }, 30000);
 });

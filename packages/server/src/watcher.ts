@@ -37,9 +37,13 @@ export function watchTasks(tasksDir: string, onChange: () => void): Watcher {
   };
 }
 
-// Watches each of `dirs` recursively, sharing one debounce window. A dir
-// that fails to watch (missing, or unsupported here) is skipped, not fatal.
-export function watchSourceDirs(dirs: string[], onChange: () => void): Watcher {
+// Watches each of `dirs` recursively; a dir that fails to watch is skipped.
+// `shouldIgnore` filters events by path, e.g. a build's own dist/ output.
+export function watchSourceDirs(
+  dirs: string[],
+  onChange: () => void,
+  shouldIgnore: (changedPath: string) => boolean = () => false
+): Watcher {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const schedule = () => {
     if (timer !== null) clearTimeout(timer);
@@ -51,7 +55,12 @@ export function watchSourceDirs(dirs: string[], onChange: () => void): Watcher {
   const watchers = dirs.flatMap((dir) => {
     if (!existsSync(dir)) return [];
     try {
-      return [watch(dir, { recursive: true }, schedule)];
+      return [
+        watch(dir, { recursive: true }, (_event, filename) => {
+          if (filename !== null && shouldIgnore(filename)) return;
+          schedule();
+        }),
+      ];
     } catch {
       return [];
     }

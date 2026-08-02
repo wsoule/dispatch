@@ -1,11 +1,12 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { isSkippedPath } from '../src/depmap.js';
 import type { Watcher } from '../src/watcher.js';
-import { watchTasks } from '../src/watcher.js';
+import { watchSourceDirs, watchTasks } from '../src/watcher.js';
 
 let root: string;
 let store: TaskStore;
@@ -82,4 +83,59 @@ describe('watchTasks', () => {
     await done;
     expect(calls).toBe(1);
   }, 30_000);
+});
+
+describe('watchSourceDirs', () => {
+  it('fires onChange after a debounce window when a file is written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-source-watch-'));
+    const changed = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('watcher did not fire onChange in time')),
+        3000
+      );
+      watcher = watchSourceDirs([dir], () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    writeFileSync(join(dir, 'a.ts'), 'export const x = 1;\n');
+    await changed;
+  });
+
+  // Exercises the real combination Important 4 fixed: a non-monorepo root
+  // includes .dispatch, which the daemon writes to continuously.
+  it('ignores changes under a skipped directory but still watches for real ones', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-source-watch-skip-'));
+    mkdirSync(join(dir, '.dispatch', 'runs'), { recursive: true });
+    let calls = 0;
+    watcher = watchSourceDirs(
+      [dir],
+      () => {
+        calls += 1;
+      },
+      isSkippedPath
+    );
+    writeFileSync(join(dir, '.dispatch', 'runs', 'r-1.jsonl'), '{}\n');
+    // Give the ignored write a full debounce window to (not) fire.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(calls).toBe(0);
+
+    // A real source change still reaches onChange — the watcher is alive,
+    // it just filtered the .dispatch write above.
+    const changed = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('watcher did not fire onChange in time')),
+        3000
+      );
+      const check = setInterval(() => {
+        if (calls > 0) {
+          clearInterval(check);
+          clearTimeout(timer);
+          resolve();
+        }
+      }, 20);
+    });
+    writeFileSync(join(dir, 'real.ts'), 'export const x = 1;\n');
+    await changed;
+  });
 });

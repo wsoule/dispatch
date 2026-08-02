@@ -261,22 +261,27 @@ export function buildDepMap(rootDir: string): DepMap {
   }
 
   return {
-    // BFS over the reverse-import index: direct and indirect importers, so a
-    // change several hops from a leaf module still surfaces its blast radius.
+    // BFS over the reverse-import index, sorted by hop distance then name —
+    // a high-fanout file's direct importers must survive a later cap.
     dependents(file: string): string[] {
       const start = normalizeInputPath(file);
-      const seen = new Set<string>();
+      const depth = new Map<string, number>([[start, 0]]);
       const queue = [start];
       while (queue.length > 0) {
         const current = queue.shift() as string;
         for (const importer of reverseImports.get(current) ?? []) {
-          if (!seen.has(importer)) {
-            seen.add(importer);
+          if (!depth.has(importer)) {
+            depth.set(importer, (depth.get(current) as number) + 1);
             queue.push(importer);
           }
         }
       }
-      return [...seen].sort();
+      depth.delete(start);
+      return [...depth.entries()]
+        .sort(([fa, da], [fb, db]) =>
+          da !== db ? da - db : fa < fb ? -1 : fa > fb ? 1 : 0
+        )
+        .map(([f]) => f);
     },
     // Direct only: a mirror comment is a first-person claim, not something
     // to chase transitively.
@@ -287,16 +292,19 @@ export function buildDepMap(rootDir: string): DepMap {
   };
 }
 
-// Every `src`/`test` directory the map scans, for the caller that watches
-// them to know when to invalidate a cached map.
+// The top-level workspace roots, so a package added after boot is watched
+// without re-deriving this list — not each member's own src/test.
 export function depMapSourceDirs(rootDir: string): string[] {
-  const packages = discoverPackages(rootDir);
-  if (packages.size === 0) return [rootDir];
-  const dirs: string[] = [];
-  for (const pkg of packages.values()) {
-    for (const sub of MEMBER_SUBDIRS) dirs.push(join(pkg.dir, sub));
-  }
-  return dirs;
+  const roots = WORKSPACE_ROOTS.map((name) => join(rootDir, name)).filter(
+    (dir) => existsSync(dir)
+  );
+  return roots.length > 0 ? roots : [rootDir];
+}
+
+// True when a watch-reported path falls inside a directory buildDepMap
+// itself never scans, so the watcher doesn't invalidate on noise like it.
+export function isSkippedPath(changedPath: string): boolean {
+  return changedPath.split(/[/\\]/).some((segment) => SKIP_DIRS.has(segment));
 }
 
 // Lazily builds and memoizes a `DepMap`, so a burst of review dispatches

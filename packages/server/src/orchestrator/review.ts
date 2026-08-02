@@ -188,20 +188,30 @@ export function undeclaredWrites(
   );
 }
 
+// Deterministic per-(task, file) titles, shared between filing and the
+// dedup check so a file is never flagged twice for the same task.
+export function undeclaredWriteFindingTitle(file: string): string {
+  return `file changed outside declared writes: ${file}`;
+}
+
+export function undeclaredWriteLedgerTitle(file: string): string {
+  return `changed ${file} outside its declared writes`;
+}
+
 export interface CappedList {
   list: string[];
   truncated: boolean;
 }
 
-// Dedupes `raw` against files already in the diff (`exclude`), sorts, and
-// caps — the rubric would otherwise read a partial list as exhaustive.
+// Dedupes `raw` against the diff itself and caps, preserving `raw`'s order —
+// dependents() is already closest-first; re-sorting here would undo that.
 export function capDependencyList(
   raw: string[],
   exclude: string[],
   cap: number
 ): CappedList {
   const excluded = new Set(exclude);
-  const unique = [...new Set(raw)].filter((f) => !excluded.has(f)).sort();
+  const unique = [...new Set(raw)].filter((f) => !excluded.has(f));
   return { list: unique.slice(0, cap), truncated: unique.length > cap };
 }
 
@@ -726,7 +736,7 @@ export class ReviewRunner {
       model: reviewModelForRisk(task.meta.risk, models),
       buildPrompt: ({ runId, worktreePath }) => {
         const changed = changedFiles(this.ctx.rootDir, opts.base, opts.head);
-        this.recordUndeclaredWrites(task, changed);
+        this.recordUndeclaredWrites(task, changed, opts.round);
         const depMap = this.ctx.depMap.get();
         const dependents = capDependencyList(
           changed.flatMap((f) => depMap.dependents(f)),
@@ -778,32 +788,46 @@ export class ReviewRunner {
     });
   }
 
-  // A changed file no declared `writes` pattern covers is not a failure, but
-  // it is recorded to both the ledger and the task's findings, visibly.
-  private recordUndeclaredWrites(task: TaskDoc, changed: string[]): void {
+  // A changed file no declared `writes` pattern covers is recorded, not
+  // failed — filed at most once per (task, file), ever.
+  private recordUndeclaredWrites(
+    task: TaskDoc,
+    changed: string[],
+    round: number
+  ): void {
     const undeclared = undeclaredWrites(task.meta.writes, changed);
+    if (undeclared.length === 0) return;
+    const findings = this.ctx.findingStore.list({ taskId: task.meta.id });
+    const ledger = this.ctx.ledgerStore
+      .list()
+      .filter((e) => e.sourceTaskId === task.meta.id);
+    let added = false;
     for (const file of undeclared) {
-      this.ctx.ledgerStore.add({
-        sourceTaskId: task.meta.id,
-        kind: 'hazard',
-        title: `${task.meta.id} changed ${file} outside its declared writes`,
-        detail:
-          `Declared writes: ${task.meta.writes.length === 0 ? 'none' : task.meta.writes.join(', ')}.` +
-          ` None of them cover ${file}, which the diff changed anyway.`,
-        appliesTo: [task.meta.id],
-      });
+      const title = undeclaredWriteFindingTitle(file);
+      if (!ledger.some((e) => e.title === undeclaredWriteLedgerTitle(file))) {
+        this.ctx.ledgerStore.add({
+          sourceTaskId: task.meta.id,
+          kind: 'hazard',
+          title: undeclaredWriteLedgerTitle(file),
+          detail:
+            `Declared writes: ${task.meta.writes.length === 0 ? 'none' : task.meta.writes.join(', ')}.` +
+            ` None of them cover ${file}, which the diff changed anyway.`,
+          appliesTo: [task.meta.id],
+        });
+      }
+      if (findings.some((f) => f.file === file && f.title === title)) continue;
       this.ctx.findingStore.add({
         taskId: task.meta.id,
         runId: null,
         severity: 'minor',
-        title: `file changed outside declared writes: ${file}`,
+        title,
         detail: `${file} was modified but no declared write pattern covers it.`,
         file,
+        round,
       });
+      added = true;
     }
-    if (undeclared.length > 0) {
-      this.ctx.events.broadcast({ type: 'finding.changed' });
-    }
+    if (added) this.ctx.events.broadcast({ type: 'finding.changed' });
   }
 
   // The findings file the rubric asked for, falling back to the last assistant
