@@ -2295,6 +2295,15 @@ export async function handleApi(
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
       }
+      // POST /api/runs/:id/resume — agent-death recovery: dispatches a fresh
+      // run into the same worktree, carrying the prior run's survey.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'resume' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.orchestrator.resumeRun(segments[1]), 201);
+      }
       if (
         segments.length === 3 &&
         segments[2] === 'review' &&

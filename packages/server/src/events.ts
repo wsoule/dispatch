@@ -1,5 +1,5 @@
 import type { LinearSyncSummary } from './linear/sync.js';
-import type { NormalizedEntry } from './orchestrator/types.js';
+import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
 // opened socket; `task.changed` tells every connected client "something
@@ -74,7 +74,10 @@ export type ServerEvent =
   // A finding's verdict/ruling changed, or a review run raised a new one.
   | { type: 'finding.changed' }
   // A decision/hazard/constraint/handoff was added to the ledger.
-  | { type: 'ledger.changed' };
+  | { type: 'ledger.changed' }
+  // A run reached `failed`/`interrupted-dirty` and was surveyed — carries
+  // the survey so a connected client can show it without a follow-up fetch.
+  | { type: 'run.survey'; runId: string; survey: RunSurvey };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

@@ -48,7 +48,21 @@ export type RunState =
   | 'awaiting-approval'
   | 'finished'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  // A `failed` that left uncommitted work behind — see RunSurvey.
+  | 'interrupted-dirty';
+
+// Mirrors RunSurvey in packages/server/src/orchestrator/types.ts — what git
+// found in a terminal run's worktree, used to recover or resume it.
+export interface RunSurvey {
+  runId: string;
+  branch: string;
+  staged: string[];
+  unstaged: string[];
+  untracked: string[];
+  lastCommit: { sha: string; subject: string } | null;
+  cleanTree: boolean;
+}
 
 // Mirrors RunMeta in packages/server/src/orchestrator/types.ts.
 export interface RunMeta {
@@ -111,6 +125,8 @@ export interface RunMeta {
   // Present only on merged runs (see decorateRunsWithPushed server-side) —
   // whether the merge commit has actually reached origin's base branch.
   pushedToOrigin?: boolean;
+  // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
+  survey?: RunSurvey;
 }
 
 // Mirrors BranchEntryStatus in packages/server/src/orchestrator/types.ts.
@@ -428,7 +444,10 @@ export type ServerEvent =
   // A finding's verdict/ruling changed, or a review run raised a new one.
   | { type: 'finding.changed' }
   // A decision/hazard/constraint/handoff was added to the ledger.
-  | { type: 'ledger.changed' };
+  | { type: 'ledger.changed' }
+  // A run was surveyed on reaching `failed`/`interrupted-dirty`. Mirrors
+  // packages/server/src/events.ts.
+  | { type: 'run.survey'; runId: string; survey: RunSurvey };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -963,6 +982,9 @@ export interface ApiClient {
     opts?: { resume?: boolean }
   ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
+  // Agent-death recovery: dispatches a fresh run into a terminal run's same
+  // worktree, with its survey (if any) rendered into the new prompt.
+  resumeRun(runId: string): Promise<RunMeta>;
   fetchRunDiff(runId: string): Promise<DiffResult>;
   reviewRun(
     runId: string,
@@ -1296,6 +1318,8 @@ export function createApiClient(baseUrl: string): ApiClient {
     cancelRun: async (runId) => {
       await request(baseUrl, `/api/runs/${runId}/cancel`, { method: 'POST' });
     },
+    resumeRun: (runId) =>
+      request(baseUrl, `/api/runs/${runId}/resume`, { method: 'POST' }),
     fetchRunDiff: (runId) => request(baseUrl, `/api/runs/${runId}/diff`),
     reviewRun: (runId, action) =>
       request(baseUrl, `/api/runs/${runId}/review`, {

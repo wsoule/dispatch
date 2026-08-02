@@ -1,5 +1,7 @@
 import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 
+import type { RunSurvey } from './types.js';
+
 // Terse bulleted section for entries carried forward, or null (no header
 // at all) when there are none — this goes into every dispatch prompt.
 function renderLedgerSection(entries: LedgerEntry[]): string | null {
@@ -74,4 +76,34 @@ export function buildTaskPrompt(
   }
 
   return sections.join('\n\n');
+}
+
+// Renders a prior run's git survey into extra prompt context, so a resumed
+// agent knows what already survived instead of rediscovering it.
+export function renderSurveySection(survey: RunSurvey): string {
+  const lines: string[] = [
+    `This resumes a run that did not finish cleanly on branch \`${survey.branch}\`.`,
+  ];
+  if (survey.cleanTree) {
+    lines.push('The worktree was clean — nothing was left uncommitted.');
+  } else {
+    if (survey.staged.length > 0) {
+      lines.push(`Staged: ${survey.staged.join(', ')}`);
+    }
+    if (survey.unstaged.length > 0) {
+      lines.push(`Unstaged: ${survey.unstaged.join(', ')}`);
+    }
+    if (survey.untracked.length > 0) {
+      lines.push(`Untracked: ${survey.untracked.join(', ')}`);
+    }
+  }
+  if (survey.lastCommit !== null) {
+    lines.push(
+      `Last commit: ${survey.lastCommit.sha.slice(0, 7)} ${survey.lastCommit.subject}`
+    );
+  }
+  lines.push(
+    'Review what survived before continuing — keep, fix, or discard it as needed.'
+  );
+  return ['## Recovered state from the previous run', ...lines].join('\n');
 }
