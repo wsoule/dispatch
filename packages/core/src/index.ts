@@ -22,9 +22,12 @@ export {
   serializeTaskFile,
   TaskParseError,
   appendActivity,
+  appendAmendment,
   getSection,
+  removeSection,
   setSection,
 } from './taskfile.js';
+export type { Amendment } from './taskfile.js';
 export { TaskStore, DISPATCH_DIR } from './store.js';
 export type {
   CreateInput,

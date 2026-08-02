@@ -126,9 +126,8 @@ export function serializeTaskFile(doc: TaskDoc): string {
     created: meta.created,
     updated: meta.updated,
     external: meta.external,
-    // Only the opt-out is written. Self-review is the default, so omitting the key on the
-    // common (enabled) case keeps a plain task's frontmatter free of a line that just restates
-    // the default — the same reason the parser treats an absent key as `true`.
+    // Only the opt-out is written — self-review defaults to true, so an
+    // absent key already means "on," matching how the parser treats it.
     ...(meta.selfReview ? {} : { 'self-review': false }),
     // Unlike blocked-by/labels, an empty writes list is meaningful ("declared
     // nothing") rather than "unset", so it always serializes.
@@ -169,15 +168,8 @@ export function getSection(body: string, heading: string): string {
 }
 
 /**
- * Replaces the text under a `## <heading>` section of the body, preserving
- * every other section and their order. Used to make the free-text body
- * sections (Description, Acceptance Criteria) editable from the app the same
- * way frontmatter fields already are, without the caller having to
- * hand-splice markdown. If the heading doesn't exist yet it's inserted before
- * `## Activity` (so the append-only activity log stays last, matching the
- * create template) or appended when there's no Activity section. `content` is
- * trimmed and re-wrapped in the template's blank-line spacing so repeated
- * edits round-trip to stable output.
+ * Replaces a `## <heading>` section's text, preserving the other sections and
+ * their order; inserts a missing heading before `## Activity` (or appends it).
  */
 export function setSection(
   body: string,
@@ -187,9 +179,8 @@ export function setSection(
   const { preamble, sections } = splitSections(body);
 
   const trimmed = content.trim();
-  // The template wraps a section's text in a blank line on each side; an empty
-  // section collapses to just those blank lines so the next heading still has
-  // breathing room.
+  // Sections are blank-line padded; an empty one collapses to just the
+  // padding so the next heading still has breathing room.
   const wrapped = trimmed === '' ? '\n\n' : `\n\n${trimmed}\n\n`;
 
   const existing = sections.find((s) => s.heading === heading);
@@ -215,4 +206,53 @@ export function appendActivity(body: string, line: string): string {
     return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
   }
   return `${body.trimEnd()}\n${entry}\n`;
+}
+
+/**
+ * Removes a `## <heading>` section entirely, heading included — unlike
+ * `setSection(body, heading, '')`, which leaves an empty heading in place.
+ */
+export function removeSection(body: string, heading: string): string {
+  const { preamble, sections } = splitSections(body);
+  return (
+    preamble +
+    sections
+      .filter((s) => s.heading !== heading)
+      .map((s) => `## ${s.heading}${s.content}`)
+      .join('')
+  );
+}
+
+// A correction recorded against a task's spec after the fact — what changes,
+// why, and (optionally) where the correction came from.
+export interface Amendment {
+  date: string;
+  reason: string;
+  overrides: string;
+  source: string | null;
+}
+
+// One amendment as a dated markdown block; `formatAmendment` output is joined
+// by `appendAmendment` so a task can accumulate more than one over time.
+function formatAmendment(amendment: Amendment): string {
+  const lines = [
+    `### ${amendment.date}`,
+    `**Overrides:** ${amendment.overrides}`,
+    `**Reason:** ${amendment.reason}`,
+  ];
+  if (amendment.source !== null) {
+    lines.push(`**Source:** ${amendment.source}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Appends a new amendment to the `## Amendments` section, keeping every prior
+ * one — corrections accumulate rather than overwrite a task's history.
+ */
+export function appendAmendment(body: string, amendment: Amendment): string {
+  const existing = getSection(body, 'Amendments');
+  const entry = formatAmendment(amendment);
+  const content = existing === '' ? entry : `${existing}\n\n${entry}`;
+  return setSection(body, 'Amendments', content);
 }

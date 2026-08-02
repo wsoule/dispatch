@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  appendAmendment,
   getSection,
   parseTaskFile,
+  removeSection,
   serializeTaskFile,
   setSection,
   TaskParseError,
 } from '../src/taskfile.js';
+import type { Amendment } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
 
 describe('getSection', () => {
@@ -79,6 +82,73 @@ describe('setSection', () => {
     };
     const reparsed = parseTaskFile(serializeTaskFile(doc));
     expect(reparsed.body).toContain('edited');
+  });
+});
+
+describe('removeSection', () => {
+  const body =
+    '\n## Description\n\nold\n\n## Amendments\n\ncorrected\n\n## Activity\n- created\n';
+
+  it('drops the heading entirely, unlike setSection clearing it', () => {
+    const out = removeSection(body, 'Amendments');
+    expect(out).not.toContain('Amendments');
+    expect(out).toContain('## Description');
+    expect(out).toContain('## Activity');
+  });
+
+  it('is a no-op when the heading is not present', () => {
+    expect(removeSection(body, 'Notes')).toBe(body);
+  });
+});
+
+describe('appendAmendment', () => {
+  const body =
+    '\n## Description\n\noriginal plan\n\n## Acceptance Criteria\n\n## Activity\n';
+  const first: Amendment = {
+    date: '2026-08-02T00:00:00Z',
+    reason: 'ENG-123 style keys are not stable across a rename',
+    overrides: 'join on the issue UUID, not the display key',
+    source: 'task-review',
+  };
+
+  it('round-trips through the task file, source included', () => {
+    const withAmendment = appendAmendment(body, first);
+    const doc: TaskDoc = {
+      meta: parseTaskFile(FRONTMATTER + body).meta,
+      body: withAmendment,
+    };
+    const reparsed = parseTaskFile(serializeTaskFile(doc));
+    expect(getSection(reparsed.body, 'Amendments')).toContain(
+      'join on the issue UUID, not the display key'
+    );
+    expect(getSection(reparsed.body, 'Amendments')).toContain('task-review');
+  });
+
+  it('omits the Source line when none is given', () => {
+    const out = appendAmendment(body, { ...first, source: null });
+    expect(getSection(out, 'Amendments')).not.toContain('**Source:**');
+  });
+
+  it('accumulates a second amendment rather than replacing the first', () => {
+    const once = appendAmendment(body, first);
+    const twice = appendAmendment(once, {
+      ...first,
+      date: '2026-08-03T00:00:00Z',
+      overrides: 'also index by team id',
+    });
+    const section = getSection(twice, 'Amendments');
+    expect(section).toContain('join on the issue UUID, not the display key');
+    expect(section).toContain('also index by team id');
+  });
+
+  it('leaves an existing task file without amendments parsing unchanged', () => {
+    const doc: TaskDoc = {
+      meta: parseTaskFile(FRONTMATTER + body).meta,
+      body,
+    };
+    const text = serializeTaskFile(doc);
+    expect(parseTaskFile(text)).toEqual(doc);
+    expect(getSection(doc.body, 'Amendments')).toBe('');
   });
 });
 
