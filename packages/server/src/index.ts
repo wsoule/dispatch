@@ -8,8 +8,10 @@ import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { EventBus } from './events.js';
+import { FindingStore } from './findings.js';
 import { GitRepo } from './git/commands.js';
 import { InboxStore } from './inbox.js';
+import { LedgerStore } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
@@ -232,7 +234,17 @@ export async function startServer(
   // probed jj through that seam would decide a demo repo was jj-colocated and
   // take the jj rebase path against a repo with no jj at all.
   const jj = new JjManager(rootDir);
-  const orchestrator = new Orchestrator({ rootDir, store, cache, events, jj });
+  // Shared with apiCtx below so a decision an agent records mid-run is
+  // visible to buildTaskPrompt on the very next dispatch, no restart needed.
+  const ledgerStore = new LedgerStore(rootDir);
+  const orchestrator = new Orchestrator({
+    rootDir,
+    store,
+    cache,
+    events,
+    jj,
+    ledgerStore,
+  });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
@@ -335,6 +347,8 @@ export async function startServer(
     prCapability,
     noteStore: new NoteStore(rootDir),
     inboxStore,
+    findingStore: new FindingStore(rootDir),
+    ledgerStore,
     reviewComments: new ReviewCommentStore(rootDir),
     questions,
     linearSync,

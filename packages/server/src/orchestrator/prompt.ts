@@ -1,19 +1,21 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { LedgerEntry, TaskDoc } from '@dispatch/core';
+
+// Terse bulleted section for entries carried forward, or null (no header
+// at all) when there are none — this goes into every dispatch prompt.
+function renderLedgerSection(entries: LedgerEntry[]): string | null {
+  if (entries.length === 0) return null;
+  const lines = entries.map((e) => `- **${e.kind}**: ${e.title} — ${e.detail}`);
+  return ['## Findings and decisions from earlier work', ...lines].join('\n');
+}
 
 // Builds the exact prompt handed to an executor for a newly-dispatched task:
-// everything a from-scratch agent needs to act on it without any other
-// context — the task's own file content (title + full body, which already
-// carries its Description/Acceptance Criteria/Activity sections per core's
-// task template), its parent epic's title + body when it has one, a pointer
-// at this repo's own contribution conventions, a collaboration note steering
-// the agent toward the dispatch MCP tools other agents also use, and an
-// explicit instruction to commit before finishing. Kept as a pure function
-// of its two TaskDoc inputs (no executor, no I/O) so it's unit-testable with
-// a fixture task and snapshot-stable independent of anything else the
-// orchestrator does.
+// the task's own content, its parent epic's, any ledger entries carried
+// forward, repo conventions, and the dispatch collaboration/commit notes.
+// Pure function of its inputs, so it's unit-testable and snapshot-stable.
 export function buildTaskPrompt(
   task: TaskDoc,
-  parentEpic: TaskDoc | null
+  parentEpic: TaskDoc | null,
+  ledgerEntries: LedgerEntry[] = []
 ): string {
   const sections: string[] = [
     `# Task ${task.meta.id}: ${task.meta.title}`,
@@ -25,6 +27,9 @@ export function buildTaskPrompt(
       `## Parent epic: ${parentEpic.meta.id} — ${parentEpic.meta.title}\n\n${parentEpic.body.trim()}`
     );
   }
+
+  const ledgerSection = renderLedgerSection(ledgerEntries);
+  if (ledgerSection !== null) sections.push(ledgerSection);
 
   sections.push(
     "Follow this repository's own contribution conventions (AGENTS.md / " +
@@ -58,9 +63,7 @@ export function buildTaskPrompt(
       'uncommitted worktree cannot be reviewed or merged.'
   );
 
-  // On by default, opted out per-task with `self-review: false` in frontmatter — an explicit
-  // instruction to spend one more pass checking its own work rather than stopping the moment
-  // tests go green.
+  // On by default, opted out per-task with `self-review: false` in frontmatter.
   if (task.meta.selfReview) {
     sections.push(
       'Before finishing: self-review your work. Re-read the full diff of your changes, ' +

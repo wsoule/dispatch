@@ -104,6 +104,7 @@ describe('dispatch-mcp stdio e2e', () => {
         'ask_user',
         'dispatch_note',
         'message_user',
+        'record_decision',
         'run_list',
         'task_comment',
         'task_get',
