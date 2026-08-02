@@ -531,6 +531,10 @@ export type ServerEvent =
   | { type: 'question.asked'; runId: string; questionId: string }
   | { type: 'question.answered'; runId: string; questionId: string }
   | { type: 'question.closed'; runId: string }
+  // A run agent asked to edit outside its scope, or that request was
+  // granted/denied. Mirrors packages/server/src/events.ts.
+  | { type: 'scope.requested'; runId: string; requestId: string }
+  | { type: 'scope.decided'; runId: string; requestId: string }
   // The repo's git state changed via one of the `/api/git/*` mutation
   // routes. Mirrors packages/server/src/events.ts.
   | { type: 'git.changed' }
@@ -559,6 +563,19 @@ export interface RunQuestion {
   askedAt: string;
   answer: string | null;
   answeredAt: string | null;
+}
+
+// Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
+// an out-of-scope edit an agent asked for, blocked until it is decided.
+export interface RunScopeRequest {
+  id: string;
+  runId: string;
+  paths: string[];
+  reason: string;
+  requestedAt: string;
+  granted: boolean | null;
+  decisionReason: string | null;
+  decidedAt: string | null;
 }
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
@@ -1298,6 +1315,15 @@ export interface ApiClient {
     questionId: string,
     answer: string
   ): Promise<RunQuestion>;
+  // The blocking agent->orchestrator channel (`request_scope`'s landing
+  // spot): look up one request by id, and the call that decides it.
+  fetchScopeRequest(runId: string, requestId: string): Promise<RunScopeRequest>;
+  decideScopeRequest(
+    runId: string,
+    requestId: string,
+    granted: boolean,
+    reason?: string
+  ): Promise<RunScopeRequest>;
   // Phase 5 P2: the big-prompt plan flow. `startPlan` returns immediately
   // (202) with the plan's id — poll `fetchPlan`/watch `plan.changed` over WS
   // for it to move to `ready`/`failed`. `confirmPlan` sends the (possibly
@@ -1717,6 +1743,14 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody({ answer }),
       }),
+    fetchScopeRequest: (runId, requestId) =>
+      request(baseUrl, `/api/runs/${runId}/scope-requests/${requestId}`),
+    decideScopeRequest: (runId, requestId, granted, reason) =>
+      request(
+        baseUrl,
+        `/api/runs/${runId}/scope-requests/${requestId}/decide`,
+        { method: 'POST', ...jsonBody({ granted, reason }) }
+      ),
     startPlan: (prompt) =>
       request(baseUrl, '/api/plan', {
         method: 'POST',

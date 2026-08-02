@@ -44,6 +44,11 @@ import {
 } from './api/http.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
+import {
+  decideScopeRequest,
+  getScopeRequest,
+  requestScope,
+} from './api/scopeRequests.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
@@ -79,6 +84,7 @@ import type {
 } from './orchestrator/questions.js';
 import { QUESTION_POLL_MS } from './orchestrator/questions.js';
 import type { ReviewRunner } from './orchestrator/review.js';
+import type { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -115,6 +121,7 @@ export interface ApiContext {
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
   questions: QuestionRegistry;
+  scopeRequests: ScopeRequestRegistry;
   linearSync: LinearSync;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
@@ -2542,6 +2549,28 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await answerQuestion(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'scope-requests' &&
+        method === 'POST'
+      ) {
+        return await requestScope(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'scope-requests' &&
+        method === 'GET'
+      ) {
+        return await getScopeRequest(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'scope-requests' &&
+        segments[4] === 'decide' &&
+        method === 'POST'
+      ) {
+        return await decideScopeRequest(req, ctx, segments[1], segments[3]);
       }
     }
 

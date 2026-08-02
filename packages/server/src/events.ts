@@ -46,6 +46,10 @@ export type ServerEvent =
   | { type: 'question.asked'; runId: string; questionId: string }
   | { type: 'question.answered'; runId: string; questionId: string }
   | { type: 'question.closed'; runId: string }
+  // A run agent asked to edit outside its scope, or that request was
+  // granted/denied — refetch the open scope requests.
+  | { type: 'scope.requested'; runId: string; requestId: string }
+  | { type: 'scope.decided'; runId: string; requestId: string }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
   | { type: 'merge-queue.changed' }

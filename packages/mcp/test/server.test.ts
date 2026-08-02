@@ -49,7 +49,7 @@ describe('server identity', () => {
     expect(server.server.constructor.name).toBe('Server');
   });
 
-  it('lists all five task tools plus run_list, agent_message, message_user, ask_user, dispatch_note, record_decision, record_evidence, and record_mutation', async () => {
+  it('lists all five task tools plus run_list, agent_message, message_user, ask_user, request_scope, dispatch_note, record_decision, record_evidence, and record_mutation', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'agent_message',
@@ -59,6 +59,7 @@ describe('server identity', () => {
       'record_decision',
       'record_evidence',
       'record_mutation',
+      'request_scope',
       'run_list',
       'task_comment',
       'task_get',

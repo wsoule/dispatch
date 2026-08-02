@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { ONBOARDING_MARKDOWN } from './onboarding.js';
-import type { QuestionTiming } from './tools.js';
+import type { QuestionTiming, ScopeTiming } from './tools.js';
 import { registerDispatchTools } from './tools.js';
 
 export const MCP_SERVER_NAME = 'dispatch';
@@ -15,7 +15,7 @@ export const MCP_SERVER_VERSION = '0.0.1';
 // proxy; see the Phase 3 plan for why direct file access is the sync point).
 export function createDispatchMcpServer(
   rootDir: string,
-  opts: { questionTiming?: QuestionTiming } = {}
+  opts: { questionTiming?: QuestionTiming; scopeTiming?: ScopeTiming } = {}
 ): McpServer {
   const server = new McpServer({
     name: MCP_SERVER_NAME,
