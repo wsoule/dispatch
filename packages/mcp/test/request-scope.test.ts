@@ -56,9 +56,24 @@ class FakeDaemon {
   // When not 200, /decide rejects the tool's self-deny attempt — models a
   // real decision (from a human or the orchestrator) landing first.
   decideStatus = 200;
+  // When > 0, /decide stalls past the tool's own request timeout, so its
+  // fetch rejects instead of returning any status at all.
+  decideHangsMs = 0;
+  // What a 200 /decide echoes back, when the daemon does not simply mirror
+  // what was posted — `granted: null` is a daemon that recorded nothing.
+  decideEcho: {
+    granted: boolean | null;
+    decisionReason: string | null;
+  } | null = null;
+  // When true, a "decided" poll answers with a non-boolean `granted` — a
+  // daemon whose payload does not match the contract.
+  pollsGarbage = false;
+  // When set, every GET after the first /decide call fails with this status —
+  // the refetch that a 409 sends us back for, unreachable.
+  pollStatusAfterDecide: number | null = null;
   // Once set, every GET after the first /decide call returns this instead
   // of the normal poll-count logic — the "real decision" a race exposes.
-  raceWinner: { granted: boolean; reason: string } | null = null;
+  raceWinner: { granted: boolean | null; reason: string } | null = null;
   decidePosted = false;
   posted: { runId: string; paths: string[]; reason: string }[] = [];
   decided: { id: string; granted: boolean; reason?: string }[] = [];
@@ -95,6 +110,7 @@ class FakeDaemon {
             granted: boolean;
             reason?: string;
           };
+          if (this.decideHangsMs > 0) await Bun.sleep(this.decideHangsMs);
           if (this.decideStatus !== 200) {
             return Response.json(
               { error: `scope request already decided: ${decideRoute[2]}` },
@@ -105,8 +121,12 @@ class FakeDaemon {
           return Response.json({
             id: decideRoute[2],
             runId: decideRoute[1],
-            granted: body.granted,
-            decisionReason: body.reason ?? null,
+            granted:
+              this.decideEcho === null ? body.granted : this.decideEcho.granted,
+            decisionReason:
+              this.decideEcho === null
+                ? (body.reason ?? null)
+                : this.decideEcho.decisionReason,
           });
         }
 
@@ -115,6 +135,12 @@ class FakeDaemon {
         );
         if (one !== null && req.method === 'GET') {
           this.polls += 1;
+          if (this.decidePosted && this.pollStatusAfterDecide !== null) {
+            return Response.json(
+              { error: 'scope request unavailable' },
+              { status: this.pollStatusAfterDecide }
+            );
+          }
           if (this.pollStatus !== 200) {
             return Response.json(
               { error: 'scope request not found' },
@@ -129,12 +155,16 @@ class FakeDaemon {
               decisionReason: this.raceWinner.reason,
             });
           }
+          const decided = this.polls > this.decideAfterPolls;
           return Response.json({
             id: one[2],
             runId: one[1],
-            granted: this.polls > this.decideAfterPolls ? this.decision : null,
-            decisionReason:
-              this.polls > this.decideAfterPolls ? 'reviewed' : null,
+            granted: decided
+              ? this.pollsGarbage
+                ? 'yes'
+                : this.decision
+              : null,
+            decisionReason: decided ? 'reviewed' : null,
           });
         }
         return Response.json({ error: 'not found' }, { status: 404 });
@@ -338,6 +368,95 @@ describe('request_scope (fake daemon)', () => {
     // The self-deny POST was attempted and rejected — never recorded as a
     // decision, so the daemon's own record of what happened stays honest.
     expect(daemon.decided).toEqual([]);
+  });
+
+  // Every way the self-deny can fail to come back with a decision. These are
+  // what make "expiry denies, never grants" true rather than merely intended.
+  describe('when the self-deny cannot be confirmed', () => {
+    async function expireWith(
+      configure: (d: FakeDaemon) => void
+    ): Promise<ToolCallResult> {
+      process.env.DISPATCH_RUN_ID = 'r-self1';
+      daemon = new FakeDaemon();
+      daemon.decideAfterPolls = Number.MAX_SAFE_INTEGER;
+      configure(daemon);
+      writeFakeDaemonFile(daemon.start());
+      const client = await connectClient(root);
+      return (await client.callTool(
+        {
+          name: 'request_scope',
+          arguments: { paths: ['a.ts'], reason: 'need it' },
+        },
+        undefined,
+        { timeout: 10_000 }
+      )) as ToolCallResult;
+    }
+
+    it('denies when the daemon rejects the self-deny with a plain error', async () => {
+      const result = await expireWith((d) => {
+        d.decideStatus = 500;
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent?.granted).toBe(false);
+      expect(result.content[0]?.text).toMatch(/original fence/);
+      expect(daemon?.decided).toEqual([]);
+    });
+
+    it('denies when the daemon never answers the self-deny at all', async () => {
+      const result = await expireWith((d) => {
+        // Longer than requestTimeoutMs, so the tool's own fetch aborts.
+        d.decideHangsMs = 2000;
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent?.granted).toBe(false);
+      expect(result.content[0]?.text).toMatch(/original fence/);
+    });
+
+    it('denies when a 409 sends it back for a decision it then cannot read', async () => {
+      const result = await expireWith((d) => {
+        d.decideStatus = 409;
+        d.pollStatusAfterDecide = 503;
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent?.granted).toBe(false);
+      expect(result.content[0]?.text).toMatch(/original fence/);
+    });
+
+    it('denies when the daemon accepts the self-deny but records no decision', async () => {
+      const result = await expireWith((d) => {
+        d.decideEcho = { granted: null, decisionReason: null };
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent?.granted).toBe(false);
+      expect(result.content[0]?.text).toMatch(/original fence/);
+    });
+
+    it('denies rather than passing through a non-boolean decision', async () => {
+      const result = await expireWith((d) => {
+        d.decideAfterPolls = 0;
+        d.pollsGarbage = true;
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent?.granted).toBe(false);
+      // Still self-denied, so the request does not stay open server-side.
+      expect(daemon?.decided).toEqual([
+        {
+          id: 'sr-abc123',
+          granted: false,
+          reason: expect.stringMatching(/denied/),
+        },
+      ]);
+    });
+
+    it('denies when a 409 refetch shows the request still undecided', async () => {
+      const result = await expireWith((d) => {
+        d.decideStatus = 409;
+        d.raceWinner = { granted: null, reason: 'still open' };
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent?.granted).toBe(false);
+      expect(result.structuredContent?.reason).toBe('still open');
+    });
   });
 
   it('denies locally when the daemon no longer knows the request', async () => {

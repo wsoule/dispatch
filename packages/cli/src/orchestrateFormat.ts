@@ -30,7 +30,18 @@ export function formatEntry(
       return entry.text !== undefined ? `[system] ${entry.text}` : null;
     case 'usage':
       return entry.text !== undefined ? `[usage] ${entry.text}` : null;
+    case 'message':
+      if (entry.text === undefined) return null;
+      return `[message ${messageSender(entry)}] ${entry.text}`;
   }
+}
+
+// Who a `kind: 'message'` entry is from, for the `[message …]` prefix.
+// `toUser` marks this run's own message_user call, addressed to the human.
+function messageSender(entry: NormalizedEntry): string {
+  if (entry.toUser === true) return 'to you';
+  if (entry.from === 'user') return 'from user';
+  return `from ${entry.fromLabel ?? 'another agent'}`;
 }
 
 // Renders an `approval.requested` WS event prominently, with the exact command to copy
@@ -135,15 +146,32 @@ export function formatEpicProgress(progress: EpicProgress): string {
 
 // The exit code `dispatch run --watch` uses at any terminal state: 0 finished, 1 failed,
 // 130 cancelled (the conventional "killed by Ctrl+C"). `null` while still running.
+//
+// Every RunState is listed on purpose: a `default: return null` reads a newly
+// added terminal state as "still running" and hangs `--watch` forever.
 export function exitCodeForRunState(state: RunState): number | null {
   switch (state) {
     case 'finished':
       return 0;
     case 'failed':
+    case 'interrupted-dirty':
+      // `interrupted-dirty` is a failed run that left uncommitted work behind
+      // — still a failure; what survived is in the run's survey, not the code.
       return 1;
     case 'cancelled':
       return 130;
-    default:
+    case 'provisioning':
+    case 'running':
+    case 'awaiting-approval':
       return null;
+    default:
+      return unhandledRunState(state);
   }
+}
+
+// Compile-time exhaustiveness: a RunState with no case above is a type error
+// here. At runtime an unknown state from a newer daemon stays non-terminal.
+function unhandledRunState(state: never): null {
+  void state;
+  return null;
 }

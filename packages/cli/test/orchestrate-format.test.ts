@@ -88,6 +88,52 @@ describe('formatEntry', () => {
     expect(formatEntry(entry)).toBe('[system] user: please fix the typo');
   });
 
+  it('renders an inbound agent message with its sender label', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'heads up, I own auth.ts',
+      from: 'agent',
+      fromLabel: 'Fix login (r-abc123)',
+    };
+    expect(formatEntry(entry)).toBe(
+      '[message from Fix login (r-abc123)] heads up, I own auth.ts'
+    );
+  });
+
+  it('renders an unlabelled agent message with the generic sender', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'ping',
+      from: 'agent',
+    };
+    expect(formatEntry(entry)).toBe('[message from another agent] ping');
+  });
+
+  it('renders this run\'s own message to the human as "to you"', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'the migration looks risky',
+      from: 'agent',
+      toUser: true,
+    };
+    expect(formatEntry(entry)).toBe(
+      '[message to you] the migration looks risky'
+    );
+  });
+
+  it('renders a human message from the Session composer', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'use the v2 endpoint',
+      from: 'user',
+    };
+    expect(formatEntry(entry)).toBe('[message from user] use the v2 endpoint');
+  });
+
   it('returns null for an entry with no text and no special handling', () => {
     const entry: NormalizedEntry = {
       ts: '2026-07-20T00:00:00Z',
@@ -295,6 +341,11 @@ describe('exitCodeForRunState', () => {
   });
   it('maps cancelled to 130', () => {
     expect(exitCodeForRunState('cancelled')).toBe(130);
+  });
+  // Without this, --watch reads the state as "still running" and waits for an
+  // exit that already happened.
+  it('maps interrupted-dirty to 1, like the failed run it came from', () => {
+    expect(exitCodeForRunState('interrupted-dirty')).toBe(1);
   });
   it('returns null for a non-terminal state', () => {
     expect(exitCodeForRunState('running')).toBeNull();
