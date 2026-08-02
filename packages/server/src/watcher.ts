@@ -36,3 +36,30 @@ export function watchTasks(tasksDir: string, onChange: () => void): Watcher {
     },
   };
 }
+
+// Watches each of `dirs` recursively, sharing one debounce window. A dir
+// that fails to watch (missing, or unsupported here) is skipped, not fatal.
+export function watchSourceDirs(dirs: string[], onChange: () => void): Watcher {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const schedule = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      onChange();
+    }, DEBOUNCE_MS);
+  };
+  const watchers = dirs.flatMap((dir) => {
+    if (!existsSync(dir)) return [];
+    try {
+      return [watch(dir, { recursive: true }, schedule)];
+    } catch {
+      return [];
+    }
+  });
+  return {
+    close() {
+      if (timer !== null) clearTimeout(timer);
+      for (const w of watchers) w.close();
+    },
+  };
+}
