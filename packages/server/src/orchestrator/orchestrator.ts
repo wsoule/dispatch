@@ -818,11 +818,15 @@ export class Orchestrator {
     const staged = statusResult.ok
       ? statusResult.staged.map((f) => f.path)
       : [];
+    // No dedicated conflicted field on RunSurvey — folded into unstaged,
+    // marked, so a resumed agent still sees it instead of an unexplained tree.
     const unstaged = statusResult.ok
-      ? statusResult.unstaged.map((f) => f.path)
+      ? [
+          ...statusResult.unstaged.map((f) => f.path),
+          ...statusResult.conflicted.map((path) => `${path} (conflicted)`),
+        ]
       : [];
     const untracked = statusResult.ok ? [...statusResult.untracked] : [];
-    const conflicted = statusResult.ok ? statusResult.conflicted.length : 0;
     const firstCommit = logResult.ok ? logResult.commits[0] : undefined;
     const lastCommit =
       firstCommit !== undefined
@@ -836,11 +840,41 @@ export class Orchestrator {
       untracked,
       lastCommit,
       cleanTree:
-        staged.length === 0 &&
-        unstaged.length === 0 &&
-        untracked.length === 0 &&
-        conflicted === 0,
+        staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
     };
+  }
+
+  // Surveys a run already marked `failed` outside handleFinish (a boot
+  // crash or a zombied executor) and upgrades it if the worktree is dirty.
+  private async surveyAndUpgradeIfDirty(runId: string): Promise<void> {
+    let survey: RunSurvey;
+    try {
+      survey = await this.surveyRun(runId);
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to survey run ${runId}: ${(err as Error).message}`
+      );
+      return;
+    }
+    if (survey.cleanTree) return;
+    const meta = this.registry.get(runId);
+    if (meta === undefined || meta.state !== 'failed') return;
+    if (meta.reviewedAt !== undefined) return;
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, {
+      state: 'interrupted-dirty',
+      updatedAt: now,
+      survey,
+    });
+    this.transcriptFor(runId).appendState('interrupted-dirty', now, {
+      survey,
+    });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    this.ctx.events.broadcast({ type: 'run.survey', runId, survey });
+    this.noteTaskActivity(
+      meta.taskId,
+      `[run ${runId}] flagged interrupted-dirty: ${survey.staged.length + survey.unstaged.length + survey.untracked.length} uncommitted path(s) found`
+    );
   }
 
   // The review surface's unified diff: everything committed on the run's
@@ -1705,6 +1739,9 @@ export class Orchestrator {
     const dir = runsDir(this.ctx.rootDir);
     const keepPaths = new Set<string>();
     const keepRunIds = new Set<string>();
+    // Runs THIS call just force-failed (not one replayed already-terminal)
+    // — the actual crash victims, worth surveying below.
+    const crashedRunIds: string[] = [];
     if (existsSync(dir)) {
       for (const file of readdirSync(dir)) {
         if (!file.endsWith('.jsonl')) continue;
@@ -1721,6 +1758,7 @@ export class Orchestrator {
             const now = new Date().toISOString();
             new Transcript(path).appendState('failed', now);
             meta = { ...meta, state: 'failed', updatedAt: now };
+            crashedRunIds.push(meta.id);
           }
           this.registry.create(meta);
           keepPaths.add(meta.worktreePath);
@@ -1759,6 +1797,11 @@ export class Orchestrator {
     }
     this.worktrees.pruneOrphans(worktreesDir(this.ctx.rootDir), keepPaths);
     this.reconcileArchives();
+    // Deferred, not awaited — reconcileOnBoot() stays synchronous, so each
+    // crashed run's worktree is surveyed and upgraded in the background.
+    for (const runId of crashedRunIds) {
+      void this.surveyAndUpgradeIfDirty(runId);
+    }
   }
 
   private requireRun(runId: string): RunMeta {
@@ -1823,6 +1866,9 @@ export class Orchestrator {
       this.ctx.events.broadcast({ type: 'task.changed' });
     }
     this.fireTerminalHooks(meta.id);
+    // Deferred, same as reconcileOnBoot()'s crash sweep — a zombied run's
+    // worktree may still hold whatever the agent left behind mid-task.
+    void this.surveyAndUpgradeIfDirty(meta.id);
   }
 
   // Starts `executor` for a run that dispatch()/requestChanges() has already
@@ -1984,7 +2030,6 @@ export class Orchestrator {
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
       mergeCommit?: string;
-      survey?: RunSurvey;
     }
   ): void {
     const meta = this.registry.get(runId);
@@ -2093,11 +2138,7 @@ export class Orchestrator {
           toolName: request.toolName,
         });
       },
-      // `void`: onFinish is typed to return void, and handleFinish's own
-      // survey step is fire-and-forget like every other callback here.
-      onFinish: (finish) => {
-        void this.handleFinish(runId, finish);
-      },
+      onFinish: (finish) => this.handleFinish(runId, finish),
     };
   }
 
@@ -2106,7 +2147,7 @@ export class Orchestrator {
   // blocks recording the finish), and only flips the task to `in-review`
   // when it's still `in-progress` (it may have been moved elsewhere by a
   // human in the meantime).
-  private async handleFinish(
+  private handleFinish(
     runId: string,
     finish: {
       state: 'finished' | 'failed';
@@ -2115,7 +2156,7 @@ export class Orchestrator {
       sessionId?: string;
       error?: string;
     }
-  ): Promise<void> {
+  ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     // I6: this whole block runs from inside an executor's fire-and-forget
@@ -2145,32 +2186,16 @@ export class Orchestrator {
       };
     }
 
-    // Terminal-without-completion: survey what the auto-commit above left
-    // behind, and escalate to `interrupted-dirty` when it's not clean.
-    let survey: RunSurvey | undefined;
-    let finalState: RunState = effectiveFinish.state;
-    if (effectiveFinish.state === 'failed') {
-      try {
-        survey = await this.surveyRun(runId);
-        if (!survey.cleanTree) finalState = 'interrupted-dirty';
-      } catch (err) {
-        console.error(
-          `dispatchd: failed to survey run ${runId}: ${(err as Error).message}`
-        );
-      }
-    }
-
-    // Field-by-field: spreading effectiveFinish would leak its own `state`
-    // in and clobber `finalState` inside transition()'s merge.
-    this.transition(runId, finalState, {
+    // Synchronous, no await before this — closes the window a concurrent
+    // approve()/sendMessage()/inject() could otherwise race (see below).
+    this.transition(runId, effectiveFinish.state, {
       costUsd: effectiveFinish.costUsd,
       turns: effectiveFinish.turns,
       sessionId: effectiveFinish.sessionId,
       error: effectiveFinish.error,
-      survey,
     });
-    if (survey !== undefined) {
-      this.ctx.events.broadcast({ type: 'run.survey', runId, survey });
+    if (effectiveFinish.state === 'failed') {
+      void this.surveyAndUpgradeIfDirty(runId);
     }
 
     let filesChanged = 0;
@@ -2187,7 +2212,7 @@ export class Orchestrator {
     const task = this.ctx.store.get(meta.taskId);
     if (task === null) return;
     const patch: UpdatePatch = {
-      appendActivity: `${now} [run ${runId}] finished: ${finalState} — ${filesChanged} files, $${cost}`,
+      appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
     };
     if (task.meta.status === 'in-progress') patch.status = 'in-review';
     this.ctx.store.update(meta.taskId, patch, now);

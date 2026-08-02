@@ -60,16 +60,28 @@ function makeOrchestrator(rootDir: string): {
   return { orchestrator, store };
 }
 
-// A `pre-commit` hook that always refuses — installed in the main repo's
-// (shared) hooks dir, so a worktree's own commit attempts fail too. Used to
-// make handleFinish's auto-commit safety net a no-op without deleting the
-// worktree, so a genuinely dirty tree survives all the way to the survey.
+// A `pre-commit` hook that always refuses, installed in the main repo's
+// shared hooks dir — makes the auto-commit safety net a no-op in a worktree.
 function installRejectingPreCommitHook(repoDir: string): void {
   const hooksDir = join(repoDir, '.git', 'hooks');
   mkdirSync(hooksDir, { recursive: true });
   const hookPath = join(hooksDir, 'pre-commit');
   writeFileSync(hookPath, '#!/bin/sh\nexit 1\n');
   chmodSync(hookPath, 0o755);
+}
+
+// Starts and just sits there — never calls onFinish on its own — so a
+// dispatched run stays 'running' until something else (a reboot) acts on it.
+function controllableExecutor(): Executor {
+  return {
+    start(): ExecutorRun {
+      return {
+        interrupt: () => Promise.resolve(),
+        send: () => {},
+        approve: () => {},
+      };
+    },
+  };
 }
 
 class CapturingExecutor implements Executor {
@@ -162,8 +174,13 @@ describe('Orchestrator agent-death recovery', () => {
     // failed), so the file shows up staged rather than untracked.
     expect(run.meta.survey?.staged).toEqual(['oops.txt']);
     expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    // The synchronous finish line still says `failed`; the upgrade to
+    // `interrupted-dirty` lands as its own later Activity line.
     expect(store.get(task.meta.id)!.body).toContain(
-      `[run ${meta.id}] finished: interrupted-dirty`
+      `[run ${meta.id}] finished: failed`
+    );
+    expect(store.get(task.meta.id)!.body).toContain(
+      `[run ${meta.id}] flagged interrupted-dirty: 1 uncommitted path(s) found`
     );
   });
 
@@ -233,6 +250,41 @@ describe('Orchestrator agent-death recovery', () => {
     expect(resumed.resumedFrom).toBe(meta.id);
     expect(capturing.captured[0]?.prompt).not.toContain(
       '## Recovered state from the previous run'
+    );
+  });
+
+  it('surveys a dirty run left non-terminal by a daemon crash, via reconcileOnBoot', async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor('fake', controllableExecutor());
+    const task = store.create({ title: 'Daemon dies mid-run' });
+    const meta = await first.dispatch(task.meta.id, 'fake');
+    expect(first.getRun(meta.id)?.meta.state).toBe('running');
+
+    // The agent left real, uncommitted work behind — the shape a genuine
+    // mid-task daemon crash leaves, as opposed to a freshly empty worktree.
+    writeFileSync(join(meta.worktreePath, 'oops.txt'), 'leftover\n');
+
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const events2 = new EventBus();
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: events2,
+    });
+    second.reconcileOnBoot();
+    // reconcileOnBoot() itself is synchronous and force-fails immediately;
+    // the survey that upgrades it lands afterward, in the background.
+    expect(second.getRun(meta.id)?.meta.state).toBe('failed');
+
+    await waitFor(
+      () => second.getRun(meta.id)?.meta.state === 'interrupted-dirty'
+    );
+    const survey = second.getRun(meta.id)?.meta.survey;
+    expect(survey?.untracked).toEqual(['oops.txt']);
+    expect(store.get(task.meta.id)!.body).toContain(
+      `[run ${meta.id}] flagged interrupted-dirty: 1 uncommitted path(s) found`
     );
   });
 });
