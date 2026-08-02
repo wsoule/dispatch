@@ -12,6 +12,9 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 // check against an unvalidated `unknown` never needs an `as` cast.
 const SEVERITIES: readonly string[] = ['critical', 'important', 'minor'];
 const VERDICTS: readonly string[] = ['open', 'addressed', 'parked', 'blocked'];
+// `parked`/`blocked` are adjudications, not edits: they carry a mandatory
+// ruling and side effects, so they only come in through the adjudicate route.
+const PATCHABLE_VERDICTS: readonly string[] = ['open', 'addressed'];
 const RECOMMENDATIONS: readonly string[] = ['blocks', 'park'];
 const LEDGER_KINDS: readonly string[] = [
   'constraint',
@@ -100,7 +103,8 @@ export async function createFinding(
   return jsonResponse(finding, 201);
 }
 
-// PATCH /api/findings/:id — a controller ruling on a finding (verdict/ruling).
+// PATCH /api/findings/:id — reopening or clearing a finding. Parking and
+// blocking it are rulings and go through the adjudicate route instead.
 export async function updateFinding(
   req: Request,
   ctx: ApiContext,
@@ -111,9 +115,15 @@ export async function updateFinding(
   const body = parsed.value as { verdict?: unknown; ruling?: unknown };
   if (
     body.verdict !== undefined &&
-    (typeof body.verdict !== 'string' || !VERDICTS.includes(body.verdict))
+    (typeof body.verdict !== 'string' ||
+      !PATCHABLE_VERDICTS.includes(body.verdict))
   ) {
-    return errorResponse(400, `invalid verdict: ${String(body.verdict)}`);
+    return errorResponse(
+      400,
+      `invalid verdict: ${String(body.verdict)} (expected ${PATCHABLE_VERDICTS.join('|')}` +
+        ' — park and block through POST /api/tasks/:id/findings/:fid/adjudicate,' +
+        ' which requires a ruling)'
+    );
   }
   if (
     body.ruling !== undefined &&
