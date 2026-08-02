@@ -19,6 +19,7 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import { JjManager } from './jj.js';
@@ -29,7 +30,7 @@ import {
   worktreePath,
   worktreesDir,
 } from './paths.js';
-import { buildTaskPrompt } from './prompt.js';
+import { buildTaskPrompt, renderSurveySection } from './prompt.js';
 import { RunRegistry } from './registry.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
@@ -42,6 +43,7 @@ import type {
   NormalizedEntry,
   RunMeta,
   RunState,
+  RunSurvey,
 } from './types.js';
 import {
   MergeEnvironmentError,
@@ -711,6 +713,43 @@ export class Orchestrator {
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
     this.fireTerminalHooks(runId);
+  }
+
+  // Surveys a run's worktree via git status/log. Degrades to an empty clean
+  // survey, rather than throwing, when the worktree itself is gone.
+  async surveyRun(runId: string): Promise<RunSurvey> {
+    const meta = this.requireRun(runId);
+    const repo = new GitRepo(meta.worktreePath);
+    const [statusResult, logResult] = await Promise.all([
+      repo.status(),
+      repo.log({ limit: 1 }),
+    ]);
+    const staged = statusResult.ok
+      ? statusResult.staged.map((f) => f.path)
+      : [];
+    const unstaged = statusResult.ok
+      ? statusResult.unstaged.map((f) => f.path)
+      : [];
+    const untracked = statusResult.ok ? [...statusResult.untracked] : [];
+    const conflicted = statusResult.ok ? statusResult.conflicted.length : 0;
+    const firstCommit = logResult.ok ? logResult.commits[0] : undefined;
+    const lastCommit =
+      firstCommit !== undefined
+        ? { sha: firstCommit.sha, subject: firstCommit.subject }
+        : null;
+    return {
+      runId,
+      branch: meta.branch,
+      staged,
+      unstaged,
+      untracked,
+      lastCommit,
+      cleanTree:
+        staged.length === 0 &&
+        unstaged.length === 0 &&
+        untracked.length === 0 &&
+        conflicted === 0,
+    };
   }
 
   // The review surface's unified diff: everything committed on the run's
@@ -1854,6 +1893,7 @@ export class Orchestrator {
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
       mergeCommit?: string;
+      survey?: RunSurvey;
     }
   ): void {
     const meta = this.registry.get(runId);
@@ -1962,7 +2002,11 @@ export class Orchestrator {
           toolName: request.toolName,
         });
       },
-      onFinish: (finish) => this.handleFinish(runId, finish),
+      // `void`: onFinish is typed to return void, and handleFinish's own
+      // survey step is fire-and-forget like every other callback here.
+      onFinish: (finish) => {
+        void this.handleFinish(runId, finish);
+      },
     };
   }
 
@@ -1971,7 +2015,7 @@ export class Orchestrator {
   // blocks recording the finish), and only flips the task to `in-review`
   // when it's still `in-progress` (it may have been moved elsewhere by a
   // human in the meantime).
-  private handleFinish(
+  private async handleFinish(
     runId: string,
     finish: {
       state: 'finished' | 'failed';
@@ -1980,7 +2024,7 @@ export class Orchestrator {
       sessionId?: string;
       error?: string;
     }
-  ): void {
+  ): Promise<void> {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     // I6: this whole block runs from inside an executor's fire-and-forget
@@ -2009,7 +2053,34 @@ export class Orchestrator {
         error: `finish failed: ${(err as Error).message}`,
       };
     }
-    this.transition(runId, effectiveFinish.state, effectiveFinish);
+
+    // Terminal-without-completion: survey what the auto-commit above left
+    // behind, and escalate to `interrupted-dirty` when it's not clean.
+    let survey: RunSurvey | undefined;
+    let finalState: RunState = effectiveFinish.state;
+    if (effectiveFinish.state === 'failed') {
+      try {
+        survey = await this.surveyRun(runId);
+        if (!survey.cleanTree) finalState = 'interrupted-dirty';
+      } catch (err) {
+        console.error(
+          `dispatchd: failed to survey run ${runId}: ${(err as Error).message}`
+        );
+      }
+    }
+
+    // Field-by-field: spreading effectiveFinish would leak its own `state`
+    // in and clobber `finalState` inside transition()'s merge.
+    this.transition(runId, finalState, {
+      costUsd: effectiveFinish.costUsd,
+      turns: effectiveFinish.turns,
+      sessionId: effectiveFinish.sessionId,
+      error: effectiveFinish.error,
+      survey,
+    });
+    if (survey !== undefined) {
+      this.ctx.events.broadcast({ type: 'run.survey', runId, survey });
+    }
 
     let filesChanged = 0;
     if (effectiveFinish.state === 'finished') {
@@ -2025,7 +2096,7 @@ export class Orchestrator {
     const task = this.ctx.store.get(meta.taskId);
     if (task === null) return;
     const patch: UpdatePatch = {
-      appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
+      appendActivity: `${now} [run ${runId}] finished: ${finalState} — ${filesChanged} files, $${cost}`,
     };
     if (task.meta.status === 'in-progress') patch.status = 'in-review';
     this.ctx.store.update(meta.taskId, patch, now);
@@ -2167,6 +2238,99 @@ export class Orchestrator {
       executor
     );
     return this.registry.get(runId)!;
+  }
+
+  // POST /api/runs/:id/resume: a fresh run in the SAME worktree/branch,
+  // always a new session, with the run's survey (if any) in its prompt.
+  resumeRun(runId: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (!TERMINAL_RUN_STATES.has(meta.state)) {
+      throw new OrchestratorClientError(`run is still live: ${runId}`);
+    }
+    if (meta.reviewedAt !== undefined) {
+      throw new OrchestratorConflictError(
+        `run has already been reviewed: ${runId}`
+      );
+    }
+    this.requireNoOpenPr(meta);
+    // Same one-live-run-per-task rule dispatch()/sendMessage(resume) enforce
+    // — a second resume racing this one would put two agents in one worktree.
+    const live = this.registry.liveRunForTask(meta.taskId);
+    if (live !== undefined) {
+      throw new OrchestratorConflictError(
+        `task already has a live run: ${live.id}`
+      );
+    }
+    const task = this.ctx.store.get(meta.taskId);
+    if (task === null) {
+      throw new OrchestratorNotFoundError(`task not found: ${meta.taskId}`);
+    }
+    const {
+      executor,
+      name: executorName,
+      substituted,
+    } = this.resolveExecutorForResume(meta.executor);
+    const now = new Date().toISOString();
+    const newRunId = generateRunId(now);
+    const basePrompt = this.promptForTask(task);
+    const prompt =
+      meta.survey !== undefined
+        ? `${basePrompt}\n\n${renderSurveySection(meta.survey)}`
+        : basePrompt;
+    const newMeta: RunMeta = {
+      id: newRunId,
+      taskId: meta.taskId,
+      taskTitle: meta.taskTitle,
+      executor: executorName,
+      state: 'provisioning',
+      branch: meta.branch,
+      baseBranch: meta.baseBranch,
+      worktreePath: meta.worktreePath,
+      createdAt: now,
+      updatedAt: now,
+      model: meta.model,
+      resumedFrom: meta.id,
+      ...(meta.stackParents !== undefined
+        ? { stackParents: meta.stackParents }
+        : {}),
+      ...(meta.stackBaseCommit !== undefined
+        ? { stackBaseCommit: meta.stackBaseCommit }
+        : {}),
+    };
+    this.registry.create(newMeta);
+    this.transcriptFor(newRunId).writeHeader(newMeta);
+
+    const substitutionNote = substituted
+      ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
+      : '';
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: 'in-progress',
+        appendActivity: `${now} resumed after ${meta.state} (run ${newRunId})${substitutionNote}`,
+      },
+      now
+    );
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+
+    this.transition(newRunId, 'running');
+    const caps = this.orchestratorCaps();
+    this.startAndRegister(
+      newRunId,
+      {
+        cwd: newMeta.worktreePath,
+        projectRoot: this.ctx.rootDir,
+        runId: newRunId,
+        prompt,
+        permissionMode: caps.permissionMode,
+        maxTurns: caps.maxTurns,
+        maxBudgetUsd: caps.maxBudgetUsd,
+        model: meta.model,
+      },
+      executor
+    );
+    return this.registry.get(newRunId)!;
   }
 
   // Reads the project's `.dispatch/config.yml` `orchestrator:` block fresh on

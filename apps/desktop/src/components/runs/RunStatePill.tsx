@@ -17,6 +17,7 @@ const RUN_STATE_LABEL: Record<RunState, string> = {
   finished: 'Finished',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  'interrupted-dirty': 'Interrupted',
 };
 
 /**
@@ -37,6 +38,7 @@ const RUN_STATE_TONE: Record<RunState, FeedState> = {
   finished: 'review',
   failed: 'failed',
   cancelled: 'blocked',
+  'interrupted-dirty': 'failed',
 };
 
 interface RunStatePillProps {

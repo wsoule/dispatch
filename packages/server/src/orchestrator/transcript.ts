@@ -7,7 +7,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { NormalizedEntry, RunMeta, RunState } from './types.js';
+import type { NormalizedEntry, RunMeta, RunState, RunSurvey } from './types.js';
 
 export interface TranscriptHeaderLine {
   type: 'header';
@@ -74,6 +74,9 @@ export interface TranscriptStateLine {
   stackParents?: string[];
   baseDiscarded?: boolean;
   baseDiscardedReason?: string;
+  // See RunMeta.survey — rides along on the state line that marks a run
+  // `failed`/`interrupted-dirty`, exactly like the other finish fields above.
+  survey?: RunSurvey;
 }
 
 export type TranscriptLine =
@@ -120,6 +123,7 @@ export class Transcript {
       stackParents?: string[];
       baseDiscarded?: boolean;
       baseDiscardedReason?: string;
+      survey?: RunSurvey;
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
@@ -213,6 +217,7 @@ export function replayTranscript(
         baseDiscarded: line.baseDiscarded ?? meta.baseDiscarded,
         baseDiscardedReason:
           line.baseDiscardedReason ?? meta.baseDiscardedReason,
+        survey: line.survey ?? meta.survey,
       };
     }
   }

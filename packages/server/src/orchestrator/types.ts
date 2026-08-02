@@ -125,13 +125,28 @@ export type RunState =
   | 'awaiting-approval'
   | 'finished'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  // A `failed` that left uncommitted work behind — see RunSurvey.
+  | 'interrupted-dirty';
 
 export const TERMINAL_RUN_STATES: ReadonlySet<RunState> = new Set([
   'finished',
   'failed',
   'cancelled',
+  'interrupted-dirty',
 ]);
+
+// What survived a run that did not finish cleanly, read straight from its
+// worktree's git status — recovery info instead of a hand inspection.
+export interface RunSurvey {
+  runId: string;
+  branch: string;
+  staged: string[];
+  unstaged: string[];
+  untracked: string[];
+  lastCommit: { sha: string; subject: string } | null;
+  cleanTree: boolean;
+}
 
 // Everything the registry/transcript/API need to describe a run, independent
 // of whether it is still live (has a real ExecutorRun) or is being replayed
@@ -213,6 +228,8 @@ export interface RunMeta {
   // fixed "base discarded" label is wrong for the two restack cases, where the
   // base merged perfectly well.
   baseDiscardedReason?: string;
+  // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
+  survey?: RunSurvey;
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

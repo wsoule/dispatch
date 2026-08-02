@@ -9,7 +9,8 @@ export type RunState =
   | 'awaiting-approval'
   | 'finished'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'interrupted-dirty';
 
 export interface RunMeta {
   id: string;

@@ -78,6 +78,7 @@ const RUN_STATE_LABEL: Record<RunState, string> = {
   finished: 'Finished',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  'interrupted-dirty': 'Interrupted',
 };
 
 /**
