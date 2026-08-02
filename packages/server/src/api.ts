@@ -29,6 +29,11 @@ import {
   updateFinding,
 } from './api/findings.js';
 import {
+  adjudicateFinding,
+  advanceFixLoop,
+  getFixLoop,
+} from './api/fixLoop.js';
+import {
   errorResponse,
   jsonResponse,
   readJsonBody,
@@ -58,6 +63,7 @@ import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import type { EpicEngine } from './orchestrator/epic.js';
+import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
@@ -98,6 +104,7 @@ export interface ApiContext {
   findingStore: FindingStore;
   ledgerStore: LedgerStore;
   reviewRunner: ReviewRunner;
+  fixLoop: FixLoop;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
   questions: QuestionRegistry;
@@ -2272,6 +2279,29 @@ export async function handleApi(
         method === 'GET'
       ) {
         return listTaskFindings(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'fix-loop' &&
+        method === 'GET'
+      ) {
+        return getFixLoop(ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'fix-loop' &&
+        segments[3] === 'advance' &&
+        method === 'POST'
+      ) {
+        return await advanceFixLoop(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'findings' &&
+        segments[4] === 'adjudicate' &&
+        method === 'POST'
+      ) {
+        return await adjudicateFinding(req, ctx, segments[1], segments[3]);
       }
     }
 

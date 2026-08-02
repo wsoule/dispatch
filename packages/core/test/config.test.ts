@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import {
   ConfigError,
+  DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
   loadConfig,
@@ -34,6 +35,7 @@ describe('loadConfig', () => {
       },
       models: DEFAULT_MODELS,
       linear: DEFAULT_LINEAR,
+      fixLoop: DEFAULT_FIX_LOOP,
     });
   });
   it('merges file values over defaults', () => {
