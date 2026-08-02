@@ -63,6 +63,34 @@ class ScriptedAgent implements Executor {
   }
 }
 
+// Holds one run kind open until the test releases it, so a state the loop
+// would otherwise pass straight through can be observed and acted on.
+class GatedAgent implements Executor {
+  readonly prompts: string[] = [];
+  private pending: (() => void) | null = null;
+
+  constructor(private readonly gate: 'fix' | 'review') {}
+
+  start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+    this.prompts.push(opts.prompt);
+    const match = /as one JSON object: (\S+)/.exec(opts.prompt);
+    const finish = (): void => {
+      if (match !== null) writeFileSync(match[1], '{"findings": []}');
+      events.onFinish({ state: 'finished', sessionId: 'session-1' });
+    };
+    const kind = match !== null ? 'review' : 'fix';
+    if (kind === this.gate) this.pending = finish;
+    else setTimeout(finish, 0);
+    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+  }
+
+  releaseGate(): void {
+    const finish = this.pending;
+    this.pending = null;
+    finish?.();
+  }
+}
+
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
@@ -129,6 +157,21 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+// Replaces the running daemon with one driven by `executor`, against the same
+// project directory — also how the boot-resume path is exercised.
+async function restartWith(executor: Executor): Promise<void> {
+  await handle.stop();
+  handle = await startServer({
+    rootDir: root,
+    port: 0,
+    writeDaemonFile: false,
+    registerExecutors: (orchestrator) => {
+      orchestrator.registerExecutor('claude', executor);
+    },
+  });
+  baseUrl = `http://127.0.0.1:${handle.port}`;
+}
+
 function advance(body: unknown = {}): Promise<Response> {
   return fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop/advance`, {
     method: 'POST',
@@ -187,6 +230,16 @@ async function seedImplementerRun(): Promise<void> {
     const runs = await listRuns();
     return runs.some((run) => run.id === meta.id && run.state === 'finished');
   });
+}
+
+// Waits until the loop has stopped dispatching. A test that returns with a run
+// still in flight has its temp dirs deleted out from under that run.
+async function settle(): Promise<FixLoopState> {
+  await waitFor(async () => {
+    const { state } = await fixLoopState();
+    return state === 'capped' || state === 'complete';
+  });
+  return await fixLoopState();
 }
 
 function fixLoopState(): Promise<FixLoopState> {
@@ -337,17 +390,8 @@ describe('the fix loop', () => {
 
 describe('a review that produced unusable output', () => {
   it('never reads as clean and never completes the loop', async () => {
-    await handle.stop();
     agent = new ScriptedAgent(1);
-    handle = await startServer({
-      rootDir: root,
-      port: 0,
-      writeDaemonFile: false,
-      registerExecutors: (orchestrator) => {
-        orchestrator.registerExecutor('claude', agent);
-      },
-    });
-    baseUrl = `http://127.0.0.1:${handle.port}`;
+    await restartWith(agent);
 
     const findingId = (await json<Finding>(await seedFinding())).id;
     await advance({ baseSha, cap: 1 });
@@ -360,6 +404,122 @@ describe('a review that produced unusable output', () => {
       runs.some((run) => run.kind === 'review' && run.state === 'failed')
     ).toBe(true);
   }, 30000);
+});
+
+describe('a standing block', () => {
+  it('stops a loop that never reached the cap', async () => {
+    const gated = new GatedAgent('fix');
+    await restartWith(gated);
+
+    const findingId = (await json<Finding>(await seedFinding())).id;
+    await advance({ baseSha });
+    expect((await fixLoopState()).state).toBe('implementing');
+
+    // Ruled on mid-round, long before the cap. `blocked` is not `open`, so
+    // nothing downstream sees a finding here at all.
+    const res = await adjudicate(findingId, {
+      verdict: 'blocked',
+      ruling: 'this ships a data-loss path; it must not merge',
+    });
+    expect(res.status).toBe(200);
+    expect(await openFindings()).toEqual([]);
+
+    gated.releaseGate();
+    await waitFor(async () => {
+      const state = (await fixLoopState()).state;
+      return state !== 'implementing' && state !== 'reviewing';
+    });
+
+    // The re-review came back clean and the loop still must not settle.
+    expect((await fixLoopState()).state).toBe('capped');
+    const task = await json<TaskDoc>(
+      await fetch(`${baseUrl}/api/tasks/${taskId}`)
+    );
+    expect(task.meta.labels).toContain('blocked');
+  }, 30000);
+});
+
+describe('closing the findings a review judged', () => {
+  it('leaves a finding filed after the review started open', async () => {
+    const gated = new GatedAgent('review');
+    await restartWith(gated);
+
+    const before = (await json<Finding>(await seedFinding())).id;
+    await advance({ baseSha, cap: 1 });
+    await waitFor(async () => (await fixLoopState()).state === 'reviewing');
+
+    // Filed while the review is in flight, so that review never saw it.
+    const during = (await json<Finding>(await seedFinding())).id;
+    gated.releaseGate();
+    await settle();
+
+    const all = await json<Finding[]>(
+      await fetch(`${baseUrl}/api/tasks/${taskId}/findings`)
+    );
+    const byId = new Map(all.map((f) => [f.id, f.verdict]));
+    expect(byId.get(before)).toBe('addressed');
+    expect(byId.get(during)).toBe('open');
+  }, 30000);
+});
+
+describe('a daemon restart mid-round', () => {
+  it('resumes a loop left stalled in implementing', async () => {
+    const gated = new GatedAgent('fix');
+    await restartWith(gated);
+    await seedFinding();
+    await advance({ baseSha, cap: 1 });
+    expect((await fixLoopState()).state).toBe('implementing');
+
+    // The gated run never finishes: it dies with the daemon, so no terminal
+    // hook will ever fire for it again.
+    await restartWith(new ScriptedAgent());
+    const settled = await settle();
+    expect(settled.state).toBe('capped');
+    const runs = await listRuns();
+    expect(runs.some((run) => run.kind === 'review')).toBe(true);
+  }, 30000);
+});
+
+describe('an escalation step the resume path cannot serve', () => {
+  it('goes fresh when a high tier lands on a resume step', async () => {
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      `${readFileSync(join(root, '.dispatch', 'config.yml'), 'utf8')}fixLoop:\n  cap: 1\n  escalation:\n    - round: 1\n      strategy: resume\n      modelTier: high\n`
+    );
+    await restartWith(new ScriptedAgent());
+    await seedImplementerRun();
+    await seedFinding();
+    await advance({ baseSha });
+    await settle();
+
+    // Resuming would have kept the seed run's cheaper model, so the step is
+    // served by a fresh run at the execute model instead.
+    const runs = await fixRuns();
+    expect(runs[1].resumedFrom).toBeUndefined();
+    expect(runs[1].model).toBe('claude-opus-5');
+  }, 30000);
+});
+
+describe('PATCH /api/findings/:id', () => {
+  it('refuses to park or block, and still allows the plain verdicts', async () => {
+    const findingId = (await json<Finding>(await seedFinding())).id;
+    const patch = (body: unknown): Promise<Response> =>
+      fetch(`${baseUrl}/api/findings/${findingId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    for (const verdict of ['parked', 'blocked']) {
+      const res = await patch({ verdict });
+      expect(res.status).toBe(400);
+      expect((await json<{ error: string }>(res)).error).toContain(
+        'adjudicate'
+      );
+    }
+    expect((await openFindings())[0].verdict).toBe('open');
+    expect((await patch({ verdict: 'addressed' })).status).toBe(200);
+  });
 });
 
 describe('POST /api/tasks/:id/findings/:fid/adjudicate', () => {

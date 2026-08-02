@@ -173,16 +173,30 @@ export class FixLoop {
     // review's findings are already in the store when this fires for that run.
     ctx.orchestrator.onRunTerminal((meta) => {
       if (this.ctx.fixLoopStore.get(meta.taskId) === null) return;
-      void this.advance(meta.taskId).catch((err: unknown) => {
-        console.error(
-          `dispatchd: fix loop for ${meta.taskId} failed to advance: ${String(err)}`
-        );
-      });
+      this.advanceInBackground(meta.taskId);
     });
   }
 
   get(taskId: string): FixLoopState | null {
     return this.ctx.fixLoopStore.get(taskId);
+  }
+
+  // Loops a stopped daemon left mid-flight. The run they were waiting on went
+  // terminal in the dead process, so no hook will ever fire for them again.
+  resumeOnBoot(): number {
+    const stalled = this.ctx.fixLoopStore
+      .list()
+      .filter((s) => s.state === 'implementing' || s.state === 'reviewing');
+    for (const state of stalled) this.advanceInBackground(state.taskId);
+    return stalled.length;
+  }
+
+  private advanceInBackground(taskId: string): void {
+    void this.advance(taskId).catch((err: unknown) => {
+      console.error(
+        `dispatchd: fix loop for ${taskId} failed to advance: ${String(err)}`
+      );
+    });
   }
 
   // Opens the loop for a task. `baseSha` is supplied by the caller that knows
@@ -258,8 +272,14 @@ export class FixLoop {
         return await this.afterFixRun(state);
       case 'reviewing':
         return await this.afterReviewRun(state);
-      default:
+      case 'idle':
         return await this.openRound(state);
+      default:
+        // A hand-edited or truncated line must not read as `idle` and dispatch
+        // a round on a loop that had already stopped.
+        throw new OrchestratorClientError(
+          `unknown fix loop state for ${taskId}: ${String(state.state)}`
+        );
     }
   }
 
@@ -267,7 +287,13 @@ export class FixLoop {
   // and anything else dispatches the next fix.
   private async openRound(state: FixLoopState): Promise<FixLoopState> {
     const open = this.ctx.findingStore.openFor(state.taskId);
-    if (open.length === 0) return this.save({ ...state, state: 'complete' });
+    if (open.length === 0) {
+      // A blocking ruling stops the loop here too, not only at the cap: a
+      // blocked finding is no longer `open`, so nothing else would catch it.
+      return this.canSettle(state.taskId)
+        ? this.save({ ...state, state: 'complete' })
+        : this.reachCap(state);
+    }
     if (state.round >= state.cap) return this.reachCap(state);
     const round = state.round + 1;
     const step = escalationFor(
@@ -291,12 +317,15 @@ export class FixLoop {
       strategy: step.strategy,
       findings: open,
     });
+    const { models } = loadConfig(this.ctx.rootDir);
+    const model =
+      step.modelTier === 'high'
+        ? models.execute
+        : (task.meta.model ?? models.execute);
     const previous = this.latestRun(state.taskId, 'execute');
     if (
       step.strategy === 'resume' &&
-      previous !== null &&
-      previous.sessionId !== undefined &&
-      previous.sessionId !== ''
+      this.canResume(previous, step.modelTier, models.execute)
     ) {
       this.ctx.orchestrator.sendMessage(previous.id, prompt, { resume: true });
       return;
@@ -307,18 +336,24 @@ export class FixLoop {
       taskId: state.taskId,
       kind: 'execute',
       head: previous?.branch ?? state.baseSha,
-      model: this.modelFor(task, step.modelTier),
+      model,
       buildPrompt: () => prompt,
     });
   }
 
-  // `standard` keeps the task's own tier; `high` overrides a cheaper per-task
-  // model with the project's execute model, which is the point of escalating.
-  private modelFor(task: TaskDoc, tier: EscalationStep['modelTier']): string {
-    const { models } = loadConfig(this.ctx.rootDir);
-    return tier === 'high'
-      ? models.execute
-      : (task.meta.model ?? models.execute);
+  // A resume reuses the run's own session and model, so it cannot raise the
+  // tier: a `high` step only resumes a run already on the high model.
+  private canResume(
+    previous: RunMeta | null,
+    tier: EscalationStep['modelTier'],
+    highModel: string
+  ): previous is RunMeta {
+    return (
+      previous !== null &&
+      previous.sessionId !== undefined &&
+      previous.sessionId !== '' &&
+      (tier !== 'high' || previous.model === highModel)
+    );
   }
 
   private async afterFixRun(state: FixLoopState): Promise<FixLoopState> {
@@ -326,7 +361,10 @@ export class FixLoop {
     if (run === null || !TERMINAL_RUN_STATES.has(run.state)) return state;
     // Re-reviewed even when the fix run failed: the review judges the branch,
     // so a fix that did nothing costs a round rather than wedging the loop.
-    const head = this.worktrees.resolveCommit(run.branch);
+    const head = this.resolveHead(run.branch);
+    // No branch means nothing reviewable happened. Spend a round rather than
+    // reviewing an empty range, which would read as clean and clear findings.
+    if (head === null) return await this.openRound(state);
     await this.ctx.reviewRunner.startReview({
       taskId: state.taskId,
       base: state.baseSha,
@@ -338,21 +376,32 @@ export class FixLoop {
     return this.save({ ...state, state: 'reviewing', lastReviewedSha: head });
   }
 
+  // The commit a fix run's branch ended on, or null when that branch never
+  // came into existence — a run that died before its worktree was created.
+  private resolveHead(branch: string): string | null {
+    try {
+      return this.worktrees.resolveCommit(branch);
+    } catch {
+      return null;
+    }
+  }
+
   private async afterReviewRun(state: FixLoopState): Promise<FixLoopState> {
     const run = this.latestRun(state.taskId, 'review');
     if (run === null || !TERMINAL_RUN_STATES.has(run.state)) return state;
     // Only a review that actually finished clears anything. A failed one (an
     // unusable findings payload) must never read as a clean result.
-    if (run.state === 'finished') this.closeInputFindings(state.taskId, run.id);
+    if (run.state === 'finished') this.closeInputFindings(state.taskId, run);
     return await this.openRound(state);
   }
 
-  // Anything the finished review did not itself raise was an input to the fix
-  // it judged, so it is addressed — what survives comes back as a new finding.
-  private closeInputFindings(taskId: string, reviewRunId: string): void {
+  // Closes exactly what this review was handed: raised before it started, and
+  // not by it. A finding filed mid-review was never seen and stays open.
+  private closeInputFindings(taskId: string, review: RunMeta): void {
     let closed = 0;
     for (const finding of this.ctx.findingStore.openFor(taskId)) {
-      if (finding.runId === reviewRunId) continue;
+      if (finding.runId === review.id) continue;
+      if (finding.createdAt >= review.createdAt) continue;
       this.ctx.findingStore.update(finding.id, { verdict: 'addressed' });
       closed += 1;
     }
@@ -369,16 +418,20 @@ export class FixLoop {
     return saved;
   }
 
-  // The cap never resolves itself. The loop completes only once every finding
-  // carries a written ruling and none of them blocks.
+  // The single bar `complete` must clear, wherever it is produced from:
+  // nothing still open, and no standing block.
+  private canSettle(taskId: string): boolean {
+    return (
+      this.ctx.findingStore.openFor(taskId).length === 0 &&
+      this.ctx.findingStore.list({ taskId, verdict: 'blocked' }).length === 0
+    );
+  }
+
+  // The cap never resolves itself; only a ruling on every finding moves it.
   private settleCapped(state: FixLoopState): FixLoopState {
-    if (this.ctx.findingStore.openFor(state.taskId).length > 0) return state;
-    const blocked = this.ctx.findingStore.list({
-      taskId: state.taskId,
-      verdict: 'blocked',
-    });
-    if (blocked.length > 0) return state;
-    return this.save({ ...state, state: 'complete' });
+    return this.canSettle(state.taskId)
+      ? this.save({ ...state, state: 'complete' })
+      : state;
   }
 
   // Core has no `blocked` status (a project's statuses are pinned in its own

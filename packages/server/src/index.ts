@@ -358,6 +358,12 @@ export async function startServer(
     findingStore,
     fixLoopStore: new FixLoopStore(rootDir),
   });
+  // Runs after reconcileOnBoot has force-failed the previous process's runs,
+  // so a loop waiting on one of them sees a terminal run and moves on.
+  const resumedLoops = fixLoop.resumeOnBoot();
+  if (resumedLoops > 0) {
+    console.log(`dispatchd: resumed ${resumedLoops} stalled fix loop(s)`);
+  }
 
   const apiCtx: ApiContext = {
     rootDir,
