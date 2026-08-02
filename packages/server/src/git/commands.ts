@@ -29,6 +29,13 @@ export const INVALID_REMOTE_ERROR =
 export const CONFIRM_REQUIRED_ERROR =
   'this operation is destructive and requires confirm: true';
 export const INVALID_STASH_INDEX_ERROR = 'invalid stash index';
+// `.`, `./` and `src/..` all name the whole checkout while reading like an
+// ordinary relative path — discard takes the paths the caller meant to name.
+export const WHOLE_TREE_DISCARD_ERROR =
+  'refusing a pathspec that targets the whole repository: discard needs specific paths';
+// Prefix only — the named paths follow.
+export const STAGED_DISCARD_PREFIX =
+  'unstage before discarding (discard restores the working tree, not the index): ';
 // Prefix only — marks a commit that landed but whose sha couldn't be confirmed.
 export const COMMIT_SHA_UNRESOLVED_PREFIX =
   'commit succeeded but could not resolve its sha: ';
@@ -97,6 +104,13 @@ export class GitRepo {
     const rel = relative(root, resolved);
     if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
     return rawPath;
+  }
+
+  // True when a pathspec resolves to the repo root itself. safePath only rules
+  // out escapes *above* the root, so the root is otherwise an accepted target.
+  private isRepoRoot(rawPath: string): boolean {
+    const root = this.realRoot();
+    return relative(root, this.resolveParent(resolve(root, rawPath))) === '';
   }
 
   private safePaths(paths: string[]): string[] | null {
@@ -238,20 +252,59 @@ export class GitRepo {
       : { ok: false, stderr: commandErrorText(result) };
   }
 
-  // Removes untracked paths, then restores tracked ones (checked via
-  // `ls-files`, not checkout's locale-dependent error text).
+  // Staged deletions and renames, which `checkout -- <path>` cannot undo because
+  // it restores from the index rather than HEAD. Empty on an unborn branch.
+  private async stagedRemovals(
+    paths: string[]
+  ): Promise<{ ok: true; paths: string[] } | { ok: false; stderr: string }> {
+    const head = await this.runGit([
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      'HEAD',
+    ]);
+    if (!head.ok) return { ok: true, paths: [] };
+    const diff = await this.runGit([
+      'diff',
+      '--cached',
+      '--name-only',
+      '-z',
+      '--diff-filter=DR',
+      'HEAD',
+      '--',
+      ...paths,
+    ]);
+    if (!diff.ok) return { ok: false, stderr: commandErrorText(diff) };
+    return { ok: true, paths: diff.stdout.split('\0').filter((p) => p !== '') };
+  }
+
+  // Restores tracked paths (found via `ls-files`, not checkout's locale-dependent
+  // error text) before deleting untracked ones, so a failed restore destroys nothing.
   async discard(paths: string[], confirm: boolean): Promise<GitOutcome> {
     if (!confirm) return { ok: false, stderr: CONFIRM_REQUIRED_ERROR };
     const safe = this.safePaths(paths);
     if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
-    const clean = await this.runGit(['clean', '-f', '-d', '--', ...safe]);
-    if (!clean.ok) return { ok: false, stderr: commandErrorText(clean) };
+    if (safe.some((path) => this.isRepoRoot(path))) {
+      return { ok: false, stderr: WHOLE_TREE_DISCARD_ERROR };
+    }
+    const staged = await this.stagedRemovals(safe);
+    if (!staged.ok) return { ok: false, stderr: staged.stderr };
+    if (staged.paths.length > 0) {
+      return {
+        ok: false,
+        stderr: `${STAGED_DISCARD_PREFIX}${staged.paths.join(', ')}`,
+      };
+    }
     const tracked = await this.runGit(['ls-files', '-z', '--', ...safe]);
     if (!tracked.ok) return { ok: false, stderr: commandErrorText(tracked) };
     const trackedPaths = tracked.stdout.split('\0').filter((p) => p !== '');
-    if (trackedPaths.length === 0) return { ok: true };
-    const checkout = await this.runGit(['checkout', '--', ...trackedPaths]);
-    if (!checkout.ok) return { ok: false, stderr: commandErrorText(checkout) };
+    if (trackedPaths.length > 0) {
+      const checkout = await this.runGit(['checkout', '--', ...trackedPaths]);
+      if (!checkout.ok)
+        return { ok: false, stderr: commandErrorText(checkout) };
+    }
+    const clean = await this.runGit(['clean', '-f', '-d', '--', ...safe]);
+    if (!clean.ok) return { ok: false, stderr: commandErrorText(clean) };
     return { ok: true };
   }
 
