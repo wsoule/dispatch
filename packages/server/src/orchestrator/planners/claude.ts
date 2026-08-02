@@ -39,6 +39,11 @@ const PROPOSAL_JSON_SCHEMA: Record<string, unknown> = {
             type: 'string',
             enum: ['urgent', 'high', 'medium', 'low', 'none'],
           },
+          writes: { type: 'array', items: { type: 'string' } },
+          risk: {
+            type: 'string',
+            enum: ['routine', 'elevated', 'critical'],
+          },
         },
         required: [
           'title',
@@ -46,6 +51,8 @@ const PROPOSAL_JSON_SCHEMA: Record<string, unknown> = {
           'acceptanceCriteria',
           'blockedByIndices',
           'priority',
+          'writes',
+          'risk',
         ],
         additionalProperties: false,
       },
@@ -99,7 +106,24 @@ const PROPOSAL_RULES =
   'task. Put a short conversational reply to the user in `message`, and the ' +
   'FULL current plan (not a diff) in `proposal` once you have one — set ' +
   '`proposal` to null only on a turn where you have nothing worth proposing ' +
-  'yet (see the question rules below).';
+  'yet (see the question rules below).\n\n' +
+  'Every task also needs `writes` and `risk`, since these drive whether ' +
+  'tasks can run concurrently later. `writes` is the list of file paths (or ' +
+  '`dir/**` glob prefixes — no other glob syntax) the task will actually ' +
+  'modify or create; tasks whose `writes` do not overlap can run in ' +
+  'parallel, so over-declaring (listing files you will not really touch) ' +
+  'costs concurrency, while under-declaring (missing one you do touch) ' +
+  'costs a merge conflict when two tasks collide on a file neither ' +
+  'declared. Declare exactly what you expect to touch, and if a file is ' +
+  'genuinely shared ground for several tasks in this plan (in this repo, ' +
+  'the canonical example is `packages/server/src/api.ts`), list it in ' +
+  'every task that touches it rather than picking one owner — that is what ' +
+  'correctly serializes them. `risk` is one of routine (the default; ' +
+  'ordinary feature and fix work), elevated (touches shared contracts, ' +
+  'auth, concurrency, or data migration), or critical (destructive ' +
+  'operations, writes to an external system, or anything that can lose ' +
+  'user data) — pick the tier the task itself warrants, not the epic as a ' +
+  'whole.';
 
 // Shared clarifying-questions instruction for both plan and draft prompts;
 // `roundLimit` supplies the caller's own cap so drafts stay tighter than plans.

@@ -1,4 +1,8 @@
-import { dispatchableTasks, loadConfig } from '@dispatch/core';
+import {
+  dispatchableTasks,
+  loadConfig,
+  schedulableBatch,
+} from '@dispatch/core';
 import type { TaskDoc, TaskStore } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
@@ -294,11 +298,8 @@ export class EpicEngine {
     }
   }
 
-  // Dispatches ready children up to the session's concurrency cap. Reads a
-  // fresh live-run count on every call (rather than tracking a separate
-  // counter that could drift from reality) — cheap at epic scale, and it's
-  // the actual registry, not a shadow copy, that the concurrency guarantee
-  // has to hold against.
+  // Dispatches ready children via schedulableBatch (conflicts.ts): up to the
+  // concurrency cap, and never two with overlapping `writes` in one batch.
   //
   // C1: readiness is computed over the FULL task set (`dispatchableTasks`
   // gates a blocker on being in-review/done/cancelled, but treats a blocker
@@ -319,7 +320,7 @@ export class EpicEngine {
       .filter(
         (r) => childIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
       ).length;
-    let slots = session.concurrency - liveCount;
+    const slots = session.concurrency - liveCount;
     if (slots <= 0) return;
 
     // childIds now includes archived children (see childrenOf); dispatchability
@@ -327,16 +328,16 @@ export class EpicEngine {
     const ready = dispatchableTasks(this.ctx.cache.query()).filter(
       (t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined
     );
-    for (const task of ready) {
-      if (slots <= 0) break;
+    const batch = schedulableBatch(
+      ready.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),
+      slots
+    );
+    for (const taskId of batch) {
       try {
-        await this.ctx.orchestrator.dispatch(task.meta.id, session.executor);
-        slots--;
+        await this.ctx.orchestrator.dispatch(taskId, session.executor);
       } catch (err) {
-        // A task that already picked up a live run between the readiness
-        // snapshot above and this dispatch call (e.g. someone manually
-        // dispatched it outside the epic session) just gets skipped — every
-        // other error is a real bug and must surface, not be swallowed.
+        // A task that already picked up a live run outside this session
+        // (raced between the readiness snapshot and here) just gets skipped.
         if (err instanceof OrchestratorConflictError) continue;
         throw err;
       }

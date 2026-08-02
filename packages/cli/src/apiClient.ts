@@ -63,6 +63,8 @@ export interface PlannedTask {
   acceptanceCriteria: string[];
   blockedByIndices: number[];
   priority: string;
+  writes?: string[];
+  risk?: string;
 }
 
 export interface PlanProposal {

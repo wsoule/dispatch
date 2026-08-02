@@ -527,6 +527,8 @@ export class PlanManager {
           description: buildTaskDescription(task),
           parent: epicId ?? null,
           priority: task.priority,
+          writes: task.writes,
+          risk: task.risk,
         }).meta.id
     );
 
