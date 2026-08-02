@@ -647,6 +647,89 @@ async function recordDecision(
   }
 }
 
+// Proxies `POST /api/runs/:id/evidence` — a command the calling run actually
+// ran, recorded as data instead of narrated in the run's own report.
+async function recordEvidence(
+  rootDir: string,
+  args: {
+    command: string;
+    exitCode: number;
+    durationMs: number;
+    summary: string;
+  }
+): Promise<ToolOutcome> {
+  if (args.command.trim() === '') return toolError('command must not be empty');
+  if (args.summary.trim() === '') return toolError('summary must not be empty');
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'record_evidence requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — cannot record evidence');
+  }
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${daemon.port}/api/runs/${runId}/evidence`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(args),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `record_evidence failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    return toolResult({ ok: true });
+  } catch (err) {
+    return toolError(`record_evidence failed: ${(err as Error).message}`);
+  }
+}
+
+// Proxies `POST /api/runs/:id/mutations` — a guard reverted and the tests
+// re-run. `testsFailed: 0` is what buildReviewPrompt flags to the reviewer.
+async function recordMutation(
+  rootDir: string,
+  args: { guard: string; file: string; testsFailed: number }
+): Promise<ToolOutcome> {
+  if (args.guard.trim() === '') return toolError('guard must not be empty');
+  if (args.file.trim() === '') return toolError('file must not be empty');
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'record_mutation requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — cannot record a mutation result');
+  }
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${daemon.port}/api/runs/${runId}/mutations`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(args),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `record_mutation failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    return toolResult({ ok: true });
+  } catch (err) {
+    return toolError(`record_mutation failed: ${(err as Error).message}`);
+  }
+}
+
 // Registers the five task_* tools plus run_list against a fixed root
 // directory. Each task_* tool re-resolves the TaskStore/config on every call
 // (rather than caching it at registration time) so a `dispatch init` that
@@ -1003,5 +1086,50 @@ export function registerDispatchTools(
     },
     ({ kind, title, detail, appliesTo }) =>
       recordDecision(rootDir, { kind, title, detail, appliesTo })
+  );
+
+  server.registerTool(
+    'record_evidence',
+    {
+      title: 'Record command evidence',
+      description:
+        'Record a command you actually ran as verification evidence, ' +
+        'instead of describing the result in prose in your final report. ' +
+        'Call it once per command load-bearing to your acceptance criteria ' +
+        '— the build, the linter, the test run. The reviewer sees this as ' +
+        'data, not a claim.',
+      inputSchema: {
+        command: z.string(),
+        exitCode: z.number().int(),
+        durationMs: z.number().nonnegative(),
+        summary: z.string(),
+      },
+      outputSchema: { ok: z.boolean() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ command, exitCode, durationMs, summary }) =>
+      recordEvidence(rootDir, { command, exitCode, durationMs, summary })
+  );
+
+  server.registerTool(
+    'record_mutation',
+    {
+      title: 'Record a mutation test result',
+      description:
+        'Record the result of mutation-testing a guard you added: revert ' +
+        'the guard, rerun the tests, and report how many failed. ' +
+        '`testsFailed: 0` is flagged to the reviewer as a sign the guard is ' +
+        'dead or its test is vacuous — call this for every guard you add, ' +
+        'not just the ones you expect to pass.',
+      inputSchema: {
+        guard: z.string(),
+        file: z.string(),
+        testsFailed: z.number().int().nonnegative(),
+      },
+      outputSchema: { ok: z.boolean() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ guard, file, testsFailed }) =>
+      recordMutation(rootDir, { guard, file, testsFailed })
   );
 }

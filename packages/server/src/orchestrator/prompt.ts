@@ -61,6 +61,16 @@ export function buildTaskPrompt(
   );
 
   sections.push(
+    'Record verification evidence with the `record_evidence` MCP tool ' +
+      'instead of describing test results in prose — one call per command ' +
+      'load-bearing to your acceptance criteria. If you add a guard (a ' +
+      'check, a validation, a condition that should stop bad input or a ' +
+      'bad state), mutation-test it: revert the guard, rerun the tests, and ' +
+      'call `record_mutation` with how many failed. Zero means the guard or ' +
+      'its test is not doing its job.'
+  );
+
+  sections.push(
     'Commit your work (git add / git commit) before finishing — an ' +
       'uncommitted worktree cannot be reviewed or merged.'
   );

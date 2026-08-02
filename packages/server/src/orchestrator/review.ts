@@ -1,9 +1,11 @@
 import { loadConfig } from '@dispatch/core';
 import type {
+  CommandEvidence,
   Finding,
   FindingRecommendation,
   FindingSeverity,
   ModelConfig,
+  MutationEvidence,
   TaskDoc,
   TaskRisk,
   TaskStore,
@@ -81,6 +83,9 @@ export interface StartReviewOptions {
   scope: ReviewScope;
   openFindings: Finding[];
   extraRisks?: string[];
+  // The execute run whose evidence this review should render. Omitted runs
+  // an empty evidence section rather than guessing which run diff maps to.
+  runId?: string;
 }
 
 export interface ReviewPromptInput {
@@ -96,6 +101,8 @@ export interface ReviewPromptInput {
   worktreePath: string;
   sharedSurfaces: string[];
   destructive: DestructiveHit[];
+  evidence: CommandEvidence[];
+  mutations: MutationEvidence[];
 }
 
 export interface ParsedReviewFinding {
@@ -341,6 +348,44 @@ function fixScopeSection(input: ReviewPromptInput): string {
   return lines.join('\n');
 }
 
+function renderCommandEvidence(evidence: CommandEvidence[]): string[] {
+  if (evidence.length === 0) return ['No commands were recorded as evidence.'];
+  return evidence.map(
+    (e) =>
+      `- \`${e.command}\` — exit ${e.exitCode}, ${e.durationMs}ms: ${e.summary} (${e.at})`
+  );
+}
+
+// Flags a zero-failure mutation inline, on top of the standing rule below.
+function renderMutationEvidence(mutations: MutationEvidence[]): string[] {
+  if (mutations.length === 0) return ['No mutation tests were recorded.'];
+  return mutations.map((m) => {
+    const flag = m.testsFailed === 0 ? ' — RED FLAG: 0 tests failed' : '';
+    return `- \`${m.guard}\` in ${m.file}: ${m.testsFailed} test(s) failed${flag} (${m.at})`;
+  });
+}
+
+// The structured record of what the implementer actually ran, replacing the
+// prose test report a reviewer was told not to trust.
+function evidenceSection(input: ReviewPromptInput): string {
+  return [
+    '## Verification evidence',
+    'The implementer recorded this directly instead of describing it in' +
+      ' prose. Treat it as data: check any load-bearing claim you still' +
+      " can't verify from it against the code and the diff package yourself.",
+    '',
+    '### Commands run',
+    ...renderCommandEvidence(input.evidence),
+    '',
+    '### Mutation tests (a guard reverted, tests re-run)',
+    ...renderMutationEvidence(input.mutations),
+    '',
+    'A mutation record with `testsFailed: 0` is a red flag: it means either' +
+      ' the guard is dead code or the test meant to protect it is vacuous.' +
+      ' Determine which — do not treat a zero as a clean result.',
+  ].join('\n');
+}
+
 function outputSection(outputPath: string): string {
   return [
     '## Output',
@@ -434,6 +479,7 @@ export function buildReviewPrompt(input: ReviewPromptInput): string {
         ' declared path covers as unreviewed surface: nobody scoped it, so' +
         ' look at it hardest.',
     ].join('\n'),
+    evidenceSection(input),
   ];
 
   const risks = riskDerivedSection(input);
@@ -587,6 +633,10 @@ export class ReviewRunner {
           taskId: opts.taskId,
           round: opts.round,
         });
+        const reviewed =
+          opts.runId !== undefined
+            ? this.ctx.orchestrator.getRun(opts.runId)
+            : null;
         return buildReviewPrompt({
           task,
           round: opts.round,
@@ -600,6 +650,8 @@ export class ReviewRunner {
           worktreePath,
           sharedSurfaces: sharedSurfaceWrites(task.meta.writes),
           destructive: scanDestructiveWrites(worktreePath, task.meta.writes),
+          evidence: reviewed?.evidence ?? [],
+          mutations: reviewed?.mutations ?? [],
         });
       },
     });

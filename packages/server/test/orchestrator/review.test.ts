@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import { FindingStore } from '../../src/findings.js';
+import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import {
   buildDiffPackage,
@@ -78,6 +79,7 @@ function taskDoc(risk: TaskRisk, writes: string[] = []): TaskDoc {
       writes,
       risk,
       model: null,
+      exercised: false,
     },
     body: '## Description\n\nMake first-run sync non-destructive.\n',
   };
@@ -118,6 +120,8 @@ function promptInput(
     worktreePath: '/worktrees/r-1',
     sharedSurfaces: [],
     destructive: [],
+    evidence: [],
+    mutations: [],
     ...overrides,
   };
 }
@@ -295,6 +299,80 @@ describe('buildReviewPrompt framing and inputs', () => {
     );
     expect(prompt).not.toContain('re-review of a fix');
     expect(prompt).not.toContain('f-000001');
+  });
+});
+
+describe('buildReviewPrompt verification evidence', () => {
+  it('says so explicitly when no evidence was recorded', () => {
+    const prompt = buildReviewPrompt(promptInput());
+    expect(prompt).toContain('## Verification evidence');
+    expect(prompt).toContain('No commands were recorded as evidence.');
+    expect(prompt).toContain('No mutation tests were recorded.');
+  });
+
+  it('renders each recorded command with its exit code and summary', () => {
+    const prompt = buildReviewPrompt(
+      promptInput({
+        evidence: [
+          {
+            command: 'bun test',
+            exitCode: 0,
+            durationMs: 4200,
+            summary: '158 pass, 0 fail',
+            at: '2026-08-02T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+    expect(prompt).toContain(
+      '- `bun test` — exit 0, 4200ms: 158 pass, 0 fail (2026-08-02T00:00:00.000Z)'
+    );
+  });
+
+  // The deliverable this integration exists for: a zero-failure mutation must
+  // be impossible to miss in the rendered prompt.
+  it('flags a zero-failure mutation as a red flag', () => {
+    const prompt = buildReviewPrompt(
+      promptInput({
+        mutations: [
+          {
+            guard: 'null check on foo()',
+            file: 'src/foo.ts',
+            testsFailed: 0,
+            at: '2026-08-02T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+    expect(prompt).toContain(
+      '- `null check on foo()` in src/foo.ts: 0 test(s) failed — RED FLAG: 0 tests failed (2026-08-02T00:00:00.000Z)'
+    );
+    expect(prompt).toContain(
+      'A mutation record with `testsFailed: 0` is a red flag: it means either' +
+        ' the guard is dead code or the test meant to protect it is vacuous.'
+    );
+    expect(prompt).toContain('do not treat a zero as a clean result');
+  });
+
+  it('does not flag a mutation whose tests actually failed', () => {
+    const prompt = buildReviewPrompt(
+      promptInput({
+        mutations: [
+          {
+            guard: 'reject on empty title',
+            file: 'src/handler.ts',
+            testsFailed: 2,
+            at: '2026-08-02T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+    expect(prompt).toContain(
+      '- `reject on empty title` in src/handler.ts: 2 test(s) failed (2026-08-02T00:00:00.000Z)'
+    );
+    expect(prompt).not.toContain(
+      'reject on empty title` in src/handler.ts: 2 test(s) failed — RED FLAG'
+    );
   });
 });
 
@@ -536,6 +614,52 @@ describe('ReviewRunner', () => {
 
     expect(reviewer.lastPrompt).toContain('Adversarial review');
     expect(reviewer.lastPrompt).toContain('## Risk-derived checks');
+  });
+
+  it("renders the reviewed run's evidence, including a zero-failure mutation flag", async () => {
+    const reviewer = new ScriptedReviewer(JSON.stringify({ findings: [] }));
+    const { orchestrator, runner, store } = setupReview(reviewer);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'harden sync', risk: 'routine' });
+    const implRun = await orchestrator.dispatch(task.meta.id, 'fake');
+    orchestrator.recordEvidence(implRun.id, {
+      command: 'bun test',
+      exitCode: 0,
+      durationMs: 4200,
+      summary: '158 pass, 0 fail',
+    });
+    orchestrator.recordMutation(implRun.id, {
+      guard: 'null check on foo()',
+      file: 'src/foo.ts',
+      testsFailed: 0,
+    });
+    const { base, head } = commitRange();
+
+    const reviewMeta = await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+      runId: implRun.id,
+    });
+    await waitFor(
+      () => orchestrator.getRun(reviewMeta.id)?.meta.state === 'finished'
+    );
+
+    expect(reviewer.lastPrompt).toContain(
+      '- `bun test` — exit 0, 4200ms: 158 pass, 0 fail'
+    );
+    expect(reviewer.lastPrompt).toContain(
+      '- `null check on foo()` in src/foo.ts: 0 test(s) failed — RED FLAG: 0 tests failed'
+    );
+    expect(reviewer.lastPrompt).toContain(
+      'A mutation record with `testsFailed: 0` is a red flag'
+    );
   });
 
   it('fails the review run when the structured output is malformed', async () => {

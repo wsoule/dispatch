@@ -6,7 +6,13 @@ import {
   TaskParseError,
   TaskStore,
 } from '@dispatch/core';
-import type { OrchestratorConfig, TaskDoc, UpdatePatch } from '@dispatch/core';
+import type {
+  CommandEvidence,
+  MutationEvidence,
+  OrchestratorConfig,
+  TaskDoc,
+  UpdatePatch,
+} from '@dispatch/core';
 import {
   existsSync,
   mkdirSync,
@@ -32,6 +38,7 @@ import {
 } from './paths.js';
 import { buildTaskPrompt, renderSurveySection } from './prompt.js';
 import { RunRegistry } from './registry.js';
+import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
   ApprovalDecision,
@@ -224,14 +231,20 @@ export class Orchestrator {
   // rootDir after a restart with no reconciliation yet — falls back to
   // replaying its transcript file directly, since that's the only place its
   // state still exists.
-  getRun(id: string): { meta: RunMeta; entries: NormalizedEntry[] } | null {
+  getRun(id: string): RunDetail | null {
     const meta = this.registry.get(id);
     if (meta !== undefined) {
-      const entries = this.transcriptFor(id)
-        .read()
+      const lines = this.transcriptFor(id).read();
+      const entries = lines
         .filter((line) => line.type === 'entry')
         .map((line) => line.entry);
-      return { meta, entries };
+      const evidence = lines
+        .filter((line) => line.type === 'evidence')
+        .map((line) => line.evidence);
+      const mutations = lines
+        .filter((line) => line.type === 'mutation')
+        .map((line) => line.mutation);
+      return { meta, entries, evidence, mutations };
     }
     return replayTranscript(transcriptPath(this.ctx.rootDir, id));
   }
@@ -771,6 +784,35 @@ export class Orchestrator {
     this.transcriptFor(runId).appendEntry(entry);
     this.ctx.events.broadcast({ type: 'run.log', runId, entry });
     return meta;
+  }
+
+  // Records a command the implementer actually ran, stamped with `at` here
+  // so the caller can echo the record back — data in place of a prose report.
+  recordEvidence(
+    runId: string,
+    evidence: Omit<CommandEvidence, 'at'>
+  ): CommandEvidence {
+    this.requireRun(runId);
+    const full: CommandEvidence = { ...evidence, at: new Date().toISOString() };
+    this.transcriptFor(runId).appendEvidence(full);
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return full;
+  }
+
+  // Records a mutation-test result via `record_mutation` — a guard reverted,
+  // tests re-run. `testsFailed: 0` is what buildReviewPrompt flags.
+  recordMutation(
+    runId: string,
+    mutation: Omit<MutationEvidence, 'at'>
+  ): MutationEvidence {
+    this.requireRun(runId);
+    const full: MutationEvidence = {
+      ...mutation,
+      at: new Date().toISOString(),
+    };
+    this.transcriptFor(runId).appendMutation(full);
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return full;
   }
 
   // Records the human's reply to an `ask_user` question on the run's own

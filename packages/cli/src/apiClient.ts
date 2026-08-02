@@ -1,7 +1,9 @@
+import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
+
 import { CliError } from './context.js';
 
 // Hand-kept mirrors of @dispatch/server's orchestrator types: server is Bun-only and
-// unimportable here, and @dispatch/client's barrel would drag React into this Node CLI.
+// unimportable here. CommandEvidence/MutationEvidence are pure core types instead.
 
 export type RunState =
   | 'provisioning'
@@ -44,6 +46,8 @@ export interface NormalizedEntry {
 export interface RunDetail {
   meta: RunMeta;
   entries: NormalizedEntry[];
+  evidence: CommandEvidence[];
+  mutations: MutationEvidence[];
 }
 
 export interface DiffFile {
