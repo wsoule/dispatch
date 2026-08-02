@@ -339,6 +339,26 @@ describe('VerificationRunner', () => {
     expect(store.get(task.meta.id)?.meta.exercised).toBe(false);
   });
 
+  it('leaves exercised false when the agent reports zero checks', async () => {
+    mkdirSync(join(repo, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'verify:\n  url: http://localhost:3000\n'
+    );
+    const verifier = new ScriptedVerifier(JSON.stringify({ checks: [] }));
+    const { runner, store } = setupVerify(verifier);
+    const task = store.create({ title: 'harden sync' });
+    const head = commitHead();
+
+    await runner.startVerification({ taskId: task.meta.id, head });
+
+    await waitFor(() => runner.getLatestResult(task.meta.id) !== null);
+    const latest = runner.getLatestResult(task.meta.id);
+    expect(latest?.pass).toBe(false);
+    expect(latest?.checks).toEqual([]);
+    expect(store.get(task.meta.id)?.meta.exercised).toBe(false);
+  });
+
   it('fails the run when the structured output is malformed', async () => {
     mkdirSync(join(repo, '.dispatch'), { recursive: true });
     writeFileSync(

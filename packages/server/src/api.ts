@@ -15,9 +15,11 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  FixLoopConfig,
   LinearConfig,
   ModelConfig,
   UpdatePatch,
+  VerifyConfig,
 } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
@@ -581,6 +583,30 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // Same deal as models: core validates each field before writing, and that
     // ConfigError becomes the 400 below.
     patch.linear = body.linear as Partial<LinearConfig>;
+  }
+  if ('fixLoop' in body) {
+    if (
+      typeof body.fixLoop !== 'object' ||
+      body.fixLoop === null ||
+      Array.isArray(body.fixLoop)
+    ) {
+      return errorResponse(400, 'fixLoop must be an object');
+    }
+    // Same deal as models/linear: core validates cap/escalation before
+    // writing, and that ConfigError becomes the 400 below.
+    patch.fixLoop = body.fixLoop as Partial<FixLoopConfig>;
+  }
+  if ('verify' in body) {
+    if (
+      typeof body.verify !== 'object' ||
+      body.verify === null ||
+      Array.isArray(body.verify)
+    ) {
+      return errorResponse(400, 'verify must be an object');
+    }
+    // Same deal as models/linear: core validates each field before writing,
+    // and that ConfigError becomes the 400 below.
+    patch.verify = body.verify as Partial<VerifyConfig>;
   }
 
   try {
