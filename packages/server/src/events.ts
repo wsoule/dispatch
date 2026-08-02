@@ -1,4 +1,5 @@
 import type { LinearSyncSummary } from './linear/sync.js';
+import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
@@ -79,10 +80,17 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision/hazard/constraint/handoff was added to the ledger.
   | { type: 'ledger.changed' }
-  // A task's fix loop moved between states, or hit its round cap. `capped` is
-  // its own event because it needs a human before the loop can go anywhere.
+  // A task's fix loop moved between states, or stopped needing a human.
+  // `reason` says which action: `round` alone never distinguished them.
   | { type: 'fixloop.changed'; taskId: string }
-  | { type: 'fixloop.capped'; taskId: string; round: number }
+  | {
+      type: 'fixloop.capped';
+      taskId: string;
+      round: number;
+      cap: number;
+      reason: FixLoopStop;
+      message?: string;
+    }
   // A run reached `failed`/`interrupted-dirty` and was surveyed — carries
   // the survey so a connected client can show it without a follow-up fetch.
   | { type: 'run.survey'; runId: string; survey: RunSurvey }

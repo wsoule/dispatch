@@ -1,7 +1,13 @@
 import { DEFAULT_FIX_LOOP, TaskStore } from '@dispatch/core';
 import type { Finding, TaskDoc } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,8 +24,21 @@ import type {
 } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
 
+// The commit a fix round leaves behind. A round that commits nothing gives the
+// re-review an empty range, which the loop refuses to review at all.
+let commitCounter = 0;
+function commitFixWork(cwd: string): void {
+  commitCounter += 1;
+  writeFileSync(
+    join(cwd, 'src.ts'),
+    `export const answer = ${commitCounter};\n`
+  );
+  runGitSync(cwd, ['add', '-A']);
+  runGitSync(cwd, ['commit', '-m', `fix round ${commitCounter}`]);
+}
+
 // One executor serving both halves of the loop: a review prompt names an
-// output path and gets findings written to it, a fix prompt is just recorded.
+// output path and gets findings written to it, a fix prompt commits its work.
 class ScriptedAgent implements Executor {
   readonly prompts: string[] = [];
   private reviewCount = 0;
@@ -40,6 +59,8 @@ class ScriptedAgent implements Executor {
             ? 'I checked everything and it looks fine to me.'
             : this.findingsPayload(this.reviewCount)
         );
+      } else {
+        commitFixWork(opts.cwd);
       }
       events.onFinish({ state: 'finished', sessionId: 'session-1' });
     }, 0);
@@ -76,6 +97,7 @@ class GatedAgent implements Executor {
     const match = /as one JSON object: (\S+)/.exec(opts.prompt);
     const finish = (): void => {
       if (match !== null) writeFileSync(match[1], '{"findings": []}');
+      else commitFixWork(opts.cwd);
       events.onFinish({ state: 'finished', sessionId: 'session-1' });
     };
     const kind = match !== null ? 'review' : 'fix';
@@ -88,6 +110,22 @@ class GatedAgent implements Executor {
     const finish = this.pending;
     this.pending = null;
     finish?.();
+  }
+}
+
+// Reviews everything clean. `commitOnFix` decides whether its fix rounds leave
+// a commit behind, which is what separates a real review range from an empty one.
+class CleanAgent implements Executor {
+  constructor(private readonly commitOnFix = false) {}
+
+  start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+    const match = /as one JSON object: (\S+)/.exec(opts.prompt);
+    setTimeout(() => {
+      if (match !== null) writeFileSync(match[1], '{"findings": []}');
+      else if (this.commitOnFix) commitFixWork(opts.cwd);
+      events.onFinish({ state: 'finished', sessionId: 'session-1' });
+    }, 0);
+    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
   }
 }
 
@@ -212,7 +250,9 @@ function adjudicate(findingId: string, body: unknown): Promise<Response> {
   );
 }
 
-function seedFinding(): Promise<Response> {
+function seedFinding(
+  overrides: Record<string, unknown> = {}
+): Promise<Response> {
   return fetch(`${baseUrl}/api/findings`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -223,8 +263,23 @@ function seedFinding(): Promise<Response> {
       detail: 'reproduced against a scratch copy',
       file: 'src.ts',
       line: 1,
+      ...overrides,
     }),
   });
+}
+
+function patchFinding(id: string, body: unknown): Promise<Response> {
+  return fetch(`${baseUrl}/api/findings/${id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function allFindings(): Promise<Finding[]> {
+  return fetch(`${baseUrl}/api/findings?taskId=${taskId}`).then((res) =>
+    json<Finding[]>(res)
+  );
 }
 
 function listRuns(): Promise<RunMeta[]> {
@@ -240,7 +295,7 @@ async function fixRuns(): Promise<RunMeta[]> {
 
 // Dispatches the task's first implementer and waits for it to come to rest, so
 // there is a real run (with a resumable session) for round 1 to resume into.
-async function seedImplementerRun(): Promise<void> {
+async function seedImplementerRun(): Promise<string> {
   const res = await fetch(`${baseUrl}/api/tasks/${taskId}/runs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -251,6 +306,27 @@ async function seedImplementerRun(): Promise<void> {
     const runs = await listRuns();
     return runs.some((run) => run.id === meta.id && run.state === 'finished');
   });
+  return meta.id;
+}
+
+// Collects every `fixloop.capped` the daemon broadcasts from now on, so a test
+// can assert on the reason the loop stopped rather than only its final state.
+function collectCappedEvents(): CappedEvent[] {
+  const seen: CappedEvent[] = [];
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+  ws.addEventListener('message', (ev) => {
+    const parsed = JSON.parse(ev.data as string) as CappedEvent;
+    if (parsed.type === 'fixloop.capped') seen.push(parsed);
+  });
+  return seen;
+}
+
+interface CappedEvent {
+  type: string;
+  taskId: string;
+  round: number;
+  cap: number;
+  reason: string;
 }
 
 // Waits until the loop has stopped dispatching. A test that returns with a run
@@ -488,14 +564,15 @@ describe('a daemon restart mid-round', () => {
     const gated = new GatedAgent('fix');
     await restartWith(gated);
     await seedFinding();
-    await advance({ baseSha, cap: 1 });
+    await advance({ baseSha, cap: 2 });
     expect((await fixLoopState()).state).toBe('implementing');
 
-    // The gated run never finishes: it dies with the daemon, so no terminal
-    // hook will ever fire for it again.
+    // The gated run never finishes: it dies with the daemon having committed
+    // nothing, so no terminal hook will ever fire for it again.
     await restartWith(new ScriptedAgent());
     const settled = await settle();
     expect(settled.state).toBe('capped');
+    expect(settled.round).toBe(2);
     const runs = await listRuns();
     expect(runs.some((run) => run.kind === 'review')).toBe(true);
   }, 30000);
@@ -611,6 +688,214 @@ describe('POST /api/tasks/:id/findings/:fid/adjudicate', () => {
     expect(task.meta.labels).toContain('blocked');
     expect(task.body).toContain('blocked by finding');
     expect((await fixLoopState()).state).toBe('capped');
+  }, 30000);
+});
+
+describe('a fix round that committed nothing', () => {
+  it('reviews no empty range and clears no finding', async () => {
+    await restartWith(new CleanAgent());
+    const findingId = (
+      await json<Finding>(
+        await seedFinding({ severity: 'critical', recommendation: 'blocks' })
+      )
+    ).id;
+    await advance({ baseSha, cap: 1 });
+    const settled = await settle();
+
+    expect(settled.state).toBe('capped');
+    expect(settled.lastReviewedSha).toBeNull();
+    expect((await listRuns()).some((run) => run.kind === 'review')).toBe(false);
+    expect((await openFindings()).map((f) => f.id)).toEqual([findingId]);
+  }, 30000);
+});
+
+describe('a clean review over a real range', () => {
+  it('retires what it judged but never a critical finding', async () => {
+    await restartWith(new CleanAgent(true));
+    const critical = (
+      await json<Finding>(await seedFinding({ severity: 'critical' }))
+    ).id;
+    const important = (await json<Finding>(await seedFinding())).id;
+    await advance({ baseSha, cap: 1 });
+    const settled = await settle();
+
+    expect(settled.lastReviewedSha).not.toBe(baseSha);
+    const byId = new Map((await allFindings()).map((f) => [f.id, f.verdict]));
+    expect(byId.get(important)).toBe('addressed');
+    expect(byId.get(critical)).toBe('open');
+    expect(settled.state).toBe('capped');
+  }, 30000);
+});
+
+describe('a baseSha that is not a commit', () => {
+  it('is refused at the boundary rather than opening a loop', async () => {
+    await seedFinding();
+    const res = await advance({ baseSha: '0'.repeat(40) });
+    expect(res.status).toBe(400);
+    expect((await json<{ error: string }>(res)).error).toContain('baseSha');
+    expect(
+      (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
+    ).toBe(404);
+  });
+
+  it('400s a cap outside the allowed range', async () => {
+    expect((await advance({ baseSha, cap: 1e21 })).status).toBe(400);
+    expect((await advance({ baseSha, cap: 0 })).status).toBe(400);
+    expect(
+      (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
+    ).toBe(404);
+  });
+});
+
+describe('an execute run a human already merged or discarded', () => {
+  it('is neither resumed nor built on, and the loop still moves', async () => {
+    await restartWith(new CleanAgent());
+    const runId = await seedImplementerRun();
+    const reviewed = await fetch(`${baseUrl}/api/runs/${runId}/review`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'discard' }),
+    });
+    expect(reviewed.status).toBe(200);
+
+    await seedFinding();
+    const res = await advance({ baseSha, cap: 1 });
+    expect(res.status).toBe(200);
+
+    const settled = await settle();
+    expect(settled.round).toBe(1);
+    const runs = await fixRuns();
+    expect(runs).toHaveLength(2);
+    expect(runs[1].resumedFrom).toBeUndefined();
+  }, 30000);
+});
+
+describe('a finding that already carries a ruling', () => {
+  it('cannot have that ruling cleared by PATCH', async () => {
+    for (const verdict of ['blocked', 'parked'] as const) {
+      const findingId = (await json<Finding>(await seedFinding())).id;
+      const ruled = await adjudicate(findingId, {
+        verdict,
+        ruling: 'this ships a data-loss path; it must not merge',
+      });
+      expect(ruled.status).toBe(200);
+
+      const res = await patchFinding(findingId, { verdict: 'addressed' });
+      expect(res.status).toBe(400);
+      expect((await json<{ error: string }>(res)).error).toContain(
+        'adjudicate'
+      );
+      expect((await patchFinding(findingId, { ruling: null })).status).toBe(
+        400
+      );
+      const byId = new Map((await allFindings()).map((f) => [f.id, f]));
+      expect(byId.get(findingId)?.verdict).toBe(verdict);
+      expect(byId.get(findingId)?.ruling).toContain('data-loss');
+    }
+  });
+});
+
+describe('the reason a loop stopped', () => {
+  it('separates a standing block from an exhausted round budget', async () => {
+    const gated = new GatedAgent('fix');
+    await restartWith(gated);
+    const capped = collectCappedEvents();
+
+    const findingId = (await json<Finding>(await seedFinding())).id;
+    await advance({ baseSha });
+    await adjudicate(findingId, {
+      verdict: 'blocked',
+      ruling: 'this ships a data-loss path; it must not merge',
+    });
+    gated.releaseGate();
+    const settled = await settle();
+
+    expect(settled.state).toBe('capped');
+    expect(settled.round).toBeLessThan(settled.cap);
+    expect(settled.stopReason).toBe('standing-block');
+    await waitFor(() => Promise.resolve(capped.length > 0));
+    expect(capped[0]).toMatchObject({
+      taskId,
+      round: settled.round,
+      cap: settled.cap,
+      reason: 'standing-block',
+    });
+  }, 30000);
+
+  it('re-labels a capped loop once its last open finding is ruled on', async () => {
+    await seedFinding();
+    await advance({ baseSha, cap: 1 });
+    await waitFor(async () => (await fixLoopState()).state === 'capped');
+    expect((await fixLoopState()).stopReason).toBe('rounds-exhausted');
+
+    const open = await openFindings();
+    expect(open.length).toBeGreaterThan(0);
+    for (const finding of open) {
+      await adjudicate(finding.id, {
+        verdict: 'blocked',
+        ruling: 'this ships a data-loss path; it must not merge',
+      });
+    }
+
+    expect(await openFindings()).toEqual([]);
+    const settled = await fixLoopState();
+    expect(settled.state).toBe('capped');
+    expect(settled.stopReason).toBe('standing-block');
+  }, 30000);
+});
+
+describe('a fix loop that cannot take another step', () => {
+  it('stops where a human can act instead of retrying forever', async () => {
+    const gated = new GatedAgent('fix');
+    await restartWith(gated);
+    const capped = collectCappedEvents();
+    await seedFinding();
+    await advance({ baseSha });
+    expect((await fixLoopState()).state).toBe('implementing');
+
+    // Broken while the round is in flight, so the throw lands on the
+    // hook-driven advance, where no caller is waiting on the promise.
+    const configPath = join(root, '.dispatch', 'config.yml');
+    writeFileSync(
+      configPath,
+      `${readFileSync(configPath, 'utf8')}fixLoop:\n  cap: 0\n`
+    );
+    gated.releaseGate();
+    const settled = await settle();
+
+    expect(settled.state).toBe('capped');
+    expect(settled.stopReason).toBe('error');
+    expect(settled.stopDetail).toContain('fixLoop.cap');
+    await waitFor(() => Promise.resolve(capped.length > 0));
+    expect(capped[0].reason).toBe('error');
+
+    // And it stays stopped: the same failing step is not retried on every hook.
+    const again = await json<FixLoopState>(await advance({}));
+    expect(again.state).toBe('capped');
+    expect(again.stopReason).toBe('error');
+  }, 30000);
+});
+
+describe('an unreadable fix-loops.jsonl', () => {
+  it('does not stop the daemon booting', async () => {
+    await seedFinding();
+    await advance({ baseSha, cap: 1 });
+    await settle();
+    await handle.stop();
+
+    const file = join(root, '.dispatch', 'fix-loops.jsonl');
+    rmSync(file);
+    mkdirSync(file);
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('claude', new ScriptedAgent());
+      },
+    });
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    expect((await fetch(`${baseUrl}/api/tasks`)).status).toBe(200);
   }, 30000);
 });
 

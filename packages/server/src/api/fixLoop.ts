@@ -1,15 +1,12 @@
 import type { ApiContext } from '../api.js';
 import type { FixLoopVerdict } from '../orchestrator/fixLoop.js';
+import { ADJUDICATION_VERDICTS, capError } from '../orchestrator/fixLoop.js';
 import {
   errorResponse,
   jsonResponse,
   readJsonBody,
   readJsonBodyOptional,
 } from './http.js';
-
-// Declared as `readonly string[]` so a membership check against an
-// unvalidated `unknown` never needs an `as` cast.
-const ADJUDICATION_VERDICTS: readonly string[] = ['parked', 'blocked'];
 
 // GET /api/tasks/:id/fix-loop
 export function getFixLoop(ctx: ApiContext, taskId: string): Response {
@@ -36,17 +33,15 @@ export async function advanceFixLoop(
         'invalid baseSha: baseSha is required to open a fix loop'
       );
     }
-    if (
-      body.cap !== undefined &&
-      (typeof body.cap !== 'number' ||
-        !Number.isInteger(body.cap) ||
-        body.cap < 1)
-    ) {
-      return errorResponse(400, 'invalid cap: expected an integer >= 1');
+    if (body.cap !== undefined) {
+      const problem = capError(body.cap);
+      if (problem !== null) return errorResponse(400, problem);
     }
+    // `start` re-checks both, and resolves `baseSha` against the repository:
+    // a base that names no commit fails every round from inside a dispatch.
     ctx.fixLoop.start(taskId, {
       baseSha: body.baseSha.trim(),
-      cap: body.cap,
+      cap: body.cap as number | undefined,
     });
   }
   return jsonResponse(await ctx.fixLoop.advance(taskId));

@@ -30,6 +30,19 @@ export const BLOCKED_LABEL = 'blocked';
 
 export type FixLoopVerdict = 'parked' | 'blocked';
 
+/** The verdicts a written ruling produces. Only the adjudicate path may set
+ *  one, and only it may change one — an edit route must not clear a ruling. */
+export const ADJUDICATION_VERDICTS: readonly string[] = ['parked', 'blocked'];
+
+/** Why a stopped loop is not `complete`. Carried on the state and the
+ *  `fixloop.capped` event so no consumer has to infer it from the round. */
+export type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+
+export const MIN_FIX_LOOP_CAP = 1;
+/** An upper bound on the round budget: every round dispatches a real agent
+ *  run, so an unbounded cap is an unbounded spend. */
+export const MAX_FIX_LOOP_CAP = 50;
+
 export interface FixLoopState {
   taskId: string;
   /** 0 = not started. Incremented once per dispatched fix. */
@@ -40,7 +53,37 @@ export interface FixLoopState {
    *  against it, so a later round sees the whole change, not just its own. */
   baseSha: string;
   lastReviewedSha: string | null;
+  /** Set while `capped`, cleared on `complete`. */
+  stopReason?: FixLoopStop;
+  /** The failure text behind a `stopReason` of `error`. */
+  stopDetail?: string;
   updatedAt: string;
+}
+
+// A finding a clean review may not retire on its own: both of these mean the
+// decision to ship belongs to a human, not to a reviewer that found nothing.
+export function requiresRuling(finding: Finding): boolean {
+  return finding.severity === 'critical' || finding.recommendation === 'blocks';
+}
+
+// Why `cap` is unusable, or null when it is fine. Shared so the route and the
+// loop reject exactly the same values.
+export function capError(cap: unknown): string | null {
+  if (
+    typeof cap !== 'number' ||
+    !Number.isInteger(cap) ||
+    cap < MIN_FIX_LOOP_CAP ||
+    cap > MAX_FIX_LOOP_CAP
+  ) {
+    return `invalid cap: expected an integer between ${MIN_FIX_LOOP_CAP} and ${MAX_FIX_LOOP_CAP}`;
+  }
+  return null;
+}
+
+// A run this loop can still build on. A merged or discarded run's branch and
+// worktree are gone, so it can be neither resumed into nor stacked onto.
+function canBuildOn(run: RunMeta | null): run is RunMeta {
+  return run !== null && run.reviewedAt === undefined;
 }
 
 // Per-task loop state in `.dispatch/fix-loops.jsonl`, one JSON line per write.
@@ -52,10 +95,18 @@ export class FixLoopStore {
     this.file = join(rootDir, '.dispatch', 'fix-loops.jsonl');
   }
 
-  private read(): Map<string, FixLoopState> {
+  private read(): { byTask: Map<string, FixLoopState>; error: string | null } {
     const byTask = new Map<string, FixLoopState>();
-    if (!existsSync(this.file)) return byTask;
-    for (const line of readFileSync(this.file, 'utf8').split('\n')) {
+    if (!existsSync(this.file)) return { byTask, error: null };
+    let text: string;
+    try {
+      text = readFileSync(this.file, 'utf8');
+    } catch (err) {
+      // An unreadable store costs the loops recorded in it, not the daemon
+      // booting over it.
+      return { byTask, error: (err as Error).message };
+    }
+    for (const line of text.split('\n')) {
       if (line.trim() === '') continue;
       try {
         const record = JSON.parse(line) as FixLoopState;
@@ -64,15 +115,22 @@ export class FixLoopStore {
         // A hand-corrupted line costs itself, not the rest of the store.
       }
     }
-    return byTask;
+    return { byTask, error: null };
   }
 
   get(taskId: string): FixLoopState | null {
-    return this.read().get(taskId) ?? null;
+    return this.read().byTask.get(taskId) ?? null;
   }
 
   list(): FixLoopState[] {
-    return [...this.read().values()];
+    return [...this.read().byTask.values()];
+  }
+
+  // `list()` plus why it may be empty, for callers on the boot path that must
+  // report an unreadable store rather than read it as "no loops".
+  listSafe(): { states: FixLoopState[]; error: string | null } {
+    const { byTask, error } = this.read();
+    return { states: [...byTask.values()], error };
   }
 
   put(state: FixLoopState): FixLoopState {
@@ -184,19 +242,42 @@ export class FixLoop {
   // Loops a stopped daemon left mid-flight. The run they were waiting on went
   // terminal in the dead process, so no hook will ever fire for them again.
   resumeOnBoot(): number {
-    const stalled = this.ctx.fixLoopStore
-      .list()
-      .filter((s) => s.state === 'implementing' || s.state === 'reviewing');
+    const { states, error } = this.ctx.fixLoopStore.listSafe();
+    if (error !== null) {
+      console.error(
+        `dispatchd: fix loop store unreadable, no loops resumed: ${error}`
+      );
+    }
+    const stalled = states.filter(
+      (s) => s.state === 'implementing' || s.state === 'reviewing'
+    );
     for (const state of stalled) this.advanceInBackground(state.taskId);
     return stalled.length;
   }
 
   private advanceInBackground(taskId: string): void {
     void this.advance(taskId).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(
-        `dispatchd: fix loop for ${taskId} failed to advance: ${String(err)}`
+        `dispatchd: fix loop for ${taskId} failed to advance: ${message}`
       );
+      this.stopOnError(taskId, message);
     });
+  }
+
+  // A step that threw will throw again on the same persisted state, so the
+  // loop stops where a human can see it instead of retrying forever.
+  private stopOnError(taskId: string, message: string): void {
+    try {
+      const state = this.ctx.fixLoopStore.get(taskId);
+      if (state === null) return;
+      if (state.state === 'capped' || state.state === 'complete') return;
+      this.reachCap(state, 'error', message);
+    } catch (err) {
+      console.error(
+        `dispatchd: fix loop for ${taskId} could not record its failure: ${String(err)}`
+      );
+    }
   }
 
   // Opens the loop for a task. `baseSha` is supplied by the caller that knows
@@ -205,12 +286,24 @@ export class FixLoop {
     const existing = this.ctx.fixLoopStore.get(taskId);
     if (existing !== null) return existing;
     this.requireTask(taskId);
+    if (opts.cap !== undefined) {
+      const problem = capError(opts.cap);
+      if (problem !== null) throw new OrchestratorClientError(problem);
+    }
+    // Pinned to the commit the ref resolves to now: a base that names nothing
+    // fails every round from here on, inside a dispatch nobody is watching.
+    const baseSha = this.resolveHead(opts.baseSha);
+    if (baseSha === null) {
+      throw new OrchestratorClientError(
+        `invalid baseSha: not a commit in this repository: ${opts.baseSha}`
+      );
+    }
     return this.save({
       taskId,
       round: 0,
       cap: opts.cap ?? loadConfig(this.ctx.rootDir).fixLoop.cap,
       state: 'idle',
-      baseSha: opts.baseSha,
+      baseSha,
       lastReviewedSha: null,
       updatedAt: '',
     });
@@ -290,8 +383,8 @@ export class FixLoop {
     if (open.length === 0) {
       // A blocking ruling stops the loop here too, not only at the cap: a
       // blocked finding is no longer `open`, so nothing else would catch it.
-      return this.canSettle(state.taskId)
-        ? this.save({ ...state, state: 'complete' })
+      return this.stopReasonFor(state.taskId) === null
+        ? this.settle(state)
         : this.reachCap(state);
     }
     if (state.round >= state.cap) return this.reachCap(state);
@@ -322,7 +415,8 @@ export class FixLoop {
       step.modelTier === 'high'
         ? models.execute
         : (task.meta.model ?? models.execute);
-    const previous = this.latestRun(state.taskId, 'execute');
+    const latest = this.latestRun(state.taskId, 'execute');
+    const previous = canBuildOn(latest) ? latest : null;
     if (
       step.strategy === 'resume' &&
       this.canResume(previous, step.modelTier, models.execute)
@@ -349,7 +443,7 @@ export class FixLoop {
     highModel: string
   ): previous is RunMeta {
     return (
-      previous !== null &&
+      canBuildOn(previous) &&
       previous.sessionId !== undefined &&
       previous.sessionId !== '' &&
       (tier !== 'high' || previous.model === highModel)
@@ -362,9 +456,11 @@ export class FixLoop {
     // Re-reviewed even when the fix run failed: the review judges the branch,
     // so a fix that did nothing costs a round rather than wedging the loop.
     const head = this.resolveHead(run.branch);
-    // No branch means nothing reviewable happened. Spend a round rather than
-    // reviewing an empty range, which would read as clean and clear findings.
-    if (head === null) return await this.openRound(state);
+    // No branch, or a branch still on the base, means nothing reviewable
+    // happened: an empty range reads as clean and would clear findings.
+    if (head === null || head === state.baseSha) {
+      return await this.openRound(state);
+    }
     await this.ctx.reviewRunner.startReview({
       taskId: state.taskId,
       base: state.baseSha,
@@ -377,11 +473,11 @@ export class FixLoop {
     return this.save({ ...state, state: 'reviewing', lastReviewedSha: head });
   }
 
-  // The commit a fix run's branch ended on, or null when that branch never
-  // came into existence — a run that died before its worktree was created.
-  private resolveHead(branch: string): string | null {
+  // The commit a ref names, or null when it names nothing. `^{commit}` is what
+  // rejects an absent sha: `rev-parse --verify` takes any well-formed one.
+  private resolveHead(ref: string): string | null {
     try {
-      return this.worktrees.resolveCommit(branch);
+      return this.worktrees.resolveCommit(`${ref}^{commit}`);
     } catch {
       return null;
     }
@@ -396,43 +492,74 @@ export class FixLoop {
     return await this.openRound(state);
   }
 
-  // Closes exactly what this review was handed: raised before it started, and
-  // not by it. A finding filed mid-review was never seen and stays open.
+  // Closes exactly what this review was handed: raised before it started, not
+  // by it, and not one only a human may retire.
   private closeInputFindings(taskId: string, review: RunMeta): void {
     let closed = 0;
     for (const finding of this.ctx.findingStore.openFor(taskId)) {
       if (finding.runId === review.id) continue;
       if (finding.createdAt >= review.createdAt) continue;
+      if (requiresRuling(finding)) continue;
       this.ctx.findingStore.update(finding.id, { verdict: 'addressed' });
       closed += 1;
     }
     if (closed > 0) this.ctx.events.broadcast({ type: 'finding.changed' });
   }
 
-  private reachCap(state: FixLoopState): FixLoopState {
-    const saved = this.save({ ...state, state: 'capped' });
+  private reachCap(
+    state: FixLoopState,
+    reason?: FixLoopStop,
+    detail?: string
+  ): FixLoopState {
+    const stopReason =
+      reason ?? this.stopReasonFor(state.taskId) ?? 'rounds-exhausted';
+    const saved = this.save({
+      ...state,
+      state: 'capped',
+      stopReason,
+      stopDetail: detail,
+    });
     this.ctx.events.broadcast({
       type: 'fixloop.capped',
       taskId: saved.taskId,
       round: saved.round,
+      cap: saved.cap,
+      reason: stopReason,
+      ...(detail !== undefined ? { message: detail } : {}),
     });
     return saved;
   }
 
-  // The single bar `complete` must clear, wherever it is produced from:
-  // nothing still open, and no standing block.
-  private canSettle(taskId: string): boolean {
-    return (
-      this.ctx.findingStore.openFor(taskId).length === 0 &&
-      this.ctx.findingStore.list({ taskId, verdict: 'blocked' }).length === 0
-    );
+  // The single bar `complete` must clear, wherever it is produced from, and
+  // the reason it is not cleared. Null means the loop may settle.
+  private stopReasonFor(taskId: string): FixLoopStop | null {
+    if (this.ctx.findingStore.list({ taskId, verdict: 'blocked' }).length > 0) {
+      return 'standing-block';
+    }
+    if (this.ctx.findingStore.openFor(taskId).length > 0) {
+      return 'rounds-exhausted';
+    }
+    return null;
   }
 
-  // The cap never resolves itself; only a ruling on every finding moves it.
+  private settle(state: FixLoopState): FixLoopState {
+    return this.save({
+      ...state,
+      state: 'complete',
+      stopReason: undefined,
+      stopDetail: undefined,
+    });
+  }
+
+  // The cap never resolves itself. A ruling either settles it or changes what
+  // it waits for, so it stops asking for rulings that no longer exist.
   private settleCapped(state: FixLoopState): FixLoopState {
-    return this.canSettle(state.taskId)
-      ? this.save({ ...state, state: 'complete' })
-      : state;
+    const reason = this.stopReasonFor(state.taskId);
+    if (reason === null) return this.settle(state);
+    if (state.stopReason === 'error' || reason === state.stopReason) {
+      return state;
+    }
+    return this.save({ ...state, stopReason: reason, stopDetail: undefined });
   }
 
   // Core has no `blocked` status (a project's statuses are pinned in its own
