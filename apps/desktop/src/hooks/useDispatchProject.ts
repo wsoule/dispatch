@@ -50,6 +50,10 @@ import { useTransitionNotifications } from './useTransitionNotifications';
 // only the live event carries it (see the WS effect below).
 type PendingApproval = { requestId: string; toolName: string };
 
+// Same shape/reason as `PendingApproval`, for `scope.requested` — there is no
+// listing route for open scope requests, only the live WS event carries the id.
+type PendingScopeRequest = { requestId: string };
+
 // Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
 // own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
 // is a Tauri/browser-only app, never SSR'd, but a stray server-side render of this module
@@ -315,6 +319,15 @@ export interface DispatchProjectData {
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
   pendingApprovals: Map<string, PendingApproval>;
+  /** Run id -> the scope request that run's agent is blocked on, seen live via
+   * `scope.requested` — see `pendingApprovals` for why there's no other way to get the id. */
+  pendingScopeRequests: Map<string, PendingScopeRequest>;
+  handleDecideScopeRequest: (
+    runId: string,
+    requestId: string,
+    granted: boolean,
+    reason?: string
+  ) => Promise<void>;
   /** Run id -> every question that run's agent is blocked on, oldest first. Usually one, but
    * an agent can dispatch several `ask_user` calls in the same turn. */
   openQuestions: Map<string, RunQuestion[]>;
@@ -432,6 +445,9 @@ export function useDispatchProject(
   const queryClient = useQueryClient();
   const [pendingApprovals, setPendingApprovals] = useState<
     Map<string, PendingApproval>
+  >(new Map());
+  const [pendingScopeRequests, setPendingScopeRequests] = useState<
+    Map<string, PendingScopeRequest>
   >(new Map());
   const [planId, setPlanId] = useState<string | null>(null);
   // The Notes hub's own plan slot: the AI task draft started off a single note, kept apart
@@ -991,6 +1007,24 @@ export function useDispatchProject(
             event.type === 'question.closed'
           ) {
             void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+          } else if (event.type === 'scope.requested') {
+            setPendingScopeRequests((prev) => {
+              const next = new Map(prev);
+              next.set(event.runId, { requestId: event.requestId });
+              return next;
+            });
+            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+            const taskTitle =
+              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+              event.runId;
+            void notify('An agent needs scope approval', taskTitle);
+          } else if (event.type === 'scope.decided') {
+            setPendingScopeRequests((prev) => {
+              if (!prev.has(event.runId)) return prev;
+              const next = new Map(prev);
+              next.delete(event.runId);
+              return next;
+            });
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
@@ -1015,31 +1049,40 @@ export function useDispatchProject(
             });
           } else if (event.type === 'finding.changed') {
             void queryClient.invalidateQueries({
-              queryKey: findingsQueryRootKey,
+              queryKey: findingsQueryRootKey(port),
             });
           } else if (event.type === 'ledger.changed') {
             void queryClient.invalidateQueries({
-              queryKey: ledgerQueryRootKey,
+              queryKey: ledgerQueryRootKey(port),
             });
           } else if (event.type === 'fixloop.changed') {
             void queryClient.invalidateQueries({
-              queryKey: fixLoopKey(event.taskId),
+              queryKey: fixLoopKey(port, event.taskId),
             });
           } else if (event.type === 'fixloop.capped') {
             void queryClient.invalidateQueries({
-              queryKey: fixLoopKey(event.taskId),
+              queryKey: fixLoopKey(port, event.taskId),
             });
             // A capped loop needs a human — same "tell them" treatment as an
-            // approval or an agent's question.
+            // approval or an agent's question, plus a durable inbox row (a
+            // toast alone vanishes, and nothing labels a freshly capped loop).
             const liveTasks =
               queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
             const taskTitle =
               liveTasks?.find((t) => t.meta.id === event.taskId)?.meta.title ??
               event.taskId;
             void notify('Fix loop capped', taskTitle);
+            onRecordInbox([
+              {
+                ts: new Date().toISOString(),
+                title: 'Fix loop capped',
+                body: `${taskTitle} needs a ruling on its open findings.`,
+                target: { kind: 'task', taskId: event.taskId },
+              },
+            ]);
           } else if (event.type === 'verification.changed') {
             void queryClient.invalidateQueries({
-              queryKey: taskVerificationKey(event.taskId),
+              queryKey: taskVerificationKey(port, event.taskId),
             });
           } else if (event.type === 'linear.changed') {
             // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so
@@ -1152,6 +1195,25 @@ export function useDispatchProject(
       for (const runId of next.keys()) {
         const meta = runs.find((r) => r.id === runId);
         if (meta === undefined || meta.state !== 'awaiting-approval') {
+          next.delete(runId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [runs]);
+
+  // Same cleanup as the pendingApprovals effect above, but keyed on the run reaching a
+  // terminal state rather than a specific `meta.state` — a scope request doesn't move
+  // `meta.state` the way an approval gate does, so "still running" is the only signal.
+  useEffect(() => {
+    if (runs === undefined) return;
+    setPendingScopeRequests((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const runId of next.keys()) {
+        const meta = runs.find((r) => r.id === runId);
+        if (meta === undefined || isTerminalRunState(meta.state)) {
           next.delete(runId);
           changed = true;
         }
@@ -1450,6 +1512,25 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, runsQueryKey, port]
+  );
+
+  const handleDecideScopeRequest = useCallback(
+    async (
+      runId: string,
+      requestId: string,
+      granted: boolean,
+      reason?: string
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.decideScopeRequest(runId, requestId, granted, reason);
+      setPendingScopeRequests((prev) => {
+        const next = new Map(prev);
+        next.delete(runId);
+        return next;
+      });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, port]
   );
 
   const handleAnswerQuestion = useCallback(
@@ -2007,6 +2088,8 @@ export function useDispatchProject(
     setNotePlanId,
     notePlanRecord,
     pendingApprovals,
+    pendingScopeRequests,
+    handleDecideScopeRequest,
     openQuestions,
     handleAnswerQuestion,
 

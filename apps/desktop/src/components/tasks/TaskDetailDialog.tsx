@@ -1,9 +1,12 @@
 import type {
+  AdjudicateFindingInput,
   ApiClient,
+  FixLoopState,
   LinearIssueLink,
   LinearSyncSummary,
   PlanRecord,
   RunMeta,
+  VerificationResult,
 } from '@dispatch/client';
 import type {
   EscalationStep,
@@ -41,11 +44,6 @@ import {
   useTaskFindings,
   useTaskVerification,
 } from '../../hooks/useOrchestration';
-import type {
-  AdjudicateFindingInput,
-  FixLoopState,
-  VerificationResult,
-} from '../../lib/apiTypes';
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import {
   countOpenFindings,
@@ -440,8 +438,21 @@ function FindingsPanel({
   const groups = groupOpenFindingsBySeverity(findings);
   const counts = countOpenFindings(findings);
   if (groups.length === 0) return null;
+  // The header names the severity mix so it's visible without scrolling the
+  // grouped body below — e.g. "3 open (1 critical, 2 minor)".
+  const bySeverity = [
+    counts.critical > 0 ? `${counts.critical} critical` : null,
+    counts.important > 0 ? `${counts.important} important` : null,
+    counts.minor > 0 ? `${counts.minor} minor` : null,
+  ]
+    .filter((s): s is string => s !== null)
+    .join(', ');
+  const title =
+    bySeverity === ''
+      ? `Findings · ${counts.open} open`
+      : `Findings · ${counts.open} open (${bySeverity})`;
   return (
-    <MainSection title={`Findings · ${counts.open} open`}>
+    <MainSection title={title}>
       <div className="flex flex-col gap-3">
         {groups.map((group) => (
           <div key={group.severity} className="flex flex-col gap-1.5">
@@ -522,13 +533,20 @@ function FixLoopSection({
 
 // `exercised` (the app actually ran) stays visually distinct from whatever
 // review status the header already shows — the two answer different asks.
+// Self-hides when there is nothing to say (never exercised, no result, no
+// error) so an ordinary task doesn't permanently grow an empty block.
 function VerificationSection({
   exercised,
   result,
+  error,
 }: {
   exercised: boolean;
   result: VerificationResult | null;
+  /** Set when the checks fetch itself failed — distinct from `result` being
+   * `null` because nothing has ever run, which is not an error at all. */
+  error: string | null;
 }) {
+  if (!exercised && result === null && error === null) return null;
   const summary = summarizeVerification(result);
   return (
     <MainSection title="Verification">
@@ -549,10 +567,19 @@ function VerificationSection({
           >
             {exercised ? 'Exercised' : 'Not exercised'}
           </span>
-          <span className="text-muted-foreground text-[12px]">
-            · {summary.label}
-          </span>
+          {error === null ? (
+            <span className="text-muted-foreground text-[12px]">
+              · {summary.label}
+            </span>
+          ) : (
+            <span className="text-destructive text-[12px]">
+              · couldn&rsquo;t load checks
+            </span>
+          )}
         </div>
+        {error !== null && (
+          <div className="text-destructive text-[12px]">{error}</div>
+        )}
         {result !== null && result.checks.length > 0 && (
           <ul className="flex flex-col gap-1">
             {result.checks.map((check, i) => (
@@ -710,6 +737,9 @@ interface TaskDetailDialogProps {
   /** The dispatchd client — this dialog fetches its own findings/fix-loop/
    * verification/ledger data rather than going through the app-level hook. */
   client: ApiClient | null;
+  /** The active project's daemon port — namespaces this dialog's own query keys, same as
+   * every other per-project query in the app (see useOrchestration.ts). */
+  port: number | undefined;
   /** The project's escalation ladder, for the "fresh implementer" hint. */
   fixLoopEscalation: EscalationStep[];
 }
@@ -747,6 +777,7 @@ export function TaskDetailDialog({
   linearConfigured,
   onPushToLinear,
   client,
+  port,
   fixLoopEscalation,
 }: TaskDetailDialogProps) {
   const [title, setTitle] = useState(doc.meta.title);
@@ -788,16 +819,22 @@ export function TaskDetailDialog({
   const linearLink = resolveLinearLink(doc.meta.external, linearLinks);
   const linearLinked = parseExternal(doc.meta.external) !== null;
 
-  const { findings } = useTaskFindings(client, doc.meta.id);
-  const { fixLoop } = useFixLoop(client, doc.meta.id);
-  const { result: verification } = useTaskVerification(client, doc.meta.id);
+  const { findings } = useTaskFindings(client, port, doc.meta.id);
+  const { fixLoop, error: fixLoopError } = useFixLoop(
+    client,
+    port,
+    doc.meta.id
+  );
+  const { result: verification, error: verificationError } =
+    useTaskVerification(client, port, doc.meta.id);
   // Only ever meaningful for an epic — `useEpicLedger` no-ops (empty,
   // disabled) when `epicId` is undefined, so this is safe on a plain task.
   const { entries: ledgerEntries } = useEpicLedger(
     client,
+    port,
     doc.meta.kind === 'epic' ? doc.meta.id : undefined
   );
-  const adjudicateFinding = useAdjudicateFinding(client);
+  const adjudicateFinding = useAdjudicateFinding(client, port);
 
   async function pushToLinear() {
     if (onPushToLinear === undefined) return;
@@ -1209,6 +1246,11 @@ export function TaskDetailDialog({
                   </div>
                 )}
 
+                {fixLoopError !== null && (
+                  <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12.5px]">
+                    Couldn&rsquo;t load the fix loop: {fixLoopError}
+                  </div>
+                )}
                 {fixLoop !== null && (
                   <FixLoopSection
                     fixLoop={fixLoop}
@@ -1283,6 +1325,7 @@ export function TaskDetailDialog({
                 <VerificationSection
                   exercised={doc.meta.exercised}
                   result={verification}
+                  error={verificationError}
                 />
 
                 <MainSection title="Activity">

@@ -1,7 +1,7 @@
+import type { FixLoopState } from '@dispatch/client';
 import type { EscalationStep } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import type { FixLoopState } from './apiTypes';
 import {
   fixLoopNeedsRuling,
   fixLoopStatusLabel,
@@ -65,5 +65,13 @@ describe('willEscalateNextRound', () => {
 
   test('an empty table never escalates', () => {
     expect(willEscalateNextRound(state({ round: 9 }), [])).toBe(false);
+  });
+
+  test('never escalates once round has reached cap — openRound caps the loop there instead of dispatching a next round', () => {
+    // Same rung table as above, so a naive "would round 6 be fresh" check
+    // would say yes; there is no round 6, the loop stops at round 5.
+    expect(willEscalateNextRound(state({ round: 5, cap: 5 }), escalation)).toBe(
+      false
+    );
   });
 });

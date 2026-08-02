@@ -1,9 +1,8 @@
+import type { FixLoopState } from '@dispatch/client';
 import type { EscalationStep } from '@dispatch/core/browser';
 
-import type { FixLoopState } from './apiTypes';
-
-/** One line summarizing where a task's fix loop stands — the task row and
- *  detail dialog both render this rather than each spelling out the states. */
+/** One line summarizing where a task's fix loop stands — rendered on the
+ *  task detail dialog only; there's no bulk route to fetch this for a row. */
 export function fixLoopStatusLabel(state: FixLoopState): string {
   switch (state.state) {
     case 'idle':
@@ -39,11 +38,12 @@ function rungFor(
   return chosen ?? { round, strategy: 'resume', modelTier: 'standard' };
 }
 
-/** Whether the loop's *next* round would hand off to a fresh implementer
- *  rather than resuming the current one. */
+/** Whether the loop's *next* round hands off to a fresh implementer — false
+ *  once `round >= cap`, since `openRound` caps the loop there instead. */
 export function willEscalateNextRound(
   state: FixLoopState,
   escalation: readonly EscalationStep[]
 ): boolean {
+  if (state.round >= state.cap) return false;
   return rungFor(state.round + 1, escalation).strategy === 'fresh';
 }

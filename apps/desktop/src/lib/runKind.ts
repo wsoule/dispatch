@@ -1,4 +1,4 @@
-import type { RunKind } from './apiTypes';
+import type { RunKind } from '@dispatch/client';
 
 const RUN_KIND_LABEL: Record<RunKind, string> = {
   execute: 'Execute',

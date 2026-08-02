@@ -22,6 +22,7 @@ import { IconToggle } from '../components/ui/IconToggle';
 import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useResizablePane } from '../hooks/useResizablePane';
+import { useScopeRequest } from '../hooks/useScopeRequest';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import { showArchiveToggle } from '../lib/archiveToggle';
 import { countMergeReady } from '../lib/mergeReady';
@@ -151,6 +152,15 @@ export function RunsView({
   const selected = data.runs.find((r) => r.id === selectedRunId);
   const selectedId = selected?.id;
   const selectedState = selected?.state;
+  // The WS event only carries the id — this resolves the paths/reason RunLogView renders.
+  const { request: pendingScopeRequest } = useScopeRequest(
+    data.client,
+    data.port,
+    selectedId,
+    selectedId !== undefined
+      ? data.pendingScopeRequests.get(selectedId)?.requestId
+      : undefined
+  );
 
   // Built once per `data.tasksIncludingArchived`/`data.epics` change rather than re-scanned
   // per row: a run row's epic breadcrumb needs its task's `parent`, then that parent id's
@@ -441,6 +451,19 @@ export function RunsView({
                           selected.id,
                           questionId,
                           answer
+                        )
+                      }
+                      pendingScopeRequest={
+                        isTerminalRunState(selected.state)
+                          ? null
+                          : pendingScopeRequest
+                      }
+                      onDecideScopeRequest={(granted) =>
+                        data.handleDecideScopeRequest(
+                          selected.id,
+                          data.pendingScopeRequests.get(selected.id)
+                            ?.requestId ?? '',
+                          granted
                         )
                       }
                       onRequestChanges={(text) =>

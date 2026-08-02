@@ -1,6 +1,6 @@
+import type { VerificationResult } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import type { VerificationResult } from './apiTypes';
 import { summarizeVerification } from './verificationSummary';
 
 function result(overrides: Partial<VerificationResult>): VerificationResult {
