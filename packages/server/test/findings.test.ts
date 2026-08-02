@@ -22,7 +22,27 @@ describe('FindingStore', () => {
     expect(finding.verdict).toBe('open');
     expect(finding.ruling).toBeNull();
     expect(finding.round).toBe(0);
+    expect(finding.recommendation).toBeUndefined();
     expect(store.get(finding.id)).toEqual(finding);
+  });
+
+  // The reviewer's blocks-or-park call, kept separate from `ruling`, which is
+  // the controller's. Absent — not null — when nobody offered one.
+  test('add() carries a recommendation through a write and read-back', () => {
+    const store = new FindingStore(root());
+    const finding = store.add({
+      taskId: 't-abc123',
+      runId: 'r-111111',
+      severity: 'critical',
+      title: 'first sync overwrites the workspace',
+      detail: 'reproduced on a scratch copy',
+      recommendation: 'blocks',
+    });
+    expect(finding.recommendation).toBe('blocks');
+    expect(store.get(finding.id)?.recommendation).toBe('blocks');
+    expect(store.update(finding.id, { verdict: 'parked' }).recommendation).toBe(
+      'blocks'
+    );
   });
 
   // The whole point of the append-only design: an update never rewrites the

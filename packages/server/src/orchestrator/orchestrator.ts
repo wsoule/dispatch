@@ -329,10 +329,8 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
-  // Starts a non-execute run against `head` on its own throwaway branch,
-  // leaving the task's status and Activity alone — judging work is not doing
-  // it. `buildPrompt` runs once the worktree exists and before the executor
-  // starts, so a caller can write input files and name their paths in it.
+  // Starts a non-execute run against `head` on its own throwaway branch, and
+  // leaves the task alone. `buildPrompt` runs once the worktree exists.
   async dispatchAuxRun(opts: {
     taskId: string;
     kind: RunKind;
@@ -378,7 +376,21 @@ export class Orchestrator {
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
 
-    const prompt = opts.buildPrompt({ runId, worktreePath: wtPath });
+    // A throwing buildPrompt would otherwise strand this run in `provisioning`,
+    // which counts as live: the task could never be dispatched again.
+    let prompt: string;
+    try {
+      prompt = opts.buildPrompt({ runId, worktreePath: wtPath });
+    } catch (err) {
+      const message = (err as Error).message;
+      this.transition(runId, 'failed', {
+        error: `failed to prepare ${opts.kind} run: ${message}`,
+      });
+      this.worktrees.remove(wtPath, branch, runId);
+      throw new OrchestratorClientError(
+        `failed to prepare ${opts.kind} run: ${message}`
+      );
+    }
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
     this.startAndRegister(
@@ -399,8 +411,7 @@ export class Orchestrator {
   }
 
   // Force-fails a non-execute run whose reported success a post-run check
-  // rejected. Bypasses transition()'s terminal guard on purpose: a review that
-  // reads as clean when its output was unusable must never happen.
+  // rejected, bypassing transition()'s terminal guard on purpose.
   failAuxRun(runId: string, error: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined || runKind(meta) === 'execute') return;

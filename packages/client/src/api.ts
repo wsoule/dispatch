@@ -2,6 +2,7 @@ import type {
   CreateInput,
   DispatchConfig,
   Finding,
+  FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
   LedgerEntry,
@@ -382,6 +383,9 @@ export interface CreateFindingInput {
   file?: string | null;
   line?: number | null;
   round?: number;
+  // The reviewer's blocks-or-park call. `ruling` on the Finding itself is the
+  // controller's answer to it.
+  recommendation?: FindingRecommendation;
 }
 
 export interface UpdateFindingPatch {

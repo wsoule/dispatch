@@ -7,7 +7,12 @@ export {
   generateRunId,
   generateTaskId,
 } from './ids.js';
-export type { Finding, FindingSeverity, FindingVerdict } from './findings.js';
+export type {
+  Finding,
+  FindingRecommendation,
+  FindingSeverity,
+  FindingVerdict,
+} from './findings.js';
 export type { LedgerEntry, LedgerKind } from './ledger.js';
 export { schedulableBatch, tasksConflict } from './conflicts.js';
 export { slugify } from './slug.js';

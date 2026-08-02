@@ -68,6 +68,37 @@ describe('POST /api/findings', () => {
     expect(finding.taskId).toBe(taskId);
   });
 
+  it('accepts a blocks-or-park recommendation and rejects anything else', async () => {
+    const ok = await fetch(`${baseUrl}/api/findings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskId,
+        severity: 'critical',
+        title: 't',
+        detail: 'd',
+        recommendation: 'park',
+      }),
+    });
+    expect(ok.status).toBe(201);
+    expect((await json<{ recommendation: string }>(ok)).recommendation).toBe(
+      'park'
+    );
+
+    const bad = await fetch(`${baseUrl}/api/findings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskId,
+        severity: 'critical',
+        title: 't',
+        detail: 'd',
+        recommendation: 'maybe',
+      }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it('400s a missing taskId', async () => {
     const res = await fetch(`${baseUrl}/api/findings`, {
       method: 'POST',

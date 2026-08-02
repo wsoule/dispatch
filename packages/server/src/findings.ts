@@ -1,5 +1,10 @@
 import { generateFindingId } from '@dispatch/core';
-import type { Finding, FindingSeverity, FindingVerdict } from '@dispatch/core';
+import type {
+  Finding,
+  FindingRecommendation,
+  FindingSeverity,
+  FindingVerdict,
+} from '@dispatch/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -15,6 +20,7 @@ export interface AddFindingInput {
   file?: string | null;
   line?: number | null;
   round?: number;
+  recommendation?: FindingRecommendation;
 }
 
 export interface FindingUpdatePatch {
@@ -91,6 +97,11 @@ export class FindingStore {
       round: input.round ?? 0,
       createdAt: now,
       updatedAt: now,
+      // Spread rather than set, so a finding raised without one keeps exactly
+      // the shape it had before reviewers were asked for a recommendation.
+      ...(input.recommendation !== undefined
+        ? { recommendation: input.recommendation }
+        : {}),
     };
     this.append(record);
     return record;
