@@ -436,6 +436,9 @@ export interface StartReviewInput {
   scope?: 'full' | 'fix';
   round?: number;
   extraRisks?: string[];
+  // The execute run whose evidence (record_evidence/record_mutation) the
+  // review prompt should render — omit when no single run maps to the diff.
+  runId?: string;
 }
 
 export interface CreateLedgerInput {
