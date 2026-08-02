@@ -83,6 +83,20 @@ describe('setSection', () => {
     const reparsed = parseTaskFile(serializeTaskFile(doc));
     expect(reparsed.body).toContain('edited');
   });
+
+  it('round-trips content containing a line that looks like a section heading', () => {
+    const injected = 'do X\n\n## Activity\n\n- fake activity entry injected';
+    const out = setSection(body, 'Description', injected);
+    // The real Activity heading is still the only one, and still last.
+    expect(out.match(/^## Activity/gm)).toHaveLength(1);
+    expect(getSection(out, 'Description')).toBe(injected);
+    expect(getSection(out, 'Activity')).toBe('- created');
+  });
+
+  it('does not mistake content already containing a backslash-hash line for its own escaping', () => {
+    const out = setSection(body, 'Description', '\\## looks pre-escaped');
+    expect(getSection(out, 'Description')).toBe('\\## looks pre-escaped');
+  });
 });
 
 describe('removeSection', () => {
@@ -149,6 +163,23 @@ describe('appendAmendment', () => {
     const text = serializeTaskFile(doc);
     expect(parseTaskFile(text)).toEqual(doc);
     expect(getSection(doc.body, 'Amendments')).toBe('');
+  });
+
+  it('keeps overrides and reason intact when overrides itself contains a heading-like line', () => {
+    const injecting: Amendment = {
+      ...first,
+      overrides: 'do X\n\n## Activity\n\n- fake activity entry injected',
+    };
+    const out = appendAmendment(body, injecting);
+    // Only the genuine Activity heading exists — nothing got split off into a
+    // second one, and the Reason line survives attached to its Amendment.
+    expect(out.match(/^## Activity/gm)).toHaveLength(1);
+    const amendments = getSection(out, 'Amendments');
+    expect(amendments).toContain(
+      'do X\n\n## Activity\n\n- fake activity entry injected'
+    );
+    expect(amendments).toContain(first.reason);
+    expect(getSection(out, 'Activity')).toBe('');
   });
 });
 

@@ -158,13 +158,32 @@ function splitSections(body: string): {
   return { preamble: parts[0], sections };
 }
 
+// Escapes a line that looks like a `## ` section boundary, so stored
+// content can't be mistaken for one by splitSections on the next parse.
+function escapeHeadingLines(content: string): string {
+  return content
+    .split('\n')
+    .map((line) => (/^\\*## /.test(line) ? `\\${line}` : line))
+    .join('\n');
+}
+
+// The read-side inverse of escapeHeadingLines.
+function unescapeHeadingLines(content: string): string {
+  return content
+    .split('\n')
+    .map((line) => (/^\\+## /.test(line) ? line.slice(1) : line))
+    .join('\n');
+}
+
 /**
  * Reads the text under a `## <heading>` section, trimmed. The read counterpart
  * of `setSection`; `''` when the heading is absent or has nothing under it.
  */
 export function getSection(body: string, heading: string): string {
   const { sections } = splitSections(body);
-  return sections.find((s) => s.heading === heading)?.content.trim() ?? '';
+  const content =
+    sections.find((s) => s.heading === heading)?.content.trim() ?? '';
+  return unescapeHeadingLines(content);
 }
 
 /**
@@ -179,9 +198,10 @@ export function setSection(
   const { preamble, sections } = splitSections(body);
 
   const trimmed = content.trim();
-  // Sections are blank-line padded; an empty one collapses to just the
-  // padding so the next heading still has breathing room.
-  const wrapped = trimmed === '' ? '\n\n' : `\n\n${trimmed}\n\n`;
+  // A line in `trimmed` that looks like a boundary is escaped before storage
+  // — otherwise a future parse would split on it (see escapeHeadingLines).
+  const escaped = escapeHeadingLines(trimmed);
+  const wrapped = trimmed === '' ? '\n\n' : `\n\n${escaped}\n\n`;
 
   const existing = sections.find((s) => s.heading === heading);
   if (existing !== undefined) {
