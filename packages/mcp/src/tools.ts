@@ -95,6 +95,7 @@ const taskSummaryShape = {
 const taskMetaShape = {
   ...taskSummaryShape,
   external: z.string().nullable(),
+  writes: z.array(z.string()),
 };
 
 function toSummary(doc: TaskDoc) {
@@ -981,7 +982,7 @@ export function registerDispatchTools(
         'Upsert a task. Omit id to create (title required) — creating is NOT ' +
         'idempotent; calling this twice without an id makes two tasks. With id, ' +
         'only the provided fields change — omitted fields are untouched, ' +
-        'blockedBy/labels are full replacements. kind and description apply on ' +
+        'blockedBy/labels/writes are full replacements. kind and description apply on ' +
         'create only; there is no supported way to change kind or rewrite the ' +
         'description section after creation.',
       // Enum-shaped fields (kind, priority, assignee) are typed as plain
@@ -999,6 +1000,9 @@ export function registerDispatchTools(
         priority: z.string().optional(),
         assignee: z.string().optional(),
         description: z.string().optional(),
+        // Files this task expects to touch, for the epic scheduler. Omitted
+        // means "unknown", which serializes against everything.
+        writes: z.array(z.string()).optional(),
       },
       outputSchema: { meta: z.object(taskMetaShape), body: z.string() },
       // No idempotentHint: creating (no id) makes a new task every call, so
@@ -1028,6 +1032,7 @@ export function registerDispatchTools(
             labels: input.labels ?? [],
             blockedBy: input.blockedBy ?? [],
             assignee,
+            writes: input.writes,
           });
           return toolResult({ meta: doc.meta, body: doc.body });
         }
@@ -1044,6 +1049,7 @@ export function registerDispatchTools(
           labels: input.labels,
           priority,
           assignee,
+          writes: input.writes,
         };
         // `kind` and `description` are the only fields a caller could have
         // sent that don't end up in `patch` (both are create-only — see

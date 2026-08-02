@@ -732,6 +732,47 @@ describe('EpicEngine write-set conflicts', () => {
           .length === 1
     );
   });
+
+  // Mirror of the test above: an undeclared task is what "could touch
+  // anything" now, so it waits even on a fully disjoint live claim.
+  it('makes an undeclared child wait on any live claim, even a disjoint one', async () => {
+    const harness = makeHarness();
+    const blocker = harness.store.create({
+      title: 'Blocker',
+      writes: ['unrelated.ts'],
+    });
+    const blockerRun = await harness.orchestrator.dispatch(
+      blocker.meta.id,
+      'fake'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === blockerRun.id)
+          ?.state === 'awaiting-approval'
+    );
+
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    const undeclared = harness.store.create({
+      title: 'No declared writes',
+      parent: epic.meta.id,
+    });
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await sleep(80);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === undeclared.meta.id)
+    ).toHaveLength(0);
+
+    harness.orchestrator.approve(blockerRun.id, 'go', true);
+    await waitFor(
+      () =>
+        harness.orchestrator
+          .list()
+          .filter((r) => r.taskId === undeclared.meta.id).length === 1
+    );
+  });
 });
 
 describe('EpicEngine fill serialization', () => {

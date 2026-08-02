@@ -182,12 +182,14 @@ describe('run claims', () => {
       const task = store.create({ title: 'Task', writes: ['a.ts'] });
       const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
-      // The onEntry-triggered refresh is fire-and-forget — wait for its
-      // async git-status call to land rather than asserting immediately.
-      await waitFor(() =>
-        (
-          orchestrator.list().find((r) => r.id === meta.id)?.claims ?? []
-        ).includes('first.ts')
+      // Short timeout, inside the 300ms delay: only onEntry can satisfy this
+      // before an idle transition's own forced refresh could confound it.
+      await waitFor(
+        () =>
+          (
+            orchestrator.list().find((r) => r.id === meta.id)?.claims ?? []
+          ).includes('first.ts'),
+        150
       );
       expect(orchestrator.list().find((r) => r.id === meta.id)?.state).toBe(
         'running'
@@ -198,5 +200,89 @@ describe('run claims', () => {
     } finally {
       GitRepo.prototype.status = originalStatus;
     }
+  });
+
+  // Pins the cancel() call site: no entry or approval ever fires, so only
+  // cancel()'s own forced refresh can see this test's direct worktree write.
+  it('captures a trailing edit on cancel, with no other trigger in play', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [{ delayMs: 2000 }],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const task = store.create({ title: 'Task', writes: ['a.ts'] });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () =>
+        orchestrator.list().find((r) => r.id === meta.id)?.state === 'running'
+    );
+
+    writeFileSync(join(meta.worktreePath, 'trailing.ts'), 'x');
+    await orchestrator.cancel(meta.id);
+
+    await waitFor(() =>
+      (
+        orchestrator.list().find((r) => r.id === meta.id)?.claims ?? []
+      ).includes('trailing.ts')
+    );
+  });
+
+  // Pins the onApprovalRequest call site: no entry ever fires, so only the
+  // forced refresh at the approval transition can see the write.
+  it('captures a trailing edit on the approval transition, with no entry in play', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => writeFileSync(join(cwd, 'trailing.ts'), 'x'),
+            commit: false,
+            approval: { requestId: 'go', toolName: 'noop', input: {} },
+          },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const task = store.create({ title: 'Task', writes: ['a.ts'] });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+
+    await waitFor(() =>
+      (
+        orchestrator.list().find((r) => r.id === meta.id)?.claims ?? []
+      ).includes('trailing.ts')
+    );
+    expect(orchestrator.list().find((r) => r.id === meta.id)?.state).toBe(
+      'awaiting-approval'
+    );
+  });
+
+  // Pins the handleFinish call site: no entry or approval ever fires, so
+  // only the forced refresh right before the terminal transition can see it.
+  it('captures a trailing edit on finish, with no other trigger in play', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => writeFileSync(join(cwd, 'trailing.ts'), 'x'),
+            commit: false,
+          },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const task = store.create({ title: 'Task', writes: ['a.ts'] });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+
+    await waitFor(() =>
+      (
+        orchestrator.list().find((r) => r.id === meta.id)?.claims ?? []
+      ).includes('trailing.ts')
+    );
   });
 });

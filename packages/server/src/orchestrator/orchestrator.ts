@@ -2285,8 +2285,8 @@ export class Orchestrator {
   ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
-    // Fired before autoCommitIfDirty below can absorb any trailing edit into
-    // a commit and make it disappear from a live git-status read.
+    // Fire-and-forget: races (doesn't provably beat) autoCommitIfDirty's
+    // commit below. Lands after transition(→terminal) — for history only.
     this.forceClaimsRefresh(runId);
     // I6: this whole block runs from inside an executor's fire-and-forget
     // event plumbing (see makeEvents/onFinish) — there is no caller left to
