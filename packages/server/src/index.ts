@@ -7,7 +7,7 @@ import { handleApi } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
-import { DepMapCache, depMapSourceDirs } from './depmap.js';
+import { DepMapCache, depMapSourceDirs, isSkippedPath } from './depmap.js';
 import { EventBus } from './events.js';
 import { FindingStore } from './findings.js';
 import { GitRepo } from './git/commands.js';
@@ -228,9 +228,11 @@ export async function startServer(
   // The reverse-dependency map ReviewRunner scopes reviews with, rebuilt
   // lazily and invalidated whenever the workspace's own source changes.
   const depMapCache = new DepMapCache(rootDir);
-  const sourceWatcher = watchSourceDirs(depMapSourceDirs(rootDir), () => {
-    depMapCache.invalidate();
-  });
+  const sourceWatcher = watchSourceDirs(
+    depMapSourceDirs(rootDir),
+    () => depMapCache.invalidate(),
+    isSkippedPath
+  );
 
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.

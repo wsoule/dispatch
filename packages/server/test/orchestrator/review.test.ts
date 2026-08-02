@@ -486,10 +486,10 @@ describe('undeclaredWrites', () => {
 });
 
 describe('capDependencyList', () => {
-  it('dedupes, sorts, excludes the diff itself, and reports no truncation under the cap', () => {
+  it('dedupes, preserves input order, excludes the diff itself, and reports no truncation under the cap', () => {
     expect(
       capDependencyList(['b.ts', 'a.ts', 'a.ts', 'c.ts'], ['c.ts'], 20)
-    ).toEqual({ list: ['a.ts', 'b.ts'], truncated: false });
+    ).toEqual({ list: ['b.ts', 'a.ts'], truncated: false });
   });
 
   it('truncates and says so once the unique count exceeds the cap', () => {
@@ -910,6 +910,9 @@ describe('ReviewRunner', () => {
     expect(hazards[0].detail).toContain('src.ts');
   });
 });
+
+// Cross-round dedup is proven end-to-end against the real fix loop in
+// fix-loop.test.ts's "an undeclared write" suite.
 
 describe('RunMeta.kind', () => {
   it('reads a transcript header written before run kinds existed as execute', () => {

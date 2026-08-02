@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildDepMap, DepMapCache, depMapSourceDirs } from '../src/depmap.js';
+import {
+  buildDepMap,
+  DepMapCache,
+  depMapSourceDirs,
+  isSkippedPath,
+} from '../src/depmap.js';
 
 let root: string;
 
@@ -68,6 +73,26 @@ describe('buildDepMap over a fixture tree', () => {
     writeFixtureWorkspace();
     const map = buildDepMap(root);
     expect(map.dependents('packages/b/src/consumer.ts')).toEqual([]);
+  });
+
+  it('sorts dependents by hop distance before name, so depth beats the alphabet', () => {
+    writeFixtureWorkspace();
+    // A direct importer named to sort alphabetically LAST, and a two-hop
+    // importer named to sort FIRST — proves depth wins, not the alphabet.
+    writeFileSync(
+      join(root, 'packages/b/src/zzz-direct.ts'),
+      "import { helper } from '@dispatch/a';\nhelper();\n"
+    );
+    writeFileSync(
+      join(root, 'packages/b/src/aaa-indirect.ts'),
+      "import { x } from './zzz-direct.js';\nx;\n"
+    );
+    const map = buildDepMap(root);
+    const dependents = map.dependents('packages/a/src/util.ts');
+    const directIndex = dependents.indexOf('packages/b/src/zzz-direct.ts');
+    const indirectIndex = dependents.indexOf('packages/b/src/aaa-indirect.ts');
+    expect(directIndex).toBeGreaterThanOrEqual(0);
+    expect(indirectIndex).toBeGreaterThan(directIndex);
   });
 
   it('detects a mirror comment in the brief-literal "X in path" form', () => {
@@ -144,21 +169,26 @@ describe('DepMapCache', () => {
 });
 
 describe('depMapSourceDirs', () => {
-  it("lists every workspace member's src and test directories", () => {
+  it('lists the workspace roots, not each member — so a package added later is still covered', () => {
     writeFixtureWorkspace();
-    const dirs = depMapSourceDirs(root).sort();
-    expect(dirs).toEqual(
-      [
-        join(root, 'packages/a/src'),
-        join(root, 'packages/a/test'),
-        join(root, 'packages/b/src'),
-        join(root, 'packages/b/test'),
-      ].sort()
-    );
+    expect(depMapSourceDirs(root)).toEqual([join(root, 'packages')]);
   });
 
   it('falls back to the project root when there is no packages/apps layout', () => {
     expect(depMapSourceDirs(root)).toEqual([root]);
+  });
+});
+
+describe('isSkippedPath', () => {
+  it('flags a path that passes through any skipped directory segment', () => {
+    expect(isSkippedPath('mcp/dist/index.js')).toBe(true);
+    expect(isSkippedPath('server/node_modules/foo/index.js')).toBe(true);
+    expect(isSkippedPath('.dispatch/runs/r-1.jsonl')).toBe(true);
+    expect(isSkippedPath('.git/HEAD')).toBe(true);
+  });
+
+  it('does not flag an ordinary source path', () => {
+    expect(isSkippedPath('packages/server/src/depmap.ts')).toBe(false);
   });
 });
 
