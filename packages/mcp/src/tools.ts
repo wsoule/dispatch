@@ -574,7 +574,9 @@ async function selfDenyExpiredScope(
       };
     }
     if (res.status === 409) {
-      const current = await fetch(`${base}/${id}`);
+      const current = await fetch(`${base}/${id}`, {
+        signal: AbortSignal.timeout(timing.requestTimeoutMs),
+      });
       if (current.ok) {
         const record = (await current.json()) as ScopeRequestRecord;
         return {

@@ -53,6 +53,13 @@ class FakeDaemon {
   decideAfterPolls = 1;
   decision = true;
   pollStatus = 200;
+  // When not 200, /decide rejects the tool's self-deny attempt — models a
+  // real decision (from a human or the orchestrator) landing first.
+  decideStatus = 200;
+  // Once set, every GET after the first /decide call returns this instead
+  // of the normal poll-count logic — the "real decision" a race exposes.
+  raceWinner: { granted: boolean; reason: string } | null = null;
+  decidePosted = false;
   posted: { runId: string; paths: string[]; reason: string }[] = [];
   decided: { id: string; granted: boolean; reason?: string }[] = [];
   polls = 0;
@@ -83,10 +90,17 @@ class FakeDaemon {
             url.pathname
           );
         if (decideRoute !== null && req.method === 'POST') {
+          this.decidePosted = true;
           const body = (await req.json()) as {
             granted: boolean;
             reason?: string;
           };
+          if (this.decideStatus !== 200) {
+            return Response.json(
+              { error: `scope request already decided: ${decideRoute[2]}` },
+              { status: this.decideStatus }
+            );
+          }
           this.decided.push({ id: decideRoute[2], ...body });
           return Response.json({
             id: decideRoute[2],
@@ -106,6 +120,14 @@ class FakeDaemon {
               { error: 'scope request not found' },
               { status: this.pollStatus }
             );
+          }
+          if (this.decidePosted && this.raceWinner !== null) {
+            return Response.json({
+              id: one[2],
+              runId: one[1],
+              granted: this.raceWinner.granted,
+              decisionReason: this.raceWinner.reason,
+            });
           }
           return Response.json({
             id: one[2],
@@ -288,6 +310,34 @@ describe('request_scope (fake daemon)', () => {
         reason: expect.stringMatching(/denied/),
       },
     ]);
+  });
+
+  it('honors a real grant that lands the instant before the self-deny call, instead of the canned denial', async () => {
+    process.env.DISPATCH_RUN_ID = 'r-self1';
+    daemon = new FakeDaemon();
+    daemon.decideAfterPolls = Number.MAX_SAFE_INTEGER;
+    daemon.decideStatus = 409;
+    daemon.raceWinner = { granted: true, reason: 'granted just in time' };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool(
+      {
+        name: 'request_scope',
+        arguments: { paths: ['a.ts'], reason: 'need it' },
+      },
+      undefined,
+      { timeout: 10_000 }
+    )) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual({
+      granted: true,
+      reason: 'granted just in time',
+    });
+    // The self-deny POST was attempted and rejected — never recorded as a
+    // decision, so the daemon's own record of what happened stays honest.
+    expect(daemon.decided).toEqual([]);
   });
 
   it('denies locally when the daemon no longer knows the request', async () => {
