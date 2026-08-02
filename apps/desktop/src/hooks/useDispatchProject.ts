@@ -37,6 +37,12 @@ import { isTerminalRunState } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
+import {
+  findingsQueryRootKey,
+  fixLoopKey,
+  ledgerQueryRootKey,
+  taskVerificationKey,
+} from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
@@ -1006,6 +1012,34 @@ export function useDispatchProject(
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
+            });
+          } else if (event.type === 'finding.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: findingsQueryRootKey,
+            });
+          } else if (event.type === 'ledger.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: ledgerQueryRootKey,
+            });
+          } else if (event.type === 'fixloop.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: fixLoopKey(event.taskId),
+            });
+          } else if (event.type === 'fixloop.capped') {
+            void queryClient.invalidateQueries({
+              queryKey: fixLoopKey(event.taskId),
+            });
+            // A capped loop needs a human — same "tell them" treatment as an
+            // approval or an agent's question.
+            const liveTasks =
+              queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
+            const taskTitle =
+              liveTasks?.find((t) => t.meta.id === event.taskId)?.meta.title ??
+              event.taskId;
+            void notify('Fix loop capped', taskTitle);
+          } else if (event.type === 'verification.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: taskVerificationKey(event.taskId),
             });
           } else if (event.type === 'linear.changed') {
             // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so

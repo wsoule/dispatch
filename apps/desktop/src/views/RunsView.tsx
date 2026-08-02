@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
 import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunDiffView } from '../components/runs/RunDiffView';
+import { RunKindBadge } from '../components/runs/RunKindBadge';
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
 import { RunSidebar } from '../components/runs/RunSidebar';
@@ -288,6 +289,7 @@ export function RunsView({
                     </span>
                     <span className="flex min-w-0 items-center gap-1.5">
                       <RunStatePill meta={run} className="shrink-0" />
+                      <RunKindBadge kind={run.kind} />
                       <MergeLadderDot
                         meta={data.latestRunByTaskId.get(run.taskId)}
                       />
