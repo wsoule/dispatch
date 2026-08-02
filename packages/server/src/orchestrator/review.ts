@@ -13,8 +13,10 @@ import type {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
 import type { FindingStore } from '../findings.js';
+import type { LedgerStore } from '../ledger.js';
 import type { Orchestrator } from './orchestrator.js';
 import { reviewDir, reviewOutputPath, reviewPackagePath } from './paths.js';
 import type { RunMeta } from './types.js';
@@ -70,6 +72,10 @@ const SHARED_SURFACE_PATTERNS: readonly RegExp[] = [
 
 const MAX_SCAN_BYTES = 512_000;
 
+// A wider dependent/mirror list reads as "the reviewer will find it anyway";
+// past that, an unbounded list is noise the rubric shouldn't force reading.
+const DEPENDENT_CAP = 20;
+
 export interface DestructiveHit {
   path: string;
   marker: string;
@@ -103,6 +109,12 @@ export interface ReviewPromptInput {
   destructive: DestructiveHit[];
   evidence: CommandEvidence[];
   mutations: MutationEvidence[];
+  // Reverse-dependency scope from the depmap: files outside the diff that
+  // import or hand-mirror something the diff changed, already capped.
+  dependents: string[];
+  dependentsTruncated: boolean;
+  mirrors: string[];
+  mirrorsTruncated: boolean;
 }
 
 export interface ParsedReviewFinding {
@@ -165,6 +177,34 @@ export function scanDestructiveWrites(
   return hits;
 }
 
+// Changed files no declared `writes` glob covers — a planner declaration the
+// diff outgrew, surfaced rather than trusted.
+export function undeclaredWrites(
+  writes: string[],
+  changed: string[]
+): string[] {
+  return changed.filter(
+    (file) => !writes.some((pattern) => new Bun.Glob(pattern).match(file))
+  );
+}
+
+export interface CappedList {
+  list: string[];
+  truncated: boolean;
+}
+
+// Dedupes `raw` against files already in the diff (`exclude`), sorts, and
+// caps — the rubric would otherwise read a partial list as exhaustive.
+export function capDependencyList(
+  raw: string[],
+  exclude: string[],
+  cap: number
+): CappedList {
+  const excluded = new Set(exclude);
+  const unique = [...new Set(raw)].filter((f) => !excluded.has(f)).sort();
+  return { list: unique.slice(0, cap), truncated: unique.length > cap };
+}
+
 function git(cwd: string, args: string[]): string {
   const result = Bun.spawnSync(['git', ...args], {
     cwd,
@@ -177,6 +217,19 @@ function git(cwd: string, args: string[]): string {
     );
   }
   return result.stdout.toString('utf8');
+}
+
+// The files base..head actually touched, repo-relative — the ground truth
+// write-set validation and dependency scope are both measured against.
+export function changedFiles(
+  root: string,
+  base: string,
+  head: string
+): string[] {
+  return git(root, ['diff', '--name-only', `${base}..${head}`])
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
 }
 
 // The commit list, stat and full diff as one document. It goes to a file and is
@@ -253,6 +306,45 @@ const SEVERITY_SECTION = [
 function declaredWrites(input: ReviewPromptInput): string {
   const { writes } = input.task.meta;
   return writes.length === 0 ? 'none were declared' : writes.join(', ');
+}
+
+// Complements declaredWrites: that bullet is about the diff's own file list,
+// this section is about files the diff never touched but may still break.
+function dependencyScopeSection(input: ReviewPromptInput): string | null {
+  if (input.dependents.length === 0 && input.mirrors.length === 0) {
+    return null;
+  }
+  const lines: string[] = ['## Files outside the diff to check'];
+  if (input.dependents.length > 0) {
+    lines.push(
+      '',
+      'These files import something this diff changed, directly or' +
+        ' transitively — confirm each still holds against the new shape or' +
+        ' behaviour:',
+      ...input.dependents.map((f) => `- ${f}`)
+    );
+    if (input.dependentsTruncated) {
+      lines.push(
+        `(truncated to ${DEPENDENT_CAP} — more dependents exist; do not treat` +
+          ' this list as exhaustive)'
+      );
+    }
+  }
+  if (input.mirrors.length > 0) {
+    lines.push(
+      '',
+      'These files declare, in a comment, that they hand-mirror something' +
+        ' this diff changed — confirm the mirror still matches:',
+      ...input.mirrors.map((f) => `- ${f}`)
+    );
+    if (input.mirrorsTruncated) {
+      lines.push(
+        `(truncated to ${DEPENDENT_CAP} — more mirrors exist; do not treat` +
+          ' this list as exhaustive)'
+      );
+    }
+  }
+  return lines.join('\n');
 }
 
 function riskDerivedSection(input: ReviewPromptInput): string | null {
@@ -482,6 +574,9 @@ export function buildReviewPrompt(input: ReviewPromptInput): string {
     evidenceSection(input),
   ];
 
+  const dependencyScope = dependencyScopeSection(input);
+  if (dependencyScope !== null) sections.push(dependencyScope);
+
   const risks = riskDerivedSection(input);
   if (risks !== null) sections.push(risks);
 
@@ -586,10 +681,18 @@ export function parseReviewOutput(raw: string): ReviewParseResult {
   return { ok: true, findings: result };
 }
 
+// The slice of DepMapCache's API a ReviewRunner needs — kept minimal so
+// tests can hand it a fake without pulling in the real workspace scan.
+export interface DepMapProvider {
+  get(): DepMap;
+}
+
 export interface ReviewRunnerContext {
   rootDir: string;
   store: TaskStore;
   findingStore: FindingStore;
+  ledgerStore: LedgerStore;
+  depMap: DepMapProvider;
   events: EventBus;
   orchestrator: Orchestrator;
 }
@@ -622,6 +725,20 @@ export class ReviewRunner {
       head: opts.head,
       model: reviewModelForRisk(task.meta.risk, models),
       buildPrompt: ({ runId, worktreePath }) => {
+        const changed = changedFiles(this.ctx.rootDir, opts.base, opts.head);
+        this.recordUndeclaredWrites(task, changed);
+        const depMap = this.ctx.depMap.get();
+        const dependents = capDependencyList(
+          changed.flatMap((f) => depMap.dependents(f)),
+          changed,
+          DEPENDENT_CAP
+        );
+        const mirrors = capDependencyList(
+          changed.flatMap((f) => depMap.mirrors(f)),
+          changed,
+          DEPENDENT_CAP
+        );
+
         const packagePath = reviewPackagePath(this.ctx.rootDir, runId);
         const outputPath = reviewOutputPath(this.ctx.rootDir, runId);
         mkdirSync(reviewDir(this.ctx.rootDir, runId), { recursive: true });
@@ -652,9 +769,41 @@ export class ReviewRunner {
           destructive: scanDestructiveWrites(worktreePath, task.meta.writes),
           evidence: reviewed?.evidence ?? [],
           mutations: reviewed?.mutations ?? [],
+          dependents: dependents.list,
+          dependentsTruncated: dependents.truncated,
+          mirrors: mirrors.list,
+          mirrorsTruncated: mirrors.truncated,
         });
       },
     });
+  }
+
+  // A changed file no declared `writes` pattern covers is not a failure, but
+  // it is recorded to both the ledger and the task's findings, visibly.
+  private recordUndeclaredWrites(task: TaskDoc, changed: string[]): void {
+    const undeclared = undeclaredWrites(task.meta.writes, changed);
+    for (const file of undeclared) {
+      this.ctx.ledgerStore.add({
+        sourceTaskId: task.meta.id,
+        kind: 'hazard',
+        title: `${task.meta.id} changed ${file} outside its declared writes`,
+        detail:
+          `Declared writes: ${task.meta.writes.length === 0 ? 'none' : task.meta.writes.join(', ')}.` +
+          ` None of them cover ${file}, which the diff changed anyway.`,
+        appliesTo: [task.meta.id],
+      });
+      this.ctx.findingStore.add({
+        taskId: task.meta.id,
+        runId: null,
+        severity: 'minor',
+        title: `file changed outside declared writes: ${file}`,
+        detail: `${file} was modified but no declared write pattern covers it.`,
+        file,
+      });
+    }
+    if (undeclared.length > 0) {
+      this.ctx.events.broadcast({ type: 'finding.changed' });
+    }
   }
 
   // The findings file the rubric asked for, falling back to the last assistant

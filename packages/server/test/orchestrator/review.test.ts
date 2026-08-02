@@ -6,20 +6,27 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { TaskCache } from '../../src/cache.js';
+import type { DepMap } from '../../src/depmap.js';
 import { EventBus } from '../../src/events.js';
 import { FindingStore } from '../../src/findings.js';
+import { LedgerStore } from '../../src/ledger.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import {
   buildDiffPackage,
   buildReviewPrompt,
+  capDependencyList,
   parseReviewOutput,
   reviewModelForRisk,
   ReviewRunner,
   scanDestructiveWrites,
   sharedSurfaceWrites,
+  undeclaredWrites,
 } from '../../src/orchestrator/review.js';
-import type { ReviewPromptInput } from '../../src/orchestrator/review.js';
+import type {
+  DepMapProvider,
+  ReviewPromptInput,
+} from '../../src/orchestrator/review.js';
 import { Transcript } from '../../src/orchestrator/transcript.js';
 import type {
   Executor,
@@ -122,6 +129,10 @@ function promptInput(
     destructive: [],
     evidence: [],
     mutations: [],
+    dependents: [],
+    dependentsTruncated: false,
+    mirrors: [],
+    mirrorsTruncated: false,
     ...overrides,
   };
 }
@@ -251,6 +262,37 @@ describe('buildReviewPrompt framing and inputs', () => {
     expect(buildReviewPrompt(promptInput())).toContain(
       'Declared writes for this task: none were declared'
     );
+  });
+
+  it('names dependents and mirrors as files outside the diff to check', () => {
+    const prompt = buildReviewPrompt(
+      promptInput({
+        dependents: ['packages/cli/src/program.ts'],
+        mirrors: ['packages/cli/src/apiClient.ts'],
+      })
+    );
+    expect(prompt).toContain('## Files outside the diff to check');
+    expect(prompt).toContain('- packages/cli/src/program.ts');
+    expect(prompt).toContain('- packages/cli/src/apiClient.ts');
+    expect(prompt).toContain('hand-mirror something');
+  });
+
+  it('says so when the dependents or mirrors list was truncated', () => {
+    const prompt = buildReviewPrompt(
+      promptInput({
+        dependents: ['a.ts'],
+        dependentsTruncated: true,
+        mirrors: ['b.ts'],
+        mirrorsTruncated: true,
+      })
+    );
+    expect(prompt).toContain('truncated to 20');
+    expect(prompt.match(/truncated to 20/g)).toHaveLength(2);
+  });
+
+  it('omits the section entirely when there is nothing outside the diff', () => {
+    const prompt = buildReviewPrompt(promptInput());
+    expect(prompt).not.toContain('Files outside the diff to check');
   });
 
   it('appends extraRisks verbatim', () => {
@@ -424,6 +466,41 @@ describe('write-set classification', () => {
   });
 });
 
+describe('undeclaredWrites', () => {
+  it('flags a changed file no declared glob covers', () => {
+    expect(
+      undeclaredWrites(
+        ['packages/core/**'],
+        ['packages/core/src/a.ts', 'packages/cli/src/b.ts']
+      )
+    ).toEqual(['packages/cli/src/b.ts']);
+  });
+
+  it('flags everything when nothing was declared', () => {
+    expect(undeclaredWrites([], ['a.ts', 'b.ts'])).toEqual(['a.ts', 'b.ts']);
+  });
+
+  it('flags nothing when every changed file is covered', () => {
+    expect(undeclaredWrites(['src/**'], ['src/a.ts'])).toEqual([]);
+  });
+});
+
+describe('capDependencyList', () => {
+  it('dedupes, sorts, excludes the diff itself, and reports no truncation under the cap', () => {
+    expect(
+      capDependencyList(['b.ts', 'a.ts', 'a.ts', 'c.ts'], ['c.ts'], 20)
+    ).toEqual({ list: ['a.ts', 'b.ts'], truncated: false });
+  });
+
+  it('truncates and says so once the unique count exceeds the cap', () => {
+    const raw = Array.from({ length: 5 }, (_, i) => `f${i}.ts`);
+    expect(capDependencyList(raw, [], 3)).toEqual({
+      list: ['f0.ts', 'f1.ts', 'f2.ts'],
+      truncated: true,
+    });
+  });
+});
+
 describe('parseReviewOutput', () => {
   it('parses a bare findings object', () => {
     const result = parseReviewOutput(
@@ -532,10 +609,18 @@ class ScriptedReviewer implements Executor {
   }
 }
 
-function setupReview(reviewer: Executor): {
+// A DepMap with no edges — the default for tests that don't care about
+// dependency scope, so they don't have to scan a real workspace.
+const EMPTY_DEP_MAP: DepMap = { dependents: () => [], mirrors: () => [] };
+
+function setupReview(
+  reviewer: Executor,
+  depMap: DepMapProvider = { get: () => EMPTY_DEP_MAP }
+): {
   orchestrator: Orchestrator;
   runner: ReviewRunner;
   findingStore: FindingStore;
+  ledgerStore: LedgerStore;
   store: TaskStore;
 } {
   const store = TaskStore.init(repo);
@@ -550,14 +635,17 @@ function setupReview(reviewer: Executor): {
   });
   orchestrator.registerExecutor('claude', reviewer);
   const findingStore = new FindingStore(repo);
+  const ledgerStore = new LedgerStore(repo);
   const runner = new ReviewRunner({
     rootDir: repo,
     store,
     findingStore,
+    ledgerStore,
+    depMap,
     events,
     orchestrator,
   });
-  return { orchestrator, runner, findingStore, store };
+  return { orchestrator, runner, findingStore, ledgerStore, store };
 }
 
 function commitRange(): { base: string; head: string } {
@@ -586,7 +674,11 @@ describe('ReviewRunner', () => {
       })
     );
     const { orchestrator, runner, findingStore, store } = setupReview(reviewer);
-    const task = store.create({ title: 'harden sync', risk: 'critical' });
+    const task = store.create({
+      title: 'harden sync',
+      risk: 'critical',
+      writes: ['src.ts'],
+    });
     const { base, head } = commitRange();
 
     const meta = await runner.startReview({
@@ -667,7 +759,11 @@ describe('ReviewRunner', () => {
       '{"findings":[{"severity":"showstopper","title":"t","detail":"d"}]}'
     );
     const { orchestrator, runner, findingStore, store } = setupReview(reviewer);
-    const task = store.create({ title: 'harden sync', risk: 'elevated' });
+    const task = store.create({
+      title: 'harden sync',
+      risk: 'elevated',
+      writes: ['src.ts'],
+    });
     const { base, head } = commitRange();
 
     const meta = await runner.startReview({
@@ -689,7 +785,11 @@ describe('ReviewRunner', () => {
     const { orchestrator, runner, findingStore, store } = setupReview(
       new ScriptedReviewer(null)
     );
-    const task = store.create({ title: 'harden sync', risk: 'routine' });
+    const task = store.create({
+      title: 'harden sync',
+      risk: 'routine',
+      writes: ['src.ts'],
+    });
     const { base, head } = commitRange();
 
     const meta = await runner.startReview({
@@ -748,6 +848,66 @@ describe('ReviewRunner', () => {
     await waitFor(
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
+  });
+
+  it("scopes the prompt with the diff's dependents and mirrors, reporting truncation", async () => {
+    const manyDependents = Array.from({ length: 25 }, (_, i) => `dep${i}.ts`);
+    const fakeDepMap: DepMap = {
+      dependents: (file) => (file === 'src.ts' ? manyDependents : []),
+      mirrors: (file) => (file === 'src.ts' ? ['mirror.ts'] : []),
+    };
+    const reviewer = new ScriptedReviewer('{"findings": []}');
+    const { runner, store } = setupReview(reviewer, {
+      get: () => fakeDepMap,
+    });
+    const task = store.create({ title: 'harden sync', risk: 'routine' });
+    const { base, head } = commitRange();
+
+    await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+    });
+
+    expect(reviewer.lastPrompt).toContain('## Files outside the diff to check');
+    expect(reviewer.lastPrompt).toContain('- dep0.ts');
+    expect(reviewer.lastPrompt).toContain('- mirror.ts');
+    expect(reviewer.lastPrompt).toContain(
+      'truncated to 20 — more dependents exist'
+    );
+  });
+
+  it('records a hazard ledger entry and a minor finding for a changed file outside declared writes', async () => {
+    const reviewer = new ScriptedReviewer('{"findings": []}');
+    const { runner, findingStore, ledgerStore, store } = setupReview(reviewer);
+    const task = store.create({
+      title: 'harden sync',
+      risk: 'routine',
+      writes: ['docs/**'],
+    });
+    const { base, head } = commitRange();
+
+    await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+    });
+
+    const findings = findingStore.list({ taskId: task.meta.id });
+    const undeclared = findings.find((f) => f.file === 'src.ts');
+    expect(undeclared?.severity).toBe('minor');
+    expect(undeclared?.title).toContain('outside declared writes');
+
+    const hazards = ledgerStore.list().filter((e) => e.kind === 'hazard');
+    expect(hazards).toHaveLength(1);
+    expect(hazards[0].sourceTaskId).toBe(task.meta.id);
+    expect(hazards[0].detail).toContain('src.ts');
   });
 });
 

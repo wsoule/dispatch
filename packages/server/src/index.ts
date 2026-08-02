@@ -7,6 +7,7 @@ import { handleApi } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
+import { DepMapCache, depMapSourceDirs } from './depmap.js';
 import { EventBus } from './events.js';
 import { FindingStore } from './findings.js';
 import { GitRepo } from './git/commands.js';
@@ -29,7 +30,7 @@ import { QuestionRegistry } from './orchestrator/questions.js';
 import { ReviewRunner } from './orchestrator/review.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import { ReviewCommentStore } from './reviewComments.js';
-import { watchTasks } from './watcher.js';
+import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
   port: number;
@@ -223,6 +224,13 @@ export async function startServer(
     events.broadcast({ type: 'task.changed' });
   });
 
+  // The reverse-dependency map ReviewRunner scopes reviews with, rebuilt
+  // lazily and invalidated whenever the workspace's own source changes.
+  const depMapCache = new DepMapCache(rootDir);
+  const sourceWatcher = watchSourceDirs(depMapSourceDirs(rootDir), () => {
+    depMapCache.invalidate();
+  });
+
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
@@ -343,6 +351,8 @@ export async function startServer(
     rootDir,
     store,
     findingStore,
+    ledgerStore,
+    depMap: depMapCache,
     events,
     orchestrator,
   });
@@ -496,6 +506,7 @@ export async function startServer(
     mergeQueue,
     async stop() {
       watcher.close();
+      sourceWatcher.close();
       prManager.stopPolling();
       mergeQueue.stop();
       unsubscribeLinear();
