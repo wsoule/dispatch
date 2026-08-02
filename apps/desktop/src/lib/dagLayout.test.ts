@@ -27,6 +27,9 @@ function makeTask(
       updated: created,
       external: null,
       selfReview: false,
+      writes: [],
+      risk: 'routine',
+      model: null,
     },
     body: '',
   };

@@ -101,6 +101,9 @@ const doc: TaskDoc = {
     updated: '2026-07-13T18:04:00Z',
     external: null,
     selfReview: false,
+    writes: [],
+    risk: 'routine',
+    model: null,
   },
   body: '\n## Description\n\nStuff.\n\n## Acceptance Criteria\n\n## Activity\n',
 };
@@ -141,6 +144,9 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(parsed.meta.assignee).toBe('none');
     expect(parsed.meta.external).toBeNull();
     expect(parsed.meta.selfReview).toBe(true);
+    expect(parsed.meta.writes).toEqual([]);
+    expect(parsed.meta.risk).toBe('routine');
+    expect(parsed.meta.model).toBeNull();
     expect(parsed.body).toBe('body');
   });
   it('throws TaskParseError on missing frontmatter or required field', () => {
@@ -222,6 +228,104 @@ describe('selfReview / self-review frontmatter', () => {
     expect(() => parseTaskFile(text)).toThrow(TaskParseError);
     expect(() => parseTaskFile(text)).toThrow(
       /invalid archived-at: expected a string/
+    );
+  });
+});
+
+describe('writes / risk / model frontmatter', () => {
+  it('round-trips a non-default writes, risk and model', () => {
+    const withOverrides: TaskDoc = {
+      ...doc,
+      meta: {
+        ...doc.meta,
+        writes: ['src/**', 'packages/core/src/types.ts'],
+        risk: 'critical',
+        model: 'claude-opus-4',
+      },
+    };
+    const text = serializeTaskFile(withOverrides);
+    expect(parseTaskFile(text)).toEqual(withOverrides);
+    expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
+  });
+
+  it('always serializes writes, even when empty', () => {
+    expect(serializeTaskFile(doc)).toContain('writes: []');
+  });
+
+  it('omits risk when routine and model when null', () => {
+    const text = serializeTaskFile(doc);
+    expect(text).not.toContain('risk:');
+    expect(text).not.toContain('model:');
+  });
+
+  it('serializes risk when not routine', () => {
+    const elevated: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, risk: 'elevated' },
+    };
+    expect(serializeTaskFile(elevated)).toContain('risk: elevated');
+  });
+
+  it('serializes model when set', () => {
+    const withModel: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, model: 'claude-haiku-4' },
+    };
+    expect(serializeTaskFile(withModel)).toContain('model: claude-haiku-4');
+  });
+
+  it('throws TaskParseError on an invalid risk', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'risk: urgent',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(/invalid risk: urgent/);
+  });
+
+  it('throws TaskParseError on a non-string model', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'model: 42',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid model: expected a string/
+    );
+  });
+
+  it('throws TaskParseError on non-array writes', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'writes: src/index.ts',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid writes: expected a list of strings/
     );
   });
 });

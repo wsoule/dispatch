@@ -19,6 +19,9 @@ function makeTask(id: string, status: string): TaskDoc {
     updated: '2026-01-01T00:00:00.000Z',
     external: null,
     selfReview: false,
+    writes: [],
+    risk: 'routine',
+    model: null,
   };
   return { meta, body: '' };
 }

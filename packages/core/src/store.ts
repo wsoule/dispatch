@@ -21,6 +21,7 @@ import type {
   TaskDoc,
   TaskKind,
   TaskMeta,
+  TaskRisk,
 } from './types.js';
 
 export const DISPATCH_DIR = '.dispatch';
@@ -41,6 +42,9 @@ export interface CreateInput {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  writes?: string[];
+  risk?: TaskRisk;
+  model?: string | null;
 }
 
 export interface UpdatePatch {
@@ -53,6 +57,10 @@ export interface UpdatePatch {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  writes?: string[];
+  risk?: TaskRisk;
+  // null clears a per-task override, falling back to config.models.
+  model?: string | null;
   // The id of this task in an external tracker (`linear:<uuid>`), or null to unlink it.
   external?: string | null;
   // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
@@ -125,6 +133,9 @@ export class TaskStore {
       updated: now,
       external: null,
       selfReview: input.selfReview ?? true,
+      writes: input.writes ?? [],
+      risk: input.risk ?? 'routine',
+      model: input.model ?? null,
     };
     const body = `\n## Description\n\n${input.description ?? ''}\n\n## Acceptance Criteria\n\n## Activity\n`;
     const doc: TaskDoc = { meta, body };

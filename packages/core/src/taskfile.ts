@@ -6,8 +6,9 @@ import type {
   TaskDoc,
   TaskKind,
   TaskMeta,
+  TaskRisk,
 } from './types.js';
-import { ASSIGNEES, KINDS, PRIORITIES } from './types.js';
+import { ASSIGNEES, KINDS, PRIORITIES, TASK_RISKS } from './types.js';
 
 export class TaskParseError extends Error {
   constructor(
@@ -62,7 +63,13 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw['archived-at'] != null && typeof raw['archived-at'] !== 'string') {
     throw new TaskParseError(`invalid archived-at: expected a string`, file);
   }
-  for (const key of ['blocked-by', 'labels'] as const) {
+  if (raw.risk != null && !TASK_RISKS.includes(raw.risk as TaskRisk)) {
+    throw new TaskParseError(`invalid risk: ${String(raw.risk)}`, file);
+  }
+  if (raw.model != null && typeof raw.model !== 'string') {
+    throw new TaskParseError(`invalid model: expected a string`, file);
+  }
+  for (const key of ['blocked-by', 'labels', 'writes'] as const) {
     const value = raw[key];
     if (
       value != null &&
@@ -91,6 +98,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     // Absent means on: self-review is the default, so a file only carries the key once the
     // task has explicitly opted out (see serializeTaskFile).
     selfReview: (raw['self-review'] as boolean | undefined) ?? true,
+    writes: (raw.writes as string[] | undefined) ?? [],
+    risk: (raw.risk as TaskRisk | undefined) ?? 'routine',
+    model: raw.model ?? null,
     ...(raw['archived-at'] == null ? {} : { archivedAt: raw['archived-at'] }),
   };
   return { meta, body: content.slice(m[0].length) };
@@ -116,6 +126,11 @@ export function serializeTaskFile(doc: TaskDoc): string {
     // common (enabled) case keeps a plain task's frontmatter free of a line that just restates
     // the default — the same reason the parser treats an absent key as `true`.
     ...(meta.selfReview ? {} : { 'self-review': false }),
+    // Unlike blocked-by/labels, an empty writes list is meaningful ("declared
+    // nothing") rather than "unset", so it always serializes.
+    writes: meta.writes,
+    ...(meta.risk === 'routine' ? {} : { risk: meta.risk }),
+    ...(meta.model === null ? {} : { model: meta.model }),
     ...(meta.archivedAt === undefined
       ? {}
       : { 'archived-at': meta.archivedAt }),

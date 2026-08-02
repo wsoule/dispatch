@@ -45,3 +45,28 @@ export function generateDraftId(
     .slice(0, 6);
   return `d-${hash}`;
 }
+
+// Same shape as generateRunId's id, but for review findings — minted one at a
+// time as a review run raises them.
+export function generateFindingId(
+  now: string,
+  nonce: string = randomBytes(4).toString('hex')
+): string {
+  const hash = createHash('sha256')
+    .update(`${now}\n${nonce}`)
+    .digest('hex')
+    .slice(0, 6);
+  return `f-${hash}`;
+}
+
+// Same shape as generateRunId's id, but for ledger entries.
+export function generateLedgerId(
+  now: string,
+  nonce: string = randomBytes(4).toString('hex')
+): string {
+  const hash = createHash('sha256')
+    .update(`${now}\n${nonce}`)
+    .digest('hex')
+    .slice(0, 6);
+  return `l-${hash}`;
+}
