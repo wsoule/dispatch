@@ -40,6 +40,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
+import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
@@ -2358,6 +2359,20 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'evidence' &&
+        method === 'POST'
+      ) {
+        return await createRunEvidence(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'mutations' &&
+        method === 'POST'
+      ) {
+        return await createRunMutation(req, ctx, segments[1]);
       }
       // POST /api/runs/:id/resume — agent-death recovery: dispatches a fresh
       // run into the same worktree, carrying the prior run's survey.
