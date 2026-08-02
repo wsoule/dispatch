@@ -31,7 +31,38 @@ export interface DispatchConfig {
   orchestrator: OrchestratorConfig;
   models: ModelConfig;
   linear: LinearConfig;
+  fixLoop: FixLoopConfig;
 }
+
+/** One rung of the fix-loop escalation ladder: how round `round`, and every
+ *  later round up to the next rung, is dispatched. */
+export interface EscalationStep {
+  round: number;
+  strategy: 'resume' | 'fresh';
+  modelTier: 'standard' | 'high';
+}
+
+/** Bounds on the review -> fix -> re-review loop. `cap` is the last round that
+ *  may dispatch; reaching it demands an explicit ruling on every finding. */
+export interface FixLoopConfig {
+  cap: number;
+  escalation: EscalationStep[];
+}
+
+// Declared as `readonly string[]` (not the literal unions) so a membership
+// check against an unvalidated `unknown` never needs an `as` cast.
+export const FIX_STRATEGIES: readonly string[] = ['resume', 'fresh'];
+export const FIX_MODEL_TIERS: readonly string[] = ['standard', 'high'];
+
+// Rounds 1-3 resume the same agent; 4 and 5 hand the work to a fresh one at
+// the top tier, because an agent three rounds deep stops seeing its own shape.
+export const DEFAULT_FIX_LOOP: FixLoopConfig = {
+  cap: 5,
+  escalation: [
+    { round: 1, strategy: 'resume', modelTier: 'standard' },
+    { round: 4, strategy: 'fresh', modelTier: 'high' },
+  ],
+};
 
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
 export interface LinearConfig {
@@ -99,4 +130,5 @@ export interface ConfigPatch {
   permissionMode?: OrchestratorConfig['permissionMode'];
   models?: Partial<ModelConfig>;
   linear?: Partial<LinearConfig>;
+  fixLoop?: Partial<FixLoopConfig>;
 }

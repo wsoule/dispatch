@@ -393,6 +393,37 @@ export interface UpdateFindingPatch {
   ruling?: string | null;
 }
 
+// Mirrors FixLoopState in packages/server/src/orchestrator/fixLoop.ts: where a
+// task's review -> fix -> re-review loop currently stands.
+export interface FixLoopState {
+  taskId: string;
+  round: number;
+  cap: number;
+  state: 'idle' | 'implementing' | 'reviewing' | 'capped' | 'complete';
+  baseSha: string;
+  lastReviewedSha: string | null;
+  updatedAt: string;
+}
+
+// Mirrors POST /api/tasks/:id/fix-loop/advance's body. `baseSha` opens the loop
+// on the first call and is ignored afterwards.
+export interface AdvanceFixLoopInput {
+  baseSha?: string;
+  cap?: number;
+}
+
+// Mirrors POST /api/tasks/:id/findings/:fid/adjudicate. `ruling` is required
+// and non-empty — the server rejects a blank one.
+export interface AdjudicateFindingInput {
+  verdict: 'parked' | 'blocked';
+  ruling: string;
+}
+
+export interface AdjudicateFindingResult {
+  finding: Finding;
+  fixLoop: FixLoopState | null;
+}
+
 // Mirrors POST /api/tasks/:id/review's body. The open findings a `fix`
 // re-review is scoped to are read server-side, never sent from here.
 export interface StartReviewInput {
@@ -466,6 +497,10 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision/hazard/constraint/handoff was added to the ledger.
   | { type: 'ledger.changed' }
+  // A task's fix loop moved between states, or hit its round cap. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'fixloop.changed'; taskId: string }
+  | { type: 'fixloop.capped'; taskId: string; round: number }
   // A run was surveyed on reaching `failed`/`interrupted-dirty`. Mirrors
   // packages/server/src/events.ts.
   | { type: 'run.survey'; runId: string; survey: RunSurvey };
@@ -1274,6 +1309,18 @@ export interface ApiClient {
   // Dispatches a review run over base..head. Resolves with the run's meta as
   // soon as it is accepted; the findings land asynchronously when it ends.
   startReview(taskId: string, input: StartReviewInput): Promise<RunMeta>;
+  // `advanceFixLoop` drives one step (and opens the loop when `baseSha` is
+  // supplied); `adjudicateFinding` is the ruling a capped loop demands.
+  fetchFixLoop(taskId: string): Promise<FixLoopState>;
+  advanceFixLoop(
+    taskId: string,
+    input?: AdvanceFixLoopInput
+  ): Promise<FixLoopState>;
+  adjudicateFinding(
+    taskId: string,
+    findingId: string,
+    input: AdjudicateFindingInput
+  ): Promise<AdjudicateFindingResult>;
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
   fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
   createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
@@ -1694,6 +1741,20 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody(input),
       }),
+    fetchFixLoop: (taskId) =>
+      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
+    advanceFixLoop: (taskId, input = {}) =>
+      request(
+        baseUrl,
+        `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/advance`,
+        { method: 'POST', ...jsonBody(input) }
+      ),
+    adjudicateFinding: (taskId, findingId, input) =>
+      request(
+        baseUrl,
+        `/api/tasks/${encodeURIComponent(taskId)}/findings/${encodeURIComponent(findingId)}/adjudicate`,
+        { method: 'POST', ...jsonBody(input) }
+      ),
     fetchLedger: (filter = {}) => {
       const params = new URLSearchParams();
       if (filter.epicId !== undefined) {

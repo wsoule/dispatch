@@ -17,6 +17,7 @@ import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
@@ -345,6 +346,19 @@ export async function startServer(
     orchestrator,
   });
 
+  // Constructed after ReviewRunner on purpose: terminal hooks fire in
+  // registration order, so a review's findings land before the loop reacts.
+  const fixLoop = new FixLoop({
+    rootDir,
+    store,
+    cache,
+    events,
+    orchestrator,
+    reviewRunner,
+    findingStore,
+    fixLoopStore: new FixLoopStore(rootDir),
+  });
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -362,6 +376,7 @@ export async function startServer(
     findingStore,
     ledgerStore,
     reviewRunner,
+    fixLoop,
     reviewComments: new ReviewCommentStore(rootDir),
     questions,
     linearSync,

@@ -5,13 +5,18 @@ import YAML from 'yaml';
 import type {
   ConfigPatch,
   DispatchConfig,
+  EscalationStep,
+  FixLoopConfig,
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
 } from './configTypes.js';
 import {
+  DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  FIX_MODEL_TIERS,
+  FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
 } from './configTypes.js';
@@ -48,12 +53,22 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   verifyTimeoutSec: 600,
 };
 
+// `escalation` holds objects, so a shallow spread would share rows between the
+// defaults and every loaded config.
+function cloneFixLoop(config: FixLoopConfig): FixLoopConfig {
+  return {
+    cap: config.cap,
+    escalation: config.escalation.map((step) => ({ ...step })),
+  };
+}
+
 const DEFAULTS: DispatchConfig = {
   statuses: [...STATUSES],
   autoCommit: false,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   models: { ...DEFAULT_MODELS },
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
+  fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
 };
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -251,6 +266,74 @@ function parseLinearConfig(raw: unknown): LinearConfig {
   };
 }
 
+// Validates one escalation row. `label` names it in the error so a bad row in
+// a five-row table is identifiable without counting.
+function parseEscalationStep(raw: unknown, label: string): EscalationStep {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`invalid ${label}: must be an object`);
+  }
+  const { round, strategy, modelTier } = raw as Record<string, unknown>;
+  if (typeof round !== 'number' || !Number.isInteger(round) || round < 1) {
+    throw new ConfigError(`invalid ${label}.round: must be an integer >= 1`);
+  }
+  if (typeof strategy !== 'string' || !FIX_STRATEGIES.includes(strategy)) {
+    throw new ConfigError(
+      `invalid ${label}.strategy: must be one of ${FIX_STRATEGIES.join('|')}`
+    );
+  }
+  if (typeof modelTier !== 'string' || !FIX_MODEL_TIERS.includes(modelTier)) {
+    throw new ConfigError(
+      `invalid ${label}.modelTier: must be one of ${FIX_MODEL_TIERS.join('|')}`
+    );
+  }
+  return {
+    round,
+    strategy: strategy as EscalationStep['strategy'],
+    modelTier: modelTier as EscalationStep['modelTier'],
+  };
+}
+
+// Validates the optional `fixLoop:` block, same contract as the blocks above.
+// An escalation table on disk replaces the default outright rather than merging.
+function parseFixLoopConfig(raw: unknown): FixLoopConfig {
+  if (raw === undefined) return cloneFixLoop(DEFAULT_FIX_LOOP);
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: fixLoop must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { cap } = obj;
+  if (
+    cap !== undefined &&
+    (typeof cap !== 'number' || !Number.isInteger(cap) || cap < 1)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: fixLoop.cap must be an integer >= 1'
+    );
+  }
+
+  const { escalation } = obj;
+  if (escalation === undefined) {
+    return {
+      ...cloneFixLoop(DEFAULT_FIX_LOOP),
+      cap: cap ?? DEFAULT_FIX_LOOP.cap,
+    };
+  }
+  if (!Array.isArray(escalation)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: fixLoop.escalation must be a list'
+    );
+  }
+  return {
+    cap: cap ?? DEFAULT_FIX_LOOP.cap,
+    escalation: escalation.map((entry, index) =>
+      parseEscalationStep(entry, `fixLoop.escalation[${index}]`)
+    ),
+  };
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -263,6 +346,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
         ...DEFAULTS.linear,
         statusMap: { ...DEFAULTS.linear.statusMap },
       },
+      fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
     };
   }
   let parsed: unknown;
@@ -325,6 +409,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
     models: parseModelConfig(raw.models),
     linear: parseLinearConfig(raw.linear),
+    fixLoop: parseFixLoopConfig(raw.fixLoop),
   };
 }
 
@@ -376,6 +461,29 @@ function applyLinearPatch(
       }
       doc.setIn(['linear', 'statusMap', status], state.trim());
     }
+  }
+}
+
+// Writes the `fixLoop:` keys a patch names. The escalation table is written
+// whole, since a per-row merge has no stable key to merge on.
+function applyFixLoopPatch(
+  doc: YAML.Document,
+  patch: Partial<FixLoopConfig>
+): void {
+  if (patch.cap !== undefined) {
+    if (!Number.isInteger(patch.cap) || patch.cap < 1) {
+      throw new ConfigError('invalid fixLoop.cap: must be an integer >= 1');
+    }
+    doc.setIn(['fixLoop', 'cap'], patch.cap);
+  }
+  if (patch.escalation !== undefined) {
+    if (!Array.isArray(patch.escalation)) {
+      throw new ConfigError('invalid fixLoop.escalation: must be a list');
+    }
+    const steps = patch.escalation.map((entry, index) =>
+      parseEscalationStep(entry, `fixLoop.escalation[${index}]`)
+    );
+    doc.setIn(['fixLoop', 'escalation'], steps);
   }
 }
 
@@ -439,6 +547,7 @@ export function updateConfig(
     }
   }
   if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
+  if (patch.fixLoop !== undefined) applyFixLoopPatch(doc, patch.fixLoop);
 
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, doc.toString());
