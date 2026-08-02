@@ -7,7 +7,7 @@ making major changes concurrently — `feat/orchestration-capabilities` among th
 — and this spec touches `packages/core/src/types.ts`, the orchestrator, and the
 desktop task components, all of which are moving. Re-read §4's file references
 against the tree before planning; they were accurate at `main` @`40ee234` and at
-`feat/orchestration-capabilities` @`7777b45`.
+`feat/orchestration-capabilities` @`689a634`.
 
 Sequencing note: §4.11's audit export depends on the `risk` / `writes` / `model`
 / `findings` / `ledger` model added in `6ec45d9`, which lives on
@@ -72,9 +72,9 @@ files; presence, claims, and duplicate-dispatch prevention over git refs;
 cross-machine `run_list` and `agent_message`; a Team surface in the desktop app,
 CLI, and MCP; exportable audit.
 
-**Out of scope** — see §9 for the full list, but notably: a relay server, RBAC,
-SSO, real-time (sub-second) sync, and cross-repo fleet views. §4.8 and §4.11
-keep the seams for those clean without building them.
+**Out of scope** — see §9 for the full list, but notably: a coordination server,
+RBAC, SSO, real-time (sub-second) sync, and cross-repo fleet views. §4.8 and
+§4.11 keep the seams for those clean without building them.
 
 **Team shape targeted:** 2-8 humans on one repo, each running their own Dispatch
 and their own agents.
@@ -119,12 +119,13 @@ fork, does not need to reach CI, and agents never grep it — they call
 `run_list`. The original reasoning argues _for_ this narrow use, and this spec
 records that so it does not read as a reversal.
 
-Rejected: a relay server (real-time and genuinely more capable, but every team
-must run, secure, and upgrade something — and that is the point where Dispatch
-competes with Mesh on Mesh's own architecture); and riding GitHub/Linear alone
-(cheapest, and a pushed branch is a high-quality claim signal, but it only
-arrives minutes into a run, missing the first-seconds window where the duplicate
-dispatch race actually happens, and it does nothing for agent-to-agent).
+Rejected: a coordination server (real-time and genuinely more capable, but every
+team must run, secure, and upgrade something — and that is the point where
+Dispatch competes with Mesh on Mesh's own architecture); and riding
+GitHub/Linear alone (cheapest, and a pushed branch is a high-quality claim
+signal, but it only arrives minutes into a run, missing the first-seconds window
+where the duplicate dispatch race actually happens, and it does nothing for
+agent-to-agent).
 
 Branch-based signals are still used, as corroboration (§4.9), not as the
 primary.
@@ -326,9 +327,10 @@ first start, mirroring the `notes.json` → `inbox.md` migration already at
 ### 4.8 Presence — the `PresenceSource` boundary
 
 **This interface is a genuine boundary, not decoration.** It is the seam a
-hosted or self-hosted relay implements later without touching a caller, and it
-is deliberately expressed in terms of _what the app needs to know_ rather than
-_how git refs work_ — no ref names, no fetch semantics, no git types cross it.
+hosted or self-hosted coordination server implements later without touching a
+caller, and it is deliberately expressed in terms of _what the app needs to
+know_ rather than _how git refs work_ — no ref names, no fetch semantics, no git
+types cross it.
 
 ```ts
 // packages/core/src/presence.ts — pure shapes, browser-safe
@@ -344,6 +346,9 @@ export interface Claim {
   taskId: string;
   claimedAt: string; // earliest-wins resolution key (§4.9)
   runId: string | null; // null for a manual human claim
+  /** The task's declared `writes`, carried so remote actors can run
+   *  `tasksConflict` without fetching the task file. Empty = undeclared. */
+  writes: string[];
 }
 
 export interface PresenceSource {
@@ -351,7 +356,11 @@ export interface PresenceSource {
   list(): Promise<PresenceRecord[]>;
   /** Replace this actor's own record. */
   publish(record: PresenceRecord): Promise<void>;
-  claim(taskId: string, runId: string | null): Promise<ClaimResult>;
+  claim(
+    taskId: string,
+    runId: string | null,
+    writes: string[]
+  ): Promise<ClaimResult>;
   release(taskId: string): Promise<void>;
   send(to: string, text: string): Promise<void>;
   receive(since: string): Promise<AgentMessage[]>;
@@ -397,6 +406,38 @@ dispatch anyway?"_
 even when presence is stale, so the claim check consults both: presence is fast
 and advisory, branches are slow and durable. When presence is unavailable
 entirely (§6), branch corroboration is the sole signal and the UI says so.
+
+#### 4.9.1 Write-set overlap across machines
+
+`689a634` added write-set conflict detection to the epic scheduler:
+`packages/core/src/conflicts.ts` exposes `tasksConflict(a, b)` and
+`schedulableBatch(ready, limit)`, and the engine now batches only mutually
+non-conflicting ready tasks rather than the first N.
+
+That guarantee is **single-machine only**, and its absence across machines is a
+gap same-task claims do not cover. Alice dispatching `t-aaa` and Bob dispatching
+`t-bbb` never collide on task id, but if both declare
+`packages/core/src/types.ts` they produce two branches racing the same file —
+precisely what `schedulableBatch` refuses to do locally.
+
+So the claim check runs `tasksConflict` between the candidate's `writes` and
+every live remote claim's `writes`, and reuses `conflicts.ts` rather than
+reimplementing the matcher. Claims carry their write-set (§4.8) so this costs no
+extra fetch.
+
+**The unknown-write-set rule inverts across the machine boundary,
+deliberately.** Locally, `tasksConflict` treats an empty write-set as
+conflicting with everything, and the cost is one serialized batch — cheap and
+invisible. Remotely, the same rule would warn on every dispatch of an undeclared
+task whenever any teammate was running anything, which is noise that trains
+people to click through. So across machines an empty write-set on either side
+yields **no signal**, and only a declared overlap raises the soft block of §4.9.
+State this in the implementation, because reusing `tasksConflict` naively
+inherits the local rule and produces exactly the wrong behavior.
+
+A consequence worth naming: `writes` stops being a scheduling hint and becomes
+the team's collision-avoidance substrate, which raises the value of the planner
+declaring it accurately and of `doctor` reporting tasks that never do.
 
 ### 4.10 Cross-machine agents
 
@@ -521,6 +562,9 @@ this testable in `bun test` with no mocks:
 - claim race: both clones claim within the fetch window; earliest `claimedAt`
   wins on both sides
 - presence goes stale after the threshold and releases claims
+- write-set overlap (§4.9.1): clone A claims a task writing `core/src/types.ts`;
+  clone B dispatching a _different_ task writing the same path is warned — and,
+  in the paired case, is **not** warned when either side's `writes` is empty
 - outbox message delivered from clone A to clone B
 - push rejection degrades to local-only without losing commits
 
@@ -550,12 +594,17 @@ exists would generate exactly the conflicts the driver is there to prevent.
 
 ## 9. Out of scope
 
-- **Relay server.** `PresenceSource` (§4.8) is the seam; no implementation here.
+- **Coordination server.** `PresenceSource` (§4.8) is the seam; no
+  implementation here.
 - **Named standing agents** (`agent:reviewer`) — derived operator-scoped handles
   cover v1 addressing.
 - **RBAC, SSO, directory-backed identity.** Identity is git identity.
 - **Real-time (sub-second) sync.** ~20s is the design target.
 - **Cross-repo or cross-project fleet views.** One repo, one board.
+- **Distributed scheduling.** §4.9.1 surfaces cross-machine write-set overlap as
+  advice at dispatch time. It does not schedule across machines — no remote
+  queue, no cross-machine `schedulableBatch`. Each machine schedules its own
+  runs; the team layer only reports what someone else already started.
 - **Conflict resolution UI.** Conflicts surface; git resolves them.
 - **Web UI (`packages/web`) parity.** Frozen as a browser fallback per the
   roadmap's standing decisions; team surfaces land in `apps/desktop`.
