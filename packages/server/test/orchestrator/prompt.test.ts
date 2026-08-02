@@ -148,4 +148,38 @@ describe('buildTaskPrompt', () => {
       '- **decision**: retry POSTs — up to 3 times on 5xx'
     );
   });
+
+  it('renders no Amendments section for a task without one', () => {
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
+    expect(prompt).not.toContain('## Amendments');
+  });
+
+  it('renders amendments after the description, with the override line', () => {
+    const task = fixtureTask();
+    task.body +=
+      '\n## Amendments\n\n### 2026-08-02\n' +
+      '**Overrides:** join on the issue UUID, not the display key\n' +
+      '**Reason:** display keys are not stable across a rename\n';
+    const prompt = buildTaskPrompt(task, null);
+
+    const descriptionIdx = prompt.indexOf(
+      'Add a rate limiter to the login endpoint.'
+    );
+    const overrideLineIdx = prompt.indexOf(
+      'These amendments override the description where they conflict.'
+    );
+    const amendmentIdx = prompt.indexOf(
+      'join on the issue UUID, not the display key'
+    );
+    expect(descriptionIdx).toBeGreaterThan(-1);
+    expect(overrideLineIdx).toBeGreaterThan(descriptionIdx);
+    expect(amendmentIdx).toBeGreaterThan(overrideLineIdx);
+  });
+
+  it('does not duplicate the amendments text in the raw body dump', () => {
+    const task = fixtureTask();
+    task.body += '\n## Amendments\n\n### 2026-08-02\n**Overrides:** x\n';
+    const prompt = buildTaskPrompt(task, null);
+    expect(prompt.split('**Overrides:** x').length - 1).toBe(1);
+  });
 });

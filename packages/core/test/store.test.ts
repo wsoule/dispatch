@@ -162,3 +162,51 @@ describe('update', () => {
     );
   });
 });
+
+describe('amend', () => {
+  it('appends a dated, sourced amendment and bumps updated', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Sync issues' }, '2026-07-13T18:00:00Z');
+    const out = store.amend(
+      doc.meta.id,
+      {
+        overrides: 'join on the issue UUID, not the display key',
+        reason: 'display keys are not stable across a rename',
+        source: 'task-review',
+      },
+      '2026-07-13T19:00:00Z'
+    );
+    expect(out.meta.updated).toBe('2026-07-13T19:00:00Z');
+    // Re-read from disk so the assertion covers what was persisted.
+    const reread = store.get(doc.meta.id)!;
+    expect(reread.body).toContain(
+      'join on the issue UUID, not the display key'
+    );
+    expect(reread.body).toContain('task-review');
+  });
+
+  it('accumulates a second amendment rather than replacing the first', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Sync issues' }, '2026-07-13T18:00:00Z');
+    store.amend(doc.meta.id, {
+      overrides: 'first fix',
+      reason: 'first reason',
+      source: null,
+    });
+    store.amend(doc.meta.id, {
+      overrides: 'second fix',
+      reason: 'second reason',
+      source: null,
+    });
+    const reread = store.get(doc.meta.id)!;
+    expect(reread.body).toContain('first fix');
+    expect(reread.body).toContain('second fix');
+  });
+
+  it('throws on an unknown task id', () => {
+    const store = TaskStore.init(root);
+    expect(() =>
+      store.amend('t-nope00', { overrides: 'x', reason: 'y', source: null })
+    ).toThrow(/task not found/);
+  });
+});

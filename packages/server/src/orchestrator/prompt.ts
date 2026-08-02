@@ -1,3 +1,4 @@
+import { getSection, removeSection } from '@dispatch/core';
 import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 
 import type { RunSurvey } from './types.js';
@@ -10,19 +11,37 @@ function renderLedgerSection(entries: LedgerEntry[]): string | null {
   return ['## Findings and decisions from earlier work', ...lines].join('\n');
 }
 
-// Builds the exact prompt handed to an executor for a newly-dispatched task:
-// the task's own content, its parent epic's, any ledger entries carried
-// forward, repo conventions, and the dispatch collaboration/commit notes.
-// Pure function of its inputs, so it's unit-testable and snapshot-stable.
+// Renders a task's recorded amendments after its description, with an
+// explicit line stating they take precedence over it where they conflict.
+function renderAmendmentsSection(amendmentsText: string): string {
+  return [
+    '## Amendments',
+    'These amendments override the description where they conflict.',
+    amendmentsText,
+  ].join('\n\n');
+}
+
+// Builds the exact prompt handed to an executor for a dispatched task — its
+// own content plus carried-forward context. Pure, so it's snapshot-stable.
 export function buildTaskPrompt(
   task: TaskDoc,
   parentEpic: TaskDoc | null,
   ledgerEntries: LedgerEntry[] = []
 ): string {
+  // Lifted out of the raw body dump so it renders as its own block after
+  // the description, with the override line, instead of an unmarked paragraph.
+  const amendmentsText = getSection(task.body, 'Amendments');
+  const bodyForPrompt =
+    amendmentsText === '' ? task.body : removeSection(task.body, 'Amendments');
+
   const sections: string[] = [
     `# Task ${task.meta.id}: ${task.meta.title}`,
-    task.body.trim(),
+    bodyForPrompt.trim(),
   ];
+
+  if (amendmentsText !== '') {
+    sections.push(renderAmendmentsSection(amendmentsText));
+  }
 
   if (parentEpic !== null) {
     sections.push(

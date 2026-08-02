@@ -450,6 +450,14 @@ export interface CreateLedgerInput {
   appliesTo?: string[];
 }
 
+// Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
+// what changes and why, recorded in the task's `## Amendments` section.
+export interface AmendTaskInput {
+  overrides: string;
+  reason: string;
+  source?: string;
+}
+
 // Mirrors VerificationCheck in packages/server/src/orchestrator/verify.ts —
 // one check a verify run ran against the live app.
 export interface VerificationCheck {
@@ -1036,6 +1044,7 @@ export interface ApiClient {
   fetchTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  amendTask(id: string, input: AmendTaskInput): Promise<TaskDoc>;
   // Starts a background planner turn and returns immediately with a `running`
   // `DraftRecord`; watch it settle via `fetchDrafts` or `draft.changed`.
   draftTask(prompt: string): Promise<DraftRecord>;
@@ -1392,6 +1401,11 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/tasks/${id}`, {
         method: 'PATCH',
         ...jsonBody(patch),
+      }),
+    amendTask: (id, input) =>
+      request(baseUrl, `/api/tasks/${id}/amend`, {
+        method: 'POST',
+        ...jsonBody(input),
       }),
     draftTask: (prompt) =>
       request(baseUrl, '/api/tasks/draft', {

@@ -23,6 +23,7 @@ import type {
 } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
+import { amendTask } from './api/amendments.js';
 import {
   createFinding,
   createLedgerEntry,
@@ -2330,6 +2331,13 @@ export async function handleApi(
         method === 'GET'
       ) {
         return getFixLoop(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'amend' &&
+        method === 'POST'
+      ) {
+        return await amendTask(req, ctx, segments[1]);
       }
       if (
         segments.length === 4 &&
