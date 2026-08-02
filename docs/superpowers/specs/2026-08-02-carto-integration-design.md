@@ -75,9 +75,11 @@ until the spike runs** (see Testing).
 - **`carto serve` takes its project root from `process.cwd()`** — no `--root`.
 - **`.carto/carto.db` is `path.join(projectRoot, '.carto')`**
   (`src/store/sqlite-store.js`).
-- **`carto init` also generates `AGENTS.md`, installs git hooks, and wires every
-  AI tool it finds** — including writing `.mcp.json`. Both files are owned by
-  Dispatch and load-bearing here. See Containment.
+- **`carto init` also generates `AGENTS.md`, installs four git hooks, and wires
+  every AI tool it finds.** `AGENTS.md` is owned by Dispatch and load-bearing
+  here; the destination is redirectable via `.carto/config.json`'s `output` key.
+  The `.mcp.json` write is a non-destructive merge and needs no containment. The
+  hooks need their working directory pinned. See Containment and Sync.
 
 ## Architecture
 
@@ -156,43 +158,106 @@ at the _project_ root — the same worktree-vs-project split
 
 ### Containment of `carto init`
 
-Dispatch calls `carto init` only when `.carto/` is absent, and only after
-snapshotting `AGENTS.md` and `.mcp.json`. If carto rewrites either, Dispatch
-restores its own copy and re-merges the carto MCP entry through the existing
-`mergeMcpConfig`. Dispatch owns those two files; carto owns `.carto/`, which
-gets a `.gitignore` line.
+`carto init` has one flag, `--no-temporal`, which does not help here. But it
+writes `.carto/config.json` with an `output` key, and **every later `carto sync`
+resolves its destination from it**:
+
+```js
+// src/cli/init.js — written fresh by init
+const config = { version: '2', framework, language, projectRoot,
+                 output: 'AGENTS.md', generated: … };
+// …read back on every sync:
+path.resolve(projectRoot, config.output || 'AGENTS.md')
+```
+
+So `AGENTS.md` is at risk exactly once — during the single `carto init` call —
+and is permanently safe afterwards. Containment is therefore:
+
+1. Snapshot `AGENTS.md`.
+2. Run `carto init`.
+3. Restore `AGENTS.md`.
+4. Rewrite `.carto/config.json`'s `output` to `.carto/CONTEXT.md`.
+
+After step 4 no `carto sync` ever targets `AGENTS.md` again, so this is a
+one-time guard rather than a permanent snapshot-restore dance around every
+invocation. Carto's generated context lands inside `.carto/`, which it owns and
+which gets a `.gitignore` line.
+
+**`.mcp.json` needs no containment.** Carto's `mergeMcpJson()` reads the
+existing file, sets `config[key].carto = entry` under `mcpServers` (or
+`servers`), and writes back — a non-destructive merge that preserves the
+`dispatch` entry. This corrects an earlier assumption in this design: there is
+no collision with `mcpConfig.ts`, and `dispatch init` can merge its own entry
+before or after carto's without ordering constraints.
 
 ### Sync, and the worktree hook hazard
 
-Carto's git hooks auto-sync on commit/checkout/merge/rebase. Worktrees share the
-common git dir, so **an agent committing inside a run's worktree fires the main
-repo's hook with `cwd` set to the worktree**, where `.carto/` does not exist —
-carto would index the worktree or create a stray container there.
+`carto init` installs four hooks — `pre-commit`, `post-checkout`, `post-merge`,
+`post-rewrite` — each appended non-destructively under the marker
+`# carto-md: keep index fresh on git events`, running:
 
-Dispatch therefore declines carto's hooks and owns sync itself. `watcher.ts`
-already debounces source changes and calls `depMapCache.invalidate()`; that
-becomes `carto sync` with `cwd` pinned to the project root, then invalidate. One
-owner for the graph.
+```sh
+carto sync >/dev/null 2>&1 || true
+```
+
+Worktrees share the common git dir, so **an agent committing inside a run's
+worktree fires these hooks with `cwd` set to the worktree**, where `.carto/`
+does not exist. `carto sync` would index the worktree or create a stray
+container there; the `|| true` and redirected output mean it fails silently
+either way, which is worse, not better.
+
+The fix is to pin the hook's working directory to the main worktree rather than
+to remove the hooks. After `carto init`, Dispatch rewrites the carto-inserted
+line in each of the four hooks to:
+
+```sh
+(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." \
+  && carto sync) >/dev/null 2>&1 || true
+```
+
+`--git-common-dir` resolves to the _main_ repository's `.git` from inside any
+linked worktree, so its parent is always the project root. This is durable
+against re-initialisation: carto's installer skips any hook whose contents
+already include `carto sync`, so a later `carto init` leaves the rewritten line
+alone.
+
+This is strictly better than declining the hooks. An agent committing inside a
+run's worktree now correctly refreshes the _project's_ container, which is
+behaviour Dispatch would otherwise have to build. The daemon's watcher still
+runs `carto sync` (cwd pinned to the project root) for uncommitted edits, then
+invalidates `depMapCache` — sync is incremental, so the two paths overlapping is
+harmless.
+
+The exact hook-rewrite is a spike item: the line must be verified against a real
+`carto init` on a repo with pre-existing hooks, and against a commit made inside
+an actual run worktree.
 
 ### Config
 
-One optional block on `DispatchConfig`. Absent behaves as `auto`.
+One optional block on `DispatchConfig`. **Absent behaves as `on`** — carto is on
+by default wherever the binary is present.
 
 ```yaml
 carto:
-  enabled: auto # auto | on | off
+  enabled: on # on | detect | off
 ```
 
-- **`auto`** (default) — use carto when both the binary and `.carto/` are
-  already present. Never runs `carto init` on its own. This is the no-surprises
-  setting: an existing project's behaviour does not change until someone opts
-  in.
-- **`on`** — build the container when it is missing, i.e. `dispatch init` and
-  daemon boot may run `carto init` (subject to Containment). Still never fails:
-  if the binary is absent, this degrades exactly as the failure ladder
-  describes, because decision 4 says no carto failure fails a run. `on` selects
-  a build policy, not a hard requirement.
+- **`on`** (default) — use carto, and build the container when it is missing:
+  `dispatch init` and daemon boot may run `carto init`, subject to Containment.
+  This never hardens into a requirement. If the binary is absent it degrades
+  exactly as the failure ladder describes, because decision 4 says no carto
+  failure fails a run. `on` selects a build policy, not a dependency.
+- **`detect`** — use carto only when both the binary and `.carto/` are already
+  present; never run `carto init`. For a repo where the one-time `carto init`
+  side effects (hook installation, the `AGENTS.md` write in step 2 of
+  Containment) are unwanted.
 - **`off`** — `buildDepMap` only. No discovery, no MCP entry, no sync.
+
+Defaulting to `on` means an existing project's first daemon boot after upgrade
+performs a one-time 4–9s index and installs four git hooks. That is a real
+first-run side effect on a repo the user did not explicitly opt in, and it is
+the deliberate cost of on-by-default: `doctor` reports what was done, and
+`detect` or `off` opts out.
 
 ## Failure handling
 
@@ -221,11 +286,23 @@ CI cannot assume `carto` is installed, and a carto-dependent test that silently
 skips is worthless. The strategy splits accordingly.
 
 1. **A verification spike runs before any adapter code.** Install carto, run it
-   against this repo, and capture: a real `blastRadius()` response, the real
-   file-mutation set of `carto init`, the real `carto serve` core tool list, and
-   whether `McpStdioServerConfig` accepts `cwd`. Commit the response as a
-   fixture. Every docs-derived shape in this document is pinned to observed
-   reality before anything is built on it.
+   against a scratch clone of this repo, and capture:
+   - a real `blastRadius()` response — the `{count, hops, files}` shape is the
+     one remaining load-bearing claim taken from docs rather than source;
+   - the real file-mutation set of `carto init`, confirming `AGENTS.md` is the
+     only Dispatch-owned file written and that `.carto/config.json`'s `output`
+     redirect actually governs subsequent syncs;
+   - the four installed hooks verbatim, then the rewritten `--git-common-dir`
+     line exercised by a commit made **inside a real run worktree**;
+   - the `carto serve` core-tier tool list, confirming ~10 rather than 57;
+   - whether `McpStdioServerConfig` accepts `cwd`.
+
+   Commit the `blastRadius()` response as a fixture. Every docs-derived shape in
+   this document is pinned to observed reality before anything is built on it.
+   The spike runs against a scratch clone specifically because `carto init`
+   installs hooks and writes `AGENTS.md` — it must not be the first thing tried
+   on the working repo.
+
 2. **Unit tests use the recorded fixture, no binary needed.** `CartoDepMap`
    takes a reader interface; tests hand it the captured `{count, hops, files}`
    and assert its `(hops, name)` ordering matches what `buildDepMap` produces
