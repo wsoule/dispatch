@@ -1,6 +1,18 @@
 # Spec: Team collaboration — actors, board sync, presence, and claims
 
-**Date:** 2026-08-02 **Status:** draft, pending review
+**Date:** 2026-08-02 **Status:** approved; implementation deferred
+
+Implementation is held until the in-flight branches land. Several agents are
+making major changes concurrently — `feat/orchestration-capabilities` among them
+— and this spec touches `packages/core/src/types.ts`, the orchestrator, and the
+desktop task components, all of which are moving. Re-read §4's file references
+against the tree before planning; they were accurate at `main` @`40ee234` and at
+`feat/orchestration-capabilities` @`7777b45`.
+
+Sequencing note: §4.11's audit export depends on the `risk` / `writes` / `model`
+/ `findings` / `ledger` model added in `6ec45d9`, which lives on
+`feat/orchestration-capabilities`, not `main`. The implementation branch either
+stacks on that branch or waits for it to merge.
 
 Reference point: [Mesh](https://entire.vc/mesh/) — "task management for human +
 AI teams," MCP-native, event-driven, Go + Postgres + NATS, self-hosted. Mesh
