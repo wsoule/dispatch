@@ -70,7 +70,11 @@ export type ServerEvent =
   | { type: 'linear.changed'; summary: LinearSyncSummary }
   // The repo's git state changed via an `/api/git/*` mutation — same
   // "go refetch" contract as `run.changed`.
-  | { type: 'git.changed' };
+  | { type: 'git.changed' }
+  // A finding's verdict/ruling changed, or a review run raised a new one.
+  | { type: 'finding.changed' }
+  // A decision/hazard/constraint/handoff was added to the ledger.
+  | { type: 'ledger.changed' };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

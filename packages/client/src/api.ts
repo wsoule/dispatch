@@ -1,6 +1,11 @@
 import type {
   CreateInput,
   DispatchConfig,
+  Finding,
+  FindingSeverity,
+  FindingVerdict,
+  LedgerEntry,
+  LedgerKind,
   ModelConfig,
   Priority,
   TaskDoc,
@@ -342,6 +347,33 @@ export interface UpdateNotePatch {
   done?: boolean;
 }
 
+// The findings/ledger carry-forward surface — mirrors
+// packages/server/src/api/findings.ts's request bodies.
+export interface CreateFindingInput {
+  taskId: string;
+  runId?: string | null;
+  severity: FindingSeverity;
+  title: string;
+  detail: string;
+  file?: string | null;
+  line?: number | null;
+  round?: number;
+}
+
+export interface UpdateFindingPatch {
+  verdict?: FindingVerdict;
+  ruling?: string | null;
+}
+
+export interface CreateLedgerInput {
+  epicId?: string | null;
+  sourceTaskId?: string | null;
+  kind: LedgerKind;
+  title: string;
+  detail: string;
+  appliesTo?: string[];
+}
+
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
@@ -391,7 +423,11 @@ export type ServerEvent =
   | { type: 'question.closed'; runId: string }
   // The repo's git state changed via one of the `/api/git/*` mutation
   // routes. Mirrors packages/server/src/events.ts.
-  | { type: 'git.changed' };
+  | { type: 'git.changed' }
+  // A finding's verdict/ruling changed, or a review run raised a new one.
+  | { type: 'finding.changed' }
+  // A decision/hazard/constraint/handoff was added to the ledger.
+  | { type: 'ledger.changed' };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -1179,6 +1215,18 @@ export interface ApiClient {
   // so this is the explicit "I've cleaned up, try again" nudge. Never errors on
   // an unblocked queue; returns the resulting snapshot either way.
   recheckMergeQueue(): Promise<MergeQueueSnapshot>;
+  // The findings/ledger carry-forward surface — `updateFinding` is how a
+  // controller rules a finding addressed/parked/blocked.
+  fetchFindings(filter?: {
+    taskId?: string;
+    verdict?: FindingVerdict;
+    severity?: FindingSeverity;
+  }): Promise<Finding[]>;
+  createFinding(input: CreateFindingInput): Promise<Finding>;
+  updateFinding(id: string, patch: UpdateFindingPatch): Promise<Finding>;
+  // `epicId: null` asks for project-wide entries only; omit it for every entry.
+  fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
+  createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -1570,6 +1618,33 @@ export function createApiClient(baseUrl: string): ApiClient {
         throw new Error(body.error ?? `request failed: ${res.status}`);
       }
     },
+    fetchFindings: (filter = {}) => {
+      const params = new URLSearchParams();
+      if (filter.taskId !== undefined) params.set('taskId', filter.taskId);
+      if (filter.verdict !== undefined) params.set('verdict', filter.verdict);
+      if (filter.severity !== undefined) {
+        params.set('severity', filter.severity);
+      }
+      const query = params.size > 0 ? `?${params.toString()}` : '';
+      return request(baseUrl, `/api/findings${query}`);
+    },
+    createFinding: (input) =>
+      request(baseUrl, '/api/findings', { method: 'POST', ...jsonBody(input) }),
+    updateFinding: (id, patch) =>
+      request(baseUrl, `/api/findings/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        ...jsonBody(patch),
+      }),
+    fetchLedger: (filter = {}) => {
+      const params = new URLSearchParams();
+      if (filter.epicId !== undefined) {
+        params.set('epicId', filter.epicId ?? '');
+      }
+      const query = params.size > 0 ? `?${params.toString()}` : '';
+      return request(baseUrl, `/api/ledger${query}`);
+    },
+    createLedgerEntry: (input) =>
+      request(baseUrl, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
     wsUrl: () => wsUrl(baseUrl),
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, options),

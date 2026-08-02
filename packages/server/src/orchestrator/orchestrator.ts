@@ -19,6 +19,7 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import { JjManager } from './jj.js';
 import {
@@ -63,6 +64,9 @@ export interface OrchestratorContext {
   // CommandRunner so that path can be exercised without a jj binary, which is
   // otherwise structurally untestable.
   jj?: JjManager;
+  // Ledger entries injected into dispatch prompts (see promptForTask below).
+  // Defaults to one over `rootDir`, same pattern as `jj`.
+  ledgerStore?: LedgerStore;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -115,6 +119,7 @@ export class Orchestrator {
   // constructing it is inert — it shells out to jj lazily, per call — so an
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
+  private readonly ledgerStore: LedgerStore;
   private readonly executors = new Map<string, Executor>();
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
@@ -135,6 +140,7 @@ export class Orchestrator {
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
+    this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -2185,6 +2191,10 @@ export class Orchestrator {
         if (!(err instanceof TaskParseError)) throw err;
       }
     }
-    return buildTaskPrompt(task, parentEpic);
+    const ledgerEntries = this.ledgerStore.entriesFor(
+      task.meta.id,
+      task.meta.parent
+    );
+    return buildTaskPrompt(task, parentEpic, ledgerEntries);
   }
 }

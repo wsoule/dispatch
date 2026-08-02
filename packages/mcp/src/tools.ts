@@ -573,6 +573,80 @@ async function dispatchNote(
   }
 }
 
+// Looks up the calling run's task and that task's parent epic — best-effort,
+// since an unresolved one just makes the ledger entry project-wide instead.
+async function callingTaskAndEpic(
+  port: number,
+  runId: string
+): Promise<{ taskId: string | null; epicId: string | null }> {
+  try {
+    const runRes = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}`);
+    if (!runRes.ok) return { taskId: null, epicId: null };
+    const run = (await runRes.json()) as { taskId?: string };
+    if (typeof run.taskId !== 'string') return { taskId: null, epicId: null };
+    const taskRes = await fetch(
+      `http://127.0.0.1:${port}/api/tasks/${run.taskId}`
+    );
+    if (!taskRes.ok) return { taskId: run.taskId, epicId: null };
+    const task = (await taskRes.json()) as {
+      meta?: { parent?: string | null };
+    };
+    return { taskId: run.taskId, epicId: task.meta?.parent ?? null };
+  } catch {
+    return { taskId: null, epicId: null };
+  }
+}
+
+// Proxies `POST /api/ledger` so a discovery an agent makes mid-run reaches
+// every later task in the epic without a human relaying it by hand.
+async function recordDecision(
+  rootDir: string,
+  args: {
+    kind: 'decision' | 'hazard';
+    title: string;
+    detail: string;
+    appliesTo?: string[];
+  }
+): Promise<ToolOutcome> {
+  if (args.title.trim() === '') return toolError('title must not be empty');
+  if (args.detail.trim() === '') return toolError('detail must not be empty');
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'record_decision requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — cannot record a decision');
+  }
+  const { taskId, epicId } = await callingTaskAndEpic(daemon.port, runId);
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/ledger`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        epicId,
+        sourceTaskId: taskId,
+        kind: args.kind,
+        title: args.title,
+        detail: args.detail,
+        appliesTo: args.appliesTo ?? [],
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `record_decision failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    const created = (await res.json()) as { id: string };
+    return toolResult({ ok: true, id: created.id });
+  } catch (err) {
+    return toolError(`record_decision failed: ${(err as Error).message}`);
+  }
+}
+
 // Registers the five task_* tools plus run_list against a fixed root
 // directory. Each task_* tool re-resolves the TaskStore/config on every call
 // (rather than caching it at registration time) so a `dispatch init` that
@@ -901,5 +975,33 @@ export function registerDispatchTools(
       annotations: { readOnlyHint: false },
     },
     ({ kind, title, body }) => dispatchNote(rootDir, { kind, title, body })
+  );
+
+  server.registerTool(
+    'record_decision',
+    {
+      title: 'Record a decision or hazard for later tasks',
+      description:
+        'Write a decision or hazard to the project ledger so later tasks ' +
+        'in this epic see it in their own dispatch prompt — the fix for a ' +
+        'shared trap other tasks would otherwise walk into blind (a ' +
+        'wrapper that swallows rejections, a flaky command, a required env ' +
+        'var), or a call you made that others should follow. Use `hazard` ' +
+        'for something that will bite another task; `decision` for a ' +
+        'choice made that others should stay consistent with. Omit ' +
+        '`appliesTo` to apply it to every task in this epic (or the whole ' +
+        'project, if this task has none); pass specific task ids to target ' +
+        'only them.',
+      inputSchema: {
+        kind: z.enum(['decision', 'hazard']),
+        title: z.string(),
+        detail: z.string(),
+        appliesTo: z.array(z.string()).optional(),
+      },
+      outputSchema: { ok: z.boolean(), id: z.string() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ kind, title, detail, appliesTo }) =>
+      recordDecision(rootDir, { kind, title, detail, appliesTo })
   );
 }

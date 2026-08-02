@@ -21,8 +21,22 @@ import type {
 } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
+import {
+  createFinding,
+  createLedgerEntry,
+  listFindings,
+  listLedger,
+  updateFinding,
+} from './api/findings.js';
+import {
+  errorResponse,
+  jsonResponse,
+  readJsonBody,
+  readJsonBodyOptional,
+} from './api/http.js';
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import type { FindingStore } from './findings.js';
 import {
   COMMIT_SHA_UNRESOLVED_PREFIX,
   CONFIRM_REQUIRED_ERROR,
@@ -37,6 +51,7 @@ import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { InboxClusterer } from './inboxClusterer.js';
+import type { LedgerStore } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
@@ -78,6 +93,8 @@ export interface ApiContext {
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
   inboxStore: InboxStore;
+  findingStore: FindingStore;
+  ledgerStore: LedgerStore;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
   questions: QuestionRegistry;
@@ -90,17 +107,6 @@ export interface ApiContext {
   gitRepo: GitRepo;
   // Test-injection seam only, same as `inboxClusterer` above.
   commitMessageGenerator?: CommitMessageGenerator;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  });
-}
-
-function errorResponse(status: number, message: string): Response {
-  return jsonResponse({ error: message }, status);
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -230,69 +236,6 @@ function validateTaskFields(
   );
   if (acceptanceError) return acceptanceError;
   return null;
-}
-
-// A hostile cross-origin request can never set this — CORS alone only
-// blocks it from reading the response, not from sending the request.
-function hasJsonContentType(req: Request): boolean {
-  const contentType = req.headers.get('content-type');
-  return (
-    contentType !== null &&
-    contentType.toLowerCase().startsWith('application/json')
-  );
-}
-
-async function readJsonBody(
-  req: Request
-): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
-  if (!hasJsonContentType(req)) {
-    return {
-      ok: false,
-      response: errorResponse(415, 'expected content-type: application/json'),
-    };
-  }
-  try {
-    const value = await req.json();
-    if (typeof value !== 'object' || value === null) {
-      return {
-        ok: false,
-        response: errorResponse(400, 'invalid body: expected a JSON object'),
-      };
-    }
-    return { ok: true, value };
-  } catch {
-    return { ok: false, response: errorResponse(400, 'invalid JSON body') };
-  }
-}
-
-// Same contract as readJsonBody, but an empty body is `{}` rather than a 400
-// — the content-type check only applies once there's a real body to guard.
-async function readJsonBodyOptional(
-  req: Request
-): Promise<
-  | { ok: true; value: Record<string, unknown> }
-  | { ok: false; response: Response }
-> {
-  const text = await req.text();
-  if (text.trim() === '') return { ok: true, value: {} };
-  if (!hasJsonContentType(req)) {
-    return {
-      ok: false,
-      response: errorResponse(415, 'expected content-type: application/json'),
-    };
-  }
-  try {
-    const value = JSON.parse(text);
-    if (typeof value !== 'object' || value === null) {
-      return {
-        ok: false,
-        response: errorResponse(400, 'invalid body: expected a JSON object'),
-      };
-    }
-    return { ok: true, value: value as Record<string, unknown> };
-  } catch {
-    return { ok: false, response: errorResponse(400, 'invalid JSON body') };
-  }
 }
 
 async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
@@ -2803,6 +2746,27 @@ export async function handleApi(
         method === 'POST'
       ) {
         return enrichInbox(ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'findings') {
+      if (segments.length === 1 && method === 'GET') {
+        return listFindings(ctx, url);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await createFinding(req, ctx);
+      }
+      if (segments.length === 2 && method === 'PATCH') {
+        return await updateFinding(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'ledger') {
+      if (segments.length === 1 && method === 'GET') {
+        return listLedger(ctx, url);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await createLedgerEntry(req, ctx);
       }
     }
 

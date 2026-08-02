@@ -1,11 +1,24 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import { buildTaskPrompt } from '../../src/orchestrator/prompt.js';
 
+function fixtureLedgerEntry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
+  return {
+    id: 'l-abc123',
+    epicId: 'e-def456',
+    sourceTaskId: 't-earlier1',
+    kind: 'hazard',
+    title: 'withActionFeedback swallows rejections',
+    detail: 'every catch downstream of it is dead code — check response.ok',
+    appliesTo: [],
+    createdAt: '2026-07-20T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 // A fixture task/epic pair with every field buildTaskPrompt reads set to a
-// fixed, deterministic value — this is a pure function of these two docs, so
-// a snapshot of its output is exact-text stable across runs.
+// fixed, deterministic value, so a snapshot of its output is exact-text stable.
 function fixtureTask(): TaskDoc {
   return {
     meta: {
@@ -99,5 +112,31 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(task, null);
     expect(prompt).toContain('self-review your work');
     expect(prompt).toContain('Only finish when the review comes back clean.');
+  });
+
+  it('renders no ledger section at all when there are no entries', () => {
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    expect(prompt).not.toContain('Findings and decisions');
+  });
+
+  it('renders each ledger entry as its kind, title, and detail', () => {
+    const entries = [
+      fixtureLedgerEntry(),
+      fixtureLedgerEntry({
+        id: 'l-def456',
+        kind: 'decision',
+        title: 'retry POSTs',
+        detail: 'up to 3 times on 5xx',
+      }),
+    ];
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), entries);
+    expect(prompt).toContain('## Findings and decisions from earlier work');
+    expect(prompt).toContain(
+      '- **hazard**: withActionFeedback swallows rejections — every catch ' +
+        'downstream of it is dead code — check response.ok'
+    );
+    expect(prompt).toContain(
+      '- **decision**: retry POSTs — up to 3 times on 5xx'
+    );
   });
 });
