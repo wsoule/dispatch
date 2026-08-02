@@ -159,6 +159,70 @@ describe('PlanManager.confirm', () => {
     expect(implement?.body).toContain('Tests pass');
   });
 
+  it('leaves an epic Activity note when a confirmed task has no declared writes', async () => {
+    const manager = makeManager(
+      new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
+    );
+    const started = await startAndSettle(manager, 'build a widget feature');
+    const result = manager.confirm(started.id, SAMPLE_PROPOSAL);
+
+    const epic = store.get(result.epicId!);
+    expect(epic?.body).toContain('undeclared writes');
+  });
+
+  it("carries a task's declared writes/risk onto its created TaskMeta", async () => {
+    const proposal: PlanProposal = {
+      tasks: [
+        {
+          title: 'Migrate the schema',
+          description: 'Touches the DB.',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'high',
+          writes: ['migrations/001.sql'],
+          risk: 'elevated',
+        },
+      ],
+    };
+    const manager = makeManager(new FakePlanner({ ok: true, proposal }));
+    const started = await startAndSettle(manager, 'migrate the schema');
+    const result = manager.confirm(started.id, proposal);
+
+    const task = store.get(result.taskIds[0]);
+    expect(task?.meta.writes).toEqual(['migrations/001.sql']);
+    expect(task?.meta.risk).toBe('elevated');
+  });
+
+  it('leaves no undeclared-writes note when every task declares writes', async () => {
+    const proposal: PlanProposal = {
+      epic: { title: 'Ship it', description: 'Two well-scoped tasks.' },
+      tasks: [
+        {
+          title: 'A',
+          description: 'Touches a.ts.',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'medium',
+          writes: ['a.ts'],
+        },
+        {
+          title: 'B',
+          description: 'Touches b.ts.',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'medium',
+          writes: ['b.ts'],
+        },
+      ],
+    };
+    const manager = makeManager(new FakePlanner({ ok: true, proposal }));
+    const started = await startAndSettle(manager, 'build two things');
+    const result = manager.confirm(started.id, proposal);
+
+    const epic = store.get(result.epicId!);
+    expect(epic?.body).not.toContain('undeclared writes');
+  });
+
   it('writes a flat task list with no epic when the proposal omits one', async () => {
     const proposal: PlanProposal = {
       tasks: [
