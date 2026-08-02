@@ -160,7 +160,7 @@ function splitSections(body: string): {
 
 // Escapes a line that looks like a `## ` section boundary, so stored
 // content can't be mistaken for one by splitSections on the next parse.
-function escapeHeadingLines(content: string): string {
+export function escapeHeadingLines(content: string): string {
   return content
     .split('\n')
     .map((line) => (/^\\*## /.test(line) ? `\\${line}` : line))
@@ -221,7 +221,9 @@ export function setSection(
  * body (the store's create template guarantees this).
  */
 export function appendActivity(body: string, line: string): string {
-  const entry = `- ${line}`;
+  // `line` is caller-supplied text (e.g. an agent's task_comment) appended
+  // straight onto the body, so it's escaped the same as setSection's content.
+  const entry = `- ${escapeHeadingLines(line)}`;
   if (!/^## Activity\s*$/m.test(body)) {
     return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
   }

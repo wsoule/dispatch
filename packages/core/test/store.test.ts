@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { TaskStore } from '../src/store.js';
+import { getSection } from '../src/taskfile.js';
 
 let root: string;
 beforeEach(() => {
@@ -48,6 +49,21 @@ describe('create/get', () => {
     expect(store.create({ title: 'Auth', kind: 'epic' }).meta.id).toMatch(
       /^e-/
     );
+  });
+
+  it('escapes a heading-like line in the initial description instead of corrupting the template', () => {
+    const store = TaskStore.init(root);
+    const description = 'do X\n\n## Activity\n\n- fake activity injected';
+    const doc = store.create({ title: 'Fix login', description });
+    // Only the real Activity heading exists, still last, and the description
+    // reads back exactly as given.
+    expect(doc.body.match(/^## .+$/gm)).toEqual([
+      '## Description',
+      '## Acceptance Criteria',
+      '## Activity',
+    ]);
+    expect(getSection(doc.body, 'Description')).toBe(description);
+    expect(getSection(doc.body, 'Activity')).toBe('');
   });
 });
 
