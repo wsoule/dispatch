@@ -21,6 +21,7 @@ export async function startTaskReview(
     scope?: unknown;
     round?: unknown;
     extraRisks?: unknown;
+    runId?: unknown;
   };
   if (typeof body.base !== 'string' || body.base.trim() === '') {
     return errorResponse(400, 'invalid base: base is required');
@@ -47,6 +48,9 @@ export async function startTaskReview(
   ) {
     return errorResponse(400, 'invalid extraRisks: expected a list of strings');
   }
+  if (body.runId !== undefined && typeof body.runId !== 'string') {
+    return errorResponse(400, 'invalid runId: expected a string');
+  }
   const meta = await ctx.reviewRunner.startReview({
     taskId,
     base: body.base,
@@ -55,6 +59,7 @@ export async function startTaskReview(
     scope: (body.scope as ReviewScope | undefined) ?? 'full',
     openFindings: ctx.findingStore.openFor(taskId),
     extraRisks: body.extraRisks,
+    runId: body.runId,
   });
   return jsonResponse(meta, 202);
 }

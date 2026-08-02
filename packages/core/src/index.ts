@@ -14,6 +14,7 @@ export type {
   FindingVerdict,
 } from './findings.js';
 export type { LedgerEntry, LedgerKind } from './ledger.js';
+export type { CommandEvidence, MutationEvidence } from './evidence.js';
 export { schedulableBatch, tasksConflict } from './conflicts.js';
 export { slugify } from './slug.js';
 export {
@@ -62,6 +63,7 @@ export type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  VerifyConfig,
   VerifyStep,
 } from './config.js';
 export {

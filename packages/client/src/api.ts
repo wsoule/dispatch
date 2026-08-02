@@ -1,4 +1,5 @@
 import type {
+  CommandEvidence,
   CreateInput,
   DispatchConfig,
   Finding,
@@ -8,6 +9,7 @@ import type {
   LedgerEntry,
   LedgerKind,
   ModelConfig,
+  MutationEvidence,
   Priority,
   TaskDoc,
   TaskRisk,
@@ -213,6 +215,8 @@ export interface NormalizedEntry {
 export interface RunDetail {
   meta: RunMeta;
   entries: NormalizedEntry[];
+  evidence: CommandEvidence[];
+  mutations: MutationEvidence[];
 }
 
 export interface DiffFile {
@@ -443,6 +447,32 @@ export interface CreateLedgerInput {
   appliesTo?: string[];
 }
 
+// Mirrors VerificationCheck in packages/server/src/orchestrator/verify.ts —
+// one check a verify run ran against the live app.
+export interface VerificationCheck {
+  check: string;
+  expected: string;
+  actual: string;
+  pass: boolean;
+}
+
+// Mirrors VerificationResult in packages/server/src/orchestrator/verify.ts —
+// the structured outcome `GET /api/tasks/:id/verification` serves.
+export interface VerificationResult {
+  runId: string;
+  taskId: string;
+  pass: boolean;
+  checks: VerificationCheck[];
+  artifacts: string[];
+  createdAt: string;
+}
+
+// Mirrors POST /api/tasks/:id/verify's response: a dispatched run, or a skip
+// (narrow on `'skipped' in result`) when the project has no `verify` config.
+export type StartVerificationResult =
+  | RunMeta
+  | { skipped: true; reason: string };
+
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
@@ -503,7 +533,9 @@ export type ServerEvent =
   | { type: 'fixloop.capped'; taskId: string; round: number }
   // A run was surveyed on reaching `failed`/`interrupted-dirty`. Mirrors
   // packages/server/src/events.ts.
-  | { type: 'run.survey'; runId: string; survey: RunSurvey };
+  | { type: 'run.survey'; runId: string; survey: RunSurvey }
+  // A verify run finished and recorded a structured result for the task.
+  | { type: 'verification.changed'; taskId: string };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -1309,6 +1341,13 @@ export interface ApiClient {
   // Dispatches a review run over base..head. Resolves with the run's meta as
   // soon as it is accepted; the findings land asynchronously when it ends.
   startReview(taskId: string, input: StartReviewInput): Promise<RunMeta>;
+  // Dispatches a verify run against `head`; resolves to a skip payload
+  // instead when the project has no `verify` config.
+  startVerification(
+    taskId: string,
+    head: string
+  ): Promise<StartVerificationResult>;
+  fetchTaskVerification(taskId: string): Promise<VerificationResult>;
   // `advanceFixLoop` drives one step (and opens the loop when `baseSha` is
   // supplied); `adjudicateFinding` is the ruling a capped loop demands.
   fetchFixLoop(taskId: string): Promise<FixLoopState>;
@@ -1741,6 +1780,13 @@ export function createApiClient(baseUrl: string): ApiClient {
         method: 'POST',
         ...jsonBody(input),
       }),
+    startVerification: (taskId, head) =>
+      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/verify`, {
+        method: 'POST',
+        ...jsonBody({ head }),
+      }),
+    fetchTaskVerification: (taskId) =>
+      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/verification`),
     fetchFixLoop: (taskId) =>
       request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
     advanceFixLoop: (taskId, input = {}) =>

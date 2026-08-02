@@ -39,6 +39,7 @@ function fixtureTask(): TaskDoc {
       writes: [],
       risk: 'routine',
       model: null,
+      exercised: false,
     },
     body:
       '\n## Description\n\nAdd a rate limiter to the login endpoint.\n\n' +
@@ -67,6 +68,7 @@ function fixtureEpic(): TaskDoc {
       writes: [],
       risk: 'routine',
       model: null,
+      exercised: false,
     },
     body: '\n## Description\n\nMake the auth system resistant to abuse.\n\n## Activity\n',
   };
@@ -91,6 +93,13 @@ describe('buildTaskPrompt', () => {
     expect(prompt).toContain('task_comment');
     expect(prompt).toContain('ask_user');
     expect(prompt).toContain('Commit your work');
+  });
+
+  it('tells implementers to record evidence and mutation-test guards', () => {
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
+    expect(prompt).toContain('record_evidence');
+    expect(prompt).toContain('record_mutation');
+    expect(prompt).toContain('instead of describing test results in prose');
   });
 
   it('includes the task id/title and its full body verbatim', () => {

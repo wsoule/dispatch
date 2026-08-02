@@ -40,6 +40,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
+import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
 import type { FindingStore } from './findings.js';
@@ -79,6 +80,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from './orchestrator/types.js';
+import type { VerificationRunner } from './orchestrator/verify.js';
 import {
   formatCommentsForAgent,
   ReviewCommentStore,
@@ -104,6 +106,7 @@ export interface ApiContext {
   findingStore: FindingStore;
   ledgerStore: LedgerStore;
   reviewRunner: ReviewRunner;
+  verificationRunner: VerificationRunner;
   fixLoop: FixLoop;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
@@ -2272,6 +2275,20 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await startTaskReview(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'verify' &&
+        method === 'POST'
+      ) {
+        return await startTaskVerification(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'verification' &&
+        method === 'GET'
+      ) {
+        return getTaskVerification(ctx, segments[1]);
       }
       if (
         segments.length === 3 &&

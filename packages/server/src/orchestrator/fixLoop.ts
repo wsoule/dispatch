@@ -372,6 +372,7 @@ export class FixLoop {
       round: state.round,
       scope: 'fix',
       openFindings: this.ctx.findingStore.openFor(state.taskId),
+      runId: run.id,
     });
     return this.save({ ...state, state: 'reviewing', lastReviewedSha: head });
   }
