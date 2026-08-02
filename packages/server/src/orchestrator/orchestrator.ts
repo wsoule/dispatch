@@ -78,6 +78,9 @@ export interface OrchestratorContext {
   // Ledger entries injected into dispatch prompts (see promptForTask below).
   // Defaults to one over `rootDir`, same pattern as `jj`.
   ledgerStore?: LedgerStore;
+  // Overrides CLAIMS_REFRESH_COOLDOWN_MS — test-injection seam only, so a
+  // cooldown test isn't stuck waiting out the real 5s production window.
+  claimsRefreshCooldownMs?: number;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -154,11 +157,14 @@ export class Orchestrator {
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
+  private readonly claimsRefreshCooldownMs: number;
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
     this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
+    this.claimsRefreshCooldownMs =
+      ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -856,6 +862,8 @@ export class Orchestrator {
     if (TERMINAL_RUN_STATES.has(meta.state)) {
       throw new OrchestratorConflictError(`run already finished: ${runId}`);
     }
+    // Before transition() below makes the run terminal, so it isn't a no-op.
+    this.forceClaimsRefresh(runId);
     const executorRun = this.registry.getExecutorRun(runId);
     if (executorRun !== undefined) await executorRun.interrupt();
     this.transition(runId, 'cancelled');
@@ -917,7 +925,7 @@ export class Orchestrator {
   }
 
   // Grows a run's claims to match its worktree's git status. Public so tests
-  // can call it directly instead of waiting out scheduleClaimsRefresh's cooldown.
+  // can call it directly instead of waiting out the cooldown below.
   async refreshClaims(runId: string): Promise<void> {
     const meta = this.registry.get(runId);
     if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return;
@@ -941,9 +949,14 @@ export class Orchestrator {
   // every executor entry so claims stay current without a dedicated poll timer.
   private scheduleClaimsRefresh(runId: string): void {
     const last = this.lastClaimsCheck.get(runId) ?? 0;
-    const now = Date.now();
-    if (now - last < CLAIMS_REFRESH_COOLDOWN_MS) return;
-    this.lastClaimsCheck.set(runId, now);
+    if (Date.now() - last < this.claimsRefreshCooldownMs) return;
+    this.forceClaimsRefresh(runId);
+  }
+
+  // Unconditional fire-and-forget refresh, bypassing the cooldown — used at
+  // the transitions into an idle state, where a trailing edit must not wait.
+  private forceClaimsRefresh(runId: string): void {
+    this.lastClaimsCheck.set(runId, Date.now());
     void this.refreshClaims(runId).catch((err: unknown) => {
       console.error(
         `dispatchd: claims refresh failed for run ${runId}: ${(err as Error).message}`
@@ -2185,7 +2198,7 @@ export class Orchestrator {
   private fireTerminalHooks(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
-    // Nothing will ever refresh a terminal run's claims again — see refreshClaims.
+    // Nothing will ever refresh a terminal run's claims again.
     this.lastClaimsCheck.delete(runId);
     this.invokeHooksSafely(this.terminalHooks, meta);
   }
@@ -2247,6 +2260,9 @@ export class Orchestrator {
           requestId: request.requestId,
           toolName: request.toolName,
         });
+        // Awaiting-approval can sit for arbitrarily long — capture whatever
+        // this run just did rather than letting the cooldown delay it.
+        this.forceClaimsRefresh(runId);
       },
       onFinish: (finish) => this.handleFinish(runId, finish),
     };
@@ -2269,6 +2285,9 @@ export class Orchestrator {
   ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
+    // Fired before autoCommitIfDirty below can absorb any trailing edit into
+    // a commit and make it disappear from a live git-status read.
+    this.forceClaimsRefresh(runId);
     // I6: this whole block runs from inside an executor's fire-and-forget
     // event plumbing (see makeEvents/onFinish) — there is no caller left to
     // catch an escaped throw, so one would either crash the process or (with

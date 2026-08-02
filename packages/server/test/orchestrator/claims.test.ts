@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
+import { GitRepo } from '../../src/git/commands.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { initGitRepo } from './helpers.js';
@@ -36,7 +37,10 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   throw new Error('waitFor timed out');
 }
 
-function makeOrchestrator(rootDir: string): {
+function makeOrchestrator(
+  rootDir: string,
+  opts: { claimsRefreshCooldownMs?: number } = {}
+): {
   orchestrator: Orchestrator;
   store: TaskStore;
 } {
@@ -44,7 +48,13 @@ function makeOrchestrator(rootDir: string): {
   const cache = new TaskCache();
   cache.rebuild(store);
   const events = new EventBus();
-  const orchestrator = new Orchestrator({ rootDir, store, cache, events });
+  const orchestrator = new Orchestrator({
+    rootDir,
+    store,
+    cache,
+    events,
+    claimsRefreshCooldownMs: opts.claimsRefreshCooldownMs,
+  });
   return { orchestrator, store };
 }
 
@@ -118,5 +128,75 @@ describe('run claims', () => {
     expect(orchestrator.liveClaims().some((c) => c.runId === meta.id)).toBe(
       false
     );
+  });
+
+  // Every other growth test calls refreshClaims() directly; this one drives
+  // growth through the real onEntry trigger and checks the cooldown itself.
+  it('grows claims via the real onEntry trigger, and the cooldown suppresses a second refresh', async () => {
+    // A cooldown far longer than this test takes keeps the second entry
+    // below unambiguously inside the window, so suppression isn't a race.
+    const { orchestrator, store } = makeOrchestrator(repo, {
+      claimsRefreshCooldownMs: 60_000,
+    });
+    let statusCalls = 0;
+    const originalStatus = GitRepo.prototype.status;
+    GitRepo.prototype.status = async function (this: GitRepo) {
+      statusCalls++;
+      return originalStatus.call(this);
+    };
+
+    try {
+      orchestrator.registerExecutor(
+        'fake',
+        new FakeExecutor({
+          steps: [
+            {
+              write: (cwd) => writeFileSync(join(cwd, 'first.ts'), 'x'),
+              commit: false,
+            },
+            {
+              entry: {
+                ts: new Date().toISOString(),
+                kind: 'assistant',
+                text: 'wrote first.ts',
+              },
+            },
+            {
+              write: (cwd) => writeFileSync(join(cwd, 'second.ts'), 'x'),
+              commit: false,
+            },
+            {
+              entry: {
+                ts: new Date().toISOString(),
+                kind: 'assistant',
+                text: 'wrote second.ts',
+              },
+            },
+            // Keeps the run 'running' long enough to assert against, with
+            // no idle-transition of its own; cancel() below stops it early.
+            { delayMs: 300 },
+          ],
+          finish: { state: 'finished', costUsd: 0, turns: 1 },
+        })
+      );
+      const task = store.create({ title: 'Task', writes: ['a.ts'] });
+      const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+
+      // The onEntry-triggered refresh is fire-and-forget — wait for its
+      // async git-status call to land rather than asserting immediately.
+      await waitFor(() =>
+        (
+          orchestrator.list().find((r) => r.id === meta.id)?.claims ?? []
+        ).includes('first.ts')
+      );
+      expect(orchestrator.list().find((r) => r.id === meta.id)?.state).toBe(
+        'running'
+      );
+      expect(statusCalls).toBe(1);
+
+      await orchestrator.cancel(meta.id);
+    } finally {
+      GitRepo.prototype.status = originalStatus;
+    }
   });
 });

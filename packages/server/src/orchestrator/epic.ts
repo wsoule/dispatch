@@ -1,8 +1,8 @@
 import {
+  claimConflictsWithWrites,
   dispatchableTasks,
   loadConfig,
   schedulableBatch,
-  tasksConflict,
 } from '@dispatch/core';
 import type { TaskDoc, TaskStore } from '@dispatch/core';
 
@@ -333,7 +333,10 @@ export class EpicEngine {
     // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
     const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);
     const clearOfLiveRuns = ready.filter(
-      (t) => !liveClaims.some((claim) => tasksConflict(claim, t.meta.writes))
+      (t) =>
+        !liveClaims.some((claim) =>
+          claimConflictsWithWrites(claim, t.meta.writes)
+        )
     );
     const batch = schedulableBatch(
       clearOfLiveRuns.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),

@@ -35,6 +35,16 @@ export function tasksConflict(a: string[], b: string[]): boolean {
   return a.some((pa) => b.some((pb) => entriesOverlap(pa, pb)));
 }
 
+// Like tasksConflict, but an empty claim means "hasn't touched anything
+// yet" rather than "could touch anything" — it must never universally block.
+export function claimConflictsWithWrites(
+  claim: string[],
+  writes: string[]
+): boolean {
+  if (claim.length === 0) return false;
+  return tasksConflict(claim, writes);
+}
+
 // Greedy batching: keeps each ready task, in order, that doesn't conflict
 // with one already accepted, until `limit` is reached.
 export function schedulableBatch(
