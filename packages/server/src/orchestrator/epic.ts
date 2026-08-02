@@ -332,6 +332,8 @@ export class EpicEngine {
     // A live run's footprint can have grown past its task's declared writes
     // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
     const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);
+    // An undeclared task (`writes: []`) therefore waits on ANY live claim
+    // project-wide, bounded by how long a run can sit idle, not permanent.
     const clearOfLiveRuns = ready.filter(
       (t) =>
         !liveClaims.some((claim) =>

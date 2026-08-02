@@ -108,6 +108,25 @@ describe('task_save', () => {
     expect(meta.id).toMatch(/^t-[0-9a-f]{6}$/);
   });
 
+  it('creates a task with a declared write-set, then replaces it on update', async () => {
+    const created = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Declares writes', writes: ['a.ts', 'b.ts'] },
+    })) as ToolCallResult;
+    const createdMeta = created.structuredContent?.meta as {
+      id: string;
+      writes: string[];
+    };
+    expect(createdMeta.writes).toEqual(['a.ts', 'b.ts']);
+
+    const updated = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: createdMeta.id, writes: ['c.ts'] },
+    })) as ToolCallResult;
+    const updatedMeta = updated.structuredContent?.meta as { writes: string[] };
+    expect(updatedMeta.writes).toEqual(['c.ts']);
+  });
+
   it('rejects an empty title on create', async () => {
     const result = (await client.callTool({
       name: 'task_save',
