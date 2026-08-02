@@ -16,6 +16,7 @@ import {
   buildDiffPackage,
   buildReviewPrompt,
   capDependencyList,
+  mergeRoundRobin,
   parseReviewOutput,
   reviewModelForRisk,
   ReviewRunner,
@@ -501,6 +502,28 @@ describe('capDependencyList', () => {
   });
 });
 
+describe('mergeRoundRobin', () => {
+  it('takes one item from each list per round rather than draining the first', () => {
+    expect(mergeRoundRobin([['a1', 'a2', 'a3'], ['b1'], ['c1', 'c2']])).toEqual(
+      ['a1', 'b1', 'c1', 'a2', 'c2', 'a3']
+    );
+  });
+
+  it('dedupes across lists, letting a list fall through to its next item in the same round', () => {
+    expect(
+      mergeRoundRobin([
+        ['x', 'y'],
+        ['x', 'z'],
+      ])
+    ).toEqual(['x', 'z', 'y']);
+  });
+
+  it('handles empty lists without stalling', () => {
+    expect(mergeRoundRobin([[], ['a'], []])).toEqual(['a']);
+    expect(mergeRoundRobin([])).toEqual([]);
+  });
+});
+
 describe('parseReviewOutput', () => {
   it('parses a bare findings object', () => {
     const result = parseReviewOutput(
@@ -878,6 +901,46 @@ describe('ReviewRunner', () => {
     expect(reviewer.lastPrompt).toContain(
       'truncated to 20 — more dependents exist'
     );
+  });
+
+  it("spreads the cap across every changed file, so a low-fanout file's dependents survive a high-fanout sibling", async () => {
+    const manyDependents = Array.from({ length: 25 }, (_, i) => `dep${i}.ts`);
+    const fakeDepMap: DepMap = {
+      dependents: (file) => {
+        if (file === 'high.ts') return manyDependents;
+        if (file === 'low.ts')
+          return ['low-consumer-a.ts', 'low-consumer-b.ts'];
+        return [];
+      },
+      mirrors: () => [],
+    };
+    const reviewer = new ScriptedReviewer('{"findings": []}');
+    const { runner, store } = setupReview(reviewer, {
+      get: () => fakeDepMap,
+    });
+    const task = store.create({ title: 'harden sync', risk: 'routine' });
+    const base = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    writeFileSync(join(repo, 'high.ts'), 'export const a = 1;\n');
+    writeFileSync(join(repo, 'low.ts'), 'export const b = 1;\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, [
+      'commit',
+      '-m',
+      'touch a high-fanout and a low-fanout file',
+    ]);
+    const head = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+
+    await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+    });
+
+    expect(reviewer.lastPrompt).toContain('- low-consumer-a.ts');
+    expect(reviewer.lastPrompt).toContain('- low-consumer-b.ts');
   });
 
   it('records a hazard ledger entry and a minor finding for a changed file outside declared writes', async () => {

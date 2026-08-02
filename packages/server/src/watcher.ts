@@ -61,7 +61,12 @@ export function watchSourceDirs(
           schedule();
         }),
       ];
-    } catch {
+    } catch (err) {
+      // Logged, not swallowed: a dropped watch (e.g. an inotify limit) leaves
+      // the depmap silently stale otherwise.
+      console.error(
+        `dispatchd: failed to watch ${dir} for source changes: ${(err as Error).message}`
+      );
       return [];
     }
   });

@@ -198,13 +198,38 @@ export function undeclaredWriteLedgerTitle(file: string): string {
   return `changed ${file} outside its declared writes`;
 }
 
+// Interleaves each list one item at a time, so a high-fanout file can't
+// consume the whole cap before another changed file contributes anything.
+export function mergeRoundRobin(lists: string[][]): string[] {
+  const cursors = lists.map(() => 0);
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (let i = 0; i < lists.length; i++) {
+      while (cursors[i] < lists[i].length && seen.has(lists[i][cursors[i]])) {
+        cursors[i]++;
+      }
+      if (cursors[i] < lists[i].length) {
+        const item = lists[i][cursors[i]];
+        seen.add(item);
+        merged.push(item);
+        cursors[i]++;
+        progressed = true;
+      }
+    }
+  }
+  return merged;
+}
+
 export interface CappedList {
   list: string[];
   truncated: boolean;
 }
 
-// Dedupes `raw` against the diff itself and caps, preserving `raw`'s order —
-// dependents() is already closest-first; re-sorting here would undo that.
+// Dedupes `raw` against the diff itself and caps, preserving order — the
+// caller has already ordered `raw` closest-first.
 export function capDependencyList(
   raw: string[],
   exclude: string[],
@@ -739,12 +764,12 @@ export class ReviewRunner {
         this.recordUndeclaredWrites(task, changed, opts.round);
         const depMap = this.ctx.depMap.get();
         const dependents = capDependencyList(
-          changed.flatMap((f) => depMap.dependents(f)),
+          mergeRoundRobin(changed.map((f) => depMap.dependents(f))),
           changed,
           DEPENDENT_CAP
         );
         const mirrors = capDependencyList(
-          changed.flatMap((f) => depMap.mirrors(f)),
+          mergeRoundRobin(changed.map((f) => depMap.mirrors(f))),
           changed,
           DEPENDENT_CAP
         );
