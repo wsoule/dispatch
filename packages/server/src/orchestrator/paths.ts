@@ -78,6 +78,23 @@ export function reviewOutputPath(rootDir: string, runId: string): string {
   return join(reviewDir(rootDir, runId), 'findings.json');
 }
 
+// A verify run's own directory: its structured result and any artifacts it
+// records (screenshots, logs), beside the transcript so both outlive its worktree.
+export function verifyDir(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.verify`);
+}
+
+// Where the verify agent must write its raw structured output.
+export function verifyOutputPath(rootDir: string, runId: string): string {
+  return join(verifyDir(rootDir, runId), 'output.json');
+}
+
+// The canonical result VerificationRunner writes after ingesting
+// `verifyOutputPath`, so a malformed raw file is never read as usable.
+export function verifyResultPath(rootDir: string, runId: string): string {
+  return join(verifyDir(rootDir, runId), 'result.json');
+}
+
 export function worktreesDir(rootDir: string): string {
   return join(dispatchHome(), '.dispatch', 'worktrees', rootHash(rootDir));
 }

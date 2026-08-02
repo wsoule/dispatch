@@ -104,6 +104,7 @@ const doc: TaskDoc = {
     writes: [],
     risk: 'routine',
     model: null,
+    exercised: false,
   },
   body: '\n## Description\n\nStuff.\n\n## Acceptance Criteria\n\n## Activity\n',
 };
@@ -147,6 +148,7 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(parsed.meta.writes).toEqual([]);
     expect(parsed.meta.risk).toBe('routine');
     expect(parsed.meta.model).toBeNull();
+    expect(parsed.meta.exercised).toBe(false);
     expect(parsed.body).toBe('body');
   });
   it('throws TaskParseError on missing frontmatter or required field', () => {
@@ -191,6 +193,17 @@ describe('selfReview / self-review frontmatter', () => {
     };
     const back = parseTaskFile(serializeTaskFile(archived));
     expect(back.meta.archivedAt).toBe('2026-07-26T00:00:00Z');
+  });
+
+  it('round-trips exercised and omits the key when false', () => {
+    expect(serializeTaskFile(doc)).not.toContain('exercised');
+    const exercised: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, exercised: true },
+    };
+    const text = serializeTaskFile(exercised);
+    expect(text).toContain('exercised: true');
+    expect(parseTaskFile(text).meta.exercised).toBe(true);
   });
 
   it('throws on non-boolean self-review', () => {

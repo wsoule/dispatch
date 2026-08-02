@@ -81,7 +81,9 @@ export type ServerEvent =
   | { type: 'fixloop.capped'; taskId: string; round: number }
   // A run reached `failed`/`interrupted-dirty` and was surveyed — carries
   // the survey so a connected client can show it without a follow-up fetch.
-  | { type: 'run.survey'; runId: string; survey: RunSurvey };
+  | { type: 'run.survey'; runId: string; survey: RunSurvey }
+  // A verify run finished and recorded a structured result for the task.
+  | { type: 'verification.changed'; taskId: string };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

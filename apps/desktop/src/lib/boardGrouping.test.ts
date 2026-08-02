@@ -22,6 +22,7 @@ function makeTask(id: string, status: string): TaskDoc {
     writes: [],
     risk: 'routine',
     model: null,
+    exercised: false,
   };
   return { meta, body: '' };
 }

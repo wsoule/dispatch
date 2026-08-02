@@ -42,6 +42,9 @@ export interface TaskMeta {
   model: string | null;
   // Set once a reconciler determines the task's merge landed; absent otherwise.
   archivedAt?: string;
+  // Set once a verify run has actually exercised this task's work and every
+  // check passed. Distinct from a review's findings, which only read the diff.
+  exercised: boolean;
 }
 
 export interface TaskDoc {
