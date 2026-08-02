@@ -237,6 +237,9 @@ export interface RunMeta {
   // Absent on every run recorded before review runs existed, so readers go
   // through runKind() rather than reading this field directly.
   kind?: RunKind;
+  // Files this run is touching, seeded from the task's `writes` at dispatch
+  // and grown from git status as it actually edits things.
+  claims?: string[];
 }
 
 // A run's kind, defaulted for the transcripts and registry entries written

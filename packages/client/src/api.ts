@@ -137,6 +137,9 @@ export interface RunMeta {
   // Absent on runs recorded before review runs existed; treat that as
   // 'execute'.
   kind?: RunKind;
+  // Files this run is touching — seeded from its task's declared writes and
+  // grown from its worktree's own git status as it edits things.
+  claims?: string[];
 }
 
 // Mirrors BranchEntryStatus in packages/server/src/orchestrator/types.ts.
@@ -576,6 +579,13 @@ export interface RunScopeRequest {
   granted: boolean | null;
   decisionReason: string | null;
   decidedAt: string | null;
+}
+
+// The body of `GET /api/runs/claims` — one entry per live run.
+export interface RunClaim {
+  runId: string;
+  taskId: string;
+  claims: string[];
 }
 
 // Mirrors PlannedTask in packages/server/src/orchestrator/planner.ts.
@@ -1085,6 +1095,7 @@ export interface ApiClient {
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
+  fetchRunClaims(): Promise<RunClaim[]>;
   /** `scope: 'session'` also pre-approves the same tool for the rest of this run; `reason`
    * is passed to the model as the denial message, so a refusal explains itself. */
   approveRun(
@@ -1458,6 +1469,7 @@ export function createApiClient(baseUrl: string): ApiClient {
       }),
     fetchRuns: () => request(baseUrl, '/api/runs'),
     fetchRun: (id) => request(baseUrl, `/api/runs/${id}`),
+    fetchRunClaims: () => request(baseUrl, '/api/runs/claims'),
     approveRun: async (runId, requestId, allow, opts = {}) => {
       await request(baseUrl, `/api/runs/${runId}/approval`, {
         method: 'POST',

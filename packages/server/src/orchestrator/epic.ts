@@ -2,6 +2,7 @@ import {
   dispatchableTasks,
   loadConfig,
   schedulableBatch,
+  tasksConflict,
 } from '@dispatch/core';
 import type { TaskDoc, TaskStore } from '@dispatch/core';
 
@@ -328,8 +329,14 @@ export class EpicEngine {
     const ready = dispatchableTasks(this.ctx.cache.query()).filter(
       (t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined
     );
+    // A live run's footprint can have grown past its task's declared writes
+    // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
+    const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);
+    const clearOfLiveRuns = ready.filter(
+      (t) => !liveClaims.some((claim) => tasksConflict(claim, t.meta.writes))
+    );
     const batch = schedulableBatch(
-      ready.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),
+      clearOfLiveRuns.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),
       slots
     );
     for (const taskId of batch) {

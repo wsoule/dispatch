@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -633,6 +633,68 @@ describe('EpicEngine write-set conflicts', () => {
         harness.orchestrator
           .list()
           .filter((r) => r.state === 'awaiting-approval').length === 2
+    );
+  });
+
+  // A live run's actual footprint can outgrow what its task declared — the
+  // scheduler must catch that too, not just the declared write-sets above.
+  it("does not dispatch a child whose writes overlap a live run's grown claims", async () => {
+    const harness = makeHarness();
+    // Dispatched standalone (no epic), writes outside its declared writes
+    // before pausing, so only refreshClaims knows about the overlap below.
+    harness.orchestrator.registerExecutor(
+      'fake-writer',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => writeFileSync(join(cwd, 'shared-scope.ts'), 'x'),
+            commit: false,
+            approval: { requestId: 'go', toolName: 'noop', input: {} },
+          },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const blocker = harness.store.create({
+      title: 'Blocker',
+      writes: ['x.ts'],
+    });
+    const blockerRun = await harness.orchestrator.dispatch(
+      blocker.meta.id,
+      'fake-writer'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === blockerRun.id)
+          ?.state === 'awaiting-approval'
+    );
+    await harness.orchestrator.refreshClaims(blockerRun.id);
+    expect(
+      harness.orchestrator.list().find((r) => r.id === blockerRun.id)?.claims
+    ).toContain('shared-scope.ts');
+
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    const child = harness.store.create({
+      title: 'Overlaps the grown claim, not the declared one',
+      parent: epic.meta.id,
+      writes: ['shared-scope.ts'],
+    });
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await sleep(80);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === child.meta.id)
+    ).toHaveLength(0);
+
+    // Once the blocker reaches a terminal state its claim clears, and the
+    // child it was overlapping becomes dispatchable again.
+    harness.orchestrator.approve(blockerRun.id, 'go', true);
+    await waitFor(
+      () =>
+        harness.orchestrator.list().filter((r) => r.taskId === child.meta.id)
+          .length === 1
     );
   });
 });

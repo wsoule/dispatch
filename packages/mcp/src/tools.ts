@@ -1109,9 +1109,11 @@ export function registerDispatchTools(
       description:
         "List this project's dispatchd orchestrator runs (live + recent) " +
         'so an agent can see whether other agents already have runs in ' +
-        'flight before assuming exclusive access to the repo. Returns an ' +
-        "empty list with a note when dispatchd isn't running — that's a " +
-        'normal, not-an-error response, not every project runs the daemon.',
+        'flight — each live run includes `claims`, the files it has ' +
+        'declared or actually touched — before assuming exclusive access ' +
+        'to the repo. Returns an empty list with a note when dispatchd ' +
+        "isn't running — that's a normal, not-an-error response, not " +
+        'every project runs the daemon.',
       outputSchema: {
         runs: z.array(z.record(z.string(), z.unknown())),
         note: z.string().optional(),
