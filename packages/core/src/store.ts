@@ -12,6 +12,7 @@ import { slugify } from './slug.js';
 import {
   appendActivity,
   appendAmendment,
+  escapeHeadingLines,
   parseTaskFile,
   serializeTaskFile,
   setSection,
@@ -141,7 +142,10 @@ export class TaskStore {
       model: input.model ?? null,
       exercised: false,
     };
-    const body = `\n## Description\n\n${input.description ?? ''}\n\n## Acceptance Criteria\n\n## Activity\n`;
+    // The initial description is caller-supplied, so it's escaped the same
+    // way setSection escapes a later edit to the same section.
+    const description = escapeHeadingLines(input.description ?? '');
+    const body = `\n## Description\n\n${description}\n\n## Acceptance Criteria\n\n## Activity\n`;
     const doc: TaskDoc = { meta, body };
     writeFileSync(
       join(this.tasksDir, `${id}-${slugify(input.title)}.md`),
