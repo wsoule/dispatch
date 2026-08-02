@@ -410,6 +410,10 @@ export interface UpdateFindingPatch {
   ruling?: string | null;
 }
 
+// Why a stopped fix loop is not `complete`. Mirrors FixLoopStop in
+// packages/server/src/orchestrator/fixLoop.ts.
+export type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+
 // Mirrors FixLoopState in packages/server/src/orchestrator/fixLoop.ts: where a
 // task's review -> fix -> re-review loop currently stands.
 export interface FixLoopState {
@@ -419,6 +423,10 @@ export interface FixLoopState {
   state: 'idle' | 'implementing' | 'reviewing' | 'capped' | 'complete';
   baseSha: string;
   lastReviewedSha: string | null;
+  // Set while `capped`: what the loop is waiting for. `round` alone does not
+  // say — a loop can stop well short of its cap on a ruling or an error.
+  stopReason?: FixLoopStop;
+  stopDetail?: string;
   updatedAt: string;
 }
 
@@ -555,10 +563,17 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision/hazard/constraint/handoff was added to the ledger.
   | { type: 'ledger.changed' }
-  // A task's fix loop moved between states, or hit its round cap. Mirrors
+  // A task's fix loop moved between states, or stopped. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'fixloop.changed'; taskId: string }
-  | { type: 'fixloop.capped'; taskId: string; round: number }
+  | {
+      type: 'fixloop.capped';
+      taskId: string;
+      round: number;
+      cap: number;
+      reason: FixLoopStop;
+      message?: string;
+    }
   // A run was surveyed on reaching `failed`/`interrupted-dirty`. Mirrors
   // packages/server/src/events.ts.
   | { type: 'run.survey'; runId: string; survey: RunSurvey }

@@ -6,6 +6,7 @@ import type {
 } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
+import { ADJUDICATION_VERDICTS } from '../orchestrator/fixLoop.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // Declared as `readonly string[]` (not the literal union) so a membership
@@ -15,6 +16,8 @@ const VERDICTS: readonly string[] = ['open', 'addressed', 'parked', 'blocked'];
 // `parked`/`blocked` are adjudications, not edits: they carry a mandatory
 // ruling and side effects, so they only come in through the adjudicate route.
 const PATCHABLE_VERDICTS: readonly string[] = ['open', 'addressed'];
+const ADJUDICATED_ERROR =
+  'through POST /api/tasks/:id/findings/:fid/adjudicate, which requires a ruling';
 const RECOMMENDATIONS: readonly string[] = ['blocks', 'park'];
 const LEDGER_KINDS: readonly string[] = [
   'constraint',
@@ -121,8 +124,7 @@ export async function updateFinding(
     return errorResponse(
       400,
       `invalid verdict: ${String(body.verdict)} (expected ${PATCHABLE_VERDICTS.join('|')}` +
-        ' — park and block through POST /api/tasks/:id/findings/:fid/adjudicate,' +
-        ' which requires a ruling)'
+        ` — park and block ${ADJUDICATED_ERROR})`
     );
   }
   if (
@@ -131,6 +133,16 @@ export async function updateFinding(
     typeof body.ruling !== 'string'
   ) {
     return errorResponse(400, 'invalid ruling: expected a string or null');
+  }
+  // Symmetrical to the check above: a standing ruling has task-level side
+  // effects behind it, so an edit route must not clear one either.
+  const existing = ctx.findingStore.get(id);
+  if (existing === null) return errorResponse(404, `finding not found: ${id}`);
+  if (ADJUDICATION_VERDICTS.includes(existing.verdict)) {
+    return errorResponse(
+      400,
+      `finding ${id} carries a ${existing.verdict} ruling — change it ${ADJUDICATED_ERROR}`
+    );
   }
   try {
     const finding = ctx.findingStore.update(id, {
