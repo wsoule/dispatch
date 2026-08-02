@@ -20,15 +20,19 @@ function hasJsonContentType(req: Request): boolean {
   );
 }
 
+// The daemon's only CSRF defence: a cross-origin page can send a preflight-free
+// `text/plain`/form/multipart body, but never `application/json`.
+export function requireJsonContentType(req: Request): Response | null {
+  return hasJsonContentType(req)
+    ? null
+    : errorResponse(415, 'expected content-type: application/json');
+}
+
 export async function readJsonBody(
   req: Request
 ): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
-  if (!hasJsonContentType(req)) {
-    return {
-      ok: false,
-      response: errorResponse(415, 'expected content-type: application/json'),
-    };
-  }
+  const rejected = requireJsonContentType(req);
+  if (rejected !== null) return { ok: false, response: rejected };
   try {
     const value = await req.json();
     if (typeof value !== 'object' || value === null) {
@@ -43,22 +47,18 @@ export async function readJsonBody(
   }
 }
 
-// Same contract as readJsonBody, but an empty body is `{}` rather than a 400
-// — the content-type check only applies once there's a real body to guard.
+// Same contract as readJsonBody, but an empty body is `{}` rather than a 400.
+// The guard runs first: a body-less POST is the very request it exists to stop.
 export async function readJsonBodyOptional(
   req: Request
 ): Promise<
   | { ok: true; value: Record<string, unknown> }
   | { ok: false; response: Response }
 > {
+  const rejected = requireJsonContentType(req);
+  if (rejected !== null) return { ok: false, response: rejected };
   const text = await req.text();
   if (text.trim() === '') return { ok: true, value: {} };
-  if (!hasJsonContentType(req)) {
-    return {
-      ok: false,
-      response: errorResponse(415, 'expected content-type: application/json'),
-    };
-  }
   try {
     const value = JSON.parse(text);
     if (typeof value !== 'object' || value === null) {
