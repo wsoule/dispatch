@@ -94,6 +94,10 @@ const DEFAULT_EXECUTOR_NAME = 'claude';
 // invisible to the Branches surface.
 const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 
+// Minimum gap between opportunistic claims refreshes for one run — see
+// scheduleClaimsRefresh.
+const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
+
 // Sort order for the Branches surface: the rows that need a human decision
 // come first, read-only live runs last.
 const STATUS_RANK: Record<BranchEntryStatus, number> = {
@@ -147,6 +151,9 @@ export class Orchestrator {
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.
   private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
+  // When each run's claims were last refreshed from git status — see
+  // scheduleClaimsRefresh's cooldown check.
+  private readonly lastClaimsCheck = new Map<string, number>();
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
@@ -191,6 +198,15 @@ export class Orchestrator {
 
   list(): RunMeta[] {
     return this.registry.list();
+  }
+
+  // Every live run's current claims, for GET /api/runs/claims and the epic
+  // scheduler. A terminal run holds no claims — see TERMINAL_RUN_STATES.
+  liveClaims(): { runId: string; taskId: string; claims: string[] }[] {
+    return this.registry
+      .list()
+      .filter((r) => !TERMINAL_RUN_STATES.has(r.state))
+      .map((r) => ({ runId: r.id, taskId: r.taskId, claims: r.claims ?? [] }));
   }
 
   // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
@@ -298,6 +314,8 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      // Seeded from the task's own declared write-set — see RunMeta.claims.
+      claims: [...task.meta.writes],
       // Spread in only for a genuinely stacked run, so an unblocked run's
       // RunMeta keeps exactly the shape (and transcript header) it had
       // before stacking existed.
@@ -385,6 +403,7 @@ export class Orchestrator {
       updatedAt: now,
       model: opts.model,
       kind: opts.kind,
+      claims: [...task.meta.writes],
     };
     this.registry.create(meta);
     this.transcriptFor(runId).writeHeader(meta);
@@ -895,6 +914,41 @@ export class Orchestrator {
       cleanTree:
         staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
     };
+  }
+
+  // Grows a run's claims to match its worktree's git status. Public so tests
+  // can call it directly instead of waiting out scheduleClaimsRefresh's cooldown.
+  async refreshClaims(runId: string): Promise<void> {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return;
+    const status = await new GitRepo(meta.worktreePath).status();
+    if (!status.ok) return;
+    const touched = [
+      ...status.staged.map((f) => f.path),
+      ...status.unstaged.map((f) => f.path),
+      ...status.untracked,
+      ...status.conflicted,
+    ];
+    const before = meta.claims ?? [];
+    const grown = new Set([...before, ...touched]);
+    if (grown.size === before.length) return;
+    const claims = [...grown].sort();
+    this.registry.updateMeta(runId, { claims });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // Cooldown-gated, fire-and-forget trigger for refreshClaims — called from
+  // every executor entry so claims stay current without a dedicated poll timer.
+  private scheduleClaimsRefresh(runId: string): void {
+    const last = this.lastClaimsCheck.get(runId) ?? 0;
+    const now = Date.now();
+    if (now - last < CLAIMS_REFRESH_COOLDOWN_MS) return;
+    this.lastClaimsCheck.set(runId, now);
+    void this.refreshClaims(runId).catch((err: unknown) => {
+      console.error(
+        `dispatchd: claims refresh failed for run ${runId}: ${(err as Error).message}`
+      );
+    });
   }
 
   // Surveys a run already marked `failed` outside handleFinish (a boot
@@ -2131,6 +2185,8 @@ export class Orchestrator {
   private fireTerminalHooks(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
+    // Nothing will ever refresh a terminal run's claims again — see refreshClaims.
+    this.lastClaimsCheck.delete(runId);
     this.invokeHooksSafely(this.terminalHooks, meta);
   }
 
@@ -2180,6 +2236,7 @@ export class Orchestrator {
           updatedAt: new Date().toISOString(),
         });
         this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+        this.scheduleClaimsRefresh(runId);
       },
       onApprovalRequest: (request) => {
         this.registry.setPendingApproval(runId, request);
@@ -2337,6 +2394,9 @@ export class Orchestrator {
       // default, so continuing an Opus run could hand the rest of the task
       // to a different model mid-conversation.
       model: oldMeta.model,
+      // Carries forward whatever the prior run had already claimed — a
+      // follow-up must not look like it has never touched anything.
+      claims: oldMeta.claims,
       resumedFrom: oldMeta.id,
       // The resumed run inherits the same worktree and the same BRANCH, so it
       // inherits the branch's stacking facts too. Dropping them here was how a
@@ -2458,6 +2518,9 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: meta.model,
+      // See requestChanges' matching comment — a resumed run keeps whatever
+      // its predecessor had already claimed.
+      claims: meta.claims,
       resumedFrom: meta.id,
       ...(meta.stackParents !== undefined
         ? { stackParents: meta.stackParents }

@@ -43,6 +43,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
+import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
 import {
   decideScopeRequest,
@@ -2369,6 +2370,13 @@ export async function handleApi(
         return jsonResponse(
           ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
         );
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'claims' &&
+        method === 'GET'
+      ) {
+        return listRunClaims(ctx);
       }
       if (segments.length === 2 && method === 'GET') {
         const result = ctx.orchestrator.getRun(segments[1]);
