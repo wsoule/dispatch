@@ -41,6 +41,7 @@ import type {
   ExecutorEvents,
   ExecutorStartOptions,
   NormalizedEntry,
+  RunKind,
   RunMeta,
   RunState,
   RunSurvey,
@@ -50,6 +51,7 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  runKind,
   TERMINAL_RUN_STATES,
 } from './types.js';
 import type { DiffResult } from './worktree.js';
@@ -325,6 +327,95 @@ export class Orchestrator {
     );
 
     return this.registry.get(runId)!;
+  }
+
+  // Starts a non-execute run against `head` on its own throwaway branch,
+  // leaving the task's status and Activity alone — judging work is not doing
+  // it. `buildPrompt` runs once the worktree exists and before the executor
+  // starts, so a caller can write input files and name their paths in it.
+  async dispatchAuxRun(opts: {
+    taskId: string;
+    kind: RunKind;
+    head: string;
+    executor?: string;
+    model?: string;
+    buildPrompt: (ctx: { runId: string; worktreePath: string }) => string;
+  }): Promise<RunMeta> {
+    const task = this.ctx.store.get(opts.taskId);
+    if (task === null) {
+      throw new OrchestratorNotFoundError(`task not found: ${opts.taskId}`);
+    }
+    const live = this.registry.liveRunForTask(opts.taskId);
+    if (live !== undefined) {
+      throw new OrchestratorConflictError(
+        `task already has a live run: ${live.id}`
+      );
+    }
+    const { executor, name: executorName } = this.resolveExecutorForResume(
+      opts.executor ?? DEFAULT_EXECUTOR_NAME
+    );
+
+    const now = new Date().toISOString();
+    const runId = generateRunId(now);
+    const branch = `${DISPATCH_BRANCH_PREFIX}${opts.kind}-${opts.taskId}-${runId.slice(2)}`;
+    const wtPath = worktreePath(this.ctx.rootDir, runId);
+    this.worktrees.add(wtPath, branch, opts.head);
+
+    const meta: RunMeta = {
+      id: runId,
+      taskId: opts.taskId,
+      taskTitle: task.meta.title,
+      executor: executorName,
+      state: 'provisioning',
+      branch,
+      baseBranch: opts.head,
+      worktreePath: wtPath,
+      createdAt: now,
+      updatedAt: now,
+      model: opts.model,
+      kind: opts.kind,
+    };
+    this.registry.create(meta);
+    this.transcriptFor(runId).writeHeader(meta);
+
+    const prompt = opts.buildPrompt({ runId, worktreePath: wtPath });
+    this.transition(runId, 'running');
+    const caps = this.orchestratorCaps();
+    this.startAndRegister(
+      runId,
+      {
+        cwd: wtPath,
+        projectRoot: this.ctx.rootDir,
+        runId,
+        prompt,
+        permissionMode: caps.permissionMode,
+        maxTurns: caps.maxTurns,
+        maxBudgetUsd: caps.maxBudgetUsd,
+        model: opts.model,
+      },
+      executor
+    );
+    return this.registry.get(runId)!;
+  }
+
+  // Force-fails a non-execute run whose reported success a post-run check
+  // rejected. Bypasses transition()'s terminal guard on purpose: a review that
+  // reads as clean when its output was unusable must never happen.
+  failAuxRun(runId: string, error: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || runKind(meta) === 'execute') return;
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { state: 'failed', updatedAt: now, error });
+    this.transcriptFor(runId).appendState('failed', now, { error });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // Frees a finished non-execute run's throwaway worktree and branch. Its
+  // transcript and run directory stay — those are the durable record.
+  cleanupAuxRun(runId: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || runKind(meta) === 'execute') return;
+    this.worktrees.remove(meta.worktreePath, meta.branch, runId);
   }
 
   /**

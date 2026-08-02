@@ -52,6 +52,10 @@ export type RunState =
   // A `failed` that left uncommitted work behind — see RunSurvey.
   | 'interrupted-dirty';
 
+// Mirrors RunKind in packages/server/src/orchestrator/types.ts. An absent
+// `kind` means 'execute'.
+export type RunKind = 'execute' | 'review' | 'verify';
+
 // Mirrors RunSurvey in packages/server/src/orchestrator/types.ts — what git
 // found in a terminal run's worktree, used to recover or resume it.
 export interface RunSurvey {
@@ -127,6 +131,9 @@ export interface RunMeta {
   pushedToOrigin?: boolean;
   // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
   survey?: RunSurvey;
+  // Absent on runs recorded before review runs existed; treat that as
+  // 'execute'.
+  kind?: RunKind;
 }
 
 // Mirrors BranchEntryStatus in packages/server/src/orchestrator/types.ts.
@@ -380,6 +387,16 @@ export interface CreateFindingInput {
 export interface UpdateFindingPatch {
   verdict?: FindingVerdict;
   ruling?: string | null;
+}
+
+// Mirrors POST /api/tasks/:id/review's body. The open findings a `fix`
+// re-review is scoped to are read server-side, never sent from here.
+export interface StartReviewInput {
+  base: string;
+  head: string;
+  scope?: 'full' | 'fix';
+  round?: number;
+  extraRisks?: string[];
 }
 
 export interface CreateLedgerInput {
@@ -1249,6 +1266,10 @@ export interface ApiClient {
   }): Promise<Finding[]>;
   createFinding(input: CreateFindingInput): Promise<Finding>;
   updateFinding(id: string, patch: UpdateFindingPatch): Promise<Finding>;
+  fetchTaskFindings(taskId: string): Promise<Finding[]>;
+  // Dispatches a review run over base..head. Resolves with the run's meta as
+  // soon as it is accepted; the findings land asynchronously when it ends.
+  startReview(taskId: string, input: StartReviewInput): Promise<RunMeta>;
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
   fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
   createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
@@ -1661,6 +1682,13 @@ export function createApiClient(baseUrl: string): ApiClient {
       request(baseUrl, `/api/findings/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         ...jsonBody(patch),
+      }),
+    fetchTaskFindings: (taskId) =>
+      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/findings`),
+    startReview: (taskId, input) =>
+      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/review`, {
+        method: 'POST',
+        ...jsonBody(input),
       }),
     fetchLedger: (filter = {}) => {
       const params = new URLSearchParams();

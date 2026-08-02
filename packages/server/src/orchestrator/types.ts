@@ -129,6 +129,10 @@ export type RunState =
   // A `failed` that left uncommitted work behind — see RunSurvey.
   | 'interrupted-dirty';
 
+// What a run was dispatched to do. 'execute' writes the code; 'review' judges
+// a diff and emits findings; 'verify' runs checks against finished work.
+export type RunKind = 'execute' | 'review' | 'verify';
+
 export const TERMINAL_RUN_STATES: ReadonlySet<RunState> = new Set([
   'finished',
   'failed',
@@ -230,6 +234,15 @@ export interface RunMeta {
   baseDiscardedReason?: string;
   // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
   survey?: RunSurvey;
+  // Absent on every run recorded before review runs existed, so readers go
+  // through runKind() rather than reading this field directly.
+  kind?: RunKind;
+}
+
+// A run's kind, defaulted for the transcripts and registry entries written
+// before `kind` existed.
+export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
+  return meta.kind ?? 'execute';
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

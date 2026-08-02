@@ -34,6 +34,7 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from './api/http.js';
+import { listTaskFindings, startTaskReview } from './api/review.js';
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
 import type { FindingStore } from './findings.js';
@@ -66,6 +67,7 @@ import type {
   RunQuestion,
 } from './orchestrator/questions.js';
 import { QUESTION_POLL_MS } from './orchestrator/questions.js';
+import type { ReviewRunner } from './orchestrator/review.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -95,6 +97,7 @@ export interface ApiContext {
   inboxStore: InboxStore;
   findingStore: FindingStore;
   ledgerStore: LedgerStore;
+  reviewRunner: ReviewRunner;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
   questions: QuestionRegistry;
@@ -2255,6 +2258,20 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await createRun(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review' &&
+        method === 'POST'
+      ) {
+        return await startTaskReview(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'findings' &&
+        method === 'GET'
+      ) {
+        return listTaskFindings(ctx, segments[1]);
       }
     }
 
