@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { schedulableBatch, tasksConflict } from '../src/conflicts.js';
+import {
+  claimConflictsWithWrites,
+  schedulableBatch,
+  tasksConflict,
+} from '../src/conflicts.js';
 
 describe('tasksConflict', () => {
   it('is false for disjoint write-sets', () => {
@@ -27,6 +31,29 @@ describe('tasksConflict', () => {
 
   it('is true when both write-sets are empty', () => {
     expect(tasksConflict([], [])).toBe(true);
+  });
+});
+
+describe('claimConflictsWithWrites', () => {
+  it('is false when the claim is empty, unlike tasksConflict', () => {
+    expect(claimConflictsWithWrites([], ['a.ts'])).toBe(false);
+    expect(tasksConflict([], ['a.ts'])).toBe(true);
+  });
+
+  it('is false when both sides are empty', () => {
+    expect(claimConflictsWithWrites([], [])).toBe(false);
+  });
+
+  it('is true when the candidate writes are empty but the claim is not', () => {
+    expect(claimConflictsWithWrites(['a.ts'], [])).toBe(true);
+  });
+
+  it('is true when a non-empty claim overlaps the candidate writes', () => {
+    expect(claimConflictsWithWrites(['shared.ts'], ['shared.ts'])).toBe(true);
+  });
+
+  it('is false when a non-empty claim is disjoint from the candidate writes', () => {
+    expect(claimConflictsWithWrites(['a.ts'], ['b.ts'])).toBe(false);
   });
 });
 

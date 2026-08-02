@@ -697,6 +697,41 @@ describe('EpicEngine write-set conflicts', () => {
           .length === 1
     );
   });
+
+  // Default (empty) writes — the CLI/MCP default — must not read as "could
+  // touch anything" against every other task once it's a live claim.
+  it('does not let a live run with default (empty) writes block unrelated dispatch', async () => {
+    const harness = makeHarness();
+    const unrelated = harness.store.create({ title: 'No declared writes' });
+    const unrelatedRun = await harness.orchestrator.dispatch(
+      unrelated.meta.id,
+      'fake'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === unrelatedRun.id)
+          ?.state === 'awaiting-approval'
+    );
+    expect(
+      harness.orchestrator.list().find((r) => r.id === unrelatedRun.id)?.claims
+    ).toEqual([]);
+
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    const child = harness.store.create({
+      title: 'Disjoint from the empty-claim run',
+      parent: epic.meta.id,
+      writes: ['own.ts'],
+    });
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await waitFor(
+      () =>
+        harness.orchestrator.list().filter((r) => r.taskId === child.meta.id)
+          .length === 1
+    );
+  });
 });
 
 describe('EpicEngine fill serialization', () => {
