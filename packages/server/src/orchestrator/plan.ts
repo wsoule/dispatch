@@ -543,6 +543,23 @@ export class PlanManager {
       this.ctx.store.update(taskIds[i], { blockedBy }, now);
     });
 
+    // Undeclared `writes` conflicts with everything (safe default), which
+    // silently serializes an epic dispatch — leave a visible trail for why.
+    if (
+      epicId !== undefined &&
+      proposal.tasks.some(
+        (t) => t.writes === undefined || t.writes.length === 0
+      )
+    ) {
+      this.ctx.store.update(
+        epicId,
+        {
+          appendActivity: `${now} [plan] confirmed with undeclared writes on at least one task — those tasks fully serialize during epic dispatch`,
+        },
+        now
+      );
+    }
+
     this.updateRecord(planId, { confirmedAt: now });
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });

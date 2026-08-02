@@ -12,7 +12,7 @@ export interface PlannedTask {
   blockedByIndices: number[];
   priority: Priority;
   // Optional: an omitted proposal falls back to "unknown" (see
-  // validatePlannedTask), though the live planner's own schema always sets them.
+  // validatePlannedTask); the live planner's schema always sets both.
   writes?: string[];
   risk?: TaskRisk;
 }

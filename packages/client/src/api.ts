@@ -9,6 +9,7 @@ import type {
   ModelConfig,
   Priority,
   TaskDoc,
+  TaskRisk,
   UpdatePatch,
 } from '@dispatch/core';
 
@@ -452,6 +453,8 @@ export interface PlannedTask {
   acceptanceCriteria: string[];
   blockedByIndices: number[];
   priority: Priority;
+  writes?: string[];
+  risk?: TaskRisk;
 }
 
 // Mirrors PlanProposal in packages/server/src/orchestrator/planner.ts.
