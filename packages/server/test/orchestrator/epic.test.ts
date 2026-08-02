@@ -88,6 +88,8 @@ function makeHarness(): Harness {
   return { orchestrator, epics, store, cache, events };
 }
 
+// Each child gets a distinct `writes` entry — an empty write-set conflicts
+// with everything, which would otherwise serialize these generic tests.
 function createEpicWithChildren(
   store: TaskStore,
   count: number,
@@ -100,6 +102,7 @@ function createEpicWithChildren(
       title: `Child ${i}`,
       kind: 'task',
       parent: epic.meta.id,
+      writes: [`child-${i}.ts`],
     });
     childIds.push(doc.meta.id);
   }
@@ -565,6 +568,72 @@ describe('EpicEngine.start', () => {
 
     await waitFor(() => harness.epics.progress(epicA).active === false);
     expect(harness.epics.progress(epicA).children).toHaveLength(1);
+  });
+});
+
+describe('EpicEngine write-set conflicts', () => {
+  // schedulableBatch keeps overlapping-`writes` children out of one batch,
+  // even under a concurrency cap that would otherwise allow both.
+  it('never dispatches two children with overlapping writes at once', async () => {
+    const harness = makeHarness();
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    harness.store.create({
+      title: 'A',
+      parent: epic.meta.id,
+      writes: ['shared.ts'],
+    });
+    harness.store.create({
+      title: 'B',
+      parent: epic.meta.id,
+      writes: ['shared.ts'],
+    });
+
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await waitFor(() => harness.orchestrator.list().length === 1);
+    await sleep(80);
+
+    const live = harness.orchestrator
+      .list()
+      .filter((r) => r.state === 'awaiting-approval');
+    expect(live).toHaveLength(1);
+
+    harness.orchestrator.approve(live[0].id, 'go', true);
+    await waitFor(
+      () =>
+        harness.orchestrator
+          .list()
+          .filter((r) => r.state === 'awaiting-approval').length === 1
+    );
+    expect(harness.orchestrator.list()).toHaveLength(2);
+  });
+
+  it('dispatches two children with disjoint writes concurrently', async () => {
+    const harness = makeHarness();
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    harness.store.create({
+      title: 'A',
+      parent: epic.meta.id,
+      writes: ['a.ts'],
+    });
+    harness.store.create({
+      title: 'B',
+      parent: epic.meta.id,
+      writes: ['b.ts'],
+    });
+
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await waitFor(
+      () =>
+        harness.orchestrator
+          .list()
+          .filter((r) => r.state === 'awaiting-approval').length === 2
+    );
   });
 });
 

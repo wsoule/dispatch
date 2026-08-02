@@ -1,19 +1,20 @@
-import { PRIORITIES } from '@dispatch/core';
-import type { Priority } from '@dispatch/core';
+import { PRIORITIES, TASK_RISKS } from '@dispatch/core';
+import type { Priority, TaskRisk } from '@dispatch/core';
 
 import { OrchestratorClientError } from './types.js';
 
-// One task the planner proposes. `blockedByIndices` refers to *other
-// entries in this same proposal's `tasks` array* (0-based) — never a real
-// task id, since ids are minted only at confirm time (spec §5's
-// confirm-before-write rule). `priority` mirrors core's Priority enum so a
-// proposal is directly writable via TaskStore.create once confirmed.
+// One task the planner proposes. `blockedByIndices` indexes this same
+// proposal's `tasks` array, never a real id (ids mint at confirm time).
 export interface PlannedTask {
   title: string;
   description: string;
   acceptanceCriteria: string[];
   blockedByIndices: number[];
   priority: Priority;
+  // Optional: an omitted proposal falls back to "unknown" (see
+  // validatePlannedTask), though the live planner's own schema always sets them.
+  writes?: string[];
+  risk?: TaskRisk;
 }
 
 // The single-task shape a reviewer edits before saving — a `PlannedTask`
@@ -196,6 +197,25 @@ function validatePlannedTask(
       `invalid priority: ${String(t.priority)} (expected ${PRIORITIES.join('|')})`
     );
   }
+  // Optional here (the real planner's schema requires both) — a proposal
+  // without them falls back to TaskStore.create's own "unknown" defaults.
+  if (
+    t.writes !== undefined &&
+    (!Array.isArray(t.writes) || !t.writes.every((w) => typeof w === 'string'))
+  ) {
+    throw new OrchestratorClientError(
+      `invalid proposal: tasks[${index}].writes must be a list of strings`
+    );
+  }
+  if (
+    t.risk !== undefined &&
+    (typeof t.risk !== 'string' ||
+      !(TASK_RISKS as readonly string[]).includes(t.risk))
+  ) {
+    throw new OrchestratorClientError(
+      `invalid risk: ${String(t.risk)} (expected ${TASK_RISKS.join('|')})`
+    );
+  }
   return {
     title: t.title,
     description: typeof t.description === 'string' ? t.description : '',
@@ -206,6 +226,10 @@ function validatePlannedTask(
     // dedupe here, once, rather than at every later confirm() call site.
     blockedByIndices: [...new Set(t.blockedByIndices as number[])],
     priority: t.priority as Priority,
+    // Left undefined rather than defaulted here (unlike TaskStore.create's
+    // own defaulting) so a proposal that omits them round-trips unchanged.
+    writes: t.writes,
+    risk: t.risk as TaskRisk | undefined,
   };
 }
 

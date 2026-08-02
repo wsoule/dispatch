@@ -6,6 +6,7 @@ export * from './configTypes.js';
 export * from './linearMap.js';
 export type { Finding, FindingSeverity, FindingVerdict } from './findings.js';
 export type { LedgerEntry, LedgerKind } from './ledger.js';
+export { schedulableBatch, tasksConflict } from './conflicts.js';
 export {
   computeStack,
   dispatchableTasks,

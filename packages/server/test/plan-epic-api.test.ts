@@ -795,6 +795,7 @@ describe('POST /api/epics/:id/dispatch, /stop, GET /progress', () => {
             title: `Child ${i}`,
             kind: 'task',
             parent: epicRes.meta.id,
+            writes: [`child-${i}.ts`],
           }),
         })
       );
