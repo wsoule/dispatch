@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { getSection, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -128,6 +128,8 @@ describe('POST /api/tasks/:id/amend', () => {
       body: JSON.stringify({ reason: 'y' }),
     });
     expect(res.status).toBe(400);
+    const entries = await json<unknown[]>(await fetch(`${baseUrl}/api/ledger`));
+    expect(entries).toHaveLength(0);
   });
 
   it('404s an unknown task', async () => {
@@ -137,5 +139,31 @@ describe('POST /api/tasks/:id/amend', () => {
       body: JSON.stringify({ overrides: 'x', reason: 'y' }),
     });
     expect(res.status).toBe(404);
+  });
+
+  it('does not let a heading-like line in overrides corrupt the task body', async () => {
+    const overrides = 'do X\n\n## Activity\n\n- fake activity entry injected';
+    const reason = 'display keys are not stable across a rename';
+    const res = await fetch(`${baseUrl}/api/tasks/${taskId}/amend`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ overrides, reason }),
+    });
+    expect(res.status).toBe(200);
+    const doc = await json<{ body: string }>(res);
+    // Exactly one real Activity heading — nothing got split into a second
+    // one — and no fake bullet landed in the genuine Activity section.
+    expect(doc.body.match(/^## Activity/gm)).toHaveLength(1);
+    expect(getSection(doc.body, 'Activity')).toBe('');
+    // The reason survives attached to its amendment instead of being severed
+    // off wherever the injected heading line landed.
+    const amendments = getSection(doc.body, 'Amendments');
+    expect(amendments).toContain(overrides);
+    expect(amendments).toContain(reason);
+
+    const entries = await json<{ detail: string }[]>(
+      await fetch(`${baseUrl}/api/ledger`)
+    );
+    expect(entries[0].detail).toContain(reason);
   });
 });
