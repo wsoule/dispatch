@@ -102,8 +102,8 @@ describe('watchSourceDirs', () => {
     await changed;
   });
 
-  // Exercises the real combination Important 4 fixed: a non-monorepo root
-  // includes .dispatch, which the daemon writes to continuously.
+  // A watched root can include .dispatch, which the daemon writes to
+  // continuously — those writes must never trigger a rescan.
   it('ignores changes under a skipped directory but still watches for real ones', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dispatch-source-watch-skip-'));
     mkdirSync(join(dir, '.dispatch', 'runs'), { recursive: true });
