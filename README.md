@@ -43,7 +43,8 @@ until that's fixed — see
 `on` builds a carto container if one is missing, `detect` uses one only if it
 already exists, and `off` sticks to the built-in scanner. `on` is a build
 policy, not a requirement — a missing `carto` binary always degrades to the
-scanner rather than failing. `dispatch init` adds the gitignored `.carto/` build
+scanner rather than failing. Whatever builds the container — `dispatch init` or
+the daemon on a project that upgraded into this — adds the `.carto/` build
 output to `.gitignore` automatically.
 
 ## Quickstart

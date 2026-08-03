@@ -39,15 +39,21 @@ function stubCartoBinDir(succeeds: boolean): string {
   return binDir;
 }
 
-// Runs `fn` with PATH temporarily overridden, restoring it afterward even if
-// `fn` throws or rejects.
-async function withPath<T>(value: string, fn: () => Promise<T>): Promise<T> {
-  const original = process.env.PATH;
-  process.env.PATH = value;
+// Runs `fn` with `binDir`'s stub carto discoverable: it goes on PATH and the
+// suite-wide DISPATCH_CARTO_DISABLED opt-out (test/setup.ts) is lifted for
+// the call. Both are restored even if `fn` throws or rejects.
+async function withCarto<T>(binDir: string, fn: () => Promise<T>): Promise<T> {
+  const originalPath = process.env.PATH;
+  const originalDisabled = process.env.DISPATCH_CARTO_DISABLED;
+  process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`;
+  delete process.env.DISPATCH_CARTO_DISABLED;
   try {
     return await fn();
   } finally {
-    process.env.PATH = original;
+    process.env.PATH = originalPath;
+    if (originalDisabled !== undefined) {
+      process.env.DISPATCH_CARTO_DISABLED = originalDisabled;
+    }
   }
 }
 
@@ -133,8 +139,7 @@ describe('dispatch init — .mcp.json registration', () => {
 
 describe('dispatch init — carto container build', () => {
   it('builds the container when a usable carto binary is on PATH', async () => {
-    const binDir = stubCartoBinDir(true);
-    await withPath(`${binDir}${delimiter}${process.env.PATH ?? ''}`, () =>
+    await withCarto(stubCartoBinDir(true), () =>
       makeProgram(ctx).parseAsync(['init'], { from: 'user' })
     );
     expect(existsSync(join(root, '.carto/carto.db'))).toBe(true);
@@ -142,8 +147,19 @@ describe('dispatch init — carto container build', () => {
   });
 
   it('adds .carto/ to .gitignore when the container is built', async () => {
-    const binDir = stubCartoBinDir(true);
-    await withPath(`${binDir}${delimiter}${process.env.PATH ?? ''}`, () =>
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.carto/');
+  });
+
+  // The upgrade case: `.dispatch/` already exists, so init's scaffold step is
+  // skipped entirely, but a container still gets built and still needs the
+  // ignore — otherwise the SQLite container lands untracked and unignored.
+  it('adds .carto/ to .gitignore in an already-initialized project', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(existsSync(join(root, '.gitignore'))).toBe(false);
+    await withCarto(stubCartoBinDir(true), () =>
       makeProgram(ctx).parseAsync(['init'], { from: 'user' })
     );
     expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.carto/');
@@ -151,33 +167,34 @@ describe('dispatch init — carto container build', () => {
 
   it('does not duplicate an existing .carto ignore entry', async () => {
     writeFileSync(join(root, '.gitignore'), 'node_modules\n.carto/\n');
-    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
     const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
     expect(gitignore.match(/\.carto\//g)).toHaveLength(1);
   });
 
   it('starts .carto/ on its own line when .gitignore lacks a trailing newline', async () => {
     writeFileSync(join(root, '.gitignore'), 'node_modules');
-    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
     const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
     expect(gitignore).toBe('node_modules\n.carto/\n');
   });
 
-  // Regardless of whether the real machine running this has carto installed,
-  // pointing PATH at nothing reproduces "carto not available" — the case
-  // this integration exists to degrade from, not depend on ambient state.
-  it('degrades quietly when carto is not on PATH', async () => {
-    await withPath('/nonexistent', () =>
-      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
-    );
+  // DISPATCH_CARTO_DISABLED (test/setup.ts) reproduces "carto not available"
+  // whether or not this machine has carto installed — the case this
+  // integration exists to degrade from, not depend on ambient state.
+  it('degrades quietly when carto is unavailable', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
     expect(existsSync(join(root, '.carto'))).toBe(false);
     expect(lines.join('\n')).toContain('Initialized');
     expect(lines.join('\n')).not.toContain('Indexed the repo');
   });
 
   it('reports skipped rather than throwing when carto init fails', async () => {
-    const binDir = stubCartoBinDir(false);
-    await withPath(`${binDir}${delimiter}${process.env.PATH ?? ''}`, () =>
+    await withCarto(stubCartoBinDir(false), () =>
       makeProgram(ctx).parseAsync(['init'], { from: 'user' })
     );
     expect(existsSync(join(root, '.carto/carto.db'))).toBe(false);
@@ -185,20 +202,13 @@ describe('dispatch init — carto container build', () => {
   });
 
   it('does not attempt to build the container when carto.enabled is off', async () => {
-    // No PATH override on this first call: it only needs to scaffold
-    // .dispatch, and running it with carto absent keeps the setup step from
-    // depending on (or being slowed by) whatever carto happens to be on
-    // this machine.
-    await withPath('/nonexistent', () =>
-      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
-    );
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
     writeFileSync(
       join(root, '.dispatch/config.yml'),
       `${readFileSync(join(root, '.dispatch/config.yml'), 'utf8')}carto:\n  enabled: off\n`
     );
-    const binDir = stubCartoBinDir(true);
     lines = [];
-    await withPath(`${binDir}${delimiter}${process.env.PATH ?? ''}`, () =>
+    await withCarto(stubCartoBinDir(true), () =>
       makeProgram(ctx).parseAsync(['init'], { from: 'user' })
     );
     expect(existsSync(join(root, '.carto'))).toBe(false);

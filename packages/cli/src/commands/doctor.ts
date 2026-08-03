@@ -164,7 +164,7 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
             );
           } else {
             ctx.log(
-              `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: bun install -g carto-md`
+              `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: npm install -g carto-md (its native deps built only under Node 22 LTS in our testing)`
             );
           }
         }

@@ -6,7 +6,7 @@ import {
 } from '@dispatch/core';
 import { cartoInit, discoverCarto } from '@dispatch/core/carto';
 import { Command } from 'commander';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -21,16 +21,6 @@ import { registerTaskCommands } from './commands/task.js';
 import type { CliContext } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
 
-// Appends a `.carto/` ignore entry to .gitignore (creating it if needed);
-// no-op if a `.carto` line is already there. carto's index is per-machine.
-function ensureCartoIgnored(rootDir: string): void {
-  const path = join(rootDir, '.gitignore');
-  const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  if (/^\.carto\/?\s*$/m.test(existing)) return;
-  const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-  writeFileSync(path, `${existing}${prefix}.carto/\n`);
-}
-
 // Scaffolds `.dispatch/` for `ctx.cwd` if it isn't there yet. Shared by
 // `dispatch init` (explicit, always reports what happened) and the bare
 // default action (implicit, only ever runs this on a project's very first
@@ -40,7 +30,6 @@ function ensureCartoIgnored(rootDir: string): void {
 function initIfMissing(ctx: CliContext): boolean {
   if (existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'))) return false;
   TaskStore.init(ctx.cwd);
-  ensureCartoIgnored(ctx.cwd);
   return true;
 }
 

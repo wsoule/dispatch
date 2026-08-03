@@ -13,6 +13,7 @@ import { join } from 'node:path';
 
 import {
   cartoInit,
+  cartoSyncAsync,
   discoverCarto,
   openCartoReader,
   pinHookWorkingDirs,
@@ -97,6 +98,24 @@ describe('discoverCarto', () => {
       const result = discoverCarto({ PATH: binDir }, []);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('unsupported-version');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // PATH cannot express "no carto here": discovery also searches the two
+  // Homebrew prefixes, where an `npm install -g` carto commonly lands.
+  it('reports not-found when DISPATCH_CARTO_DISABLED=1, even with carto present', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binDir = join(root, 'bin');
+      writeFakeCarto(binDir, 'carto-md 2.1.3');
+      const result = discoverCarto({
+        PATH: binDir,
+        DISPATCH_CARTO_DISABLED: '1',
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('not-found');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -380,6 +399,29 @@ describe('redirectCartoOutput', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Reached from cartoInit via DepMapCache.build() during a review, so a
+  // throw here would fail the review run this integration must never fail.
+  it.skipIf((process.getuid?.() ?? -1) === 0)(
+    'does not throw when the config file cannot be written',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+      const config = join(root, '.carto', 'config.json');
+      try {
+        mkdirSync(join(root, '.carto'), { recursive: true });
+        writeFileSync(config, JSON.stringify({ output: 'AGENTS.md' }));
+        chmodSync(config, 0o444);
+        expect(() => redirectCartoOutput(root)).not.toThrow();
+      } finally {
+        try {
+          chmodSync(config, 0o644);
+        } catch {
+          // config.json may not exist if an earlier step threw
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
 });
 
 describe('cartoInit', () => {
@@ -446,6 +488,55 @@ describe('cartoInit', () => {
         readFileSync(join(root, '.carto', 'config.json'), 'utf8')
       ) as { output: string };
       expect(config.output).not.toBe('AGENTS.md');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Every container builder goes through here — `dispatch init` on an
+  // already-initialized project, and the daemon's first review in `on` mode.
+  it('gitignores .carto/ wherever it builds a container', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeStubCartoBinary(
+        join(root, 'bin'),
+        ['mkdir -p .carto', 'touch .carto/carto.db', 'exit 0'].join('\n')
+      );
+      cartoInit(root, binary);
+      expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain(
+        '.carto/'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('gitignores the .carto/ a failed init leaves behind', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeStubCartoBinary(
+        join(root, 'bin'),
+        [
+          'mkdir -p .carto',
+          'echo \'{"output":"AGENTS.md"}\' > .carto/config.json',
+          'exit 1',
+        ].join('\n')
+      );
+      expect(cartoInit(root, binary).ok).toBe(false);
+      expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain(
+        '.carto/'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves .gitignore alone when carto never created a container dir', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeStubCartoBinary(join(root, 'bin'), 'exit 1');
+      cartoInit(root, binary);
+      expect(existsSync(join(root, '.gitignore'))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -558,4 +649,47 @@ describe('cartoInit', () => {
       }
     }
   );
+});
+
+describe('cartoSyncAsync', () => {
+  it('resolves ok when the sync succeeds', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeStubCartoBinary(join(root, 'bin'), 'exit 0');
+      const result = await cartoSyncAsync(root, binary);
+      expect(result.ok).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves with the failure detail rather than rejecting', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeStubCartoBinary(
+        join(root, 'bin'),
+        'echo "index is locked" 1>&2\nexit 1'
+      );
+      const result = await cartoSyncAsync(root, binary);
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('index is locked');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The daemon's watcher awaits this on the event loop; a rejection there
+  // would be an unhandled one.
+  it('resolves rather than rejecting when the binary cannot be spawned', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const result = await cartoSyncAsync(root, {
+        path: join(root, 'no-such-carto'),
+        version: '2.9.9',
+      });
+      expect(result.ok).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
