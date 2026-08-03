@@ -6,7 +6,10 @@ import type {
 import { describe, expect, it, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 
-import { ClaudeExecutor } from '../../src/orchestrator/executors/claude.js';
+import {
+  buildCartoMcpServerConfig,
+  ClaudeExecutor,
+} from '../../src/orchestrator/executors/claude.js';
 import type {
   ExecutorEvents,
   NormalizedEntry,
@@ -804,3 +807,39 @@ test.skipIf(!process.env.DISPATCH_CLAUDE_SMOKE)(
   },
   60_000
 );
+
+describe('buildCartoMcpServerConfig', () => {
+  it('passes only allowlisted environment variables', () => {
+    const config = buildCartoMcpServerConfig('/proj', {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    }) as McpStdioServerConfig;
+    expect(config.type).toBe('stdio');
+    // McpStdioServerConfig has no `cwd` field, so carto must be spawned
+    // through a shell wrapper (`command: '/bin/sh'`) that `cd`s into the
+    // project root first — the actual carto invocation is in `args`.
+    expect(config.command).toBe('/bin/sh');
+    expect(JSON.stringify(config.args)).toContain('carto');
+    // The SDK serializes env into the spawned CLI's argv, visible via `ps`.
+    for (const key of Object.keys(config.env ?? {})) {
+      expect(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL']).toContain(key);
+    }
+  });
+
+  it('never widens the tool tier', () => {
+    const config = buildCartoMcpServerConfig('/proj', {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    }) as McpStdioServerConfig;
+    expect(config.env?.CARTO_MCP_TIER).toBeUndefined();
+    expect(JSON.stringify(config)).not.toContain('CARTO_MCP_TIER');
+  });
+
+  it('roots carto at the project, never at a run worktree', () => {
+    const config = buildCartoMcpServerConfig('/proj', {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    });
+    expect(JSON.stringify(config)).toContain('/proj');
+  });
+});
