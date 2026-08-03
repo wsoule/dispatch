@@ -29,27 +29,27 @@
   --accent-border: #d4d4d8;
 
   /* Per-project categorical palette — deterministically assigned (see src/lib/projectColor.ts)
-     so every session/card/row for a project always shows the same color. Identity comes from
-     initials and position; the ramp only separates adjacent items. */
-  --project-color-1: #3f3f46;
-  --project-color-2: #52525b;
-  --project-color-3: #62626b;
-  --project-color-4: #71717a;
-  --project-color-5: #82828b;
-  --project-color-6: #91919a;
-  --project-color-7: #a1a1aa;
-  --project-color-8: #b1b1b8;
+     so every session/card/row for a project always shows the same color. Identity is a hue
+     again, not initials and position; the 8 colours just need to stay distinguishable. */
+  --project-color-1: #4f7cac;
+  --project-color-2: #3f9178;
+  --project-color-3: #a06bb0;
+  --project-color-4: #b5843a;
+  --project-color-5: #5c6bc0;
+  --project-color-6: #7a9a4a;
+  --project-color-7: #c05f7a;
+  --project-color-8: #4a9aa8;
 
   /* Semantic */
-  --green: #2f7d55;
+  --green: #3f9c6d;
   --green-bg: #eaf6f0;
   --green-border: #bfe3d1;
 
-  --blue: #3d5a99;
+  --blue: #4a5fc4;
   --blue-bg: #edeffb;
   --blue-border: #c3caf0;
 
-  --red: #b84c4c;
+  --red: #d64c4c;
   --red-bg: #fdeded;
   /* Green/blue/gray ship a hand-picked border; red and amber didn't. Derived rather than
      hand-picked so the pair stays consistent when either end is retuned, and so the dark
@@ -60,6 +60,12 @@
   --amber-bg: #fbf3e6;
   --amber-border: color-mix(in srgb, var(--amber) 34%, var(--amber-bg));
 
+  /* Violet exists solely so the working run state keeps a distinct hue now that
+     --accent is neutral again; it is not a brand accent and nothing else uses it. */
+  --violet: #5e6ad2;
+  --violet-bg: #eef0fc;
+  --violet-border: color-mix(in srgb, var(--violet) 34%, var(--violet-bg));
+
   --gray: #71757d;
   --gray-bg: #f1f2f4;
   --gray-border: #d7d9dd;
@@ -68,30 +74,30 @@
      `RunDisposition`. `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its
      hairline. References to the palette above, never literals, so the dark block flows through
      for free and must not restate them. */
-  --state-working-fg: var(--text-secondary);
-  --state-working-surface: var(--surface-raised);
-  --state-working-edge: var(--border-default);
+  --state-working-fg: var(--violet);
+  --state-working-surface: var(--violet-bg);
+  --state-working-edge: var(--violet-border);
 
-  --state-waiting-fg: var(--text-primary);
-  --state-waiting-surface: var(--surface-raised);
-  --state-waiting-edge: var(--border-strong);
+  --state-waiting-fg: var(--amber);
+  --state-waiting-surface: var(--amber-bg);
+  --state-waiting-edge: var(--amber-border);
 
-  --state-failed-fg: var(--text-primary);
-  --state-failed-surface: var(--surface-raised);
-  --state-failed-edge: var(--border-strong);
+  --state-failed-fg: var(--red);
+  --state-failed-surface: var(--red-bg);
+  --state-failed-edge: var(--red-border);
 
-  --state-review-fg: var(--text-secondary);
-  --state-review-surface: var(--surface-raised);
-  --state-review-edge: var(--border-default);
+  --state-review-fg: var(--green);
+  --state-review-surface: var(--green-bg);
+  --state-review-edge: var(--green-border);
 
-  --state-landing-fg: var(--text-muted);
-  --state-landing-surface: var(--surface-muted);
-  --state-landing-edge: var(--border-default);
+  --state-landing-fg: var(--blue);
+  --state-landing-surface: var(--blue-bg);
+  --state-landing-edge: var(--blue-border);
 
   /* Ready and blocked aren't run states — they're task states, and both are deliberately
      colorless. A ready task is not an event; making it green would compete with the states
      that actually need a human. */
-  --state-ready-fg: var(--text-muted);
+  --state-ready-fg: var(--text-secondary);
   --state-ready-surface: var(--surface-muted);
   --state-ready-edge: var(--border-strong);
 
@@ -112,14 +118,14 @@
   /* Sizing tokens are rem, deliberately matching the old hardcoded px values at the browser
      default 16px root. global.css sets the root font-size with a clamp() tied to viewport
      width, so type and spacing scale together as the window grows. */
-  --text-2xs: 0.625rem; /* 10px */
-  --text-xs: 0.6875rem; /* 11px */
-  --text-meta: 0.75rem; /* 12px */
-  --text-sm: 0.8125rem; /* 13px */
-  --text-base: 0.875rem; /* 14px */
-  --text-md: 1rem; /* 16px */
-  --text-lg: 1.1875rem; /* 19px */
-  --text-xl: 1.5rem; /* 24px */
+  --text-2xs: 0.5938rem; /* 9.5px */
+  --text-xs: 0.625rem; /* 10px */
+  --text-meta: 0.6563rem; /* 10.5px */
+  --text-sm: 0.6875rem; /* 11px */
+  --text-base: 0.8125rem; /* 13px */
+  --text-md: 0.9375rem; /* 15px */
+  --text-lg: 1.0625rem; /* 17px */
+  --text-xl: 1.25rem; /* 20px */
 
   /* The dense-row treatments. Every list surface in the redesign leans on these two, so they
      live here rather than being respelled as font-size + letter-spacing per component. */
@@ -173,28 +179,31 @@
     --accent-subtle: #1a1a1d;
     --accent-border: #3f3f46;
 
-    --project-color-1: #e4e4e7;
-    --project-color-2: #d4d4d8;
-    --project-color-3: #c4c4c8;
-    --project-color-4: #b4b4bb;
-    --project-color-5: #a4a4ab;
-    --project-color-6: #94949c;
-    --project-color-7: #84848d;
-    --project-color-8: #74747e;
+    --project-color-1: #7ca3d4;
+    --project-color-2: #5fbb9c;
+    --project-color-3: #c090d0;
+    --project-color-4: #d4a55e;
+    --project-color-5: #8b96e0;
+    --project-color-6: #a0c072;
+    --project-color-7: #dc85a0;
+    --project-color-8: #6fc0cc;
 
-    --green: #4c9a72;
+    --green: #4cb782;
     --green-bg: #12241b;
     --green-border: #234e39;
 
-    --blue: #6f8ac4;
+    --blue: #8b9aec;
     --blue-bg: #191d33;
     --blue-border: #333c6a;
 
-    --red: #cf5f5f;
+    --red: #e5595b;
     --red-bg: #2c1719;
 
     --amber: #d3a052;
     --amber-bg: #2a2113;
+
+    --violet: #8b96e0;
+    --violet-bg: #1d1f38;
 
     --gray: #9296a0;
     --gray-bg: #1c1d21;

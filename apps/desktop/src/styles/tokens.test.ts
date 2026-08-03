@@ -12,8 +12,15 @@ test('tailwind.css declares no hex literals', () => {
   expect(hexes).toEqual([]);
 });
 
-// The brand indigo is what this re-theme removes; if it reappears anywhere in
-// the token layer the grayscale rule has been broken.
-test('the Linear indigo is gone from the token layer', () => {
-  expect(`${tokens}${tailwind}`.toLowerCase()).not.toContain('#5e6ad2');
+// The brand indigo as a chrome accent is what this re-theme removes: --accent
+// must stay a neutral contrast color, not a hue. (A `--violet` token reusing
+// this hex is fine — it's meaning color for the working run state, not chrome.)
+test('--accent is not the Linear indigo', () => {
+  const accentLines = tokens
+    .split('\n')
+    .filter((line) => /--accent:\s*/.test(line));
+  expect(accentLines.length).toBeGreaterThan(0);
+  for (const line of accentLines) {
+    expect(line.toLowerCase()).not.toContain('#5e6ad2');
+  }
 });
