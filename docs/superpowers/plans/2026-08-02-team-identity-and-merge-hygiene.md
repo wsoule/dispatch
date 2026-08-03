@@ -445,7 +445,9 @@ so no task file on disk needs rewriting."
   `parseTeam(yaml: string): TeamMember[]`;
   `serializeTeam(members: TeamMember[]): string`;
   `handleFromEmail(email: string, taken: Set<string>): string`;
-  `upsertMember(members: TeamMember[], email: string, displayName: string): { members: TeamMember[]; member: TeamMember; changed: boolean }`.
+  `upsertMember(members: TeamMember[], email: string, displayName: string, knownHandle?: string): { members: TeamMember[]; member: TeamMember; changed: boolean }`
+  — matches by `knownHandle` first, then current-or-prior email. Never by
+  display name.
 
 This module is pure — no filesystem. File IO lives in the server (Task 4),
 mirroring how `configTypes.ts` is pure and `config.ts` does the reading.
@@ -527,9 +529,14 @@ describe('upsertMember', () => {
     expect(second.members).toHaveLength(1);
   });
 
-  it('keeps the handle stable when the email changes', () => {
+  it('keeps the handle stable when the caller names it', () => {
     const first = upsertMember([], 'old@example.com', 'Wyat');
-    const second = upsertMember(first.members, 'new@example.com', 'Wyat');
+    const second = upsertMember(
+      first.members,
+      'new@example.com',
+      'Wyat',
+      first.member.handle
+    );
     expect(second.member.handle).toBe(first.member.handle);
     expect(second.member.email).toBe('new@example.com');
     expect(second.member.emails).toContain('old@example.com');
@@ -538,9 +545,27 @@ describe('upsertMember', () => {
 
   it('matches a member by a prior address', () => {
     const first = upsertMember([], 'old@example.com', 'Wyat');
-    const moved = upsertMember(first.members, 'new@example.com', 'Wyat');
+    const moved = upsertMember(
+      first.members,
+      'new@example.com',
+      'Wyat',
+      first.member.handle
+    );
     const back = upsertMember(moved.members, 'old@example.com', 'Wyat');
     expect(back.members).toHaveLength(1);
+  });
+
+  it('never merges two people who share a display name', () => {
+    const first = upsertMember([], 'alex.kim@example.com', 'Alex Kim');
+    const second = upsertMember(first.members, 'akim@example.com', 'Alex Kim');
+    expect(second.members).toHaveLength(2);
+    expect(second.member.handle).not.toBe(first.member.handle);
+  });
+
+  it('ignores a known handle that is not in the roster', () => {
+    const r = upsertMember([], 'w@example.com', 'Wyat', 'ghost');
+    expect(r.members).toHaveLength(1);
+    expect(r.member.handle).toBe('w');
   });
 });
 ```
@@ -605,17 +630,21 @@ export function serializeTeam(members: TeamMember[]): string {
 }
 
 /**
- * Records the local developer in the roster. Matches on current or prior email
- * so a changed git address updates in place instead of adding a second entry.
+ * Records the local developer in the roster. `knownHandle` is the caller's own
+ * record of who it is, which is the only reliable way to survive an email
+ * change — never guess identity from a display name, since two people share one.
  */
 export function upsertMember(
   members: TeamMember[],
   email: string,
-  displayName: string
+  displayName: string,
+  knownHandle?: string
 ): { members: TeamMember[]; member: TeamMember; changed: boolean } {
-  const found = members.find(
-    (m) => m.email === email || m.emails.includes(email)
-  );
+  const found =
+    (knownHandle === undefined
+      ? undefined
+      : members.find((m) => m.handle === knownHandle)) ??
+    members.find((m) => m.email === email || m.emails.includes(email));
   if (found && found.email === email && found.displayName === displayName) {
     return { members, member: found, changed: false };
   }
@@ -697,7 +726,14 @@ addresses keeps the handle stable when someone changes their git email."
 - Consumes: `TeamMember`, `parseTeam`, `serializeTeam`, `upsertMember` (Task 3);
   `formatActorRef` (Task 1).
 - Produces: `class ActorContext` with
-  `static resolve(rootDir: string, runGit: GitReader): ActorContext`;
+  `static resolve(rootDir: string, runGit: GitReader): ActorContext`; plus two
+  module-private helpers, `readKnownHandle(rootDir): string | undefined` and
+  `writeKnownHandle(rootDir, handle): void`, persisting this machine's own
+  handle at `~/.dispatch/actor/<hash of rootDir>.json` — keyed exactly the way
+  `packages/server/src/linear/state.ts:44` already keys its per-project state.
+  This is user-level, not project-level: it must not live under `.dispatch/`,
+  which is committed and shared. Add a test that a changed git email keeps the
+  handle when this file is present, and yields a new member when it is absent;
   `readonly member: TeamMember`; `readonly humanRef: string` (e.g.
   `human:wyat`); `agentRef(executorId: string): string` (e.g.
   `agent:wyat/claude`). `type GitReader = (args: string[]) => string | null`.
@@ -810,11 +846,19 @@ export class ActorContext {
     const dir = join(rootDir, DISPATCH_DIR);
     const file = join(dir, 'team.yml');
     const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
-    const result = upsertMember(parseTeam(existing), email, name);
+    // The handle we registered under last time. It is the only thing that
+    // survives a changed git email — the roster cannot infer identity itself.
+    const result = upsertMember(
+      parseTeam(existing),
+      email,
+      name,
+      readKnownHandle(rootDir)
+    );
     if (result.changed) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(file, serializeTeam(result.members));
     }
+    writeKnownHandle(rootDir, result.member.handle);
     return new ActorContext(result.member, `human:${result.member.handle}`);
   }
 
