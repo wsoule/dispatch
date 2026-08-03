@@ -4,7 +4,7 @@ import {
   loadConfig,
   schedulableBatch,
 } from '@dispatch/core';
-import type { TaskDoc, TaskStore } from '@dispatch/core';
+import type { ActorContext, TaskDoc, TaskStore } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
@@ -60,6 +60,10 @@ export interface EpicEngineContext {
   // Test-injection seam for the self-retry delay below, so a test can watch a
   // stalled fill recover without sleeping the production window.
   fillRetryDelayMs?: number;
+  // Optional, same "tests may omit it" contract as OrchestratorContext's own
+  // field — appendEpicActivity() below falls back to an unattributed
+  // Activity line when it's absent.
+  actorContext?: ActorContext;
 }
 
 // How long a fill that failed outright waits before retrying itself, and how
@@ -337,7 +341,8 @@ export class EpicEngine {
     try {
       this.appendEpicActivity(
         epicId,
-        `[hook error] auto-dispatch failed: ${message}`
+        `[hook error] auto-dispatch failed: ${message}`,
+        'none'
       );
     } catch {
       // Even the Activity append failing must not propagate — same rule
@@ -385,7 +390,11 @@ export class EpicEngine {
     );
     for (const taskId of batch) {
       try {
-        await this.ctx.orchestrator.dispatch(taskId, session.executor);
+        // The epic scheduler's own auto-fill decided this task was next —
+        // no human pressed dispatch for it specifically.
+        await this.ctx.orchestrator.dispatch(taskId, session.executor, {
+          actor: 'none',
+        });
       } catch (err) {
         // A task that already picked up a live run outside this session
         // (raced between the readiness snapshot and here) just gets skipped.
@@ -421,7 +430,8 @@ export class EpicEngine {
     this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
-      'epic dispatch session ended — no children left to dispatch'
+      'epic dispatch session ended — no children left to dispatch',
+      'none'
     );
   }
 
@@ -444,11 +454,22 @@ export class EpicEngine {
     return epic;
   }
 
-  private appendEpicActivity(epicId: string, text: string): void {
+  // `actor` credits who caused this epic-level Activity line: omitted
+  // defaults to the daemon's human (start()/stop() are both only ever
+  // reached through the API), while a mechanical line (an auto-fill
+  // completing, a hook error) passes 'none' explicitly at its own call site.
+  private appendEpicActivity(
+    epicId: string,
+    text: string,
+    actor?: string
+  ): void {
     const now = new Date().toISOString();
     this.ctx.store.update(
       epicId,
-      { appendActivity: `${now} [epic] ${text}` },
+      {
+        appendActivity: `${now} [epic] ${text}`,
+        activityActor: actor ?? this.ctx.actorContext?.humanRef,
+      },
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);

@@ -1,16 +1,17 @@
-import {
-  DISPATCH_DIR,
-  formatActorRef,
-  parseTeam,
-  serializeTeam,
-  TeamParseError,
-  upsertMember,
-} from '@dispatch/core';
-import type { TeamMember } from '@dispatch/core';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import { formatActorRef } from './actor.js';
+import { DISPATCH_DIR } from './store.js';
+import type { TeamMember } from './team.js';
+import {
+  parseTeam,
+  serializeTeam,
+  TeamParseError,
+  upsertMember,
+} from './team.js';
 
 /** Reads one git config value; returns null when git or the key is unavailable. */
 export type GitReader = (args: string[]) => string | null;
@@ -28,7 +29,7 @@ function orFallback(
   return trimmed !== undefined && trimmed !== '' ? trimmed : fallback;
 }
 
-// Same override/fallback rule as daemonfile.ts's `daemonHome()` and
+// Same override/fallback rule as server's daemonfile.ts's `daemonHome()` and
 // orchestrator/paths.ts's `dispatchHome()` — no injectable param, just this.
 function userStateHome(): string {
   const home = process.env.DISPATCH_HOME;
@@ -63,8 +64,13 @@ function writeKnownHandle(rootDir: string, handle: string): void {
 }
 
 /**
- * The identity this daemon acts as. Derived from git config and recorded in
+ * The identity this process acts as. Derived from git config and recorded in
  * `.dispatch/team.yml` on first sight, so joining a team needs no invite step.
+ *
+ * Lives in `@dispatch/core` (not `@dispatch/server`) so both the daemon and
+ * the CLI can resolve the same identity through the same roster logic — the
+ * daemon is Bun-only, but everything this class touches (node:fs/crypto/os
+ * plus `@dispatch/core` itself) is plain Node, same as store.ts.
  */
 export class ActorContext {
   private constructor(

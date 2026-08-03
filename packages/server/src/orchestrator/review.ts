@@ -1,5 +1,6 @@
 import { loadConfig } from '@dispatch/core';
 import type {
+  ActorContext,
   CommandEvidence,
   Finding,
   FindingRecommendation,
@@ -13,7 +14,6 @@ import type {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ActorContext } from '../actorContext.js';
 import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
 import type { FindingStore } from '../findings.js';

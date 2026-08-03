@@ -1,5 +1,6 @@
 import { loadConfig } from '@dispatch/core';
 import type {
+  ActorContext,
   EscalationStep,
   Finding,
   TaskDoc,
@@ -229,6 +230,10 @@ export interface FixLoopContext {
   reviewRunner: ReviewRunner;
   findingStore: FindingStore;
   fixLoopStore: FixLoopStore;
+  // Optional, same "tests may omit it" contract as OrchestratorContext's own
+  // field — blockTask() below falls back to an unattributed Activity line
+  // when it's absent.
+  actorContext?: ActorContext;
 }
 
 /** The review -> fix -> re-review loop. Its cap does not resolve itself: a
@@ -435,7 +440,12 @@ export class FixLoop {
       step.strategy === 'resume' &&
       this.canResume(previous, step.modelTier, models.execute)
     ) {
-      this.ctx.orchestrator.sendMessage(previous.id, prompt, { resume: true });
+      // The fix loop's own escalation moved to the next round — no human
+      // typed this feedback, it's the loop's automated fix prompt.
+      this.ctx.orchestrator.sendMessage(previous.id, prompt, {
+        resume: true,
+        actor: 'none',
+      });
       return;
     }
     // A fresh implementer starts from the work so far rather than the task's
@@ -590,6 +600,9 @@ export class FixLoop {
         assignee: 'human',
         labels,
         appendActivity: `${now} blocked by finding ${finding.id}: ${finding.ruling ?? ''}`,
+        // adjudicate() (this method's only caller) is only ever reached
+        // through the human-facing ruling endpoint — no agent tool calls it.
+        activityActor: this.ctx.actorContext?.humanRef,
       },
       now
     );

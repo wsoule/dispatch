@@ -1167,7 +1167,9 @@ export class MergeQueue {
       }
       this.ctx.orchestrator.markRunMergedViaPr(meta.id);
     } else {
-      this.ctx.orchestrator.review(meta.id, 'merge');
+      // The queue's own automatic merge — nobody clicked Merge for this run,
+      // the queue decided it was ready.
+      this.ctx.orchestrator.review(meta.id, 'merge', { actor: 'none' });
     }
   }
 
