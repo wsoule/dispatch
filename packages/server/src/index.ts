@@ -3,6 +3,8 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
+import { ActorContext } from './actorContext.js';
+import type { GitReader } from './actorContext.js';
 import { handleApi, isTrustedOrigin } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
@@ -176,6 +178,18 @@ async function serveStatic(
   return null;
 }
 
+// ActorContext's GitReader seam: reads one git config value synchronously,
+// since identity resolution runs once at boot before anything else is ready.
+// No existing helper in git/commands.ts reads a single value (GitRepo's
+// methods are all async and shell out via a CommandRunner), so this is a
+// thin local wrapper instead.
+function makeGitReader(rootDir: string): GitReader {
+  return (args) => {
+    const result = Bun.spawnSync(['git', ...args], { cwd: rootDir });
+    return result.exitCode === 0 ? result.stdout.toString().trim() : null;
+  };
+}
+
 /**
  * Boots the dispatchd HTTP + WebSocket server for one dispatch project
  * (`rootDir`): a Bun.serve instance backed by an in-memory task cache that is
@@ -189,6 +203,11 @@ export async function startServer(
   const webDistDir =
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
+
+  // Who this daemon acts as. Resolved first, before anything touches the
+  // store, so a teammate is registered on the roster ahead of any task edit
+  // this process might make.
+  const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
 
   const store = new TaskStore(rootDir);
   const cache = new TaskCache();
@@ -401,6 +420,7 @@ export async function startServer(
     scopeRequests,
     linearSync,
     gitRepo,
+    actorContext,
   };
 
   const server = Bun.serve({
