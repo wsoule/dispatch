@@ -1272,7 +1272,11 @@ export interface DepMapCacheOptions {
 // every miss degrades to the built-in scanner and is reported once.
 export class DepMapCache {
   private cached: DepMap | null = null;
+  // Both survive invalidate() deliberately. The watcher invalidates on every
+  // debounced source change, so without these a missing binary would re-report
+  // forever and a failed `carto init` would respawn a 4-9s index each tick.
   private reported = false;
+  private initAttempted = false;
 
   constructor(
     private readonly rootDir: string,
@@ -1295,7 +1299,24 @@ export class DepMapCache {
       this.report(discovery.detail);
       return fallback;
     }
-    const opened = openCartoReader(this.rootDir);
+    let opened = openCartoReader(this.rootDir);
+    // Mode `on` is a build policy: a project that upgraded into carto without
+    // re-running `dispatch init` gets its container built here, once, on the
+    // first review that needs it. `detect` never builds.
+    if (
+      !opened.ok &&
+      opened.reason === 'no-container' &&
+      mode === 'on' &&
+      !this.initAttempted
+    ) {
+      this.initAttempted = true;
+      const built = cartoInit(this.rootDir, discovery.binary);
+      if (!built.ok) {
+        this.report(built.detail);
+        return fallback;
+      }
+      opened = openCartoReader(this.rootDir);
+    }
     if (!opened.ok) {
       this.report(opened.detail);
       return fallback;
@@ -1316,8 +1337,43 @@ export class DepMapCache {
 }
 ```
 
-Import `discoverCarto`, `openCartoReader`, and `type CartoMode` from
-`@dispatch/core/carto` at the top of the file.
+Import `cartoInit`, `discoverCarto`, `openCartoReader`, and `type CartoMode`
+from `@dispatch/core/carto` at the top of the file.
+
+Add a test for the build-on-boot path alongside the two above:
+
+```ts
+it('does not build a container when the mode is detect', () => {
+  writeFixtureWorkspace();
+  const cache = new DepMapCache(root, { mode: 'detect' });
+  cache.get();
+  expect(existsSync(join(root, '.carto'))).toBe(false);
+});
+```
+
+And a test pinning the retry guard, which is the durability half of this:
+
+```ts
+it('attempts carto init at most once across invalidations', () => {
+  writeFixtureWorkspace();
+  // No carto binary on PATH, so init can never succeed here; the guard is
+  // what stops the watcher from respawning it on every debounced change.
+  const seen: string[] = [];
+  const cache = new DepMapCache(root, {
+    mode: 'on',
+    onDegrade: (d) => seen.push(d.detail),
+  });
+  cache.get();
+  cache.invalidate();
+  cache.get();
+  cache.invalidate();
+  cache.get();
+  expect(seen.length).toBeLessThanOrEqual(1);
+});
+```
+
+`invalidate()` clears only the memoized map, so `build()` does re-run on the
+next `get()`. `reported` and `initAttempted` are what make that cheap.
 
 Note: `reported` deliberately survives `invalidate()`. A watcher firing every
 few seconds would otherwise re-report the same degradation forever — the same
@@ -1606,37 +1662,57 @@ if (config.carto.enabled !== 'off') {
     );
   }
 }
-const sample = buildDepMap(ctx.cwd);
-if (!hasAnyDependents(ctx.cwd, sample)) {
+// The built-in scanner only understands .ts/.tsx. With no carto and no
+// TypeScript, dependents() can only ever return [] — the silent scope
+// collapse this warning exists to expose.
+if (!discoverCarto().ok && !hasTypeScriptSources(ctx.cwd)) {
   ctx.log(
-    'warning: the dependency map is empty for this repo, so review scope covers only changed files'
+    'warning: no carto container and no TypeScript sources, so the dependency map is empty and review scope covers only changed files'
   );
 }
 ```
 
-Add a small local helper below the `Issue` interface:
+Add this helper below the `Issue` interface:
 
 ```ts
-// True when at least one source file has a known importer. An entirely empty
-// map means the scanner found no language it understands.
-function hasAnyDependents(rootDir: string, depMap: DepMap): boolean {
-  for (const dir of depMapSourceDirs(rootDir)) {
-    for (const file of collectSampleFiles(dir, 25)) {
-      if (depMap.dependents(file).length > 0) return true;
+const SOURCE_ROOTS = ['packages', 'apps', 'src', 'lib'];
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.dispatch']);
+
+// Shallow, bounded search for any .ts/.tsx file. This deliberately does NOT
+// build a dependency graph — the only question is whether the built-in
+// scanner could find anything at all in this repo.
+function hasTypeScriptSources(rootDir: string, depth = 4): boolean {
+  const search = (dir: string, left: number): boolean => {
+    if (left < 0 || !existsSync(dir)) return false;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
     }
-  }
-  return false;
+    for (const entry of entries) {
+      if (entry.isFile() && /\.tsx?$/.test(entry.name)) return true;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || SKIP_DIRS.has(entry.name)) continue;
+      if (search(join(dir, entry.name), left - 1)) return true;
+    }
+    return false;
+  };
+  if (search(rootDir, 0)) return true;
+  return SOURCE_ROOTS.some((name) => search(join(rootDir, name), depth));
 }
 ```
 
-`buildDepMap`, `depMapSourceDirs`, and `DepMap` live in `@dispatch/server`,
-which the CLI **cannot import** — it depends on server as a bin only. Move these
-three symbols into `@dispatch/core` as part of this step if they are not already
-there, or reimplement `hasAnyDependents` against a direct filesystem scan.
-**Prefer moving `depmap.ts` into `packages/core/src/depmap.ts`** and
-re-exporting it from the server, so there is one implementation; update
-`packages/server/src/depmap.ts` to `export * from '@dispatch/core/depmap'` plus
-the carto-specific additions from Tasks 5–6.
+Add `existsSync`, `readdirSync`, and `type Dirent` to the `node:fs` imports.
+
+**This deliberately avoids importing `depmap.ts`.** The CLI depends on
+`@dispatch/server` as a **bin only** — server publishes just `./package.json` in
+its `exports`, so `buildDepMap` is unreachable from here. Moving `depmap.ts`
+into core to make it importable would be a mid-plan refactor of O-6's file for a
+check that never needed the graph in the first place. A language-presence test
+answers the question directly, in one self-contained function, with no
+cross-package coupling and no second copy of any graph logic.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1796,14 +1872,34 @@ Containment → 3. Hook pinning → 3, verified in 0. Config → 4. Both MCP sur
 → 7 (executor) and 8 (`.mcp.json`, via the existing `registerMcpServer`).
 Testing strategy → 0 (spike), 5–6 (fixture + mutation), 9 (conditional).
 
-**Known risk carried forward:** Task 8 Step 3 discovers that `doctor` cannot
-import `depmap.ts` from `@dispatch/server`. The recommended resolution — moving
-`depmap.ts` into core — is a real refactor of O-6's file that lands mid-plan. If
-the reviewer would rather not move it, the fallback is a standalone filesystem
-check in the CLI, at the cost of a second implementation. **Raise this with the
-user when Task 8 begins rather than deciding unilaterally.**
+**Three defects found and fixed inline:**
 
-**Unresolved until Task 0:** the per-file-hops question in Task 5. If carto
-exposes only a scalar `hops`, `CartoDepMap` cannot reproduce O-6's depth
-ordering and trades a documented regression for multi-language support. That
-trade is the user's call, not the implementer's.
+1. **Task 8 could not compile.** `doctor` needs an empty-graph check, but the
+   CLI cannot import `buildDepMap` — `@dispatch/server` exports only
+   `./package.json`. The first draft punted this to a mid-plan refactor moving
+   `depmap.ts` into core. Fixed properly instead: `doctor` never needed a graph,
+   only "could the scanner find anything here?" — answered by
+   `hasTypeScriptSources()`, one self-contained function, no cross-package
+   coupling, no duplicated graph logic, no refactor of O-6's file.
+2. **Spec coverage gap.** The spec says `on` means "`dispatch init` **and daemon
+   boot** may run `carto init`," but only Task 8's CLI path built the container.
+   A project that upgraded without re-running `dispatch init` would never get
+   one. `DepMapCache.build()` now builds on first use under `on`.
+3. **A retry storm introduced by fix 2.** `invalidate()` clears the memo, so
+   `build()` re-runs on the next `get()` — a failed `cartoInit` would respawn a
+   4–9s index on every debounced watcher tick. Guarded with `initAttempted`,
+   which survives invalidation for the same reason `reported` does. Both have
+   pinning tests.
+
+**Type consistency:** checked across all ten tasks. Every symbol a task consumes
+— `discoverCarto`, `openCartoReader`, `cartoInit`, `cartoSync`, `CartoMode`,
+`createCartoDepMap`, `normalizeBlastRadius`, `CartoDegradation`,
+`buildCartoMcpServerConfig` — is produced by a named earlier task with a
+matching signature.
+
+**Genuinely unresolved until Task 0 runs:** the per-file-hops question in
+Task 5. Both branches are written out in full, so the implementer is never
+blocked — but if carto exposes only a scalar `hops`, `CartoDepMap` cannot
+reproduce O-6's depth ordering, trading a measured improvement for
+multi-language coverage. Report the measurement before proceeding; that trade is
+the user's call, not the implementer's.
