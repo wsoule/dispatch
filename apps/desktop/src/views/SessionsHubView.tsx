@@ -26,10 +26,10 @@ import { Skeleton } from '@/ui/skeleton';
 const RECENT_WINDOW_DAYS = 30;
 
 /**
- * Relay's entire observability surface, collapsed from five tabs (Dashboard, Projects,
+ * The entire observability surface, collapsed from five tabs (Dashboard, Projects,
  * Sessions, Timeline, Reports) into one view: headline spend tiles, spend by model, spend by
  * project (click a row to filter the session list below to that project), the session list
- * itself, and a single export action in the header. Everything here reads Relay's own local
+ * itself, and a single export action in the header. Everything here reads the app's own local
  * session/project data — no dispatch task/plan state lives on this page.
  */
 export function SessionsHubView() {

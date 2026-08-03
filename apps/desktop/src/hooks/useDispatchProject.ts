@@ -29,6 +29,11 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
+import {
+  configChangedQueryKeys,
+  dispatchConfigKey,
+  linearStatusKey,
+} from '../lib/configEvents';
 import type { DecideAvailability } from '../lib/daemonAuth';
 import {
   assertCanDecide,
@@ -40,7 +45,7 @@ import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
 import { resolveExecuteModel } from '../lib/models';
 import { notify } from '../lib/notifications';
-import { isTerminalRunState } from '../lib/runState';
+import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
@@ -571,7 +576,7 @@ export function useDispatchProject(
   );
 
   const tasksQueryKey = useMemo(() => ['dispatch-tasks', port], [port]);
-  const configQueryKey = useMemo(() => ['dispatch-config', port], [port]);
+  const configQueryKey = useMemo(() => dispatchConfigKey(port), [port]);
   const readyQueryKey = useMemo(() => ['dispatch-ready-tasks', port], [port]);
   const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
   const runDetailQueryKey = useMemo(
@@ -614,10 +619,7 @@ export function useDispatchProject(
   // missing from countMergeReady's lookup map entirely and read as
   // "not done", wrongly inflating the "Merge all ready" count.
   const allTasksQueryKey = useMemo(() => ['dispatch-tasks-all', port], [port]);
-  const linearStatusQueryKey = useMemo(
-    () => ['dispatch-linear-status', port],
-    [port]
-  );
+  const linearStatusQueryKey = useMemo(() => linearStatusKey(port), [port]);
   const linearTeamsQueryKey = useMemo(
     () => ['dispatch-linear-teams', port],
     [port]
@@ -1099,6 +1101,31 @@ export function useDispatchProject(
                 target: { kind: 'task', taskId: event.taskId },
               },
             ]);
+          } else if (event.type === 'config.changed') {
+            // Settings in another window, the CLI, and Linear connect/disconnect
+            // all write config; without this branch they sit stale here.
+            for (const key of configChangedQueryKeys(port)) {
+              void queryClient.invalidateQueries({ queryKey: key });
+            }
+          } else if (event.type === 'run.survey') {
+            // Same cache-read reason as approval.requested above. This is the
+            // only signal that a terminal run left uncommitted work behind.
+            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+            const taskTitle =
+              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+              event.runId;
+            const notice = runSurveyNotice(taskTitle, event.survey);
+            if (notice !== null) {
+              void notify(notice.title, notice.body);
+              onRecordInbox([
+                {
+                  ts: new Date().toISOString(),
+                  title: notice.title,
+                  body: notice.body,
+                  target: { kind: 'run', runId: event.runId },
+                },
+              ]);
+            }
           } else if (event.type === 'verification.changed') {
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),

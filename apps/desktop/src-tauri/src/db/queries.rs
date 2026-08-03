@@ -271,7 +271,7 @@ pub fn set_ingest_state(
 
 // --- Read side (frontend commands) ---
 
-/// Lists projects for display. A project row can exist for a directory Relay noticed but that
+/// Lists projects for display. A project row can exist for a directory the watcher noticed but that
 /// never actually ran a session (e.g. a bare `.claude` dir with no activity yet); the inner
 /// `JOIN sessions` excludes those — a directory with 0 sessions and $0 spent isn't something
 /// the user should see listed.
@@ -1391,7 +1391,7 @@ mod list_query_tests {
     #[test]
     fn a_project_with_no_sessions_is_not_listed() {
         let conn = in_memory_db();
-        // A directory Relay noticed but that never ran a session.
+        // A directory the watcher noticed but that never ran a session.
         upsert_project(&conn, "empty", "empty", "/empty", 1000).unwrap();
         seed(&conn, "active", 2000, &["s1"]);
 

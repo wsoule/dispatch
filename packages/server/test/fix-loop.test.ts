@@ -2,6 +2,7 @@ import { DEFAULT_FIX_LOOP, TaskStore } from '@dispatch/core';
 import type { Finding, TaskDoc } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -539,6 +540,28 @@ describe('a standing block', () => {
   }, 30000);
 });
 
+describe('a standing block with other findings still open', () => {
+  it('stops the loop instead of spending rounds on a task a human stopped', async () => {
+    const blocked = (await json<Finding>(await seedFinding())).id;
+    await seedFinding({ title: 'still open, nobody has ruled on it' });
+    const ruled = await adjudicate(blocked, {
+      verdict: 'blocked',
+      ruling: 'this ships a data-loss path; it must not merge',
+    });
+    expect(ruled.status).toBe(200);
+
+    const state = await json<FixLoopState>(await advance({ baseSha }));
+
+    expect(state.state).toBe('capped');
+    expect(state.stopReason).toBe('standing-block');
+    // Round 0: the block was standing before the loop opened, so no fix run
+    // was ever dispatched against it.
+    expect(state.round).toBe(0);
+    expect(await listRuns()).toEqual([]);
+    expect(await openFindings()).toHaveLength(1);
+  }, 30000);
+});
+
 describe('closing the findings a review judged', () => {
   it('leaves a finding filed after the review started open', async () => {
     const gated = new GatedAgent('review');
@@ -559,6 +582,43 @@ describe('closing the findings a review judged', () => {
     const byId = new Map(all.map((f) => [f.id, f.verdict]));
     expect(byId.get(before)).toBe('addressed');
     expect(byId.get(during)).toBe('open');
+  }, 30000);
+
+  it('leaves a finding it was never handed open, even one older than the run', async () => {
+    const gated = new GatedAgent('review');
+    await restartWith(gated);
+
+    const handed = (await json<Finding>(await seedFinding())).id;
+    await advance({ baseSha, cap: 1 });
+    await waitFor(async () => (await fixLoopState()).state === 'reviewing');
+
+    // Written straight into the store, dated before the review run existed:
+    // the window between reading the open findings and the run being created.
+    appendFileSync(
+      join(root, '.dispatch', 'findings.jsonl'),
+      `${JSON.stringify({
+        id: 'f-unseen',
+        taskId,
+        runId: null,
+        severity: 'minor',
+        verdict: 'open',
+        title: 'filed in the window this review never saw',
+        detail: 'detail',
+        file: null,
+        line: null,
+        ruling: null,
+        round: 0,
+        createdAt: '2020-01-01T00:00:00.000Z',
+        updatedAt: '2020-01-01T00:00:00.000Z',
+      })}\n`
+    );
+
+    gated.releaseGate();
+    await settle();
+
+    const byId = new Map((await allFindings()).map((f) => [f.id, f.verdict]));
+    expect(byId.get(handed)).toBe('addressed');
+    expect(byId.get('f-unseen')).toBe('open');
   }, 30000);
 });
 

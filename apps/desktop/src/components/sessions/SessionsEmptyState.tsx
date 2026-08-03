@@ -18,7 +18,7 @@ interface SessionsEmptyStateProps {
  * "nothing here yet" and "couldn't load" states — Dashboard, Projects, Sessions, Timeline, and
  * Reports each rendered their own near-identical copy of this block before this pass. Mirrors
  * `DaemonUnavailable`'s layout (icon, muted message, retry button) without that component's
- * dispatchd-specific copy, since these queries hit Relay's own local data, not the task daemon.
+ * dispatchd-specific copy, since these queries hit the app's own local data, not the task daemon.
  */
 export function SessionsEmptyState({
   icon,

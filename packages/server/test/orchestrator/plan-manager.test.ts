@@ -168,6 +168,31 @@ describe('PlanManager.confirm', () => {
 
     const epic = store.get(result.epicId!);
     expect(epic?.body).toContain('undeclared writes');
+    // The hold is against every live run in the project, not just this epic's
+    // siblings — see epic.test.ts's "wait on any live claim, even a disjoint one".
+    expect(epic?.body).toContain('no run is live anywhere in the project');
+  });
+
+  // A single-task epic is where "serialize" reads as vacuous, but the hold is
+  // project-wide, so that lone task still waits behind an unrelated run.
+  it('leaves the note on a single-task epic as well', async () => {
+    const proposal: PlanProposal = {
+      epic: { title: 'One thing', description: 'Just the one task.' },
+      tasks: [
+        {
+          title: 'Touches who knows what',
+          description: 'No writes declared.',
+          acceptanceCriteria: [],
+          blockedByIndices: [],
+          priority: 'medium',
+        },
+      ],
+    };
+    const manager = makeManager(new FakePlanner({ ok: true, proposal }));
+    const started = await startAndSettle(manager, 'do one thing');
+    const result = manager.confirm(started.id, proposal);
+
+    expect(store.get(result.epicId!)?.body).toContain('undeclared writes');
   });
 
   it("carries a task's declared writes/risk onto its created TaskMeta", async () => {

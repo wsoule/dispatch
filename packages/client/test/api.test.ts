@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { TaskDraft } from '../src/api';
+import type { ApiClient, TaskDraft } from '../src/api';
 import {
   createApiClient,
   httpToWs,
@@ -127,11 +127,43 @@ describe('request() defaults content-type: application/json for a JSON body', ()
       stub.restore();
     }
   });
+});
 
-  it('leaves a bodyless request with no content-type header at all', async () => {
+// The header has to be unconditional on writes, not body-conditional: while a
+// body-less POST arrived without it, the server's content-type check could never
+// be promoted from the body readers to a blanket router-level guard.
+describe('request() declares content-type on every state-changing request', () => {
+  const bodyless: Array<[string, (c: ApiClient) => Promise<unknown>]> = [
+    ['POST /api/git/pull', (c) => c.gitPull()],
+    ['POST /api/inbox/cluster', (c) => c.clusterInbox()],
+    ['POST /api/runs/:id/cancel', (c) => c.cancelRun('run-1')],
+    ['POST /api/runs/:id/resume', (c) => c.resumeRun('run-1')],
+    ['POST /api/notes/:id/enrich', (c) => c.enrichNote('note-1')],
+    ['POST /api/merge-queue/ready', (c) => c.enqueueMergeReady()],
+    ['DELETE /api/notes/:id', (c) => c.deleteNote('note-1')],
+  ];
+
+  for (const [label, call] of bodyless) {
+    it(`sends the header on a body-less ${label}`, async () => {
+      const stub = stubFetch();
+      try {
+        await call(createApiClient('http://example.test'));
+        expect(stub.calls).toHaveLength(1);
+        expect(stub.calls[0].init?.body).toBeUndefined();
+        const headers = new Headers(stub.calls[0].init?.headers);
+        expect(headers.get('content-type')).toBe('application/json');
+      } finally {
+        stub.restore();
+      }
+    });
+  }
+
+  // A content-type on a GET would make it a non-simple cross-origin request and
+  // buy a preflight for a request that carries nothing.
+  it('leaves a read with no content-type header at all', async () => {
     const stub = stubFetch();
     try {
-      await createApiClient('http://example.test').clusterInbox();
+      await createApiClient('http://example.test').fetchGitStatus();
       expect(stub.calls).toHaveLength(1);
       const headers = new Headers(stub.calls[0].init?.headers);
       expect(headers.has('content-type')).toBe(false);

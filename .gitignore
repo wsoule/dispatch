@@ -39,5 +39,4 @@ tsconfig.tsbuildinfo
 .agents/ignore/
 .env.worktree
 .superpowers/
-Relay/
 dispatch-fix-changed-files.zip
