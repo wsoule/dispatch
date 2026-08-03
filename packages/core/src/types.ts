@@ -7,7 +7,9 @@ export type TaskStatus =
   | 'cancelled';
 export type TaskKind = 'task' | 'epic';
 export type Priority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
-export type Assignee = 'agent' | 'human' | 'none';
+// A serialized ActorRef (see actor.ts): `none`, the legacy bare `human`/`agent`,
+// or a named `human:wyat` / `agent:wyat/claude`.
+export type Assignee = string;
 export type TaskRisk = 'routine' | 'elevated' | 'critical';
 
 export interface TaskMeta {
