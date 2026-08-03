@@ -101,7 +101,12 @@ export class ActorContext {
       mkdirSync(dir, { recursive: true });
       writeFileSync(file, serializeTeam(result.members));
     }
-    writeKnownHandle(rootDir, result.member.handle);
+    // Never persist a handle derived from a roster this boot couldn't read —
+    // upsertMember saw an empty member list, so its result can't be trusted
+    // enough to overwrite what a prior, successful boot recorded.
+    if (rosterReadable) {
+      writeKnownHandle(rootDir, result.member.handle);
+    }
     return new ActorContext(
       result.member,
       formatActorRef({

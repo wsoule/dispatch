@@ -139,4 +139,35 @@ describe('upsertMember', () => {
     expect(r.members).toHaveLength(1);
     expect(r.member.handle).toBe('w');
   });
+
+  it('lets the email lookup win when knownHandle points at a different person', () => {
+    // A corrupted known-handle file claims handle "w", but "w" belongs to
+    // someone else — the caller's own entry is the one matching by email.
+    const other = {
+      handle: 'w',
+      email: 'other@example.com',
+      displayName: 'Other Person',
+      emails: [],
+    };
+    const mine = {
+      handle: 'w2',
+      email: 'wyat@example.com',
+      displayName: 'Wyat Soule',
+      emails: [],
+    };
+    const r = upsertMember(
+      [other, mine],
+      'wyat@example.com',
+      'Wyat Soule',
+      'w'
+    );
+    expect(r.member.handle).toBe('w2');
+    expect(r.members).toHaveLength(2);
+    expect(r.members.find((m) => m.handle === 'w')?.email).toBe(
+      'other@example.com'
+    );
+    expect(r.members.find((m) => m.handle === 'w')?.displayName).toBe(
+      'Other Person'
+    );
+  });
 });

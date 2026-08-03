@@ -1,3 +1,4 @@
+import { parseTeam } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   mkdirSync,
@@ -112,6 +113,96 @@ describe('ActorContext.resolve', () => {
     // fresh from git rather than finding a stale record.
     const ctx = ActorContext.resolve(root, gitOk);
     expect(ctx.member.handle).toBe('w');
+  });
+
+  // Regression for the two compounding defects: (a) resolve() used to write
+  // a known-handle file even when the roster it derived from was unreadable
+  // (empty), and (b) upsertMember let a knownHandle match short-circuit
+  // ahead of the email lookup even when that match belonged to someone
+  // else. Together they let a corrupted known-handle file permanently
+  // merge two people's roster entries. This three-boot sequence reproduces
+  // it end to end and asserts the roster never merges.
+  it('does not let a corrupted known-handle file merge two roster entries', () => {
+    const root = fixture();
+    const rosterWithOther =
+      'members:\n  - handle: w\n    email: other@example.com\n    displayName: Other Person\n    emails: []\n';
+    writeFileSync(join(root, '.dispatch', 'team.yml'), rosterWithOther);
+
+    // Boot 1: Wyat's own git email also has local part "w" — collides with
+    // Other Person's handle, so Wyat is registered as "w2".
+    const gitWyat = (args: string[]) =>
+      args.includes('user.email') ? 'w@wyatcorp.com' : 'Wyat Soule';
+    const boot1 = ActorContext.resolve(root, gitWyat);
+    expect(boot1.member.handle).toBe('w2');
+
+    // Boot 2: team.yml develops a merge conflict before the next boot.
+    const conflicted =
+      'members:\n<<<<<<< HEAD\n  - handle: w\n=======\n  - handle: wyat\n>>>>>>> branch\n';
+    writeFileSync(join(root, '.dispatch', 'team.yml'), conflicted);
+    const boot2 = ActorContext.resolve(root, gitWyat);
+    expect(boot2.rosterReadable).toBe(false);
+
+    // The user repairs the conflict — team.yml restored with both members
+    // intact, exactly as before the conflict.
+    const rosterRepaired =
+      'members:\n' +
+      '  - handle: w\n    email: other@example.com\n    displayName: Other Person\n    emails: []\n' +
+      '  - handle: w2\n    email: w@wyatcorp.com\n    displayName: Wyat Soule\n    emails: []\n';
+    writeFileSync(join(root, '.dispatch', 'team.yml'), rosterRepaired);
+
+    // Boot 3 must resolve back to Wyat's own entry, not take over Other
+    // Person's.
+    const boot3 = ActorContext.resolve(root, gitWyat);
+    expect(boot3.member.handle).toBe('w2');
+    expect(boot3.member.email).toBe('w@wyatcorp.com');
+
+    const finalRoster = parseTeam(
+      readFileSync(join(root, '.dispatch', 'team.yml'), 'utf8')
+    );
+    expect(finalRoster).toHaveLength(2);
+    expect(finalRoster.find((m) => m.handle === 'w')?.email).toBe(
+      'other@example.com'
+    );
+    expect(finalRoster.find((m) => m.handle === 'w2')?.email).toBe(
+      'w@wyatcorp.com'
+    );
+  });
+
+  // Isolates fix (a) from fix (b): here the very first boot a new developer
+  // ever makes hits a conflicted team.yml, before any known-handle file
+  // exists — so upsertMember's byEmail lookup is undefined not because a
+  // legitimate email change is in progress, but because the roster it saw
+  // was empty. Fix (b) alone cannot tell those two cases apart (both leave
+  // byEmail undefined); only guarding the write in resolve() (fix a) keeps
+  // this boot's guess out of the known-handle file at all.
+  it('does not let a first boot against a conflicted roster poison the known-handle file', () => {
+    const root = fixture();
+    const rosterWithOther =
+      'members:\n  - handle: w\n    email: other@example.com\n    displayName: Other Person\n    emails: []\n';
+    const conflicted =
+      'members:\n<<<<<<< HEAD\n  - handle: w\n=======\n  - handle: wyat\n>>>>>>> branch\n';
+    // The roster is already conflicted before Wyat's daemon ever boots.
+    writeFileSync(join(root, '.dispatch', 'team.yml'), conflicted);
+
+    const gitWyat = (args: string[]) =>
+      args.includes('user.email') ? 'w@wyatcorp.com' : 'Wyat Soule';
+    const boot1 = ActorContext.resolve(root, gitWyat);
+    expect(boot1.rosterReadable).toBe(false);
+
+    // The conflict resolves to a roster that already has Other Person under
+    // handle "w" — the same handle boot1 would have (wrongly) derived from
+    // an empty roster, had it been allowed to persist that guess.
+    writeFileSync(join(root, '.dispatch', 'team.yml'), rosterWithOther);
+    const boot2 = ActorContext.resolve(root, gitWyat);
+
+    expect(boot2.member.handle).not.toBe('w');
+    expect(boot2.member.email).toBe('w@wyatcorp.com');
+    const roster = parseTeam(
+      readFileSync(join(root, '.dispatch', 'team.yml'), 'utf8')
+    );
+    expect(roster.find((m) => m.handle === 'w')?.email).toBe(
+      'other@example.com'
+    );
   });
 
   it('stands down without writing when the roster is conflicted', () => {
