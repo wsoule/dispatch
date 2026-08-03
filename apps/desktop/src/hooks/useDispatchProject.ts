@@ -29,6 +29,7 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
+import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
 import { resolveExecuteModel } from '../lib/models';
@@ -1063,19 +1064,25 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: fixLoopKey(port, event.taskId),
             });
-            // A capped loop needs a human — a toast plus a durable inbox row,
-            // since nothing else labels a freshly capped loop.
+            // A stopped loop needs a human — a toast plus a durable inbox row,
+            // worded from the stop reason so the row does not outlive what it
+            // asks for.
             const liveTasks =
               queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
             const taskTitle =
               liveTasks?.find((t) => t.meta.id === event.taskId)?.meta.title ??
               event.taskId;
-            void notify('Fix loop capped', taskTitle);
+            const notice = fixLoopCappedNotice(
+              taskTitle,
+              event.reason,
+              event.message
+            );
+            void notify(notice.title, taskTitle);
             onRecordInbox([
               {
                 ts: new Date().toISOString(),
-                title: 'Fix loop capped',
-                body: `${taskTitle} needs a ruling on its open findings.`,
+                title: notice.title,
+                body: notice.body,
                 target: { kind: 'task', taskId: event.taskId },
               },
             ]);

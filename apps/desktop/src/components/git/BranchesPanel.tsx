@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { GitSummary } from './GitSummary';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import type { BranchRowVM } from '@/lib/gitBranchRows';
+import { canActOnBranchRow } from '@/lib/gitBranchRows';
 import type { GitFilter } from '@/lib/gitHealth';
 import { computeGitHealth } from '@/lib/gitHealth';
 import { cn } from '@/lib/utils';
@@ -39,8 +40,6 @@ interface BranchesPanelProps {
   onFilterChange: (filter: GitFilter) => void;
   reclaiming: boolean;
   onReclaimMerged: () => void;
-  /** Every orphan whose commits already landed on its base — safe to delete in bulk. */
-  mergedOrphans: BranchEntry[];
   onDeleteAllMergedOrphans: () => void;
   onSelectIndex: (index: number) => void;
   onOpenRun: (runId: string) => void;
@@ -57,7 +56,6 @@ export function BranchesPanel({
   onFilterChange,
   reclaiming,
   onReclaimMerged,
-  mergedOrphans,
   onDeleteAllMergedOrphans,
   onSelectIndex,
   onOpenRun,
@@ -75,15 +73,15 @@ export function BranchesPanel({
         active={filter}
         onFocus={onFilterChange}
       />
-      {mergedOrphans.length > 0 && (
+      {health.mergedOrphans.length > 0 && (
         <Button
           variant="outline"
           size="xs"
           className="self-start"
           onClick={onDeleteAllMergedOrphans}
         >
-          Delete {mergedOrphans.length} merged orphan
-          {mergedOrphans.length === 1 ? '' : 's'}
+          Delete {health.mergedOrphans.length} merged orphan
+          {health.mergedOrphans.length === 1 ? '' : 's'}
         </Button>
       )}
       {rows.length === 0 ? (
@@ -97,8 +95,7 @@ export function BranchesPanel({
               row.worktree !== undefined
                 ? STATUS_CHIP[row.worktree.status]
                 : null;
-            const canAct =
-              row.worktree === undefined || row.worktree.status !== 'active';
+            const canAct = canActOnBranchRow(row);
             return (
               <div
                 key={row.name}

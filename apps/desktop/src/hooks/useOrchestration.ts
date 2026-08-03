@@ -37,6 +37,11 @@ export function epicLedgerKey(
 ) {
   return [ORCHESTRATION_QUERY_ROOT, 'ledger', port, epicId] as const;
 }
+/** The project-wide bucket (`epicId: null`), kept under the same 'ledger' root
+ *  so `ledger.changed` invalidates it alongside every epic's. */
+export function projectLedgerKey(port: number | undefined) {
+  return [ORCHESTRATION_QUERY_ROOT, 'ledger', port, null] as const;
+}
 export function findingsQueryRootKey(port: number | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'findings', port] as const;
 }
@@ -150,6 +155,30 @@ export function useEpicLedger(
       return client.fetchLedger({ epicId });
     },
     enabled: client !== null && epicId !== undefined,
+    retry: false,
+  });
+  return {
+    entries: data ?? [],
+    loading: isLoading,
+    error: error instanceof Error ? error.message : null,
+  };
+}
+
+/** The project-wide ledger — entries filed with no epic, which is where a
+ *  scope grant on a parentless task lands. Callers narrow it with
+ *  `taskLedgerEntries`. */
+export function useProjectLedger(
+  client: ApiClient | null,
+  port: number | undefined,
+  enabled: boolean
+) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: projectLedgerKey(port),
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLedger({ epicId: null });
+    },
+    enabled: client !== null && enabled,
     retry: false,
   });
   return {

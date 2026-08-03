@@ -23,9 +23,14 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useGit } from '../hooks/useGit';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import type { BranchRowVM } from '../lib/gitBranchRows';
-import { buildBranchRows, filterBranchRows } from '../lib/gitBranchRows';
+import {
+  buildBranchRows,
+  filterBranchRows,
+  forceDeleteDefault,
+} from '../lib/gitBranchRows';
 import { fileRowsFromStatus } from '../lib/gitFileRows';
 import type { GitFilter } from '../lib/gitHealth';
+import { computeGitHealth } from '../lib/gitHealth';
 import type {
   GitFileRow,
   GitPanelId,
@@ -392,12 +397,12 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     }
   }
 
-  const mergedOrphans = data.branches.filter(
-    (e) => e.status === 'orphan' && e.mergedIntoBase
-  );
+  // Both bulk actions read their set from the same health pass the summary
+  // renders its counts from, so the button's number is the set it acts on.
+  const health = computeGitHealth(data.branches);
 
   async function deleteAllMergedOrphans() {
-    for (const entry of mergedOrphans) {
+    for (const entry of health.mergedOrphans) {
       await runBranchMutation(entry.branch, () =>
         data.handleDeleteBranch(entry.branch)
       );
@@ -407,10 +412,8 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
   async function reclaimMerged() {
     setReclaiming(true);
     try {
-      for (const entry of data.branches) {
-        if (entry.worktreeExists && entry.mergedIntoBase && !entry.dirty) {
-          await data.handleFreeBranchDisk(entry.branch);
-        }
+      for (const entry of health.reclaimable) {
+        await data.handleFreeBranchDisk(entry.branch);
       }
     } finally {
       setReclaiming(false);
@@ -691,7 +694,6 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
                       }
                       reclaiming={reclaiming}
                       onReclaimMerged={() => void reclaimMerged()}
-                      mergedOrphans={mergedOrphans}
                       onDeleteAllMergedOrphans={() =>
                         void deleteAllMergedOrphans()
                       }
@@ -1065,9 +1067,7 @@ function ConfirmDialog({
   // Lazy initializer, no effect: the parent remounts this component per distinct `pending`
   // (see `pendingConfirmKey`), so this runs fresh instead of showing a stale value for a frame.
   const [force, setForce] = useState(
-    () =>
-      pending?.kind === 'delete-branch' &&
-      pending.row.worktree?.mergedIntoBase === false
+    () => pending?.kind === 'delete-branch' && forceDeleteDefault(pending.row)
   );
 
   if (pending === null) return null;
