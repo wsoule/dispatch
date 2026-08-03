@@ -1,6 +1,6 @@
 ---
 id: t-8fc90d
-title: Get written licensing grant from Relay's author
+title: Get written licensing grant from the desktop shell's upstream author
 status: cancelled
 kind: task
 parent: e-ec195e

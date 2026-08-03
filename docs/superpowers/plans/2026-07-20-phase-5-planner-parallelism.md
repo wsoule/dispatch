@@ -79,8 +79,8 @@ no-live-target error, prefix applied); MCP agent_message both daemon states.
   progress (x/y done, active runs), stop.
 - PR: button on finished-run review surface when health.pr; PR link chip on task
   detail; merged-state auto-refresh.
-- Follow Relay tokens; reuse run components from O3. Client package gains
-  plan/epic/inject APIs.
+- Follow the desktop design tokens; reuse run components from O3. Client package
+  gains plan/epic/inject APIs.
 - Tests: client API units; proposal-editing reducer logic unit-tested; build
   green.
 

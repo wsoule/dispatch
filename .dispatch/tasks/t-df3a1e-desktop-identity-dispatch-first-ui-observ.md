@@ -1,6 +1,6 @@
 ---
 id: t-df3a1e
-title: "Desktop identity: Dispatch-first UI, Relay views become the Sessions area"
+title: "Desktop identity: Dispatch-first UI, observability views become the Sessions area"
 status: done
 kind: task
 parent: e-ec195e
