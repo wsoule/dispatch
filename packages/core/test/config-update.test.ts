@@ -128,4 +128,43 @@ describe('updateConfig', () => {
     expect(cfg.orchestrator.epicConcurrency).toBe(9);
     expect(cfg.orchestrator.verifyTimeoutSec).toBe(120);
   });
+
+  test('writes a turn cap and a budget cap under orchestrator', () => {
+    const dir = root();
+    updateConfig(dir, { maxTurns: 40, maxBudgetUsd: 12.5 });
+    const cfg = loadConfig(dir);
+    expect(cfg.orchestrator.maxTurns).toBe(40);
+    expect(cfg.orchestrator.maxBudgetUsd).toBe(12.5);
+  });
+
+  // Both are optional in OrchestratorConfig, so clearing is a real state — "no cap"
+  // is different from "a cap of zero", which the loader rejects outright.
+  test('clears a cap when passed null', () => {
+    const dir = root();
+    updateConfig(dir, { maxTurns: 40, maxBudgetUsd: 12.5 });
+    updateConfig(dir, { maxTurns: null, maxBudgetUsd: null });
+    const cfg = loadConfig(dir);
+    expect(cfg.orchestrator.maxTurns).toBeUndefined();
+    expect(cfg.orchestrator.maxBudgetUsd).toBeUndefined();
+  });
+
+  test('refuses a non-positive turn cap before it reaches disk', () => {
+    expect(() => updateConfig(root(), { maxTurns: 0 })).toThrow(
+      /invalid maxTurns: must be a positive number/
+    );
+  });
+
+  test('refuses a non-positive budget cap before it reaches disk', () => {
+    expect(() => updateConfig(root(), { maxBudgetUsd: -1 })).toThrow(
+      /invalid maxBudgetUsd: must be a positive number/
+    );
+  });
+
+  // A budget is money, so fractions are legitimate — unlike epicConcurrency, this
+  // must not be an integer check.
+  test('accepts a fractional budget cap', () => {
+    const dir = root();
+    updateConfig(dir, { maxBudgetUsd: 0.75 });
+    expect(loadConfig(dir).orchestrator.maxBudgetUsd).toBe(0.75);
+  });
 });
