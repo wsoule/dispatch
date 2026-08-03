@@ -1,5 +1,5 @@
+import type { CartoMode } from '@dispatch/core';
 import { loadConfig, TaskStore } from '@dispatch/core';
-import { cartoSync, discoverCarto } from '@dispatch/core/carto';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,7 +8,12 @@ import { handleApi, isTrustedOrigin } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
-import { DepMapCache, depMapSourceDirs, isSkippedPath } from './depmap.js';
+import {
+  createSourceChangeHandler,
+  DepMapCache,
+  depMapSourceDirs,
+  isSkippedPath,
+} from './depmap.js';
 import { EventBus } from './events.js';
 import { FindingStore } from './findings.js';
 import { GitRepo } from './git/commands.js';
@@ -231,7 +236,16 @@ export async function startServer(
   // it when available; the built-in scanner is the fallback. Source changes
   // re-sync carto's container before invalidating, so the next review reads a
   // current graph.
-  const cartoMode = loadConfig(rootDir).carto.enabled;
+  // Boot must survive a malformed config.yml: this is the first loadConfig on
+  // the startup path, and per-request loads still surface the real error.
+  let cartoMode: CartoMode = 'on';
+  try {
+    cartoMode = loadConfig(rootDir).carto.enabled;
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read carto config, defaulting to 'on': ${(err as Error).message}`
+    );
+  }
   const depMapCache = new DepMapCache(rootDir, {
     mode: cartoMode,
     onDegrade: ({ detail }) => {
@@ -244,13 +258,11 @@ export async function startServer(
   });
   const sourceWatcher = watchSourceDirs(
     depMapSourceDirs(rootDir),
-    () => {
-      if (cartoMode !== 'off') {
-        const discovery = discoverCarto();
-        if (discovery.ok) cartoSync(rootDir, discovery.binary);
-      }
-      depMapCache.invalidate();
-    },
+    createSourceChangeHandler({
+      rootDir,
+      mode: cartoMode,
+      cache: depMapCache,
+    }),
     isSkippedPath
   );
 

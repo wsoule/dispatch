@@ -1,4 +1,8 @@
-import type { CartoBlastRadius, CartoReader } from '@dispatch/core/carto';
+import type {
+  CartoBlastRadius,
+  CartoReader,
+  CartoRunResult,
+} from '@dispatch/core/carto';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,
@@ -15,6 +19,7 @@ import { delimiter, join } from 'node:path';
 import {
   buildDepMap,
   createCartoDepMap,
+  createSourceChangeHandler,
   DepMapCache,
   depMapSourceDirs,
   isSkippedPath,
@@ -196,6 +201,10 @@ describe('isSkippedPath', () => {
     expect(isSkippedPath('server/node_modules/foo/index.js')).toBe(true);
     expect(isSkippedPath('.dispatch/runs/r-1.jsonl')).toBe(true);
     expect(isSkippedPath('.git/HEAD')).toBe(true);
+    // carto's own output: without this, a sync's writes re-arm the watcher
+    // that triggered it, which loops on any repo watched at its root.
+    expect(isSkippedPath('.carto/carto.db')).toBe(true);
+    expect(isSkippedPath('.carto/CONTEXT.md')).toBe(true);
   });
 
   it('does not flag an ordinary source path', () => {
@@ -409,7 +418,11 @@ describe('DepMapCache backend selection', () => {
     );
     chmodSync(stub, 0o755);
     const originalPath = process.env.PATH;
+    const originalDisabled = process.env.DISPATCH_CARTO_DISABLED;
     process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`;
+    // packages/cli's preload sets this when `bun test` runs from the repo
+    // root; the stub above is exactly what this test wants discovered.
+    delete process.env.DISPATCH_CARTO_DISABLED;
     try {
       const seen: string[] = [];
       const cache = new DepMapCache(root, {
@@ -430,6 +443,131 @@ describe('DepMapCache backend selection', () => {
       expect(initCalls).toBe(1);
     } finally {
       process.env.PATH = originalPath;
+      if (originalDisabled !== undefined) {
+        process.env.DISPATCH_CARTO_DISABLED = originalDisabled;
+      }
     }
+  });
+});
+
+describe('createSourceChangeHandler', () => {
+  // A CartoDiscovery for a binary that is never actually spawned: the
+  // handler's sync is injected in every test below.
+  const foundBinary = {
+    ok: true as const,
+    binary: { path: '/nonexistent/carto', version: '2.9.9' },
+  };
+
+  function countingCache(counter: { invalidations: number }): DepMapCache {
+    const cache = new DepMapCache(root, { mode: 'off' });
+    const original = cache.invalidate.bind(cache);
+    cache.invalidate = () => {
+      counter.invalidations += 1;
+      original();
+    };
+    return cache;
+  }
+
+  it('invalidates the cache without syncing when there is no container', () => {
+    const counter = { invalidations: 0 };
+    let syncs = 0;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => foundBinary,
+      sync: () => {
+        syncs += 1;
+        return Promise.resolve({ ok: true, detail: 'synced' });
+      },
+    });
+    handler();
+    expect(counter.invalidations).toBe(1);
+    expect(syncs).toBe(0);
+  });
+
+  it('never syncs or discovers when the mode is off', () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let discoveries = 0;
+    let syncs = 0;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'off',
+      cache: countingCache(counter),
+      discover: () => {
+        discoveries += 1;
+        return foundBinary;
+      },
+      sync: () => {
+        syncs += 1;
+        return Promise.resolve({ ok: true, detail: 'synced' });
+      },
+    });
+    handler();
+    expect(counter.invalidations).toBe(1);
+    expect(discoveries).toBe(0);
+    expect(syncs).toBe(0);
+  });
+
+  it('runs one sync at a time and discovers carto only once', async () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let discoveries = 0;
+    let syncs = 0;
+    let release: (() => void) | null = null;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => {
+        discoveries += 1;
+        return foundBinary;
+      },
+      sync: () => {
+        syncs += 1;
+        return new Promise<CartoRunResult>((resolve) => {
+          release = () => {
+            resolve({ ok: true, detail: 'synced' });
+          };
+        });
+      },
+    });
+    handler();
+    handler();
+    handler();
+    // Every change invalidates, but the two bursts landing while the first
+    // sync is still running must not queue further spawns.
+    expect(counter.invalidations).toBe(3);
+    expect(syncs).toBe(1);
+    (release as unknown as () => void)();
+    await Promise.resolve();
+    await Promise.resolve();
+    // Finishing invalidates again, so the next review reads the fresh
+    // container, and releases the single-flight guard.
+    expect(counter.invalidations).toBe(4);
+    handler();
+    expect(syncs).toBe(2);
+    expect(discoveries).toBe(1);
+  });
+
+  it('keeps invalidating after carto turns out to be unavailable', () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let syncs = 0;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => ({ ok: false, reason: 'not-found', detail: 'absent' }),
+      sync: () => {
+        syncs += 1;
+        return Promise.resolve({ ok: true, detail: 'synced' });
+      },
+    });
+    handler();
+    handler();
+    expect(counter.invalidations).toBe(2);
+    expect(syncs).toBe(0);
   });
 });
