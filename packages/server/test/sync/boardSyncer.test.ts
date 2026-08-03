@@ -1,6 +1,13 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -28,6 +35,22 @@ afterEach(() => {
   rmSync(fakeHome, { recursive: true, force: true });
   resetSyncers();
 });
+
+// Deterministic push rejection, independent of filesystem permissions (which
+// behave differently across platforms and under a root test runner): a
+// pre-receive hook that always rejects the push, the way a protected trunk
+// or missing write access would.
+function installRejectingHook(bareRepo: string): void {
+  const hooksDir = join(bareRepo, 'hooks');
+  mkdirSync(hooksDir, { recursive: true });
+  const hookPath = join(hooksDir, 'pre-receive');
+  writeFileSync(hookPath, '#!/bin/sh\nexit 1\n');
+  chmodSync(hookPath, 0o755);
+}
+
+function removeRejectingHook(bareRepo: string): void {
+  rmSync(join(bareRepo, 'hooks', 'pre-receive'), { force: true });
+}
 
 describe('BoardSyncer.syncOnce', () => {
   it('mirrors an edit from clone A into clone B’s sync worktree', async () => {
@@ -462,6 +485,147 @@ describe('BoardSyncer.syncOnce', () => {
     const written = syncerFor(a).materialize();
     expect(written).toBe(0);
     expect(storeA.get(doc.meta.id)?.meta.title).toBe('Not yet synced');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+});
+
+describe('BoardSyncer degradation', () => {
+  it('a push rejected by the remote is local-only, keeps the commit, and recovers once unblocked', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const doc = storeA.create({ title: 'Blocked by a protected trunk' });
+
+    installRejectingHook(origin);
+    const result = await syncerFor(a).syncOnce();
+
+    expect(result.state).toBe('local-only');
+    expect(result.pushed).toBe(0);
+    expect(result.detail).not.toBeNull();
+
+    // The commit is not lost — it sits in the private sync worktree waiting
+    // for the next successful push, not discarded or retried destructively.
+    const worktreeA = SyncWorktree.open(a, run);
+    if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    const log = runGitSync(worktreeA.path, ['log', '--oneline']);
+    expect(log).toContain('sync 1 task');
+
+    // Repair: the hook goes away, exactly as a protected-branch rule being
+    // lifted or write access being restored would look from the syncer's
+    // side. No other state changes — recovery must be automatic.
+    removeRejectingHook(origin);
+    const recovered = await syncerFor(a).syncOnce();
+    expect(recovered.state).toBe('idle');
+    expect(recovered.detail).toBeNull();
+
+    const resultB = await syncerFor(b).syncOnce();
+    expect(resultB.state).toBe('idle');
+    expect(new TaskStore(b).get(doc.meta.id)?.meta.title).toBe(
+      'Blocked by a protected trunk'
+    );
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('an unreachable origin during pull is local-only (not blocked), and recovers once reachable', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const doc = storeA.create({ title: 'Queued while offline' });
+
+    const badUrl = join(mkdtempSync(join(tmpdir(), 'dispatch-gone-')), 'nope');
+    runGitSync(a, ['remote', 'set-url', 'origin', badUrl]);
+
+    const result = await syncerFor(a).syncOnce();
+    expect(result.state).toBe('local-only');
+    expect(result.pushed).toBe(0);
+    expect(result.detail).not.toBeNull();
+
+    const worktreeA = SyncWorktree.open(a, run);
+    if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    const log = runGitSync(worktreeA.path, ['log', '--oneline']);
+    expect(log).toContain('sync 1 task');
+
+    // Repair: the network/remote comes back — pointing origin at the real
+    // bare repo again.
+    runGitSync(a, ['remote', 'set-url', 'origin', origin]);
+    const recovered = await syncerFor(a).syncOnce();
+    expect(recovered.state).toBe('idle');
+
+    await syncerFor(b).syncOnce();
+    expect(new TaskStore(b).get(doc.meta.id)?.meta.title).toBe(
+      'Queued while offline'
+    );
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('a genuine rebase conflict is blocked, surfaces the conflicting path, leaves the worktree usable, and self-heals on the next sync', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const storeB = new TaskStore(b);
+    const doc = storeA.create(
+      { title: 'Original title' },
+      '2026-08-01T00:00:00.000Z'
+    );
+    await syncerFor(a).syncOnce();
+    await syncerFor(b).syncOnce();
+
+    // Bob edits and pushes the very same field first.
+    storeB.update(
+      doc.meta.id,
+      { title: 'Title from bob' },
+      '2026-08-02T00:00:00.000Z'
+    );
+    const resultB = await syncerFor(b).syncOnce();
+    expect(resultB.state).toBe('idle');
+
+    // Alice edits the same field independently, unaware of bob's push — a
+    // real one-line collision, not something git can silently merge.
+    storeA.update(
+      doc.meta.id,
+      { title: 'Title from alice' },
+      '2026-08-03T00:00:00.000Z'
+    );
+    const result = await syncerFor(a).syncOnce();
+
+    expect(result.state).toBe('blocked');
+    expect(result.detail).not.toBeNull();
+    expect(result.detail).toContain(doc.meta.id);
+
+    const worktreeA = SyncWorktree.open(a, run);
+    if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    // Not left mid-rebase: status is clean and REBASE_HEAD no longer exists.
+    const status = runGitSync(worktreeA.path, ['status', '--porcelain']);
+    expect(status.trim()).toBe('');
+    const rebaseHead = run(worktreeA.path, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      'REBASE_HEAD',
+    ]);
+    expect(rebaseHead.status).not.toBe(0);
+
+    // Alice's own working tree is untouched — the board keeps serving the
+    // last good state, and her edit was never lost.
+    expect(storeA.get(doc.meta.id)?.meta.title).toBe('Title from alice');
+
+    // Recovery: nothing manual, just sync again — the same last-write-wins
+    // rule the push side already applies (isOutstanding) re-derives a fresh
+    // commit straight from Alice's current file, on top of trunk.
+    const recovered = await syncerFor(a).syncOnce();
+    expect(recovered.state).toBe('idle');
+    expect(recovered.pushed).toBe(1);
+
+    await syncerFor(b).syncOnce();
+    expect(new TaskStore(b).get(doc.meta.id)?.meta.title).toBe(
+      'Title from alice'
+    );
 
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);

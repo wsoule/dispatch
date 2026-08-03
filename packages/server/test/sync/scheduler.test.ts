@@ -1,7 +1,9 @@
 import { ActorContext, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -57,6 +59,16 @@ function schedulerFor(
     events,
     debounceMs,
   });
+}
+
+// Mirrors boardSyncer.test.ts's own helper: a pre-receive hook is a
+// deterministic, cross-platform way to force a rejected push.
+function installRejectingHook(bareRepo: string): void {
+  const hooksDir = join(bareRepo, 'hooks');
+  mkdirSync(hooksDir, { recursive: true });
+  const hookPath = join(hooksDir, 'pre-receive');
+  writeFileSync(hookPath, '#!/bin/sh\nexit 1\n');
+  chmodSync(hookPath, 0o755);
 }
 
 function collectBoardSyncEvents(events: EventBus): ServerEvent[] {
@@ -135,6 +147,32 @@ describe('BoardSyncScheduler', () => {
     // Never even attempted: no commit, no push, nothing — the private sync
     // worktree is never created.
     expect(existsSync(worktree?.path ?? '')).toBe(false);
+
+    scheduler.stop();
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('a failing sync does not retry itself — only the next real change tries again', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    installRejectingHook(origin);
+    new TaskStore(a).create({ title: 'Will fail to push' });
+
+    const events = new EventBus();
+    const seen = collectBoardSyncEvents(events);
+    const scheduler = schedulerFor(a, events, 15);
+
+    scheduler.notifyTaskChanged();
+    // Long enough for several debounce windows to have elapsed if the
+    // scheduler were silently re-arming itself after the failure — proves
+    // absence, not just an unlucky timing window.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toMatchObject({
+      type: 'board.sync',
+      result: { state: 'local-only' },
+    });
 
     scheduler.stop();
     rmSync(origin, { recursive: true, force: true });
