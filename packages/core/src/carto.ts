@@ -24,7 +24,7 @@ const MIN_MAJOR = 2;
 // installed carto always wins over a brew one.
 const BREW_BIN_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
 
-function isExecutableFile(path: string): boolean {
+function isRegularFile(path: string): boolean {
   try {
     return statSync(path).isFile();
   } catch {
@@ -32,27 +32,34 @@ function isExecutableFile(path: string): boolean {
   }
 }
 
-function candidateDirs(env: NodeJS.ProcessEnv): string[] {
+function candidateDirs(
+  env: NodeJS.ProcessEnv,
+  extraDirs: readonly string[]
+): string[] {
   const fromPath = (env.PATH ?? '').split(delimiter).filter((d) => d !== '');
-  return [...fromPath, ...BREW_BIN_DIRS];
+  return [...fromPath, ...extraDirs];
 }
 
 // Locates `carto`, runs `--version`, and gates on the 2.x floor. Returns a
-// result rather than throwing: every caller's correct response to an absent
-// or too-old carto is to degrade, not to fail.
+// result rather than throwing.
 export function discoverCarto(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  extraDirs: readonly string[] = BREW_BIN_DIRS
 ): CartoDiscovery {
   let found: string | null = null;
-  for (const dir of candidateDirs(env)) {
+  for (const dir of candidateDirs(env, extraDirs)) {
     const candidate = join(dir, 'carto');
-    if (existsSync(candidate) && isExecutableFile(candidate)) {
+    if (existsSync(candidate) && isRegularFile(candidate)) {
       found = candidate;
       break;
     }
   }
   if (found === null) {
-    return { ok: false, reason: 'not-found', detail: 'no `carto` on PATH' };
+    return {
+      ok: false,
+      reason: 'not-found',
+      detail: 'no `carto` found on PATH or in the fallback directories',
+    };
   }
 
   const probe = spawnSync(found, ['--version'], { encoding: 'utf8' });

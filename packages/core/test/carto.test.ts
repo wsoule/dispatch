@@ -39,7 +39,7 @@ describe('discoverCarto', () => {
   it('reports not-found rather than throwing when carto is absent', () => {
     const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
     try {
-      const result = discoverCarto({ PATH: join(root, 'empty') });
+      const result = discoverCarto({ PATH: join(root, 'empty') }, []);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('not-found');
     } finally {
@@ -52,7 +52,7 @@ describe('discoverCarto', () => {
     try {
       const binDir = join(root, 'bin');
       writeFakeCarto(binDir, '1.9.0');
-      const result = discoverCarto({ PATH: binDir });
+      const result = discoverCarto({ PATH: binDir }, []);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('unsupported-version');
     } finally {
