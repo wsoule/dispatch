@@ -1821,7 +1821,7 @@ async function updateNote(
     (typeof body.kind !== 'string' ||
       !NOTE_KINDS.includes(body.kind as NoteKind))
   ) {
-    return errorResponse(400, `invalid kind: ${String(body.kind)}`);
+    return errorResponse(400, `invalid kind: ${JSON.stringify(body.kind)}`);
   }
   try {
     const note = ctx.noteStore.update(id, {
