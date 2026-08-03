@@ -13,11 +13,16 @@ import {
   registerDaemonCommands,
 } from './commands/daemon.js';
 import { registerDoctorCommand } from './commands/doctor.js';
+import { registerMergeTaskCommand } from './commands/mergeTask.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerTaskCommands } from './commands/task.js';
 import type { CliContext } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
+import {
+  registerMergeDriverGitConfig,
+  writeGitAttributes,
+} from './mergeDriver.js';
 
 // Scaffolds `.dispatch/` for `ctx.cwd` if it isn't there yet. Shared by
 // `dispatch init` (explicit, always reports what happened) and the bare
@@ -57,6 +62,11 @@ export function makeProgram(ctx: CliContext): Command {
         registerMcpServer(ctx.cwd);
         ctx.log('Registered the dispatch MCP server in .mcp.json');
       }
+      writeGitAttributes(ctx.cwd);
+      registerMergeDriverGitConfig(ctx.cwd);
+      ctx.log(
+        'Registered the task-file merge driver (.gitattributes + git config)'
+      );
     });
 
   // Bare `dispatch` in a repo: initialize if needed, register the project,
@@ -96,6 +106,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerDaemonCommands(program, ctx);
   registerOrchestrateCommands(program, ctx);
   registerPlanCommands(program, ctx);
+  registerMergeTaskCommand(program, ctx);
 
   return program;
 }

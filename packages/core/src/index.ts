@@ -46,6 +46,7 @@ export {
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
 export { TaskStore, DISPATCH_DIR } from './store.js';
+export { mergeTaskFile } from './mergeTask.js';
 export type {
   CreateInput,
   UpdatePatch,
