@@ -1,4 +1,5 @@
 import {
+  ActorContext,
   ASSIGNEES,
   KINDS,
   loadConfig,
@@ -6,12 +7,30 @@ import {
   readyTasks,
   TaskStore,
 } from '@dispatch/core';
-import type { Priority, TaskDoc, TaskKind } from '@dispatch/core';
+import type { GitReader, Priority, TaskDoc, TaskKind } from '@dispatch/core';
 import type { Command } from 'commander';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
+
+// ActorContext's GitReader seam, Node-based — mirrors server/src/index.ts's
+// `makeGitReader` (which uses Bun.spawnSync instead, since the daemon is
+// Bun-only) so the CLI resolves the exact same identity a daemon in the same
+// repo would.
+function makeGitReader(cwd: string): GitReader {
+  return (args) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    return result.status === 0 ? result.stdout.trim() : null;
+  };
+}
+
+// The CLI is always run directly by a human at a terminal — resolved fresh
+// per command, same as the daemon resolves it fresh per boot.
+function resolveActor(ctx: CliContext): ActorContext {
+  return ActorContext.resolve(ctx.cwd, makeGitReader(ctx.cwd));
+}
 
 export function requireStore(ctx: CliContext): TaskStore {
   const store = new TaskStore(ctx.cwd);
@@ -140,6 +159,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       store.update(id, {
         status: valid,
         appendActivity: `${new Date().toISOString()} status → ${valid}`,
+        activityActor: resolveActor(ctx).humanRef,
       });
       ctx.log(`${id} → ${valid}`);
     });
