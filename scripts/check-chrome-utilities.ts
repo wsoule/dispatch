@@ -1,9 +1,8 @@
 #!/usr/bin/env bun
 import { Glob } from 'bun';
 
-// Container chrome is the private vocabulary of src/ui/chrome. Views and domain
-// components compose those primitives instead of respelling a panel, which is
-// what let 85 hand-rolled containers drift apart before the layer existed.
+// Container chrome is the private vocabulary of src/ui/chrome; views compose the
+// primitives instead of respelling a panel, as 85 hand-rolled containers did.
 const BANNED = [
   'rounded-sm',
   'rounded-md',
@@ -15,11 +14,62 @@ const BANNED = [
   'text-muted-foreground',
 ];
 
-// Everything under src/ui/ — the chrome primitives themselves plus the
-// shadcn-style base components they're built from — legitimately spells out
-// these utilities. `includes` (not `startsWith`) matches this substring
-// regardless of the workspace prefix the caller globbed from (e.g.
-// `apps/desktop/src/ui/chrome/panel.tsx`).
+// Tailwind's stock colour scales. The app's own semantic colours (`text-green`,
+// `bg-state-failed`, …) carry no numeric shade, so requiring one below keeps
+// them out of this rule while catching `text-emerald-400` and friends.
+const HUE_SCALES = [
+  'slate',
+  'gray',
+  'zinc',
+  'neutral',
+  'stone',
+  'red',
+  'orange',
+  'amber',
+  'yellow',
+  'lime',
+  'green',
+  'emerald',
+  'teal',
+  'cyan',
+  'sky',
+  'blue',
+  'indigo',
+  'violet',
+  'purple',
+  'fuchsia',
+  'pink',
+  'rose',
+];
+
+const HUE_PROPERTIES = [
+  'text',
+  'bg',
+  'border',
+  'ring',
+  'ring-offset',
+  'fill',
+  'stroke',
+  'from',
+  'via',
+  'to',
+  'divide',
+  'outline',
+  'decoration',
+  'shadow',
+  'accent',
+  'caret',
+  'placeholder',
+];
+
+const RAW_HUE = new RegExp(
+  `(?<![\\w-])(?:${HUE_PROPERTIES.join('|')})-(?:${HUE_SCALES.join('|')})-\\d{2,3}(?![\\w-])`,
+  'g'
+);
+
+// src/ui/ — the chrome primitives and the shadcn bases under them — is where
+// these utilities legitimately live. `includes`, not `startsWith`, so it matches
+// whatever workspace prefix the caller globbed from.
 const EXEMPT = ['src/ui/'];
 
 export interface Violation {
@@ -35,13 +85,16 @@ export function findViolations(
   for (const file of files) {
     if (EXEMPT.some((prefix) => file.path.includes(prefix))) continue;
     for (const utility of BANNED) {
-      // Word boundaries so `not-rounded-md-thing` is not a hit, and so a
-      // shorter banned utility doesn't also fire inside a longer one that
-      // shares its prefix (e.g. `shadow-hairline` inside
-      // `shadow-hairline-strong`).
+      // Word boundaries so `not-rounded-md-thing` misses, and so `shadow-hairline`
+      // doesn't also fire inside `shadow-hairline-strong`.
       if (new RegExp(`(?<![\\w-])${utility}(?![\\w-])`).test(file.text)) {
         found.push({ path: file.path, utility });
       }
+    }
+    // One row per distinct hue utility, matching how the container rule reports:
+    // a file that says `text-emerald-400` four times is one thing to fix.
+    for (const utility of new Set(file.text.match(RAW_HUE) ?? [])) {
+      found.push({ path: file.path, utility });
     }
   }
   return found;
@@ -49,7 +102,9 @@ export function findViolations(
 
 if (import.meta.main) {
   const files: Array<{ path: string; text: string }> = [];
-  for await (const path of new Glob('apps/desktop/src/**/*.tsx').scan('.')) {
+  for await (const path of new Glob('apps/desktop/src/**/*.{ts,tsx}').scan(
+    '.'
+  )) {
     files.push({ path, text: await Bun.file(path).text() });
   }
   const violations = findViolations(files);
