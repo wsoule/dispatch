@@ -69,6 +69,58 @@ test('does not let a longer banned utility mask a shorter one at a hyphen bounda
   expect(found[0]?.utility).toBe('shadow-hairline-strong');
 });
 
+// The branch's thesis is that chrome has no hue, so a stock Tailwind colour
+// scale in a view is the rule CI most needs to hold.
+test('flags a raw Tailwind palette hue in a view', () => {
+  const found = findViolations([
+    {
+      path: 'src/views/PlansView.tsx',
+      text: "state === 'ready' && 'bg-emerald-500',",
+    },
+  ]);
+  expect(found.map((violation) => violation.utility)).toEqual([
+    'bg-emerald-500',
+  ]);
+});
+
+test('flags raw hues on every colour-taking property, including under a variant', () => {
+  const found = findViolations([
+    {
+      path: 'src/components/git/BranchesPanel.tsx',
+      text: '<span className="border-red-500 ring-sky-300 fill-violet-400 dark:text-amber-400 bg-orange-500/20" />',
+    },
+  ]);
+  expect(found.map((violation) => violation.utility).sort()).toEqual([
+    'bg-orange-500',
+    'border-red-500',
+    'fill-violet-400',
+    'ring-sky-300',
+    'text-amber-400',
+  ]);
+});
+
+// Addition green, deletion red and conflict blue are the meanings the design
+// deliberately spends colour on; they carry no numeric shade.
+test('allows the app semantic colour tokens', () => {
+  const found = findViolations([
+    {
+      path: 'src/views/RunsView.tsx',
+      text: '<span className="text-green text-red text-blue bg-state-failed border-state-review-edge" />',
+    },
+  ]);
+  expect(found).toEqual([]);
+});
+
+test('reports one row per distinct hue however often it repeats', () => {
+  const found = findViolations([
+    {
+      path: 'src/views/PullRequestsView.tsx',
+      text: 'text-emerald-400 ... text-emerald-400 ... text-emerald-400',
+    },
+  ]);
+  expect(found).toHaveLength(1);
+});
+
 test('flags multiple distinct banned utilities in the same file', () => {
   const found = findViolations([
     {
