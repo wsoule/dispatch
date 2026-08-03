@@ -28,7 +28,16 @@ Rust repo it finds nothing, and review scope silently shrinks to the changed
 files alone. `dispatch doctor` reports which backend is in use, including a
 warning when there's neither carto nor TypeScript to work from.
 
-    bun install -g carto-md     # or: npm install -g carto-md
+carto's native dependencies (`better-sqlite3`, `tree-sitter`) don't build on
+every Node version: in our testing only `npm install -g` under Node 22 LTS
+produced a working install; newer Node lines failed to compile the bindings, and
+`bun install -g` did not produce a working native build. Also, carto's MCP
+server (`carto serve`) is wired into dispatched agents' tool config, but
+upstream it currently doesn't connect its transport, so the integration is inert
+until that's fixed — see
+[carto#9](https://github.com/theanshsonkar/carto/issues/9).
+
+    npm install -g carto-md
 
 `carto.enabled` in `.dispatch/config.yml` controls the policy (default `on`):
 `on` builds a carto container if one is missing, `detect` uses one only if it
@@ -36,14 +45,6 @@ already exists, and `off` sticks to the built-in scanner. `on` is a build
 policy, not a requirement — a missing `carto` binary always degrades to the
 scanner rather than failing. `dispatch init` adds the gitignored `.carto/` build
 output to `.gitignore` automatically.
-
-Two things worth knowing before installing: carto's native dependencies
-(`better-sqlite3`, `tree-sitter`) don't build under every Node version — a
-current LTS is the reliable choice, and it's worth trying `npm install -g` if
-the `bun install -g` above fails to build them. Also, carto's MCP server
-(`carto serve`) is wired into dispatched agents' tool config, but upstream it
-currently doesn't connect its transport, so the integration is inert until
-that's fixed — see [carto#9](https://github.com/theanshsonkar/carto/issues/9).
 
 ## Quickstart
 
