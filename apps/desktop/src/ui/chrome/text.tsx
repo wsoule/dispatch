@@ -12,3 +12,18 @@ export function MetaText({
 }) {
   return <span className={cn('dense-meta', className)}>{children}</span>;
 }
+
+/** Explanatory prose under a control — a sentence, so neither mono nor uppercase. */
+export function HintText({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span className={cn('text-muted-foreground text-[11px]', className)}>
+      {children}
+    </span>
+  );
+}
