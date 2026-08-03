@@ -74,6 +74,7 @@
     "clean:all": "bun run clean && rm -rf node_modules packages/*/node_modules apps/*/node_modules",
     "lint": "oxlint --type-aware --tsconfig tsconfig.oxlint.json .",
     "lint:fix": "oxlint --type-aware --tsconfig tsconfig.oxlint.json --fix .",
+    "lint:chrome": "bun scripts/check-chrome-utilities.ts",
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
     "lint:css:fix": "stylelint \"**/*.css\" --allow-empty-input --fix",
     "format": "oxfmt .",
