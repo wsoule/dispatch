@@ -1,4 +1,3 @@
-import { parseTeam } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   mkdirSync,
@@ -11,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ActorContext } from '../src/actorContext.js';
+import { parseTeam } from '../src/team.js';
 
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), 'dispatch-actor-'));

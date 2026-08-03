@@ -1,11 +1,10 @@
-import { TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch/core';
 import type { Finding, TaskDoc, TaskRisk } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ActorContext } from '../../src/actorContext.js';
 import { TaskCache } from '../../src/cache.js';
 import type { DepMap } from '../../src/depmap.js';
 import { EventBus } from '../../src/events.js';

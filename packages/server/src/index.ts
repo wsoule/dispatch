@@ -1,10 +1,9 @@
-import { TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch/core';
+import type { GitReader } from '@dispatch/core';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
-import { ActorContext } from './actorContext.js';
-import type { GitReader } from './actorContext.js';
 import { handleApi, isTrustedOrigin } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
@@ -256,6 +255,7 @@ export async function startServer(
     events,
     jj,
     ledgerStore,
+    actorContext,
   });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
@@ -287,7 +287,13 @@ export async function startServer(
   // via `registerPlanners`) and the epic dispatch engine, both wired against
   // the same store/cache/events/orchestrator every other request handler
   // shares.
-  const planManager = new PlanManager({ rootDir, store, cache, events });
+  const planManager = new PlanManager({
+    rootDir,
+    store,
+    cache,
+    events,
+    actorContext,
+  });
   if (opts.registerPlanners !== undefined) {
     opts.registerPlanners(planManager);
   } else {
@@ -299,6 +305,7 @@ export async function startServer(
     cache,
     events,
     orchestrator,
+    actorContext,
   });
 
   // PR capability is detected once, here at boot, and never rechecked per
@@ -307,7 +314,7 @@ export async function startServer(
   // health check or review action would be wasted work.
   const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
   const prManager = new PrManager(
-    { rootDir, store, cache, events, orchestrator },
+    { rootDir, store, cache, events, orchestrator, actorContext },
     prCapability,
     opts.prCommandRunner
   );
@@ -394,6 +401,7 @@ export async function startServer(
     reviewRunner,
     findingStore,
     fixLoopStore: new FixLoopStore(rootDir),
+    actorContext,
   });
   // Runs after reconcileOnBoot has force-failed the previous process's runs,
   // so a loop waiting on one of them sees a terminal run and moves on.
