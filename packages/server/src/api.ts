@@ -23,6 +23,7 @@ import type {
 } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
+import type { ActorContext } from './actorContext.js';
 import { amendTask } from './api/amendments.js';
 import {
   createFinding,
@@ -132,6 +133,8 @@ export interface ApiContext {
   gitRepo: GitRepo;
   // Test-injection seam only, same as `inboxClusterer` above.
   commitMessageGenerator?: CommitMessageGenerator;
+  // Who this daemon acts as, resolved once at boot from git config.
+  actorContext: ActorContext;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
