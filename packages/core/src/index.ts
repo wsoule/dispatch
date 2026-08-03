@@ -68,6 +68,8 @@ export {
   MODEL_ROLES,
 } from './config.js';
 export type {
+  CartoConfig,
+  CartoMode,
   ConfigPatch,
   DispatchConfig,
   EscalationStep,

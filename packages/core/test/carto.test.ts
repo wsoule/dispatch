@@ -101,6 +101,23 @@ describe('discoverCarto', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // The real carto-md CLI's --version prints `${pkg.name} ${pkg.version}`
+  // ("carto-md 2.1.3"), not a bare version number — reproduced here rather
+  // than assumed, since a bare-number parse silently reports every genuine
+  // install as unsupported.
+  it('parses the real CLI\'s "carto-md 2.1.3" --version format', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binDir = join(root, 'bin');
+      writeFakeCarto(binDir, 'carto-md 2.1.3');
+      const result = discoverCarto({ PATH: binDir });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.binary.version).toBe('2.1.3');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('openCartoReader', () => {
