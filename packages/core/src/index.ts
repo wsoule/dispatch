@@ -126,3 +126,10 @@ export {
   upsertRegisteredProject,
 } from './registry.js';
 export type { RegisteredProject } from './registry.js';
+export {
+  handleFromEmail,
+  parseTeam,
+  serializeTeam,
+  upsertMember,
+} from './team.js';
+export type { TeamMember } from './team.js';
