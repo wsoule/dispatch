@@ -64,14 +64,10 @@
   --gray-bg: #f1f2f4;
   --gray-border: #d7d9dd;
 
-  /* Run state — the one semantic role for "what does this run want from a human", so eight
-     screens can't each invent their own idea of what "waiting on you" looks like. Names match
-     the `RunDisposition` vocabulary in lib/runState.ts, which is the derivation these paint.
-     Every value forwards to a palette token above; nothing here introduces a hue. Because they
-     are references and not literals, the dark theme's palette override below flows through
-     automatically — deliberately NOT restated in the dark block, so the two can never drift.
-
-     `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its hairline. */
+  /* Run state — "what does this run want from a human", named after lib/runState.ts's
+     `RunDisposition`. `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its
+     hairline. References to the palette above, never literals, so the dark block flows through
+     for free and must not restate them. */
   --state-working-fg: var(--text-secondary);
   --state-working-surface: var(--surface-raised);
   --state-working-edge: var(--border-default);
@@ -130,11 +126,9 @@
   --label-tracking: 0.11em;
   --meta-tracking: 0.02em;
 
-  /* Hairlines as inset shadows rather than borders: an inset shadow doesn't participate in
-     layout, so a row can carry an edge without shifting by a pixel or double-drawing against
-     its neighbour — which is what lets dense rows sit flush. `--hairline` outlines a whole
-     box; the directional four draw a single side (a pane divider, a sticky header's underline).
-     Use in `box-shadow`, and compose with a comma for two sides. */
+  /* Hairlines as inset shadows, not borders: an inset shadow is outside layout, so a row can
+     carry an edge without shifting a pixel. `--hairline` outlines the whole box; the
+     directional four draw one side each. Use in `box-shadow`; comma-compose for two sides. */
   --hairline: inset 0 0 0 1px var(--border-default);
   --hairline-strong: inset 0 0 0 1px var(--border-strong);
   --hairline-top: inset 0 1px 0 var(--border-default);

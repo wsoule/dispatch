@@ -4,8 +4,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * The filter/segmented/actions row under a view header. `flex-wrap` is
- * load-bearing — these rows clipped their trailing controls at ordinary widths
- * when each view spelled the layout out itself.
+ * load-bearing: without it these rows clip trailing controls at ordinary widths.
  */
 export function Toolbar({
   children,

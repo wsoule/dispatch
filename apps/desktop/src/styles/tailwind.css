@@ -98,11 +98,8 @@
   --color-red: var(--red);
   --color-blue: var(--blue);
 
-  /* The dense-row *type* treatments aren't exported here: a section label is size + tracking +
-     uppercase and row metadata is size + mono + tracking, so they're one `.dense-label` /
-     `.dense-meta` class each in global.css rather than three utilities to remember to combine.
-     Tailwind's own `text-xs`/`text-sm` are also left alone — 7 call sites rely on their
-     defaults, and quietly redefining them to 10px/11px would resize existing views. */
+  /* The dense-row type treatments are `.dense-label` / `.dense-meta` in global.css, not
+     utilities here. Tailwind's `text-xs`/`text-sm` stay stock: 7 call sites rely on them. */
 
   /* Hairline edges as shadow utilities: `shadow-hairline`, `shadow-hairline-bottom`, … */
   --shadow-hairline: var(--hairline);
