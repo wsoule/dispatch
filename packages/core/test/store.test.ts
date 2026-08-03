@@ -23,7 +23,7 @@ describe('TaskStore.init', () => {
     TaskStore.init(root);
     expect(existsSync(join(root, '.dispatch/tasks'))).toBe(true);
     expect(readFileSync(join(root, '.dispatch/config.yml'), 'utf8')).toContain(
-      'autoCommit: false'
+      'autoCommit: true'
     );
   });
 });
