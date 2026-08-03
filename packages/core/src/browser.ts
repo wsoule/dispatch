@@ -39,3 +39,10 @@ export type {
   ListSafeResult,
   UpdatePatch,
 } from './store.js';
+export {
+  handleFromEmail,
+  parseTeam,
+  serializeTeam,
+  upsertMember,
+} from './team.js';
+export type { TeamMember } from './team.js';
