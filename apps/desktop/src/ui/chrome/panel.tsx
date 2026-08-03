@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ComponentPropsWithRef, KeyboardEvent, ReactNode } from 'react';
 
 import { SectionLabel } from './SectionLabel';
 import { cn } from '@/lib/utils';
@@ -27,29 +27,40 @@ export function Panel({
 }
 
 /**
- * A panel's title row: label left, optional count, optional actions right.
- * Composes `SectionLabel` for the label+count pairing rather than
- * re-implementing it — that markup already lives in one place.
+ * A panel's title row: label left, optional count, optional actions right. Wraps
+ * `SectionLabel` and forwards its `rule`/`trailing` rather than re-spelling them.
  */
 export function PanelHeader({
   children,
   count,
+  rule,
+  trailing,
   actions,
   className,
+  ...rest
 }: {
   children: ReactNode;
   count?: number;
+  rule?: boolean;
+  trailing?: ReactNode;
   actions?: ReactNode;
-  className?: string;
-}) {
+} & Omit<ComponentPropsWithRef<'div'>, 'children'>) {
   return (
     <div
       className={cn(
         'border-border flex min-h-9 flex-wrap items-center gap-2 border-b px-3 py-2',
         className
       )}
+      {...rest}
     >
-      <SectionLabel count={count}>{children}</SectionLabel>
+      <SectionLabel
+        count={count}
+        rule={rule}
+        trailing={trailing}
+        className={rule ? 'min-w-0 flex-1' : undefined}
+      >
+        {children}
+      </SectionLabel>
       {actions && (
         <div className="ml-auto flex items-center gap-1">{actions}</div>
       )}
@@ -66,29 +77,44 @@ export function PanelRow({
   children,
   urgent,
   onClick,
+  onKeyDown,
   className,
+  ...rest
 }: {
   children: ReactNode;
   urgent?: boolean;
   onClick?: () => void;
-  className?: string;
-}) {
+} & Omit<ComponentPropsWithRef<'div'>, 'children' | 'onClick'>) {
   const classes = cn(
     'border-border flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left',
     'border-b last:border-b-0',
     urgent && 'border-l-2 border-l-foreground',
-    onClick && 'hover:bg-muted/60 transition-colors duration-150',
+    onClick &&
+      'cursor-pointer hover:bg-muted/60 transition-colors duration-150',
     className
   );
 
-  // A clickable row must be a real button so the global :focus-visible ring in
-  // global.css applies and j/k roving focus can move DOM focus onto it.
-  if (onClick) {
-    return (
-      <button type="button" onClick={onClick} className={classes}>
-        {children}
-      </button>
-    );
-  }
-  return <div className={classes}>{children}</div>;
+  // A div with `role="button"`, not a `<button>`: these rows nest their own
+  // action buttons (see components/overview/FeedRow.tsx), which a button wrapper
+  // would make invalid HTML. tabIndex + Enter/Space restore what that costs.
+  const activate = (event: KeyboardEvent<HTMLDivElement>) => {
+    onKeyDown?.(event);
+    if (!onClick || event.defaultPrevented) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onClick();
+    }
+  };
+
+  return (
+    <div
+      className={classes}
+      {...(onClick
+        ? { role: 'button', tabIndex: 0, onClick, onKeyDown: activate }
+        : { onKeyDown })}
+      {...rest}
+    >
+      {children}
+    </div>
+  );
 }
