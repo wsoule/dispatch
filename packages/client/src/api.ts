@@ -966,19 +966,45 @@ export interface LinearViewer {
 export class ApiError extends Error {
   constructor(
     message: string,
-    public readonly status: number
+    public readonly status: number,
+    /**
+     * The server's stable `code`, when it sent one — `auth_missing_token`,
+     * `auth_invalid_token`, `auth_insufficient_tier`. Key on this rather than
+     * the message, which is prose and will be reworded.
+     */
+    public readonly code?: string
   ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-// Shared fetch wrapper: resolves against `baseUrl`, throws with the server's
-// `{ error }` message (falling back to the status code) on any non-2xx
-// response, and parses the body as JSON on success. Every typed fetcher below
-// is a thin wrapper around this.
+/** True for the 403 that means "this token is valid but ranks below decide tier". */
+export function isInsufficientTier(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'auth_insufficient_tier';
+}
+
+/** Where a request goes and what credential it presents. */
+interface ApiTarget {
+  baseUrl: string;
+  /** The daemon token; omitted only when none is available, which 401s. */
+  token?: string;
+}
+
+// The daemon injects its agent token into the HTML it serves, because a
+// browser page has no filesystem and so cannot read the daemon file itself.
+export function injectedDaemonToken(): string | undefined {
+  const value = (globalThis as { __DISPATCH_DAEMON_TOKEN__?: unknown })
+    .__DISPATCH_DAEMON_TOKEN__;
+  return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+// Shared fetch wrapper: resolves against `target.baseUrl`, presents its token,
+// throws with the server's `{ error }` message (falling back to the status
+// code) on any non-2xx response, and parses the body as JSON on success. Every
+// typed fetcher below is a thin wrapper around this.
 async function request<T>(
-  baseUrl: string,
+  target: ApiTarget,
   path: string,
   init?: RequestInit
 ): Promise<T> {
@@ -988,12 +1014,19 @@ async function request<T>(
   if (init?.body !== undefined && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
-  const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
+  if (target.token !== undefined) {
+    headers.set('authorization', `Bearer ${target.token}`);
+  }
+  const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+    };
     throw new ApiError(
       body.error ?? `request failed: ${res.status}`,
-      res.status
+      res.status,
+      body.code
     );
   }
   return (await res.json()) as T;
@@ -1026,9 +1059,14 @@ export function httpToWs(origin: string): string {
 
 // Resolves the WS URL for a given baseUrl, falling back to the current
 // page's own origin when baseUrl is empty — the same-origin default case
-// (dispatchd serving its own static UI).
-export function wsUrl(baseUrl: string): string {
-  return httpToWs(baseUrl !== '' ? baseUrl : window.location.origin);
+// (dispatchd serving its own static UI). The token rides in the query string
+// because the browser WebSocket API cannot set an Authorization header; the
+// daemon accepts it there for `/ws` and nowhere else.
+export function wsUrl(baseUrl: string, token?: string): string {
+  const url = httpToWs(baseUrl !== '' ? baseUrl : window.location.origin);
+  return token === undefined
+    ? url
+    : `${url}?token=${encodeURIComponent(token)}`;
 }
 
 // The subset of the DOM `WebSocket` interface `connectEvents` needs, so
@@ -1057,6 +1095,9 @@ export interface ConnectEventsOptions {
   // so existing callers keep their exact behavior). A malformed frame never
   // reaches this callback — see the `try/catch` around `JSON.parse` below.
   onEvent?: (event: ServerEvent) => void;
+  // Daemon token for the upgrade, since the guard covers `/ws` too. Defaults
+  // to whatever the daemon injected into the page it served.
+  token?: string;
 }
 
 // Opens a WS connection to dispatchd and calls `onChange` for every
@@ -1071,6 +1112,7 @@ export function connectEvents(
 ): () => void {
   const createSocket = options.createSocket ?? ((url) => new WebSocket(url));
   const reconnectDelayMs = options.reconnectDelayMs ?? 1000;
+  const token = options.token ?? injectedDaemonToken();
 
   let closed = false;
   let socket: SocketLike | null = null;
@@ -1091,7 +1133,7 @@ export function connectEvents(
   function connect() {
     if (closed) return;
     scheduled = false;
-    socket = createSocket(wsUrl(baseUrl));
+    socket = createSocket(wsUrl(baseUrl, token));
     socket.addEventListener('message', (event) => {
       // A malformed frame (bad JSON, or JSON that isn't a ServerEvent) should
       // never take down the UI's reconnect loop — ignore it and wait for the
@@ -1468,6 +1510,7 @@ export interface ApiClient {
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
   fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
   createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -1479,78 +1522,84 @@ export interface ApiClient {
 // same-origin use (the web app, served by dispatchd itself) or an explicit
 // `http://127.0.0.1:<port>` for the desktop app pointing at a sidecar
 // dispatchd on some other port.
-export function createApiClient(baseUrl: string): ApiClient {
+//
+// `token` is the daemon token every call presents. Pass the app token to reach
+// `decideScopeRequest`; the agent token reaches everything else. Omitting it
+// falls back to the token the daemon injected into the page it served, which
+// is how the browser UI gets one at all.
+export function createApiClient(baseUrl: string, token?: string): ApiClient {
+  const target: ApiTarget = { baseUrl, token: token ?? injectedDaemonToken() };
   return {
     baseUrl,
-    fetchHealth: () => request(baseUrl, '/api/health'),
-    fetchConfig: () => request(baseUrl, '/api/config'),
+    fetchHealth: () => request(target, '/api/health'),
+    fetchConfig: () => request(target, '/api/config'),
     fetchTasks: (filter = {}) =>
-      request(baseUrl, `/api/tasks${taskQueryString(filter)}`),
-    fetchReadyTasks: () => request(baseUrl, '/api/tasks/ready'),
-    fetchTask: (id) => request(baseUrl, `/api/tasks/${id}`),
+      request(target, `/api/tasks${taskQueryString(filter)}`),
+    fetchReadyTasks: () => request(target, '/api/tasks/ready'),
+    fetchTask: (id) => request(target, `/api/tasks/${id}`),
     createTask: (input) =>
-      request(baseUrl, '/api/tasks', { method: 'POST', ...jsonBody(input) }),
+      request(target, '/api/tasks', { method: 'POST', ...jsonBody(input) }),
     updateTask: (id, patch) =>
-      request(baseUrl, `/api/tasks/${id}`, {
+      request(target, `/api/tasks/${id}`, {
         method: 'PATCH',
         ...jsonBody(patch),
       }),
     amendTask: (id, input) =>
-      request(baseUrl, `/api/tasks/${id}/amend`, {
+      request(target, `/api/tasks/${id}/amend`, {
         method: 'POST',
         ...jsonBody(input),
       }),
     draftTask: (prompt) =>
-      request(baseUrl, '/api/tasks/draft', {
+      request(target, '/api/tasks/draft', {
         method: 'POST',
         ...jsonBody({ prompt }),
       }),
-    fetchDrafts: () => request(baseUrl, '/api/tasks/drafts'),
-    fetchDraft: (id) => request(baseUrl, `/api/tasks/drafts/${id}`),
+    fetchDrafts: () => request(target, '/api/tasks/drafts'),
+    fetchDraft: (id) => request(target, `/api/tasks/drafts/${id}`),
     dismissDraft: async (id) => {
-      await request(baseUrl, `/api/tasks/drafts/${id}`, { method: 'DELETE' });
+      await request(target, `/api/tasks/drafts/${id}`, { method: 'DELETE' });
     },
     sendDraftMessage: (draftId, text) =>
-      request(baseUrl, `/api/tasks/drafts/${draftId}/message`, {
+      request(target, `/api/tasks/drafts/${draftId}/message`, {
         method: 'POST',
         ...jsonBody({ text }),
       }),
     createRun: (taskId, opts = {}) =>
-      request(baseUrl, `/api/tasks/${taskId}/runs`, {
+      request(target, `/api/tasks/${taskId}/runs`, {
         method: 'POST',
         ...jsonBody({
           ...(opts.executor !== undefined ? { executor: opts.executor } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
         }),
       }),
-    fetchRuns: () => request(baseUrl, '/api/runs'),
-    fetchRun: (id) => request(baseUrl, `/api/runs/${id}`),
-    fetchRunClaims: () => request(baseUrl, '/api/runs/claims'),
+    fetchRuns: () => request(target, '/api/runs'),
+    fetchRun: (id) => request(target, `/api/runs/${id}`),
+    fetchRunClaims: () => request(target, '/api/runs/claims'),
     approveRun: async (runId, requestId, allow, opts = {}) => {
-      await request(baseUrl, `/api/runs/${runId}/approval`, {
+      await request(target, `/api/runs/${runId}/approval`, {
         method: 'POST',
         ...jsonBody({ requestId, allow, ...opts }),
       });
     },
     sendRunMessage: (runId, text, opts = {}) =>
-      request(baseUrl, `/api/runs/${runId}/message`, {
+      request(target, `/api/runs/${runId}/message`, {
         method: 'POST',
         ...jsonBody({ text, ...opts }),
       }),
     cancelRun: async (runId) => {
-      await request(baseUrl, `/api/runs/${runId}/cancel`, { method: 'POST' });
+      await request(target, `/api/runs/${runId}/cancel`, { method: 'POST' });
     },
     resumeRun: (runId) =>
-      request(baseUrl, `/api/runs/${runId}/resume`, { method: 'POST' }),
-    fetchRunDiff: (runId) => request(baseUrl, `/api/runs/${runId}/diff`),
+      request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
+    fetchRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
     reviewRun: (runId, action) =>
-      request(baseUrl, `/api/runs/${runId}/review`, {
+      request(target, `/api/runs/${runId}/review`, {
         method: 'POST',
         ...jsonBody({ action }),
       }),
-    fetchBranches: () => request(baseUrl, '/api/branches'),
+    fetchBranches: () => request(target, '/api/branches'),
     freeBranchDisk: (branch) =>
-      request(baseUrl, '/api/branches/free-disk', {
+      request(target, '/api/branches/free-disk', {
         method: 'POST',
         ...jsonBody({ branch }),
       }),
@@ -1559,306 +1608,304 @@ export function createApiClient(baseUrl: string): ApiClient {
       // a single path segment — the server rejoins and decodes it.
       const query = opts.force === true ? '?force=1' : '';
       await request(
-        baseUrl,
+        target,
         `/api/branches/${encodeURIComponent(branch)}${query}`,
         { method: 'DELETE' }
       );
     },
-    fetchGitStatus: () => request(baseUrl, '/api/git/status'),
+    fetchGitStatus: () => request(target, '/api/git/status'),
     fetchGitLog: (opts = {}) => {
       const params = new URLSearchParams();
       if (opts.ref !== undefined) params.set('ref', opts.ref);
       if (opts.limit !== undefined) params.set('limit', String(opts.limit));
       if (opts.skip !== undefined) params.set('skip', String(opts.skip));
       const query = params.size > 0 ? `?${params.toString()}` : '';
-      return request(baseUrl, `/api/git/log${query}`);
+      return request(target, `/api/git/log${query}`);
     },
-    fetchGitBranches: () => request(baseUrl, '/api/git/branches'),
+    fetchGitBranches: () => request(target, '/api/git/branches'),
     fetchGitDiff: (opts = {}) => {
       const params = new URLSearchParams();
       if (opts.staged === true) params.set('staged', '1');
       if (opts.path !== undefined) params.set('path', opts.path);
       const query = params.size > 0 ? `?${params.toString()}` : '';
-      return request(baseUrl, `/api/git/diff${query}`);
+      return request(target, `/api/git/diff${query}`);
     },
     fetchGitCommitDiff: (sha) =>
-      request(baseUrl, `/api/git/commit/${encodeURIComponent(sha)}`),
+      request(target, `/api/git/commit/${encodeURIComponent(sha)}`),
     gitStage: (paths) =>
-      request(baseUrl, '/api/git/stage', {
+      request(target, '/api/git/stage', {
         method: 'POST',
         ...jsonBody({ paths }),
       }),
     gitUnstage: (paths) =>
-      request(baseUrl, '/api/git/unstage', {
+      request(target, '/api/git/unstage', {
         method: 'POST',
         ...jsonBody({ paths }),
       }),
     gitStageHunk: (patch) =>
-      request(baseUrl, '/api/git/stage-hunk', {
+      request(target, '/api/git/stage-hunk', {
         method: 'POST',
         ...jsonBody({ patch }),
       }),
     gitUnstageHunk: (patch) =>
-      request(baseUrl, '/api/git/unstage-hunk', {
+      request(target, '/api/git/unstage-hunk', {
         method: 'POST',
         ...jsonBody({ patch }),
       }),
     gitDiscard: (paths, confirm) =>
-      request(baseUrl, '/api/git/discard', {
+      request(target, '/api/git/discard', {
         method: 'POST',
         ...jsonBody({ paths, confirm }),
       }),
     gitCommit: (message, opts = {}) =>
-      request(baseUrl, '/api/git/commit', {
+      request(target, '/api/git/commit', {
         method: 'POST',
         ...jsonBody({ message, ...opts }),
       }),
     generateCommitMessage: () =>
-      request(baseUrl, '/api/git/commit-message', { method: 'POST' }),
+      request(target, '/api/git/commit-message', { method: 'POST' }),
     gitCheckout: (branch) =>
-      request(baseUrl, '/api/git/checkout', {
+      request(target, '/api/git/checkout', {
         method: 'POST',
         ...jsonBody({ branch }),
       }),
     gitCreateBranch: (name, from) =>
-      request(baseUrl, '/api/git/branch', {
+      request(target, '/api/git/branch', {
         method: 'POST',
         ...jsonBody(from !== undefined ? { name, from } : { name }),
       }),
     gitDeleteBranch: (name, opts = {}) =>
-      request(baseUrl, `/api/git/branch/${encodeURIComponent(name)}`, {
+      request(target, `/api/git/branch/${encodeURIComponent(name)}`, {
         method: 'DELETE',
         ...jsonBody(opts),
       }),
     gitStashPush: (message) =>
-      request(baseUrl, '/api/git/stash', {
+      request(target, '/api/git/stash', {
         method: 'POST',
         ...jsonBody(message !== undefined ? { message } : {}),
       }),
-    fetchGitStashList: () => request(baseUrl, '/api/git/stash'),
+    fetchGitStashList: () => request(target, '/api/git/stash'),
     gitStashPop: (index) =>
-      request(baseUrl, '/api/git/stash/pop', {
+      request(target, '/api/git/stash/pop', {
         method: 'POST',
         ...jsonBody({ index }),
       }),
     gitStashDrop: (index, confirm) =>
-      request(baseUrl, '/api/git/stash/drop', {
+      request(target, '/api/git/stash/drop', {
         method: 'POST',
         ...jsonBody({ index, confirm }),
       }),
     gitFetch: (remote) =>
-      request(baseUrl, '/api/git/fetch', {
+      request(target, '/api/git/fetch', {
         method: 'POST',
         ...jsonBody(remote !== undefined ? { remote } : {}),
       }),
-    gitPull: () => request(baseUrl, '/api/git/pull', { method: 'POST' }),
+    gitPull: () => request(target, '/api/git/pull', { method: 'POST' }),
     gitPush: (opts = {}) =>
-      request(baseUrl, '/api/git/push', { method: 'POST', ...jsonBody(opts) }),
+      request(target, '/api/git/push', { method: 'POST', ...jsonBody(opts) }),
     gitCherryPick: (sha) =>
-      request(baseUrl, '/api/git/cherry-pick', {
+      request(target, '/api/git/cherry-pick', {
         method: 'POST',
         ...jsonBody({ sha }),
       }),
     gitRevert: (sha) =>
-      request(baseUrl, '/api/git/revert', {
+      request(target, '/api/git/revert', {
         method: 'POST',
         ...jsonBody({ sha }),
       }),
-    fetchPrDetail: (runId) => request(baseUrl, `/api/runs/${runId}/pr`),
+    fetchPrDetail: (runId) => request(target, `/api/runs/${runId}/pr`),
     reviewPr: (runId, event, body) =>
-      request(baseUrl, `/api/runs/${runId}/pr/review`, {
+      request(target, `/api/runs/${runId}/pr/review`, {
         method: 'POST',
         ...jsonBody({ event, body: body ?? '' }),
       }),
     commentPr: (runId, body) =>
-      request(baseUrl, `/api/runs/${runId}/pr/comment`, {
+      request(target, `/api/runs/${runId}/pr/comment`, {
         method: 'POST',
         ...jsonBody({ body }),
       }),
-    fetchRepoPrs: () => request(baseUrl, '/api/prs'),
-    fetchRepoPrDetail: (number) =>
-      request(baseUrl, `/api/prs/${number}/detail`),
+    fetchRepoPrs: () => request(target, '/api/prs'),
+    fetchRepoPrDetail: (number) => request(target, `/api/prs/${number}/detail`),
     reviewRepoPr: (number, event, body) =>
-      request(baseUrl, `/api/prs/${number}/review`, {
+      request(target, `/api/prs/${number}/review`, {
         method: 'POST',
         ...jsonBody({ event, body: body ?? '' }),
       }),
     commentRepoPr: (number, body) =>
-      request(baseUrl, `/api/prs/${number}/comment`, {
+      request(target, `/api/prs/${number}/comment`, {
         method: 'POST',
         ...jsonBody({ body }),
       }),
-    fetchInbox: () => request(baseUrl, '/api/inbox'),
+    fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>
-      request(baseUrl, '/api/inbox', {
+      request(target, '/api/inbox', {
         method: 'POST',
         body: JSON.stringify(input),
       }),
     updateInbox: (id, patch) =>
-      request(baseUrl, `/api/inbox/${encodeURIComponent(id)}`, {
+      request(target, `/api/inbox/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
     dismissInbox: (ids) =>
-      request(baseUrl, '/api/inbox/dismiss', {
+      request(target, '/api/inbox/dismiss', {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
     convertInbox: (ids) =>
-      request(baseUrl, '/api/inbox/convert', {
+      request(target, '/api/inbox/convert', {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
     enrichInbox: (id) =>
-      request(baseUrl, `/api/inbox/${encodeURIComponent(id)}/enrich`, {
+      request(target, `/api/inbox/${encodeURIComponent(id)}/enrich`, {
         method: 'POST',
       }),
     enrichTask: (id) =>
-      request(baseUrl, `/api/tasks/${encodeURIComponent(id)}/enrich`, {
+      request(target, `/api/tasks/${encodeURIComponent(id)}/enrich`, {
         method: 'POST',
       }),
     clusterInbox: () =>
-      request(baseUrl, '/api/inbox/cluster', { method: 'POST' }),
+      request(target, '/api/inbox/cluster', { method: 'POST' }),
     fetchReviewComments: (runId) =>
-      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/comments`),
+      request(target, `/api/runs/${encodeURIComponent(runId)}/comments`),
     addReviewComment: (runId, input) =>
-      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/comments`, {
+      request(target, `/api/runs/${encodeURIComponent(runId)}/comments`, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
     resolveReviewComment: (runId, commentId, resolved) =>
       request(
-        baseUrl,
+        target,
         `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}`,
         { method: 'PATCH', body: JSON.stringify({ resolved }) }
       ),
     replyReviewComment: (runId, commentId, body) =>
       request(
-        baseUrl,
+        target,
         `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}/reply`,
         { method: 'POST', body: JSON.stringify({ body }) }
       ),
     updateConfig: (patch) =>
-      request(baseUrl, '/api/config', {
+      request(target, '/api/config', {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
-    fetchLinearStatus: () => request(baseUrl, '/api/linear/status'),
+    fetchLinearStatus: () => request(target, '/api/linear/status'),
     connectLinear: (apiKey) =>
-      request(baseUrl, '/api/linear/connect', {
+      request(target, '/api/linear/connect', {
         method: 'POST',
         ...jsonBody({ apiKey }),
       }),
     disconnectLinear: () =>
-      request(baseUrl, '/api/linear/disconnect', { method: 'POST' }),
-    fetchLinearTeams: () => request(baseUrl, '/api/linear/teams'),
+      request(target, '/api/linear/disconnect', { method: 'POST' }),
+    fetchLinearTeams: () => request(target, '/api/linear/teams'),
     fetchLinearStates: (teamId) =>
       request(
-        baseUrl,
+        target,
         `/api/linear/states?teamId=${encodeURIComponent(teamId)}`
       ),
     syncLinear: (taskIds) =>
-      request(baseUrl, '/api/linear/sync', {
+      request(target, '/api/linear/sync', {
         method: 'POST',
         ...jsonBody(taskIds === undefined ? {} : { taskIds }),
       }),
-    fetchLinearLinks: () => request(baseUrl, '/api/linear/links'),
+    fetchLinearLinks: () => request(target, '/api/linear/links'),
     importLinearIssues: () =>
-      request(baseUrl, '/api/linear/import', { method: 'POST' }),
+      request(target, '/api/linear/import', { method: 'POST' }),
     submitReview: (runId, verdict, body) =>
-      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {
+      request(target, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {
         method: 'POST',
         body: JSON.stringify({ verdict, body }),
       }),
     sendBackRun: (runId, note) =>
-      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/send-back`, {
+      request(target, `/api/runs/${encodeURIComponent(runId)}/send-back`, {
         method: 'POST',
         body: JSON.stringify({ note }),
       }),
     setRunArchived: (runId, archived) =>
-      request(baseUrl, `/api/runs/${encodeURIComponent(runId)}/archive`, {
+      request(target, `/api/runs/${encodeURIComponent(runId)}/archive`, {
         method: 'POST',
         body: JSON.stringify({ archived }),
       }),
-    fetchNotes: () => request(baseUrl, '/api/notes'),
+    fetchNotes: () => request(target, '/api/notes'),
     createNote: (input) =>
-      request(baseUrl, '/api/notes', { method: 'POST', ...jsonBody(input) }),
+      request(target, '/api/notes', { method: 'POST', ...jsonBody(input) }),
     updateNote: (id, patch) =>
-      request(baseUrl, `/api/notes/${id}`, {
+      request(target, `/api/notes/${id}`, {
         method: 'PATCH',
         ...jsonBody(patch),
       }),
     deleteNote: async (id) => {
-      await request(baseUrl, `/api/notes/${id}`, { method: 'DELETE' });
+      await request(target, `/api/notes/${id}`, { method: 'DELETE' });
     },
     promoteNote: (id) =>
-      request(baseUrl, `/api/notes/${id}/promote`, { method: 'POST' }),
+      request(target, `/api/notes/${id}/promote`, { method: 'POST' }),
     enrichNote: (id) =>
-      request(baseUrl, `/api/notes/${id}/enrich`, { method: 'POST' }),
+      request(target, `/api/notes/${id}/enrich`, { method: 'POST' }),
     injectRun: (runId, text, fromRunId) =>
-      request(baseUrl, `/api/runs/${runId}/inject`, {
+      request(target, `/api/runs/${runId}/inject`, {
         method: 'POST',
         ...jsonBody(fromRunId !== undefined ? { text, fromRunId } : { text }),
       }),
     messageUser: (runId, text) =>
-      request(baseUrl, `/api/runs/${runId}/message-user`, {
+      request(target, `/api/runs/${runId}/message-user`, {
         method: 'POST',
         ...jsonBody({ text }),
       }),
-    fetchOpenQuestions: () => request(baseUrl, '/api/questions'),
+    fetchOpenQuestions: () => request(target, '/api/questions'),
     answerQuestion: (runId, questionId, answer) =>
-      request(baseUrl, `/api/runs/${runId}/questions/${questionId}/answer`, {
+      request(target, `/api/runs/${runId}/questions/${questionId}/answer`, {
         method: 'POST',
         ...jsonBody({ answer }),
       }),
     fetchScopeRequest: (runId, requestId) =>
-      request(baseUrl, `/api/runs/${runId}/scope-requests/${requestId}`),
+      request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
     decideScopeRequest: (runId, requestId, granted, reason) =>
-      request(
-        baseUrl,
-        `/api/runs/${runId}/scope-requests/${requestId}/decide`,
-        { method: 'POST', ...jsonBody({ granted, reason }) }
-      ),
+      request(target, `/api/runs/${runId}/scope-requests/${requestId}/decide`, {
+        method: 'POST',
+        ...jsonBody({ granted, reason }),
+      }),
     startPlan: (prompt) =>
-      request(baseUrl, '/api/plan', {
+      request(target, '/api/plan', {
         method: 'POST',
         ...jsonBody({ prompt }),
       }),
-    fetchPlan: (planId) => request(baseUrl, `/api/plan/${planId}`),
+    fetchPlan: (planId) => request(target, `/api/plan/${planId}`),
     sendPlanMessage: (planId, text) =>
-      request(baseUrl, `/api/plan/${planId}/message`, {
+      request(target, `/api/plan/${planId}/message`, {
         method: 'POST',
         ...jsonBody({ text }),
       }),
     confirmPlan: (planId, proposal) =>
-      request(baseUrl, `/api/plan/${planId}/confirm`, {
+      request(target, `/api/plan/${planId}/confirm`, {
         method: 'POST',
         ...jsonBody({ proposal }),
       }),
     startEpic: (epicId, opts = {}) =>
-      request(baseUrl, `/api/epics/${epicId}/dispatch`, {
+      request(target, `/api/epics/${epicId}/dispatch`, {
         method: 'POST',
         ...jsonBody(opts),
       }),
     stopEpic: (epicId) =>
-      request(baseUrl, `/api/epics/${epicId}/stop`, { method: 'POST' }),
+      request(target, `/api/epics/${epicId}/stop`, { method: 'POST' }),
     fetchEpicProgress: (epicId) =>
-      request(baseUrl, `/api/epics/${epicId}/progress`),
-    fetchMergeQueue: () => request(baseUrl, '/api/merge-queue'),
+      request(target, `/api/epics/${epicId}/progress`),
+    fetchMergeQueue: () => request(target, '/api/merge-queue'),
     enqueueMergeQueue: (runId) =>
-      request(baseUrl, '/api/merge-queue', {
+      request(target, '/api/merge-queue', {
         method: 'POST',
         ...jsonBody({ runId }),
       }),
     enqueueMergeStack: (taskId) =>
-      request(baseUrl, '/api/merge-queue/stack', {
+      request(target, '/api/merge-queue/stack', {
         method: 'POST',
         ...jsonBody({ taskId }),
       }),
     enqueueMergeReady: () =>
-      request(baseUrl, '/api/merge-queue/ready', { method: 'POST' }),
+      request(target, '/api/merge-queue/ready', { method: 'POST' }),
     recheckMergeQueue: () =>
-      request(baseUrl, '/api/merge-queue/recheck', { method: 'POST' }),
+      request(target, '/api/merge-queue/recheck', { method: 'POST' }),
     // Not routed through the shared `request()` helper: the server answers
     // this one with 204 No Content (per the merge queue's REST contract), and
     // `request()` always tries to parse a JSON body on success — which throws
@@ -1883,40 +1930,40 @@ export function createApiClient(baseUrl: string): ApiClient {
         params.set('severity', filter.severity);
       }
       const query = params.size > 0 ? `?${params.toString()}` : '';
-      return request(baseUrl, `/api/findings${query}`);
+      return request(target, `/api/findings${query}`);
     },
     createFinding: (input) =>
-      request(baseUrl, '/api/findings', { method: 'POST', ...jsonBody(input) }),
+      request(target, '/api/findings', { method: 'POST', ...jsonBody(input) }),
     updateFinding: (id, patch) =>
-      request(baseUrl, `/api/findings/${encodeURIComponent(id)}`, {
+      request(target, `/api/findings/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         ...jsonBody(patch),
       }),
     fetchTaskFindings: (taskId) =>
-      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/findings`),
+      request(target, `/api/tasks/${encodeURIComponent(taskId)}/findings`),
     startReview: (taskId, input) =>
-      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/review`, {
+      request(target, `/api/tasks/${encodeURIComponent(taskId)}/review`, {
         method: 'POST',
         ...jsonBody(input),
       }),
     startVerification: (taskId, head) =>
-      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/verify`, {
+      request(target, `/api/tasks/${encodeURIComponent(taskId)}/verify`, {
         method: 'POST',
         ...jsonBody({ head }),
       }),
     fetchTaskVerification: (taskId) =>
-      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/verification`),
+      request(target, `/api/tasks/${encodeURIComponent(taskId)}/verification`),
     fetchFixLoop: (taskId) =>
-      request(baseUrl, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
+      request(target, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
     advanceFixLoop: (taskId, input = {}) =>
       request(
-        baseUrl,
+        target,
         `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/advance`,
         { method: 'POST', ...jsonBody(input) }
       ),
     adjudicateFinding: (taskId, findingId, input) =>
       request(
-        baseUrl,
+        target,
         `/api/tasks/${encodeURIComponent(taskId)}/findings/${encodeURIComponent(findingId)}/adjudicate`,
         { method: 'POST', ...jsonBody(input) }
       ),
@@ -1926,12 +1973,12 @@ export function createApiClient(baseUrl: string): ApiClient {
         params.set('epicId', filter.epicId ?? '');
       }
       const query = params.size > 0 ? `?${params.toString()}` : '';
-      return request(baseUrl, `/api/ledger${query}`);
+      return request(target, `/api/ledger${query}`);
     },
     createLedgerEntry: (input) =>
-      request(baseUrl, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
-    wsUrl: () => wsUrl(baseUrl),
+      request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
+    wsUrl: () => wsUrl(baseUrl, target.token),
     connectEvents: (onChange, options) =>
-      connectEvents(baseUrl, onChange, options),
+      connectEvents(baseUrl, onChange, { token: target.token, ...options }),
   };
 }

@@ -146,7 +146,14 @@ function withCors(res: Response, origin: string | null): Response {
       'access-control-allow-methods',
       'GET, POST, PATCH, DELETE, OPTIONS'
     );
-    res.headers.set('access-control-allow-headers', 'content-type');
+    // `authorization` must stay listed: every guarded route needs the bearer
+    // header, and the desktop webview and dev harness are both cross-origin to
+    // this daemon, so dropping it makes the browser discard their requests at
+    // the preflight before the daemon ever sees them.
+    res.headers.set(
+      'access-control-allow-headers',
+      'content-type, authorization'
+    );
     // The allowed origin is request-dependent, so caches must key on it.
     res.headers.set('vary', 'origin');
   }
@@ -162,17 +169,51 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
+/**
+ * Serves `index.html` with the agent token inlined, because a browser page has
+ * no filesystem and so cannot read the daemon file the CLI and MCP read.
+ *
+ * The token this hands out is the same request-tier one already sitting in
+ * `~/.dispatch/daemons/<key>.json`, so a co-resident process learns nothing it
+ * could not already read; the app token is never served. Cross-origin pages
+ * cannot read this response either — static assets go through the same
+ * `withCors` as everything else, and an untrusted origin gets no CORS header.
+ */
+async function serveIndexHtml(
+  indexFile: ReturnType<typeof Bun.file>,
+  agentToken: string
+): Promise<Response> {
+  const html = await indexFile.text();
+  const inject = `<script>window.__DISPATCH_DAEMON_TOKEN__=${JSON.stringify(agentToken)}</script>`;
+  return new Response(
+    html.includes('</head>')
+      ? html.replace('</head>', `${inject}</head>`)
+      : `${inject}${html}`,
+    {
+      headers: {
+        'content-type': CONTENT_TYPES['.html'],
+        // A page carrying a credential must not sit in a shared cache.
+        'cache-control': 'no-store',
+      },
+    }
+  );
+}
+
 // Serves a built web UI out of `webDistDir`, falling back to `index.html` for
 // any non-file path so client-side routes work on a hard refresh (a classic
 // SPA fallback). Returns null if nothing in `webDistDir` matches, so the
 // caller can fall through to a plain 404.
 async function serveStatic(
   pathname: string,
-  webDistDir: string
+  webDistDir: string,
+  agentToken: string
 ): Promise<Response | null> {
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
   const candidate = Bun.file(join(webDistDir, relative));
   if (await candidate.exists()) {
+    if (relative === 'index.html') {
+      return await serveIndexHtml(candidate, agentToken);
+    }
     const type = CONTENT_TYPES[extname(relative)];
     return new Response(
       candidate,
@@ -181,9 +222,7 @@ async function serveStatic(
   }
   const indexFile = Bun.file(join(webDistDir, 'index.html'));
   if (await indexFile.exists()) {
-    return new Response(indexFile, {
-      headers: { 'content-type': CONTENT_TYPES['.html'] },
-    });
+    return await serveIndexHtml(indexFile, agentToken);
   }
   return null;
 }
@@ -470,7 +509,11 @@ export async function startServer(
       }
 
       if (webDistDir !== null) {
-        const staticResponse = await serveStatic(url.pathname, webDistDir);
+        const staticResponse = await serveStatic(
+          url.pathname,
+          webDistDir,
+          tokens.agentToken
+        );
         if (staticResponse !== null) return withCors(staticResponse, origin);
       }
 
