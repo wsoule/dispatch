@@ -103,10 +103,87 @@ describe('LedgerStore', () => {
       expect(store.entriesFor('t-sibling', 'e-111111')).toEqual([]);
     });
 
+    // Targeting is the stronger signal: an entry aimed at a task follows it
+    // even when the epic it was raised under is not the task's own.
+    test('an explicit appliesTo target wins regardless of epic', () => {
+      const store = new LedgerStore(root());
+      const entry = store.add({
+        epicId: 'e-111111',
+        kind: 'hazard',
+        title: 'the migration renames this column',
+        detail: 'coordinate with the other epic',
+        appliesTo: ['t-target'],
+      });
+
+      expect(store.entriesFor('t-target', 'e-222222')).toEqual([entry]);
+      expect(store.entriesFor('t-target', null)).toEqual([entry]);
+    });
+
     test('a store with no file yet applies nothing', () => {
       const store = new LedgerStore(root());
       expect(store.entriesFor('t-a', null)).toEqual([]);
     });
+  });
+});
+
+// A well-formed line, so a test only has to say what it wants to be wrong.
+function ledgerLine(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 'l-good01',
+    epicId: null,
+    sourceTaskId: null,
+    kind: 'constraint',
+    title: 'a real one',
+    detail: 'detail',
+    appliesTo: [],
+    createdAt: '2026-07-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('LedgerStore malformed lines', () => {
+  test('a line that is not JSON costs itself, not the rest of the ledger', () => {
+    const dir = root();
+    mkdirSync(join(dir, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dispatch', 'ledger.jsonl'),
+      [
+        JSON.stringify(ledgerLine()),
+        '{"id": "l-trunc0", "kind": "hazard"',
+        JSON.stringify(ledgerLine({ id: 'l-good02' })),
+      ].join('\n') + '\n'
+    );
+
+    const store = new LedgerStore(dir);
+    expect(store.list().map((e) => e.id)).toEqual(['l-good01', 'l-good02']);
+  });
+
+  test('a parseable line that is not an entry is dropped rather than injected', () => {
+    const dir = root();
+    const { appliesTo: _dropped, ...noAppliesTo } = ledgerLine({
+      id: 'l-bad001',
+      title: 'the shapeless one',
+    });
+    const { id: _idLess, ...noId } = ledgerLine({ title: 'the id-less one' });
+    seedLines(dir, [noAppliesTo, noId, ledgerLine()]);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const store = new LedgerStore(dir);
+      // Without the guard this throws: entriesFor calls .includes() on a
+      // missing appliesTo.
+      expect(store.entriesFor('t-a', null).map((e) => e.id)).toEqual([
+        'l-good01',
+      ]);
+      expect(store.list().map((e) => e.id)).toEqual(['l-good01']);
+
+      // Logged once per damaged line, not once per read.
+      store.list();
+      expect(errors).toHaveBeenCalledTimes(2);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });
 

@@ -139,6 +139,85 @@ describe('FindingStore', () => {
   });
 });
 
+// A well-formed line, so a test only has to say what it wants to be wrong.
+function findingLine(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 'f-good01',
+    taskId: 't-a',
+    runId: null,
+    severity: 'important',
+    verdict: 'open',
+    title: 'a real one',
+    detail: 'detail',
+    file: null,
+    line: null,
+    ruling: null,
+    round: 0,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('FindingStore malformed lines', () => {
+  test('a line that is not JSON costs itself, not the rest of the store', () => {
+    const dir = root();
+    mkdirSync(join(dir, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dispatch', 'findings.jsonl'),
+      [
+        JSON.stringify(findingLine()),
+        '{"id": "f-trunc0", "taskId": "t-a"',
+        JSON.stringify(findingLine({ id: 'f-good02' })),
+      ].join('\n') + '\n'
+    );
+
+    const store = new FindingStore(dir);
+    expect(store.list().map((f) => f.id)).toEqual(['f-good01', 'f-good02']);
+  });
+
+  test('a parseable line that is not a finding is dropped rather than served as a ghost', () => {
+    const dir = root();
+    const { id: _dropped, ...idLess } = findingLine({ title: 'the ghost' });
+    seedLines(dir, [idLess, findingLine()]);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const store = new FindingStore(dir);
+      expect(store.list().map((f) => f.id)).toEqual(['f-good01']);
+      expect(store.openFor('t-a').map((f) => f.title)).toEqual(['a real one']);
+
+      // The call a fix round makes with a ghost in hand: update(finding.id),
+      // where the id is undefined and matches the ghost's own missing one.
+      const ghostId = store.openFor('t-a').find((f) => f.title === 'the ghost')
+        ?.id as string;
+      expect(() => store.update(ghostId, { verdict: 'addressed' })).toThrow();
+
+      // Logged once for the damaged line, not once per read.
+      store.list();
+      store.get('f-good01');
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect(String(errors.mock.calls[0]?.[0])).toContain('the ghost');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test('two id-less lines cannot collide into one another', () => {
+    const dir = root();
+    const { id: _a, ...first } = findingLine({ title: 'ghost one' });
+    const { id: _b, ...second } = findingLine({ title: 'ghost two' });
+    seedLines(dir, [first, second]);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(new FindingStore(dir).list()).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});
+
 describe('FindingStore id collisions', () => {
   // Two findings minted the same 6-hex id. Keying compaction by id alone drops
   // the older one, which is how a standing block can vanish without a trace.
