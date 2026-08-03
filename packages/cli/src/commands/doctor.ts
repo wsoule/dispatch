@@ -5,8 +5,9 @@ import {
   parseTaskFile,
 } from '@dispatch/core';
 import type { DispatchConfig, TaskDoc } from '@dispatch/core';
+import { discoverCarto } from '@dispatch/core/carto';
 import type { Command } from 'commander';
-import { readdirSync, readFileSync } from 'node:fs';
+import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type CliContext, CliError } from '../context.js';
@@ -15,6 +16,33 @@ import { requireStore } from './task.js';
 interface Issue {
   file: string;
   problem: string;
+}
+
+const SOURCE_ROOTS = ['packages', 'apps', 'src', 'lib'];
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.dispatch']);
+
+// Shallow, bounded search for any .ts/.tsx file — not a dependency graph,
+// just whether the built-in scanner could find anything at all here.
+function hasTypeScriptSources(rootDir: string, depth = 4): boolean {
+  const search = (dir: string, left: number): boolean => {
+    if (left < 0 || !existsSync(dir)) return false;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      if (entry.isFile() && /\.tsx?$/.test(entry.name)) return true;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || SKIP_DIRS.has(entry.name)) continue;
+      if (search(join(dir, entry.name), left - 1)) return true;
+    }
+    return false;
+  };
+  if (search(rootDir, 0)) return true;
+  return SOURCE_ROOTS.some((name) => search(join(rootDir, name), depth));
 }
 
 // Matches the ISO-8601 subset `created`/`updated` are actually written in
@@ -123,6 +151,30 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
           file,
           problem: `dependency cycle: ${cycle.join(' → ')}`,
         });
+      }
+
+      // Carto health, plus the empty-dependency-map warning below. Skipped
+      // under --json since that output must be a single parseable blob.
+      if (opts.json !== true) {
+        const discovery = discoverCarto();
+        if (config.carto.enabled !== 'off') {
+          if (discovery.ok) {
+            ctx.log(
+              `carto ${discovery.binary.version} at ${discovery.binary.path}`
+            );
+          } else {
+            ctx.log(
+              `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: npm install -g carto-md (its native deps built only under Node 22 LTS in our testing)`
+            );
+          }
+        }
+        // No carto and no TypeScript: the built-in scanner is blind here,
+        // so dependents() can only ever return [].
+        if (!discovery.ok && !hasTypeScriptSources(ctx.cwd)) {
+          ctx.log(
+            'warning: no carto container and no TypeScript sources, so the dependency map is empty and review scope covers only changed files'
+          );
+        }
       }
 
       if (opts.json === true) {

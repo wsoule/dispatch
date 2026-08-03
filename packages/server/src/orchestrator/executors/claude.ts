@@ -8,6 +8,10 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { CartoMode } from '@dispatch/core';
+import { loadConfig } from '@dispatch/core';
+import type { CartoBinary } from '@dispatch/core/carto';
+import { discoverCarto } from '@dispatch/core/carto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
@@ -135,6 +139,61 @@ function buildDispatchMcpServerConfig(
     env,
     timeout: DISPATCH_MCP_TOOL_TIMEOUT_MS,
   };
+}
+
+// Same allowlist rationale as MCP_ENV_PASSTHROUGH above; CARTO_MCP_TIER stays
+// absent so the agent's tool menu stays at carto's ~10-tool core.
+const CARTO_MCP_ENV_PASSTHROUGH: readonly string[] = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+];
+
+// McpStdioServerConfig has no `cwd`, so `carto serve` (whose root is cwd, no
+// arg) runs via a shell wrapper. projectRoot/binary.path are passed as
+// positional params ($1/$2), never spliced into the script text, so the
+// shell never re-parses them — interpolating them (even JSON-escaped) would
+// let a `$(...)` or backtick in either value run as a shell command.
+//
+// Upstream carto serve doesn't connect its MCP transport when required as a
+// library rather than run as __main__: carto#9.
+export function buildCartoMcpServerConfig(
+  projectRoot: string,
+  binary: CartoBinary
+): McpServerConfig {
+  const env: Record<string, string> = {};
+  for (const key of CARTO_MCP_ENV_PASSTHROUGH) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return {
+    type: 'stdio',
+    command: '/bin/sh',
+    args: ['-c', 'cd "$1" && exec "$2" serve', 'sh', projectRoot, binary.path],
+    env,
+  };
+}
+
+// Contributes a `carto` entry only when `carto.enabled` allows it and the
+// binary is actually present — `off` means no MCP entry at all, and a spawn
+// failure would cost every run a startup error for no benefit. Runs once per
+// dispatched run (Orchestrator calls start() once), so the config read here
+// is not on a hot path; a malformed config degrades to the default `on`.
+export function cartoMcpServers(
+  projectRoot: string
+): Record<string, McpServerConfig> {
+  let mode: CartoMode = 'on';
+  try {
+    mode = loadConfig(projectRoot).carto.enabled;
+  } catch {
+    // A config Dispatch can't read must not decide carto policy by itself.
+  }
+  if (mode === 'off') return {};
+  const discovery = discoverCarto();
+  if (!discovery.ok) return {};
+  return { carto: buildCartoMcpServerConfig(projectRoot, discovery.binary) };
 }
 
 // A resolver for one canUseTool call this run is currently blocked on,
@@ -517,6 +576,7 @@ export class ClaudeExecutor implements Executor {
           opts.projectRoot ?? opts.cwd,
           opts.runId ?? ''
         ),
+        ...cartoMcpServers(opts.projectRoot ?? opts.cwd),
       },
     };
     const sdkQuery: Query = this.openQuery(queue, sdkOptions);
