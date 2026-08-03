@@ -1502,7 +1502,12 @@ describe('buildCartoMcpServerConfig', () => {
       version: '2.1.3',
     });
     expect(config.type).toBe('stdio');
-    expect(config.command).toContain('carto');
+    // CORRECTED: with the shell wrapper (which Task 0 made unconditional),
+    // `command` is `/bin/sh` and the carto path lives in `args`. Assert on
+    // `args`. Also cast to McpStdioServerConfig before reading stdio-only
+    // fields, matching how buildDispatchMcpServerConfig's own tests in this
+    // file do it — the union type does not expose them.
+    expect(config.args.join(' ')).toContain('carto');
     // The SDK serializes env into the spawned CLI's argv, visible via `ps`.
     for (const key of Object.keys(config.env ?? {})) {
       expect(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL']).toContain(key);
