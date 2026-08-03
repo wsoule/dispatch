@@ -74,4 +74,20 @@ describe('appendActivity attribution', () => {
     expect(body).toContain('— human:wyat');
     expect(body).not.toMatch(/^## not a heading$/m);
   });
+
+  it('drops a malformed actor instead of writing it into the file', () => {
+    const body = appendActivity(
+      '## Activity\n',
+      'moved to in-review',
+      'not a valid ref'
+    );
+    expect(body).toContain('- moved to in-review');
+    expect(body).not.toContain('not a valid ref');
+    expect(body).not.toContain('—');
+  });
+
+  it('accepts the unassigned sentinel "none" as an actor', () => {
+    const body = appendActivity('## Activity\n', 'auto-closed', 'none');
+    expect(body).toContain('- auto-closed — none');
+  });
 });
