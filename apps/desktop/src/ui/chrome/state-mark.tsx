@@ -3,12 +3,13 @@ import { cn } from '@/lib/utils';
 
 // Spelled out because Tailwind cannot build class names at runtime. With the
 // palette grayscale, form distinguishes states and tone ranks their urgency.
-// `failed`'s ring-offset-background keeps its halo on the themed surface color
-// instead of Tailwind's literal white default, which would show through in dark mode.
+// `failed` is a wedge bitten out of the disc, not a ring: a ring is drawn in a
+// border tone that all but vanishes against the light theme's near-white ground,
+// whereas a cut silhouette survives either ground.
 const MARK_FORM: Record<FeedState, string> = {
   waiting: 'bg-state-waiting rounded-full',
   failed:
-    'bg-state-failed rounded-full ring-2 ring-offset-1 ring-offset-background ring-state-failed-edge',
+    'bg-state-failed rounded-full [clip-path:polygon(0%_0%,100%_0%,100%_25%,35%_50%,100%_75%,100%_100%,0%_100%)]',
   working: 'bg-state-working rounded-full',
   review: 'border border-state-review rounded-full',
   landing: 'bg-state-landing rounded-full [clip-path:inset(0_50%_0_0)]',
