@@ -999,36 +999,66 @@ existing callers and existing task files are unaffected."
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `packages/core/test/findings.test.ts`:
+Add to the server's findings store test file (find it under
+`packages/server/test/` — read the existing tests first and match their fixture
+style). These test real behaviour, not the type:
 
 ```ts
-describe('finding attribution', () => {
-  it('carries the actor that raised it', () => {
-    const finding: Finding = {
-      id: 'f-abc123',
+it('round-trips the actor that raised a finding', () => {
+  const root = fixture();
+  const store = new FindingsStore(root);
+  const written = store.add({
+    taskId: 't-abc123',
+    runId: null,
+    severity: 'important',
+    verdict: 'open',
+    title: 'x',
+    detail: 'y',
+    file: null,
+    line: null,
+    round: 0,
+    raisedBy: 'agent:wyat/claude',
+  });
+  expect(new FindingsStore(root).list()).toContainEqual(
+    expect.objectContaining({ id: written.id, raisedBy: 'agent:wyat/claude' })
+  );
+});
+
+it('defaults raisedBy on a record written before attribution existed', () => {
+  const root = fixture();
+  mkdirSync(join(root, '.dispatch'), { recursive: true });
+  // A legacy line: every field except raisedBy.
+  writeFileSync(
+    join(root, '.dispatch', 'findings.jsonl'),
+    `${JSON.stringify({
+      id: 'f-legacy',
       taskId: 't-abc123',
       runId: null,
-      severity: 'important',
+      severity: 'minor',
       verdict: 'open',
-      title: 'x',
-      detail: 'y',
+      title: 'old',
+      detail: '',
       file: null,
       line: null,
       ruling: null,
       round: 0,
-      raisedBy: 'agent:wyat/claude',
-      createdAt: '2026-08-02T00:00:00.000Z',
-      updatedAt: '2026-08-02T00:00:00.000Z',
-    };
-    expect(finding.raisedBy).toBe('agent:wyat/claude');
-  });
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    })}\n`
+  );
+  expect(new FindingsStore(root).list()[0]?.raisedBy).toBe('');
 });
 ```
 
+Adjust `FindingsStore`, `add`, and `list` to the real member names in
+`packages/server/src/findings.ts`. Add the equivalent pair for `authoredBy` in
+the ledger store's test file.
+
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bun ws core tsc` Expected: FAIL — `raisedBy` is not a property of
-`Finding`.
+Run: `bun test packages/server/test/` (the findings and ledger test files)
+Expected: FAIL — `raisedBy` is not a property of `Finding`, and the legacy
+record loads without the defaulted field.
 
 - [ ] **Step 3: Add the fields**
 
