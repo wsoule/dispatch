@@ -11,10 +11,12 @@ export type GitRunner = (
   args: string[]
 ) => { status: number; stdout: string; stderr: string };
 
-// DISPATCH_HOME before homedir() — mirrors daemonfile.ts's daemonHome() and
-// linear/state.ts's stateHome(). Kept as its own copy per this repo's
-// convention for this scheme (see daemonfile.ts's comment on its copies);
-// update alongside them if the rule ever changes.
+// DISPATCH_HOME before homedir() — the sixth copy of this exact scheme; see
+// daemonfile.ts's `daemonHome()` comment for the full enumeration (also
+// mirrors linear/state.ts's stateHome(), which predates that enumeration).
+// Kept as its own copy rather than an import so this module has no
+// dependency on the daemon-file module; update all six together if the rule
+// ever changes.
 function dispatchHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();
@@ -35,7 +37,22 @@ function resolveTrunk(rootDir: string, run: GitRunner): string | null {
   if (originHead.status === 0) {
     const ref = originHead.stdout.trim();
     const prefix = 'refs/remotes/origin/';
-    if (ref.startsWith(prefix)) return ref.slice(prefix.length);
+    if (ref.startsWith(prefix)) {
+      const name = ref.slice(prefix.length);
+      // `symbolic-ref` only confirms the symref FILE exists, not that its
+      // target still does — a remote's default branch being renamed or
+      // deleted leaves a stale local symref pointing at nothing. Verify the
+      // target actually resolves before trusting it, so a ghost branch
+      // falls through to the local fallbacks instead of producing a syncer
+      // that can never check anything out.
+      const verify = run(rootDir, [
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        `refs/remotes/origin/${name}`,
+      ]);
+      if (verify.status === 0) return name;
+    }
   }
   for (const candidate of ['main', 'master']) {
     const verify = run(rootDir, [
