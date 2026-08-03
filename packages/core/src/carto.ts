@@ -330,7 +330,12 @@ export function cartoSyncAsync(
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(binary.path, ['sync'], { cwd: projectRoot });
+      // stdout is discarded, not piped: an unread pipe fills its OS buffer
+      // and blocks the child forever once it writes enough of it.
+      child = spawn(binary.path, ['sync'], {
+        cwd: projectRoot,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
     } catch (err) {
       resolve({ ok: false, detail: (err as Error).message });
       return;
