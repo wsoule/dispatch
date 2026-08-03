@@ -173,11 +173,11 @@ function buildTaskDescription(task: PlannedTask): string {
 // so the later-inserted one wins the tie rather than the order being arbitrary.
 export function sortDraftsNewestFirst(drafts: DraftRecord[]): DraftRecord[] {
   const inserted = new Map(drafts.map((d, i) => [d.id, i]));
-  return [...drafts].sort(
-    (a, b) =>
-      b.createdAt.localeCompare(a.createdAt) ||
-      (inserted.get(b.id) ?? 0) - (inserted.get(a.id) ?? 0)
-  );
+  return [...drafts].sort((a, b) => {
+    const byCreated = b.createdAt.localeCompare(a.createdAt);
+    if (byCreated !== 0) return byCreated;
+    return (inserted.get(b.id) ?? 0) - (inserted.get(a.id) ?? 0);
+  });
 }
 
 export class PlanManager {
