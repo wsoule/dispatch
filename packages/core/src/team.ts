@@ -94,11 +94,26 @@ export function upsertMember(
   displayName: string,
   knownHandle?: string
 ): { members: TeamMember[]; member: TeamMember; changed: boolean } {
-  const found =
-    (knownHandle === undefined
+  const byHandle =
+    knownHandle === undefined
       ? undefined
-      : members.find((m) => m.handle === knownHandle)) ??
-    members.find((m) => m.email === email || m.emails.includes(email));
+      : members.find((m) => m.handle === knownHandle);
+  const byEmail = members.find(
+    (m) => m.email === email || m.emails.includes(email)
+  );
+  // A knownHandle match only wins outright when its own email matches, or
+  // when no other entry independently claims `email` — that is what makes
+  // it survive a legitimate email change. If a *different* entry already
+  // owns `email`, the knownHandle match belongs to someone else (a corrupted
+  // or stale known-handle record), and the email lookup — the true match —
+  // must win instead, or two people's rosters merge into one.
+  const found =
+    byHandle !== undefined &&
+    (byHandle.email === email ||
+      byEmail === undefined ||
+      byEmail.handle === byHandle.handle)
+      ? byHandle
+      : byEmail;
   if (
     found !== undefined &&
     found.email === email &&
