@@ -176,3 +176,25 @@ describe('unexpected internal errors', () => {
     expect(text).not.toContain('at ');
   });
 });
+
+describe('boot with a malformed config.yml', () => {
+  it('starts anyway and keeps serving, rather than dying on the carto read', async () => {
+    const store = TaskStore.init(root);
+    store.create({ title: 'Survivor' }, '2026-07-13T01:00:00Z');
+    // Unparseable YAML: the boot-path loadConfig that picks carto's mode
+    // throws on this, and a config typo must not take the daemon down.
+    writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');
+
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    const tasks = await json(
+      await fetch(`http://127.0.0.1:${handle.port}/api/tasks`)
+    );
+    expect(tasks.map((t: { meta: { title: string } }) => t.meta.title)).toEqual(
+      ['Survivor']
+    );
+  });
+});
