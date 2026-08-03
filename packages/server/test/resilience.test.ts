@@ -190,6 +190,7 @@ describe('boot with a malformed config.yml', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     const tasks = await json(
       await fetch(`http://127.0.0.1:${handle.port}/api/tasks`)
     );
