@@ -413,15 +413,52 @@ describe('BoardSyncer.syncOnce', () => {
     cleanupClone(b);
   });
 
-  it('a brand-new, never-synced local task survives a standalone materialize() call', () => {
+  it('a brand-new, never-synced local task survives a real, diff-driven materialize() call', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const storeB = new TaskStore(b);
+    const doc = storeA.create({ title: 'Not yet synced' });
+
+    // An unrelated task from bob lands on trunk, so the diff materialize()
+    // is about to apply is real and non-empty — this must not be a bare,
+    // trivially-a-no-op call (that's covered separately, at the "no
+    // persisted pointer" assertion below).
+    storeB.create({ title: 'From bob' });
+    await syncerFor(b).syncOnce();
+
+    const worktreeA = SyncWorktree.open(a, run);
+    if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    worktreeA.ensure();
+    const beforeSha = runGitSync(worktreeA.path, ['rev-parse', 'HEAD']).trim();
+    runGitSync(worktreeA.path, [
+      'pull',
+      '--rebase',
+      'origin',
+      worktreeA.trunkRef(),
+    ]);
+
+    // materialize() called with no prior syncOnce() on A at all — the
+    // staging loop that would normally mirror A's own new task into the
+    // worktree first never ran. A diff-driven materialize() has no opinion
+    // about a task the sync worktree has never mentioned, so even given a
+    // real, non-empty range it must not touch it.
+    const written = syncerFor(a).materialize(beforeSha);
+    expect(written).toBe(1);
+    expect(storeA.get(doc.meta.id)?.meta.title).toBe('Not yet synced');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('a bare materialize() call with no `before` is always a no-op', () => {
     const { origin, a, b } = twoClones();
     const storeA = new TaskStore(a);
     const doc = storeA.create({ title: 'Not yet synced' });
 
-    // materialize() called with no prior syncOnce() at all — the staging
-    // loop that would normally mirror this task into the worktree first
-    // never ran. A diff-driven materialize() has no opinion about a task
-    // the sync worktree has never mentioned, so it must not touch it.
+    // No persisted "last materialized" pointer exists (round 2 removed it),
+    // so a call with nothing to diff from must not guess — it must do
+    // nothing rather than fall back to some default range.
     const written = syncerFor(a).materialize();
     expect(written).toBe(0);
     expect(storeA.get(doc.meta.id)?.meta.title).toBe('Not yet synced');
