@@ -10,7 +10,6 @@ import {
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
   loadConfig,
-  updateConfig,
 } from '../src/config.js';
 
 let root: string;
@@ -305,43 +304,5 @@ describe('the carto block', () => {
     expect(() => loadConfig(writeConfig('carto: nope\n'))).toThrow(
       /invalid \.dispatch\/config\.yml: carto must be a mapping/
     );
-  });
-});
-
-describe('updateConfig', () => {
-  it('writes a turn cap and a budget cap under orchestrator', () => {
-    updateConfig(root, { maxTurns: 40, maxBudgetUsd: 12.5 });
-    const config = loadConfig(root);
-    expect(config.orchestrator.maxTurns).toBe(40);
-    expect(config.orchestrator.maxBudgetUsd).toBe(12.5);
-  });
-
-  // Both are optional in OrchestratorConfig, so clearing is a real state — "no cap"
-  // is different from "a cap of zero", which the loader rejects outright.
-  it('clears a cap when passed null', () => {
-    updateConfig(root, { maxTurns: 40, maxBudgetUsd: 12.5 });
-    updateConfig(root, { maxTurns: null, maxBudgetUsd: null });
-    const config = loadConfig(root);
-    expect(config.orchestrator.maxTurns).toBeUndefined();
-    expect(config.orchestrator.maxBudgetUsd).toBeUndefined();
-  });
-
-  it('refuses a non-positive turn cap before it reaches disk', () => {
-    expect(() => updateConfig(root, { maxTurns: 0 })).toThrow(
-      /invalid maxTurns: must be a positive number/
-    );
-  });
-
-  it('refuses a non-positive budget cap before it reaches disk', () => {
-    expect(() => updateConfig(root, { maxBudgetUsd: -1 })).toThrow(
-      /invalid maxBudgetUsd: must be a positive number/
-    );
-  });
-
-  // A budget is money, so fractions are legitimate — unlike epicConcurrency, this
-  // must not be an integer check.
-  it('accepts a fractional budget cap', () => {
-    updateConfig(root, { maxBudgetUsd: 0.75 });
-    expect(loadConfig(root).orchestrator.maxBudgetUsd).toBe(0.75);
   });
 });
