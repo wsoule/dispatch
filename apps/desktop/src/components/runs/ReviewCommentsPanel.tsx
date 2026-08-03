@@ -2,9 +2,9 @@ import type { ReviewComment, ReviewVerdict } from '@dispatch/client';
 import { Check, MessageSquare, Undo2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
-import { SectionLabel } from '../ui/SectionLabel';
 import { ReviewThread } from './ReviewThread';
 import { cn } from '@/lib/utils';
+import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 interface ReviewCommentsPanelProps {
   comments: ReviewComment[];

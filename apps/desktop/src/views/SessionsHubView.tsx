@@ -8,7 +8,6 @@ import { projectNameFor } from '../components/sessions/sessionDisplay';
 import { SessionRow } from '../components/sessions/SessionRow';
 import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
 import { SpendTable } from '../components/sessions/SpendTable';
-import { StatTile } from '../components/ui/StatTile';
 import { modelDisplayName } from '../lib/models';
 import {
   exportReport,
@@ -17,6 +16,7 @@ import {
   listProjects,
   listSessions,
 } from '../lib/tauri';
+import { StatTile } from '@/ui/chrome/StatTile';
 import { Skeleton } from '@/ui/skeleton';
 
 /** Window used for the header's "Spend (Nd)" tile and the header export — a fixed recent

@@ -1,13 +1,13 @@
 import { CircleAlert, Hand } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import { ProgressTrack } from '@/components/ui/ProgressTrack';
-import { StateDot } from '@/components/ui/StateDot';
 import type { FeedRowModel } from '@/lib/controlRoom';
 import type { FeedState } from '@/lib/feedState';
 import { FEED_STATE_LABEL, isUrgentState } from '@/lib/feedState';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
+import { StateDot } from '@/ui/chrome/StateDot';
 
 // The urgent skins, spelled out for Tailwind's static extraction.
 const URGENT_ROW: Partial<Record<FeedState, string>> = {

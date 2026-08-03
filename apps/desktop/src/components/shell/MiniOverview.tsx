@@ -4,8 +4,8 @@ import { useMemo } from 'react';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { buildFeed } from '../../lib/controlRoom';
 import { FEED_STATE_LABEL, FEED_STATE_ORDER } from '../../lib/feedState';
-import { StateDot } from '../ui/StateDot';
 import { cn } from '@/lib/utils';
+import { StateDot } from '@/ui/chrome/StateDot';
 
 interface MiniOverviewProps {
   data: DispatchProjectData;
