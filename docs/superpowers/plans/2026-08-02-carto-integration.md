@@ -912,9 +912,13 @@ If `writeConfig` does not already exist in that file, add a local helper that
 writes `.dispatch/config.yml` under a fresh `mkdtempSync` root and returns the
 root.
 
-**Note on YAML:** `enabled: off` parses as the boolean `false` in YAML 1.1. The
-parser must accept both the string `'off'` and boolean `false` as the `off`
-mode, and both `'on'` and `true` as `on`. Cover this in the test above.
+**Note on YAML (corrected during implementation):** an earlier draft claimed
+`enabled: off` parses as boolean `false` because of YAML 1.1. **That was wrong**
+for this repo — the `yaml` package defaults to the YAML 1.2 core schema, where
+bare `on`/`off`/`yes`/`no` all parse as _strings_. Verified empirically. Only
+bare `true`/`false` are real booleans. The boolean normalization is still
+required, but to handle `enabled: true` / `enabled: false`, not `on`/`off`. Test
+against the spellings that are genuinely booleans, or the test proves nothing.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -948,7 +952,7 @@ In `packages/core/src/config.ts`, add a parser mirroring the existing block
 parsers:
 
 ```ts
-// YAML 1.1 parses bare `on`/`off` as booleans, so both spellings are accepted.
+// Bare `true`/`false` are real YAML booleans; accept them as on/off too.
 function parseCarto(raw: unknown): CartoConfig {
   if (raw === undefined || raw === null) return { ...DEFAULT_CARTO };
   if (typeof raw !== 'object' || Array.isArray(raw)) {
