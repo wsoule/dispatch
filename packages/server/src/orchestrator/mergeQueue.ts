@@ -551,7 +551,9 @@ export class MergeQueue {
     if (this.entries.some((e) => e.runId === meta.id)) {
       return `run is already in the merge queue: ${meta.id}`;
     }
-    return null;
+    // No other admission check looks at findings, so without this "merge all
+    // ready" would ship work a human ruled unshippable.
+    return this.ctx.orchestrator.blockedFindingReason(meta.taskId);
   }
 
   private isEnqueueable(meta: RunMeta): boolean {
@@ -1135,6 +1137,10 @@ export class MergeQueue {
   // markRunMergedViaPr (mirroring what PrManager's own poller does once it
   // sees a PR merged).
   private async merge(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
+    // Re-checked because a finding can be adjudicated while the entry waits,
+    // and the PR path below never reaches review()'s own gate.
+    const blocked = this.ctx.orchestrator.blockedFindingReason(meta.taskId);
+    if (blocked !== null) throw new Error(blocked);
     this.setEntryState(entry, 'merging');
     this.broadcast();
 

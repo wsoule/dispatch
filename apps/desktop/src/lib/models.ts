@@ -1,7 +1,5 @@
-// The Claude models a run can be dispatched with, and the user's default choice. The default
-// is persisted in localStorage (this is a Tauri/browser-only app) so it survives restarts the
-// same way the board's List/Board toggle does; the picker in Settings writes it, and every
-// dispatch reads it unless a per-dispatch override is given.
+// The Claude models a run can be dispatched with. localStorage here holds only
+// a per-device override of the project's `.dispatch/config.yml` default.
 
 export interface ModelOption {
   /** SDK model id passed straight through to the Agent SDK's `query({ options: { model } })`. */
@@ -43,15 +41,28 @@ export const DEFAULT_MODEL = MODELS[0].id;
 
 const STORAGE_KEY = 'dispatch:default-model';
 
-// The user's chosen default dispatch model, or the built-in default. Guarded for a missing
-// `localStorage` (never throws) and validated against the known list so a stale/removed id
-// can't leave dispatch pointed at a model that no longer exists.
-export function readDefaultModel(): string {
-  if (typeof window === 'undefined') return DEFAULT_MODEL;
+// Reads the user's per-device model override, if one is stored and is still a
+// valid choice. Never throws when `localStorage` is missing (SSR/tests).
+function readStoredOverride(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
   const stored = window.localStorage.getItem(STORAGE_KEY);
   return stored !== null && MODELS.some((m) => m.id === stored)
     ? stored
-    : DEFAULT_MODEL;
+    : undefined;
+}
+
+// The user's chosen default dispatch model, or the built-in one. Seeds the
+// picker; see resolveExecuteModel for what a dispatch actually runs on.
+export function readDefaultModel(): string {
+  return readStoredOverride() ?? DEFAULT_MODEL;
+}
+
+// The model a dispatch actually runs on: the per-device override if set, else
+// the project's configured `models.execute`, else the hardcoded default.
+export function resolveExecuteModel(
+  config: { models?: { execute?: string } } | null | undefined
+): string {
+  return readStoredOverride() ?? config?.models?.execute ?? DEFAULT_MODEL;
 }
 
 export function writeDefaultModel(id: string): void {

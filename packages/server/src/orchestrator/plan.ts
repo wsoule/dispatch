@@ -1,3 +1,4 @@
+import { generateDraftId, loadConfig } from '@dispatch/core';
 import type { TaskStore } from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -6,11 +7,11 @@ import type { EventBus } from '../events.js';
 import type {
   PlannedTask,
   Planner,
+  PlannerQuestion,
   PlannerTurn,
   PlanProposal,
-  TaskDraft,
 } from './planner.js';
-import { validatePlanProposal } from './planner.js';
+import { validatePlanProposal, validatePlanProposalOrNull } from './planner.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -57,6 +58,9 @@ export interface PlanRecord {
   // (sendMessage) re-resolves the same planner the opening turn used — a plan
   // is one continuous conversation with one backend.
   plannerName: string;
+  // Which config.models role resolves this conversation's model ('enrich' for
+  // api.ts's enrich* flows). Stored so follow-ups re-read the same role.
+  role: 'plan' | 'enrich';
   state: PlanState;
   // The full conversation transcript, appended to on every turn: the user
   // message first, then the assistant reply once the turn settles.
@@ -64,6 +68,9 @@ export interface PlanRecord {
   // The latest *working* proposal — refined across turns and the target
   // confirm() validates against. Undefined until the first turn settles ready.
   proposal?: PlanProposal;
+  // Clarifying questions from the latest assistant turn, answerable via
+  // sendMessage; empty once the planner has enough to propose without them.
+  questions: PlannerQuestion[];
   // The planner's opaque resume handle from the most recent turn (the Agent
   // SDK session id for ClaudePlanner). Threaded back into the next
   // sendMessage so follow-ups retain prior context.
@@ -88,7 +95,33 @@ export interface ConfirmResult {
   taskIds: string[];
 }
 
+// One in-flight or settled task draft, mirroring PlanRecord's shape.
+// In-memory only — a lost daemon losing in-flight drafts is acceptable.
+export interface DraftRecord {
+  id: string;
+  prompt: string;
+  // Which registered planner this draft is talking to (mirrors PlanRecord.plannerName).
+  plannerName: string;
+  state: 'running' | 'ready' | 'failed';
+  /** The planner's conversational reply for this turn (may contain questions). */
+  message: string;
+  proposal: PlanProposal | null;
+  /** Clarifying questions from the latest turn, answerable via sendDraftMessage. */
+  questions: PlannerQuestion[];
+  // The planner's opaque resume handle from the most recent turn, threaded
+  // into the next sendDraftMessage — mirrors PlanRecord.sessionId.
+  sessionId?: string;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Cap on how many drafts stay in memory at once; eviction only drops
+// *non-running* entries once exceeded (see evictOldDrafts).
+const MAX_DRAFTS = 50;
+
 export interface PlanManagerContext {
+  rootDir: string;
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
@@ -139,6 +172,7 @@ function buildTaskDescription(task: PlannedTask): string {
 export class PlanManager {
   private readonly plans = new Map<string, PlanRecord>();
   private readonly planners = new Map<string, Planner>();
+  private readonly drafts = new Map<string, DraftRecord>();
 
   constructor(private readonly ctx: PlanManagerContext) {}
 
@@ -152,17 +186,20 @@ export class PlanManager {
     return [...this.planners.keys()];
   }
 
-  // Opens a plan conversation against `prompt` on the named planner (defaults
-  // to 'claude') and returns its id immediately — the actual Planner call
-  // happens fire-and-forget (mirrors Orchestrator.dispatch()'s
-  // executor.start() pattern), with the opening turn landing via runTurn()'s
-  // state update + `plan.changed` broadcast. `sourceNoteId` is carried
-  // through onto the record untouched for note-derived plans (see the field's
-  // comment) — it changes nothing about how the plan itself runs.
+  // Fresh per-call read of `config.models`, so a settings change takes effect
+  // on the very next call with no daemon restart.
+  private resolveModel(role: 'plan' | 'enrich'): string {
+    const { models } = loadConfig(this.ctx.rootDir);
+    return role === 'enrich' ? models.enrich : models.plan;
+  }
+
+  // Opens a plan conversation and returns its id immediately; the Planner call
+  // is fire-and-forget, landing via runTurn()'s `plan.changed` broadcast.
   startPlan(
     prompt: string,
     plannerName = 'claude',
-    sourceNoteId?: string
+    sourceNoteId?: string,
+    role: 'plan' | 'enrich' = 'plan'
   ): PlanRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
@@ -173,46 +210,163 @@ export class PlanManager {
       id: generatePlanId(now),
       prompt,
       plannerName,
+      role,
       state: 'running',
       messages: [{ role: 'user', text: prompt, at: now }],
+      questions: [],
       createdAt: now,
       updatedAt: now,
       sourceNoteId,
     };
     this.plans.set(record.id, record);
-    void this.runTurn(record.id, () => planner.start(prompt));
+    const model = this.resolveModel(role);
+    void this.runTurn(record.id, () => planner.start(prompt, model, 'plan'));
     return record;
   }
 
-  // The natural-language single-task creator (spec's "Linear-style add"): the
-  // one-task equivalent of startPlan/confirm, reusing the exact same `Planner`
-  // seam and validation rather than a second Agent-SDK path. Runs the named
-  // planner (defaults to 'claude', same registry/400-on-unknown contract as
-  // startPlan) for a single opening turn, re-validates whatever proposal it
-  // returns with the same validatePlanProposal rules confirm() uses, and hands
-  // back the first task as a `TaskDraft` for the client to review and save
-  // through the normal createTask path. Read-only and stateless — no
-  // PlanRecord is minted, since a draft is reviewed-then-created directly,
-  // never confirmed like a plan.
-  async draftTask(prompt: string, plannerName = 'claude'): Promise<TaskDraft> {
+  // Starts a single-task draft's planner turn in the background and returns
+  // the DraftRecord immediately at `running`; no busy-guard between drafts.
+  startDraft(prompt: string, plannerName = 'claude'): DraftRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
       throw new OrchestratorClientError(`unknown planner: ${plannerName}`);
     }
-    const turn = await planner.start(prompt);
-    const proposal = validatePlanProposal(turn.proposal);
-    const [task] = proposal.tasks;
-    if (task === undefined) {
-      throw new OrchestratorClientError(
-        'planner produced no task for this description'
+    const now = new Date().toISOString();
+    const record: DraftRecord = {
+      id: generateDraftId(now),
+      prompt,
+      plannerName,
+      state: 'running',
+      message: '',
+      proposal: null,
+      questions: [],
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.drafts.set(record.id, record);
+    this.evictOldDrafts();
+    const model = loadConfig(this.ctx.rootDir).models.draft;
+    void this.runDraftTurn(record.id, () =>
+      planner.start(prompt, model, 'draft')
+    );
+    return record;
+  }
+
+  // Mirrors sendMessage for a draft's follow-up (typically an answer to its
+  // questions), minus the `confirmedAt` guard — a draft has no confirm step.
+  sendDraftMessage(draftId: string, message: string): DraftRecord {
+    const record = this.getDraft(draftId);
+    if (record.state === 'running') {
+      throw new OrchestratorConflictError(
+        `draft is busy: a turn is already in progress: ${draftId}`
       );
     }
-    return {
-      title: task.title,
-      description: task.description,
-      acceptanceCriteria: task.acceptanceCriteria,
-      priority: task.priority,
+    const planner = this.planners.get(record.plannerName);
+    if (planner === undefined) {
+      throw new OrchestratorClientError(
+        `unknown planner: ${record.plannerName}`
+      );
+    }
+    this.updateDraftRecord(draftId, {
+      state: 'running',
+      error: null,
+      questions: [],
+    });
+    const sessionId = record.sessionId;
+    const model = loadConfig(this.ctx.rootDir).models.draft;
+    void this.runDraftTurn(draftId, () =>
+      planner.sendMessage(sessionId, message, model, 'draft')
+    );
+    return this.getDraft(draftId);
+  }
+
+  // Runs one draft turn to completion; a turn with neither a proposal nor
+  // questions is a failure (the planner produced nothing to act on).
+  private async runDraftTurn(
+    draftId: string,
+    run: () => Promise<PlannerTurn>
+  ): Promise<void> {
+    try {
+      const turn = await run();
+      const proposal = validatePlanProposalOrNull(turn.proposal);
+      const current = this.drafts.get(draftId);
+      if (current === undefined) return;
+      if (
+        (proposal === null || proposal.tasks.length === 0) &&
+        turn.questions.length === 0
+      ) {
+        throw new OrchestratorClientError(
+          'planner produced no task for this description'
+        );
+      }
+      this.updateDraftRecord(draftId, {
+        state: 'ready',
+        message: turn.reply,
+        ...(proposal !== null ? { proposal } : {}),
+        questions: turn.questions,
+        sessionId: turn.sessionId ?? current.sessionId,
+      });
+    } catch (err) {
+      this.updateDraftRecord(draftId, {
+        state: 'failed',
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  private updateDraftRecord(
+    draftId: string,
+    patch: Partial<DraftRecord>
+  ): void {
+    const record = this.drafts.get(draftId);
+    if (record === undefined) return;
+    const updated: DraftRecord = {
+      ...record,
+      ...patch,
+      updatedAt: new Date().toISOString(),
     };
+    this.drafts.set(draftId, updated);
+    this.ctx.events.broadcast({ type: 'draft.changed' });
+  }
+
+  getDraft(draftId: string): DraftRecord {
+    const record = this.drafts.get(draftId);
+    if (record === undefined) {
+      throw new OrchestratorNotFoundError(`draft not found: ${draftId}`);
+    }
+    return record;
+  }
+
+  // Newest first, matching how the client wants to render "your recent
+  // drafts" — most useful one on top.
+  listDrafts(): DraftRecord[] {
+    return [...this.drafts.values()].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt)
+    );
+  }
+
+  // Removes a reviewed draft; a silent no-op for an unknown id (api.ts's
+  // DELETE handler 404s that case itself before calling this).
+  dismissDraft(draftId: string): void {
+    if (this.drafts.delete(draftId)) {
+      this.ctx.events.broadcast({ type: 'draft.changed' });
+    }
+  }
+
+  // Drops the oldest non-running drafts once over MAX_DRAFTS; a running
+  // draft is never evicted.
+  private evictOldDrafts(): void {
+    if (this.drafts.size <= MAX_DRAFTS) return;
+    const evictable = [...this.drafts.values()]
+      .filter((d) => d.state !== 'running')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    let overBy = this.drafts.size - MAX_DRAFTS;
+    for (const draft of evictable) {
+      if (overBy <= 0) break;
+      this.drafts.delete(draft.id);
+      overBy--;
+    }
   }
 
   // Sends a follow-up user message on an existing plan and returns the record
@@ -245,19 +399,22 @@ export class PlanManager {
       // A new turn supersedes any prior failure — clear the stale error so a
       // retry after a failed turn doesn't keep advertising the old message.
       error: undefined,
+      // Superseded by this new message — clear so a stale form doesn't linger.
+      questions: [],
       updatedAt: now,
     };
     this.plans.set(planId, updated);
     this.ctx.events.broadcast({ type: 'plan.changed', planId });
     const sessionId = record.sessionId;
-    void this.runTurn(planId, () => planner.sendMessage(sessionId, message));
+    const model = this.resolveModel(record.role);
+    void this.runTurn(planId, () =>
+      planner.sendMessage(sessionId, message, model, 'plan')
+    );
     return updated;
   }
 
-  // Runs one planner turn (opening or follow-up) to completion and folds it
-  // into the record: on success, appends the assistant reply, stores the
-  // (re-validated) working proposal and the planner's resume session, and
-  // moves to `ready`; on any error, moves to `failed`.
+  // Runs one planner turn and folds it into the record; a `null` turn
+  // proposal (questions-only) leaves the prior working proposal untouched.
   private async runTurn(
     planId: string,
     run: () => Promise<PlannerTurn>
@@ -269,12 +426,15 @@ export class PlanManager {
       // uses) so a plan never sits at `ready` advertising a proposal nobody
       // could actually confirm; an invalid one downgrades to `failed` with the
       // validation message instead.
-      const proposal = validatePlanProposal(turn.proposal);
+      const proposal = validatePlanProposalOrNull(turn.proposal);
       const current = this.plans.get(planId);
       if (current === undefined) return;
+      // Unlike runDraftTurn, an empty turn isn't rejected here — the plan
+      // conversation always has PlansView's free-text composer as an escape hatch.
       this.updateRecord(planId, {
         state: 'ready',
-        proposal,
+        ...(proposal !== null ? { proposal } : {}),
+        questions: turn.questions,
         sessionId: turn.sessionId ?? current.sessionId,
         messages: [
           ...current.messages,
@@ -354,6 +514,8 @@ export class PlanManager {
           description: buildTaskDescription(task),
           parent: epicId ?? null,
           priority: task.priority,
+          writes: task.writes,
+          risk: task.risk,
         }).meta.id
     );
 
@@ -367,6 +529,23 @@ export class PlanManager {
       const blockedBy = task.blockedByIndices.map((idx) => taskIds[idx]);
       this.ctx.store.update(taskIds[i], { blockedBy }, now);
     });
+
+    // Undeclared `writes` conflicts with everything (safe default), which
+    // silently serializes an epic dispatch — leave a visible trail for why.
+    if (
+      epicId !== undefined &&
+      proposal.tasks.some(
+        (t) => t.writes === undefined || t.writes.length === 0
+      )
+    ) {
+      this.ctx.store.update(
+        epicId,
+        {
+          appendActivity: `${now} [plan] confirmed with undeclared writes on at least one task — those tasks fully serialize during epic dispatch`,
+        },
+        now
+      );
+    }
 
     this.updateRecord(planId, { confirmedAt: now });
     this.ctx.cache.rebuild(this.ctx.store);

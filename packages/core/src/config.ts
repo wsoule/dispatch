@@ -2,8 +2,29 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
+import type {
+  ConfigPatch,
+  DispatchConfig,
+  EscalationStep,
+  FixLoopConfig,
+  LinearConfig,
+  ModelConfig,
+  OrchestratorConfig,
+  VerifyConfig,
+} from './configTypes.js';
+import {
+  DEFAULT_FIX_LOOP,
+  DEFAULT_LINEAR,
+  DEFAULT_MODELS,
+  FIX_MODEL_TIERS,
+  FIX_STRATEGIES,
+  LINEAR_DIRECTIONS,
+  MODEL_ROLES,
+} from './configTypes.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
+
+export * from './configTypes.js';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -12,12 +33,8 @@ export class ConfigError extends Error {
   }
 }
 
-// The exact set of Claude Agent SDK `PermissionMode` values, duplicated here
-// (rather than imported) so core stays executor-agnostic — @dispatch/server
-// is the only package that knows the Agent SDK exists. Keep this list in
-// sync with the SDK's `PermissionMode` union if it ever changes; a value
-// outside this set is a loud ConfigError rather than a confusing 400 from
-// the SDK itself at dispatch time.
+// The Claude Agent SDK's `PermissionMode` values, duplicated so core stays
+// executor-agnostic. An unknown mode is a ConfigError, not an SDK 400 later.
 const KNOWN_PERMISSION_MODES = [
   'default',
   'acceptEdits',
@@ -27,80 +44,36 @@ const KNOWN_PERMISSION_MODES = [
   'auto',
 ] as const;
 
-// Per-run caps/defaults for the orchestrator's executors (spec's Slice O2):
-// how many turns an agent gets, an optional USD spend cap, and which
-// permission mode it starts in. `maxBudgetUsd` has no default — omitting it
-// means "no budget cap" — everything else always has a concrete value.
-// `epicConcurrency` (Phase 5) is the default cap the epic dispatch engine
-// applies when starting an epic without an explicit override -- how many of
-// an epic's ready children may have a live run at once.
-//
-// `permissionMode: 'auto'` is the default rather than `'acceptEdits'`: the
-// SDK's own model-classifier auto-approves the whole run (edits and every
-// other tool), not just file edits, so a dispatched agent proceeds
-// unattended instead of stalling on the first non-edit tool call (a Bash
-// command, an MCP tool) waiting for a human who isn't watching. Verified
-// against the installed SDK (0.3.207)'s `PermissionMode` union, which
-// includes `'auto'`.
-export interface OrchestratorConfig {
-  maxTurns?: number;
-  // How long the merge queue lets `verifyCommand` run before killing it and
-  // failing the entry. A ceiling, not a budget: the queue is strictly serial, so
-  // a verify that never returns holds up every entry behind it — which is
-  // exactly how an entry once sat in `verifying` for 11 minutes with no process
-  // behind it at all.
-  verifyTimeoutSec: number;
-  maxBudgetUsd?: number;
-  permissionMode: string;
-  epicConcurrency: number;
-}
-
-/** One named gate in the verify pipeline. */
-export interface VerifyStep {
-  name: string;
-  command: string;
-}
-
-export interface DispatchConfig {
-  statuses: string[];
-  autoCommit: boolean;
-  verifyCommand?: string;
-  /**
-   * Verify as named steps rather than one opaque command.
-   *
-   * `verifyCommand` runs a single shell line, which means a failure can only ever be reported
-   * as "verify failed" — the queue genuinely does not know whether typecheck or the tests broke.
-   * Listing steps here is what makes per-check reporting possible at all: each runs in order,
-   * each is recorded pass/fail with its duration, and the first failure stops the rest.
-   *
-   * Takes precedence over `verifyCommand` when both are set. Absent, the single command is run
-   * as one step called "verify", so nothing changes for a project that has not opted in.
-   */
-  verifySteps?: VerifyStep[];
-  orchestrator: OrchestratorConfig;
-}
-
+// `permissionMode: 'auto'` lets the SDK's own classifier approve every tool, so a
+// dispatched agent proceeds unattended instead of stalling on the first Bash call.
 const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   // No default turn cap — maxBudgetUsd is the real guard.
   permissionMode: 'auto',
   epicConcurrency: 3,
-  // 10 minutes: comfortably above a real install+build+test verify (~2-3 min
-  // measured on this repo) while still bounded, so a hang is caught in minutes
-  // rather than never.
+  // 10 minutes: above a real install+build+test verify, still bounded.
   verifyTimeoutSec: 600,
 };
+
+// `escalation` holds objects, so a shallow spread would share rows between the
+// defaults and every loaded config.
+function cloneFixLoop(config: FixLoopConfig): FixLoopConfig {
+  return {
+    cap: config.cap,
+    escalation: config.escalation.map((step) => ({ ...step })),
+  };
+}
 
 const DEFAULTS: DispatchConfig = {
   statuses: [...STATUSES],
   autoCommit: false,
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
+  models: { ...DEFAULT_MODELS },
+  linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
+  fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
 };
 
-// Validates and normalizes the optional `orchestrator:` block. `raw` is
-// whatever YAML.parse produced for that key — `undefined` (key omitted) is
-// the only shape that skips validation entirely and falls back to defaults;
-// anything else that isn't a plain object is a loud ConfigError rather than
-// being silently ignored.
+// Validates the optional `orchestrator:` block. Only `undefined` falls back to
+// defaults; any other non-object is a ConfigError rather than silently ignored.
 function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
   if (raw === undefined) return { ...DEFAULT_ORCHESTRATOR };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -180,6 +153,227 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
   };
 }
 
+// Validates the optional `models:` block, same contract as parseOrchestratorConfig.
+// An unknown role key is a ConfigError so a typo can't leave a role on its default.
+function parseModelConfig(raw: unknown): ModelConfig {
+  if (raw === undefined) return { ...DEFAULT_MODELS };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: models must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!MODEL_ROLES.includes(key as keyof ModelConfig)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown models role "${key}" (expected ${MODEL_ROLES.join('|')})`
+      );
+    }
+  }
+  const result = { ...DEFAULT_MODELS };
+  for (const role of MODEL_ROLES) {
+    const value = obj[role];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: models.${role} must be a non-empty string`
+      );
+    }
+    result[role] = value;
+  }
+  return result;
+}
+
+// Declared as `readonly string[]` (not the literal union) so a membership
+// check against an unvalidated `unknown` never needs an `as` cast.
+const VERIFY_FIELDS: readonly (keyof VerifyConfig)[] = [
+  'command',
+  'url',
+  'notes',
+];
+
+// Validates the optional `verify:` block. Unlike models, an absent block
+// stays absent — no recipe means the verify stage has nothing to dispatch.
+function parseVerifyConfig(raw: unknown): VerifyConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: verify must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    if (!VERIFY_FIELDS.includes(key as keyof VerifyConfig)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown verify field "${key}" (expected ${VERIFY_FIELDS.join('|')})`
+      );
+    }
+  }
+  const result: VerifyConfig = {};
+  for (const field of VERIFY_FIELDS) {
+    const value = obj[field];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: verify.${field} must be a non-empty string`
+      );
+    }
+    result[field] = value;
+  }
+  return result;
+}
+
+// Validates the optional `linear:` block, same contract as the blocks above. `statusMap`
+// merges over the default, so remapping one status does not unmap the other five.
+function parseLinearConfig(raw: unknown): LinearConfig {
+  const defaults: LinearConfig = {
+    ...DEFAULT_LINEAR,
+    statusMap: { ...DEFAULT_LINEAR.statusMap },
+  };
+  if (raw === undefined) return defaults;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { enabled } = obj;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.enabled must be a boolean'
+    );
+  }
+
+  const { teamId } = obj;
+  if (teamId !== undefined && teamId !== null && typeof teamId !== 'string') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.teamId must be a string or null'
+    );
+  }
+
+  const { intervalSec } = obj;
+  if (
+    intervalSec !== undefined &&
+    (typeof intervalSec !== 'number' ||
+      !Number.isFinite(intervalSec) ||
+      intervalSec < 30)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.intervalSec must be a number >= 30'
+    );
+  }
+
+  const { direction } = obj;
+  if (
+    direction !== undefined &&
+    (typeof direction !== 'string' ||
+      !LINEAR_DIRECTIONS.includes(direction as LinearConfig['direction']))
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: linear.direction must be one of ${LINEAR_DIRECTIONS.join('|')}`
+    );
+  }
+
+  const { statusMap } = obj;
+  const mergedStatusMap = { ...defaults.statusMap };
+  if (statusMap !== undefined) {
+    if (
+      typeof statusMap !== 'object' ||
+      statusMap === null ||
+      Array.isArray(statusMap)
+    ) {
+      throw new ConfigError(
+        'invalid .dispatch/config.yml: linear.statusMap must be an object'
+      );
+    }
+    for (const [key, value] of Object.entries(statusMap)) {
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: linear.statusMap.${key} must be a non-empty string`
+        );
+      }
+      mergedStatusMap[key] = value;
+    }
+  }
+
+  return {
+    enabled: enabled ?? defaults.enabled,
+    teamId: teamId ?? defaults.teamId,
+    statusMap: mergedStatusMap,
+    intervalSec: intervalSec ?? defaults.intervalSec,
+    direction: (direction as LinearConfig['direction']) ?? defaults.direction,
+  };
+}
+
+// Validates one escalation row. `label` names it in the error so a bad row in
+// a five-row table is identifiable without counting.
+function parseEscalationStep(raw: unknown, label: string): EscalationStep {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`invalid ${label}: must be an object`);
+  }
+  const { round, strategy, modelTier } = raw as Record<string, unknown>;
+  if (typeof round !== 'number' || !Number.isInteger(round) || round < 1) {
+    throw new ConfigError(`invalid ${label}.round: must be an integer >= 1`);
+  }
+  if (typeof strategy !== 'string' || !FIX_STRATEGIES.includes(strategy)) {
+    throw new ConfigError(
+      `invalid ${label}.strategy: must be one of ${FIX_STRATEGIES.join('|')}`
+    );
+  }
+  if (typeof modelTier !== 'string' || !FIX_MODEL_TIERS.includes(modelTier)) {
+    throw new ConfigError(
+      `invalid ${label}.modelTier: must be one of ${FIX_MODEL_TIERS.join('|')}`
+    );
+  }
+  return {
+    round,
+    strategy: strategy as EscalationStep['strategy'],
+    modelTier: modelTier as EscalationStep['modelTier'],
+  };
+}
+
+// Validates the optional `fixLoop:` block, same contract as the blocks above.
+// An escalation table on disk replaces the default outright rather than merging.
+function parseFixLoopConfig(raw: unknown): FixLoopConfig {
+  if (raw === undefined) return cloneFixLoop(DEFAULT_FIX_LOOP);
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: fixLoop must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { cap } = obj;
+  if (
+    cap !== undefined &&
+    (typeof cap !== 'number' || !Number.isInteger(cap) || cap < 1)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: fixLoop.cap must be an integer >= 1'
+    );
+  }
+
+  const { escalation } = obj;
+  if (escalation === undefined) {
+    return {
+      ...cloneFixLoop(DEFAULT_FIX_LOOP),
+      cap: cap ?? DEFAULT_FIX_LOOP.cap,
+    };
+  }
+  if (!Array.isArray(escalation)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: fixLoop.escalation must be a list'
+    );
+  }
+  return {
+    cap: cap ?? DEFAULT_FIX_LOOP.cap,
+    escalation: escalation.map((entry, index) =>
+      parseEscalationStep(entry, `fixLoop.escalation[${index}]`)
+    ),
+  };
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -187,6 +381,12 @@ export function loadConfig(rootDir: string): DispatchConfig {
       statuses: [...DEFAULTS.statuses],
       autoCommit: DEFAULTS.autoCommit,
       orchestrator: { ...DEFAULTS.orchestrator },
+      models: { ...DEFAULTS.models },
+      linear: {
+        ...DEFAULTS.linear,
+        statusMap: { ...DEFAULTS.linear.statusMap },
+      },
+      fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
     };
   }
   let parsed: unknown;
@@ -247,31 +447,89 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
+    models: parseModelConfig(raw.models),
+    linear: parseLinearConfig(raw.linear),
+    fixLoop: parseFixLoopConfig(raw.fixLoop),
+    verify: parseVerifyConfig(raw.verify),
   };
 }
 
-/** The subset of config the Settings screen can change. Everything else in the file — statuses
- * chief among them — is structural, and editing it from a settings form would silently
- * invalidate every task already carrying an old status. */
-export interface ConfigPatch {
-  verifyCommand?: string | null;
-  autoCommit?: boolean;
-  epicConcurrency?: number;
-  verifyTimeoutSec?: number;
-  permissionMode?: OrchestratorConfig['permissionMode'];
+// Writes the `linear:` keys a patch names, validating each before it reaches disk.
+// `statusMap` is written key-by-key so an entry the patch omits survives.
+function applyLinearPatch(
+  doc: YAML.Document,
+  patch: Partial<LinearConfig>
+): void {
+  if (patch.enabled !== undefined) {
+    if (typeof patch.enabled !== 'boolean') {
+      throw new ConfigError('invalid linear.enabled: must be a boolean');
+    }
+    doc.setIn(['linear', 'enabled'], patch.enabled);
+  }
+  if (patch.teamId !== undefined) {
+    if (patch.teamId !== null && typeof patch.teamId !== 'string') {
+      throw new ConfigError('invalid linear.teamId: must be a string or null');
+    }
+    doc.setIn(['linear', 'teamId'], patch.teamId);
+  }
+  if (patch.intervalSec !== undefined) {
+    if (!Number.isFinite(patch.intervalSec) || patch.intervalSec < 30) {
+      throw new ConfigError('invalid linear.intervalSec: must be >= 30');
+    }
+    doc.setIn(['linear', 'intervalSec'], patch.intervalSec);
+  }
+  if (patch.direction !== undefined) {
+    if (!LINEAR_DIRECTIONS.includes(patch.direction)) {
+      throw new ConfigError(
+        `invalid linear.direction: must be one of ${LINEAR_DIRECTIONS.join('|')}`
+      );
+    }
+    doc.setIn(['linear', 'direction'], patch.direction);
+  }
+  if (patch.statusMap !== undefined) {
+    if (
+      typeof patch.statusMap !== 'object' ||
+      patch.statusMap === null ||
+      Array.isArray(patch.statusMap)
+    ) {
+      throw new ConfigError('invalid linear.statusMap: must be an object');
+    }
+    for (const [status, state] of Object.entries(patch.statusMap)) {
+      if (typeof state !== 'string' || state.trim() === '') {
+        throw new ConfigError(
+          `invalid linear.statusMap.${status}: must be a non-empty string`
+        );
+      }
+      doc.setIn(['linear', 'statusMap', status], state.trim());
+    }
+  }
 }
 
-/**
- * Applies a partial change to `.dispatch/config.yml`, preserving everything it does not touch.
- *
- * Re-serialising a parsed object would be simpler and wrong: this file is hand-written and
- * checked in, so it carries comments and key ordering someone chose. YAML's document API is used
- * so an edit changes the one value asked for and leaves the rest of the file — comments
- * included — exactly as it was found.
- *
- * `verifyCommand: null` clears the key rather than writing an empty string, since an empty
- * verify command and no verify command mean different things to the merge queue.
- */
+// Writes the `fixLoop:` keys a patch names. The escalation table is written
+// whole, since a per-row merge has no stable key to merge on.
+function applyFixLoopPatch(
+  doc: YAML.Document,
+  patch: Partial<FixLoopConfig>
+): void {
+  if (patch.cap !== undefined) {
+    if (!Number.isInteger(patch.cap) || patch.cap < 1) {
+      throw new ConfigError('invalid fixLoop.cap: must be an integer >= 1');
+    }
+    doc.setIn(['fixLoop', 'cap'], patch.cap);
+  }
+  if (patch.escalation !== undefined) {
+    if (!Array.isArray(patch.escalation)) {
+      throw new ConfigError('invalid fixLoop.escalation: must be a list');
+    }
+    const steps = patch.escalation.map((entry, index) =>
+      parseEscalationStep(entry, `fixLoop.escalation[${index}]`)
+    );
+    doc.setIn(['fixLoop', 'escalation'], steps);
+  }
+}
+
+/** Applies a partial change to `.dispatch/config.yml` through YAML's document API, so the
+ *  hand-written file keeps its comments and ordering. `verifyCommand: null` clears the key. */
 export function updateConfig(
   rootDir: string,
   patch: ConfigPatch
@@ -299,9 +557,8 @@ export function updateConfig(
     doc.setIn(['orchestrator', key], value);
   }
   if (patch.permissionMode !== undefined) {
-    // Validated BEFORE the write, not after. updateConfig re-reads through loadConfig to return
-    // its result, and loadConfig throws on an unknown mode — so validating only there would
-    // leave a file on disk that the daemon then refuses to load.
+    // Validated before the write: an unknown mode on disk would make every
+    // later loadConfig throw.
     if (
       !KNOWN_PERMISSION_MODES.includes(
         patch.permissionMode as (typeof KNOWN_PERMISSION_MODES)[number]
@@ -312,6 +569,42 @@ export function updateConfig(
       );
     }
     doc.setIn(['orchestrator', 'permissionMode'], patch.permissionMode);
+  }
+  if (patch.models !== undefined) {
+    // Same validate-before-write rule as permissionMode: a bad role must never
+    // reach disk, or loadConfig refuses the whole file afterwards.
+    for (const [role, value] of Object.entries(patch.models)) {
+      if (!MODEL_ROLES.includes(role as keyof ModelConfig)) {
+        throw new ConfigError(
+          `invalid models role: ${role} (expected ${MODEL_ROLES.join('|')})`
+        );
+      }
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new ConfigError(
+          `invalid models.${role}: must be a non-empty string`
+        );
+      }
+      doc.setIn(['models', role], value.trim());
+    }
+  }
+  if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
+  if (patch.fixLoop !== undefined) applyFixLoopPatch(doc, patch.fixLoop);
+  if (patch.verify !== undefined) {
+    // Same validate-before-write rule as models: a bad field must never reach
+    // disk, or loadConfig refuses the whole file afterwards.
+    for (const [field, value] of Object.entries(patch.verify)) {
+      if (!VERIFY_FIELDS.includes(field as keyof VerifyConfig)) {
+        throw new ConfigError(
+          `invalid verify field: ${field} (expected ${VERIFY_FIELDS.join('|')})`
+        );
+      }
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new ConfigError(
+          `invalid verify.${field}: must be a non-empty string`
+        );
+      }
+      doc.setIn(['verify', field], value.trim());
+    }
   }
 
   mkdirSync(dirname(path), { recursive: true });

@@ -2,3 +2,9 @@
 
 minimumReleaseAge = 604800 # 7 days in seconds
 minimumReleaseAgeExcludes = ["@types/bun"]
+
+[test]
+
+# Covers `bun test <path>` run from the repo root; packages/server/bunfig.toml
+# carries the same preload for runs whose cwd is that package.
+preload = ["./packages/server/test/setup.ts"]

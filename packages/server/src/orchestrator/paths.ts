@@ -61,6 +61,40 @@ export function mergeQueuePath(rootDir: string): string {
   return join(runsDir(rootDir), 'merge-queue.json');
 }
 
+// A review run's own directory: the diff package handed to it and the findings
+// JSON it writes back, beside the transcript so both outlive its worktree.
+export function reviewDir(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.review`);
+}
+
+// The diff package file: commit list, stat and full diff, referenced by path
+// from the prompt and never pasted into it.
+export function reviewPackagePath(rootDir: string, runId: string): string {
+  return join(reviewDir(rootDir, runId), 'diff-package.md');
+}
+
+// Where the review agent must write its structured findings.
+export function reviewOutputPath(rootDir: string, runId: string): string {
+  return join(reviewDir(rootDir, runId), 'findings.json');
+}
+
+// A verify run's own directory: its structured result and any artifacts it
+// records, beside the transcript so both outlive the worktree.
+export function verifyDir(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.verify`);
+}
+
+// Where the verify agent must write its raw structured output.
+export function verifyOutputPath(rootDir: string, runId: string): string {
+  return join(verifyDir(rootDir, runId), 'output.json');
+}
+
+// The canonical result VerificationRunner writes after ingesting
+// `verifyOutputPath`, so a malformed raw file is never read as usable.
+export function verifyResultPath(rootDir: string, runId: string): string {
+  return join(verifyDir(rootDir, runId), 'result.json');
+}
+
 export function worktreesDir(rootDir: string): string {
   return join(dispatchHome(), '.dispatch', 'worktrees', rootHash(rootDir));
 }

@@ -1,3 +1,4 @@
+import type { RunQuestion } from '@dispatch/client';
 import {
   Archive,
   FileX,
@@ -10,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
 import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunDiffView } from '../components/runs/RunDiffView';
+import { RunKindBadge } from '../components/runs/RunKindBadge';
 import { RunLogView } from '../components/runs/RunLogView';
 import { RunReviewView } from '../components/runs/RunReviewView';
 import { RunSidebar } from '../components/runs/RunSidebar';
@@ -20,6 +22,9 @@ import { IconToggle } from '../components/ui/IconToggle';
 import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useResizablePane } from '../hooks/useResizablePane';
+import { useScopeRequest } from '../hooks/useScopeRequest';
+import { hideArchivedRuns } from '../lib/archiveFilter';
+import { showArchiveToggle } from '../lib/archiveToggle';
 import { countMergeReady } from '../lib/mergeReady';
 import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
@@ -32,6 +37,10 @@ type RunTab = 'session' | 'diff';
 // The run-list column's width before any manual resize, and what double-clicking the drag
 // handle resets it back to — matches the old fixed `w-72`.
 const DEFAULT_RUN_LIST_WIDTH = 288;
+
+// Shared empty array so a run with no open questions keeps the same prop
+// identity across renders.
+const NO_QUESTIONS: RunQuestion[] = [];
 
 // A muted centered placeholder for the Diff tab when there's nothing to review yet — a run
 // that's still going (no worktree diff exposed until it's terminal) or a terminal run whose
@@ -127,13 +136,31 @@ export function RunsView({
     splitRef
   );
 
-  // How many runs the archive filter is currently holding back — drives the
-  // toggle, which stays hidden entirely when there is nothing to reveal.
-  const hiddenRunCount = data.runs.length - data.visibleRuns.length;
+  // How many runs the archive filter is holding back. Computed from `data.runs`
+  // rather than `visibleRuns`, which stops excluding anything once it's on.
+  const archivedTaskIds = useMemo(
+    () => new Set(data.archivedTasks.map((t) => t.meta.id)),
+    [data.archivedTasks]
+  );
+  const archivedRunCount =
+    data.runs.length - hideArchivedRuns(data.runs, archivedTaskIds).length;
 
   const selected = data.runs.find((r) => r.id === selectedRunId);
   const selectedId = selected?.id;
   const selectedState = selected?.state;
+  // Read once and reused below for both the fetch and the decide call, so the
+  // two can never disagree about which request is pending.
+  const scopeRequestId =
+    selectedId !== undefined
+      ? data.pendingScopeRequests.get(selectedId)?.requestId
+      : undefined;
+  // The WS event only carries the id — this fetches the paths/reason.
+  const { request: pendingScopeRequest } = useScopeRequest(
+    data.client,
+    data.port,
+    selectedId,
+    scopeRequestId
+  );
 
   // Built once per `data.tasksIncludingArchived`/`data.epics` change rather than re-scanned
   // per row: a run row's epic breadcrumb needs its task's `parent`, then that parent id's
@@ -189,10 +216,10 @@ export function RunsView({
         <h1 className="view-topbar-title">Runs</h1>
         <span className="dense-meta">
           {data.visibleRuns.length} shown
-          {hiddenRunCount > 0 && ` · ${hiddenRunCount} archived`}
+          {archivedRunCount > 0 && ` · ${archivedRunCount} archived`}
         </span>
         <div className="flex-1" />
-        {hiddenRunCount > 0 && (
+        {showArchiveToggle(data.showArchived, archivedRunCount) && (
           <Button
             variant="ghost"
             size="xs"
@@ -272,6 +299,7 @@ export function RunsView({
                     </span>
                     <span className="flex min-w-0 items-center gap-1.5">
                       <RunStatePill meta={run} className="shrink-0" />
+                      <RunKindBadge kind={run.kind} />
                       <MergeLadderDot
                         meta={data.latestRunByTaskId.get(run.taskId)}
                       />
@@ -409,6 +437,36 @@ export function RunsView({
                       }
                       onSendMessage={(text) =>
                         data.handleSendMessage(selected.id, text)
+                      }
+                      openQuestions={
+                        // Terminal check as well as the list: a dropped socket must not
+                        // leave a dead run still asking for an answer.
+                        isTerminalRunState(selected.state)
+                          ? NO_QUESTIONS
+                          : (data.openQuestions.get(selected.id) ??
+                            NO_QUESTIONS)
+                      }
+                      onAnswerQuestion={(questionId, answer) =>
+                        data.handleAnswerQuestion(
+                          selected.id,
+                          questionId,
+                          answer
+                        )
+                      }
+                      pendingScopeRequest={
+                        isTerminalRunState(selected.state)
+                          ? null
+                          : pendingScopeRequest
+                      }
+                      onDecideScopeRequest={(granted) =>
+                        // Undefined means it raced closed — nothing to send.
+                        scopeRequestId === undefined
+                          ? Promise.resolve()
+                          : data.handleDecideScopeRequest(
+                              selected.id,
+                              scopeRequestId,
+                              granted
+                            )
                       }
                       onRequestChanges={(text) =>
                         data.handleRequestChanges(selected.id, text)

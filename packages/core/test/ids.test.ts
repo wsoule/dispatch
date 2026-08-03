@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 
-import { generateRunId, generateTaskId } from '../src/ids.js';
+import {
+  generateFindingId,
+  generateLedgerId,
+  generateRunId,
+  generateTaskId,
+} from '../src/ids.js';
 import { slugify } from '../src/slug.js';
 
 describe('generateTaskId', () => {
@@ -40,6 +45,42 @@ describe('generateRunId', () => {
   it('generates a random nonce when omitted', () => {
     const a = generateRunId('2026-01-01T00:00:00Z');
     const b = generateRunId('2026-01-01T00:00:00Z');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('generateFindingId', () => {
+  it('prefixes with f-, 6 hex chars', () => {
+    expect(generateFindingId('2026-07-13T00:00:00Z', 'n1')).toMatch(
+      /^f-[0-9a-f]{6}$/
+    );
+  });
+  it('is deterministic for identical inputs, differs across nonces', () => {
+    const a = generateFindingId('2026-01-01T00:00:00Z', 'n1');
+    expect(generateFindingId('2026-01-01T00:00:00Z', 'n1')).toBe(a);
+    expect(generateFindingId('2026-01-01T00:00:00Z', 'n2')).not.toBe(a);
+  });
+  it('generates a random nonce when omitted', () => {
+    const a = generateFindingId('2026-01-01T00:00:00Z');
+    const b = generateFindingId('2026-01-01T00:00:00Z');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('generateLedgerId', () => {
+  it('prefixes with l-, 6 hex chars', () => {
+    expect(generateLedgerId('2026-07-13T00:00:00Z', 'n1')).toMatch(
+      /^l-[0-9a-f]{6}$/
+    );
+  });
+  it('is deterministic for identical inputs, differs across nonces', () => {
+    const a = generateLedgerId('2026-01-01T00:00:00Z', 'n1');
+    expect(generateLedgerId('2026-01-01T00:00:00Z', 'n1')).toBe(a);
+    expect(generateLedgerId('2026-01-01T00:00:00Z', 'n2')).not.toBe(a);
+  });
+  it('generates a random nonce when omitted', () => {
+    const a = generateLedgerId('2026-01-01T00:00:00Z');
+    const b = generateLedgerId('2026-01-01T00:00:00Z');
     expect(a).not.toBe(b);
   });
 });

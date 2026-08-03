@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { computeBlockedIds } from './taskGraph';
@@ -24,6 +24,10 @@ function makeTask(
       updated: '2026-01-01T00:00:00.000Z',
       external: null,
       selfReview: false,
+      writes: [],
+      risk: 'routine',
+      model: null,
+      exercised: false,
     },
     body: '',
   };

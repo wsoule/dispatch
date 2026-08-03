@@ -31,6 +31,7 @@ function record(patch: Partial<PlanRecord>): PlanRecord {
     updatedAt: '2026-07-26T00:00:00.000Z',
     sourceNoteId: 'nt-aaa',
     proposal: { tasks: [DRAFTED] },
+    questions: [],
     ...patch,
   };
 }

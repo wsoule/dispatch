@@ -1,4 +1,9 @@
-import type { NormalizedEntry, RunMeta } from '@dispatch/client';
+import type {
+  NormalizedEntry,
+  RunMeta,
+  RunQuestion,
+  RunScopeRequest,
+} from '@dispatch/client';
 import {
   Info,
   Megaphone,
@@ -13,6 +18,8 @@ import { groupLogEntries } from '../../lib/runLog';
 import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
+import { QuestionCard } from './QuestionCard';
+import { ScopeRequestCard } from './ScopeRequestCard';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -82,6 +89,14 @@ interface RunLogViewProps {
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
+  /** Questions this run's agent is blocked on, oldest first. Usually one, but an agent can
+   * dispatch several `ask_user` calls in a single turn, and each parks its own tool call. */
+  openQuestions: RunQuestion[];
+  onAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
+  /** The scope request seen live via `scope.requested`, fetched in full
+   * (paths + reason) once its id arrives — `null` when there isn't one. */
+  pendingScopeRequest: RunScopeRequest | null;
+  onDecideScopeRequest: (granted: boolean) => Promise<void>;
   /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
    * button drives) — this view offers it too once the run is done, so talking to the agent
    * works the same way (one composer, always in the same place) whether the run is still
@@ -100,6 +115,10 @@ export function RunLogView({
   pendingApproval,
   onApprove,
   onSendMessage,
+  openQuestions,
+  onAnswerQuestion,
+  pendingScopeRequest,
+  onDecideScopeRequest,
   onRequestChanges,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
@@ -222,6 +241,26 @@ export function RunLogView({
             ))}
         </div>
       </div>
+
+      {/* Pinned above the composer, not left in the scroller like the approval gate: the agent
+          is frozen inside a tool call, so it must not be possible to scroll past this. */}
+      {openQuestions.map((question) => (
+        <QuestionCard
+          key={question.id}
+          question={question.question}
+          options={question.options}
+          askedAt={question.askedAt}
+          onAnswer={(answer) => onAnswerQuestion(question.id, answer)}
+        />
+      ))}
+
+      {pendingScopeRequest !== null && pendingScopeRequest.granted === null && (
+        <ScopeRequestCard
+          paths={pendingScopeRequest.paths}
+          reason={pendingScopeRequest.reason}
+          onDecide={onDecideScopeRequest}
+        />
+      )}
 
       {error !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">

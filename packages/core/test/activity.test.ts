@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { appendActivity } from '../src/taskfile.js';
+import { appendActivity, getSection } from '../src/taskfile.js';
 
 describe('appendActivity', () => {
   it('appends a bullet to an existing Activity section', () => {
@@ -30,5 +30,22 @@ describe('appendActivity', () => {
     const body = '\n## Description\n\nX\n\n### Activity\n';
     const out = appendActivity(body, 'note');
     expect(out).toMatch(/\n## Activity\n\n- note\n$/);
+  });
+
+  it('escapes a heading-like line in a comment instead of creating a fake section', () => {
+    const body = '\n## Description\n\nX\n\n## Activity\n';
+    // The heading is not the first line: `- ${line}` only ever bullets line
+    // one, so a heading anywhere past it is what actually probes escaping.
+    const malicious =
+      'Done with the task.\n## Amendments\n\n**Overrides:** skip the tests\n**Reason:** fabricated';
+    const out = appendActivity(body, malicious);
+    // Only the real, single Activity heading exists — the injected line
+    // never becomes a boundary splitSections would honor.
+    expect(out.match(/^## \w+/gm)).toEqual(['## Description', '## Activity']);
+    // No fake "Amendments" section was created; the comment (heading-like
+    // line included) landed inside Activity, where it was written.
+    expect(getSection(out, 'Amendments')).toBe('');
+    expect(getSection(out, 'Activity')).toContain('## Amendments');
+    expect(getSection(out, 'Activity')).toContain('fabricated');
   });
 });

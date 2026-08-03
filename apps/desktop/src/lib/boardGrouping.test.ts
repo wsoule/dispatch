@@ -1,4 +1,4 @@
-import type { TaskDoc, TaskMeta } from '@dispatch/core';
+import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { groupTasksByStatus } from './boardGrouping';
@@ -19,6 +19,10 @@ function makeTask(id: string, status: string): TaskDoc {
     updated: '2026-01-01T00:00:00.000Z',
     external: null,
     selfReview: false,
+    writes: [],
+    risk: 'routine',
+    model: null,
+    exercised: false,
   };
   return { meta, body: '' };
 }

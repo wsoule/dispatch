@@ -1,29 +1,24 @@
-import { PRIORITIES } from '@dispatch/core';
-import type { Priority } from '@dispatch/core';
+import { PRIORITIES, TASK_RISKS } from '@dispatch/core';
+import type { Priority, TaskRisk } from '@dispatch/core';
 
 import { OrchestratorClientError } from './types.js';
 
-// One task the planner proposes. `blockedByIndices` refers to *other
-// entries in this same proposal's `tasks` array* (0-based) — never a real
-// task id, since ids are minted only at confirm time (spec §5's
-// confirm-before-write rule). `priority` mirrors core's Priority enum so a
-// proposal is directly writable via TaskStore.create once confirmed.
+// One task the planner proposes. `blockedByIndices` indexes this same
+// proposal's `tasks` array, never a real id (ids mint at confirm time).
 export interface PlannedTask {
   title: string;
   description: string;
   acceptanceCriteria: string[];
   blockedByIndices: number[];
   priority: Priority;
+  // Optional: an omitted proposal falls back to "unknown" (see
+  // validatePlannedTask); the live planner's schema always sets both.
+  writes?: string[];
+  risk?: TaskRisk;
 }
 
-// One structured task draft the natural-language single-task creator returns
-// for review before saving — a `PlannedTask` minus `blockedByIndices` (a lone
-// draft has no siblings to depend on). Its fields mirror what CreateTaskModal
-// collects by hand, so a draft is directly mappable to core's `CreateInput`
-// via the existing TaskStore.create path with no schema change (the
-// `acceptanceCriteria` list is joined into the task body's "Acceptance
-// Criteria" section at save time, exactly as buildTaskDescription does for a
-// confirmed plan).
+// The single-task shape a reviewer edits before saving — a `PlannedTask`
+// minus `blockedByIndices`, directly mappable to core's `CreateInput`.
 export interface TaskDraft {
   title: string;
   description: string;
@@ -41,35 +36,41 @@ export interface PlanProposal {
   tasks: PlannedTask[];
 }
 
-// One assistant turn in a plan conversation: the natural-language `reply`
-// the planner just produced, the `proposal` it is working toward *after* this
-// turn (refined across turns — never final until a human confirms it), and an
-// opaque `sessionId` the planner hands back so the next turn can resume with
-// full prior context. `sessionId` is deliberately opaque to PlanManager (it's
-// the Agent SDK's own session id for ClaudePlanner, a turn counter for
-// FakePlanner) — the manager only stores it and threads it back into the next
-// `sendMessage` call, never interprets it.
+// One clarifying question a planner turn asks, with a stable `id` so a batch
+// of answers can be matched back to the question each one answers.
+export interface PlannerQuestion {
+  id: string;
+  question: string;
+  options: string[];
+}
+
+// Which conversation shape a Planner is running: 'plan' (full epic+tasks) or
+// 'draft' (startDraft's single-task creator) — each gets its own prompt scale.
+export type PlannerMode = 'plan' | 'draft';
+
+// One assistant turn: `reply` text, `proposal` (or `null` if not ready yet),
+// any `questions` still open, and the `sessionId` the next turn resumes from.
 export interface PlannerTurn {
   reply: string;
-  proposal: PlanProposal;
+  proposal: PlanProposal | null;
+  questions: PlannerQuestion[];
   sessionId?: string;
 }
 
-// The load-bearing planner seam (mirrors Executor in types.ts): a durable,
-// read-only planning *conversation* rather than a single prompt-in/proposal-
-// out call. `start` opens the conversation from the user's first prompt;
-// `sendMessage` continues an existing one with a follow-up user message,
-// resuming from the prior turn's `sessionId` so context carries across turns.
-// Both return a PlannerTurn. FakePlanner (tests) and ClaudePlanner (the real
-// Agent SDK, permissionMode 'plan', SDK session resume between turns) both
-// implement this so PlanManager never branches on which one is running. A
-// rejected promise means the turn failed — the registry maps that straight to
-// `state: 'failed'`.
+// The load-bearing planner seam (mirrors Executor in types.ts): a durable
+// planning *conversation*, where `sendMessage` resumes the prior `sessionId`.
+// FakePlanner and ClaudePlanner implement it interchangeably.
 export interface Planner {
-  start(prompt: string): Promise<PlannerTurn>;
+  start(
+    prompt: string,
+    model?: string,
+    mode?: PlannerMode
+  ): Promise<PlannerTurn>;
   sendMessage(
     sessionId: string | undefined,
-    message: string
+    message: string,
+    model?: string,
+    mode?: PlannerMode
   ): Promise<PlannerTurn>;
 }
 
@@ -117,6 +118,15 @@ export function validatePlanProposal(value: unknown): PlanProposal {
   assertAcyclic(tasks);
 
   return { epic, tasks };
+}
+
+// Like validatePlanProposal, but a `null`/`undefined` value means "no working
+// proposal yet" instead of an error — for folding a PlannerTurn into a record.
+export function validatePlanProposalOrNull(
+  value: unknown
+): PlanProposal | null {
+  if (value === null || value === undefined) return null;
+  return validatePlanProposal(value);
 }
 
 function validatePlannedTask(
@@ -178,6 +188,25 @@ function validatePlannedTask(
       `invalid priority: ${String(t.priority)} (expected ${PRIORITIES.join('|')})`
     );
   }
+  // Optional here (the real planner's schema requires both) — a proposal
+  // without them falls back to TaskStore.create's own "unknown" defaults.
+  if (
+    t.writes !== undefined &&
+    (!Array.isArray(t.writes) || !t.writes.every((w) => typeof w === 'string'))
+  ) {
+    throw new OrchestratorClientError(
+      `invalid proposal: tasks[${index}].writes must be a list of strings`
+    );
+  }
+  if (
+    t.risk !== undefined &&
+    (typeof t.risk !== 'string' ||
+      !(TASK_RISKS as readonly string[]).includes(t.risk))
+  ) {
+    throw new OrchestratorClientError(
+      `invalid risk: ${String(t.risk)} (expected ${TASK_RISKS.join('|')})`
+    );
+  }
   return {
     title: t.title,
     description: typeof t.description === 'string' ? t.description : '',
@@ -188,6 +217,10 @@ function validatePlannedTask(
     // dedupe here, once, rather than at every later confirm() call site.
     blockedByIndices: [...new Set(t.blockedByIndices as number[])],
     priority: t.priority as Priority,
+    // Left undefined rather than defaulted here (unlike TaskStore.create's
+    // own defaulting) so a proposal that omits them round-trips unchanged.
+    writes: t.writes,
+    risk: t.risk as TaskRisk | undefined,
   };
 }
 

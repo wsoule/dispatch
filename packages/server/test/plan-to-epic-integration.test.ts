@@ -62,6 +62,9 @@ const PROPOSAL: PlanProposal = {
     acceptanceCriteria: [`Part ${i} is done`],
     blockedByIndices: [],
     priority: 'medium' as const,
+    // Distinct per child so the scheduler can actually batch them — an
+    // empty write-set would otherwise serialize every child in turn.
+    writes: [`child-${i}.ts`],
   })),
 };
 
@@ -107,7 +110,12 @@ describe('plan -> confirm -> startEpic integration', () => {
       })
     );
 
-    const planManager = new PlanManager({ store, cache, events });
+    const planManager = new PlanManager({
+      store,
+      cache,
+      events,
+      rootDir: repo,
+    });
     planManager.registerPlanner(
       'claude',
       new FakePlanner({ ok: true, proposal: PROPOSAL })

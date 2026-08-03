@@ -79,7 +79,18 @@
       "files": ["apps/desktop/**"],
       "rules": {
         "typescript/strict-boolean-expressions": "off",
-        "typescript/prefer-nullish-coalescing": "off"
+        "typescript/prefer-nullish-coalescing": "off",
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@dispatch/core",
+                "message": "The webview must import @dispatch/core/browser — the root entry reaches node:crypto and node:fs."
+              }
+            ]
+          }
+        ]
       }
     }
   ],

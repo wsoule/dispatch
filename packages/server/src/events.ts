@@ -1,4 +1,6 @@
-import type { NormalizedEntry } from './orchestrator/types.js';
+import type { LinearSyncSummary } from './linear/sync.js';
+import type { FixLoopStop } from './orchestrator/fixLoop.js';
+import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
 // opened socket; `task.changed` tells every connected client "something
@@ -27,6 +29,9 @@ export type ServerEvent =
   // just confirmed — same "go refetch, no payload beyond the id" contract as
   // run.changed.
   | { type: 'plan.changed'; planId: string }
+  // A task draft changed state or was dismissed — no id, since a client can
+  // have several drafts running and is expected to refetch the whole list.
+  | { type: 'draft.changed' }
   // A note/triage/follow-up was created, edited, promoted, or deleted — same
   // "go refetch" contract as task.changed. Lets an agent-created triage (via
   // the MCP `dispatch_note` tool) show up live in an open Notes tab.
@@ -37,6 +42,15 @@ export type ServerEvent =
   | { type: 'review.changed'; runId: string }
   // .dispatch/config.yml changed through the Settings screen.
   | { type: 'config.changed' }
+  // A run agent's question was asked, answered, or withdrawn (the agent
+  // stopped listening) — refetch the open questions.
+  | { type: 'question.asked'; runId: string; questionId: string }
+  | { type: 'question.answered'; runId: string; questionId: string }
+  | { type: 'question.closed'; runId: string }
+  // A run agent asked to edit outside its scope, or that request was
+  // granted/denied — refetch the open scope requests.
+  | { type: 'scope.requested'; runId: string; requestId: string }
+  | { type: 'scope.decided'; runId: string; requestId: string }
   // The merge queue's state changed (entry added/removed/advanced) — same
   // "go refetch" contract as run.changed.
   | { type: 'merge-queue.changed' }
@@ -55,7 +69,33 @@ export type ServerEvent =
       merged: number;
       pushed: boolean;
       pushError?: string;
-    };
+    }
+  // A Linear sync pass finished. Carries its own summary so the settings screen
+  // can show the outcome without a follow-up fetch.
+  | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // The repo's git state changed via an `/api/git/*` mutation — same
+  // "go refetch" contract as `run.changed`.
+  | { type: 'git.changed' }
+  // A finding's verdict/ruling changed, or a review run raised a new one.
+  | { type: 'finding.changed' }
+  // A decision/hazard/constraint/handoff was added to the ledger.
+  | { type: 'ledger.changed' }
+  // A task's fix loop moved between states, or stopped needing a human.
+  // `reason` says which action: `round` alone never distinguished them.
+  | { type: 'fixloop.changed'; taskId: string }
+  | {
+      type: 'fixloop.capped';
+      taskId: string;
+      round: number;
+      cap: number;
+      reason: FixLoopStop;
+      message?: string;
+    }
+  // A run reached `failed`/`interrupted-dirty` and was surveyed — carries
+  // the survey so a connected client can show it without a follow-up fetch.
+  | { type: 'run.survey'; runId: string; survey: RunSurvey }
+  // A verify run finished and recorded a structured result for the task.
+  | { type: 'verification.changed'; taskId: string };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
@@ -71,6 +111,7 @@ export interface BroadcastClient {
 // forever on Bun 1.3.14, so `stop(true)` is left to own the close.
 export class EventBus {
   private readonly clients = new Set<BroadcastClient>();
+  private readonly listeners = new Set<(event: ServerEvent) => void>();
 
   add(client: BroadcastClient): void {
     this.clients.add(client);
@@ -80,8 +121,16 @@ export class EventBus {
     this.clients.delete(client);
   }
 
+  // In-process listener, for daemon components that need to react to an event
+  // rather than forward it to a socket. Returns its own unsubscribe.
+  subscribe(listener: (event: ServerEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   broadcast(event: ServerEvent): void {
     const payload = JSON.stringify(event);
     for (const client of this.clients) client.send(payload);
+    for (const listener of this.listeners) listener(event);
   }
 }

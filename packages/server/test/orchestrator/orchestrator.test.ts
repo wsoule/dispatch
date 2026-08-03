@@ -343,6 +343,80 @@ describe('Orchestrator.messageUser', () => {
   });
 });
 
+describe('Orchestrator.recordEvidence / recordMutation', () => {
+  it('round-trips a command and a mutation record through getRun', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Guard the sync path' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+
+    const evidence = orchestrator.recordEvidence(meta.id, {
+      command: 'bun test',
+      exitCode: 0,
+      durationMs: 4200,
+      summary: '158 pass, 0 fail',
+    });
+    const mutation = orchestrator.recordMutation(meta.id, {
+      guard: 'null check on foo()',
+      file: 'src/foo.ts',
+      testsFailed: 0,
+    });
+
+    expect(evidence.at).toBeTruthy();
+    expect(mutation.at).toBeTruthy();
+
+    const detail = orchestrator.getRun(meta.id)!;
+    expect(detail.evidence).toEqual([evidence]);
+    expect(detail.mutations).toEqual([mutation]);
+  });
+
+  // The live-registry path and the transcript-replay fallback (used after a
+  // restart) must agree on what a run's evidence is.
+  it('survives replay from the transcript after the registry forgets the run', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Guard the sync path' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    orchestrator.recordEvidence(meta.id, {
+      command: 'bun run tsc',
+      exitCode: 0,
+      durationMs: 900,
+      summary: 'no errors',
+    });
+    orchestrator.recordMutation(meta.id, {
+      guard: 'reject on empty title',
+      file: 'src/handler.ts',
+      testsFailed: 2,
+    });
+
+    const replay = replayTranscript(transcriptPath(repo, meta.id))!;
+    expect(replay.evidence).toEqual([
+      expect.objectContaining({ command: 'bun run tsc' }),
+    ]);
+    expect(replay.mutations).toEqual([
+      expect.objectContaining({ guard: 'reject on empty title' }),
+    ]);
+  });
+
+  it('throws for an unknown run', () => {
+    const { orchestrator } = makeOrchestrator(repo);
+    expect(() =>
+      orchestrator.recordEvidence('r-missing', {
+        command: 'bun test',
+        exitCode: 0,
+        durationMs: 1,
+        summary: 'ok',
+      })
+    ).toThrow(OrchestratorNotFoundError);
+  });
+});
+
 describe('Orchestrator.sendMessage resume (request-changes)', () => {
   it('re-dispatches into the same worktree/branch after a finished run', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);

@@ -1,4 +1,4 @@
-import type { Assignee, Priority, TaskDoc } from '@dispatch/core';
+import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
 import { Check, Milestone } from 'lucide-react';
 import type { ReactNode } from 'react';
 

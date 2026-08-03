@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,6 +88,8 @@ function makeHarness(): Harness {
   return { orchestrator, epics, store, cache, events };
 }
 
+// Each child gets a distinct `writes` entry — an empty write-set conflicts
+// with everything, which would otherwise serialize these generic tests.
 function createEpicWithChildren(
   store: TaskStore,
   count: number,
@@ -100,6 +102,7 @@ function createEpicWithChildren(
       title: `Child ${i}`,
       kind: 'task',
       parent: epic.meta.id,
+      writes: [`child-${i}.ts`],
     });
     childIds.push(doc.meta.id);
   }
@@ -565,6 +568,210 @@ describe('EpicEngine.start', () => {
 
     await waitFor(() => harness.epics.progress(epicA).active === false);
     expect(harness.epics.progress(epicA).children).toHaveLength(1);
+  });
+});
+
+describe('EpicEngine write-set conflicts', () => {
+  // schedulableBatch keeps overlapping-`writes` children out of one batch,
+  // even under a concurrency cap that would otherwise allow both.
+  it('never dispatches two children with overlapping writes at once', async () => {
+    const harness = makeHarness();
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    harness.store.create({
+      title: 'A',
+      parent: epic.meta.id,
+      writes: ['shared.ts'],
+    });
+    harness.store.create({
+      title: 'B',
+      parent: epic.meta.id,
+      writes: ['shared.ts'],
+    });
+
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await waitFor(() => harness.orchestrator.list().length === 1);
+    await sleep(80);
+
+    const live = harness.orchestrator
+      .list()
+      .filter((r) => r.state === 'awaiting-approval');
+    expect(live).toHaveLength(1);
+
+    harness.orchestrator.approve(live[0].id, 'go', true);
+    await waitFor(
+      () =>
+        harness.orchestrator
+          .list()
+          .filter((r) => r.state === 'awaiting-approval').length === 1
+    );
+    expect(harness.orchestrator.list()).toHaveLength(2);
+  });
+
+  it('dispatches two children with disjoint writes concurrently', async () => {
+    const harness = makeHarness();
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    harness.store.create({
+      title: 'A',
+      parent: epic.meta.id,
+      writes: ['a.ts'],
+    });
+    harness.store.create({
+      title: 'B',
+      parent: epic.meta.id,
+      writes: ['b.ts'],
+    });
+
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await waitFor(
+      () =>
+        harness.orchestrator
+          .list()
+          .filter((r) => r.state === 'awaiting-approval').length === 2
+    );
+  });
+
+  // A live run's actual footprint can outgrow what its task declared — the
+  // scheduler must catch that too, not just the declared write-sets above.
+  it("does not dispatch a child whose writes overlap a live run's grown claims", async () => {
+    const harness = makeHarness();
+    // Dispatched standalone (no epic), writes outside its declared writes
+    // before pausing, so only refreshClaims knows about the overlap below.
+    harness.orchestrator.registerExecutor(
+      'fake-writer',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => writeFileSync(join(cwd, 'shared-scope.ts'), 'x'),
+            commit: false,
+            approval: { requestId: 'go', toolName: 'noop', input: {} },
+          },
+        ],
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
+    const blocker = harness.store.create({
+      title: 'Blocker',
+      writes: ['x.ts'],
+    });
+    const blockerRun = await harness.orchestrator.dispatch(
+      blocker.meta.id,
+      'fake-writer'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === blockerRun.id)
+          ?.state === 'awaiting-approval'
+    );
+    await harness.orchestrator.refreshClaims(blockerRun.id);
+    expect(
+      harness.orchestrator.list().find((r) => r.id === blockerRun.id)?.claims
+    ).toContain('shared-scope.ts');
+
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    const child = harness.store.create({
+      title: 'Overlaps the grown claim, not the declared one',
+      parent: epic.meta.id,
+      writes: ['shared-scope.ts'],
+    });
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await sleep(80);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === child.meta.id)
+    ).toHaveLength(0);
+
+    // Once the blocker reaches a terminal state its claim clears, and the
+    // child it was overlapping becomes dispatchable again.
+    harness.orchestrator.approve(blockerRun.id, 'go', true);
+    await waitFor(
+      () =>
+        harness.orchestrator.list().filter((r) => r.taskId === child.meta.id)
+          .length === 1
+    );
+  });
+
+  // Default (empty) writes — the CLI/MCP default — must not read as "could
+  // touch anything" against every other task once it's a live claim.
+  it('does not let a live run with default (empty) writes block unrelated dispatch', async () => {
+    const harness = makeHarness();
+    const unrelated = harness.store.create({ title: 'No declared writes' });
+    const unrelatedRun = await harness.orchestrator.dispatch(
+      unrelated.meta.id,
+      'fake'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === unrelatedRun.id)
+          ?.state === 'awaiting-approval'
+    );
+    expect(
+      harness.orchestrator.list().find((r) => r.id === unrelatedRun.id)?.claims
+    ).toEqual([]);
+
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    const child = harness.store.create({
+      title: 'Disjoint from the empty-claim run',
+      parent: epic.meta.id,
+      writes: ['own.ts'],
+    });
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await waitFor(
+      () =>
+        harness.orchestrator.list().filter((r) => r.taskId === child.meta.id)
+          .length === 1
+    );
+  });
+
+  // Mirror of the test above: an undeclared task is what "could touch
+  // anything" now, so it waits even on a fully disjoint live claim.
+  it('makes an undeclared child wait on any live claim, even a disjoint one', async () => {
+    const harness = makeHarness();
+    const blocker = harness.store.create({
+      title: 'Blocker',
+      writes: ['unrelated.ts'],
+    });
+    const blockerRun = await harness.orchestrator.dispatch(
+      blocker.meta.id,
+      'fake'
+    );
+    await waitFor(
+      () =>
+        harness.orchestrator.list().find((r) => r.id === blockerRun.id)
+          ?.state === 'awaiting-approval'
+    );
+
+    const epic = harness.store.create({ title: 'Epic', kind: 'epic' });
+    const undeclared = harness.store.create({
+      title: 'No declared writes',
+      parent: epic.meta.id,
+    });
+    await harness.epics.start(epic.meta.id, {
+      concurrency: 2,
+      executor: 'fake',
+    });
+    await sleep(80);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === undeclared.meta.id)
+    ).toHaveLength(0);
+
+    harness.orchestrator.approve(blockerRun.id, 'go', true);
+    await waitFor(
+      () =>
+        harness.orchestrator
+          .list()
+          .filter((r) => r.taskId === undeclared.meta.id).length === 1
+    );
   });
 });
 

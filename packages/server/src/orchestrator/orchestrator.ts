@@ -6,7 +6,13 @@ import {
   TaskParseError,
   TaskStore,
 } from '@dispatch/core';
-import type { OrchestratorConfig, TaskDoc, UpdatePatch } from '@dispatch/core';
+import type {
+  CommandEvidence,
+  MutationEvidence,
+  OrchestratorConfig,
+  TaskDoc,
+  UpdatePatch,
+} from '@dispatch/core';
 import {
   existsSync,
   mkdirSync,
@@ -19,6 +25,9 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { FindingStore } from '../findings.js';
+import { GitRepo } from '../git/commands.js';
+import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import { JjManager } from './jj.js';
 import {
@@ -28,8 +37,13 @@ import {
   worktreePath,
   worktreesDir,
 } from './paths.js';
-import { buildTaskPrompt } from './prompt.js';
+import {
+  buildTaskPrompt,
+  renderSurveySection,
+  untrustedInline,
+} from './prompt.js';
 import { RunRegistry } from './registry.js';
+import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
   ApprovalDecision,
@@ -39,14 +53,17 @@ import type {
   ExecutorEvents,
   ExecutorStartOptions,
   NormalizedEntry,
+  RunKind,
   RunMeta,
   RunState,
+  RunSurvey,
 } from './types.js';
 import {
   MergeEnvironmentError,
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  runKind,
   TERMINAL_RUN_STATES,
 } from './types.js';
 import type { DiffResult } from './worktree.js';
@@ -63,6 +80,15 @@ export interface OrchestratorContext {
   // CommandRunner so that path can be exercised without a jj binary, which is
   // otherwise structurally untestable.
   jj?: JjManager;
+  // Ledger entries injected into dispatch prompts (see promptForTask below).
+  // Defaults to one over `rootDir`, same pattern as `jj`.
+  ledgerStore?: LedgerStore;
+  // Where blocking rulings are read from (see blockedFindingReason). Defaults
+  // to one over `rootDir`, same pattern as `ledgerStore`.
+  findingStore?: FindingStore;
+  // Overrides CLAIMS_REFRESH_COOLDOWN_MS — test-injection seam only, so a
+  // cooldown test isn't stuck waiting out the real 5s production window.
+  claimsRefreshCooldownMs?: number;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -78,6 +104,10 @@ const DEFAULT_EXECUTOR_NAME = 'claude';
 // the reader can never drift — a mismatch would make every dispatch branch
 // invisible to the Branches surface.
 const DISPATCH_BRANCH_PREFIX = 'dispatch/';
+
+// Minimum gap between opportunistic claims refreshes for one run — see
+// scheduleClaimsRefresh.
+const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
 
 // Sort order for the Branches surface: the rows that need a human decision
 // come first, read-only live runs last.
@@ -115,6 +145,8 @@ export class Orchestrator {
   // constructing it is inert — it shells out to jj lazily, per call — so an
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
+  private readonly ledgerStore: LedgerStore;
+  private readonly findingStore: FindingStore;
   private readonly executors = new Map<string, Executor>();
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
@@ -131,10 +163,18 @@ export class Orchestrator {
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.
   private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
+  // When each run's claims were last refreshed from git status — see
+  // scheduleClaimsRefresh's cooldown check.
+  private readonly lastClaimsCheck = new Map<string, number>();
+  private readonly claimsRefreshCooldownMs: number;
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
+    this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
+    this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
+    this.claimsRefreshCooldownMs =
+      ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -176,6 +216,15 @@ export class Orchestrator {
     return this.registry.list();
   }
 
+  // Every live run's current claims, for GET /api/runs/claims and the epic
+  // scheduler. A terminal run holds no claims — see TERMINAL_RUN_STATES.
+  liveClaims(): { runId: string; taskId: string; claims: string[] }[] {
+    return this.registry
+      .list()
+      .filter((r) => !TERMINAL_RUN_STATES.has(r.state))
+      .map((r) => ({ runId: r.id, taskId: r.taskId, claims: r.claims ?? [] }));
+  }
+
   // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
   // persisted). Memoizes by (mergeCommit, baseBranch) so runs sharing a base pay once.
   decorateRunsWithPushed(
@@ -214,14 +263,20 @@ export class Orchestrator {
   // rootDir after a restart with no reconciliation yet — falls back to
   // replaying its transcript file directly, since that's the only place its
   // state still exists.
-  getRun(id: string): { meta: RunMeta; entries: NormalizedEntry[] } | null {
+  getRun(id: string): RunDetail | null {
     const meta = this.registry.get(id);
     if (meta !== undefined) {
-      const entries = this.transcriptFor(id)
-        .read()
+      const lines = this.transcriptFor(id).read();
+      const entries = lines
         .filter((line) => line.type === 'entry')
         .map((line) => line.entry);
-      return { meta, entries };
+      const evidence = lines
+        .filter((line) => line.type === 'evidence')
+        .map((line) => line.evidence);
+      const mutations = lines
+        .filter((line) => line.type === 'mutation')
+        .map((line) => line.mutation);
+      return { meta, entries, evidence, mutations };
     }
     return replayTranscript(transcriptPath(this.ctx.rootDir, id));
   }
@@ -275,6 +330,8 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
       model: opts.model,
+      // Seeded from the task's own declared write-set — see RunMeta.claims.
+      claims: [...task.meta.writes],
       // Spread in only for a genuinely stacked run, so an unblocked run's
       // RunMeta keeps exactly the shape (and transcript header) it had
       // before stacking existed.
@@ -317,6 +374,128 @@ export class Orchestrator {
     );
 
     return this.registry.get(runId)!;
+  }
+
+  // Starts a non-execute run against `head` on its own throwaway branch, and
+  // leaves the task alone. `buildPrompt` runs once the worktree exists.
+  async dispatchAuxRun(opts: {
+    taskId: string;
+    kind: RunKind;
+    head: string;
+    executor?: string;
+    model?: string;
+    buildPrompt: (ctx: { runId: string; worktreePath: string }) => string;
+  }): Promise<RunMeta> {
+    const task = this.ctx.store.get(opts.taskId);
+    if (task === null) {
+      throw new OrchestratorNotFoundError(`task not found: ${opts.taskId}`);
+    }
+    const live = this.registry.liveRunForTask(opts.taskId);
+    if (live !== undefined) {
+      throw new OrchestratorConflictError(
+        `task already has a live run: ${live.id}`
+      );
+    }
+    const { executor, name: executorName } = this.resolveExecutorForResume(
+      opts.executor ?? DEFAULT_EXECUTOR_NAME
+    );
+
+    const now = new Date().toISOString();
+    const runId = generateRunId(now);
+    const branch = `${DISPATCH_BRANCH_PREFIX}${opts.kind}-${opts.taskId}-${runId.slice(2)}`;
+    const wtPath = worktreePath(this.ctx.rootDir, runId);
+    this.worktrees.add(wtPath, branch, opts.head);
+
+    const meta: RunMeta = {
+      id: runId,
+      taskId: opts.taskId,
+      taskTitle: task.meta.title,
+      executor: executorName,
+      state: 'provisioning',
+      branch,
+      baseBranch: opts.head,
+      worktreePath: wtPath,
+      createdAt: now,
+      updatedAt: now,
+      model: opts.model,
+      kind: opts.kind,
+      claims: [...task.meta.writes],
+    };
+    this.registry.create(meta);
+    this.transcriptFor(runId).writeHeader(meta);
+
+    // A throwing buildPrompt would otherwise strand this run in `provisioning`,
+    // which counts as live: the task could never be dispatched again.
+    let prompt: string;
+    try {
+      prompt = opts.buildPrompt({ runId, worktreePath: wtPath });
+    } catch (err) {
+      const message = (err as Error).message;
+      this.transition(runId, 'failed', {
+        error: `failed to prepare ${opts.kind} run: ${message}`,
+      });
+      this.worktrees.remove(wtPath, branch, runId);
+      throw new OrchestratorClientError(
+        `failed to prepare ${opts.kind} run: ${message}`
+      );
+    }
+    this.transition(runId, 'running');
+    const caps = this.orchestratorCaps();
+    this.startAndRegister(
+      runId,
+      {
+        cwd: wtPath,
+        projectRoot: this.ctx.rootDir,
+        runId,
+        prompt,
+        permissionMode: caps.permissionMode,
+        maxTurns: caps.maxTurns,
+        maxBudgetUsd: caps.maxBudgetUsd,
+        model: opts.model,
+      },
+      executor
+    );
+    return this.registry.get(runId)!;
+  }
+
+  // Force-fails a non-execute run whose reported success a post-run check
+  // rejected, bypassing transition()'s terminal guard on purpose.
+  failAuxRun(runId: string, error: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || runKind(meta) === 'execute') return;
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { state: 'failed', updatedAt: now, error });
+    this.transcriptFor(runId).appendState('failed', now, { error });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // Frees a finished non-execute run's throwaway worktree. Commits first (aux
+  // agents can edit), and spares the branch if it holds commits the base lacks.
+  cleanupAuxRun(runId: string): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || runKind(meta) === 'execute') return;
+    if (this.worktrees.isWorktreeDirty(meta.worktreePath)) {
+      this.bestEffort(`auto-commit of aux run ${runId}`, () => {
+        this.autoCommitIfDirty(meta.worktreePath, runId);
+      });
+    }
+    if (this.worktrees.aheadCount(meta.branch, meta.baseBranch) > 0) {
+      this.worktrees.removeWorktreeOnly(meta.worktreePath);
+      this.bestEffort(`recording kept branch for run ${runId}`, () => {
+        const now = new Date().toISOString();
+        this.ctx.store.update(
+          meta.taskId,
+          {
+            appendActivity: `${now} [run ${runId}] worktree removed; branch ${meta.branch} kept — it has unmerged commits`,
+          },
+          now
+        );
+        this.ctx.cache.rebuild(this.ctx.store);
+        this.ctx.events.broadcast({ type: 'task.changed' });
+      });
+      return;
+    }
+    this.worktrees.remove(meta.worktreePath, meta.branch, runId);
   }
 
   /**
@@ -585,11 +764,13 @@ export class Orchestrator {
     if (from?.runId !== undefined) {
       const senderMeta = this.registry.get(from.runId);
       if (senderMeta !== undefined) {
-        return { fromLabel: `${senderMeta.taskTitle} (${senderMeta.id})` };
+        return {
+          fromLabel: `${untrustedInline(senderMeta.taskTitle)} (${senderMeta.id})`,
+        };
       }
     }
     if (from?.label !== undefined && from.label.trim() !== '') {
-      return { fromLabel: from.label };
+      return { fromLabel: untrustedInline(from.label) };
     }
     return { fromLabel: 'another agent' };
   }
@@ -663,6 +844,49 @@ export class Orchestrator {
     return meta;
   }
 
+  // Records a command the implementer actually ran, stamped with `at` here
+  // so the caller can echo the record back — data in place of a prose report.
+  recordEvidence(
+    runId: string,
+    evidence: Omit<CommandEvidence, 'at'>
+  ): CommandEvidence {
+    this.requireRun(runId);
+    const full: CommandEvidence = { ...evidence, at: new Date().toISOString() };
+    this.transcriptFor(runId).appendEvidence(full);
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return full;
+  }
+
+  // Records a mutation-test result via `record_mutation` — a guard reverted,
+  // tests re-run. `testsFailed: 0` is what buildReviewPrompt flags.
+  recordMutation(
+    runId: string,
+    mutation: Omit<MutationEvidence, 'at'>
+  ): MutationEvidence {
+    this.requireRun(runId);
+    const full: MutationEvidence = {
+      ...mutation,
+      at: new Date().toISOString(),
+    };
+    this.transcriptFor(runId).appendMutation(full);
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return full;
+  }
+
+  // Records the human's reply to an `ask_user` question on the run's own
+  // transcript. The agent gets it as its tool result, so nothing is injected.
+  recordAnswer(runId: string, text: string): void {
+    this.requireRun(runId);
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: 'user',
+      text,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+  }
+
   // Interrupts a live run's executor and marks it cancelled. The worktree is
   // deliberately left in place — per the plan, only a review action
   // (merge/discard) removes a run's worktree.
@@ -671,6 +895,8 @@ export class Orchestrator {
     if (TERMINAL_RUN_STATES.has(meta.state)) {
       throw new OrchestratorConflictError(`run already finished: ${runId}`);
     }
+    // Before transition() below makes the run terminal, so it isn't a no-op.
+    this.forceClaimsRefresh(runId);
     const executorRun = this.registry.getExecutorRun(runId);
     if (executorRun !== undefined) await executorRun.interrupt();
     this.transition(runId, 'cancelled');
@@ -683,14 +909,146 @@ export class Orchestrator {
     // first) — only a review action (merge/discard) or a fresh dispatch
     // changes task status.
     const now = new Date().toISOString();
-    this.ctx.store.update(
-      meta.taskId,
-      { appendActivity: `${now} [run ${runId}] cancelled` },
-      now
-    );
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    // Same rule as handleFinish: a task file this can't read or write costs
+    // the Activity line, never the terminal hooks.
+    this.bestEffort(`recording cancel for run ${runId}`, () => {
+      this.ctx.store.update(
+        meta.taskId,
+        { appendActivity: `${now} [run ${runId}] cancelled` },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    });
     this.fireTerminalHooks(runId);
+  }
+
+  // Surveys a run's worktree via git status/log. Degrades to an empty clean
+  // survey, rather than throwing, when the worktree itself is gone.
+  async surveyRun(runId: string): Promise<RunSurvey> {
+    const meta = this.requireRun(runId);
+    const repo = new GitRepo(meta.worktreePath);
+    const [statusResult, logResult] = await Promise.all([
+      repo.status(),
+      repo.log({ limit: 1 }),
+    ]);
+    const staged = statusResult.ok
+      ? statusResult.staged.map((f) => f.path)
+      : [];
+    // No dedicated conflicted field on RunSurvey — folded into unstaged,
+    // marked, so a resumed agent still sees it instead of an unexplained tree.
+    const unstaged = statusResult.ok
+      ? [
+          ...statusResult.unstaged.map((f) => f.path),
+          ...statusResult.conflicted.map((path) => `${path} (conflicted)`),
+        ]
+      : [];
+    const untracked = statusResult.ok ? [...statusResult.untracked] : [];
+    const firstCommit = logResult.ok ? logResult.commits[0] : undefined;
+    const lastCommit =
+      firstCommit !== undefined
+        ? { sha: firstCommit.sha, subject: firstCommit.subject }
+        : null;
+    return {
+      runId,
+      branch: meta.branch,
+      staged,
+      unstaged,
+      untracked,
+      lastCommit,
+      cleanTree:
+        staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+    };
+  }
+
+  // Grows a run's claims to match its worktree's git status. Public so tests
+  // can call it directly instead of waiting out the cooldown below.
+  async refreshClaims(runId: string): Promise<void> {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return;
+    const status = await new GitRepo(meta.worktreePath).status();
+    if (!status.ok) return;
+    const touched = [
+      ...status.staged.map((f) => f.path),
+      ...status.unstaged.map((f) => f.path),
+      ...status.untracked,
+      ...status.conflicted,
+    ];
+    const before = meta.claims ?? [];
+    const grown = new Set([...before, ...touched]);
+    if (grown.size === before.length) return;
+    const claims = [...grown].sort();
+    this.registry.updateMeta(runId, { claims });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // Cooldown-gated, fire-and-forget trigger for refreshClaims — called from
+  // every executor entry so claims stay current without a dedicated poll timer.
+  private scheduleClaimsRefresh(runId: string): void {
+    const last = this.lastClaimsCheck.get(runId) ?? 0;
+    if (Date.now() - last < this.claimsRefreshCooldownMs) return;
+    this.forceClaimsRefresh(runId);
+  }
+
+  // Unconditional fire-and-forget refresh, bypassing the cooldown — used at
+  // the transitions into an idle state, where a trailing edit must not wait.
+  private forceClaimsRefresh(runId: string): void {
+    this.lastClaimsCheck.set(runId, Date.now());
+    void this.refreshClaims(runId).catch((err: unknown) => {
+      console.error(
+        `dispatchd: claims refresh failed for run ${runId}: ${(err as Error).message}`
+      );
+    });
+  }
+
+  // Fire-and-forget survey. No caller is left to receive a rejection, and this
+  // decides `failed` vs `interrupted-dirty`, so a failure is logged, not lost.
+  private scheduleSurvey(runId: string): void {
+    void this.surveyAndUpgradeIfDirty(runId).catch((err: unknown) => {
+      console.error(
+        `dispatchd: survey of run ${runId} failed: ${(err as Error).message}`
+      );
+    });
+  }
+
+  // Surveys a run already marked `failed` outside handleFinish (a boot
+  // crash or a zombied executor) and upgrades it if the worktree is dirty.
+  private async surveyAndUpgradeIfDirty(runId: string): Promise<void> {
+    let survey: RunSurvey;
+    try {
+      survey = await this.surveyRun(runId);
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to survey run ${runId}: ${(err as Error).message}`
+      );
+      return;
+    }
+    if (survey.cleanTree) return;
+    const meta = this.registry.get(runId);
+    if (meta === undefined || meta.state !== 'failed') return;
+    if (meta.reviewedAt !== undefined) return;
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, {
+      state: 'interrupted-dirty',
+      updatedAt: now,
+      survey,
+    });
+    // Same rule as transition(): the registry already carries the new state, so
+    // a transcript that can't be written must not also cost the broadcasts.
+    this.bestEffort(
+      `appending interrupted-dirty state for run ${runId}`,
+      () => {
+        this.transcriptFor(runId).appendState('interrupted-dirty', now, {
+          survey,
+        });
+      }
+    );
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    this.ctx.events.broadcast({ type: 'run.survey', runId, survey });
+    this.noteTaskActivity(
+      meta.taskId,
+      `[run ${runId}] flagged interrupted-dirty: ${survey.staged.length + survey.unstaged.length + survey.untracked.length} uncommitted path(s) found`
+    );
   }
 
   // The review surface's unified diff: everything committed on the run's
@@ -755,6 +1113,16 @@ export class Orchestrator {
     }
   }
 
+  // Why `taskId` may not be merged, or null when nothing blocks it. Read from
+  // the findings, not the fix loop: the ruling stands however that loop settled.
+  blockedFindingReason(taskId: string): string | null {
+    const blocked = this.findingStore.list({ taskId, verdict: 'blocked' });
+    if (blocked.length === 0) return null;
+    const first = blocked[0];
+    const ruling = first.ruling ?? first.title;
+    return `task is blocked by an adjudicated finding: ${taskId} (${first.id}: ${ruling})`;
+  }
+
   // Terminal review action for a run: 'merge' squash-merges the branch into
   // the main checkout and closes the task; 'discard' just cleans up and
   // reopens the task. Both remove the run's worktree/branch — the worktree
@@ -779,6 +1147,12 @@ export class Orchestrator {
       throw new OrchestratorConflictError(
         `run has already been reviewed: ${runId}`
       );
+    }
+    // Discarding blocked work is exactly what a human should still be able to
+    // do; merging it is the thing the ruling exists to prevent.
+    if (action === 'merge') {
+      const blocked = this.blockedFindingReason(meta.taskId);
+      if (blocked !== null) throw new OrchestratorConflictError(blocked);
     }
     this.requireNoOpenPr(meta);
     const now = new Date().toISOString();
@@ -1555,6 +1929,9 @@ export class Orchestrator {
     const dir = runsDir(this.ctx.rootDir);
     const keepPaths = new Set<string>();
     const keepRunIds = new Set<string>();
+    // Runs THIS call just force-failed (not one replayed already-terminal)
+    // — the actual crash victims, worth surveying below.
+    const crashedRunIds: string[] = [];
     if (existsSync(dir)) {
       for (const file of readdirSync(dir)) {
         if (!file.endsWith('.jsonl')) continue;
@@ -1571,6 +1948,7 @@ export class Orchestrator {
             const now = new Date().toISOString();
             new Transcript(path).appendState('failed', now);
             meta = { ...meta, state: 'failed', updatedAt: now };
+            crashedRunIds.push(meta.id);
           }
           this.registry.create(meta);
           keepPaths.add(meta.worktreePath);
@@ -1609,6 +1987,11 @@ export class Orchestrator {
     }
     this.worktrees.pruneOrphans(worktreesDir(this.ctx.rootDir), keepPaths);
     this.reconcileArchives();
+    // Deferred, not awaited — reconcileOnBoot() stays synchronous, so each
+    // crashed run's worktree is surveyed and upgraded in the background.
+    for (const runId of crashedRunIds) {
+      this.scheduleSurvey(runId);
+    }
   }
 
   private requireRun(runId: string): RunMeta {
@@ -1673,6 +2056,9 @@ export class Orchestrator {
       this.ctx.events.broadcast({ type: 'task.changed' });
     }
     this.fireTerminalHooks(meta.id);
+    // Deferred, same as reconcileOnBoot()'s crash sweep — a zombied run's
+    // worktree may still hold whatever the agent left behind mid-task.
+    this.scheduleSurvey(meta.id);
   }
 
   // Starts `executor` for a run that dispatch()/requestChanges() has already
@@ -1862,7 +2248,11 @@ export class Orchestrator {
       updatedAt: now,
       ...finish,
     });
-    this.transcriptFor(runId).appendState(state, now, finish);
+    // The registry already carries the new state; a transcript that can't be
+    // appended to must not also cost clients the broadcast that says so.
+    this.bestEffort(`appending ${state} state line for run ${runId}`, () => {
+      this.transcriptFor(runId).appendState(state, now, finish);
+    });
     this.ctx.events.broadcast({ type: 'run.changed' });
     // Phase 5 P1: onRunTerminal is deliberately NOT fired from here. A run
     // "reaching" a terminal state is only fully visible to a subscriber once
@@ -1882,6 +2272,8 @@ export class Orchestrator {
   private fireTerminalHooks(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
+    // Nothing will ever refresh a terminal run's claims again.
+    this.lastClaimsCheck.delete(runId);
     this.invokeHooksSafely(this.terminalHooks, meta);
   }
 
@@ -1921,6 +2313,16 @@ export class Orchestrator {
     }
   }
 
+  // Bookkeeping between a run going terminal and its hooks firing: cleanup an
+  // exception can skip is not cleanup, so a failed step is logged, not thrown.
+  private bestEffort(label: string, step: () => void): void {
+    try {
+      step();
+    } catch (err) {
+      console.error(`dispatchd: ${label} failed: ${(err as Error).message}`);
+    }
+  }
+
   // Builds the ExecutorEvents callbacks for one run, closing over its runId
   // so the Executor implementation never has to know it.
   private makeEvents(runId: string): ExecutorEvents {
@@ -1931,6 +2333,7 @@ export class Orchestrator {
           updatedAt: new Date().toISOString(),
         });
         this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+        this.scheduleClaimsRefresh(runId);
       },
       onApprovalRequest: (request) => {
         this.registry.setPendingApproval(runId, request);
@@ -1941,6 +2344,9 @@ export class Orchestrator {
           requestId: request.requestId,
           toolName: request.toolName,
         });
+        // Awaiting-approval can sit for arbitrarily long — capture whatever
+        // this run just did rather than letting the cooldown delay it.
+        this.forceClaimsRefresh(runId);
       },
       onFinish: (finish) => this.handleFinish(runId, finish),
     };
@@ -1963,6 +2369,9 @@ export class Orchestrator {
   ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
+    // Fire-and-forget: races (doesn't provably beat) autoCommitIfDirty's
+    // commit below. Lands after transition(→terminal) — for history only.
+    this.forceClaimsRefresh(runId);
     // I6: this whole block runs from inside an executor's fire-and-forget
     // event plumbing (see makeEvents/onFinish) — there is no caller left to
     // catch an escaped throw, so one would either crash the process or (with
@@ -1989,7 +2398,18 @@ export class Orchestrator {
         error: `finish failed: ${(err as Error).message}`,
       };
     }
-    this.transition(runId, effectiveFinish.state, effectiveFinish);
+
+    // Synchronous, no await before this — closes the window a concurrent
+    // approve()/sendMessage()/inject() could otherwise race (see below).
+    this.transition(runId, effectiveFinish.state, {
+      costUsd: effectiveFinish.costUsd,
+      turns: effectiveFinish.turns,
+      sessionId: effectiveFinish.sessionId,
+      error: effectiveFinish.error,
+    });
+    if (effectiveFinish.state === 'failed') {
+      this.scheduleSurvey(runId);
+    }
 
     let filesChanged = 0;
     if (effectiveFinish.state === 'finished') {
@@ -2002,15 +2422,19 @@ export class Orchestrator {
     }
     const cost = (effectiveFinish.costUsd ?? 0).toFixed(2);
     const now = new Date().toISOString();
-    const task = this.ctx.store.get(meta.taskId);
-    if (task === null) return;
-    const patch: UpdatePatch = {
-      appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
-    };
-    if (task.meta.status === 'in-progress') patch.status = 'in-review';
-    this.ctx.store.update(meta.taskId, patch, now);
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    // An unreadable or unwritable task file must not skip the hooks below,
+    // which are what free the epic engine's next dispatch.
+    this.bestEffort(`recording finish for run ${runId}`, () => {
+      const task = this.ctx.store.get(meta.taskId);
+      if (task === null) return;
+      const patch: UpdatePatch = {
+        appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
+      };
+      if (task.meta.status === 'in-progress') patch.status = 'in-review';
+      this.ctx.store.update(meta.taskId, patch, now);
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    });
     this.fireTerminalHooks(runId);
   }
 
@@ -2077,6 +2501,9 @@ export class Orchestrator {
       // default, so continuing an Opus run could hand the rest of the task
       // to a different model mid-conversation.
       model: oldMeta.model,
+      // Carries forward whatever the prior run had already claimed — a
+      // follow-up must not look like it has never touched anything.
+      claims: oldMeta.claims,
       resumedFrom: oldMeta.id,
       // The resumed run inherits the same worktree and the same BRANCH, so it
       // inherits the branch's stacking facts too. Dropping them here was how a
@@ -2149,6 +2576,102 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
+  // POST /api/runs/:id/resume: a fresh run in the SAME worktree/branch,
+  // always a new session, with the run's survey (if any) in its prompt.
+  resumeRun(runId: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (!TERMINAL_RUN_STATES.has(meta.state)) {
+      throw new OrchestratorClientError(`run is still live: ${runId}`);
+    }
+    if (meta.reviewedAt !== undefined) {
+      throw new OrchestratorConflictError(
+        `run has already been reviewed: ${runId}`
+      );
+    }
+    this.requireNoOpenPr(meta);
+    // Same one-live-run-per-task rule dispatch()/sendMessage(resume) enforce
+    // — a second resume racing this one would put two agents in one worktree.
+    const live = this.registry.liveRunForTask(meta.taskId);
+    if (live !== undefined) {
+      throw new OrchestratorConflictError(
+        `task already has a live run: ${live.id}`
+      );
+    }
+    const task = this.ctx.store.get(meta.taskId);
+    if (task === null) {
+      throw new OrchestratorNotFoundError(`task not found: ${meta.taskId}`);
+    }
+    const {
+      executor,
+      name: executorName,
+      substituted,
+    } = this.resolveExecutorForResume(meta.executor);
+    const now = new Date().toISOString();
+    const newRunId = generateRunId(now);
+    const basePrompt = this.promptForTask(task);
+    const prompt =
+      meta.survey !== undefined
+        ? `${basePrompt}\n\n${renderSurveySection(meta.survey)}`
+        : basePrompt;
+    const newMeta: RunMeta = {
+      id: newRunId,
+      taskId: meta.taskId,
+      taskTitle: meta.taskTitle,
+      executor: executorName,
+      state: 'provisioning',
+      branch: meta.branch,
+      baseBranch: meta.baseBranch,
+      worktreePath: meta.worktreePath,
+      createdAt: now,
+      updatedAt: now,
+      model: meta.model,
+      // See requestChanges' matching comment — a resumed run keeps whatever
+      // its predecessor had already claimed.
+      claims: meta.claims,
+      resumedFrom: meta.id,
+      ...(meta.stackParents !== undefined
+        ? { stackParents: meta.stackParents }
+        : {}),
+      ...(meta.stackBaseCommit !== undefined
+        ? { stackBaseCommit: meta.stackBaseCommit }
+        : {}),
+    };
+    this.registry.create(newMeta);
+    this.transcriptFor(newRunId).writeHeader(newMeta);
+
+    const substitutionNote = substituted
+      ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
+      : '';
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: 'in-progress',
+        appendActivity: `${now} resumed after ${meta.state} (run ${newRunId})${substitutionNote}`,
+      },
+      now
+    );
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+
+    this.transition(newRunId, 'running');
+    const caps = this.orchestratorCaps();
+    this.startAndRegister(
+      newRunId,
+      {
+        cwd: newMeta.worktreePath,
+        projectRoot: this.ctx.rootDir,
+        runId: newRunId,
+        prompt,
+        permissionMode: caps.permissionMode,
+        maxTurns: caps.maxTurns,
+        maxBudgetUsd: caps.maxBudgetUsd,
+        model: meta.model,
+      },
+      executor
+    );
+    return this.registry.get(newRunId)!;
+  }
+
   // Reads the project's `.dispatch/config.yml` `orchestrator:` block fresh on
   // every dispatch/resume — same rationale as the MCP tools re-resolving
   // config on every call: a config edit takes effect on the next dispatch
@@ -2171,6 +2694,10 @@ export class Orchestrator {
         if (!(err instanceof TaskParseError)) throw err;
       }
     }
-    return buildTaskPrompt(task, parentEpic);
+    const ledgerEntries = this.ledgerStore.entriesFor(
+      task.meta.id,
+      task.meta.parent
+    );
+    return buildTaskPrompt(task, parentEpic, ledgerEntries);
   }
 }

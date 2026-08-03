@@ -1,7 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import type { Update } from '@tauri-apps/plugin-updater';
 import { Loader2, Plus, TriangleAlert } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useState,
+} from 'react';
 
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -13,7 +20,9 @@ import { Sidebar } from './components/shell/Sidebar';
 import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
 import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
+import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
+import { DraftReviewDialog } from './components/tasks/DraftReviewDialog';
 import { TaskDetailDialog } from './components/tasks/TaskDetailDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
@@ -24,6 +33,7 @@ import { initialNavState, navReducer } from './lib/appNav';
 import { deriveFeedState } from './lib/feedState';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
+import { isLinearConfigured } from './lib/linearSettings';
 import { basename } from './lib/projectName';
 import { isTerminalRunState } from './lib/runState';
 import {
@@ -40,7 +50,6 @@ import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { GetStartedView } from './views/GetStartedView';
-import { NewTaskView } from './views/NewTaskView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { PullRequestsView } from './views/PullRequestsView';
@@ -54,16 +63,18 @@ import { TooltipProvider } from '@/ui/tooltip';
 function App() {
   const [navState, dispatchNav] = useReducer(navReducer, initialNavState);
   const [showCreate, setShowCreate] = useState(false);
-  // Pre-selects the Status field of whichever creator is open — the full-page `NewTaskView` or
-  // the `CreateTaskModal` quick-add — when it's opened from a board column's or list group's
-  // hover "+" button (see `BoardView`'s `onNewTask`). `null` when opened from the plain "New
-  // task" button, which leaves the creator to default to the first configured status on its
-  // own. One piece of state for both, so switching to the quick form mid-flow keeps the column
-  // you started from.
+  // Pre-selects `CreateTaskModal`'s Status field from a board/list "+" button; `null` leaves
+  // it to default to the first configured status.
   const [createStatus, setCreateStatus] = useState<string | null>(null);
   // Whether the notification inbox popover (the bell in Sidebar's global section) is open —
   // see toggleInbox below for why opening it also marks everything read.
   const [inboxOpen, setInboxOpen] = useState(false);
+  // The AI task composer, a dialog rather than a screen — open state lives here (not in
+  // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
+  const [aiComposerOpen, setAiComposerOpen] = useState(false);
+  // Which draft the tray opened for review, or `null` when closed — an id rather than a
+  // boolean since several drafts can be in flight at once.
+  const [reviewingDraftId, setReviewingDraftId] = useState<string | null>(null);
 
   // The overview rail's open/closed state, kept across launches — it is a
   // layout preference, and re-hiding it every start would make it feel broken.
@@ -92,6 +103,14 @@ function App() {
   }, []);
 
   useDataChangedEvents();
+
+  // Reaching `new-task` only opens the AI composer dialog and hands the view back to
+  // `newTaskReturnView` — `useLayoutEffect` so this happens before paint, with no blank frame.
+  useLayoutEffect(() => {
+    if (navState.projectView !== 'new-task') return;
+    setAiComposerOpen(true);
+    dispatchNav({ type: 'closeNewTask' });
+  }, [navState.projectView]);
 
   // The app is scoped to a single project — the one it was launched from (see
   // `commands::current_project_root`'s doc comment for the `tauri dev`-vs-packaged-app
@@ -358,6 +377,13 @@ function App() {
         ) ?? null)
       : null;
 
+  // Re-derived from the live query every render — stays open across a follow-up turn
+  // (running -> ready) and closes once the draft is dismissed and drops out of the list.
+  const reviewingDraft =
+    reviewingDraftId !== null
+      ? (data.drafts.find((d) => d.id === reviewingDraftId) ?? null)
+      : null;
+
   // Destructured to bare locals rather than referenced as `data.tasks`/`data.readyIds`/
   // `data.handleDispatch` inside the memo below: `data` itself is a brand-new object literal
   // every render (it's returned fresh from `useDispatchProject` each time), so
@@ -396,6 +422,14 @@ function App() {
   // would linger after the user just acted on the newest entry.
   const navigateFromInbox = useCallback(
     (target: InboxTarget) => {
+      if (target.kind === 'task') {
+        // The peek panel overlays whichever view is active, so this doesn't
+        // need a view switch the way the run/queue targets below do.
+        dispatchNav({ type: 'openPeek', taskId: target.taskId });
+        markNotificationInboxRead();
+        setInboxOpen(false);
+        return;
+      }
       selectProjectView('runs');
       if (target.kind === 'run') {
         dispatchNav({ type: 'openRun', runId: target.runId });
@@ -564,6 +598,9 @@ function App() {
             }}
             unreadCount={unreadCount(data.notificationInbox)}
             onToggleInbox={toggleInbox}
+            drafts={data.drafts}
+            onOpenDraft={setReviewingDraftId}
+            onDismissDraft={(id) => void data.handleDismissDraft(id)}
             onSetProjectView={selectProjectView}
             onSetGlobalView={setGlobalView}
             switcherOpen={switcherOpen}
@@ -742,16 +779,6 @@ function App() {
                       key={planSeed ?? 'plans'}
                     />
                   )}
-                  {navState.projectView === 'new-task' && (
-                    <NewTaskView
-                      data={data}
-                      initialStatus={createStatus ?? undefined}
-                      onQuickAdd={() =>
-                        openQuickAddTask(createStatus ?? undefined)
-                      }
-                      onClose={() => dispatchNav({ type: 'closeNewTask' })}
-                    />
-                  )}
                 </>
               )}
             </ErrorBoundary>
@@ -814,6 +841,12 @@ function App() {
               dispatchNav({ type: 'openRun', runId });
             }}
             onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
+            linearLinks={data.linearLinks}
+            linearConfigured={isLinearConfigured(data.linearStatus)}
+            onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}
+            client={data.client}
+            port={data.port}
+            fixLoopEscalation={data.config.fixLoop.escalation}
           />
         )}
 
@@ -822,14 +855,30 @@ function App() {
             statuses={data.config.statuses}
             epics={data.epics}
             initialStatus={createStatus ?? undefined}
-            onCreate={async (input) => {
-              await data.handleCreate(input);
-              // Quick-added from on top of the full-page creator: that page has nothing left
-              // to do once the task exists, so close it rather than leaving its composer
-              // sitting behind the dismissed modal. A no-op from anywhere else.
-              dispatchNav({ type: 'closeNewTask' });
-            }}
+            onCreate={(input) => data.handleCreate(input)}
             onClose={() => setShowCreate(false)}
+          />
+        )}
+
+        {aiComposerOpen && (
+          <AiTaskComposer
+            data={data}
+            onStartDraft={rawData.handleStartDraft}
+            onQuickAdd={() => {
+              setAiComposerOpen(false);
+              openQuickAddTask(createStatus ?? undefined);
+            }}
+            onClose={() => setAiComposerOpen(false)}
+          />
+        )}
+
+        {reviewingDraft !== null && data.config !== null && (
+          <DraftReviewDialog
+            key={reviewingDraft.id}
+            data={data}
+            onCreate={rawData.handleCreate}
+            draft={reviewingDraft}
+            onClose={() => setReviewingDraftId(null)}
           />
         )}
 

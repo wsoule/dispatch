@@ -31,6 +31,15 @@ function defaultFakeScript(): FakeExecutor {
   });
 }
 
+// Pauses at an approval gate instead of finishing immediately, so a test can
+// query a run while it is still deterministically live.
+function gatedFakeScript(): FakeExecutor {
+  return new FakeExecutor({
+    steps: [{ approval: { requestId: 'go', toolName: 'noop', input: {} } }],
+    finish: { state: 'finished', costUsd: 0, turns: 1 },
+  });
+}
+
 // Same escape hatch as api.test.ts/resilience.test.ts: `Response.json()`
 // types as `Promise<unknown>` under this repo's strict, DOM-less tsconfig.
 function json(res: Response): Promise<any> {
@@ -307,6 +316,66 @@ describe('GET /api/runs and /api/runs/:id', () => {
     const res = await fetch(`${baseUrl}/api/runs/r-000000`);
     expect(res.status).toBe(404);
     expect((await json(res)).error).toMatch(/run not found/);
+  });
+});
+
+// Its own server, with an approval-gated executor, so the run under test
+// stays deterministically live instead of racing a fire-and-forget finish.
+describe('GET /api/runs/claims', () => {
+  let gateHandle: ServerHandle;
+  let gateBaseUrl: string;
+  let gateRoot: string;
+
+  beforeEach(async () => {
+    gateRoot = initDispatchGitRepo();
+    TaskStore.init(gateRoot);
+    gateHandle = await startServer({
+      rootDir: gateRoot,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('fake-gate', gatedFakeScript());
+      },
+    });
+    gateBaseUrl = `http://127.0.0.1:${gateHandle.port}`;
+  });
+
+  afterEach(async () => {
+    await gateHandle.stop();
+    rmSync(gateRoot, { recursive: true, force: true });
+  });
+
+  it("lists a live run's claims, seeded from its task's writes", async () => {
+    const taskRes = await fetch(`${gateBaseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Claim me', writes: ['a.ts', 'b.ts'] }),
+    });
+    const task = await json(taskRes);
+    const dispatchRes = await json(
+      await fetch(`${gateBaseUrl}/api/tasks/${task.meta.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'fake-gate' }),
+      })
+    );
+    await waitFor(async () => {
+      const r = await json(
+        await fetch(`${gateBaseUrl}/api/runs/${dispatchRes.id}`)
+      );
+      return r.meta.state === 'awaiting-approval';
+    });
+
+    const claims = await json(await fetch(`${gateBaseUrl}/api/runs/claims`));
+    expect(Array.isArray(claims)).toBe(true);
+    const entry = claims.find(
+      (c: { runId: string }) => c.runId === dispatchRes.id
+    );
+    expect(entry).toEqual({
+      runId: dispatchRes.id,
+      taskId: task.meta.id,
+      claims: ['a.ts', 'b.ts'],
+    });
   });
 });
 

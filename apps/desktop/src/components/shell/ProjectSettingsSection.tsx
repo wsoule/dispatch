@@ -1,4 +1,4 @@
-import type { DispatchConfig } from '@dispatch/core';
+import type { DispatchConfig } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
