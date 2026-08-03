@@ -1,4 +1,5 @@
-import { TaskStore } from '@dispatch/core';
+import type { CartoMode } from '@dispatch/core';
+import { loadConfig, TaskStore } from '@dispatch/core';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,7 +8,12 @@ import { handleApi, isTrustedOrigin } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
-import { DepMapCache, depMapSourceDirs, isSkippedPath } from './depmap.js';
+import {
+  createSourceChangeHandler,
+  DepMapCache,
+  depMapSourceDirs,
+  isSkippedPath,
+} from './depmap.js';
 import { EventBus } from './events.js';
 import { FindingStore } from './findings.js';
 import { GitRepo } from './git/commands.js';
@@ -207,15 +213,6 @@ export async function startServer(
     events.broadcast({ type: 'task.changed' });
   });
 
-  // The reverse-dependency map ReviewRunner scopes reviews with, rebuilt
-  // lazily and invalidated whenever the workspace's own source changes.
-  const depMapCache = new DepMapCache(rootDir);
-  const sourceWatcher = watchSourceDirs(
-    depMapSourceDirs(rootDir),
-    () => depMapCache.invalidate(),
-    isSkippedPath
-  );
-
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
@@ -233,6 +230,41 @@ export async function startServer(
   // Shared with apiCtx below so a decision an agent records mid-run is
   // visible to buildTaskPrompt on the very next dispatch, no restart needed.
   const ledgerStore = new LedgerStore(rootDir);
+
+  // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
+  // it when available; the built-in scanner is the fallback. Source changes
+  // re-sync carto's container before invalidating, so the next review reads a
+  // current graph.
+  // Boot must survive a malformed config.yml: this is the first loadConfig on
+  // the startup path, and per-request loads still surface the real error.
+  let cartoMode: CartoMode = 'on';
+  try {
+    cartoMode = loadConfig(rootDir).carto.enabled;
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read carto config, defaulting to 'on': ${(err as Error).message}`
+    );
+  }
+  const depMapCache = new DepMapCache(rootDir, {
+    mode: cartoMode,
+    onDegrade: ({ detail }) => {
+      ledgerStore.add({
+        kind: 'hazard',
+        title: 'dependency map degraded',
+        detail: `carto unavailable, using the built-in scanner: ${detail}`,
+      });
+    },
+  });
+  const sourceWatcher = watchSourceDirs(
+    depMapSourceDirs(rootDir),
+    createSourceChangeHandler({
+      rootDir,
+      mode: cartoMode,
+      cache: depMapCache,
+    }),
+    isSkippedPath
+  );
+
   const orchestrator = new Orchestrator({
     rootDir,
     store,

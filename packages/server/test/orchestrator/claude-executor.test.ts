@@ -4,9 +4,21 @@ import type {
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, test } from 'bun:test';
-import { rmSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 
-import { ClaudeExecutor } from '../../src/orchestrator/executors/claude.js';
+import {
+  buildCartoMcpServerConfig,
+  cartoMcpServers,
+  ClaudeExecutor,
+} from '../../src/orchestrator/executors/claude.js';
 import type {
   ExecutorEvents,
   NormalizedEntry,
@@ -804,3 +816,159 @@ test.skipIf(!process.env.DISPATCH_CLAUDE_SMOKE)(
   },
   60_000
 );
+
+describe('buildCartoMcpServerConfig', () => {
+  it('passes only allowlisted environment variables', () => {
+    const config = buildCartoMcpServerConfig('/proj', {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    }) as McpStdioServerConfig;
+    expect(config.type).toBe('stdio');
+    // McpStdioServerConfig has no `cwd` field, so carto must be spawned
+    // through a shell wrapper (`command: '/bin/sh'`) that `cd`s into the
+    // project root first — the actual carto invocation is in `args`.
+    expect(config.command).toBe('/bin/sh');
+    expect(JSON.stringify(config.args)).toContain('carto');
+    // The SDK serializes env into the spawned CLI's argv, visible via `ps`.
+    for (const key of Object.keys(config.env ?? {})) {
+      expect(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL']).toContain(key);
+    }
+  });
+
+  it('never widens the tool tier', () => {
+    const config = buildCartoMcpServerConfig('/proj', {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    }) as McpStdioServerConfig;
+    expect(config.env?.CARTO_MCP_TIER).toBeUndefined();
+    expect(JSON.stringify(config)).not.toContain('CARTO_MCP_TIER');
+  });
+
+  it('roots carto at the project, never at a run worktree', () => {
+    const config = buildCartoMcpServerConfig('/proj', {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    });
+    expect(JSON.stringify(config)).toContain('/proj');
+  });
+
+  // Security: a projectRoot (user-configured) or binary.path (from a PATH
+  // entry) containing shell metacharacters must never be able to run as a
+  // command. Interpolating either into the `-c` script text — even
+  // JSON-escaped, which only escapes `"` and `\`, not `$` or backticks — lets
+  // a `$(...)` payload execute inside double quotes under POSIX sh. Passing
+  // both as positional parameters ($1/$2) instead means the shell binds them
+  // to variables without ever re-parsing their contents as script text.
+  it('passes projectRoot as a positional shell parameter, never spliced into the script text', () => {
+    const maliciousRoot = '/tmp/proj$(touch /tmp/should-not-exist)';
+    const config = buildCartoMcpServerConfig(maliciousRoot, {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    }) as McpStdioServerConfig;
+    const script = config.args?.[1] ?? '';
+    // The payload must not appear inside the `-c` script text itself...
+    expect(script).not.toContain(maliciousRoot);
+    expect(script).not.toContain('$(');
+    // ...only as a separate argv element, which sh assigns to $1 verbatim
+    // and never re-parses.
+    expect(config.args).toContain(maliciousRoot);
+  });
+});
+
+// A discoverable stub `carto` for the config-gating tests below, so what they
+// prove is the config decision, not whatever carto this machine happens to
+// have. packages/cli's preload sets DISPATCH_CARTO_DISABLED when `bun test`
+// runs from the repo root; it is lifted for the duration of `fn`.
+function withStubCarto<T>(fn: () => T): T {
+  const binDir = mkdtempSync(join(tmpdir(), 'dispatch-carto-bin-'));
+  const stub = join(binDir, 'carto');
+  writeFileSync(stub, '#!/bin/sh\necho "carto-md 2.1.3"\n');
+  chmodSync(stub, 0o755);
+  const originalPath = process.env.PATH;
+  const originalDisabled = process.env.DISPATCH_CARTO_DISABLED;
+  process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`;
+  delete process.env.DISPATCH_CARTO_DISABLED;
+  try {
+    return fn();
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalDisabled !== undefined) {
+      process.env.DISPATCH_CARTO_DISABLED = originalDisabled;
+    }
+    rmSync(binDir, { recursive: true, force: true });
+  }
+}
+
+function writeCartoConfig(root: string, mode: string): void {
+  mkdirSync(join(root, '.dispatch'), { recursive: true });
+  writeFileSync(
+    join(root, '.dispatch', 'config.yml'),
+    `carto:\n  enabled: ${mode}\n`
+  );
+}
+
+// `off` means "no discovery, no MCP entry, no sync" — an opted-out project
+// must not get a carto server spawned into every dispatched run.
+describe('carto MCP entry honors carto.enabled', () => {
+  it('contributes an entry when the mode allows it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-proj-'));
+    try {
+      writeCartoConfig(root, 'on');
+      const servers = withStubCarto(() => cartoMcpServers(root));
+      expect(Object.keys(servers)).toEqual(['carto']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('contributes nothing when the mode is off', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-proj-'));
+    try {
+      writeCartoConfig(root, 'off');
+      const servers = withStubCarto(() => cartoMcpServers(root));
+      expect(Object.keys(servers)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('defaults to contributing an entry when the config cannot be parsed', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-proj-'));
+    try {
+      mkdirSync(join(root, '.dispatch'), { recursive: true });
+      writeFileSync(join(root, '.dispatch', 'config.yml'), 'statuses: [a\n');
+      const servers = withStubCarto(() => cartoMcpServers(root));
+      expect(Object.keys(servers)).toEqual(['carto']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the carto entry out of a dispatched run under off', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-proj-'));
+    try {
+      writeCartoConfig(root, 'off');
+      let captured: Options | undefined;
+      const executor = new ClaudeExecutor((args: { options?: Options }) => {
+        captured = args.options;
+        return emptyMessages() as unknown as Query;
+      });
+      withStubCarto(() =>
+        executor.start(
+          {
+            cwd: root,
+            projectRoot: root,
+            prompt: 'do the thing',
+            permissionMode: 'acceptEdits',
+            maxTurns: 5,
+          },
+          noopEvents
+        )
+      );
+      expect(captured?.mcpServers?.dispatch).toBeDefined();
+      expect(captured?.mcpServers?.carto).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
