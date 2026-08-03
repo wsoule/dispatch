@@ -27,10 +27,8 @@ function writeFakeCarto(binDir: string, version: string): void {
   chmodSync(file, 0o755);
 }
 
-// Writes an executable `carto` stub whose behavior on `init` is the given
-// shell `body`, run with cwd set to the project root — mirrors real carto
-// well enough to exercise cartoInit's containment logic without a real
-// binary, since the real one is unbuildable on this machine (Task 0).
+// Writes an executable `carto` stub whose `init` behavior is the given
+// shell `body`, run with cwd set to the project root.
 function writeStubCartoBinary(
   binDir: string,
   body: string
@@ -233,6 +231,108 @@ describe('pinHookWorkingDirs', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // chmod 000 does not deny access to root, so this test is meaningless
+  // (and would fail) when the suite runs as root.
+  it.skipIf((process.getuid?.() ?? -1) === 0)(
+    'skips an unreadable hook without throwing, and still pins the others',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+      try {
+        const hooks = join(root, '.git', 'hooks');
+        mkdirSync(hooks, { recursive: true });
+        writeFileSync(
+          join(hooks, 'pre-commit'),
+          '#!/bin/sh\ncarto sync >/dev/null 2>&1 || true\n'
+        );
+        chmodSync(join(hooks, 'pre-commit'), 0o000);
+        writeFileSync(
+          join(hooks, 'post-checkout'),
+          '#!/bin/sh\ncarto sync >/dev/null 2>&1 || true\n'
+        );
+        let rewritten: string[] = [];
+        expect(() => {
+          rewritten = pinHookWorkingDirs(root);
+        }).not.toThrow();
+        expect(rewritten).toContain(join(hooks, 'post-checkout'));
+        expect(rewritten).not.toContain(join(hooks, 'pre-commit'));
+        expect(readFileSync(join(hooks, 'post-checkout'), 'utf8')).toContain(
+          '--git-common-dir'
+        );
+      } finally {
+        try {
+          chmodSync(join(root, '.git', 'hooks', 'pre-commit'), 0o644);
+        } catch {
+          // pre-commit may not have been created if an earlier step threw
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf((process.getuid?.() ?? -1) === 0)(
+    'returns no rewritten hooks, without throwing, when the hooks dir is unreadable',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+      try {
+        const hooks = join(root, '.git', 'hooks');
+        mkdirSync(hooks, { recursive: true });
+        writeFileSync(
+          join(hooks, 'pre-commit'),
+          '#!/bin/sh\ncarto sync >/dev/null 2>&1 || true\n'
+        );
+        chmodSync(hooks, 0o000);
+        let rewritten: string[] = [];
+        expect(() => {
+          rewritten = pinHookWorkingDirs(root);
+        }).not.toThrow();
+        expect(rewritten).toEqual([]);
+      } finally {
+        try {
+          chmodSync(join(root, '.git', 'hooks'), 0o755);
+        } catch {
+          // hooks dir may not have been created if an earlier step threw
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf((process.getuid?.() ?? -1) === 0)(
+    'skips a hook it cannot write, without throwing, and still pins the others',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+      try {
+        const hooks = join(root, '.git', 'hooks');
+        mkdirSync(hooks, { recursive: true });
+        writeFileSync(
+          join(hooks, 'pre-commit'),
+          '#!/bin/sh\ncarto sync >/dev/null 2>&1 || true\n'
+        );
+        chmodSync(join(hooks, 'pre-commit'), 0o444);
+        writeFileSync(
+          join(hooks, 'post-checkout'),
+          '#!/bin/sh\ncarto sync >/dev/null 2>&1 || true\n'
+        );
+        let rewritten: string[] = [];
+        expect(() => {
+          rewritten = pinHookWorkingDirs(root);
+        }).not.toThrow();
+        expect(rewritten).toContain(join(hooks, 'post-checkout'));
+        expect(rewritten).not.toContain(join(hooks, 'pre-commit'));
+        expect(readFileSync(join(hooks, 'pre-commit'), 'utf8')).not.toContain(
+          '--git-common-dir'
+        );
+      } finally {
+        try {
+          chmodSync(join(root, '.git', 'hooks', 'pre-commit'), 0o644);
+        } catch {
+          // pre-commit may not have been created if an earlier step threw
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
 });
 
 describe('redirectCartoOutput', () => {
@@ -375,4 +475,70 @@ describe('cartoInit', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // chmod 000/444 do not deny access to root, so these tests are
+  // meaningless (and would fail) when the suite runs as root.
+  it.skipIf((process.getuid?.() ?? -1) === 0)(
+    'reports failure instead of throwing when AGENTS.md cannot be snapshotted',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+      try {
+        const agents = join(root, 'AGENTS.md');
+        writeFileSync(agents, 'original\n');
+        chmodSync(agents, 0o000);
+        // Never actually invoked: cartoInit must fail before spawning carto.
+        const binary = { path: join(root, 'no-such-carto'), version: '2.9.9' };
+        let result: { ok: boolean; detail: string } | undefined;
+        expect(() => {
+          result = cartoInit(root, binary);
+        }).not.toThrow();
+        expect(result?.ok).toBe(false);
+        expect(result?.detail).toContain('snapshot');
+      } finally {
+        try {
+          chmodSync(join(root, 'AGENTS.md'), 0o644);
+        } catch {
+          // AGENTS.md may not have been created if an earlier step threw
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf((process.getuid?.() ?? -1) === 0)(
+    'reports failure instead of throwing when AGENTS.md cannot be restored, and still cleans up the backup',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+      try {
+        writeFileSync(join(root, 'AGENTS.md'), 'original\n');
+        // Stub overwrites AGENTS.md, same as real carto init, then makes it
+        // read-only so the post-init restore copy fails.
+        const binary = writeStubCartoBinary(
+          join(root, 'bin'),
+          [
+            'echo "carto wrote this" > AGENTS.md',
+            'chmod 444 AGENTS.md',
+            'mkdir -p .carto',
+            'echo \'{"output":"AGENTS.md"}\' > .carto/config.json',
+            'touch .carto/carto.db',
+            'exit 0',
+          ].join('\n')
+        );
+        let result: { ok: boolean; detail: string } | undefined;
+        expect(() => {
+          result = cartoInit(root, binary);
+        }).not.toThrow();
+        expect(result?.ok).toBe(false);
+        expect(result?.detail).toContain('restore');
+        expect(existsSync(join(root, '.carto-agents-backup'))).toBe(false);
+      } finally {
+        try {
+          chmodSync(join(root, 'AGENTS.md'), 0o644);
+        } catch {
+          // AGENTS.md may not have been created if an earlier step threw
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
 });
