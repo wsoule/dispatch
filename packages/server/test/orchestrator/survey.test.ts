@@ -287,4 +287,36 @@ describe('Orchestrator agent-death recovery', () => {
       `[run ${meta.id}] flagged interrupted-dirty: 1 uncommitted path(s) found`
     );
   });
+
+  it('does not stamp a superseded run with a survey of the resumed run’s tree', async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor('fake', controllableExecutor());
+    const task = store.create({ title: 'Resumed before its survey landed' });
+    const meta = await first.dispatch(task.meta.id, 'fake');
+    writeFileSync(join(meta.worktreePath, 'oops.txt'), 'leftover\n');
+
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: new EventBus(),
+    });
+    second.registerExecutor('fake', controllableExecutor());
+    // Both calls are synchronous, so the resume lands inside the window the
+    // scheduled survey opens — the same tens-of-ms race a fast human wins.
+    second.reconcileOnBoot();
+    const resumed = second.resumeRun(meta.id);
+
+    expect(resumed.worktreePath).toBe(meta.worktreePath);
+    // Waited out rather than slept past: the survey resolves against a worktree
+    // that is now the resumed run's, so the superseded run keeps its own state.
+    await second.surveySettled(meta.id);
+    expect(second.getRun(meta.id)?.meta.state).toBe('failed');
+    expect(second.getRun(meta.id)?.meta.survey).toBeUndefined();
+    expect(store.get(task.meta.id)!.body).not.toContain(
+      'flagged interrupted-dirty'
+    );
+  });
 });
