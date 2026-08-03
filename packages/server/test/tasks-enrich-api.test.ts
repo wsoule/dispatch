@@ -12,6 +12,7 @@ import type {
   PlanProposal,
 } from '../src/orchestrator/planner.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 function json(res: Response): Promise<any> {
   return res.json();
@@ -108,6 +109,7 @@ beforeEach(async () => {
       planManager.registerPlanner('claude', planner);
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 

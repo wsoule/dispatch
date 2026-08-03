@@ -3,8 +3,14 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
-import { handleApi, isTrustedOrigin } from './api.js';
-import type { ApiContext } from './api.js';
+import {
+  bearerToken,
+  handleApi,
+  isTrustedOrigin,
+  mintDaemonTokens,
+  rejectUnauthorized,
+} from './api.js';
+import type { ApiContext, DaemonTokens } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import { DepMapCache, depMapSourceDirs, isSkippedPath } from './depmap.js';
@@ -35,6 +41,9 @@ import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
   port: number;
+  // Minted at boot unless the caller supplied them. bin.ts prints `appToken`
+  // on stdout; nothing else may log or persist either value.
+  tokens: DaemonTokens;
   // Exposed for introspection/tests; its own 60s auto-refresh timer and
   // blocked-retry timer are started/stopped by startServer itself below.
   mergeQueue: MergeQueue;
@@ -85,6 +94,9 @@ export interface StartServerOptions {
   // Replaces credential lookup with a ready-made Linear client, so no sync test
   // ever reaches the network.
   linearClient?: LinearClient;
+  // Fixed tokens instead of freshly minted ones, so a test can present a known
+  // value. Production never passes this.
+  tokens?: DaemonTokens;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -189,6 +201,7 @@ export async function startServer(
   const webDistDir =
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
+  const tokens = opts.tokens ?? mintDaemonTokens();
 
   const store = new TaskStore(rootDir);
   const cache = new TaskCache();
@@ -401,6 +414,7 @@ export async function startServer(
     scopeRequests,
     linearSync,
     gitRepo,
+    tokens,
   };
 
   const server = Bun.serve({
@@ -420,6 +434,16 @@ export async function startServer(
             origin
           );
         }
+        // The browser WebSocket API cannot set request headers, so this is the
+        // one route that also takes the token as a query parameter.
+        const wsToken = bearerToken(req) ?? url.searchParams.get('token');
+        const unauthorized = rejectUnauthorized(
+          req,
+          tokens,
+          'request',
+          wsToken
+        );
+        if (unauthorized !== null) return withCors(unauthorized, origin);
         if (srv.upgrade(req)) return undefined;
         return withCors(
           new Response('expected websocket upgrade', { status: 400 }),
@@ -498,11 +522,13 @@ export async function startServer(
       port,
       pid: process.pid,
       startedAt: new Date().toISOString(),
+      agentToken: tokens.agentToken,
     });
   }
 
   return {
     port,
+    tokens,
     mergeQueue,
     async stop() {
       watcher.close();

@@ -15,6 +15,7 @@ import type {
   ExecutorStartOptions,
 } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 // Answers a review dispatch by writing `output` to the findings path the
 // rubric named, then finishing — no Agent SDK involved.
@@ -116,6 +117,7 @@ beforeEach(async () => {
       );
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 

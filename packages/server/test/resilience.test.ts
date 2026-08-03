@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { useTestAuth } from './testAuth.js';
 
 // `Response.json()` types as `Promise<unknown>` under this repo's strict,
 // DOM-less tsconfig; same escape hatch as api.test.ts.
@@ -62,6 +63,7 @@ describe('boot with a corrupt task file already on disk', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     const baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const health = await json(await fetch(`${baseUrl}/api/health`));
@@ -85,6 +87,7 @@ describe('a task file going bad while the daemon is running', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     const baseUrl = `http://127.0.0.1:${handle.port}`;
 
     // Confirm the daemon is healthy and serving the one good task before
@@ -150,6 +153,7 @@ describe('unexpected internal errors', () => {
       writeDaemonFile: false,
       webDistDir: null,
     });
+    useTestAuth(handle);
     const baseUrl = `http://127.0.0.1:${handle.port}`;
 
     // Remove the tasks directory out from under the store so the next create

@@ -22,6 +22,7 @@ import type {
   VerifyConfig,
 } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { amendTask } from './api/amendments.js';
 import {
@@ -130,6 +131,8 @@ export interface ApiContext {
   prCapability: boolean;
   // The Git page's backend — see packages/server/src/git/commands.ts.
   gitRepo: GitRepo;
+  // The two tokens this daemon accepts — see DaemonTokens.
+  tokens: DaemonTokens;
   // Test-injection seam only, same as `inboxClusterer` above.
   commitMessageGenerator?: CommitMessageGenerator;
 }
@@ -2155,13 +2158,160 @@ export function isTrustedOrigin(origin: string): boolean {
 }
 
 // CORS cannot stop a body-less cross-origin POST (no preflight, and headers go
-// on only after the handler ran) — this daemon has no other authentication.
+// on only after the handler ran). Kept alongside the token guard below as
+// defence in depth: Origin rejects the browser case, the token the co-resident
+// case.
 export function rejectUntrustedOrigin(req: Request): Response | null {
   if (READ_ONLY_METHODS.has(req.method)) return null;
   const origin = req.headers.get('origin');
   // Browsers always send Origin on a state change; the CLI, MCP and curl never do.
   if (origin === null || isTrustedOrigin(origin)) return null;
   return errorResponse(403, 'cross-origin request rejected');
+}
+
+// Per-daemon token auth. An agent's Bash runs as the user, so it can read any
+// secret at rest and this does not lock it out. What it buys: an agent using
+// the credential it was handed cannot record a decision, so self-granting takes
+// deliberate exfiltration rather than one curl against a port found in a file.
+
+/**
+ * The two tokens a daemon mints at startup. `agentToken` goes in the 0600
+ * daemon file because the CLI and MCP have no other channel; `appToken` is
+ * emitted once on stdout and never persisted, so there is no file to read it
+ * out of.
+ */
+export interface DaemonTokens {
+  agentToken: string;
+  appToken: string;
+}
+
+/** `request` covers everything the daemon does; `decide` adds adjudication. */
+export type AuthTier = 'request' | 'decide';
+
+export function mintDaemonTokens(): DaemonTokens {
+  return {
+    agentToken: randomBytes(32).toString('hex'),
+    appToken: randomBytes(32).toString('hex'),
+  };
+}
+
+// Path segments (after `/api/`) of every route that records an adjudication,
+// where `*` matches one segment. The check runs once in handleApi, so a new
+// decision-class route is an entry here rather than another call site.
+const DECIDE_TIER_ROUTES: ReadonlyArray<{
+  method: string;
+  segments: readonly string[];
+}> = [
+  { method: 'POST', segments: ['runs', '*', 'scope-requests', '*', 'decide'] },
+];
+
+function matchesRoute(
+  pattern: readonly string[],
+  segments: readonly string[]
+): boolean {
+  return (
+    pattern.length === segments.length &&
+    pattern.every((part, i) => part === '*' || part === segments[i])
+  );
+}
+
+/**
+ * The tier a request to `/api/<segments>` must present, or null when open.
+ * `GET /api/health` is the only open route, because the CLI, MCP and the
+ * desktop sidecar all probe it to discover a daemon before they hold a token.
+ */
+export function requiredTier(
+  method: string,
+  segments: readonly string[]
+): AuthTier | null {
+  if (
+    (method === 'GET' || method === 'HEAD') &&
+    segments.length === 1 &&
+    segments[0] === 'health'
+  ) {
+    return null;
+  }
+  for (const route of DECIDE_TIER_ROUTES) {
+    if (route.method === method && matchesRoute(route.segments, segments)) {
+      return 'decide';
+    }
+  }
+  return 'request';
+}
+
+// Length-independent comparison, so a mismatch never leaks where it diverged.
+function tokenMatches(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Highest tier the presented token grants, or null if it matches neither.
+function grantedTier(
+  presented: string | null,
+  tokens: DaemonTokens
+): AuthTier | null {
+  if (presented === null) return null;
+  if (tokenMatches(presented, tokens.appToken)) return 'decide';
+  if (tokenMatches(presented, tokens.agentToken)) return 'request';
+  return null;
+}
+
+/** The bearer token on a request, or null when the header is absent or malformed. */
+export function bearerToken(req: Request): string | null {
+  const header = req.headers.get('authorization');
+  if (header === null) return null;
+  const match = /^Bearer[ ]+(\S+)$/i.exec(header.trim());
+  return match?.[1] ?? null;
+}
+
+const MISSING_TOKEN_MESSAGE =
+  'missing daemon token: send `Authorization: Bearer <token>`. The CLI and MCP ' +
+  'read `agentToken` from ~/.dispatch/daemons/<key>.json; if that file has no ' +
+  '`agentToken`, the daemon predates token auth — restart it.';
+
+const INVALID_TOKEN_MESSAGE =
+  'daemon token not recognized: it belongs to a different or restarted daemon. ' +
+  'Re-read `agentToken` from ~/.dispatch/daemons/<key>.json.';
+
+const WRONG_TIER_MESSAGE =
+  'this route needs the daemon app token, which is never written to disk. Pass ' +
+  'it with --token or DISPATCH_APP_TOKEN, taking the value from the ' +
+  'DISPATCH_APP_TOKEN line the daemon prints at startup; restart the daemon if ' +
+  'you no longer have it.';
+
+function authErrorResponse(
+  status: number,
+  message: string,
+  code: string
+): Response {
+  const res = jsonResponse({ error: message, code }, status);
+  if (status === 401) res.headers.set('www-authenticate', 'Bearer');
+  return res;
+}
+
+/**
+ * Rejects a request whose token is not good for `required`, or null to let it
+ * through. 401 is "no usable credential"; 403 is "valid, but ranks below this
+ * route" — the distinction a client needs to tell those two apart.
+ */
+export function rejectUnauthorized(
+  req: Request,
+  tokens: DaemonTokens,
+  required: AuthTier,
+  presented: string | null = bearerToken(req)
+): Response | null {
+  if (presented === null) {
+    return authErrorResponse(401, MISSING_TOKEN_MESSAGE, 'auth_missing_token');
+  }
+  const granted = grantedTier(presented, tokens);
+  if (granted === null) {
+    return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
+  }
+  if (required === 'decide' && granted !== 'decide') {
+    return authErrorResponse(403, WRONG_TIER_MESSAGE, 'auth_insufficient_tier');
+  }
+  return null;
 }
 
 export async function handleApi(
@@ -2177,6 +2327,12 @@ export async function handleApi(
 
   const untrusted = rejectUntrustedOrigin(req);
   if (untrusted !== null) return untrusted;
+
+  const tier = requiredTier(method, segments);
+  if (tier !== null) {
+    const unauthorized = rejectUnauthorized(req, ctx.tokens, tier);
+    if (unauthorized !== null) return unauthorized;
+  }
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
