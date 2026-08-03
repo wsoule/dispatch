@@ -13,6 +13,8 @@ export interface AddLedgerInput {
   title: string;
   detail: string;
   appliesTo?: string[];
+  /** Serialized ActorRef of whoever wrote it. */
+  authoredBy: string;
 }
 
 export interface LedgerListFilter {
@@ -47,7 +49,12 @@ export class LedgerStore {
     for (const line of readFileSync(this.file, 'utf8').split('\n')) {
       if (line.trim() === '') continue;
       try {
-        const record = JSON.parse(line) as LedgerEntry;
+        const parsed = JSON.parse(line) as LedgerEntry;
+        // Older lines pre-date authoredBy; default it so they stay loadable.
+        const record: LedgerEntry = {
+          ...parsed,
+          authoredBy: parsed.authoredBy ?? '',
+        };
         const key = `${record.id}\n${record.createdAt}`;
         const first = firstKeyForId.get(record.id);
         if (first === undefined) firstKeyForId.set(record.id, key);
@@ -100,6 +107,7 @@ export class LedgerStore {
       detail: input.detail,
       appliesTo: input.appliesTo ?? [],
       createdAt: now,
+      authoredBy: input.authoredBy,
     };
     this.append(record);
     return record;

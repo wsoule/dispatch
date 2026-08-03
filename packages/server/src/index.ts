@@ -362,6 +362,7 @@ export async function startServer(
     depMap: depMapCache,
     events,
     orchestrator,
+    actorContext,
   });
 
   // Verification as its own dispatched run kind, exercising finished work
@@ -412,7 +413,7 @@ export async function startServer(
     reviewRunner,
     verificationRunner,
     fixLoop,
-    reviewComments: new ReviewCommentStore(rootDir),
+    reviewComments: new ReviewCommentStore(rootDir, actorContext.humanRef),
     questions,
     scopeRequests,
     linearSync,

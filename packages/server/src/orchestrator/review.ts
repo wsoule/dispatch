@@ -13,6 +13,7 @@ import type {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import type { ActorContext } from '../actorContext.js';
 import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
 import type { FindingStore } from '../findings.js';
@@ -741,6 +742,7 @@ export interface ReviewRunnerContext {
   depMap: DepMapProvider;
   events: EventBus;
   orchestrator: Orchestrator;
+  actorContext: ActorContext;
 }
 
 interface PendingReview {
@@ -849,6 +851,8 @@ export class ReviewRunner {
             `Declared writes: ${task.meta.writes.length === 0 ? 'none' : task.meta.writes.join(', ')}.` +
             ` None of them cover ${file}, which the diff changed anyway.`,
           appliesTo: [task.meta.id],
+          // Mechanically detected by the review harness, not raised by anyone.
+          authoredBy: 'none',
         });
       }
       if (findings.some((f) => f.file === file && f.title === title)) continue;
@@ -860,6 +864,8 @@ export class ReviewRunner {
         detail: `${file} was modified but no declared write pattern covers it.`,
         file,
         round,
+        // Mechanically detected by the review harness, not raised by anyone.
+        raisedBy: 'none',
       });
       added = true;
     }
@@ -910,6 +916,8 @@ export class ReviewRunner {
       this.ctx.orchestrator.cleanupAuxRun(meta.id);
       return;
     }
+    // The reviewer's own findings, credited to the agent that ran the review.
+    const raisedBy = this.ctx.actorContext.agentRef(meta.executor);
     for (const finding of parsed.findings) {
       this.ctx.findingStore.add({
         taskId: pending.taskId,
@@ -921,6 +929,7 @@ export class ReviewRunner {
         line: finding.line,
         round: pending.round,
         recommendation: finding.recommendation ?? undefined,
+        raisedBy,
       });
     }
     this.ctx.events.broadcast({ type: 'finding.changed' });

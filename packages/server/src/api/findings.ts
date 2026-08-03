@@ -101,6 +101,7 @@ export async function createFinding(
     line: typeof body.line === 'number' ? body.line : null,
     round: typeof body.round === 'number' ? body.round : undefined,
     recommendation: body.recommendation as FindingRecommendation | undefined,
+    raisedBy: ctx.actorContext.humanRef,
   });
   ctx.events.broadcast({ type: 'finding.changed' });
   return jsonResponse(finding, 201);
@@ -209,6 +210,7 @@ export async function createLedgerEntry(
     title: body.title,
     detail: body.detail,
     appliesTo: body.appliesTo,
+    authoredBy: ctx.actorContext.humanRef,
   });
   ctx.events.broadcast({ type: 'ledger.changed' });
   return jsonResponse(entry, 201);
