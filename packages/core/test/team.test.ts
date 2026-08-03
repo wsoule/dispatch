@@ -70,9 +70,14 @@ describe('upsertMember', () => {
     expect(second.members).toHaveLength(1);
   });
 
-  it('keeps the handle stable when the email changes', () => {
+  it('keeps the handle stable when the caller names it', () => {
     const first = upsertMember([], 'old@example.com', 'Wyat');
-    const second = upsertMember(first.members, 'new@example.com', 'Wyat');
+    const second = upsertMember(
+      first.members,
+      'new@example.com',
+      'Wyat',
+      first.member.handle
+    );
     expect(second.member.handle).toBe(first.member.handle);
     expect(second.member.email).toBe('new@example.com');
     expect(second.member.emails).toContain('old@example.com');
@@ -81,8 +86,26 @@ describe('upsertMember', () => {
 
   it('matches a member by a prior address', () => {
     const first = upsertMember([], 'old@example.com', 'Wyat');
-    const moved = upsertMember(first.members, 'new@example.com', 'Wyat');
+    const moved = upsertMember(
+      first.members,
+      'new@example.com',
+      'Wyat',
+      first.member.handle
+    );
     const back = upsertMember(moved.members, 'old@example.com', 'Wyat');
     expect(back.members).toHaveLength(1);
+  });
+
+  it('never merges two people who share a display name', () => {
+    const first = upsertMember([], 'alex.kim@example.com', 'Alex Kim');
+    const second = upsertMember(first.members, 'akim@example.com', 'Alex Kim');
+    expect(second.members).toHaveLength(2);
+    expect(second.member.handle).not.toBe(first.member.handle);
+  });
+
+  it('ignores a known handle that is not in the roster', () => {
+    const r = upsertMember([], 'w@example.com', 'Wyat', 'ghost');
+    expect(r.members).toHaveLength(1);
+    expect(r.member.handle).toBe('w');
   });
 });
