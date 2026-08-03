@@ -37,7 +37,11 @@ import {
   worktreePath,
   worktreesDir,
 } from './paths.js';
-import { buildTaskPrompt, renderSurveySection } from './prompt.js';
+import {
+  buildTaskPrompt,
+  renderSurveySection,
+  untrustedInline,
+} from './prompt.js';
 import { RunRegistry } from './registry.js';
 import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
@@ -761,11 +765,13 @@ export class Orchestrator {
     if (from?.runId !== undefined) {
       const senderMeta = this.registry.get(from.runId);
       if (senderMeta !== undefined) {
-        return { fromLabel: `${senderMeta.taskTitle} (${senderMeta.id})` };
+        return {
+          fromLabel: `${untrustedInline(senderMeta.taskTitle)} (${senderMeta.id})`,
+        };
       }
     }
     if (from?.label !== undefined && from.label.trim() !== '') {
-      return { fromLabel: from.label };
+      return { fromLabel: untrustedInline(from.label) };
     }
     return { fromLabel: 'another agent' };
   }

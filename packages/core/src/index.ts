@@ -22,6 +22,11 @@ export {
 } from './conflicts.js';
 export { slugify } from './slug.js';
 export {
+  untrustedBlock,
+  untrustedFenced,
+  untrustedInline,
+} from './untrusted.js';
+export {
   parseTaskFile,
   serializeTaskFile,
   TaskParseError,
