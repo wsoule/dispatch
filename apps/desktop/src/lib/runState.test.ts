@@ -1,4 +1,4 @@
-import type { RunMeta, RunState } from '@dispatch/client';
+import type { RunMeta, RunState, RunSurvey } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import type { RunDisposition } from './runState';
@@ -6,6 +6,7 @@ import {
   deriveRunDisposition,
   isTerminalRunState,
   runDispositionLabel,
+  runSurveyNotice,
 } from './runState';
 
 describe('isTerminalRunState', () => {
@@ -154,5 +155,50 @@ describe('runDispositionLabel', () => {
   // whole badge exists to remove.
   test('closed with no reviewAction falls back to Closed', () => {
     expect(runDispositionLabel('closed')).toBe('Closed');
+  });
+});
+
+function survey(patch: Partial<RunSurvey> = {}): RunSurvey {
+  return {
+    runId: 'r-1',
+    branch: 'dispatch/t-1',
+    staged: [],
+    unstaged: [],
+    untracked: [],
+    lastCommit: null,
+    cleanTree: true,
+    ...patch,
+  };
+}
+
+describe('runSurveyNotice', () => {
+  test('counts staged, unstaged and untracked together, and names the branch', () => {
+    const notice = runSurveyNotice(
+      'Ship it',
+      survey({
+        cleanTree: false,
+        staged: ['a.ts'],
+        unstaged: ['b.ts', 'c.ts'],
+        untracked: ['d.ts'],
+      })
+    );
+    expect(notice).toEqual({
+      title: 'Run left uncommitted work',
+      body: 'Ship it — 4 uncommitted paths on dispatch/t-1',
+    });
+  });
+
+  test('a single path reads singular', () => {
+    expect(
+      runSurveyNotice('Ship it', survey({ cleanTree: false, staged: ['a.ts'] }))
+        ?.body
+    ).toBe('Ship it — 1 uncommitted path on dispatch/t-1');
+  });
+
+  // The daemon does not broadcast a clean survey today, but an alarm naming no
+  // paths is worse than silence, so the client does not depend on that.
+  test('a clean tree says nothing — the run already notified as failed', () => {
+    expect(runSurveyNotice('Ship it', survey())).toBeNull();
+    expect(runSurveyNotice('Ship it', survey({ cleanTree: false }))).toBeNull();
   });
 });

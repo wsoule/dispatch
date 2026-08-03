@@ -63,24 +63,26 @@ state derivation).
 
 ## What is here that the app does not have
 
-Most screens in the mockup map onto an existing view. Two do not, and both are
-their own epic: **Brain dump** (a capture inbox that splits pasted text into
-triaged items) and **Landing** (the merge queue as a first-class view — the
-backend already exists in `packages/server/src/orchestrator/mergeQueue.ts`).
+Every screen in the mockup now maps onto an existing view. The two that used to
+be missing have both been built: **Brain dump** (`BrainDumpView.tsx`) and
+**Landing**, the merge queue as a first-class surface (`LandingView.tsx`,
+rendered inside `ReviewView`).
 
 ## What not to build
 
-**Do not build the mockup's `isNotes` screen.** Notes & triage is being removed,
-and Brain dump replaces it as the single inbox. Also skip the "Older — the
-triage list from before →" link in Brain dump's right rail: it points at the
-page we are deleting.
+**Do not build the mockup's `isNotes` screen.** Notes & triage has been removed;
+Brain dump is the single inbox. Also skip the "Older — the triage list from
+before →" link in Brain dump's right rail: it points at a page that no longer
+exists.
 
-Two things the old Notes surface carried move into the inbox rather than dying
-with it — `packages/server/src/notes.ts` backs the MCP `dispatch_note` tool that
-agents call mid-run to flag what they noticed, and `useDispatchProject.ts` holds
-a second plan slot (`notePlanId` / `notePlanRecord` / `handleConfirmNotePlan`)
-that AI-drafts a task from one note, which is Brain dump's "Plan it" action.
-Neither is dead code. See `t-2814f8`.
+Two things the old Notes surface carried moved into the inbox rather than dying
+with it. The MCP `dispatch_note` tool that agents call mid-run to flag what they
+noticed now POSTs to `/api/inbox` (its four note kinds fold onto `note` and
+`task`); `packages/server/src/notes.ts` still exists and still backs the
+`/api/notes` routes, but no longer backs that tool. And `useDispatchProject.ts`
+holds a second plan slot (`notePlanId` / `notePlanRecord` /
+`handleConfirmNotePlan`) that AI-drafts a task from one item, which is Brain
+dump's "Plan it" action. Neither is dead code.
 
 The mockup's **Plans** screen is also not its own epic: `PlansView.tsx` already
 covers it, and the conversational-planning work is tracked under `e-359627`.
