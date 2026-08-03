@@ -16,6 +16,10 @@ use tauri::{Emitter, Manager};
 const IDLE_THRESHOLD_SECS: i64 = 120;
 /// How often the sweep checks for idle sessions.
 const SWEEP_INTERVAL_SECS: u64 = 20;
+/// How long a file change keeps its stored before/after text. Past this the row survives (so
+/// churn history and spend aggregates are unaffected) but its diff no longer renders. Those
+/// blobs dominate the database's size, and an edit this old is not one anyone opens.
+const DIFF_CONTENT_RETENTION_DAYS: i64 = 90;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -46,11 +50,14 @@ pub fn run() {
       }
 
       let app_data_dir = app.path().app_data_dir()?;
-      let db_path = app_data_dir.join("relay.db");
+      // Pre-0.1 installs wrote to `relay.db`; adopt it so upgrades keep their history.
+      db::adopt_legacy_db(&app_data_dir, "relay.db", "dispatch.db")?;
+      let db_path = app_data_dir.join("dispatch.db");
       let conn = db::open(&db_path)?;
       // Backfill cost_usd once at startup for sessions ingested before cost calculation
       // existed (their cost_usd is stuck at 0 in the DB otherwise).
       backfill_session_costs(&conn);
+      prune_old_diff_content(&conn);
       app.manage(db::Db(Mutex::new(conn)));
 
       // Resolved once at startup (env var, then app_data_dir/config.json), never re-read —
@@ -66,6 +73,7 @@ pub fn run() {
       app.manage(summarize::InFlight(Mutex::new(std::collections::HashSet::new())));
       app.manage(summarize::HttpClient(reqwest::Client::new()));
       app.manage(sidecar::DispatchdChildren::new());
+      app.manage(sidecar::SpawnedAppTokens::new());
 
       watcher::start(app.handle().clone());
       spawn_idle_sweep(app.handle().clone());
@@ -85,6 +93,7 @@ pub fn run() {
       commands::get_file_diff_for_session_file,
       commands::open_url,
       commands::ensure_dispatchd,
+      commands::restart_dispatchd,
       commands::has_dispatch,
       commands::current_project_root,
       commands::list_registered_projects,
@@ -106,6 +115,21 @@ pub fn run() {
         app_handle.state::<sidecar::DispatchdChildren>().kill_all();
       }
     });
+}
+
+/// Drops diff text older than `DIFF_CONTENT_RETENTION_DAYS`, once at startup. Logs how much it
+/// cleared rather than failing the boot — a full disk of old diffs is a problem, but not one
+/// worth refusing to start over.
+fn prune_old_diff_content(conn: &rusqlite::Connection) {
+  let cutoff =
+    chrono::Utc::now().timestamp() - DIFF_CONTENT_RETENTION_DAYS * 24 * 60 * 60;
+  match db::queries::prune_file_diff_content(conn, cutoff) {
+    Ok(0) => {}
+    Ok(n) => log::info!(
+      "cleared stored diff text on {n} file changes older than {DIFF_CONTENT_RETENTION_DAYS} days"
+    ),
+    Err(e) => log::warn!("failed to prune old diff content: {e:#}"),
+  }
 }
 
 /// Recomputes cost_usd for every session from its currently-stored token totals against the
@@ -172,16 +196,7 @@ fn spawn_idle_sweep(app_handle: tauri::AppHandle) {
         let mut any_finalized = false;
         for id in &ids {
           match db::queries::finalize_session(&conn, id) {
-            Ok(()) => {
-              any_finalized = true;
-              // Moves this session's linked card (if any) to its board's 'review' column —
-              // see `sync_card_for_session`'s doc comment for why this always wins over a
-              // manual drag. A failure here is a kanban-layer concern only; it must not stop
-              // the rest of this tick (tag/summary generation still need to run for `id`).
-              if let Err(e) = db::queries::sync_card_for_session(&conn, id, "review") {
-                log::warn!("idle sweep: failed to sync card for finalized session {id}: {e:#}");
-              }
-            }
+            Ok(()) => any_finalized = true,
             Err(e) => log::warn!("idle sweep: failed to finalize session {id}: {e:#}"),
           }
         }

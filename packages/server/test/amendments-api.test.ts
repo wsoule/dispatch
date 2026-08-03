@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
@@ -42,6 +43,7 @@ beforeEach(async () => {
     port: 0,
     writeDaemonFile: false,
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
   const taskRes = await fetch(`${baseUrl}/api/tasks`, {
     method: 'POST',

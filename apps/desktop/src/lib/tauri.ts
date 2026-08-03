@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
+import type { DaemonConnection } from './daemonAuth';
 import type {
   DashboardStats,
   FileDiff,
@@ -26,7 +27,7 @@ function browserParam(name: string): string | null {
 }
 
 export function listProjects(): Promise<ProjectSummary[]> {
-  // Relay's project enumeration is backed by Tauri IPC; in the browser dev
+  // Project enumeration is backed by Tauri IPC; in the browser dev
   // harness there's no backend, so degrade to an empty list rather than
   // throwing (the switcher dropdown simply shows only the active project).
   if (!isTauri()) return Promise.resolve([]);
@@ -93,30 +94,53 @@ export function hasDispatch(root: string): Promise<boolean> {
   return invoke('has_dispatch', { root });
 }
 
-/** Ensures a `dispatchd` sidecar is running for `root` and resolves to its port — reuses an
+/** Ensures a `dispatchd` sidecar is running for `root` and resolves to its port plus whichever
+ * daemon tokens this app holds — reuses an
  * already-healthy daemon if one exists (unless `root` still needs `--init`, in which case a
  * fresh spawn always runs so initialization actually happens), otherwise spawns one (`bun
  * packages/server/src/bin.ts --root <root>` in dev, or the bundled compiled binary in a
  * packaged release) and waits up to 15s for it to come up. See `sidecar::ensure_dispatchd` on
  * the backend. Rejects with a multi-line message (launch path used + the daemon's own recent
  * stdout/stderr) if the daemon never becomes healthy in time, or with the bare spawn error if
- * the process couldn't even start. */
-export function ensureDispatchd(root: string): Promise<number> {
+ * the process couldn't even start.
+ *
+ * `appToken` comes back non-null only on the spawn path, where the backend reads it off the
+ * daemon's stdout; attaching to a daemon someone else started yields request tier only. */
+export function ensureDispatchd(root: string): Promise<DaemonConnection> {
   // Browser-dev fallback: the daemon is already running (started outside the
   // app); take its port straight from the URL param instead of spawning one.
+  // Structurally the attach path — a browser cannot read the daemon's stdout,
+  // so `?token=` can only ever carry the request-tier agent token.
   if (!isTauri()) {
     const port = browserParam('port');
     return port !== null
-      ? Promise.resolve(Number(port))
+      ? Promise.resolve({
+          port: Number(port),
+          appToken: null,
+          agentToken: browserParam('token'),
+        })
       : Promise.reject(new Error('no ?port= param for browser-dev mode'));
   }
   return invoke('ensure_dispatchd', { root });
 }
 
+/** Replaces the dispatchd serving `root` with one this app spawns itself, so it can read the
+ * app token off stdout and regain decide tier. The daemon hosts running agents, so callers
+ * must gate this on nothing being in flight (see `daemonRestartReadiness`). Rejects in
+ * browser-dev, which has no backend to spawn anything. */
+export function restartDispatchd(root: string): Promise<DaemonConnection> {
+  if (!isTauri()) {
+    return Promise.reject(
+      new Error('restarting dispatchd requires the desktop app')
+    );
+  }
+  return invoke('restart_dispatchd', { root });
+}
+
 /** The single project this window is scoped to — the app's one active project root, resolved
  * on the backend (see `commands::current_project_root`'s doc comment for the `tauri dev` vs
  * packaged-app resolution). Replaces the old `listProjects` + per-path `hasDispatch` fan-out
- * that used to decide which of Relay's *many* discovered projects was "active" — this app is a
+ * that used to decide which of the *many* discovered projects was "active" — this app is a
  * single-project workspace now, not a switcher.
  *
  * Resolves to `null` — not a rejection — on a genuine first run (empty registry, no launch

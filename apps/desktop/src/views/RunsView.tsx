@@ -468,6 +468,8 @@ export function RunsView({
                               granted
                             )
                       }
+                      scopeDecide={data.scopeDecide}
+                      onRestartDaemon={data.handleRestartDaemon}
                       onRequestChanges={(text) =>
                         data.handleRequestChanges(selected.id, text)
                       }

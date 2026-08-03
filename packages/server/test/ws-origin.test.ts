@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth, wsUrl } from './testAuth.js';
 
 // The origin a page on the open web presents. CORS does not apply to a
 // WebSocket handshake, so the upgrade itself is the only place to stop it.
@@ -40,6 +41,7 @@ beforeEach(async () => {
     webDistDir: null,
     writeDaemonFile: false,
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 
@@ -58,7 +60,7 @@ function connect(
 ): Promise<{ opened: boolean; firstMessage: string | null }> {
   return new Promise((resolve) => {
     const ws = new WebSocket(
-      `${baseUrl}/ws`,
+      wsUrl(handle),
       origin === null ? undefined : ({ headers: { origin } } as never)
     );
     let settled = false;

@@ -15,7 +15,7 @@
 //! `codex_jsonl.rs`, `cwd`/session id are assumed to appear once on a leading `session_start`
 //! line and are cached per `raw_log_path` for later lines in the same file.
 
-use super::record::{ParsedRecord, Usage};
+use super::record::{ParsedRecord, Usage, UsageKind};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -128,6 +128,8 @@ fn cached_context(raw_log_path: &str) -> FileContext {
 /// has no separate cache-write count, so `cache_creation_input_tokens` is always 0 here.
 fn extract_usage_metadata(usage: &Value) -> Usage {
     Usage {
+        // `usageMetadata` is per-response, not a session running total.
+        kind: UsageKind::Delta,
         input_tokens: usage.get("promptTokenCount").and_then(Value::as_i64).unwrap_or(0),
         output_tokens: usage.get("candidatesTokenCount").and_then(Value::as_i64).unwrap_or(0),
         cache_read_input_tokens: usage

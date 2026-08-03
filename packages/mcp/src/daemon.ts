@@ -22,11 +22,15 @@ import { join } from 'node:path';
 // must be applied to this file by hand.
 // ---------------------------------------------------------------------------
 
-interface DaemonFileInfo {
+export interface DaemonFileInfo {
   port: number;
   pid: number;
   rootDir: string;
   startedAt: string;
+  // Request tier, and the only credential this package ever holds. The app
+  // token that decides scope requests is never written to disk, so there is
+  // nothing here for an MCP tool to pick up.
+  agentToken?: string;
 }
 
 function daemonHome(): string {
@@ -71,4 +75,14 @@ export async function isDaemonHealthy(port: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// The request-tier bearer header every tool call carries. A daemon file
+// written before token auth has no token to send; the daemon's own 401 then
+// names the fix, so there is nothing better to say from here.
+export function daemonAuth(daemon: DaemonFileInfo): Record<string, string> {
+  const token = daemon.agentToken;
+  return token === undefined || token === ''
+    ? {}
+    : { authorization: `Bearer ${token}` };
 }

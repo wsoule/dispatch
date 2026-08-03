@@ -55,6 +55,9 @@ export interface FixLoopState {
    *  against it, so a later round sees the whole change, not just its own. */
   baseSha: string;
   lastReviewedSha: string | null;
+  /** The findings handed to the review this loop is waiting on — the only ones
+   *  a clean result may retire. */
+  reviewInputIds?: string[];
   /** Set while `capped`, cleared on `complete`. */
   stopReason?: FixLoopStop;
   /** The failure text behind a `stopReason` of `error`. */
@@ -399,13 +402,11 @@ export class FixLoop {
   // and anything else dispatches the next fix.
   private async openRound(state: FixLoopState): Promise<FixLoopState> {
     const open = this.ctx.findingStore.openFor(state.taskId);
-    if (open.length === 0) {
-      // A blocking ruling stops the loop here too, not only at the cap: a
-      // blocked finding is no longer `open`, so nothing else would catch it.
-      return this.stopReasonFor(state.taskId) === null
-        ? this.settle(state)
-        : this.reachCap(state);
-    }
+    // A blocking ruling stops the loop wherever it lands, not only at the cap:
+    // it hands the task to a human, and this can never reach `complete` anyway.
+    const stop = this.stopReasonFor(state.taskId);
+    if (stop === 'standing-block') return this.reachCap(state, stop);
+    if (open.length === 0) return this.settle(state);
     if (state.round >= state.cap) return this.reachCap(state);
     const round = state.round + 1;
     const step = escalationFor(
@@ -485,16 +486,22 @@ export class FixLoop {
     if (head === null || head === state.baseSha) {
       return await this.openRound(state);
     }
+    const handed = this.ctx.findingStore.openFor(state.taskId);
     await this.ctx.reviewRunner.startReview({
       taskId: state.taskId,
       base: state.baseSha,
       head,
       round: state.round,
       scope: 'fix',
-      openFindings: this.ctx.findingStore.openFor(state.taskId),
+      openFindings: handed,
       runId: run.id,
     });
-    return this.save({ ...state, state: 'reviewing', lastReviewedSha: head });
+    return this.save({
+      ...state,
+      state: 'reviewing',
+      lastReviewedSha: head,
+      reviewInputIds: handed.map((f) => f.id),
+    });
   }
 
   // The commit a ref names, or null when it names nothing. `^{commit}` is what
@@ -512,17 +519,17 @@ export class FixLoop {
     if (run === null || !TERMINAL_RUN_STATES.has(run.state)) return state;
     // Only a review that actually finished clears anything. A failed one (an
     // unusable findings payload) must never read as a clean result.
-    if (run.state === 'finished') this.closeInputFindings(state.taskId, run);
+    if (run.state === 'finished') this.closeInputFindings(state);
     return await this.openRound(state);
   }
 
-  // Closes exactly what this review was handed: raised before it started, not
-  // by it, and not one only a human may retire.
-  private closeInputFindings(taskId: string, review: RunMeta): void {
+  // Closes exactly what this review was handed — the ids named when it was
+  // dispatched — minus the ones only a human may retire.
+  private closeInputFindings(state: FixLoopState): void {
+    const handed = new Set(state.reviewInputIds ?? []);
     let closed = 0;
-    for (const finding of this.ctx.findingStore.openFor(taskId)) {
-      if (finding.runId === review.id) continue;
-      if (finding.createdAt >= review.createdAt) continue;
+    for (const finding of this.ctx.findingStore.openFor(state.taskId)) {
+      if (!handed.has(finding.id)) continue;
       if (requiresRuling(finding)) continue;
       this.ctx.findingStore.update(finding.id, { verdict: 'addressed' });
       closed += 1;

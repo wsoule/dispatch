@@ -13,6 +13,7 @@ import type {
   ExecutorStartOptions,
 } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 // Answers a verify dispatch by writing `output` to the result path the
 // rubric named, then finishing — no Agent SDK involved.
@@ -98,6 +99,7 @@ describe('POST /api/tasks/:id/verify', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await startVerify({ head });
@@ -134,6 +136,7 @@ describe('POST /api/tasks/:id/verify', () => {
         orchestrator.registerExecutor('claude', verifier);
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await startVerify({ head });
@@ -163,6 +166,7 @@ describe('POST /api/tasks/:id/verify', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
     expect((await startVerify({})).status).toBe(400);
   });
@@ -173,6 +177,7 @@ describe('POST /api/tasks/:id/verify', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
     const res = await fetch(`${baseUrl}/api/tasks/t-000000/verify`, {
       method: 'POST',
@@ -190,6 +195,7 @@ describe('GET /api/tasks/:id/verification', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
     const res = await fetch(`${baseUrl}/api/tasks/${taskId}/verification`);
     expect(res.status).toBe(404);
