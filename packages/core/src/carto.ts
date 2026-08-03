@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
   existsSync,
@@ -49,12 +49,23 @@ function candidateDirs(
   return [...fromPath, ...extraDirs];
 }
 
+// Set by test suites that must never touch a real carto install. PATH alone
+// cannot express that: discovery also searches the Homebrew prefixes.
+const DISABLE_ENV_VAR = 'DISPATCH_CARTO_DISABLED';
+
 // Locates `carto`, runs `--version`, and gates on the 2.x floor. Returns a
 // result rather than throwing.
 export function discoverCarto(
   env: NodeJS.ProcessEnv = process.env,
   extraDirs: readonly string[] = BREW_BIN_DIRS
 ): CartoDiscovery {
+  if (env[DISABLE_ENV_VAR] === '1') {
+    return {
+      ok: false,
+      reason: 'not-found',
+      detail: `carto discovery disabled by ${DISABLE_ENV_VAR}=1`,
+    };
+  }
   let found: string | null = null;
   for (const dir of candidateDirs(env, extraDirs)) {
     const candidate = join(dir, 'carto');
@@ -198,7 +209,27 @@ export function redirectCartoOutput(projectRoot: string): void {
     return;
   }
   config.output = '.carto/CONTEXT.md';
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  try {
+    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  } catch {
+    // Best-effort: a read-only config leaves carto pointed at AGENTS.md,
+    // which the snapshot/restore in cartoInit still covers.
+  }
+}
+
+// Appends a `.carto/` ignore entry to .gitignore (creating it if needed);
+// no-op if a `.carto` line is already there. carto's index is per-machine.
+function ensureCartoIgnored(projectRoot: string): void {
+  const path = join(projectRoot, '.gitignore');
+  try {
+    const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    if (/^\.carto\/?\s*$/m.test(existing)) return;
+    const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+    writeFileSync(path, `${existing}${prefix}.carto/\n`);
+  } catch {
+    // Best-effort: an unignorable .carto/ shows up as untracked, which is
+    // noise, not a failure.
+  }
 }
 
 // Runs carto init, containing its side effects on files Dispatch owns:
@@ -254,6 +285,10 @@ export function cartoInit(
   }
   redirectCartoOutput(projectRoot);
   pinHookWorkingDirs(projectRoot);
+  // Ignored here rather than at `dispatch init` time so every builder is
+  // covered: a failed init still leaves .carto/config.json behind, and the
+  // daemon can build a container in a project that was initialized long ago.
+  if (existsSync(join(projectRoot, '.carto'))) ensureCartoIgnored(projectRoot);
 
   // Exit status alone isn't trustworthy: carto can exit 0 after a fatal
   // error, so the container's existence is the real success signal.
@@ -284,4 +319,39 @@ export function cartoSync(
   if (run.status === 0) return { ok: true, detail: 'synced' };
   const stderr = (run.stderr ?? '').trim();
   return { ok: false, detail: stderr !== '' ? stderr : 'carto sync failed' };
+}
+
+// The same re-index off the event loop, for callers (the daemon's watcher)
+// that cannot block for the seconds a sync takes. Never rejects.
+export function cartoSyncAsync(
+  projectRoot: string,
+  binary: CartoBinary
+): Promise<CartoRunResult> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(binary.path, ['sync'], { cwd: projectRoot });
+    } catch (err) {
+      resolve({ ok: false, detail: (err as Error).message });
+      return;
+    }
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (err) => {
+      resolve({ ok: false, detail: err.message });
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({ ok: true, detail: 'synced' });
+        return;
+      }
+      const detail = stderr.trim();
+      resolve({
+        ok: false,
+        detail: detail !== '' ? detail : 'carto sync failed',
+      });
+    });
+  });
 }
