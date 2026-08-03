@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { delimiter, join } from 'node:path';
 
 /** The carto binary Dispatch found, and the version it reported. */
@@ -80,4 +81,41 @@ export function discoverCarto(
     };
   }
   return { ok: true, binary: { path: found, version } };
+}
+
+/** One `blastRadius()` response. Key names are pinned by the recorded
+ *  fixture in packages/server/test/fixtures/carto-blast-radius.json. */
+export interface CartoBlastRadius {
+  count: number;
+  hops: number;
+  files: unknown[];
+}
+
+export interface CartoReader {
+  blastRadius(file: string): CartoBlastRadius;
+}
+
+export type CartoReaderResult =
+  | { ok: true; reader: CartoReader }
+  | { ok: false; reason: 'no-container' | 'load-failed'; detail: string };
+
+// Opens the ANCI container as a library, which reads it "without running
+// Carto's engine" — no binary spawn per query. Wrapped in a result because a
+// half-written container during a sync is a normal, recoverable state.
+export function openCartoReader(projectRoot: string): CartoReaderResult {
+  const dir = join(projectRoot, '.carto');
+  if (!existsSync(dir)) {
+    return { ok: false, reason: 'no-container', detail: `${dir} not found` };
+  }
+  try {
+    // Resolved lazily: importing it at module load would make every consumer
+    // of this file depend on carto-md being installed.
+    const require_ = createRequire(import.meta.url);
+    const { loadAnci } = require_('carto-md/src/anci/consumer') as {
+      loadAnci: (dir: string) => CartoReader;
+    };
+    return { ok: true, reader: loadAnci(dir) };
+  } catch (err) {
+    return { ok: false, reason: 'load-failed', detail: (err as Error).message };
+  }
 }
