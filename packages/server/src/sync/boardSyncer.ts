@@ -1,13 +1,13 @@
 import type { ActorContext } from '@dispatch/core';
 import { isOutstanding, TaskStore } from '@dispatch/core';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import type { GitRunner, SyncWorktree } from './worktree.js';
 
 export interface SyncResult {
   pushed: number;
-  /** Always 0 until Task 4 adds materialize() and wires this in. */
+  /** How many files materialize() wrote or removed in the working tree. */
   pulled: number;
   state: SyncState;
   detail: string | null;
@@ -108,6 +108,12 @@ export class BoardSyncer {
       };
     }
 
+    // The worktree now holds trunk's latest state (local pushes rebased onto
+    // whatever else landed) — copy it into the user's working tree before
+    // attempting the push, so a push failure doesn't also withhold pulled
+    // content the user already has a right to see.
+    const written = this.materialize();
+
     const push = this.run(this.worktree.path, [
       'push',
       'origin',
@@ -116,13 +122,68 @@ export class BoardSyncer {
     if (push.status !== 0) {
       return {
         pushed: 0,
-        pulled: 0,
+        pulled: written,
         state: 'local-only',
         detail: errorText(push),
       };
     }
 
-    return { pushed: staged.length, pulled: 0, state: 'idle', detail: null };
+    return {
+      pushed: staged.length,
+      pulled: written,
+      state: 'idle',
+      detail: null,
+    };
+  }
+
+  /**
+   * Copies task files from the sync worktree (trunk's latest, post-pull)
+   * into the user's actual working tree, and removes files trunk no longer
+   * has. Gated per file by the same monotonic rule as the push side, but
+   * reversed: a working-tree copy newer than the incoming one is a local
+   * edit that hasn't synced yet, and is left alone so the next syncOnce()
+   * pushes it instead of losing it. Runs regardless of which branch the
+   * working tree currently has checked out — the board is trunk's state.
+   */
+  materialize(): number {
+    this.worktree.ensure();
+
+    const localStore = new TaskStore(this.rootDir);
+    const remoteStore = new TaskStore(this.worktree.path);
+    const tasksDir = join(this.rootDir, '.dispatch', 'tasks');
+
+    let written = 0;
+
+    for (const doc of remoteStore.listSafe().docs) {
+      const sourceFile = remoteStore.taskFilePath(doc.meta.id);
+      if (sourceFile === null) continue;
+      let localUpdated: string | undefined;
+      try {
+        localUpdated = localStore.get(doc.meta.id)?.meta.updated;
+      } catch {
+        // A corrupt local copy isn't a version to hold against — overwrite it.
+        localUpdated = undefined;
+      }
+      if (!isOutstanding(doc.meta.updated, localUpdated)) continue;
+
+      mkdirSync(tasksDir, { recursive: true });
+      copyFileSync(sourceFile, join(tasksDir, basename(sourceFile)));
+      written++;
+    }
+
+    // Anything local that trunk no longer has was deleted by a teammate —
+    // syncOnce() already mirrored every outstanding local task into the
+    // worktree before this runs, so a local id missing there means trunk
+    // dropped it, not that it's merely unsynced.
+    for (const doc of localStore.listSafe().docs) {
+      if (remoteStore.taskFilePath(doc.meta.id) !== null) continue;
+      const localFile = localStore.taskFilePath(doc.meta.id);
+      if (localFile === null) continue;
+      rmSync(localFile);
+      written++;
+    }
+
+    return written;
   }
 
   private commitMessage(count: number): string {

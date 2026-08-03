@@ -1,8 +1,8 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { SyncWorktree } from '../../src/sync/worktree.js';
 import { runGitSync } from '../orchestrator/helpers.js';
@@ -191,6 +191,160 @@ describe('BoardSyncer.syncOnce', () => {
     expect(statusAfter).toBe(statusBefore);
     expect(statusAfter).toContain('scratch.txt');
     expect(statusAfter).toContain('untouched.txt');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('materializes a teammate’s change into the working tree, not just the sync worktree', async () => {
+    const { origin, a, b } = twoClones();
+    const storeB = new TaskStore(b);
+    const doc = storeB.create({ title: 'From bob' });
+    await syncerFor(b).syncOnce();
+
+    const resultA = await syncerFor(a).syncOnce();
+    expect(resultA.state).toBe('idle');
+    expect(resultA.pulled).toBe(1);
+
+    const seenByA = new TaskStore(a).get(doc.meta.id);
+    expect(seenByA?.meta.title).toBe('From bob');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('does not clobber a locally-newer file with an older incoming one, and pushes it on the next sync', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const storeB = new TaskStore(b);
+    const doc = storeA.create(
+      { title: 'Original' },
+      '2026-08-01T00:00:00.000Z'
+    );
+    await syncerFor(a).syncOnce();
+    await syncerFor(b).syncOnce();
+
+    // Bob's edit lands on trunk, with an `updated` that will sit BETWEEN
+    // A's own sync worktree's last-known version and the local edit A is
+    // about to make — the exact ordering the gate must respect.
+    storeB.update(
+      doc.meta.id,
+      { title: 'From bob' },
+      '2026-08-02T00:00:00.000Z'
+    );
+    await syncerFor(b).syncOnce();
+
+    // Pull bob's commit into A's OWN sync worktree directly (bypassing
+    // syncOnce): A hasn't made any local edit yet, so this is a clean
+    // fast-forward, not a rebase — no git-level conflict to reason about.
+    // This isolates the materialize() gate itself from git's merge
+    // mechanics, which are not this task's concern.
+    const worktreeA = SyncWorktree.open(a, run);
+    if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    runGitSync(worktreeA.path, [
+      'pull',
+      '--rebase',
+      'origin',
+      worktreeA.trunkRef(),
+    ]);
+    expect(new TaskStore(worktreeA.path).get(doc.meta.id)?.meta.title).toBe(
+      'From bob'
+    );
+
+    // Alice edits locally, without syncing yet — this is the unsynced edit
+    // that must survive the next materialize() call.
+    storeA.update(
+      doc.meta.id,
+      { title: 'Newer from alice' },
+      '2026-08-03T00:00:00.000Z'
+    );
+
+    const written = syncerFor(a).materialize();
+    expect(written).toBe(0);
+    const localCopy = storeA.get(doc.meta.id);
+    expect(localCopy?.meta.title).toBe('Newer from alice');
+
+    // The next full sync pushes it: A's worktree is already caught up to
+    // bob's commit, so staging A's edit on top is a clean fast-forward.
+    const result = await syncerFor(a).syncOnce();
+    expect(result.pushed).toBe(1);
+
+    const resultB = await syncerFor(b).syncOnce();
+    expect(resultB.pulled).toBe(1);
+    const seenByB = storeB.get(doc.meta.id);
+    expect(seenByB?.meta.title).toBe('Newer from alice');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('removes a task locally after a teammate deletes it', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const doc = storeA.create({ title: 'Will be deleted' });
+    await syncerFor(a).syncOnce();
+    await syncerFor(b).syncOnce();
+    expect(new TaskStore(b).get(doc.meta.id)).not.toBeNull();
+
+    // Task 3's push side never propagates a local deletion (it only ever
+    // adds outstanding files), so there is no BoardSyncer-driven way yet to
+    // get a removal onto trunk. Simulate one landing there directly, in
+    // bob's own sync worktree — the same paths a real deletion would touch.
+    const worktreeB = SyncWorktree.open(b, run);
+    if (worktreeB === null) throw new Error('expected a resolvable trunk');
+    const fileInWorktree = new TaskStore(worktreeB.path).taskFilePath(
+      doc.meta.id
+    );
+    expect(fileInWorktree).not.toBeNull();
+    const relPath = join(
+      '.dispatch',
+      'tasks',
+      basename(fileInWorktree as string)
+    );
+    runGitSync(worktreeB.path, ['rm', relPath]);
+    runGitSync(worktreeB.path, ['commit', '-m', 'remove task']);
+    runGitSync(worktreeB.path, [
+      'push',
+      'origin',
+      `HEAD:${worktreeB.trunkRef()}`,
+    ]);
+
+    const result = await syncerFor(a).syncOnce();
+    expect(result.pulled).toBe(1);
+    expect(storeA.get(doc.meta.id)).toBeNull();
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('materializes into .dispatch/ even while the clone sits on a feature branch', async () => {
+    const { origin, a, b } = twoClones();
+    const storeB = new TaskStore(b);
+    const doc = storeB.create({ title: 'From bob on trunk' });
+    await syncerFor(b).syncOnce();
+
+    // Switching branches must not stop the board write: syncOnce()'s pull
+    // fetches straight from origin inside the private sync worktree, and
+    // materialize() writes to the working tree by plain filesystem path,
+    // unaffected by whatever ref the user's own checkout is on.
+    runGitSync(a, ['checkout', '-b', 'some-feature']);
+
+    const result = await syncerFor(a).syncOnce();
+    expect(result.pulled).toBe(1);
+
+    const seenByA = new TaskStore(a).get(doc.meta.id);
+    expect(seenByA?.meta.title).toBe('From bob on trunk');
+    expect(runGitSync(a, ['rev-parse', '--abbrev-ref', 'HEAD']).trim()).toBe(
+      'some-feature'
+    );
+    expect(existsSync(join(a, '.dispatch', 'tasks'))).toBe(true);
+
+    // A direct, already-materialized call is idempotent: nothing new to write.
+    expect(syncerFor(a).materialize()).toBe(0);
 
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);
