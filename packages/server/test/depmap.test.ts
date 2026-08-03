@@ -1,6 +1,8 @@
 import type { CartoBlastRadius, CartoReader } from '@dispatch/core/carto';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -8,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import {
   buildDepMap,
@@ -356,5 +358,78 @@ describe('createCartoDepMap', () => {
     );
     // Sorted at hop 1's position (alphabetically first there), not hop 5's.
     expect(files[0]).toBe('apps/desktop/src/main.tsx');
+  });
+});
+
+describe('DepMapCache backend selection', () => {
+  it('uses the scanner when carto is off', () => {
+    writeFixtureWorkspace();
+    const cache = new DepMapCache(root, { mode: 'off' });
+    expect(cache.get().dependents('packages/a/src/index.ts')).toEqual(
+      buildDepMap(root).dependents('packages/a/src/index.ts')
+    );
+  });
+
+  it('reports one degradation, not one per call', () => {
+    writeFixtureWorkspace();
+    const seen: string[] = [];
+    // No .carto/ in the fixture root, so carto selection always misses.
+    const cache = new DepMapCache(root, {
+      mode: 'detect',
+      onDegrade: (d) => seen.push(d.detail),
+    });
+    cache.get().dependents('packages/a/src/index.ts');
+    cache.get().dependents('packages/b/src/index.ts');
+    expect(seen.length).toBeLessThanOrEqual(1);
+  });
+
+  it('does not build a container when the mode is detect', () => {
+    writeFixtureWorkspace();
+    const cache = new DepMapCache(root, { mode: 'detect' });
+    cache.get();
+    expect(existsSync(join(root, '.carto'))).toBe(false);
+  });
+
+  it('attempts carto init at most once across invalidations', () => {
+    writeFixtureWorkspace();
+    // A stub binary that reports a supported version but always fails to
+    // produce a container, logging one line per `init` invocation. Unlike
+    // this machine's real carto-md (which leaves a half-written .carto/ that
+    // itself blocks a second attempt via openCartoReader's "load-failed"
+    // path), this stub leaves nothing behind, so `openCartoReader` keeps
+    // reporting 'no-container' on every call — the initAttempted guard is
+    // the ONLY thing standing between this and a respawn per invalidation.
+    const binDir = join(root, 'fake-carto-bin');
+    mkdirSync(binDir, { recursive: true });
+    const stub = join(binDir, 'carto');
+    const initLog = join(root, 'init-calls.log');
+    writeFileSync(
+      stub,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo "2.9.9"\nelif [ "$1" = "init" ]; then\n  echo x >> "${initLog}"\n  exit 1\nelse\n  exit 1\nfi\n`
+    );
+    chmodSync(stub, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`;
+    try {
+      const seen: string[] = [];
+      const cache = new DepMapCache(root, {
+        mode: 'on',
+        onDegrade: (d) => seen.push(d.detail),
+      });
+      cache.get();
+      cache.invalidate();
+      cache.get();
+      cache.invalidate();
+      cache.get();
+      expect(seen.length).toBeLessThanOrEqual(1);
+      const initCalls = existsSync(initLog)
+        ? readFileSync(initLog, 'utf8')
+            .split('\n')
+            .filter((l) => l !== '').length
+        : 0;
+      expect(initCalls).toBe(1);
+    } finally {
+      process.env.PATH = originalPath;
+    }
   });
 });

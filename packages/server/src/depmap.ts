@@ -1,3 +1,9 @@
+import type { CartoMode } from '@dispatch/core';
+import {
+  cartoInit,
+  discoverCarto,
+  openCartoReader,
+} from '@dispatch/core/carto';
 import type { CartoBlastRadius, CartoReader } from '@dispatch/core/carto';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -308,15 +314,72 @@ export function isSkippedPath(changedPath: string): boolean {
   return changedPath.split(/[/\\]/).some((segment) => SKIP_DIRS.has(segment));
 }
 
-// Lazily builds and memoizes a `DepMap`, so a burst of review dispatches
-// shares one scan instead of re-walking the workspace each time.
+export interface DepMapCacheOptions {
+  mode?: CartoMode;
+  onDegrade?: (degradation: CartoDegradation) => void;
+}
+
+// Lazily builds and memoizes a DepMap, so a burst of review dispatches shares
+// one scan. Prefers carto when the mode allows and a container is readable;
+// every miss degrades to the built-in scanner and is reported once.
 export class DepMapCache {
   private cached: DepMap | null = null;
+  // Both survive invalidate() deliberately. The watcher invalidates on every
+  // debounced source change, so without these a missing binary would re-report
+  // forever and a failed `carto init` would respawn a 4-9s index each tick.
+  private reported = false;
+  private initAttempted = false;
 
-  constructor(private readonly rootDir: string) {}
+  constructor(
+    private readonly rootDir: string,
+    private readonly options: DepMapCacheOptions = {}
+  ) {}
+
+  private report(detail: string): void {
+    if (this.reported) return;
+    this.reported = true;
+    this.options.onDegrade?.({ file: '', detail });
+  }
+
+  private build(): DepMap {
+    const fallback = buildDepMap(this.rootDir);
+    const mode = this.options.mode ?? 'on';
+    if (mode === 'off') return fallback;
+
+    const discovery = discoverCarto();
+    if (!discovery.ok) {
+      this.report(discovery.detail);
+      return fallback;
+    }
+    let opened = openCartoReader(this.rootDir);
+    // Mode `on` is a build policy: a project that upgraded into carto without
+    // re-running `dispatch init` gets its container built here, once, on the
+    // first review that needs it. `detect` never builds.
+    if (
+      !opened.ok &&
+      opened.reason === 'no-container' &&
+      mode === 'on' &&
+      !this.initAttempted
+    ) {
+      this.initAttempted = true;
+      const built = cartoInit(this.rootDir, discovery.binary);
+      if (!built.ok) {
+        this.report(built.detail);
+        return fallback;
+      }
+      opened = openCartoReader(this.rootDir);
+    }
+    if (!opened.ok) {
+      this.report(opened.detail);
+      return fallback;
+    }
+    return createCartoDepMap(this.rootDir, opened.reader, fallback, (d) =>
+      this.report(d.detail)
+    );
+  }
 
   get(): DepMap {
-    this.cached ??= buildDepMap(this.rootDir);
+    this.cached ??= this.build();
     return this.cached;
   }
 
