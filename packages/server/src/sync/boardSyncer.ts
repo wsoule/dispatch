@@ -141,26 +141,57 @@ export class BoardSyncer {
         const paths = conflicts.stdout
           .split('\n')
           .filter((line) => line.trim().length > 0);
+        const conflictDetail =
+          paths.length > 0
+            ? `conflict in ${paths.join(', ')}`
+            : 'rebase conflict (git reported no conflicting path)';
+
         // Never leave the worktree mid-rebase — the next syncOnce() must
         // find it clean; the commit above already sits safely in its
         // history.
         this.run(this.worktree.path, ['rebase', '--abort']);
+
         // Drop the syncer's own unpushed scratch commit and land back on
         // trunk's freshly-fetched tip. rootDir is never touched, so this
         // loses nothing: the next syncOnce() simply recommits whatever the
         // user's file currently holds, fresh on top of trunk — the same
         // last-write-wins rule the staging loop above already applies
         // (isOutstanding), so recovery needs no manual conflict resolution.
-        this.run(this.worktree.path, [
+        const reset = this.run(this.worktree.path, [
           'reset',
           '--hard',
           `refs/remotes/origin/${trunk}`,
         ]);
+        if (reset.status !== 0) {
+          // Stuck on the pre-rebase commit — the next cycle would hit the
+          // exact same conflict again with no way out. Surface this rather
+          // than reporting a clean-looking 'blocked'.
+          return {
+            pushed: 0,
+            pulled: 0,
+            state: 'blocked',
+            detail: `${conflictDetail}; also failed to reset the sync worktree to trunk: ${errorText(reset)}`,
+          };
+        }
+
+        // The reset above just replayed every other commit trunk had beyond
+        // `beforePull` into the worktree — including a teammate's edit to an
+        // unrelated task, which has nothing to do with this conflict.
+        // Deliver that now rather than dropping it: materialize()'s own
+        // isOutstanding gate still holds back the conflicting file itself
+        // (this cycle's local edit stays put), but a bystander file must
+        // not silently go stale forever just because a different file
+        // collided.
+        const rescued =
+          beforePull.status === 0
+            ? this.materialize(beforePull.stdout.trim())
+            : 0;
+
         return {
           pushed: 0,
-          pulled: 0,
+          pulled: rescued,
           state: 'blocked',
-          detail: `conflict in ${paths.join(', ')}`,
+          detail: conflictDetail,
         };
       }
       return {
