@@ -1,3 +1,4 @@
+import type { CartoBlastRadius, CartoReader } from '@dispatch/core/carto';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -322,4 +323,71 @@ export class DepMapCache {
   invalidate(): void {
     this.cached = null;
   }
+}
+
+// carto's `files` entries carry their own hop distance. Sorting by
+// (hops, name) reproduces buildDepMap's ordering exactly, so a high-fanout
+// file's direct importers survive review.ts's cap of 20.
+export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
+  const entries: { path: string; hops: number }[] = [];
+  for (const file of raw.files) {
+    if (typeof file === 'string') {
+      entries.push({ path: file, hops: raw.hops });
+      continue;
+    }
+    if (typeof file === 'object' && file !== null) {
+      const record = file as Record<string, unknown>;
+      // Key names pinned by the Task 0 fixture: entries are
+      // { file, hop_distance }. `path`/`hops` are tolerated fallbacks only.
+      const path = record.file ?? record.path;
+      if (typeof path !== 'string') continue;
+      const rawHops = record.hop_distance ?? record.hops;
+      const hops = typeof rawHops === 'number' ? rawHops : raw.hops;
+      entries.push({ path, hops });
+    }
+  }
+  return entries
+    .sort((a, b) =>
+      a.hops !== b.hops
+        ? a.hops - b.hops
+        : a.path < b.path
+          ? -1
+          : a.path > b.path
+            ? 1
+            : 0
+    )
+    .map((e) => e.path);
+}
+
+/** Why a CartoDepMap stopped using carto, for the caller to surface once. */
+export type CartoDegradation = { file: string; detail: string };
+
+// dependents() from carto, mirrors() from the scanner — carto has no notion
+// of Dispatch's hand-mirror comments, so that half never moves. A single
+// throw retires carto for this instance's lifetime: a broken container must
+// not be retried once per file across a 40-file diff.
+export function createCartoDepMap(
+  rootDir: string,
+  reader: CartoReader,
+  fallback: DepMap,
+  onDegrade?: (degradation: CartoDegradation) => void
+): DepMap {
+  let degraded = false;
+  return {
+    dependents(file: string): string[] {
+      if (degraded) return fallback.dependents(file);
+      try {
+        return normalizeBlastRadius(
+          reader.blastRadius(normalizeInputPath(file))
+        );
+      } catch (err) {
+        degraded = true;
+        onDegrade?.({ file, detail: (err as Error).message });
+        return fallback.dependents(file);
+      }
+    },
+    mirrors(file: string): string[] {
+      return fallback.mirrors(file);
+    },
+  };
 }
