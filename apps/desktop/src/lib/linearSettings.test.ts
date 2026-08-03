@@ -4,9 +4,11 @@ import type {
   LinearSyncSummary,
   LinearWorkflowState,
 } from '@dispatch/client';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 
 import {
+  describeFetchFailure,
+  describeKeySource,
   formatSyncCounts,
   isLinearConfigured,
   NO_LINEAR_STATE,
@@ -208,5 +210,63 @@ describe('pushToLinearError', () => {
 
   test('null when an existing issue was updated', () => {
     expect(pushToLinearError(summary({ pushed: 1 }))).toBeNull();
+  });
+});
+
+const baseStatus: LinearStatus = {
+  enabled: false,
+  connected: true,
+  keySource: 'file',
+  teamId: null,
+  direction: 'both',
+  intervalSec: 300,
+  statusMap: {},
+  cursor: null,
+  bootstrappedAt: null,
+  lastSyncAt: null,
+  lastError: null,
+  lastSummary: null,
+  syncing: false,
+};
+
+describe('describeKeySource', () => {
+  it('allows disconnecting a key held in the credentials file', () => {
+    expect(describeKeySource({ ...baseStatus, keySource: 'file' })).toEqual({
+      canDisconnect: true,
+      note: null,
+    });
+  });
+
+  it('refuses to promise a disconnect it cannot deliver for an env key', () => {
+    const result = describeKeySource({ ...baseStatus, keySource: 'env' });
+    expect(result.canDisconnect).toBe(false);
+    expect(result.note).toContain('LINEAR_API_KEY');
+  });
+
+  it('has nothing to say when no key is configured', () => {
+    expect(describeKeySource({ ...baseStatus, keySource: null })).toEqual({
+      canDisconnect: false,
+      note: null,
+    });
+  });
+});
+
+describe('describeFetchFailure', () => {
+  it('reads a 401 as a rejected key rather than a missing one', () => {
+    expect(describeFetchFailure(new Error('401 Unauthorized'))).toContain(
+      'rejected'
+    );
+  });
+
+  it('reads a 409 as no key configured', () => {
+    expect(
+      describeFetchFailure(new Error('409 no Linear API key configured'))
+    ).toContain('No Linear API key');
+  });
+
+  it('passes an unrecognised failure through rather than inventing a cause', () => {
+    expect(describeFetchFailure(new Error('socket hang up'))).toContain(
+      'socket hang up'
+    );
   });
 });
