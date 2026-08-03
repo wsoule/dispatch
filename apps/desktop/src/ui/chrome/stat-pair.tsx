@@ -10,6 +10,9 @@ export function StatPair({
   removed: number;
   className?: string;
 }) {
+  // Both sides zero means no diff to report; an empty span would still take gap
+  // space in the flex row that holds it.
+  if (added <= 0 && removed <= 0) return null;
   return (
     <span
       className={cn('dense-meta flex shrink-0 items-center gap-1.5', className)}
