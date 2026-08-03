@@ -79,7 +79,12 @@ export function discoverCarto(
       detail: `\`carto --version\` exited ${String(probe.status)}`,
     };
   }
-  const version = (probe.stdout ?? '').trim();
+  // The real CLI prints `${pkg.name} ${pkg.version}` ("carto-md 2.1.3"), not
+  // a bare number, so the version is pulled out of the trailing dotted-digit
+  // group rather than assumed to be the whole line.
+  const rawOutput = (probe.stdout ?? '').trim();
+  const versionMatch = /(\d+(?:\.\d+)*)\s*$/.exec(rawOutput);
+  const version = versionMatch?.[1] ?? rawOutput;
   const major = Number.parseInt(version.split('.')[0] ?? '', 10);
   if (Number.isNaN(major) || major < MIN_MAJOR) {
     return {
