@@ -85,6 +85,7 @@ export type {
   RunMeta,
   RunQuestion,
   RunScopeRequest,
+  RunSurvey,
   StartReviewInput,
   StartVerificationResult,
   VerifyStepResult,
