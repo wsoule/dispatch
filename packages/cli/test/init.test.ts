@@ -112,6 +112,19 @@ describe('dispatch init — task-file merge driver registration', () => {
     expect(lines.join('\n')).toContain('task-file merge driver');
   });
 
+  // Regression (minor half of the same finding): registerMergeDriverGitConfig's
+  // spawnSync exit codes used to go unchecked, so `dispatch init` claimed
+  // success even when `git config` failed — e.g. run outside a git repo.
+  it('reports honestly when git config registration fails (no git repo)', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(lines.join('\n')).not.toContain(
+      'Registered the task-file merge driver'
+    );
+    expect(lines.join('\n')).toContain(
+      'Could not register the task-file merge driver'
+    );
+  });
+
   it('re-running init on an already-initialized project does not duplicate the .gitattributes line', async () => {
     spawnSync('git', ['init', '-q'], { cwd: root });
     await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
