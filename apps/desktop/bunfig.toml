@@ -1,2 +1,4 @@
 [test]
 preload = ["./test-setup.ts"]
+# Playwright owns e2e/ (test() from @playwright/test collides with bun:test's).
+pathIgnorePatterns = ["e2e/**"]
