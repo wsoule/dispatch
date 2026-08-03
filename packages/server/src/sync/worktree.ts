@@ -22,6 +22,21 @@ function dispatchHome(): string {
   return home !== undefined && home !== '' ? home : homedir();
 }
 
+// syncOnce() is fully synchronous, so a git process that blocks on a
+// credential/passphrase/host-key prompt freezes the daemon's single event
+// loop entirely — HTTP and WebSocket included, not just sync. These env
+// vars make git fail fast instead of prompting (an expired HTTPS token, a
+// passphrase-protected SSH key with no agent, first contact with a new
+// host); `timeout` below is the last-resort backstop for anything they
+// don't cover. Any process this turns away becomes a normal `local-only`
+// result, not a wedged daemon.
+const NO_PROMPT_ENV = {
+  GIT_TERMINAL_PROMPT: '0',
+  GIT_ASKPASS: '',
+  SSH_ASKPASS: '',
+  GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o ConnectTimeout=10',
+};
+
 // Production GitRunner: shells out for real. Mirrors the test harness's own
 // `run` in test/sync/helpers.ts exactly, kept separate so src/ has no
 // dependency on test code.
@@ -30,6 +45,8 @@ export const defaultGitRunner: GitRunner = (cwd, args) => {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
+    env: { ...process.env, ...NO_PROMPT_ENV },
+    timeout: 30_000,
   });
   return {
     status: result.exitCode,

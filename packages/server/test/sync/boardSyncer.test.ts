@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,
@@ -11,10 +11,12 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import { SyncWorktree } from '../../src/sync/worktree.js';
+import { BoardSyncer } from '../../src/sync/boardSyncer.js';
+import { defaultGitRunner, SyncWorktree } from '../../src/sync/worktree.js';
 import { runGitSync } from '../orchestrator/helpers.js';
 import {
   cleanupClone,
+  gitReaderFor,
   resetSyncers,
   run,
   syncerFor,
@@ -626,6 +628,171 @@ describe('BoardSyncer degradation', () => {
     expect(new TaskStore(b).get(doc.meta.id)?.meta.title).toBe(
       'Title from alice'
     );
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('a conflict on one task does not withhold a teammate’s unrelated task from the working tree', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const storeB = new TaskStore(b);
+    const taskX = storeA.create(
+      { title: 'X original' },
+      '2026-08-01T00:00:00.000Z'
+    );
+    await syncerFor(a).syncOnce();
+    await syncerFor(b).syncOnce();
+
+    // Bob touches two things: X (the same field Alice is about to collide
+    // on) and Y, a brand-new task Alice has never seen — a bystander with
+    // nothing to do with the conflict.
+    storeB.update(
+      taskX.meta.id,
+      { title: 'X from bob' },
+      '2026-08-02T00:00:00.000Z'
+    );
+    const taskY = storeB.create(
+      { title: 'Y from bob' },
+      '2026-08-02T00:00:00.000Z'
+    );
+    const resultB = await syncerFor(b).syncOnce();
+    expect(resultB.state).toBe('idle');
+
+    // Alice edits only X, independently — a real same-field collision.
+    storeA.update(
+      taskX.meta.id,
+      { title: 'X from alice' },
+      '2026-08-03T00:00:00.000Z'
+    );
+    const result = await syncerFor(a).syncOnce();
+
+    expect(result.state).toBe('blocked');
+    // Y was never in conflict — it must still reach Alice's working tree in
+    // this same blocked cycle, not be withheld until some future sync that
+    // (per the reset-to-trunk recovery) will never diff over it again.
+    expect(result.pulled).toBe(1);
+    expect(storeA.get(taskY.meta.id)?.meta.title).toBe('Y from bob');
+    // Alice's own conflicting edit to X is untouched — the board keeps
+    // serving the last good state for the file that actually collided.
+    expect(storeA.get(taskX.meta.id)?.meta.title).toBe('X from alice');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('a remote requiring a credential prompt fails fast instead of hanging the daemon', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    storeA.create({ title: 'Should not hang the daemon' });
+
+    // A stub HTTP server that looks like a git-http-backend demanding
+    // credentials: without GIT_TERMINAL_PROMPT=0, `git fetch` against this
+    // sits on "Username for ...:" indefinitely (git pty prompt) — since
+    // syncOnce() is fully synchronous, that freezes the daemon's entire
+    // event loop, not just this one sync. Run as its own OS process, not an
+    // in-process Bun.serve(): syncOnce()'s git call is itself a synchronous
+    // spawnSync on THIS test's thread, so an in-process server would never
+    // get to run its own event loop to answer the request while blocked —
+    // it would just look like an even longer hang, for the wrong reason.
+    const serverScript = `
+      const server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response('auth required', {
+            status: 401,
+            headers: { 'WWW-Authenticate': 'Basic realm="git"' },
+          });
+        },
+      });
+      console.log(server.port);
+    `;
+    const serverProc = Bun.spawn(['bun', '-e', serverScript], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    try {
+      const reader = serverProc.stdout.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      const port = new TextDecoder().decode(value).trim();
+
+      runGitSync(a, [
+        'remote',
+        'set-url',
+        'origin',
+        `http://127.0.0.1:${port}/repo.git`,
+      ]);
+
+      // The real production GitRunner, not the test harness's mirror of it
+      // — this proves worktree.ts's own defaultGitRunner is hardened, not
+      // just its test-only copy.
+      const worktree = SyncWorktree.open(a, defaultGitRunner);
+      if (worktree === null) throw new Error('expected a resolvable trunk');
+      const actor = ActorContext.resolve(a, gitReaderFor(a));
+      const syncer = new BoardSyncer(a, worktree, actor, defaultGitRunner);
+
+      const startedAt = Date.now();
+      const result = await syncer.syncOnce();
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(result.state).toBe('local-only');
+      // Comfortably below both the 30s spawnSync backstop and where an
+      // unprotected hang would sit forever — proves GIT_TERMINAL_PROMPT
+      // actually fired, not that the backstop eventually rescued it.
+      expect(elapsedMs).toBeLessThan(10_000);
+    } finally {
+      serverProc.kill();
+      rmSync(origin, { recursive: true, force: true });
+      cleanupClone(a);
+      cleanupClone(b);
+    }
+  });
+});
+
+describe('BoardSyncer with the real merge driver', () => {
+  it('two teammates editing different fields on the same task merge cleanly and stay idle', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const storeB = new TaskStore(b);
+    const doc = storeA.create(
+      { title: 'Shared task', status: 'todo' },
+      '2026-08-01T00:00:00.000Z'
+    );
+    await syncerFor(a).syncOnce();
+    await syncerFor(b).syncOnce();
+
+    // Bob changes status; Alice changes title — different fields in the
+    // same file, which the field-aware merge driver (registered by
+    // twoClones()'s cloneOf(), same as a real `dispatch init`) reconciles
+    // without either side losing anything.
+    storeB.update(
+      doc.meta.id,
+      { status: 'in-progress' },
+      '2026-08-02T00:00:00.000Z'
+    );
+    const resultB = await syncerFor(b).syncOnce();
+    expect(resultB.state).toBe('idle');
+
+    storeA.update(
+      doc.meta.id,
+      { title: 'Retitled by alice' },
+      '2026-08-03T00:00:00.000Z'
+    );
+    const result = await syncerFor(a).syncOnce();
+
+    // A clean 3-way field merge, not a conflict: this never enters the
+    // REBASE_HEAD-detected branch at all.
+    expect(result.state).toBe('idle');
+    expect(result.detail).toBeNull();
+
+    const resultB2 = await syncerFor(b).syncOnce();
+    expect(resultB2.state).toBe('idle');
+    const seenByB = storeB.get(doc.meta.id);
+    expect(seenByB?.meta.title).toBe('Retitled by alice');
+    expect(seenByB?.meta.status).toBe('in-progress');
 
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);

@@ -1,8 +1,8 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore, writeGitAttributes } from '@dispatch/core';
 import type { GitReader } from '@dispatch/core';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { BoardSyncer } from '../../src/sync/boardSyncer.js';
 import type { GitRunner } from '../../src/sync/worktree.js';
@@ -10,12 +10,23 @@ import { SyncWorktree } from '../../src/sync/worktree.js';
 import { initBareRepo, runGitSync } from '../orchestrator/helpers.js';
 
 // Real `git`, no stubbing — this harness is entirely about actual git
-// behaviour (push/pull refspecs, staging discipline, rebase).
+// behaviour (push/pull refspecs, staging discipline, rebase). Mirrors
+// worktree.ts's own defaultGitRunner exactly, including the credential-
+// prompt lockout and timeout, so a test exercising this harness sees the
+// same "never hangs the daemon" behaviour production gets.
 export const run: GitRunner = (cwd, args) => {
   const result = Bun.spawnSync(['git', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_ASKPASS: '',
+      SSH_ASKPASS: '',
+      GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o ConnectTimeout=10',
+    },
+    timeout: 30_000,
   });
   return {
     status: result.exitCode,
@@ -36,6 +47,28 @@ export function gitReaderFor(dir: string): GitReader {
 const CONFIG_YML =
   'statuses: [backlog, todo, in-progress, in-review, done, cancelled]\nautoCommit: false\n';
 
+// registerMergeDriverGitConfig() (core's own helper) hardcodes the driver
+// command as `dispatch merge-task %O %A %B`, resolved via PATH at merge
+// time — on a machine that already has a `dispatch` binary installed
+// elsewhere (e.g. the desktop app), that would silently run the WRONG
+// build during a test. Point the driver straight at this repo's own CLI
+// source instead, the same way merge-team-git-e2e.test.ts does for
+// `dispatch merge-team`, so the driver under test is always this checkout's.
+const MERGE_TASK_CLI = resolve(import.meta.dirname, '../../../cli/src/cli.ts');
+
+function registerTaskMergeDriverForTest(dir: string): void {
+  runGitSync(dir, [
+    'config',
+    'merge.dispatch-task.name',
+    'Dispatch task file merge',
+  ]);
+  runGitSync(dir, [
+    'config',
+    'merge.dispatch-task.driver',
+    `bun ${MERGE_TASK_CLI} merge-task %O %A %B`,
+  ]);
+}
+
 /**
  * A bare origin plus two clones with distinct git identities, standing in
  * for two teammates syncing the same board. Reused by every task in this
@@ -53,6 +86,10 @@ export function twoClones(): { origin: string; a: string; b: string } {
   mkdirSync(join(seed, '.dispatch'), { recursive: true });
   writeFileSync(join(seed, '.dispatch', 'config.yml'), CONFIG_YML);
   writeFileSync(join(seed, 'README.md'), '# test repo\n');
+  // Committed so every clone (and their private sync worktrees, which check
+  // out this same trunk commit) route .dispatch/tasks/*.md through the
+  // merge driver during a real rebase — matching a real `dispatch init`.
+  writeGitAttributes(seed);
   runGitSync(seed, ['add', '-A']);
   runGitSync(seed, ['commit', '-m', 'initial commit']);
   runGitSync(seed, ['remote', 'add', 'origin', origin]);
@@ -65,6 +102,10 @@ export function twoClones(): { origin: string; a: string; b: string } {
     runGitSync(parent, ['clone', origin, dir]);
     runGitSync(dir, ['config', 'user.email', `${name}@example.com`]);
     runGitSync(dir, ['config', 'user.name', name]);
+    // Local config, not part of the commit — every clone (and its sync
+    // worktree, which shares this clone's .git/config) needs its own copy,
+    // exactly like a real `dispatch init` run per machine.
+    registerTaskMergeDriverForTest(dir);
     TaskStore.init(dir);
     return dir;
   };
