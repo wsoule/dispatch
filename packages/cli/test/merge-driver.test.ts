@@ -6,9 +6,12 @@ import { join } from 'node:path';
 
 import {
   checkMergeDriverSetup,
+  checkTeamMergeDriverSetup,
   GITATTRIBUTES_LINE,
   mergeGitAttributes,
   registerMergeDriverGitConfig,
+  registerTeamMergeDriverGitConfig,
+  TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from '../src/mergeDriver.js';
 
@@ -64,8 +67,9 @@ describe('writeGitAttributes / registerMergeDriverGitConfig / checkMergeDriverSe
       gitattributes: true,
       gitConfig: true,
     });
+    // writeGitAttributes writes both drivers' lines in one pass.
     expect(readFileSync(join(root, '.gitattributes'), 'utf8')).toBe(
-      `${GITATTRIBUTES_LINE}\n`
+      `${GITATTRIBUTES_LINE}\n${TEAM_GITATTRIBUTES_LINE}\n`
     );
   });
 
@@ -77,6 +81,61 @@ describe('writeGitAttributes / registerMergeDriverGitConfig / checkMergeDriverSe
     expect(checkMergeDriverSetup(root)).toEqual({
       gitattributes: true,
       gitConfig: false,
+    });
+  });
+});
+
+// Mirrors the task-driver suite above — same contract, different driver name.
+describe('team-roster merge driver registration', () => {
+  function initRepo(): string {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-merge-driver-'));
+    spawnSync('git', ['init', '-q'], { cwd: root });
+    return root;
+  }
+
+  it('reports both missing before setup runs', () => {
+    const root = initRepo();
+    expect(checkTeamMergeDriverSetup(root)).toEqual({
+      gitattributes: false,
+      gitConfig: false,
+    });
+  });
+
+  it('reports both present after writeGitAttributes + registerTeamMergeDriverGitConfig', () => {
+    const root = initRepo();
+    writeGitAttributes(root);
+    registerTeamMergeDriverGitConfig(root);
+    expect(checkTeamMergeDriverSetup(root)).toEqual({
+      gitattributes: true,
+      gitConfig: true,
+    });
+  });
+
+  it('flags gitConfig missing on its own — the fresh-clone case', () => {
+    const root = initRepo();
+    writeGitAttributes(root);
+    expect(checkTeamMergeDriverSetup(root)).toEqual({
+      gitattributes: true,
+      gitConfig: false,
+    });
+  });
+
+  it('registering the team driver does not affect the task driver, and vice versa', () => {
+    const root = initRepo();
+    writeGitAttributes(root);
+    registerMergeDriverGitConfig(root);
+    expect(checkTeamMergeDriverSetup(root)).toEqual({
+      gitattributes: true,
+      gitConfig: false,
+    });
+    registerTeamMergeDriverGitConfig(root);
+    expect(checkMergeDriverSetup(root)).toEqual({
+      gitattributes: true,
+      gitConfig: true,
+    });
+    expect(checkTeamMergeDriverSetup(root)).toEqual({
+      gitattributes: true,
+      gitConfig: true,
     });
   });
 });

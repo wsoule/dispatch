@@ -109,7 +109,9 @@ describe('dispatch init — task-file merge driver registration', () => {
       gitattributes: true,
       gitConfig: true,
     });
-    expect(lines.join('\n')).toContain('task-file merge driver');
+    expect(lines.join('\n')).toContain(
+      'task-file and team-roster merge drivers'
+    );
   });
 
   // Regression (minor half of the same finding): registerMergeDriverGitConfig's
@@ -117,11 +119,9 @@ describe('dispatch init — task-file merge driver registration', () => {
   // success even when `git config` failed — e.g. run outside a git repo.
   it('reports honestly when git config registration fails (no git repo)', async () => {
     await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
-    expect(lines.join('\n')).not.toContain(
-      'Registered the task-file merge driver'
-    );
+    expect(lines.join('\n')).not.toContain('Registered the task-file');
     expect(lines.join('\n')).toContain(
-      'Could not register the task-file merge driver'
+      'Could not register the merge driver git config'
     );
   });
 

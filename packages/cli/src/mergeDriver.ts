@@ -4,8 +4,11 @@
 // project-init path.
 export {
   checkMergeDriverSetup,
+  checkTeamMergeDriverSetup,
   GITATTRIBUTES_LINE,
   mergeGitAttributes,
   registerMergeDriverGitConfig,
+  registerTeamMergeDriverGitConfig,
+  TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from '@dispatch/core';

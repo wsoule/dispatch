@@ -47,6 +47,7 @@ export {
 export type { Amendment } from './taskfile.js';
 export { TaskStore, DISPATCH_DIR } from './store.js';
 export { mergeTaskFile } from './mergeTask.js';
+export { mergeTeamFile } from './mergeTeam.js';
 export type {
   CreateInput,
   UpdatePatch,
@@ -139,8 +140,11 @@ export { ActorContext } from './actorContext.js';
 export type { GitReader } from './actorContext.js';
 export {
   checkMergeDriverSetup,
+  checkTeamMergeDriverSetup,
   GITATTRIBUTES_LINE,
   mergeGitAttributes,
   registerMergeDriverGitConfig,
+  registerTeamMergeDriverGitConfig,
+  TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from './mergeDriverSetup.js';
