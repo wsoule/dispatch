@@ -14,6 +14,14 @@ export type { LedgerEntry, LedgerKind } from './ledger.js';
 export type { CommandEvidence, MutationEvidence } from './evidence.js';
 export { schedulableBatch, tasksConflict } from './conflicts.js';
 export {
+  ActorRefError,
+  formatActorRef,
+  isValidAssignee,
+  parseActorRef,
+  UNASSIGNED,
+} from './actor.js';
+export type { ActorKind, ActorRef } from './actor.js';
+export {
   computeStack,
   dispatchableTasks,
   findDependencyCycles,

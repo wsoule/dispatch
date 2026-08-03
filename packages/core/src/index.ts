@@ -20,6 +20,14 @@ export {
   schedulableBatch,
   tasksConflict,
 } from './conflicts.js';
+export {
+  ActorRefError,
+  formatActorRef,
+  isValidAssignee,
+  parseActorRef,
+  UNASSIGNED,
+} from './actor.js';
+export type { ActorKind, ActorRef } from './actor.js';
 export { slugify } from './slug.js';
 export {
   untrustedBlock,
