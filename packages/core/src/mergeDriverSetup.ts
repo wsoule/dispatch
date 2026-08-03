@@ -1,0 +1,80 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+// Registers the task-file merge driver: the .gitattributes line that routes
+// task files through it, and the local git config that points git at
+// `dispatch merge-task`. Lives in core (rather than @dispatch/cli, which
+// depends on @dispatch/server) so both the CLI's own `dispatch init` and
+// server/bin.ts's `--init` path (the desktop app's project-init route) can
+// register it without a circular package dependency.
+
+// The .gitattributes line that routes task files through the merge driver.
+// Committed to the repo, so every clone gets it — unlike the git config
+// below, which is local-only and must be set up again per clone.
+export const GITATTRIBUTES_LINE = '.dispatch/tasks/*.md merge=dispatch-task';
+
+// Appends GITATTRIBUTES_LINE to existing .gitattributes content unless it's
+// already present, preserving every other line untouched. Pure so the merge
+// logic is testable without touching the filesystem — mirrors mergeMcpConfig.
+export function mergeGitAttributes(existing: string | undefined): string {
+  const lines = existing !== undefined ? existing.split('\n') : [];
+  // split('\n') on text ending in a newline leaves a trailing '' entry —
+  // drop it so appending doesn't reintroduce a blank line before the tail.
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  if (!lines.includes(GITATTRIBUTES_LINE)) lines.push(GITATTRIBUTES_LINE);
+  return `${lines.join('\n')}\n`;
+}
+
+// Reads (if present), merges, and writes `<cwd>/.gitattributes`.
+export function writeGitAttributes(cwd: string): void {
+  const path = join(cwd, '.gitattributes');
+  const existing = existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+  writeFileSync(path, mergeGitAttributes(existing));
+}
+
+// Points git at `dispatch merge-task` for task files, in the repo's *local*
+// (never committed) git config. A fresh clone gets the committed
+// .gitattributes line but not this, which is exactly what
+// `checkMergeDriverSetup` below exists to catch. Returns whether both `git
+// config` calls actually succeeded, so a caller run before `git init`, or on
+// a machine with no `git` on PATH, can report the truth instead of claiming
+// success unconditionally.
+export function registerMergeDriverGitConfig(cwd: string): boolean {
+  const name = spawnSync(
+    'git',
+    ['config', 'merge.dispatch-task.name', 'Dispatch task file merge'],
+    { cwd }
+  );
+  const driver = spawnSync(
+    'git',
+    ['config', 'merge.dispatch-task.driver', 'dispatch merge-task %O %A %B'],
+    { cwd }
+  );
+  return name.status === 0 && driver.status === 0;
+}
+
+function gitConfigHasDriver(cwd: string): boolean {
+  const result = spawnSync(
+    'git',
+    ['config', '--local', '--get', 'merge.dispatch-task.driver'],
+    { cwd, encoding: 'utf8' }
+  );
+  return result.status === 0;
+}
+
+// What `dispatch doctor` needs to know: whether the .gitattributes line and
+// the local git config entry are both in place. They can disagree — a fresh
+// clone inherits the committed .gitattributes but not the local config —
+// and without the driver git falls back to ordinary line-based conflicts.
+export function checkMergeDriverSetup(cwd: string): {
+  gitattributes: boolean;
+  gitConfig: boolean;
+} {
+  const attrPath = join(cwd, '.gitattributes');
+  const attrText = existsSync(attrPath) ? readFileSync(attrPath, 'utf8') : '';
+  const gitattributes = attrText
+    .split('\n')
+    .some((line) => line.trim() === GITATTRIBUTES_LINE);
+  return { gitattributes, gitConfig: gitConfigHasDriver(cwd) };
+}

@@ -1,5 +1,7 @@
+import { checkMergeDriverSetup } from '@dispatch/core';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -71,6 +73,41 @@ describe('bin.ts --init', () => {
     expect(initialized).toBe(true);
     expect(existsSync(tasksDir)).toBe(true);
     expect(existsSync(configPath)).toBe(true);
+  }, 15_000);
+
+  // Regression: this is the desktop app's project-init path
+  // (GetStartedView -> TaskStore.init(rootDir) equivalent), which used to
+  // skip merge-driver registration entirely — only the CLI's `dispatch init`
+  // registered it, so a desktop-first project never got it.
+  it('registers the task-file merge driver before the server starts', async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'dispatch-bin-init-root-'));
+    dispatchHome = mkdtempSync(join(tmpdir(), 'dispatch-bin-init-home-'));
+    spawnSync('git', ['init', '-q'], { cwd: rootDir });
+    const gitattributesPath = join(rootDir, '.gitattributes');
+
+    child = Bun.spawn(
+      ['bun', BIN, '--root', rootDir, '--init', '--port', '0'],
+      {
+        env: { ...process.env, DISPATCH_HOME: dispatchHome },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }
+    );
+
+    // Wait on the actual end state (both halves registered), not just the
+    // .gitattributes write — registerMergeDriverGitConfig's two `git config`
+    // subprocess calls run after it and take real time to complete.
+    const registered = await waitFor(
+      () => checkMergeDriverSetup(rootDir!).gitConfig
+    );
+    expect(registered).toBe(true);
+    expect(readFileSync(gitattributesPath, 'utf8')).toContain(
+      '.dispatch/tasks/*.md merge=dispatch-task'
+    );
+    expect(checkMergeDriverSetup(rootDir)).toEqual({
+      gitattributes: true,
+      gitConfig: true,
+    });
   }, 15_000);
 
   it('does not initialize the project when --init is absent', async () => {

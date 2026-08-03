@@ -33,6 +33,13 @@ import {
 function initIfMissing(ctx: CliContext): boolean {
   if (existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'))) return false;
   TaskStore.init(ctx.cwd);
+  // Register the merge driver on every path that scaffolds a project, not
+  // just the explicit `dispatch init` subcommand — the bare `dispatch`
+  // command (below) and the desktop app's init route (server/src/bin.ts's
+  // `--init` flag) both go through this function and must not ship the
+  // driver dark.
+  writeGitAttributes(ctx.cwd);
+  registerMergeDriverGitConfig(ctx.cwd);
   return true;
 }
 
@@ -62,11 +69,20 @@ export function makeProgram(ctx: CliContext): Command {
         registerMcpServer(ctx.cwd);
         ctx.log('Registered the dispatch MCP server in .mcp.json');
       }
+      // Idempotent — safe to call again even when initIfMissing already ran
+      // it above, and this is what re-registers the driver for a project
+      // whose local git config lost it (e.g. a fresh clone).
       writeGitAttributes(ctx.cwd);
-      registerMergeDriverGitConfig(ctx.cwd);
-      ctx.log(
-        'Registered the task-file merge driver (.gitattributes + git config)'
-      );
+      if (registerMergeDriverGitConfig(ctx.cwd)) {
+        ctx.log(
+          'Registered the task-file merge driver (.gitattributes + git config)'
+        );
+      } else {
+        ctx.log(
+          'Could not register the task-file merge driver git config — ' +
+            'is this a git repository, and is git on PATH?'
+        );
+      }
     });
 
   // Bare `dispatch` in a repo: initialize if needed, register the project,

@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
-import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
+import {
+  DISPATCH_DIR,
+  registerMergeDriverGitConfig,
+  TaskStore,
+  writeGitAttributes,
+} from '@dispatch/core';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -381,6 +386,12 @@ if (
   !existsSync(join(rootDir, DISPATCH_DIR, 'tasks'))
 ) {
   TaskStore.init(rootDir);
+  // The CLI's `dispatch init` registers the task-file merge driver; this is
+  // the desktop app's equivalent init path (GetStartedView's add-project
+  // flow), so it must register the same driver or the merge driver ships
+  // dark for every desktop-first project.
+  writeGitAttributes(rootDir);
+  registerMergeDriverGitConfig(rootDir);
 }
 
 const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';
