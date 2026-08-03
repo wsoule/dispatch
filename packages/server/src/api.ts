@@ -68,7 +68,7 @@ import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
-import { InboxClusterer } from './inboxClusterer.js';
+import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
 import type { LedgerStore } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
@@ -2043,9 +2043,16 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
   const clusterer = ctx.inboxClusterer ?? new InboxClusterer(ctx.rootDir);
   try {
     // listAll(), not list(): clustering has to see every teammate's captures, not just this
-    // daemon's own actor file, or two people describing the same work would never group.
+    // daemon's own actor file, or two people describing the same work would never group. But
+    // the response has to stay local: display (BrainDumpView) and convert both resolve ids
+    // against list() only, so a group carrying a teammate's item id would overstate its count,
+    // seed selection with an id the UI can't resolve, and fail convert outright. Filtering here
+    // — rather than widening display/convert to cross-file reads — also keeps a teammate's
+    // private capture text from ever reaching the local UI or a future model call over it.
+    const localIds = new Set(ctx.inboxStore.list().map((i) => i.id));
     const groups = await clusterer.cluster(ctx.inboxStore.listAll());
-    return jsonResponse({ groups, error: null });
+    const localGroups = filterGroupsToLocalItems(groups, localIds);
+    return jsonResponse({ groups: localGroups, error: null });
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
