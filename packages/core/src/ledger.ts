@@ -13,4 +13,6 @@ export interface LedgerEntry {
   /** Task ids this applies to; empty means every task under the epic. */
   appliesTo: string[];
   createdAt: string;
+  /** Serialized ActorRef of whoever wrote it; empty for pre-team records. */
+  authoredBy: string;
 }

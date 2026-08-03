@@ -24,4 +24,6 @@ export interface Finding {
   round: number; // fix round that raised it, 0 for the first review
   createdAt: string;
   updatedAt: string;
+  /** Serialized ActorRef of whoever raised it; empty for pre-team records. */
+  raisedBy: string;
 }

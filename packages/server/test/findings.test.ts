@@ -28,6 +28,7 @@ describe('FindingStore', () => {
       severity: 'important',
       title: 'withActionFeedback swallows rejections',
       detail: 'every catch downstream of it is dead code',
+      raisedBy: '',
     });
     expect(finding.verdict).toBe('open');
     expect(finding.ruling).toBeNull();
@@ -47,6 +48,7 @@ describe('FindingStore', () => {
       title: 'first sync overwrites the workspace',
       detail: 'reproduced on a scratch copy',
       recommendation: 'blocks',
+      raisedBy: '',
     });
     expect(finding.recommendation).toBe('blocks');
     expect(store.get(finding.id)?.recommendation).toBe('blocks');
@@ -66,6 +68,7 @@ describe('FindingStore', () => {
       severity: 'critical',
       title: 'a real bug',
       detail: 'detail',
+      raisedBy: '',
     });
     store.update(finding.id, {
       verdict: 'addressed',
@@ -95,6 +98,7 @@ describe('FindingStore', () => {
       severity: 'critical',
       title: 'a',
       detail: 'a',
+      raisedBy: '',
     });
     store.add({
       taskId: 't-b',
@@ -102,6 +106,7 @@ describe('FindingStore', () => {
       severity: 'minor',
       title: 'b',
       detail: 'b',
+      raisedBy: '',
     });
     store.update(a.id, { verdict: 'parked' });
 
@@ -118,6 +123,7 @@ describe('FindingStore', () => {
       severity: 'minor',
       title: 'open one',
       detail: 'd',
+      raisedBy: '',
     });
     const addressed = store.add({
       taskId: 't-a',
@@ -125,6 +131,7 @@ describe('FindingStore', () => {
       severity: 'minor',
       title: 'addressed one',
       detail: 'd',
+      raisedBy: '',
     });
     store.update(addressed.id, { verdict: 'addressed' });
 
@@ -205,6 +212,7 @@ describe('FindingStore id collisions', () => {
       severity: 'critical',
       title: 'a real bug',
       detail: 'detail',
+      raisedBy: '',
     });
     store.update(finding.id, { verdict: 'addressed' });
     expect(store.list()).toHaveLength(1);
@@ -222,6 +230,7 @@ describe('FindingStore id collisions', () => {
       severity: 'minor',
       title: 'first',
       detail: 'd',
+      raisedBy: '',
     });
     const second = store.add({
       taskId: 't-b',
@@ -229,6 +238,7 @@ describe('FindingStore id collisions', () => {
       severity: 'minor',
       title: 'second',
       detail: 'd',
+      raisedBy: '',
     });
 
     expect(first.id).toBe('f-dupdup');
@@ -245,6 +255,7 @@ describe('FindingStore id collisions', () => {
       severity: 'minor',
       title: 'first',
       detail: 'd',
+      raisedBy: '',
     });
     expect(() =>
       store.add({
@@ -253,7 +264,50 @@ describe('FindingStore id collisions', () => {
         severity: 'minor',
         title: 'second',
         detail: 'd',
+        raisedBy: '',
       })
     ).toThrow(/unused finding id/);
+  });
+});
+
+describe('FindingStore attribution', () => {
+  test('round-trips the actor that raised a finding', () => {
+    const root_ = root();
+    const store = new FindingStore(root_);
+    const written = store.add({
+      taskId: 't-abc123',
+      runId: null,
+      severity: 'important',
+      title: 'x',
+      detail: 'y',
+      raisedBy: 'agent:wyat/claude',
+    });
+    expect(new FindingStore(root_).list()).toContainEqual(
+      expect.objectContaining({ id: written.id, raisedBy: 'agent:wyat/claude' })
+    );
+  });
+
+  // findings.jsonl is append-only and pre-dates raisedBy, so a legacy line
+  // must still load with the field defaulted rather than undefined.
+  test('defaults raisedBy on a record written before attribution existed', () => {
+    const dir = root();
+    seedLines(dir, [
+      {
+        id: 'f-legacy',
+        taskId: 't-abc123',
+        runId: null,
+        severity: 'minor',
+        verdict: 'open',
+        title: 'old',
+        detail: '',
+        file: null,
+        line: null,
+        ruling: null,
+        round: 0,
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+      },
+    ]);
+    expect(new FindingStore(dir).list()[0]?.raisedBy).toBe('');
   });
 });

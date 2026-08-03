@@ -103,6 +103,7 @@ function blockTask(harness: Harness, taskId: string, runId: string): void {
     severity: 'critical',
     title: 'leaks the session token',
     detail: 'logs the raw token on every request',
+    raisedBy: '',
   });
   harness.findings.update(finding.id, {
     verdict: 'blocked',
