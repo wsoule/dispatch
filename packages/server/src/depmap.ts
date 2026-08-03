@@ -335,8 +335,9 @@ export interface DepMapCacheOptions {
 }
 
 // Lazily builds and memoizes a DepMap, so a burst of review dispatches shares
-// one scan. Prefers carto when the mode allows and a container is readable;
-// every miss degrades to the built-in scanner and is reported once.
+// one scan. Unions carto with the built-in scanner when the mode allows and a
+// container is readable; every miss degrades to the scanner alone and is
+// reported once.
 export class DepMapCache {
   private cached: DepMap | null = null;
   // Both survive invalidate() deliberately. The watcher invalidates on every
@@ -486,8 +487,44 @@ export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
 /** Why a CartoDepMap stopped using carto, for the caller to surface once. */
 export type CartoDegradation = { file: string; detail: string };
 
-// dependents() from carto, mirrors() from the scanner (carto has no notion
-// of hand-mirror comments). A throw retires carto for this instance's life.
+// Interleaves two closest-first lists one item at a time so a file only the
+// second list found still lands near the front, instead of behind every
+// entry of a long first list. review.ts's mergeRoundRobin does the same job,
+// but depmap.ts is a shared, lower-level module (also consumed directly from
+// index.ts) and importing a value from the orchestrator layer would invert
+// that dependency, so this keeps its own copy.
+function mergeRoundRobin(lists: string[][]): string[] {
+  const cursors = lists.map(() => 0);
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (let i = 0; i < lists.length; i++) {
+      while (cursors[i] < lists[i].length && seen.has(lists[i][cursors[i]])) {
+        cursors[i]++;
+      }
+      if (cursors[i] < lists[i].length) {
+        const item = lists[i][cursors[i]];
+        seen.add(item);
+        merged.push(item);
+        cursors[i]++;
+        progressed = true;
+      }
+    }
+  }
+  return merged;
+}
+
+// dependents() unions carto's blast radius with the scanner's reverse-import
+// graph: carto resolves specifiers naively and misses workspace `exports`
+// edges the scanner catches, while the scanner only understands .ts/.tsx.
+// Neither dominates, so a review must never lose the other's coverage. The
+// two closest-first lists are round-robin merged, not concatenated, so a
+// scanner-only dependent still survives review.ts's cap on a repo where carto
+// alone returns far more results. mirrors() has no carto equivalent (no
+// notion of hand-mirror comments), so it always comes from the scanner. A
+// throw retires carto for this instance's life.
 export function createCartoDepMap(
   rootDir: string,
   reader: CartoReader,
@@ -498,8 +535,9 @@ export function createCartoDepMap(
   return {
     dependents(file: string): string[] {
       if (degraded) return fallback.dependents(file);
+      let cartoDependents: string[];
       try {
-        return normalizeBlastRadius(
+        cartoDependents = normalizeBlastRadius(
           reader.blastRadius(normalizeInputPath(file))
         );
       } catch (err) {
@@ -507,6 +545,7 @@ export function createCartoDepMap(
         onDegrade?.({ file, detail: (err as Error).message });
         return fallback.dependents(file);
       }
+      return mergeRoundRobin([cartoDependents, fallback.dependents(file)]);
     },
     mirrors(file: string): string[] {
       return fallback.mirrors(file);
