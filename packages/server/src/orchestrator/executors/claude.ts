@@ -8,6 +8,8 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { CartoMode } from '@dispatch/core';
+import { loadConfig } from '@dispatch/core';
 import type { CartoBinary } from '@dispatch/core/carto';
 import { discoverCarto } from '@dispatch/core/carto';
 import { createRequire } from 'node:module';
@@ -174,9 +176,21 @@ export function buildCartoMcpServerConfig(
   };
 }
 
-// Contributes a `carto` entry only when the binary is actually present — a
-// spawn failure would cost every run a startup error for no benefit.
-function cartoMcpServers(projectRoot: string): Record<string, McpServerConfig> {
+// Contributes a `carto` entry only when `carto.enabled` allows it and the
+// binary is actually present — `off` means no MCP entry at all, and a spawn
+// failure would cost every run a startup error for no benefit. Runs once per
+// dispatched run (Orchestrator calls start() once), so the config read here
+// is not on a hot path; a malformed config degrades to the default `on`.
+export function cartoMcpServers(
+  projectRoot: string
+): Record<string, McpServerConfig> {
+  let mode: CartoMode = 'on';
+  try {
+    mode = loadConfig(projectRoot).carto.enabled;
+  } catch {
+    // A config Dispatch can't read must not decide carto policy by itself.
+  }
+  if (mode === 'off') return {};
   const discovery = discoverCarto();
   if (!discovery.ok) return {};
   return { carto: buildCartoMcpServerConfig(projectRoot, discovery.binary) };
