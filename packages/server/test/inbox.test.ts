@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   existsSync,
   mkdirSync,
@@ -6,6 +6,7 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -353,6 +354,68 @@ describe('migrateLegacy', () => {
     expect(alice.migrateLegacy()).toBe(0);
     expect(alice.list()).toEqual([]);
     expect(wyat.list().map((i) => i.text)).toContain('shared legacy item');
+  });
+
+  // The sequential test above never opens the real race window: by the time the second store
+  // calls migrateLegacy(), existsSync already sees the file gone and returns early, before ever
+  // reaching unlinkSync. A true startup race is a TOCTOU: this store's own existsSync passes, it
+  // reads and folds in the content, and only then — when it tries to remove the file — finds
+  // another daemon already deleted it first. Reproduced directly by making unlinkSync throw
+  // ENOENT on its first call, which is exactly what a real second unlink of an already-removed
+  // file does.
+  test('losing the unlink race to another daemon does not throw, and still keeps the content', () => {
+    const dir = root();
+    writeLegacy(dir, '- [ ] legacy item\n');
+    const store = new InboxStore(dir, 'wyat');
+    const legacyPath = join(dir, '.dispatch', 'inbox.md');
+
+    const spy = spyOn(fs, 'unlinkSync').mockImplementation(((
+      path: Parameters<typeof fs.unlinkSync>[0]
+    ) => {
+      if (path === legacyPath) {
+        const err = new Error(
+          'ENOENT: no such file or directory'
+        ) as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      }
+    }) as typeof fs.unlinkSync);
+
+    try {
+      let brought = -1;
+      expect(() => {
+        brought = store.migrateLegacy();
+      }).not.toThrow();
+      expect(brought).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(store.list().map((i) => i.text)).toContain('legacy item');
+  });
+
+  test('a real, non-ENOENT unlink failure still propagates', () => {
+    const dir = root();
+    writeLegacy(dir, '- [ ] legacy item\n');
+    const store = new InboxStore(dir, 'wyat');
+    const legacyPath = join(dir, '.dispatch', 'inbox.md');
+
+    const spy = spyOn(fs, 'unlinkSync').mockImplementation(((
+      path: Parameters<typeof fs.unlinkSync>[0]
+    ) => {
+      if (path === legacyPath) {
+        const err = new Error(
+          'EACCES: permission denied'
+        ) as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+    }) as typeof fs.unlinkSync);
+
+    try {
+      expect(() => store.migrateLegacy()).toThrow(/EACCES/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('an unreadable legacy file is a no-op rather than a crash, and is left in place', () => {
