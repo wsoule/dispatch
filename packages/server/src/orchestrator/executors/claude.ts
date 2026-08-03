@@ -139,11 +139,8 @@ function buildDispatchMcpServerConfig(
   };
 }
 
-// carto's MCP child needs far less than dispatch's: no DISPATCH_* variables,
-// just enough to start. The allowlist rule is the same and for the same
-// reason — the SDK serializes env into the spawned CLI's argv, readable by
-// any local process through `ps`. CARTO_MCP_TIER is deliberately absent:
-// omitting it keeps the agent's tool menu at carto's ~10-tool core.
+// Same allowlist rationale as MCP_ENV_PASSTHROUGH above; CARTO_MCP_TIER stays
+// absent so the agent's tool menu stays at carto's ~10-tool core.
 const CARTO_MCP_ENV_PASSTHROUGH: readonly string[] = [
   'PATH',
   'HOME',
@@ -152,17 +149,14 @@ const CARTO_MCP_ENV_PASSTHROUGH: readonly string[] = [
   'LC_ALL',
 ];
 
-// `carto serve` takes its project root from process.cwd() and accepts no root
-// argument, so the working directory is the only way to point it at the
-// project rather than the run's worktree (where .carto/ never exists).
-// McpStdioServerConfig has no `cwd` field, so a `/bin/sh -c` wrapper is the
-// only way to set it; both interpolations are JSON-stringified so a path
-// containing spaces or quotes can't break out of the shell command.
+// McpStdioServerConfig has no `cwd`, so `carto serve` (whose root is cwd, no
+// arg) runs via a shell wrapper. projectRoot/binary.path are passed as
+// positional params ($1/$2), never spliced into the script text, so the
+// shell never re-parses them — interpolating them (even JSON-escaped) would
+// let a `$(...)` or backtick in either value run as a shell command.
 //
-// `carto serve`'s MCP transport does not connect when carto is required as a
-// library rather than run as the main module — tracked upstream at
-// https://github.com/theanshsonkar/carto/issues/9. This config is correct;
-// the connection is carto's to fix.
+// Upstream carto serve doesn't connect its MCP transport when required as a
+// library rather than run as __main__: carto#9.
 export function buildCartoMcpServerConfig(
   projectRoot: string,
   binary: CartoBinary
@@ -175,10 +169,7 @@ export function buildCartoMcpServerConfig(
   return {
     type: 'stdio',
     command: '/bin/sh',
-    args: [
-      '-c',
-      `cd ${JSON.stringify(projectRoot)} && exec ${JSON.stringify(binary.path)} serve`,
-    ],
+    args: ['-c', 'cd "$1" && exec "$2" serve', 'sh', projectRoot, binary.path],
     env,
   };
 }
