@@ -8,6 +8,8 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { CartoBinary } from '@dispatch/core/carto';
+import { discoverCarto } from '@dispatch/core/carto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
@@ -135,6 +137,58 @@ function buildDispatchMcpServerConfig(
     env,
     timeout: DISPATCH_MCP_TOOL_TIMEOUT_MS,
   };
+}
+
+// carto's MCP child needs far less than dispatch's: no DISPATCH_* variables,
+// just enough to start. The allowlist rule is the same and for the same
+// reason — the SDK serializes env into the spawned CLI's argv, readable by
+// any local process through `ps`. CARTO_MCP_TIER is deliberately absent:
+// omitting it keeps the agent's tool menu at carto's ~10-tool core.
+const CARTO_MCP_ENV_PASSTHROUGH: readonly string[] = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+];
+
+// `carto serve` takes its project root from process.cwd() and accepts no root
+// argument, so the working directory is the only way to point it at the
+// project rather than the run's worktree (where .carto/ never exists).
+// McpStdioServerConfig has no `cwd` field, so a `/bin/sh -c` wrapper is the
+// only way to set it; both interpolations are JSON-stringified so a path
+// containing spaces or quotes can't break out of the shell command.
+//
+// `carto serve`'s MCP transport does not connect when carto is required as a
+// library rather than run as the main module — tracked upstream at
+// https://github.com/theanshsonkar/carto/issues/9. This config is correct;
+// the connection is carto's to fix.
+export function buildCartoMcpServerConfig(
+  projectRoot: string,
+  binary: CartoBinary
+): McpServerConfig {
+  const env: Record<string, string> = {};
+  for (const key of CARTO_MCP_ENV_PASSTHROUGH) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return {
+    type: 'stdio',
+    command: '/bin/sh',
+    args: [
+      '-c',
+      `cd ${JSON.stringify(projectRoot)} && exec ${JSON.stringify(binary.path)} serve`,
+    ],
+    env,
+  };
+}
+
+// Contributes a `carto` entry only when the binary is actually present — a
+// spawn failure would cost every run a startup error for no benefit.
+function cartoMcpServers(projectRoot: string): Record<string, McpServerConfig> {
+  const discovery = discoverCarto();
+  if (!discovery.ok) return {};
+  return { carto: buildCartoMcpServerConfig(projectRoot, discovery.binary) };
 }
 
 // A resolver for one canUseTool call this run is currently blocked on,
@@ -517,6 +571,7 @@ export class ClaudeExecutor implements Executor {
           opts.projectRoot ?? opts.cwd,
           opts.runId ?? ''
         ),
+        ...cartoMcpServers(opts.projectRoot ?? opts.cwd),
       },
     };
     const sdkQuery: Query = this.openQuery(queue, sdkOptions);
