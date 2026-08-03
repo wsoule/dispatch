@@ -1,6 +1,9 @@
 import type { ApiContext } from '../api.js';
 import { SCOPE_REQUEST_POLL_MS } from '../orchestrator/scopeRequests.js';
-import type { RunScopeRequest } from '../orchestrator/scopeRequests.js';
+import type {
+  RunScopeRequest,
+  ScopeDecider,
+} from '../orchestrator/scopeRequests.js';
 import { OrchestratorConflictError } from '../orchestrator/types.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
@@ -76,6 +79,24 @@ export async function getScopeRequest(
   );
 }
 
+// The desktop app's own webview origins, plus the loopback origins its dev
+// harness runs under.
+const APP_WEBVIEW_ORIGINS = new Set([
+  'tauri://localhost',
+  'https://tauri.localhost',
+  'http://tauri.localhost',
+]);
+const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+// Who a decision is attributed to: a webview sends an `Origin`, an agent's own
+// curl does not. Attribution, not authentication — the header is forgeable.
+function deciderFor(req: Request): ScopeDecider {
+  const origin = req.headers.get('origin');
+  if (origin === null) return 'api';
+  if (APP_WEBVIEW_ORIGINS.has(origin)) return 'app';
+  return LOOPBACK_ORIGIN.test(origin) ? 'app' : 'api';
+}
+
 // A granted request extends what its task inherits: the paths it touched,
 // and why, so the next task in the epic sees the fence actually moved.
 function recordGrantedLedgerEntry(
@@ -86,10 +107,13 @@ function recordGrantedLedgerEntry(
   const run = ctx.orchestrator.getRun(runId);
   const taskId = run?.meta.taskId ?? null;
   const task = taskId !== null ? ctx.store.get(taskId) : null;
-  const detail =
+  const why =
     record.decisionReason === null
-      ? `${record.paths.join(', ')} — ${record.reason}`
-      : `${record.paths.join(', ')} — ${record.reason} (${record.decisionReason})`;
+      ? record.reason
+      : `${record.reason} (${record.decisionReason})`;
+  // A reader judging whether an out-of-fence edit was sanctioned needs to see
+  // who sanctioned it, so the decider goes in the entry itself.
+  const detail = `${record.paths.join(', ')} — ${why} [decided via ${record.decidedBy ?? 'api'}]`;
   ctx.ledgerStore.add({
     epicId: task?.meta.parent ?? null,
     sourceTaskId: taskId,
@@ -122,7 +146,12 @@ export async function decideScopeRequest(
   }
   let record: RunScopeRequest;
   try {
-    record = ctx.scopeRequests.decide(requestId, body.granted, body.reason);
+    record = ctx.scopeRequests.decide(
+      requestId,
+      body.granted,
+      body.reason,
+      deciderFor(req)
+    );
   } catch (err) {
     if (err instanceof OrchestratorConflictError) {
       return errorResponse(409, err.message);
