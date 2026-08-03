@@ -2139,6 +2139,32 @@ function enrichNote(ctx: ApiContext, id: string): Response {
   return jsonResponse({ planId: record.id }, 202);
 }
 
+// Methods that only read; everything else counts as a state change, so a route
+// added later is guarded by default rather than by opting in.
+const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// Origins allowed to drive this daemon — the same set resolveCorsOrigin in
+// index.ts uses to decide whether a response may be read.
+export function isTrustedOrigin(origin: string): boolean {
+  return (
+    origin === 'tauri://localhost' ||
+    origin === 'https://tauri.localhost' ||
+    origin === 'http://tauri.localhost' ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  );
+}
+
+// A body-less cross-origin POST skips the preflight, and CORS headers are added
+// only after the handler ran, so a foreign origin has to be refused before any
+// route matches — this daemon has no other authentication.
+export function rejectUntrustedOrigin(req: Request): Response | null {
+  if (READ_ONLY_METHODS.has(req.method)) return null;
+  const origin = req.headers.get('origin');
+  // Browsers always send Origin on a state change; the CLI, MCP and curl never do.
+  if (origin === null || isTrustedOrigin(origin)) return null;
+  return errorResponse(403, 'cross-origin request rejected');
+}
+
 export async function handleApi(
   req: Request,
   ctx: ApiContext
@@ -2149,6 +2175,9 @@ export async function handleApi(
     .split('/')
     .filter(Boolean);
   const method = req.method;
+
+  const untrusted = rejectUntrustedOrigin(req);
+  if (untrusted !== null) return untrusted;
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
