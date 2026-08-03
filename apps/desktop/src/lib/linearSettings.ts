@@ -87,3 +87,32 @@ export function resolveLinearLink(
   const uuid = parseExternal(external);
   return uuid === null ? null : (links[uuid] ?? null);
 }
+
+/** Whether Disconnect can actually take effect, and what to say when it cannot. An env key
+ *  outranks the stored file, so clearing the file would leave the daemon still connected. */
+export function describeKeySource(status: LinearStatus): {
+  canDisconnect: boolean;
+  note: string | null;
+} {
+  if (status.keySource === 'file') return { canDisconnect: true, note: null };
+  if (status.keySource === 'env') {
+    return {
+      canDisconnect: false,
+      note: 'This key comes from LINEAR_API_KEY in the daemon’s environment. Unset it and restart Dispatch to disconnect.',
+    };
+  }
+  return { canDisconnect: false, note: null };
+}
+
+/** Turns a failed teams/states fetch into something worth showing. A 401 means the stored key
+ *  was rejected, which otherwise looks identical to having no key at all. */
+export function describeFetchFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('401')) {
+    return 'Linear rejected this key — it may have been revoked. Reconnect with a new one.';
+  }
+  if (message.includes('409')) {
+    return 'No Linear API key is configured.';
+  }
+  return `Couldn’t reach Linear: ${message}`;
+}
