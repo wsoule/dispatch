@@ -215,10 +215,16 @@ describe('doctor', () => {
     expect(out).toContain('dependency map');
   });
 
-  it('reports carto as absent without failing', () => {
+  it('reports carto as absent without failing, and suppresses the empty-map warning when TypeScript is present', () => {
     const root = writeProject({ 'src/a.ts': 'export const a = 1;\n' });
     const out = runDoctor(root, { PATH: '/nonexistent' });
     expect(out).toContain('carto');
     expect(out).not.toContain('Error');
+    // TypeScript sources are present, so the built-in scanner isn't blind
+    // here — the warning must NOT fire. This is the AND-conjunction in
+    // doctor.ts's guard (`!discovery.ok && !hasTypeScriptSources(...)`);
+    // without this assertion a regression to `!discovery.ok` alone would go
+    // unnoticed, since the Go-project test above passes either way.
+    expect(out).not.toContain('warning: no carto container');
   });
 });

@@ -21,9 +21,8 @@ interface Issue {
 const SOURCE_ROOTS = ['packages', 'apps', 'src', 'lib'];
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.dispatch']);
 
-// Shallow, bounded search for any .ts/.tsx file. This deliberately does NOT
-// build a dependency graph — the only question is whether the built-in
-// scanner could find anything at all in this repo.
+// Shallow, bounded search for any .ts/.tsx file — not a dependency graph,
+// just whether the built-in scanner could find anything at all here.
 function hasTypeScriptSources(rootDir: string, depth = 4): boolean {
   const search = (dir: string, left: number): boolean => {
     if (left < 0 || !existsSync(dir)) return false;
@@ -154,11 +153,8 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         });
       }
 
-      // Carto health, and the case that motivated this integration: a repo
-      // the built-in scanner cannot read at all reports an empty dependency
-      // map, so review scope silently shrinks to just the changed files.
-      // Skipped under --json: that output is a single parseable blob, and
-      // these are advisory lines rather than issues.
+      // Carto health, plus the empty-dependency-map warning below. Skipped
+      // under --json since that output must be a single parseable blob.
       if (opts.json !== true) {
         const discovery = discoverCarto();
         if (config.carto.enabled !== 'off') {
@@ -172,9 +168,8 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
             );
           }
         }
-        // The built-in scanner only understands .ts/.tsx. With no carto and
-        // no TypeScript, dependents() can only ever return [] — the silent
-        // scope collapse this warning exists to expose.
+        // No carto and no TypeScript: the built-in scanner is blind here,
+        // so dependents() can only ever return [].
         if (!discovery.ok && !hasTypeScriptSources(ctx.cwd)) {
           ctx.log(
             'warning: no carto container and no TypeScript sources, so the dependency map is empty and review scope covers only changed files'
