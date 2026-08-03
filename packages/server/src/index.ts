@@ -178,11 +178,8 @@ async function serveStatic(
   return null;
 }
 
-// ActorContext's GitReader seam: reads one git config value synchronously,
-// since identity resolution runs once at boot before anything else is ready.
-// No existing helper in git/commands.ts reads a single value (GitRepo's
-// methods are all async and shell out via a CommandRunner), so this is a
-// thin local wrapper instead.
+// ActorContext's GitReader seam: git/commands.ts has no single-value config
+// reader, so this is a thin synchronous wrapper instead.
 function makeGitReader(rootDir: string): GitReader {
   return (args) => {
     const result = Bun.spawnSync(['git', ...args], { cwd: rootDir });

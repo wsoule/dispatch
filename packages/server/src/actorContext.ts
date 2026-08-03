@@ -18,30 +18,23 @@ export type GitReader = (args: string[]) => string | null;
 const FALLBACK_EMAIL = 'local@localhost';
 const FALLBACK_NAME = 'Local';
 
-// Same `DISPATCH_HOME` override and fallback rule as daemonfile.ts's
-// `daemonHome()` and orchestrator/paths.ts's `dispatchHome()`, so the known-
-// handle file lands in the same redirected home the rest of the daemon's
-// user-level state uses under the test suite's DISPATCH_HOME.
-function defaultUserStateHome(): string {
+// Same override/fallback rule as daemonfile.ts's `daemonHome()` and
+// orchestrator/paths.ts's `dispatchHome()` — no injectable param, just this.
+function userStateHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();
 }
 
-// `~/.dispatch/actor/<hash of rootDir>.json`, keyed exactly like
-// linear/state.ts's per-project state — user-level, never under the
-// project's own `.dispatch/`, which is committed and shared with the team.
-function knownHandlePath(rootDir: string, userStateHome: string): string {
+// `~/.dispatch/actor/<hash of rootDir>.json`, keyed exactly like linear/state.ts.
+function knownHandlePath(rootDir: string): string {
   const key = createHash('sha256').update(rootDir).digest('hex').slice(0, 12);
-  return join(userStateHome, '.dispatch', 'actor', `${key}.json`);
+  return join(userStateHome(), '.dispatch', 'actor', `${key}.json`);
 }
 
-// A missing or corrupt file just means "no known handle yet" — resolve()
-// falls back to registering fresh from git in that case.
-function readKnownHandle(
-  rootDir: string,
-  userStateHome: string
-): string | undefined {
-  const path = knownHandlePath(rootDir, userStateHome);
+// Missing or corrupt just means "no known handle yet" — resolve() then
+// registers fresh from git.
+function readKnownHandle(rootDir: string): string | undefined {
+  const path = knownHandlePath(rootDir);
   if (!existsSync(path)) return undefined;
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as
@@ -53,12 +46,8 @@ function readKnownHandle(
   }
 }
 
-function writeKnownHandle(
-  rootDir: string,
-  userStateHome: string,
-  handle: string
-): void {
-  const path = knownHandlePath(rootDir, userStateHome);
+function writeKnownHandle(rootDir: string, handle: string): void {
+  const path = knownHandlePath(rootDir);
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ handle })}\n`);
 }
@@ -71,26 +60,20 @@ export class ActorContext {
   private constructor(
     readonly member: TeamMember,
     readonly humanRef: string,
-    // False when `.dispatch/team.yml` held merge-conflict markers or other
-    // malformed YAML — the caller should surface this rather than silently
-    // acting on a made-up empty roster.
+    // False when `.dispatch/team.yml` was unparseable (e.g. merge
+    // conflict markers) — the caller should surface the degraded state.
     readonly rosterReadable: boolean
   ) {}
 
-  static resolve(
-    rootDir: string,
-    runGit: GitReader,
-    userStateHome: string = defaultUserStateHome()
-  ): ActorContext {
+  static resolve(rootDir: string, runGit: GitReader): ActorContext {
     const email = runGit(['config', 'user.email'])?.trim() ?? FALLBACK_EMAIL;
     const name = runGit(['config', 'user.name'])?.trim() ?? FALLBACK_NAME;
     const dir = join(rootDir, DISPATCH_DIR);
     const file = join(dir, 'team.yml');
     const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
 
-    // A conflicted team.yml must be reported, never treated as empty — doing
-    // so would re-register the local member alone and wipe out every
-    // teammate's entry on the next write.
+    // A conflicted roster must be reported, never treated as empty — that
+    // would re-register the local member alone and wipe out the team.
     let existingMembers: TeamMember[] = [];
     let rosterReadable = true;
     try {
@@ -102,13 +85,13 @@ export class ActorContext {
 
     // The handle we registered under last time. It is the only thing that
     // survives a changed git email — the roster cannot infer identity itself.
-    const knownHandle = readKnownHandle(rootDir, userStateHome);
+    const knownHandle = readKnownHandle(rootDir);
     const result = upsertMember(existingMembers, email, name, knownHandle);
     if (rosterReadable && result.changed) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(file, serializeTeam(result.members));
     }
-    writeKnownHandle(rootDir, userStateHome, result.member.handle);
+    writeKnownHandle(rootDir, result.member.handle);
     return new ActorContext(
       result.member,
       formatActorRef({
