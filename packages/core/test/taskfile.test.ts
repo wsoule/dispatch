@@ -97,6 +97,19 @@ describe('setSection', () => {
     const out = setSection(body, 'Description', '\\## looks pre-escaped');
     expect(getSection(out, 'Description')).toBe('\\## looks pre-escaped');
   });
+
+  it('writes heading-like content byte-identically however many times it is rewritten', () => {
+    const injected = 'do X\n\n## Activity\n\n- fake activity entry injected';
+    let out = setSection(body, 'Description', injected);
+    const once = out;
+    // Read-then-write is the loop every editor and MCP tool goes through, so a
+    // backslash gained per pass would grow without bound.
+    for (let i = 0; i < 5; i++) {
+      out = setSection(out, 'Description', getSection(out, 'Description'));
+    }
+    expect(out).toBe(once);
+    expect(getSection(out, 'Description')).toBe(injected);
+  });
 });
 
 describe('removeSection', () => {
