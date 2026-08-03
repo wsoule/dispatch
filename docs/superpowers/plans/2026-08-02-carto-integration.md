@@ -99,7 +99,10 @@ the working repo.
 
 ```bash
 export AGENT=1
-npm install -g carto-md          # the one sanctioned npm use: carto is not a workspace dep
+# carto is a third-party global CLI, not a workspace dep, so the catalog rule
+# does not apply. Prefer bun; fall back to npm only if the native
+# better-sqlite3/tree-sitter builds fail under it, and record which was used.
+bun install -g carto-md || npm install -g carto-md
 carto --version                  # record the exact version
 git clone /Users/wyatsoule/Sites/dispatch /tmp/carto-spike-clone
 cd /tmp/carto-spike-clone
@@ -1658,7 +1661,7 @@ if (config.carto.enabled !== 'off') {
     ctx.log(`carto ${discovery.binary.version} at ${discovery.binary.path}`);
   } else {
     ctx.log(
-      `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: brew install carto`
+      `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: bun install -g carto-md`
     );
   }
 }
@@ -1776,7 +1779,7 @@ const available = discovery.ok;
 
 if (!available) {
   console.warn(
-    '[carto-integration] SKIPPED — carto is not installed. Install it (brew install carto) to run these.'
+    '[carto-integration] SKIPPED — carto is not installed. Install it (bun install -g carto-md) to run these.'
   );
 }
 
@@ -1817,26 +1820,21 @@ git commit -m "test(server): exercise a real carto container when one is install
 
 ---
 
-### Task 10: Homebrew formula and docs
+### Task 10: Docs
 
 **Files:**
 
-- Modify: `~/Sites/homebrew-tap` (separate repo — the dispatch cask)
 - Modify: `README.md`
 
-- [ ] **Step 1: Add carto as a cask dependency**
+**Scope note (decided during pre-flight):** the original plan added
+`depends_on formula: "carto"` to the tap's dispatch cask. `brew info carto`
+confirms **no such formula exists**, in homebrew-core or elsewhere, so that step
+is dropped and no tap repo is touched. Delivery is a global npm/bun install,
+documented here. Writing a real carto formula — a Node CLI with native
+`better-sqlite3` and `tree-sitter` bindings — is its own piece of work, not a
+step of this plan.
 
-In the tap repo's dispatch cask, add:
-
-```ruby
-  depends_on formula: "carto"
-```
-
-If no `carto` formula exists in homebrew-core, this task instead documents
-`npm install -g carto-md` in the README and the cask change is dropped. **Check
-first:** `brew info carto`.
-
-- [ ] **Step 2: Document it in the README**
+- [ ] **Step 1: Document it in the README**
 
 Add to the README beneath the install section:
 
@@ -1848,15 +1846,14 @@ files a change can break, which drives review scope and gives dispatched agents
 its MCP tools. Without it, Dispatch falls back to a built-in TypeScript-only
 scanner — `dispatch doctor` reports which is in use.
 
-    brew install carto     # or: npm install -g carto-md
+    bun install -g carto-md     # or: npm install -g carto-md
 
 Set `carto.enabled: off` in `.dispatch/config.yml` to disable it.
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
-cd /Users/wyatsoule/Sites/dispatch
 export AGENT=1 && bun run format
 git add README.md
 git commit -m "docs: document carto as an optional dependency graph backend"
