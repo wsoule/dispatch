@@ -23,6 +23,7 @@ function record(patch: Partial<PlanRecord>): PlanRecord {
     id: 'plan-abc123',
     prompt: 'draft this note',
     plannerName: 'claude',
+    role: 'enrich',
     messages: [
       { role: 'user', text: 'draft this note', at: '2026-07-26T00:00:00.000Z' },
     ],

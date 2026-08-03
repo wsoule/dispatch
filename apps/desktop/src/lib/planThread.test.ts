@@ -33,6 +33,7 @@ function makeRecord(patch: Partial<PlanRecord> = {}): PlanRecord {
     id: 'plan-abc123',
     prompt: 'Add search',
     plannerName: 'claude',
+    role: 'plan',
     state,
     messages: [],
     questions: [],
