@@ -872,6 +872,29 @@ export class ActorContext {
 Note the fallback: with no git identity the email is `local@localhost`, whose
 local part yields the handle `local`, so `humanRef` is `human:local`.
 
+**A conflicted roster must never be overwritten.** `parseTeam` throws
+`TeamParseError` when `.dispatch/team.yml` is malformed — a realistic state for
+a committed, shared, mergeable file. `resolve()` must catch it and **stand
+down**: serve an unregistered identity derived from the git email, and write
+nothing. Returning an empty roster and re-registering would rewrite `team.yml`
+with only the local member and destroy every teammate's entry.
+
+```ts
+let existingMembers: TeamMember[] = [];
+let rosterReadable = true;
+try {
+  existingMembers = parseTeam(existing);
+} catch {
+  rosterReadable = false;
+}
+```
+
+Guard the write with `if (rosterReadable && result.changed)`, and expose
+`readonly rosterReadable: boolean` on `ActorContext` so the daemon can surface
+the degraded state. Add a test: a `team.yml` holding merge-conflict markers
+leaves the file byte-for-byte unchanged, and `resolve()` still returns a usable
+`humanRef`.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/server/test/actorContext.test.ts` Expected: PASS, 5
