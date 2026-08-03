@@ -202,9 +202,11 @@ export function BoardView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-foreground text-[13px] font-semibold">Tasks</h1>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h1 className="text-foreground text-[13px] leading-6 font-semibold">
+          Tasks
+        </h1>
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Segmented<TasksViewMode>
             label="View"
             value={mode}
