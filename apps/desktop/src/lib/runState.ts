@@ -1,4 +1,4 @@
-import type { RunMeta, RunState } from '@dispatch/client';
+import type { RunMeta, RunState, RunSurvey } from '@dispatch/client';
 
 // Mirrors packages/server/src/orchestrator/types.ts's TERMINAL_RUN_STATES —
 // the desktop UI's own copy of the same "is this run done" check, used to
@@ -98,4 +98,28 @@ export function deriveRunDisposition(meta: RunMeta): RunDisposition {
   // run the server would refuse to resume is worse than showing none.
   const resumable = meta.sessionId !== undefined && meta.sessionId !== '';
   return resumable ? 'stopped-short' : 'dead';
+}
+
+export interface RunSurveyNotice {
+  title: string;
+  body: string;
+}
+
+/**
+ * Toast and inbox wording for a `run.survey` event, or `null` when there is nothing to
+ * say. The only signal that a run left work behind: the survey lands after the run has
+ * already notified as failed, and `interrupted-dirty` is not itself a notifying state.
+ * Names the branch because the row is durable and the work is only recoverable there.
+ */
+export function runSurveyNotice(
+  taskTitle: string,
+  survey: RunSurvey
+): RunSurveyNotice | null {
+  const paths =
+    survey.staged.length + survey.unstaged.length + survey.untracked.length;
+  if (paths === 0) return null;
+  return {
+    title: 'Run left uncommitted work',
+    body: `${taskTitle} — ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
+  };
 }

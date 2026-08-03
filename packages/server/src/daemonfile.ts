@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -12,11 +13,17 @@ import { join } from 'node:path';
 // One JSON file per project root, so `dispatch serve`/`ui` invocations against
 // the same rootDir find (or overwrite) the same daemon record without a
 // central registry process.
+//
+// Three readers mirror this shape by hand and change with it: the CLI's
+// commands/daemon.ts, the MCP's daemon.ts, and sidecar.rs's DaemonFileInfo.
 export interface DaemonFileInfo {
   port: number;
   pid: number;
   rootDir: string;
   startedAt: string;
+  // Request-tier token for the CLI and MCP, which have no other channel. The
+  // decide-tier token stays out: this file is readable by anything as the user.
+  agentToken: string;
 }
 
 // `DISPATCH_HOME` lets tests (and anything else) redirect daemon files away
@@ -49,9 +56,17 @@ export function daemonFilePath(rootDir: string): string {
   return join(daemonsDir(), `${daemonFileKey(rootDir)}.json`);
 }
 
+// Mode 0600 because the file carries `agentToken`. As in core/credentials.ts,
+// writeFileSync's `mode` is ignored on overwrite, so the chmod is explicit.
 export function writeDaemonFile(info: DaemonFileInfo): void {
   mkdirSync(daemonsDir(), { recursive: true });
-  writeFileSync(daemonFilePath(info.rootDir), JSON.stringify(info, null, 2));
+  const path = daemonFilePath(info.rootDir);
+  writeFileSync(path, JSON.stringify(info, null, 2), { mode: 0o600 });
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // A filesystem without POSIX modes is not a reason to fail the write.
+  }
 }
 
 export function readDaemonFile(rootDir: string): DaemonFileInfo | null {

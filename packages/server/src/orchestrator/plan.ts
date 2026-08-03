@@ -534,8 +534,8 @@ export class PlanManager {
       this.ctx.store.update(taskIds[i], { blockedBy }, now);
     });
 
-    // Undeclared `writes` conflicts with everything (safe default), which
-    // silently serializes an epic dispatch — leave a visible trail for why.
+    // Undeclared `writes` conflicts with everything (safe default), so epic
+    // dispatch holds such a task behind every live run — a trail for why.
     if (
       epicId !== undefined &&
       proposal.tasks.some(
@@ -545,7 +545,7 @@ export class PlanManager {
       this.ctx.store.update(
         epicId,
         {
-          appendActivity: `${now} [plan] confirmed with undeclared writes on at least one task — those tasks fully serialize during epic dispatch`,
+          appendActivity: `${now} [plan] confirmed with undeclared writes on at least one task — epic dispatch holds each of those until no run is live anywhere in the project, not only in this epic`,
           // confirm() is only ever reached through the human-facing plan
           // confirmation endpoint — no agent tool confirms a plan.
           activityActor: this.ctx.actorContext?.humanRef,

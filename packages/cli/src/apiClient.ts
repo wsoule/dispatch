@@ -168,14 +168,35 @@ export type ServerEvent =
     }
   | { type: 'plan.changed'; planId: string };
 
+// Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
+// an out-of-fence edit an agent asked for, blocked until someone decides it.
+export interface ScopeRequest {
+  id: string;
+  runId: string;
+  paths: string[];
+  reason: string;
+  requestedAt: string;
+  granted: boolean | null;
+  decisionReason: string | null;
+  decidedAt: string | null;
+}
+
+/** Where a request goes and which daemon token it presents. */
+interface ApiTarget {
+  baseUrl: string;
+  token: string;
+}
+
 // Throws a CliError carrying the server's own `{ error }` message on any non-2xx, so
 // cli.ts renders API failures in the server's wording rather than a bare status code.
 async function request<T>(
-  baseUrl: string,
+  target: ApiTarget,
   path: string,
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(`${baseUrl}${path}`, init);
+  const headers = new Headers(init?.headers);
+  headers.set('authorization', `Bearer ${target.token}`);
+  const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new CliError(body.error ?? `request failed: ${res.status}`);
@@ -221,50 +242,70 @@ export interface ApiClient {
   ): Promise<EpicSession>;
   stopEpic(epicId: string): Promise<EpicSession>;
   getEpicProgress(epicId: string): Promise<EpicProgress>;
+  getScopeRequest(runId: string, requestId: string): Promise<ScopeRequest>;
+  // Decide-tier: only a client built on the app token can call this.
+  decideScopeRequest(
+    runId: string,
+    requestId: string,
+    granted: boolean,
+    reason: string
+  ): Promise<ScopeRequest>;
 }
 
-export function createApiClient(baseUrl: string): ApiClient {
+// `token` is the credential every call presents — the agent token from the
+// daemon file for ordinary commands, and only for `dispatch scope decide` an
+// app token the user supplied explicitly.
+export function createApiClient(baseUrl: string, token: string): ApiClient {
+  const target: ApiTarget = { baseUrl, token };
   return {
     baseUrl,
     createRun: (taskId, executor) =>
-      request(baseUrl, `/api/tasks/${taskId}/runs`, {
+      request(target, `/api/tasks/${taskId}/runs`, {
         ...jsonBody(executor !== undefined ? { executor } : {}),
       }),
-    listRuns: () => request(baseUrl, '/api/runs'),
-    getRun: (id) => request(baseUrl, `/api/runs/${id}`),
+    listRuns: () => request(target, '/api/runs'),
+    getRun: (id) => request(target, `/api/runs/${id}`),
     approveRun: (runId, requestId, allow) =>
-      request(baseUrl, `/api/runs/${runId}/approval`, {
+      request(target, `/api/runs/${runId}/approval`, {
         ...jsonBody({ requestId, allow }),
       }),
     sendRunMessage: (runId, text, opts = {}) =>
-      request(baseUrl, `/api/runs/${runId}/message`, {
+      request(target, `/api/runs/${runId}/message`, {
         ...jsonBody({ text, resume: opts.resume }),
       }),
     cancelRun: (runId) =>
-      request(baseUrl, `/api/runs/${runId}/cancel`, { ...jsonBody({}) }),
-    getRunDiff: (runId) => request(baseUrl, `/api/runs/${runId}/diff`),
+      request(target, `/api/runs/${runId}/cancel`, { ...jsonBody({}) }),
+    getRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
     reviewRun: (runId, action) =>
-      request(baseUrl, `/api/runs/${runId}/review`, {
+      request(target, `/api/runs/${runId}/review`, {
         ...jsonBody({ action }),
       }),
     startPlan: (prompt, planner) =>
-      request(baseUrl, '/api/plan', {
+      request(target, '/api/plan', {
         ...jsonBody(planner !== undefined ? { prompt, planner } : { prompt }),
       }),
-    getPlan: (planId) => request(baseUrl, `/api/plan/${planId}`),
+    getPlan: (planId) => request(target, `/api/plan/${planId}`),
     sendPlanMessage: (planId, text) =>
-      request(baseUrl, `/api/plan/${planId}/message`, {
+      request(target, `/api/plan/${planId}/message`, {
         ...jsonBody({ text }),
       }),
     confirmPlan: (planId, proposal) =>
-      request(baseUrl, `/api/plan/${planId}/confirm`, {
+      request(target, `/api/plan/${planId}/confirm`, {
         ...jsonBody({ proposal }),
       }),
     startEpic: (epicId, opts = {}) =>
-      request(baseUrl, `/api/epics/${epicId}/dispatch`, { ...jsonBody(opts) }),
+      request(target, `/api/epics/${epicId}/dispatch`, { ...jsonBody(opts) }),
     stopEpic: (epicId) =>
-      request(baseUrl, `/api/epics/${epicId}/stop`, { ...jsonBody({}) }),
+      request(target, `/api/epics/${epicId}/stop`, { ...jsonBody({}) }),
     getEpicProgress: (epicId) =>
-      request(baseUrl, `/api/epics/${epicId}/progress`),
+      request(target, `/api/epics/${epicId}/progress`),
+    getScopeRequest: (runId, requestId) =>
+      request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
+    decideScopeRequest: (runId, requestId, granted, reason) =>
+      request(
+        target,
+        `/api/runs/${runId}/scope-requests/${requestId}/decide`,
+        jsonBody({ granted, reason })
+      ),
   };
 }

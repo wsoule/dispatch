@@ -17,11 +17,15 @@ export interface UseTasksResult {
 // whenever dispatchd broadcasts `task.changed` over WS. There is no
 // client-side diffing — every refresh just re-asks the server for the
 // current truth, which is cheap at v1 scale and keeps the client dead
-// simple. `baseUrl` is passed straight to `createApiClient` — see api.ts's
-// module doc comment for why this is baseUrl-first rather than reading an
-// env var.
-export function useTasks(baseUrl: string): UseTasksResult {
-  const client = useMemo(() => createApiClient(baseUrl), [baseUrl]);
+// simple. `baseUrl` and `token` are passed straight to `createApiClient` —
+// see api.ts's module doc comment for why this is baseUrl-first rather than
+// reading an env var, and `createApiClient` for what an omitted token falls
+// back to.
+export function useTasks(baseUrl: string, token?: string): UseTasksResult {
+  const client = useMemo(
+    () => createApiClient(baseUrl, token),
+    [baseUrl, token]
+  );
 
   const [tasks, setTasks] = useState<TaskDoc[]>([]);
   const [config, setConfig] = useState<DispatchConfig | null>(null);

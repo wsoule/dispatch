@@ -90,6 +90,7 @@ function startStubDaemon() {
       pid: process.pid,
       rootDir: root,
       startedAt: new Date().toISOString(),
+      agentToken: 'test-agent-token',
     })
   );
   return server;

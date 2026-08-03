@@ -16,6 +16,7 @@ import { FakePlanner } from '../src/orchestrator/planners/fake.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
 import type { Executor, ExecutorRun } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth, wsUrl } from './testAuth.js';
 
 function json(res: Response): Promise<any> {
   return res.json();
@@ -106,6 +107,7 @@ async function startWithPlanner(planner: FakePlanner): Promise<void> {
       orchestrator.registerExecutor('claude', fakeApprovalExecutor());
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 }
 
@@ -157,7 +159,7 @@ describe('POST /api/plan and GET /api/plan/:id', () => {
     await startWithPlanner(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+    const ws = new WebSocket(wsUrl(handle));
     const gotPlanChanged = new Promise<void>((resolve) => {
       ws.addEventListener('message', (ev) => {
         const parsed = JSON.parse(ev.data as string) as { type: string };
@@ -269,6 +271,7 @@ describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
         orchestrator.registerExecutor('claude', fakeApprovalExecutor());
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const good = await json(
@@ -390,7 +393,7 @@ describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
     await startWithPlanner(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );
-    const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+    const ws = new WebSocket(wsUrl(handle));
     const gotDraftChanged = new Promise<void>((resolve) => {
       ws.addEventListener('message', (ev) => {
         const parsed = JSON.parse(ev.data as string) as { type: string };
@@ -551,6 +554,7 @@ describe('POST /api/tasks/drafts/:id/message', () => {
         orchestrator.registerExecutor('claude', fakeApprovalExecutor());
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const started = await json(
@@ -980,6 +984,7 @@ describe('POST /api/runs/:id/inject', () => {
         orchestrator.registerExecutor('claude', controllable);
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const task = await json(
@@ -1038,6 +1043,7 @@ describe('POST /api/runs/:id/inject', () => {
         orchestrator.registerExecutor('claude', controllable);
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const senderTask = await json(
@@ -1164,6 +1170,7 @@ describe('POST /api/runs/:id/message-user', () => {
         orchestrator.registerExecutor('claude', controllable);
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const task = await json(
@@ -1239,6 +1246,7 @@ describe('GET /api/health pr capability', () => {
         orchestrator.registerExecutor('claude', fakeApprovalExecutor());
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
     const health = await json(await fetch(`${baseUrl}/api/health`));
     expect(health.pr).toBe(true);

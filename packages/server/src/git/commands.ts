@@ -308,6 +308,8 @@ export class GitRepo {
     return { ok: true };
   }
 
+  // `amend` takes no `confirm`, unlike discard/stashDrop/`branch -D`: it rewrites
+  // HEAD but destroys nothing, leaving the replaced commit at HEAD@{1} in the reflog.
   async commit(opts: {
     message: string;
     amend?: boolean;

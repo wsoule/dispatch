@@ -25,12 +25,32 @@ export interface LedgerListFilter {
 // randomness needs; it only bounds a generator that keeps returning a taken id.
 const MINT_ATTEMPTS = 32;
 
+// The fields every read path dereferences. `appliesTo` in particular: entriesFor
+// calls .includes() on it, so a hand-edited line without it throws.
+function isLedgerEntry(value: unknown): value is LedgerEntry {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === 'string' &&
+    record.id !== '' &&
+    typeof record.kind === 'string' &&
+    typeof record.title === 'string' &&
+    typeof record.detail === 'string' &&
+    typeof record.createdAt === 'string' &&
+    Array.isArray(record.appliesTo) &&
+    record.appliesTo.every((t) => typeof t === 'string')
+  );
+}
+
 export class LedgerStore {
   private readonly file: string;
   private readonly generateId: (now: string) => string;
   // Ids already reported as colliding, so a damaged file logs once, not on
   // every read.
   private readonly reportedCollisions = new Set<string>();
+  // Same idea for lines that parse but are not entries, keyed by the line
+  // itself.
+  private readonly reportedInvalidLines = new Set<string>();
 
   constructor(
     rootDir: string,
@@ -49,7 +69,11 @@ export class LedgerStore {
     for (const line of readFileSync(this.file, 'utf8').split('\n')) {
       if (line.trim() === '') continue;
       try {
-        const parsed = JSON.parse(line) as LedgerEntry;
+        const parsed: unknown = JSON.parse(line);
+        if (!isLedgerEntry(parsed)) {
+          this.reportInvalidLine(line);
+          continue;
+        }
         // Older lines pre-date authoredBy; default it so they stay loadable.
         const record: LedgerEntry = {
           ...parsed,
@@ -75,6 +99,16 @@ export class LedgerStore {
     console.error(
       `dispatchd: ledger id ${id} belongs to more than one entry in ${this.file}. ` +
         'Both are kept; edit the file to give the newer one a distinct id.'
+    );
+  }
+
+  // Dropped rather than served: entriesFor() injects entries into task prompts,
+  // where a shapeless one either throws or reads as `undefined`.
+  private reportInvalidLine(line: string): void {
+    if (this.reportedInvalidLines.has(line)) return;
+    this.reportedInvalidLines.add(line);
+    console.error(
+      `dispatchd: skipping a ledger line missing required fields in ${this.file}: ${line.slice(0, 200)}`
     );
   }
 

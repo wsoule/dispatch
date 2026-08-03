@@ -162,7 +162,7 @@ pub struct DailyActivity {
 pub struct DashboardStats {
     pub total_cost_usd: f64,
     pub total_sessions: i64,
-    /// Count of every project Relay knows about — independent of `top_projects`'s cap, so
+    /// Count of every known project — independent of `top_projects`'s cap, so
     /// this stays accurate once there are more projects than the "highest usage" list shows.
     pub total_projects: i64,
     /// Oldest first, one entry per day, `HEATMAP_DAYS` long (today inclusive).
@@ -359,8 +359,8 @@ fn render_report_markdown(report: &ReportData) -> String {
     out
 }
 
-/// Opens `url` in the user's default browser — macOS only, matching Relay's current
-/// platform scope.
+/// Opens `url` in the user's default browser — macOS only, matching the app's
+/// current platform scope.
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     Command::new("open")
@@ -370,7 +370,7 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("failed to open {url}: {e}"))
 }
 
-/// Reveals `path` in Finder — macOS only, matching Relay's current platform scope (see the
+/// Reveals `path` in Finder — macOS only, matching the app's platform scope (see the
 /// README's "Requirements"). Used by the Reports view's "Reveal in Finder" button right after
 /// `export_report` writes a file, so the user doesn't have to hunt through Downloads for it.
 #[tauri::command]
@@ -432,19 +432,52 @@ fn render_transcript_header(session: &queries::Session) -> String {
 // --- Dispatch task sidecar (Phase 2R, Slice R2) ---
 
 /// Ensures a `dispatchd` daemon is running for `root` (a project's absolute
-/// path) and returns its port, spawning one if needed — see `sidecar`'s
-/// module doc comment for the fast-path/spawn/poll behavior this delegates
-/// to. `root` here is a project path, not the monorepo root; `manifest_dir`
-/// (this crate's own `CARGO_MANIFEST_DIR`, baked in at compile time) is what
-/// dev-only bin resolution walks up from to find `packages/server/src/bin.ts`.
+/// path) and returns its port plus whichever daemon tokens this app holds,
+/// spawning one if needed — see `sidecar`'s module doc comment for the
+/// fast-path/spawn/poll behavior this delegates to. `root` here is a project
+/// path, not the monorepo root; `manifest_dir` (this crate's own
+/// `CARGO_MANIFEST_DIR`, baked in at compile time) is what dev-only bin
+/// resolution walks up from to find `packages/server/src/bin.ts`.
 #[tauri::command]
 pub async fn ensure_dispatchd(
     app: tauri::AppHandle,
     children: State<'_, sidecar::DispatchdChildren>,
+    app_tokens: State<'_, sidecar::SpawnedAppTokens>,
     root: String,
-) -> Result<u16, String> {
+) -> Result<sidecar::DaemonConnection, String> {
     let launch = resolve_daemon_launch(&app)?;
-    sidecar::ensure_dispatchd(&sidecar::BunSpawner, &children, launch, &root).await
+    sidecar::ensure_dispatchd(
+        &sidecar::BunSpawner,
+        &children,
+        &app_tokens,
+        launch,
+        &root,
+        false,
+    )
+    .await
+}
+
+/// Replaces the dispatchd serving `root` with one this app spawns itself, so it
+/// can read the app token off stdout and regain decide tier. Only reachable
+/// from the UI's explicit restart affordance, which gates it on no run being
+/// in flight — the daemon hosts running agents, so this ends them.
+#[tauri::command]
+pub async fn restart_dispatchd(
+    app: tauri::AppHandle,
+    children: State<'_, sidecar::DispatchdChildren>,
+    app_tokens: State<'_, sidecar::SpawnedAppTokens>,
+    root: String,
+) -> Result<sidecar::DaemonConnection, String> {
+    let launch = resolve_daemon_launch(&app)?;
+    sidecar::ensure_dispatchd(
+        &sidecar::BunSpawner,
+        &children,
+        &app_tokens,
+        launch,
+        &root,
+        true,
+    )
+    .await
 }
 
 /// Picks how to start dispatchd for the running build. A dev build runs the TS

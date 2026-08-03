@@ -153,14 +153,14 @@ double-dispatch.
   only), live-run indicator on cards; Runs rail listing live runs (state, cost
   ticker via usage entries).
 - Run view (drawer or route within project detail): chat-style normalized log
-  (collapsible tool entries — follow Relay's design system), approval card
+  (collapsible tool entries — follow the desktop design system), approval card
   (allow/deny with tool name + input preview), follow-up message box while
   running, cancel.
 - Review view for finished runs: `PatchDiff` (unified patch from /diff) with
   `WorkerPoolContext`, changed-files `FileTree` (paths from /diff files,
   `setGitStatus` decoration), actions merge / discard / request-changes
-  (textarea → /message resume). Theme the Pierre CSS vars from Relay tokens
-  (Shadow DOM keeps isolation).
+  (textarea → /message resume). Theme the Pierre CSS vars from the desktop
+  design tokens (Shadow DOM keeps isolation).
 - WS: subscribe run.changed/run.log/approval.requested → react-query
   invalidations + live log append.
 - Tests: lib-level (log entry grouping, cost accumulation helper); build green.

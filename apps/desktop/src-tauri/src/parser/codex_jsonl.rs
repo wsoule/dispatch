@@ -17,7 +17,7 @@
 //! `timestamp`. So `parse_line` is keyed by `raw_log_path` and remembers the last-seen
 //! `session_meta` for that specific file, applying it to later lines from the same file.
 
-use super::record::{ParsedRecord, Usage};
+use super::record::{ParsedRecord, Usage, UsageKind};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -184,6 +184,9 @@ fn extract_token_usage(payload: &Value) -> Option<Usage> {
     let totals = info.get("total_token_usage").unwrap_or(info);
 
     Some(Usage {
+        // `total_token_usage` is the session's running total, re-reported in full on every
+        // `token_count` event — not this event's own increment.
+        kind: UsageKind::Cumulative,
         input_tokens: totals.get("input_tokens").and_then(Value::as_i64).unwrap_or(0),
         output_tokens: totals.get("output_tokens").and_then(Value::as_i64).unwrap_or(0),
         cache_read_input_tokens: totals

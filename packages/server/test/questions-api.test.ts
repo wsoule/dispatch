@@ -8,6 +8,7 @@ import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { Executor, ExecutorRun } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 // Response.json() types as Promise<unknown> under this repo's DOM-less
 // tsconfig, so every read names the shape it expects.
@@ -84,6 +85,7 @@ beforeEach(async () => {
       orchestrator.registerExecutor('claude', controllable);
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 

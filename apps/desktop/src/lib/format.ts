@@ -1,6 +1,6 @@
 /** A session's best available display name: Claude Code's own auto-generated title first
  * (matches "Session name" in `claude`'s `/status` and `--resume` picker), falling back to
- * Relay's own AI-generated one-line summary, then a fixed placeholder if neither exists yet. */
+ * the app's own AI-generated one-line summary, then a fixed placeholder if neither exists yet. */
 export function sessionDisplayName(
   title: string | null,
   summary: string | null

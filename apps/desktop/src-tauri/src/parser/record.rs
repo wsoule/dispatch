@@ -2,8 +2,22 @@
 //! `gemini_log`, `cursor_jsonl`) produces, so `session_builder::ingest_record` can stay
 //! agent-agnostic — it only ever sees a `ParsedRecord`, never a raw log line.
 
+/// Whether a parser's token numbers are this record's own increment or the session's
+/// running total so far. Agents differ, and the distinction decides how `upsert_session`
+/// folds them in: summing a running total once per record inflates a session's counters
+/// roughly quadratically in its turn count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UsageKind {
+    /// This record's own tokens, to be added to the session total (Claude Code, Gemini).
+    #[default]
+    Delta,
+    /// The session's cumulative total as of this record (Codex), to be taken as-is.
+    Cumulative,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Usage {
+    pub kind: UsageKind,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_read_input_tokens: i64,

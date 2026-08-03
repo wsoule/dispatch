@@ -65,6 +65,7 @@ pub fn ingest_record(
         .usage
         .as_ref()
         .map(|u| TokenDelta {
+            kind: u.kind,
             prompt_tokens: u.input_tokens,
             completion_tokens: u.output_tokens,
             cache_read_tokens: u.cache_read_input_tokens,
@@ -85,19 +86,6 @@ pub fn ingest_record(
 
     if created {
         outcome.session_created = Some(session_id.clone());
-
-        // Board/columns are ensured (not just looked up) here since this may be the very
-        // first session ever seen for this project. Card title is a placeholder — no
-        // first-user-text is available yet at this point in ingestion (that's only extracted
-        // later, from the raw log, by the idle-sweep's tag/summary passes) — the user can
-        // rename it once they open the card.
-        let board_id = queries::ensure_board_for_project(conn, &project_id)?;
-        // If the user spawned this session from a card (launch_or_attach_session stamped it),
-        // adopt it into that card instead of minting a duplicate. Falls back to auto-create
-        // when nothing is awaiting a launch in this project.
-        if !queries::adopt_pending_card_for_session(conn, &project_id, &session_id)? {
-            queries::auto_create_card_for_session(conn, &board_id, &session_id, "New session")?;
-        }
     } else {
         outcome.session_updated = Some(session_id.clone());
     }
@@ -234,13 +222,7 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql"))
             .unwrap();
-        conn.execute_batch(include_str!("../../migrations/0003_kanban.sql"))
-            .unwrap();
         conn.execute_batch(include_str!("../../migrations/0004_session_title.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../../migrations/0005_plan.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../../migrations/0006_card_pending_launch.sql"))
             .unwrap();
         conn
     }
@@ -417,40 +399,6 @@ mod tests {
     }
 
     #[test]
-    fn ingesting_a_new_session_auto_creates_a_card_in_the_in_progress_column() {
-        let conn = in_memory_db();
-        ingest_fixture(&conn);
-
-        let session_id: String = conn
-            .query_row("SELECT id FROM sessions", [], |r| r.get(0))
-            .unwrap();
-
-        let (card_session_id, column_role): (Option<String>, Option<String>) = conn
-            .query_row(
-                "SELECT c.session_id, col.role FROM cards c
-                 JOIN columns col ON col.id = c.column_id",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-
-        assert_eq!(card_session_id, Some(session_id));
-        assert_eq!(column_role.as_deref(), Some("in_progress"));
-    }
-
-    #[test]
-    fn replaying_the_same_fixture_twice_does_not_create_a_duplicate_card() {
-        let conn = in_memory_db();
-        ingest_fixture(&conn);
-        ingest_fixture(&conn);
-
-        let card_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM cards", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(card_count, 1);
-    }
-
-    #[test]
     fn ingesting_fixture_sets_session_title_from_ai_title_record() {
         let conn = in_memory_db();
         ingest_fixture(&conn);
@@ -459,14 +407,6 @@ mod tests {
             .query_row("SELECT title FROM sessions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(title.as_deref(), Some("Add hello world and fix greeting"));
-
-        // The auto-created card's placeholder "New session" title is replaced by the real
-        // ai-title too, since it arrives well before the idle-sweep's own tag/summary passes
-        // would otherwise be the first thing to rename it.
-        let card_title: String = conn
-            .query_row("SELECT title FROM cards", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(card_title, "Add hello world and fix greeting");
     }
 
     #[test]

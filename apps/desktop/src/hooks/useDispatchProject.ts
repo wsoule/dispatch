@@ -29,14 +29,25 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
+import {
+  configChangedQueryKeys,
+  dispatchConfigKey,
+  linearStatusKey,
+} from '../lib/configEvents';
+import type { DecideAvailability } from '../lib/daemonAuth';
+import {
+  assertCanDecide,
+  decideAvailability,
+  resolveDaemonAuth,
+} from '../lib/daemonAuth';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
 import { resolveExecuteModel } from '../lib/models';
 import { notify } from '../lib/notifications';
-import { isTerminalRunState } from '../lib/runState';
+import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
-import { ensureDispatchd } from '../lib/tauri';
+import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
 import {
   findingsQueryRootKey,
@@ -325,6 +336,12 @@ export interface DispatchProjectData {
     granted: boolean,
     reason?: string
   ) => Promise<void>;
+  /** Whether this window holds the app token that scope decisions require, plus the notice
+   * and restart affordance to show when it does not. */
+  scopeDecide: DecideAvailability;
+  /** Replaces an attached daemon with one this app spawns, to regain decide tier. Ends any
+   * run in flight — gate on `scopeDecide.restart.safe`. */
+  handleRestartDaemon: () => Promise<void>;
   /** Run id -> every question that run's agent is blocked on, oldest first. Usually one, but
    * an agent can dispatch several `ask_user` calls in the same turn. */
   openQuestions: Map<string, RunQuestion[]>;
@@ -528,7 +545,7 @@ export function useDispatchProject(
   }, [projectPath]);
 
   const {
-    data: port,
+    data: connection,
     isLoading: portLoading,
     isError: portError,
     error: portErrorDetail,
@@ -544,14 +561,22 @@ export function useDispatchProject(
     retry: false,
   });
 
+  const port = connection?.port;
+  // The credential every call below presents. `canDecide` is false whenever the
+  // app attached to a daemon it did not spawn, because the app token only ever
+  // arrives on a spawned daemon's stdout.
+  const auth = useMemo(() => resolveDaemonAuth(connection), [connection]);
+
   const client = useMemo(
     () =>
-      port !== undefined ? createApiClient(`http://127.0.0.1:${port}`) : null,
-    [port]
+      port !== undefined
+        ? createApiClient(`http://127.0.0.1:${port}`, auth.token)
+        : null,
+    [port, auth.token]
   );
 
   const tasksQueryKey = useMemo(() => ['dispatch-tasks', port], [port]);
-  const configQueryKey = useMemo(() => ['dispatch-config', port], [port]);
+  const configQueryKey = useMemo(() => dispatchConfigKey(port), [port]);
   const readyQueryKey = useMemo(() => ['dispatch-ready-tasks', port], [port]);
   const runsQueryKey = useMemo(() => ['dispatch-runs', port], [port]);
   const runDetailQueryKey = useMemo(
@@ -594,10 +619,7 @@ export function useDispatchProject(
   // missing from countMergeReady's lookup map entirely and read as
   // "not done", wrongly inflating the "Merge all ready" count.
   const allTasksQueryKey = useMemo(() => ['dispatch-tasks-all', port], [port]);
-  const linearStatusQueryKey = useMemo(
-    () => ['dispatch-linear-status', port],
-    [port]
-  );
+  const linearStatusQueryKey = useMemo(() => linearStatusKey(port), [port]);
   const linearTeamsQueryKey = useMemo(
     () => ['dispatch-linear-teams', port],
     [port]
@@ -1079,6 +1101,31 @@ export function useDispatchProject(
                 target: { kind: 'task', taskId: event.taskId },
               },
             ]);
+          } else if (event.type === 'config.changed') {
+            // Settings in another window, the CLI, and Linear connect/disconnect
+            // all write config; without this branch they sit stale here.
+            for (const key of configChangedQueryKeys(port)) {
+              void queryClient.invalidateQueries({ queryKey: key });
+            }
+          } else if (event.type === 'run.survey') {
+            // Same cache-read reason as approval.requested above. This is the
+            // only signal that a terminal run left uncommitted work behind.
+            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+            const taskTitle =
+              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+              event.runId;
+            const notice = runSurveyNotice(taskTitle, event.survey);
+            if (notice !== null) {
+              void notify(notice.title, notice.body);
+              onRecordInbox([
+                {
+                  ts: new Date().toISOString(),
+                  title: notice.title,
+                  body: notice.body,
+                  target: { kind: 'run', runId: event.runId },
+                },
+              ]);
+            }
           } else if (event.type === 'verification.changed') {
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),
@@ -1519,6 +1566,10 @@ export function useDispatchProject(
       reason?: string
     ): Promise<void> => {
       if (client === null) return;
+      // Deciding is the one thing an attached session cannot do; the daemon
+      // would 403 it. Fail here with the actionable sentence rather than
+      // letting a raw auth error reach the card.
+      assertCanDecide(auth);
       await client.decideScopeRequest(runId, requestId, granted, reason);
       setPendingScopeRequests((prev) => {
         const next = new Map(prev);
@@ -1527,8 +1578,18 @@ export function useDispatchProject(
       });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
-    [client, queryClient, port]
+    [client, queryClient, port, auth]
   );
+
+  // Replaces an attached daemon with one this app spawns, so it can read the
+  // app token off stdout. Refetches the connection query, which rebuilds the
+  // client (new port, new token) and re-enables the decide surfaces.
+  const handleRestartDaemon = useCallback(async (): Promise<void> => {
+    if (projectPath === null) return;
+    await restartDispatchd(projectPath);
+    await retryEnsureDispatchd();
+    await queryClient.invalidateQueries();
+  }, [projectPath, retryEnsureDispatchd, queryClient]);
 
   const handleAnswerQuestion = useCallback(
     async (
@@ -2034,6 +2095,14 @@ export function useDispatchProject(
     onRecordInbox
   );
 
+  // Whether this window can adjudicate scope requests, plus what to say and
+  // offer when it cannot. Depends on the run list because a restart ends any
+  // run in flight.
+  const scopeDecide = useMemo(
+    () => decideAvailability(auth, runs ?? []),
+    [auth, runs]
+  );
+
   return {
     client,
     port,
@@ -2086,6 +2155,8 @@ export function useDispatchProject(
     pendingApprovals,
     pendingScopeRequests,
     handleDecideScopeRequest,
+    scopeDecide,
+    handleRestartDaemon,
     openQuestions,
     handleAnswerQuestion,
 

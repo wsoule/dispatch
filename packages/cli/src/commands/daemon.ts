@@ -34,6 +34,9 @@ interface DaemonFileInfo {
   pid: number;
   rootDir: string;
   startedAt: string;
+  // Request-tier credential. Optional here only so a file written by a daemon
+  // that predates token auth still parses into an actionable error.
+  agentToken?: string;
 }
 
 function daemonHome(): string {
@@ -235,14 +238,44 @@ function sleep(ms: number): Promise<void> {
 async function waitForHealthyDaemon(
   rootDir: string,
   timeoutMs: number
-): Promise<number | null> {
+): Promise<DaemonFileInfo | null> {
   const deadline = Date.now() + timeoutMs;
   do {
     const info = readDaemonFile(rootDir);
-    if (info !== null && (await isHealthy(info.port))) return info.port;
+    if (info !== null && (await isHealthy(info.port))) return info;
     await sleep(200);
   } while (Date.now() < deadline);
   return null;
+}
+
+const STALE_DAEMON_MESSAGE =
+  "this project's daemon file has no `agentToken`, so the dispatchd it " +
+  'describes predates token auth — stop that daemon and start a new one.';
+
+// The request-tier credential every CLI call to dispatchd presents. Failing
+// here beats sending a doomed request the daemon can only answer with a 401.
+function requireAgentToken(info: DaemonFileInfo): string {
+  if (info.agentToken === undefined || info.agentToken === '') {
+    throw new CliError(STALE_DAEMON_MESSAGE);
+  }
+  return info.agentToken;
+}
+
+/** A daemon this CLI can talk to: where it listens, and the token to present. */
+export interface DaemonConnection {
+  port: number;
+  agentToken: string;
+}
+
+// Attaches to an already-running daemon without ever starting one — the
+// decide path needs this, because a daemon it started itself would have
+// minted an app token nobody can present.
+export async function findRunningDaemon(
+  rootDir: string
+): Promise<DaemonConnection | null> {
+  const info = readDaemonFile(rootDir);
+  if (info === null || !(await isHealthy(info.port))) return null;
+  return { port: info.port, agentToken: requireAgentToken(info) };
 }
 
 export interface EnsureDaemonOptions {
@@ -262,11 +295,9 @@ export interface EnsureDaemonOptions {
 export async function ensureDaemon(
   ctx: CliContext,
   opts: EnsureDaemonOptions = {}
-): Promise<{ port: number }> {
-  const existing = readDaemonFile(ctx.cwd);
-  if (existing !== null && (await isHealthy(existing.port))) {
-    return { port: existing.port };
-  }
+): Promise<DaemonConnection> {
+  const existing = await findRunningDaemon(ctx.cwd);
+  if (existing !== null) return existing;
 
   const launcher = resolveDaemonLauncher();
   const args = [...launcher.leadingArgs, '--root', ctx.cwd];
@@ -274,7 +305,15 @@ export async function ensureDaemon(
 
   // Detached + ignored stdio: this daemon should outlive the CLI invocation
   // that spawned it and keep running in the background, the same way
-  // `dispatch serve` running in a separate terminal would. On the bun-script
+  // `dispatch serve` running in a separate terminal would. Its startup
+  // `DISPATCH_APP_TOKEN=` line therefore goes to /dev/null and cannot be
+  // recovered — deliberately, since `dispatch` runs inside agent shells whose
+  // stdout the agent reads, and relaying that line there would hand the
+  // decide-tier credential to the very caller the tier split excludes. Use
+  // `dispatch serve` when you need an app token; `dispatch scope decide` says
+  // so when it has none.
+  //
+  // On the bun-script
   // path no `env` override is passed, so the child inherits this process's
   // full environment — including `DISPATCH_ENABLE_FAKES`/`DISPATCH_HOME` when
   // a test (or a user) has set them, which is what lets the CLI's own e2e
@@ -293,15 +332,16 @@ export async function ensureDaemon(
   });
   child.unref();
 
-  const port = await waitForHealthyDaemon(ctx.cwd, 5000);
-  if (port === null) {
+  const info = await waitForHealthyDaemon(ctx.cwd, 5000);
+  if (info === null) {
     throw new CliError(
       launcher.usesBun
         ? 'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
         : `dispatchd did not become healthy within 5s (launched ${launcher.cmd})`
     );
   }
-  return { port: await resolveRaceWinner(ctx.cwd, child, port) };
+  const winner = await resolveRaceWinner(ctx.cwd, child, info);
+  return { port: winner.port, agentToken: requireAgentToken(winner) };
 }
 
 // I3: two concurrent `ensureDaemon` calls for the same rootDir (e.g. two
@@ -324,8 +364,8 @@ export async function ensureDaemon(
 async function resolveRaceWinner(
   rootDir: string,
   spawnedChild: ChildProcess,
-  fallbackPort: number
-): Promise<number> {
+  fallback: DaemonFileInfo
+): Promise<DaemonFileInfo> {
   const info = readDaemonFile(rootDir);
   if (
     info !== null &&
@@ -338,9 +378,9 @@ async function resolveRaceWinner(
     } catch {
       // Already gone, or never actually started — nothing more to clean up.
     }
-    return info.port;
+    return info;
   }
-  return fallbackPort;
+  return fallback;
 }
 
 export function registerDaemonCommands(

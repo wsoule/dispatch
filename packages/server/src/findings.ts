@@ -40,12 +40,32 @@ export interface FindingListFilter {
 // randomness needs; it only bounds a generator that keeps returning a taken id.
 const MINT_ATTEMPTS = 32;
 
+// The fields every read path dereferences. A hand-edited line missing one is
+// not a finding: without an id, update() writes past it and never edits it.
+function isFinding(value: unknown): value is Finding {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === 'string' &&
+    record.id !== '' &&
+    typeof record.taskId === 'string' &&
+    typeof record.severity === 'string' &&
+    typeof record.verdict === 'string' &&
+    typeof record.title === 'string' &&
+    typeof record.detail === 'string' &&
+    typeof record.createdAt === 'string'
+  );
+}
+
 export class FindingStore {
   private readonly file: string;
   private readonly generateId: (now: string) => string;
   // Ids already reported as colliding, so a damaged file logs once, not on
   // every read.
   private readonly reportedCollisions = new Set<string>();
+  // Same idea for lines that parse but are not findings, keyed by the line
+  // itself.
+  private readonly reportedInvalidLines = new Set<string>();
 
   constructor(
     rootDir: string,
@@ -64,7 +84,11 @@ export class FindingStore {
     for (const line of readFileSync(this.file, 'utf8').split('\n')) {
       if (line.trim() === '') continue;
       try {
-        const parsed = JSON.parse(line) as Finding;
+        const parsed: unknown = JSON.parse(line);
+        if (!isFinding(parsed)) {
+          this.reportInvalidLine(line);
+          continue;
+        }
         // Older lines pre-date raisedBy; default it so they stay loadable.
         const record: Finding = { ...parsed, raisedBy: parsed.raisedBy ?? '' };
         const key = `${record.id}\n${record.createdAt}`;
@@ -87,6 +111,16 @@ export class FindingStore {
     console.error(
       `dispatchd: finding id ${id} belongs to more than one record in ${this.file}. ` +
         'Both are kept; edit the file to give the newer one a distinct id.'
+    );
+  }
+
+  // Dropped rather than served: a shapeless record is one a fix round would
+  // quote and a ruling would silently fail to reach.
+  private reportInvalidLine(line: string): void {
+    if (this.reportedInvalidLines.has(line)) return;
+    this.reportedInvalidLines.add(line);
+    console.error(
+      `dispatchd: skipping a finding line missing required fields in ${this.file}: ${line.slice(0, 200)}`
     );
   }
 
