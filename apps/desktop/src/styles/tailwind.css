@@ -6,60 +6,35 @@
    the semantic CSS variables below, which are overridden in the same media query. */
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
-/* shadcn semantic theme, mapped to the app's Linear palette (see styles/tokens.css — the same
-   values, exposed here under shadcn's names so shadcn/ui primitives match the hand-rolled
-   components exactly during the migration). Light values here; dark overrides in the media
-   query below. */
+/* shadcn semantic theme, aliased onto styles/tokens.css so shadcn/ui primitives match the
+   hand-rolled components. Only aliases — no literals — so tokens.css's own dark block flips
+   these for free and this file never restates the palette. */
 :root {
-  --radius: 0.5rem;
+  --radius: 0.625rem;
 
-  --background: #fbfbfc;
-  --foreground: #1a1b1e;
-  --card: #ffffff;
-  --card-foreground: #1a1b1e;
-  --popover: #ffffff;
-  --popover-foreground: #1a1b1e;
-  --primary: #5e6ad2;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f2f4;
-  --secondary-foreground: #1a1b1e;
-  --muted: #f1f2f4;
-  --muted-foreground: #71757d;
-  /* Namespaced so it doesn't collide with tokens.css's `--accent` (the app's brand indigo).
-     shadcn's `accent` is a *subtle* hover/fill, distinct from `primary`; tokens.css loads
-     after this file, so an unprefixed `--accent` here would be overwritten by the brand
-     indigo and turn every shadcn skeleton/hover bright indigo. */
-  --sh-accent: #eceef8;
-  --sh-accent-foreground: #5e6ad2;
-  --destructive: #d64c4c;
-  --destructive-foreground: #ffffff;
-  --border: #e8e9ec;
-  --input: #e8e9ec;
-  --ring: #5e6ad2;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0e0f11;
-    --foreground: #f7f8f8;
-    --card: #17181c;
-    --card-foreground: #f7f8f8;
-    --popover: #1e1f24;
-    --popover-foreground: #f7f8f8;
-    --primary: #5e6ad2;
-    --primary-foreground: #ffffff;
-    --secondary: #1c1d21;
-    --secondary-foreground: #f7f8f8;
-    --muted: #1c1d21;
-    --muted-foreground: #858991;
-    --sh-accent: #21243a;
-    --sh-accent-foreground: #c3c8ec;
-    --destructive: #e5595b;
-    --destructive-foreground: #ffffff;
-    --border: #23252a;
-    --input: #23252a;
-    --ring: #5e6ad2;
-  }
+  --background: var(--surface-page);
+  --foreground: var(--text-primary);
+  --card: var(--surface-card);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-card);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-contrast);
+  --secondary: var(--surface-muted);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--text-muted);
+  /* Namespaced so it doesn't collide with tokens.css's `--accent`. shadcn's `accent` is a
+     *subtle* hover/fill, distinct from `primary`; tokens.css loads after this file, so an
+     unprefixed `--accent` here would be overwritten and turn every shadcn skeleton/hover the
+     wrong shade. */
+  --sh-accent: var(--accent-muted);
+  --sh-accent-foreground: var(--text-primary);
+  --destructive: var(--red);
+  --destructive-foreground: var(--accent-contrast);
+  --border: var(--border-default);
+  --input: var(--border-default);
+  --ring: var(--accent);
 }
 
 @theme inline {
@@ -115,6 +90,13 @@
   --color-state-blocked: var(--state-blocked-fg);
   --color-state-blocked-surface: var(--state-blocked-surface);
   --color-state-blocked-edge: var(--state-blocked-edge);
+
+  /* The only real colours left in the app — addition, deletion, conflict.
+     Re-exported here so a diff stat or a changed-line marker can say
+     `text-green` instead of carrying an inline style. Defined in tokens.css. */
+  --color-green: var(--green);
+  --color-red: var(--red);
+  --color-blue: var(--blue);
 
   /* The dense-row *type* treatments aren't exported here: a section label is size + tracking +
      uppercase and row metadata is size + mono + tracking, so they're one `.dense-label` /
