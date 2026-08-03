@@ -57,7 +57,15 @@ export interface EpicEngineContext {
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
+  // Test-injection seam for the self-retry delay below, so a test can watch a
+  // stalled fill recover without sleeping the production window.
+  fillRetryDelayMs?: number;
 }
+
+// How long a fill that failed outright waits before retrying itself, and how
+// many consecutive retries one epic gets before it stops on its own.
+const DEFAULT_FILL_RETRY_DELAY_MS = 15_000;
+const MAX_FILL_RETRIES = 3;
 
 /**
  * The epic-level parallel dispatch engine (spec §5 Dispatch step 6): starting
@@ -76,8 +84,17 @@ export class EpicEngine {
   // One serialization chain per epic — see scheduleFill() for why fillQueue
   // can no longer simply be called from the run-lifecycle hooks.
   private readonly fillChains = new Map<string, Promise<void>>();
+  // Self-retry state per epic: the pending timer and how many consecutive
+  // retries it has already spent (see armFillRetry).
+  private readonly fillRetryTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  private readonly fillRetryAttempts = new Map<string, number>();
+  private readonly fillRetryDelayMs: number;
 
   constructor(private readonly ctx: EpicEngineContext) {
+    this.fillRetryDelayMs = ctx.fillRetryDelayMs ?? DEFAULT_FILL_RETRY_DELAY_MS;
     // Two distinct triggers can make an epic's next dispatch decision stale:
     // a run reaching a terminal state (frees a concurrency slot, and — since
     // Orchestrator.handleFinish moves the task to `in-review` before firing
@@ -167,6 +184,7 @@ export class EpicEngine {
       );
     }
     session.active = false;
+    this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
       'epic dispatch stopped (new dispatches halted; live runs continue)'
@@ -273,9 +291,37 @@ export class EpicEngine {
   // down. Failures are recorded rather than propagated, matching
   // invokeHooksSafely's rule for a throwing subscriber.
   private scheduleFill(epicId: string): void {
-    void this.enqueueFill(epicId).catch((err: unknown) => {
-      this.recordFillFailure(epicId, err);
-    });
+    void this.enqueueFill(epicId).then(
+      () => this.fillRetryAttempts.delete(epicId),
+      (err: unknown) => {
+        this.recordFillFailure(epicId, err);
+        this.armFillRetry(epicId);
+      }
+    );
+  }
+
+  // A fill that dispatched nothing fires no lifecycle hook, so nothing else
+  // would ever retry it. Bounded: a failure that repeats is not transient.
+  private armFillRetry(epicId: string): void {
+    const attempts = (this.fillRetryAttempts.get(epicId) ?? 0) + 1;
+    if (attempts > MAX_FILL_RETRIES) return;
+    this.fillRetryAttempts.set(epicId, attempts);
+    clearTimeout(this.fillRetryTimers.get(epicId));
+    const timer = setTimeout(() => {
+      this.fillRetryTimers.delete(epicId);
+      const session = this.sessions.get(epicId);
+      if (session === undefined || !session.active) return;
+      this.scheduleFill(epicId);
+    }, this.fillRetryDelayMs);
+    // Never a reason to keep the daemon (or a test process) alive.
+    timer.unref?.();
+    this.fillRetryTimers.set(epicId, timer);
+  }
+
+  private clearFillRetry(epicId: string): void {
+    clearTimeout(this.fillRetryTimers.get(epicId));
+    this.fillRetryTimers.delete(epicId);
+    this.fillRetryAttempts.delete(epicId);
   }
 
   // The durable half of that rule: invokeHooksSafely doesn't just log a
@@ -332,8 +378,8 @@ export class EpicEngine {
     // A live run's footprint can have grown past its task's declared writes
     // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
     const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);
-    // An undeclared task (`writes: []`) therefore waits on ANY live claim
-    // project-wide, bounded by how long a run can sit idle, not permanent.
+    // An undeclared task (`writes: []`) therefore waits on ANY live claim until
+    // that run goes terminal — nothing reaps one, so a parked run waits on a human.
     const clearOfLiveRuns = ready.filter(
       (t) =>
         !liveClaims.some((claim) =>
@@ -379,6 +425,7 @@ export class EpicEngine {
     if (session === undefined || session.completedAt !== undefined) return;
     session.completedAt = new Date().toISOString();
     session.active = false;
+    this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
       'epic dispatch session ended — no children left to dispatch'

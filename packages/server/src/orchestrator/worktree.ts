@@ -490,13 +490,29 @@ export class WorktreeManager {
     return result.stdout.trim();
   }
 
-  // Boot-time hygiene: any directory directly under `worktreesRoot` that
-  // isn't referenced by a known transcript (`keepPaths`) is a leftover from
-  // a crash between provisioning and cleanup — safe to delete outright.
+  // Boot-time hygiene: a directory under `worktreesRoot` that no known
+  // transcript (`keepPaths`) references is a leftover from a crash. An empty
+  // keep-set means the enumeration found nothing — a reason to do nothing.
   pruneOrphans(worktreesRoot: string, keepPaths: Set<string>): void {
     if (!existsSync(worktreesRoot)) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(worktreesRoot);
+    } catch (err) {
+      console.error(
+        `dispatchd: skipping worktree sweep, ${worktreesRoot} is unreadable: ${(err as Error).message}`
+      );
+      return;
+    }
+    if (entries.length === 0) return;
+    if (keepPaths.size === 0) {
+      console.error(
+        `dispatchd: skipping worktree sweep in ${worktreesRoot} — ${entries.length} worktree(s) present but no run is known to keep`
+      );
+      return;
+    }
     this.prune();
-    for (const entry of readdirSync(worktreesRoot)) {
+    for (const entry of entries) {
       const full = join(worktreesRoot, entry);
       if (!keepPaths.has(full)) {
         rmSync(full, { recursive: true, force: true });

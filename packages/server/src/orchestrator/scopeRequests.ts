@@ -5,6 +5,10 @@ import {
   OrchestratorNotFoundError,
 } from './types.js';
 
+/** Where a decision came in from: `app` carries the desktop app's webview
+ *  origin, `api` is anything else — including a run's own agent. */
+export type ScopeDecider = 'app' | 'api';
+
 /** One out-of-scope edit an agent asked to make, and the decision once it lands. */
 export interface RunScopeRequest {
   id: string;
@@ -15,6 +19,9 @@ export interface RunScopeRequest {
   granted: boolean | null;
   decisionReason: string | null;
   decidedAt: string | null;
+  /** So a self-grant cannot read as a human's ruling. Advisory only: the
+   *  daemon is unauthenticated, so this attributes, it does not authenticate. */
+  decidedBy: ScopeDecider | null;
 }
 
 // How long one long-poll parks before returning the still-undecided record.
@@ -45,6 +52,7 @@ export class ScopeRequestRegistry {
       granted: null,
       decisionReason: null,
       decidedAt: null,
+      decidedBy: null,
     };
     this.requests.set(record.id, record);
     return record;
@@ -61,7 +69,12 @@ export class ScopeRequestRegistry {
     );
   }
 
-  decide(id: string, granted: boolean, reason?: string): RunScopeRequest {
+  decide(
+    id: string,
+    granted: boolean,
+    reason?: string,
+    decidedBy?: ScopeDecider
+  ): RunScopeRequest {
     const record = this.requests.get(id);
     if (record === undefined) {
       throw new OrchestratorNotFoundError(`scope request not found: ${id}`);
@@ -74,6 +87,7 @@ export class ScopeRequestRegistry {
     record.granted = granted;
     record.decisionReason = reason ?? null;
     record.decidedAt = new Date().toISOString();
+    record.decidedBy = decidedBy ?? null;
     this.release(record);
     return record;
   }

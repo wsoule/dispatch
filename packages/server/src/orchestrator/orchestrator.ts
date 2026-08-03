@@ -25,6 +25,7 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { FindingStore } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
@@ -78,6 +79,9 @@ export interface OrchestratorContext {
   // Ledger entries injected into dispatch prompts (see promptForTask below).
   // Defaults to one over `rootDir`, same pattern as `jj`.
   ledgerStore?: LedgerStore;
+  // Where blocking rulings are read from (see blockedFindingReason). Defaults
+  // to one over `rootDir`, same pattern as `ledgerStore`.
+  findingStore?: FindingStore;
   // Overrides CLAIMS_REFRESH_COOLDOWN_MS — test-injection seam only, so a
   // cooldown test isn't stuck waiting out the real 5s production window.
   claimsRefreshCooldownMs?: number;
@@ -138,6 +142,7 @@ export class Orchestrator {
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
   private readonly ledgerStore: LedgerStore;
+  private readonly findingStore: FindingStore;
   private readonly executors = new Map<string, Executor>();
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
@@ -163,6 +168,7 @@ export class Orchestrator {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
     this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
+    this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
     this.claimsRefreshCooldownMs =
       ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
   }
@@ -459,11 +465,33 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
-  // Frees a finished non-execute run's throwaway worktree and branch. Its
-  // transcript and run directory stay — those are the durable record.
+  // Frees a finished non-execute run's throwaway worktree. Aux agents can edit,
+  // and cancel never auto-commits, so the tree is committed first; a branch with
+  // commits the base lacks keeps its ref, since `branch -D` would strand them.
   cleanupAuxRun(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined || runKind(meta) === 'execute') return;
+    if (this.worktrees.isWorktreeDirty(meta.worktreePath)) {
+      this.bestEffort(`auto-commit of aux run ${runId}`, () => {
+        this.autoCommitIfDirty(meta.worktreePath, runId);
+      });
+    }
+    if (this.worktrees.aheadCount(meta.branch, meta.baseBranch) > 0) {
+      this.worktrees.removeWorktreeOnly(meta.worktreePath);
+      this.bestEffort(`recording kept branch for run ${runId}`, () => {
+        const now = new Date().toISOString();
+        this.ctx.store.update(
+          meta.taskId,
+          {
+            appendActivity: `${now} [run ${runId}] worktree removed; branch ${meta.branch} kept — it has unmerged commits`,
+          },
+          now
+        );
+        this.ctx.cache.rebuild(this.ctx.store);
+        this.ctx.events.broadcast({ type: 'task.changed' });
+      });
+      return;
+    }
     this.worktrees.remove(meta.worktreePath, meta.branch, runId);
   }
 
@@ -876,13 +904,17 @@ export class Orchestrator {
     // first) — only a review action (merge/discard) or a fresh dispatch
     // changes task status.
     const now = new Date().toISOString();
-    this.ctx.store.update(
-      meta.taskId,
-      { appendActivity: `${now} [run ${runId}] cancelled` },
-      now
-    );
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    // Same rule as handleFinish: a task file this can't read or write costs
+    // the Activity line, never the terminal hooks.
+    this.bestEffort(`recording cancel for run ${runId}`, () => {
+      this.ctx.store.update(
+        meta.taskId,
+        { appendActivity: `${now} [run ${runId}] cancelled` },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    });
     this.fireTerminalHooks(runId);
   }
 
@@ -964,6 +996,16 @@ export class Orchestrator {
     });
   }
 
+  // Fire-and-forget survey. No caller is left to receive a rejection, and this
+  // decides `failed` vs `interrupted-dirty`, so a failure is logged, not lost.
+  private scheduleSurvey(runId: string): void {
+    void this.surveyAndUpgradeIfDirty(runId).catch((err: unknown) => {
+      console.error(
+        `dispatchd: survey of run ${runId} failed: ${(err as Error).message}`
+      );
+    });
+  }
+
   // Surveys a run already marked `failed` outside handleFinish (a boot
   // crash or a zombied executor) and upgrades it if the worktree is dirty.
   private async surveyAndUpgradeIfDirty(runId: string): Promise<void> {
@@ -986,9 +1028,16 @@ export class Orchestrator {
       updatedAt: now,
       survey,
     });
-    this.transcriptFor(runId).appendState('interrupted-dirty', now, {
-      survey,
-    });
+    // Same rule as transition(): the registry already carries the new state, so
+    // a transcript that can't be written must not also cost the broadcasts.
+    this.bestEffort(
+      `appending interrupted-dirty state for run ${runId}`,
+      () => {
+        this.transcriptFor(runId).appendState('interrupted-dirty', now, {
+          survey,
+        });
+      }
+    );
     this.ctx.events.broadcast({ type: 'run.changed' });
     this.ctx.events.broadcast({ type: 'run.survey', runId, survey });
     this.noteTaskActivity(
@@ -1059,6 +1108,16 @@ export class Orchestrator {
     }
   }
 
+  // Why `taskId` may not be merged, or null when nothing blocks it. Read from
+  // the findings, not the fix loop: the ruling stands however that loop settled.
+  blockedFindingReason(taskId: string): string | null {
+    const blocked = this.findingStore.list({ taskId, verdict: 'blocked' });
+    if (blocked.length === 0) return null;
+    const first = blocked[0];
+    const ruling = first.ruling ?? first.title;
+    return `task is blocked by an adjudicated finding: ${taskId} (${first.id}: ${ruling})`;
+  }
+
   // Terminal review action for a run: 'merge' squash-merges the branch into
   // the main checkout and closes the task; 'discard' just cleans up and
   // reopens the task. Both remove the run's worktree/branch — the worktree
@@ -1083,6 +1142,12 @@ export class Orchestrator {
       throw new OrchestratorConflictError(
         `run has already been reviewed: ${runId}`
       );
+    }
+    // Discarding blocked work is exactly what a human should still be able to
+    // do; merging it is the thing the ruling exists to prevent.
+    if (action === 'merge') {
+      const blocked = this.blockedFindingReason(meta.taskId);
+      if (blocked !== null) throw new OrchestratorConflictError(blocked);
     }
     this.requireNoOpenPr(meta);
     const now = new Date().toISOString();
@@ -1920,7 +1985,7 @@ export class Orchestrator {
     // Deferred, not awaited — reconcileOnBoot() stays synchronous, so each
     // crashed run's worktree is surveyed and upgraded in the background.
     for (const runId of crashedRunIds) {
-      void this.surveyAndUpgradeIfDirty(runId);
+      this.scheduleSurvey(runId);
     }
   }
 
@@ -1988,7 +2053,7 @@ export class Orchestrator {
     this.fireTerminalHooks(meta.id);
     // Deferred, same as reconcileOnBoot()'s crash sweep — a zombied run's
     // worktree may still hold whatever the agent left behind mid-task.
-    void this.surveyAndUpgradeIfDirty(meta.id);
+    this.scheduleSurvey(meta.id);
   }
 
   // Starts `executor` for a run that dispatch()/requestChanges() has already
@@ -2178,7 +2243,11 @@ export class Orchestrator {
       updatedAt: now,
       ...finish,
     });
-    this.transcriptFor(runId).appendState(state, now, finish);
+    // The registry already carries the new state; a transcript that can't be
+    // appended to must not also cost clients the broadcast that says so.
+    this.bestEffort(`appending ${state} state line for run ${runId}`, () => {
+      this.transcriptFor(runId).appendState(state, now, finish);
+    });
     this.ctx.events.broadcast({ type: 'run.changed' });
     // Phase 5 P1: onRunTerminal is deliberately NOT fired from here. A run
     // "reaching" a terminal state is only fully visible to a subscriber once
@@ -2236,6 +2305,16 @@ export class Orchestrator {
           // triggering operation's own result already stands regardless.
         }
       }
+    }
+  }
+
+  // Bookkeeping between a run going terminal and its hooks firing: cleanup an
+  // exception can skip is not cleanup, so a failed step is logged, not thrown.
+  private bestEffort(label: string, step: () => void): void {
+    try {
+      step();
+    } catch (err) {
+      console.error(`dispatchd: ${label} failed: ${(err as Error).message}`);
     }
   }
 
@@ -2324,7 +2403,7 @@ export class Orchestrator {
       error: effectiveFinish.error,
     });
     if (effectiveFinish.state === 'failed') {
-      void this.surveyAndUpgradeIfDirty(runId);
+      this.scheduleSurvey(runId);
     }
 
     let filesChanged = 0;
@@ -2338,15 +2417,19 @@ export class Orchestrator {
     }
     const cost = (effectiveFinish.costUsd ?? 0).toFixed(2);
     const now = new Date().toISOString();
-    const task = this.ctx.store.get(meta.taskId);
-    if (task === null) return;
-    const patch: UpdatePatch = {
-      appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
-    };
-    if (task.meta.status === 'in-progress') patch.status = 'in-review';
-    this.ctx.store.update(meta.taskId, patch, now);
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    // An unreadable or unwritable task file must not skip the hooks below,
+    // which are what free the epic engine's next dispatch.
+    this.bestEffort(`recording finish for run ${runId}`, () => {
+      const task = this.ctx.store.get(meta.taskId);
+      if (task === null) return;
+      const patch: UpdatePatch = {
+        appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
+      };
+      if (task.meta.status === 'in-progress') patch.status = 'in-review';
+      this.ctx.store.update(meta.taskId, patch, now);
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    });
     this.fireTerminalHooks(runId);
   }
 
