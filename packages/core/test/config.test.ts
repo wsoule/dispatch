@@ -283,9 +283,8 @@ describe('the carto block', () => {
     ).toBe('on');
   });
 
-  // `enabled: true`/`enabled: false` (unquoted) ARE real YAML booleans under
-  // this package's default (non-1.1) schema, unlike bare on/off above, so the
-  // parser must normalize them to the 'on'/'off' string modes.
+  // Bare `true`/`false` are real YAML booleans, unlike bare on/off above, so
+  // the parser must normalize them to the 'on'/'off' string modes.
   it('normalizes real YAML booleans (bare true/false) to on/off', () => {
     expect(
       loadConfig(writeConfig('carto:\n  enabled: true\n')).carto.enabled
@@ -298,6 +297,12 @@ describe('the carto block', () => {
   it('rejects an unknown mode with a ConfigError', () => {
     expect(() => loadConfig(writeConfig('carto:\n  enabled: maybe\n'))).toThrow(
       ConfigError
+    );
+  });
+
+  it('throws when carto is not a mapping', () => {
+    expect(() => loadConfig(writeConfig('carto: nope\n'))).toThrow(
+      /invalid \.dispatch\/config\.yml: carto must be a mapping/
     );
   });
 });

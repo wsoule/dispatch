@@ -379,13 +379,14 @@ function parseFixLoopConfig(raw: unknown): FixLoopConfig {
   };
 }
 
-// Validates the optional `carto:` block. `enabled: true`/`false` are real YAML
-// booleans under this package's default (non-1.1) schema and are normalized to
-// 'on'/'off'; bare `on`/`off` already parse as those strings under this schema.
+// Validates the optional `carto:` block. `enabled: true`/`false` (real YAML
+// booleans) are normalized to 'on'/'off' alongside the string spellings.
 function parseCarto(raw: unknown): CartoConfig {
   if (raw === undefined || raw === null) return { ...DEFAULT_CARTO };
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new ConfigError('carto must be a mapping');
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: carto must be a mapping'
+    );
   }
   const enabled = (raw as Record<string, unknown>).enabled;
   if (enabled === undefined) return { ...DEFAULT_CARTO };
@@ -396,7 +397,7 @@ function parseCarto(raw: unknown): CartoConfig {
     !CARTO_MODES.includes(normalized as CartoMode)
   ) {
     throw new ConfigError(
-      `carto.enabled must be one of: ${CARTO_MODES.join(', ')}`
+      `invalid .dispatch/config.yml: carto.enabled must be one of: ${CARTO_MODES.join(', ')}`
     );
   }
   return { enabled: normalized as CartoMode };
