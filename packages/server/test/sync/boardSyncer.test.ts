@@ -1,100 +1,18 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
-import type { GitReader } from '@dispatch/core';
+import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { BoardSyncer } from '../../src/sync/boardSyncer.js';
-import type { GitRunner } from '../../src/sync/worktree.js';
 import { SyncWorktree } from '../../src/sync/worktree.js';
-import { initBareRepo, runGitSync } from '../orchestrator/helpers.js';
-
-// Same shape SyncWorktree's own test uses: real `git`, no stubbing, since
-// this whole suite is about actual git behaviour (push/pull refspecs,
-// staging discipline, rebase).
-const run: GitRunner = (cwd, args) => {
-  const result = Bun.spawnSync(['git', ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  return {
-    status: result.exitCode,
-    stdout: result.stdout.toString('utf8'),
-    stderr: result.stderr.toString('utf8'),
-  };
-};
-
-// Mirrors index.ts's own makeGitReader — ActorContext needs a single-value
-// config reader, not the {status,stdout,stderr} triple GitRunner returns.
-function gitReaderFor(dir: string): GitReader {
-  return (args) => {
-    const result = Bun.spawnSync(['git', ...args], { cwd: dir });
-    return result.exitCode === 0 ? result.stdout.toString().trim() : null;
-  };
-}
-
-const CONFIG_YML =
-  'statuses: [backlog, todo, in-progress, in-review, done, cancelled]\nautoCommit: false\n';
-
-/**
- * A bare origin plus two clones with distinct git identities, standing in
- * for two teammates syncing the same board. Reused by every task in this
- * plan that touches the syncer (materialize, watcher wiring, degradation).
- */
-function twoClones(): { origin: string; a: string; b: string } {
-  const origin = initBareRepo('dispatch-board-origin-');
-
-  // Seed trunk with a real commit (config.yml) before either clone exists —
-  // `git worktree add` and `git clone` both need a ref to point at.
-  const seed = mkdtempSync(join(tmpdir(), 'dispatch-board-seed-'));
-  runGitSync(seed, ['init', '-b', 'main']);
-  runGitSync(seed, ['config', 'user.email', 'seed@example.com']);
-  runGitSync(seed, ['config', 'user.name', 'Seed']);
-  mkdirSync(join(seed, '.dispatch'), { recursive: true });
-  writeFileSync(join(seed, '.dispatch', 'config.yml'), CONFIG_YML);
-  writeFileSync(join(seed, 'README.md'), '# test repo\n');
-  runGitSync(seed, ['add', '-A']);
-  runGitSync(seed, ['commit', '-m', 'initial commit']);
-  runGitSync(seed, ['remote', 'add', 'origin', origin]);
-  runGitSync(seed, ['push', 'origin', 'main']);
-  rmSync(seed, { recursive: true, force: true });
-
-  const cloneOf = (name: string): string => {
-    const parent = mkdtempSync(join(tmpdir(), `dispatch-board-${name}-`));
-    const dir = join(parent, 'repo');
-    runGitSync(parent, ['clone', origin, dir]);
-    runGitSync(dir, ['config', 'user.email', `${name}@example.com`]);
-    runGitSync(dir, ['config', 'user.name', name]);
-    TaskStore.init(dir);
-    return dir;
-  };
-
-  return { origin, a: cloneOf('alice'), b: cloneOf('bob') };
-}
-
-function cleanupClone(dir: string): void {
-  rmSync(join(dir, '..'), { recursive: true, force: true });
-}
-
-// Cached per clone dir: a real BoardSyncer is long-lived in production (one
-// per daemon boot), and ActorContext.resolve() writes team.yml on first call
-// — re-resolving on every syncOnce() would make that write land mid-test,
-// which is exactly the kind of side effect the "untouched" test below must
-// catch happening at the wrong time rather than hide by accident.
-const syncers = new Map<string, BoardSyncer>();
-
-function syncerFor(dir: string): BoardSyncer {
-  const cached = syncers.get(dir);
-  if (cached !== undefined) return cached;
-  const worktree = SyncWorktree.open(dir, run);
-  if (worktree === null) throw new Error('expected a resolvable trunk');
-  const actor = ActorContext.resolve(dir, gitReaderFor(dir));
-  const syncer = new BoardSyncer(dir, worktree, actor, run);
-  syncers.set(dir, syncer);
-  return syncer;
-}
+import { runGitSync } from '../orchestrator/helpers.js';
+import {
+  cleanupClone,
+  resetSyncers,
+  run,
+  syncerFor,
+  twoClones,
+} from './helpers.js';
 
 let fakeHome: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
@@ -108,7 +26,7 @@ afterEach(() => {
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
-  syncers.clear();
+  resetSyncers();
 });
 
 describe('BoardSyncer.syncOnce', () => {
