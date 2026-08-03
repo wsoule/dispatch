@@ -350,4 +350,49 @@ describe('BoardSyncer.syncOnce', () => {
     cleanupClone(a);
     cleanupClone(b);
   });
+
+  it('a task deleted locally stays deleted across repeated syncs', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const doc = storeA.create({ title: 'Local only, then deleted' });
+    await syncerFor(a).syncOnce();
+
+    // The push side never issues a `git rm` for a file that vanished
+    // locally (a known, separate gap) — so this deletion never reaches the
+    // sync worktree. A directory-scan materialize() can't tell "never seen"
+    // apart from "deleted on purpose" and resurrects it; a diff-driven one
+    // simply never revisits a path the pull didn't touch.
+    const localFile = storeA.taskFilePath(doc.meta.id);
+    expect(localFile).not.toBeNull();
+    rmSync(localFile as string);
+    expect(storeA.get(doc.meta.id)).toBeNull();
+
+    await syncerFor(a).syncOnce();
+    expect(storeA.get(doc.meta.id)).toBeNull();
+
+    await syncerFor(a).syncOnce();
+    expect(storeA.get(doc.meta.id)).toBeNull();
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('a brand-new, never-synced local task survives a standalone materialize() call', () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const doc = storeA.create({ title: 'Not yet synced' });
+
+    // materialize() called with no prior syncOnce() at all — the staging
+    // loop that would normally mirror this task into the worktree first
+    // never ran. A diff-driven materialize() has no opinion about a task
+    // the sync worktree has never mentioned, so it must not touch it.
+    const written = syncerFor(a).materialize();
+    expect(written).toBe(0);
+    expect(storeA.get(doc.meta.id)?.meta.title).toBe('Not yet synced');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
 });
