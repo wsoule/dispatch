@@ -409,6 +409,12 @@ export class InboxStore {
    * rather than duplicated, and the legacy file is only deleted after its content is folded in —
    * so a re-run after an interrupted one still has something to migrate. Once the legacy file is
    * gone, later runs are a no-op. Returns how many items it brought across.
+   *
+   * Two daemons for two different actors can both pass the initial `existsSync` check before
+   * either deletes the file (a startup-time TOCTOU race). Neither loses data — each writes its
+   * own actor file independently — but whichever one's `unlinkSync` runs second would otherwise
+   * throw ENOENT on a file the other already removed. That is the race being lost cleanly, not a
+   * real failure, so it is swallowed; anything else (e.g. a permissions error) still propagates.
    */
   migrateLegacy(): number {
     const legacyFile = join(this.rootDir, '.dispatch', 'inbox.md');
@@ -429,7 +435,13 @@ export class InboxStore {
     if (brought.length > 0) {
       this.write([...existing, ...brought]);
     }
-    unlinkSync(legacyFile);
+    try {
+      unlinkSync(legacyFile);
+    } catch (err) {
+      // Losing a startup race to another daemon means the legacy file is already
+      // gone — that is success, not an error.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
     return brought.length;
   }
 }
