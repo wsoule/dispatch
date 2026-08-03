@@ -95,7 +95,7 @@
   /* Ready and blocked aren't run states — they're task states, and both are deliberately
      colorless. A ready task is not an event; making it green would compete with the states
      that actually need a human. */
-  --state-ready-fg: var(--text-secondary);
+  --state-ready-fg: var(--text-muted);
   --state-ready-surface: var(--surface-muted);
   --state-ready-edge: var(--border-strong);
 
