@@ -152,6 +152,9 @@ export interface ConfigPatch {
   autoCommit?: boolean;
   epicConcurrency?: number;
   verifyTimeoutSec?: number;
+  /** `null` clears the key, restoring "no cap" — both are optional in OrchestratorConfig. */
+  maxTurns?: number | null;
+  maxBudgetUsd?: number | null;
   permissionMode?: OrchestratorConfig['permissionMode'];
   models?: Partial<ModelConfig>;
   linear?: Partial<LinearConfig>;
