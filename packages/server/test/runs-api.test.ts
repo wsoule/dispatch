@@ -8,6 +8,7 @@ import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth, wsUrl } from './testAuth.js';
 
 // The exact script index.ts's production registration uses for 'fake' — one
 // assistant entry, then an immediate finish. Registered under both 'fake'
@@ -93,6 +94,7 @@ beforeEach(async () => {
       orchestrator.registerExecutor('claude', defaultFakeScript());
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 
@@ -260,6 +262,7 @@ describe('POST /api/tasks/:id/runs — known executor names track the registry',
         orchestrator.registerExecutor('fake', defaultFakeScript());
       },
     });
+    useTestAuth(soloHandle);
     soloBaseUrl = `http://127.0.0.1:${soloHandle.port}`;
   });
 
@@ -337,6 +340,7 @@ describe('GET /api/runs/claims', () => {
         orchestrator.registerExecutor('fake-gate', gatedFakeScript());
       },
     });
+    useTestAuth(gateHandle);
     gateBaseUrl = `http://127.0.0.1:${gateHandle.port}`;
   });
 
@@ -437,6 +441,7 @@ describe('run review: merge and discard', () => {
         );
       },
     });
+    useTestAuth(writingHandle);
     const writingBaseUrl = `http://127.0.0.1:${writingHandle.port}`;
     try {
       const taskRes = await fetch(`${writingBaseUrl}/api/tasks`, {
@@ -598,7 +603,7 @@ describe('POST /api/runs/:id/cancel', () => {
 describe('WebSocket run.changed / run.log broadcasts', () => {
   it('broadcasts run.changed and at least one run.log entry during a dispatch', async () => {
     const task = await createTask('WS broadcast');
-    const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+    const ws = new WebSocket(wsUrl(handle));
     const seenTypes = new Set<string>();
     const gotRunChangedAndLog = new Promise<void>((resolve) => {
       ws.addEventListener('message', (ev) => {

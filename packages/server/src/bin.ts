@@ -419,6 +419,13 @@ const handle = await startServer({
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 
+// The only place the app token leaves this process — it is never written to
+// disk, so anything capturing this stdout must not persist the line either.
+console.log(`DISPATCH_APP_TOKEN=${handle.tokens.appToken}`);
+console.log(
+  'dispatchd: that token authorizes approval decisions; it is not stored anywhere, so keep it if you need it'
+);
+
 if (enableFakes) {
   console.log(
     'dispatchd: DISPATCH_ENABLE_FAKES=1 — fake executor/planner registered (test/e2e only)'

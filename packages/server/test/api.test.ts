@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { useTestAuth, wsUrl } from './testAuth.js';
 
 // `Response.json()` types as `Promise<unknown>` under this repo's strict,
 // DOM-less tsconfig; these tests assert on arbitrary response shapes (health,
@@ -40,6 +41,7 @@ beforeEach(async () => {
     port: 0,
     writeDaemonFile: false,
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 
@@ -596,7 +598,7 @@ describe('error paths', () => {
 
 describe('WebSocket task.changed broadcast', () => {
   it('sends hello on open, then task.changed after a POST', async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+    const ws = new WebSocket(wsUrl(handle));
     const messages: unknown[] = [];
     const nextMessage = () =>
       new Promise<unknown>((resolve, reject) => {

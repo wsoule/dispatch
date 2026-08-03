@@ -23,6 +23,7 @@ import type {
   RunMeta,
 } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth, wsUrl } from './testAuth.js';
 
 // The commit a fix round leaves behind. A round that commits nothing gives the
 // re-review an empty range, which the loop refuses to review at all.
@@ -205,6 +206,7 @@ beforeEach(async () => {
       orchestrator.registerExecutor('claude', agent);
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 
@@ -228,6 +230,7 @@ async function restartWith(executor: Executor): Promise<void> {
       orchestrator.registerExecutor('claude', executor);
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 }
 
@@ -313,7 +316,7 @@ async function seedImplementerRun(): Promise<string> {
 // can assert on the reason the loop stopped rather than only its final state.
 function collectCappedEvents(): CappedEvent[] {
   const seen: CappedEvent[] = [];
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+  const ws = new WebSocket(wsUrl(handle));
   ws.addEventListener('message', (ev) => {
     const parsed = JSON.parse(ev.data as string) as CappedEvent;
     if (parsed.type === 'fixloop.capped') seen.push(parsed);
@@ -423,7 +426,7 @@ describe('POST /api/tasks/:id/fix-loop/advance', () => {
 describe('the fix loop', () => {
   it('escalates to a fresh implementer at round 4 and stops at the cap', async () => {
     const capped = new Promise<{ taskId: string; round: number }>((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
+      const ws = new WebSocket(wsUrl(handle));
       ws.addEventListener('message', (ev) => {
         const parsed = JSON.parse(ev.data as string) as {
           type: string;
@@ -894,6 +897,7 @@ describe('an unreadable fix-loops.jsonl', () => {
         orchestrator.registerExecutor('claude', new ScriptedAgent());
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
     expect((await fetch(`${baseUrl}/api/tasks`)).status).toBe(200);
   }, 30000);

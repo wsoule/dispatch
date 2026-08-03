@@ -35,6 +35,7 @@ describe('writeDaemonFile / readDaemonFile', () => {
       port: 4771,
       pid: process.pid,
       startedAt: '2026-07-19T00:00:00Z',
+      agentToken: 'a'.repeat(64),
     });
     const path = daemonFilePath(rootDir);
     expect(path.startsWith(join(fakeHome, '.dispatch', 'daemons'))).toBe(true);
@@ -46,13 +47,26 @@ describe('writeDaemonFile / readDaemonFile', () => {
       port: 4771,
       pid: process.pid,
       startedAt: '2026-07-19T00:00:00Z',
+      agentToken: 'a'.repeat(64),
     });
   });
 
   it('keys different rootDirs to different files', () => {
     const otherRoot = mkdtempSync(join(tmpdir(), 'dispatch-project-'));
-    writeDaemonFile({ rootDir, port: 1, pid: 1, startedAt: 't' });
-    writeDaemonFile({ rootDir: otherRoot, port: 2, pid: 2, startedAt: 't' });
+    writeDaemonFile({
+      rootDir,
+      port: 1,
+      pid: 1,
+      startedAt: 't',
+      agentToken: 'a',
+    });
+    writeDaemonFile({
+      rootDir: otherRoot,
+      port: 2,
+      pid: 2,
+      startedAt: 't',
+      agentToken: 'a',
+    });
     expect(daemonFilePath(rootDir)).not.toBe(daemonFilePath(otherRoot));
     rmSync(otherRoot, { recursive: true, force: true });
   });
@@ -67,7 +81,13 @@ describe('writeDaemonFile / readDaemonFile', () => {
 
 describe('removeDaemonFile', () => {
   it('removes the file on clean shutdown, and is a no-op if already gone', () => {
-    writeDaemonFile({ rootDir, port: 1, pid: 1, startedAt: 't' });
+    writeDaemonFile({
+      rootDir,
+      port: 1,
+      pid: 1,
+      startedAt: 't',
+      agentToken: 'a',
+    });
     expect(readDaemonFile(rootDir)).not.toBeNull();
     removeDaemonFile(rootDir);
     expect(readDaemonFile(rootDir)).toBeNull();
