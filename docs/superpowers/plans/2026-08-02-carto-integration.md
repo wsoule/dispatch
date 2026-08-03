@@ -1198,7 +1198,12 @@ it('normalizes the recorded real carto response', () => {
   const files = normalizeBlastRadius(raw);
   expect(files.length).toBeGreaterThan(0);
   expect(files.every((f) => typeof f === 'string')).toBe(true);
-  // Ordering must be non-decreasing in hop distance, like buildDepMap's.
+  // CORRECTED: this assertion only proves there are no duplicates — Set
+  // preserves insertion order, so it says nothing about hop ordering despite
+  // what the original comment here claimed. Recompute the expected order
+  // independently from the fixture's own `file`/`hop_distance` fields and
+  // compare against normalizeBlastRadius's output, or the ordering the sort
+  // exists for is untested.
   expect(files).toEqual([...new Set(files)]);
 });
 ```
