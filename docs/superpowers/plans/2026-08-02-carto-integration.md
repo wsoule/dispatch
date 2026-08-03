@@ -794,6 +794,17 @@ export function cartoInit(
   redirectCartoOutput(projectRoot);
   pinHookWorkingDirs(projectRoot);
 
+  // Exit status alone is NOT trustworthy: carto 2.1.3 prints
+  // "Fatal error: Could not locate the bindings file" and still exits 0,
+  // leaving .carto/ with only config.json. Measured in Task 0. The container
+  // existing is the only honest success signal.
+  if (!existsSync(join(projectRoot, '.carto', 'carto.db'))) {
+    const stderr = (run.stderr ?? '').trim();
+    return {
+      ok: false,
+      detail: stderr || 'carto init produced no container',
+    };
+  }
   return run.status === 0
     ? { ok: true, detail: `indexed with carto ${binary.version}` }
     : { ok: false, detail: (run.stderr ?? '').trim() || 'carto init failed' };
@@ -1101,9 +1112,12 @@ export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
     }
     if (typeof file === 'object' && file !== null) {
       const record = file as Record<string, unknown>;
-      const path = record.path ?? record.file;
+      // Key names pinned by the Task 0 fixture: entries are
+      // { file, hop_distance }. `path`/`hops` are tolerated fallbacks only.
+      const path = record.file ?? record.path;
       if (typeof path !== 'string') continue;
-      const hops = typeof record.hops === 'number' ? record.hops : raw.hops;
+      const rawHops = record.hop_distance ?? record.hops;
+      const hops = typeof rawHops === 'number' ? rawHops : raw.hops;
       entries.push({ path, hops });
     }
   }
@@ -1531,30 +1545,33 @@ export function buildCartoMcpServerConfig(
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
+  // Task 0 confirmed McpStdioServerConfig has NO cwd field, so the working
+  // directory can only be set by wrapping the command in a shell.
   return {
     type: 'stdio',
-    command: binary.path,
-    args: ['serve'],
+    command: '/bin/sh',
+    args: [
+      '-c',
+      `cd ${JSON.stringify(projectRoot)} && exec ${JSON.stringify(binary.path)} serve`,
+    ],
     env,
-    cwd: projectRoot,
   };
 }
 ```
 
-**If Task 0 Step 6 found no `cwd` field on `McpStdioServerConfig`**, replace the
-return with a shell wrapper instead — and keep the comment explaining why:
+**Known upstream defect — read before testing this task.** `carto serve`
+currently starts but never connects its MCP transport: `src/cli/serve.js` does a
+bare `require('../mcp/server')`, and `src/mcp/server.js` only calls
+`server.connect()` under an `if (require.main === module)` guard, which is false
+when required through the `carto` bin. Filed upstream as
+[theanshsonkar/carto#9](https://github.com/theanshsonkar/carto/issues/9).
 
-```ts
-return {
-  type: 'stdio',
-  command: '/bin/sh',
-  args: [
-    '-c',
-    `cd ${JSON.stringify(projectRoot)} && exec ${JSON.stringify(binary.path)} serve`,
-  ],
-  env,
-};
-```
+Consequence for this task: the config produced here is **correct**, but an
+end-to-end handshake against `carto serve` will time out until upstream ships a
+fix. Write and verify the config-shape tests (they are pure unit tests and pass
+today); do **not** add an end-to-end MCP handshake test, and do not work around
+the bug by spawning `src/mcp/server.js` directly — that reaches into carto's
+private file layout and will break when the real fix lands.
 
 - [ ] **Step 4: Register it on the query**
 
