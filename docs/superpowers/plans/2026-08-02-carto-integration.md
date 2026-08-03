@@ -688,9 +688,14 @@ export function pinHookWorkingDirs(projectRoot: string): string[] {
 }
 ```
 
-Note: `BARE_SYNC_RE` is a module-level regex with the `g` flag, so `lastIndex`
-must be reset between `.test()` and `.replace()`. Without that reset the second
-call silently misses.
+Note (corrected during implementation): an earlier draft of this plan claimed
+the `BARE_SYNC_RE.lastIndex = 0` reset was load-bearing and that a test could
+catch its removal. **That was wrong.** `String.prototype.replace` with a global
+regex sets `lastIndex` to 0 itself before matching (per
+`RegExp.prototype[@@replace]`), and a failed `.test()` also resets it — so the
+manual reset is redundant and no test can distinguish its presence. Verified
+empirically. Keep the line as cheap defensive insurance if you like, but do not
+write a test that pretends to cover it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
