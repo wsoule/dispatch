@@ -307,6 +307,67 @@ function callingRunId(): string | undefined {
   return id !== undefined && id !== '' ? id : undefined;
 }
 
+// Appends a task_comment line, crediting whoever actually said it. When
+// there's a live run and a reachable daemon, this proxies `POST
+// /api/tasks/:id/comment` so dispatchd can resolve the calling agent's
+// identity server-side (see api.ts's commentAuthorFor — this call is BY an
+// agent from inside a run, so it must never be credited to the human
+// operating the daemon). Otherwise — no DISPATCH_RUN_ID, no daemon, or the
+// proxy attempt itself failed — this falls back to writing the comment
+// directly via the store, same as task_comment always has, crediting 'none'
+// rather than guessing at an actor it can't actually resolve.
+async function taskComment(
+  rootDir: string,
+  args: { id: string; text: string }
+): Promise<ToolOutcome> {
+  if (args.text.trim() === '') {
+    return toolError('text must not be empty');
+  }
+  const projRoot = projectRoot(rootDir);
+  const runId = callingRunId();
+  if (runId !== undefined) {
+    const daemon = readDaemonFile(projRoot);
+    if (daemon !== null && (await isDaemonHealthy(daemon.port))) {
+      try {
+        const res = await fetch(
+          `http://127.0.0.1:${daemon.port}/api/tasks/${args.id}/comment`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: args.text, runId }),
+          }
+        );
+        if (res.ok) {
+          const doc = (await res.json()) as { meta: Record<string, unknown> };
+          return toolResult({ meta: doc.meta });
+        }
+        // The daemon's own store agrees with what a direct write would find
+        // — no point falling through to re-derive the same 404.
+        if (res.status === 404) {
+          return toolError(`task not found: ${args.id}`);
+        }
+      } catch {
+        // A network hiccup talking to a daemon that just answered healthy is
+        // not worth losing the comment over — fall through to the direct
+        // write below.
+      }
+    }
+  }
+
+  // projectRoot(), not the raw rootDir — see its doc comment above: a
+  // comment written to a run's worktree copy of a task file would be
+  // discarded the moment that run's branch is merged or discarded.
+  const store = requireStore(projRoot);
+  if (store.get(args.id) === null) {
+    return toolError(`task not found: ${args.id}`);
+  }
+  const doc = store.update(args.id, {
+    appendActivity: `${new Date().toISOString()} ${args.text}`,
+    activityActor: 'none',
+  });
+  return toolResult({ meta: doc.meta });
+}
+
 // Proxies `POST /api/runs/:id/inject` — the messaging half of agent
 // collaboration (spec §5). Exactly one of `runId`/`taskId` must be given;
 // `taskId` is resolved to that task's one live run via the same `GET
@@ -1116,19 +1177,7 @@ export function registerDispatchTools(
       inputSchema: { id: z.string(), text: z.string() },
       outputSchema: { meta: z.object(taskMetaShape) },
     },
-    ({ id, text }) =>
-      wrap(() => {
-        // projectRoot(), not the raw rootDir — see its doc comment above:
-        // a comment written to a run's worktree copy of a task file would
-        // be discarded the moment that run's branch is merged or discarded.
-        const store = requireStore(projectRoot(rootDir));
-        if (store.get(id) === null)
-          throw new ToolError(`task not found: ${id}`);
-        const doc = store.update(id, {
-          appendActivity: `${new Date().toISOString()} ${text}`,
-        });
-        return toolResult({ meta: doc.meta });
-      })
+    ({ id, text }) => taskComment(rootDir, { id, text })
   );
 
   server.registerTool(
