@@ -181,7 +181,7 @@ export function AssigneeControl({
     <PropertyDropdown
       value={value}
       options={options}
-      onChange={(v) => onChange(v as Assignee)}
+      onChange={onChange}
       variant={variant}
       ariaLabel="Change assignee"
       muted={value === 'none'}
