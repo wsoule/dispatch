@@ -30,15 +30,25 @@ async function waitFor(
 }
 
 let root: string;
+let fakeHome: string;
 let handle: ServerHandle | undefined;
+const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(() => {
+  // startServer hydrates the merge queue, which writes run state under
+  // DISPATCH_HOME — left unset it lands in the real home, one dir per test.
+  fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
+  process.env.DISPATCH_HOME = fakeHome;
   root = mkdtempSync(join(tmpdir(), 'dispatch-server-resilience-'));
 });
 
 afterEach(async () => {
   await handle?.stop();
   handle = undefined;
+  if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
+  else process.env.DISPATCH_HOME = originalDispatchHome;
+  rmSync(fakeHome, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 });
 
 describe('boot with a corrupt task file already on disk', () => {

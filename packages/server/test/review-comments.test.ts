@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +9,22 @@ import {
   resolveAnchor,
   ReviewCommentStore,
 } from '../src/reviewComments';
+
+// ReviewCommentStore writes beside the run transcript under DISPATCH_HOME, not
+// under the root it is handed — left unset that is the developer's real home.
+let fakeHome: string;
+const originalDispatchHome = process.env.DISPATCH_HOME;
+
+beforeEach(() => {
+  fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
+  process.env.DISPATCH_HOME = fakeHome;
+});
+
+afterEach(() => {
+  if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
+  else process.env.DISPATCH_HOME = originalDispatchHome;
+  rmSync(fakeHome, { recursive: true, force: true });
+});
 
 function root(): string {
   return mkdtempSync(join(tmpdir(), 'dispatch-review-'));

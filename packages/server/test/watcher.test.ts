@@ -21,9 +21,9 @@ afterEach(() => {
   watcher.close();
 });
 
-// Waits for onChange to fire, rejecting after `timeoutMs` so a broken watcher
-// fails the test loudly instead of hanging.
-function waitForChange(tasksDir: string, timeoutMs = 2000): Promise<void> {
+// Waits for onChange, rejecting after `timeoutMs`. The default is a hang-guard,
+// not a latency assertion: it clears macOS's fs-event delays under suite load.
+function waitForChange(tasksDir: string, timeoutMs = 15_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error('watcher did not fire onChange in time')),
@@ -41,7 +41,7 @@ describe('watchTasks', () => {
     const changed = waitForChange(store.tasksDir);
     store.create({ title: 'New task' });
     await changed;
-  });
+  }, 30_000);
 
   it('does not throw when the tasks dir is missing (creates it instead)', () => {
     // A daemon can be pointed at a root whose .dispatch/tasks doesn't exist
@@ -107,17 +107,23 @@ describe('watchSourceDirs', () => {
   it('ignores changes under a skipped directory but still watches for real ones', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dispatch-source-watch-skip-'));
     mkdirSync(join(dir, '.dispatch', 'runs'), { recursive: true });
+    const realFile = join(dir, 'real.ts');
     let calls = 0;
+    let sawRealFile = false;
     watcher = watchSourceDirs(
       [dir],
       () => {
         calls += 1;
+        // onChange carries no path, so the real write is told apart by its file
+        // existing; a late .dispatch event would satisfy the wait below alone.
+        if (existsSync(realFile)) sawRealFile = true;
       },
       isSkippedPath
     );
     writeFileSync(join(dir, '.dispatch', 'runs', 'r-1.jsonl'), '{}\n');
-    // Give the ignored write a full debounce window to (not) fire.
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Several debounce windows, so a delayed fs event has to be very late
+    // indeed to land after it and read as a pass.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     expect(calls).toBe(0);
 
     // A real source change still reaches onChange — the watcher is alive,
@@ -125,17 +131,17 @@ describe('watchSourceDirs', () => {
     const changed = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error('watcher did not fire onChange in time')),
-        3000
+        15_000
       );
       const check = setInterval(() => {
-        if (calls > 0) {
+        if (sawRealFile) {
           clearInterval(check);
           clearTimeout(timer);
           resolve();
         }
       }, 20);
     });
-    writeFileSync(join(dir, 'real.ts'), 'export const x = 1;\n');
+    writeFileSync(realFile, 'export const x = 1;\n');
     await changed;
-  });
+  }, 30_000);
 });

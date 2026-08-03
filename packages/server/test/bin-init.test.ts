@@ -63,7 +63,11 @@ describe('bin.ts --init', () => {
       }
     );
 
-    const initialized = await waitFor(() => existsSync(tasksDir));
+    // Both, not just the tasks dir: init writes them one after the other, so
+    // waiting on the first alone can catch the child between the two writes.
+    const initialized = await waitFor(
+      () => existsSync(tasksDir) && existsSync(configPath)
+    );
     expect(initialized).toBe(true);
     expect(existsSync(tasksDir)).toBe(true);
     expect(existsSync(configPath)).toBe(true);

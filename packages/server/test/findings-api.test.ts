@@ -24,11 +24,17 @@ function initDispatchGitRepo(): string {
 }
 
 let root: string;
+let fakeHome: string;
 let handle: ServerHandle;
 let baseUrl: string;
 let taskId: string;
+const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(async () => {
+  // startServer hydrates the merge queue, which writes run state under
+  // DISPATCH_HOME — left unset it lands in the real home, one dir per test.
+  fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
+  process.env.DISPATCH_HOME = fakeHome;
   root = initDispatchGitRepo();
   TaskStore.init(root);
   handle = await startServer({
@@ -47,6 +53,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await handle.stop();
+  if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
+  else process.env.DISPATCH_HOME = originalDispatchHome;
+  rmSync(fakeHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
 });
 
