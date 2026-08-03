@@ -1,10 +1,17 @@
 import type { CartoMode } from '@dispatch/core';
 import {
   cartoInit,
+  cartoSyncAsync,
   discoverCarto,
   openCartoReader,
 } from '@dispatch/core/carto';
-import type { CartoBlastRadius, CartoReader } from '@dispatch/core/carto';
+import type {
+  CartoBinary,
+  CartoBlastRadius,
+  CartoDiscovery,
+  CartoReader,
+  CartoRunResult,
+} from '@dispatch/core/carto';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -18,7 +25,15 @@ export interface DepMap {
 const SOURCE_EXTENSIONS = ['.ts', '.tsx'];
 const MEMBER_SUBDIRS = ['src', 'test'];
 const WORKSPACE_ROOTS = ['packages', 'apps'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.dispatch']);
+// `.carto` is carto's own output directory: on a single-package repo the
+// watcher covers the whole tree, so without it a sync re-arms the watcher.
+const SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  '.git',
+  '.dispatch',
+  '.carto',
+]);
 
 interface PackageInfo {
   dir: string;
@@ -386,6 +401,46 @@ export class DepMapCache {
   invalidate(): void {
     this.cached = null;
   }
+}
+
+export interface SourceChangeHandlerOptions {
+  rootDir: string;
+  mode: CartoMode;
+  cache: DepMapCache;
+  // Both injectable so the handler's scheduling can be tested without
+  // spawning a real binary.
+  discover?: () => CartoDiscovery;
+  sync?: (projectRoot: string, binary: CartoBinary) => Promise<CartoRunResult>;
+}
+
+// The daemon's watcher callback: always invalidates the cached map, and
+// refreshes carto's container off the event loop, one sync at a time.
+// Discovery is resolved once per daemon, and only when there is a container
+// to sync — both are spawns the watcher must not pay per burst.
+export function createSourceChangeHandler(
+  options: SourceChangeHandlerOptions
+): () => void {
+  const discover = options.discover ?? discoverCarto;
+  const sync = options.sync ?? cartoSyncAsync;
+  let binary: CartoBinary | null | undefined;
+  let inFlight = false;
+  return () => {
+    options.cache.invalidate();
+    if (options.mode === 'off' || inFlight) return;
+    if (!existsSync(join(options.rootDir, '.carto'))) return;
+    if (binary === undefined) {
+      const discovery = discover();
+      binary = discovery.ok ? discovery.binary : null;
+    }
+    if (binary === null) return;
+    inFlight = true;
+    void sync(options.rootDir, binary).then(() => {
+      inFlight = false;
+      // The container just changed under the cached map, which was
+      // invalidated before the sync started.
+      options.cache.invalidate();
+    });
+  };
 }
 
 // A path reachable via more than one route keeps only its closest hop, then
