@@ -9,6 +9,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
+import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
+import { toDiffRenderOptions } from '@/lib/diffDisplay';
 
 /** What each annotation carries, so `renderAnnotation` knows what to draw. */
 type Annotation =
@@ -81,6 +83,11 @@ export function PierreReviewDiff({
     side?: string;
   } | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
+  const [diffDisplay] = useDiffDisplaySettings();
+  const diffOptions = useMemo(
+    () => toDiffRenderOptions(diffDisplay),
+    [diffDisplay]
+  );
 
   const files = useMemo(() => {
     try {
@@ -247,10 +254,11 @@ export function PierreReviewDiff({
 
   return (
     <ErrorBoundary>
-      <PierreWorkerPool>
+      <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
         <CodeView<Annotation>
           ref={viewRef}
           items={items}
+          options={diffOptions}
           onSelectedLinesChange={(sel) =>
             setSelection(
               sel === null
