@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import {
   ConfigError,
+  DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
@@ -15,6 +16,15 @@ let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-'));
 });
+
+// Writes `contents` as `.dispatch/config.yml` under a fresh temp root and
+// returns that root, so a test can hand it straight to loadConfig.
+function writeConfig(contents: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dispatch-'));
+  mkdirSync(join(dir, '.dispatch'), { recursive: true });
+  writeFileSync(join(dir, '.dispatch/config.yml'), contents);
+  return dir;
+}
 
 describe('loadConfig', () => {
   it('returns defaults when file missing', () => {
@@ -36,6 +46,7 @@ describe('loadConfig', () => {
       models: DEFAULT_MODELS,
       linear: DEFAULT_LINEAR,
       fixLoop: DEFAULT_FIX_LOOP,
+      carto: DEFAULT_CARTO,
     });
   });
   it('merges file values over defaults', () => {
@@ -236,5 +247,57 @@ describe('loadConfig', () => {
         /orchestrator\.permissionMode must be one of/
       );
     });
+  });
+});
+
+describe('the carto block', () => {
+  it('defaults to on when absent', () => {
+    const root = writeConfig('statuses: [todo, done]\n');
+    expect(loadConfig(root).carto.enabled).toBe('on');
+  });
+
+  it('accepts detect and off', () => {
+    expect(
+      loadConfig(writeConfig('carto:\n  enabled: detect\n')).carto.enabled
+    ).toBe('detect');
+    expect(
+      loadConfig(writeConfig('carto:\n  enabled: off\n')).carto.enabled
+    ).toBe('off');
+  });
+
+  it('accepts bare on/off unquoted (yaml core schema keeps these as strings)', () => {
+    expect(
+      loadConfig(writeConfig('carto:\n  enabled: on\n')).carto.enabled
+    ).toBe('on');
+    expect(
+      loadConfig(writeConfig('carto:\n  enabled: off\n')).carto.enabled
+    ).toBe('off');
+  });
+
+  it('accepts quoted on/off spellings', () => {
+    expect(
+      loadConfig(writeConfig("carto:\n  enabled: 'off'\n")).carto.enabled
+    ).toBe('off');
+    expect(
+      loadConfig(writeConfig("carto:\n  enabled: 'on'\n")).carto.enabled
+    ).toBe('on');
+  });
+
+  // `enabled: true`/`enabled: false` (unquoted) ARE real YAML booleans under
+  // this package's default (non-1.1) schema, unlike bare on/off above, so the
+  // parser must normalize them to the 'on'/'off' string modes.
+  it('normalizes real YAML booleans (bare true/false) to on/off', () => {
+    expect(
+      loadConfig(writeConfig('carto:\n  enabled: true\n')).carto.enabled
+    ).toBe('on');
+    expect(
+      loadConfig(writeConfig('carto:\n  enabled: false\n')).carto.enabled
+    ).toBe('off');
+  });
+
+  it('rejects an unknown mode with a ConfigError', () => {
+    expect(() => loadConfig(writeConfig('carto:\n  enabled: maybe\n'))).toThrow(
+      ConfigError
+    );
   });
 });

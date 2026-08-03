@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
 import type {
+  CartoConfig,
+  CartoMode,
   ConfigPatch,
   DispatchConfig,
   EscalationStep,
@@ -13,6 +15,8 @@ import type {
   VerifyConfig,
 } from './configTypes.js';
 import {
+  CARTO_MODES,
+  DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
@@ -70,6 +74,7 @@ const DEFAULTS: DispatchConfig = {
   models: { ...DEFAULT_MODELS },
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
+  carto: { ...DEFAULT_CARTO },
 };
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -374,6 +379,29 @@ function parseFixLoopConfig(raw: unknown): FixLoopConfig {
   };
 }
 
+// Validates the optional `carto:` block. `enabled: true`/`false` are real YAML
+// booleans under this package's default (non-1.1) schema and are normalized to
+// 'on'/'off'; bare `on`/`off` already parse as those strings under this schema.
+function parseCarto(raw: unknown): CartoConfig {
+  if (raw === undefined || raw === null) return { ...DEFAULT_CARTO };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ConfigError('carto must be a mapping');
+  }
+  const enabled = (raw as Record<string, unknown>).enabled;
+  if (enabled === undefined) return { ...DEFAULT_CARTO };
+  const normalized =
+    enabled === true ? 'on' : enabled === false ? 'off' : enabled;
+  if (
+    typeof normalized !== 'string' ||
+    !CARTO_MODES.includes(normalized as CartoMode)
+  ) {
+    throw new ConfigError(
+      `carto.enabled must be one of: ${CARTO_MODES.join(', ')}`
+    );
+  }
+  return { enabled: normalized as CartoMode };
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -387,6 +415,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
         statusMap: { ...DEFAULTS.linear.statusMap },
       },
       fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
+      carto: { ...DEFAULTS.carto },
     };
   }
   let parsed: unknown;
@@ -451,6 +480,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     linear: parseLinearConfig(raw.linear),
     fixLoop: parseFixLoopConfig(raw.fixLoop),
     verify: parseVerifyConfig(raw.verify),
+    carto: parseCarto(raw.carto),
   };
 }
 
