@@ -173,6 +173,17 @@ function buildTaskDescription(task: PlannedTask): string {
  * `dispatch plan --planner claude|fake` a real per-request choice instead of
  * a fixed, whole-server setting.
  */
+// Newest first. Two drafts raised in the same millisecond share a createdAt,
+// so the later-inserted one wins the tie rather than the order being arbitrary.
+export function sortDraftsNewestFirst(drafts: DraftRecord[]): DraftRecord[] {
+  const inserted = new Map(drafts.map((d, i) => [d.id, i]));
+  return [...drafts].sort(
+    (a, b) =>
+      b.createdAt.localeCompare(a.createdAt) ||
+      (inserted.get(b.id) ?? 0) - (inserted.get(a.id) ?? 0)
+  );
+}
+
 export class PlanManager {
   private readonly plans = new Map<string, PlanRecord>();
   private readonly planners = new Map<string, Planner>();
@@ -345,9 +356,7 @@ export class PlanManager {
   // Newest first, matching how the client wants to render "your recent
   // drafts" — most useful one on top.
   listDrafts(): DraftRecord[] {
-    return [...this.drafts.values()].sort((a, b) =>
-      b.createdAt.localeCompare(a.createdAt)
-    );
+    return sortDraftsNewestFirst([...this.drafts.values()]);
   }
 
   // Removes a reviewed draft; a silent no-op for an unknown id (api.ts's
