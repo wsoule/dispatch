@@ -48,20 +48,21 @@ export function serializeTeam(members: TeamMember[]): string {
 }
 
 /**
- * Records the local developer in the roster. Matches on current or prior email
- * so a changed git address updates in place instead of adding a second entry.
+ * Records the local developer in the roster. `knownHandle` is the caller's own
+ * record of who it is, which is the only reliable way to survive an email
+ * change — never guess identity from a display name, since two people share one.
  */
 export function upsertMember(
   members: TeamMember[],
   email: string,
-  displayName: string
+  displayName: string,
+  knownHandle?: string
 ): { members: TeamMember[]; member: TeamMember; changed: boolean } {
-  // Match by email first (current or prior); fall back to displayName for
-  // email changes where the person's name stays the same.
-  let found = members.find(
-    (m) => m.email === email || m.emails.includes(email)
-  );
-  found ??= members.find((m) => m.displayName === displayName);
+  const found =
+    (knownHandle === undefined
+      ? undefined
+      : members.find((m) => m.handle === knownHandle)) ??
+    members.find((m) => m.email === email || m.emails.includes(email));
   if (
     found !== undefined &&
     found.email === email &&
