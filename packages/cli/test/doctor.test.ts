@@ -1,4 +1,6 @@
+import { TaskStore } from '@dispatch/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -158,5 +160,64 @@ describe('doctor', () => {
     expect(report.issues).toHaveLength(1);
     expect(report.issues[0].file).toMatch(/\.md$/);
     expect(report.issues[0].file).toBe(files[0]);
+  });
+});
+
+// Separate describe: the outer suite's `root` is never a real git repo, so
+// the merge-driver check (which shells out to `git config`) never fires
+// there — see the `existsSync(.git)` gate in doctor.ts.
+describe('doctor — task-file merge driver', () => {
+  let gitRoot: string;
+  let gitLines: string[];
+  let gitCtx: CliContext;
+
+  async function runGit(...argv: string[]) {
+    await makeProgram(gitCtx).parseAsync(argv, { from: 'user' });
+  }
+
+  beforeEach(async () => {
+    gitRoot = mkdtempSync(join(tmpdir(), 'dispatch-cli-git-'));
+    spawnSync('git', ['init', '-q'], { cwd: gitRoot });
+    gitLines = [];
+    gitCtx = { cwd: gitRoot, log: (l) => gitLines.push(l) };
+  });
+
+  it('is quiet once dispatch init has registered the driver', async () => {
+    await runGit('init');
+    gitLines = [];
+    await runGit('doctor');
+    expect(gitLines.join('\n')).toMatch(/ok — 0 tasks/);
+  });
+
+  it('flags the local git config as missing after init in another clone', async () => {
+    await runGit('init');
+    // Simulates a fresh clone: .gitattributes is committed and travels with
+    // the repo, but the local (never-committed) git config does not.
+    spawnSync(
+      'git',
+      ['config', '--local', '--unset', 'merge.dispatch-task.driver'],
+      {
+        cwd: gitRoot,
+      }
+    );
+    gitLines = [];
+    await expect(runGit('doctor', '--json')).rejects.toThrow(/1 issue/);
+    const report = JSON.parse(gitLines.join('\n'));
+    expect(report.issues).toHaveLength(1);
+    expect(report.issues[0].problem).toMatch(/merge\.dispatch-task/);
+  });
+
+  it('flags a missing .gitattributes line when dispatch init never wrote one', async () => {
+    // Scaffold .dispatch/ directly (bypassing the CLI's `init`, which is
+    // exactly what registers the driver) so doctor has a store to check
+    // without the merge-driver setup it's meant to be flagging as absent.
+    TaskStore.init(gitRoot);
+    await expect(runGit('doctor', '--json')).rejects.toThrow();
+    const report = JSON.parse(gitLines.join('\n'));
+    expect(
+      report.issues.some((i: { problem: string }) =>
+        i.problem.includes('missing merge driver line')
+      )
+    ).toBe(true);
   });
 });
