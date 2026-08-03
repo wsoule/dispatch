@@ -6,7 +6,7 @@
 //! malformed line is skipped and logged, never treated as fatal. Verified against real log
 //! files on this machine (not just illustrative examples) as of Claude Code ~2.1.x.
 
-use super::record::{ParsedRecord, ToolUse, Usage};
+use super::record::{ParsedRecord, ToolUse, Usage, UsageKind};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -94,7 +94,9 @@ pub fn parse_line(line: &str) -> Option<ParsedRecord> {
         .and_then(Value::as_str)
         .map(String::from);
 
+    // Claude Code reports each assistant message's own usage, not a session running total.
     let usage = message.and_then(|m| m.get("usage")).map(|u| Usage {
+        kind: UsageKind::Delta,
         input_tokens: u.get("input_tokens").and_then(Value::as_i64).unwrap_or(0),
         output_tokens: u.get("output_tokens").and_then(Value::as_i64).unwrap_or(0),
         cache_read_input_tokens: u
