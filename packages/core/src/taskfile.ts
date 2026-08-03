@@ -221,10 +221,16 @@ export function setSection(
  * Appends an activity bullet. Assumes `## Activity` is the LAST section of the
  * body (the store's create template guarantees this).
  */
-export function appendActivity(body: string, line: string): string {
+export function appendActivity(
+  body: string,
+  line: string,
+  actor?: string
+): string {
   // `line` is caller-supplied text (e.g. an agent's task_comment) appended
   // straight onto the body, so it's escaped the same as setSection's content.
-  const entry = `- ${escapeHeadingLines(line)}`;
+  // `actor` is a validated ActorRef, so it needs no escaping.
+  const suffix = actor === undefined ? '' : ` — ${actor}`;
+  const entry = `- ${escapeHeadingLines(line)}${suffix}`;
   if (!/^## Activity\s*$/m.test(body)) {
     return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
   }

@@ -72,6 +72,9 @@ export interface UpdatePatch {
   // verify run leaves it exactly as it was.
   exercised?: boolean;
   appendActivity?: string;
+  // The serialized ActorRef credited for `appendActivity`. Omitted leaves the
+  // line unattributed, which is what pre-team task files already look like.
+  activityActor?: string;
   // Free-text body sections (replaced via taskfile.ts's setSection), edited
   // the same way as frontmatter fields but living in the markdown body.
   description?: string;
@@ -221,6 +224,7 @@ export class TaskStore {
     // not the frontmatter, so they're pulled out before the meta spread below.
     const {
       appendActivity: activityLine,
+      activityActor,
       description,
       acceptanceCriteria,
       archivedAt,
@@ -240,7 +244,7 @@ export class TaskStore {
       body = setSection(body, 'Description', description);
     if (acceptanceCriteria !== undefined)
       body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
-    if (activityLine) body = appendActivity(body, activityLine);
+    if (activityLine) body = appendActivity(body, activityLine, activityActor);
     const next: TaskDoc = { meta, body };
     writeFileSync(file, serializeTaskFile(next));
     return next;
