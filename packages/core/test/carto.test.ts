@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
+import * as childProcess from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -689,6 +690,25 @@ describe('cartoSyncAsync', () => {
       });
       expect(result.ok).toBe(false);
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // A child with unread piped stdout blocks forever once it fills the OS
+  // pipe buffer (reproduced with ~800 KB under Node; Bun auto-drains, which
+  // is why this checks the spawn call's stdio shape rather than a hang).
+  it('discards child stdout instead of piping it unread', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    const spy = spyOn(childProcess, 'spawn');
+    try {
+      const binary = writeStubCartoBinary(join(root, 'bin'), 'exit 0');
+      await cartoSyncAsync(root, binary);
+      expect(spy.mock.calls.length).toBe(1);
+      expect(spy.mock.calls[0]?.[2]).toMatchObject({
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+    } finally {
+      spy.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });
