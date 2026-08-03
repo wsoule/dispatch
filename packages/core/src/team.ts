@@ -15,6 +15,11 @@ export interface TeamMember {
 
 const ILLEGAL = /[^a-z0-9._-]/g;
 
+// Same format actor.ts's handles must satisfy — duplicated rather than
+// imported, same as inbox.ts's copy, so this file's dependency surface
+// stays exactly what it is today.
+const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
+
 /** Derives a stable handle from an email's local part, suffixing on collision. */
 export function handleFromEmail(email: string, taken: Set<string>): string {
   const local = email.slice(
@@ -44,10 +49,18 @@ export function parseTeam(yaml: string): TeamMember[] {
   const members = (raw as { members?: unknown } | null)?.members;
   if (!Array.isArray(members)) return [];
   // An entry without a usable handle and email is dropped, not coerced —
-  // a fabricated "undefined" handle produces an unparseable actor ref.
+  // a fabricated "undefined" handle produces an unparseable actor ref. A
+  // handle that doesn't match the format the rest of the system requires
+  // (e.g. a hand-edited `handle: Wyat`) is dropped the same way: it would
+  // otherwise reach InboxStore, which throws an uncaught error out of
+  // startServer instead of failing closed.
   return members.flatMap((m: unknown) => {
     const entry = m as Partial<TeamMember>;
-    if (typeof entry?.handle !== 'string' || typeof entry?.email !== 'string') {
+    if (
+      typeof entry?.handle !== 'string' ||
+      typeof entry?.email !== 'string' ||
+      !HANDLE.test(entry.handle)
+    ) {
       return [];
     }
     return [

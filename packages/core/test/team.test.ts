@@ -65,6 +65,15 @@ describe('parseTeam / serializeTeam', () => {
     expect(parseTeam('members:\n  - displayName: A\n')).toEqual([]);
   });
 
+  it('drops an entry whose handle fails the actor handle format', () => {
+    // A hand-edited team.yml with an uppercase handle must not reach
+    // InboxStore, which throws on it — dropped here, same as any other
+    // malformed entry.
+    expect(
+      parseTeam('members:\n  - handle: Wyat\n    email: w@example.com\n')
+    ).toEqual([]);
+  });
+
   it('drops an entry whose handle is not a scalar', () => {
     expect(
       parseTeam('members:\n  - handle:\n      nested: x\n    email: a@x.com\n')
