@@ -37,15 +37,22 @@ export interface ConnectEventsOptions {
   onGiveUp?: () => void;
   // Defaults to 10. See `onGiveUp`.
   maxConsecutiveFailures?: number;
+  // The daemon's agent token. Omitted only by tests, which inject a fake
+  // socket and never reach a real upgrade.
+  token?: string;
 }
 
 // Swaps an http(s) baseUrl for its ws(s) `/ws` equivalent — pure and
 // Node-safe (no `window.location` fallback the way
 // packages/client/src/api.ts's own `wsUrl` has, since every CLI caller
 // already has a concrete `http://127.0.0.1:<port>` baseUrl from
-// ensureDaemon, never a same-origin default).
-export function wsUrl(baseUrl: string): string {
-  return `${baseUrl.replace(/^http/, 'ws')}/ws`;
+// ensureDaemon, never a same-origin default). `/ws` is the one route that
+// takes its token in the query string, since a WebSocket sets no headers.
+export function wsUrl(baseUrl: string, token?: string): string {
+  const url = `${baseUrl.replace(/^http/, 'ws')}/ws`;
+  return token === undefined
+    ? url
+    : `${url}?token=${encodeURIComponent(token)}`;
 }
 
 // Opens a WS connection to dispatchd and calls `onEvent` for every parsed
@@ -101,7 +108,7 @@ export function connectEvents(
     if (closed) return;
     scheduled = false;
     openedThisGeneration = false;
-    socket = createSocket(wsUrl(baseUrl));
+    socket = createSocket(wsUrl(baseUrl, options.token));
     socket.addEventListener('open', () => {
       openedThisGeneration = true;
       options.onOpen?.();
