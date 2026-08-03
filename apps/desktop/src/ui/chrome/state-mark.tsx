@@ -12,7 +12,7 @@ const MARK_FORM: Record<FeedState, string> = {
   working: 'bg-state-working rounded-full',
   review: 'border border-state-review rounded-full',
   landing: 'bg-state-landing rounded-full [clip-path:inset(0_50%_0_0)]',
-  ready: 'border border-state-ready rounded-full opacity-70',
+  ready: 'border border-dashed border-state-ready rounded-full',
   blocked: 'bg-state-blocked h-px self-center',
 };
 
