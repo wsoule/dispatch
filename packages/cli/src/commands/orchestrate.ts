@@ -21,10 +21,17 @@ import { requireStore } from './task.js';
 // comment), matching the architecture note that every command needing
 // dispatchd does this transparently rather than making the user run
 // `dispatch ui`/`dispatch serve` first.
-async function baseUrlFor(ctx: CliContext): Promise<string> {
+async function daemonFor(
+  ctx: CliContext
+): Promise<{ baseUrl: string; token: string; client: ApiClient }> {
   requireStore(ctx);
-  const { port } = await ensureDaemon(ctx);
-  return `http://127.0.0.1:${port}`;
+  const { port, agentToken } = await ensureDaemon(ctx);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  return {
+    baseUrl,
+    token: agentToken,
+    client: createApiClient(baseUrl, agentToken),
+  };
 }
 
 const REVIEW_ACTIONS = ['merge', 'discard', 'pr'] as const;
@@ -67,7 +74,7 @@ export function createRunWatcher(
   opts: { verbose?: boolean },
   connectOptions: Pick<
     ConnectEventsOptions,
-    'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures'
+    'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures' | 'token'
   > = {}
 ): {
   setRunId: (id: string) => void;
@@ -219,8 +226,7 @@ export function registerOrchestrateCommands(
           json?: boolean;
         }
       ) => {
-        const baseUrl = await baseUrlFor(ctx);
-        const client = createApiClient(baseUrl);
+        const { baseUrl, token, client } = await daemonFor(ctx);
 
         if (opts.watch !== true) {
           const meta = await client.createRun(taskId, opts.executor);
@@ -235,9 +241,13 @@ export function registerOrchestrateCommands(
         // Connect BEFORE dispatching so no early log entry can be missed —
         // see createRunWatcher's doc comment for how the id-not-yet-known
         // window is handled.
-        const watcher = createRunWatcher(ctx, client, baseUrl, {
-          verbose: opts.verbose,
-        });
+        const watcher = createRunWatcher(
+          ctx,
+          client,
+          baseUrl,
+          { verbose: opts.verbose },
+          { token }
+        );
         // C1: `dispose()` must run even if `createRun` itself rejects (a
         // 4xx for a bad task id, an already-live-run 409, ...) — the
         // watcher already opened a WS connection above, and an undisposed
@@ -259,8 +269,7 @@ export function registerOrchestrateCommands(
     .command('show <runId>')
     .option('--json')
     .action(async (runId: string, opts: { json?: boolean }) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
       const detail = await client.getRun(runId);
       if (opts.json === true) {
         ctx.log(JSON.stringify(detail, null, 2));
@@ -281,8 +290,7 @@ export function registerOrchestrateCommands(
     .command('watch <runId>')
     .option('--verbose')
     .action(async (runId: string, opts: { verbose?: boolean }) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { baseUrl, token, client } = await daemonFor(ctx);
       const detail = await client.getRun(runId);
       for (const entry of detail.entries) {
         const line = formatEntry(entry, opts);
@@ -293,7 +301,7 @@ export function registerOrchestrateCommands(
         process.exitCode = immediate;
         return;
       }
-      const watcher = createRunWatcher(ctx, client, baseUrl, opts);
+      const watcher = createRunWatcher(ctx, client, baseUrl, opts, { token });
       try {
         watcher.setRunId(runId);
         process.exitCode = await watcher.waitForExit();
@@ -307,8 +315,7 @@ export function registerOrchestrateCommands(
     .description('List orchestrator runs')
     .option('--json')
     .action(async (opts: { json?: boolean }) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
       const runs = await client.listRuns();
       ctx.log(
         opts.json === true
@@ -323,8 +330,7 @@ export function registerOrchestrateCommands(
     .option('--deny', 'deny the request instead of approving it')
     .action(
       async (runId: string, requestId: string, opts: { deny?: boolean }) => {
-        const baseUrl = await baseUrlFor(ctx);
-        const client = createApiClient(baseUrl);
+        const { client } = await daemonFor(ctx);
         const allow = opts.deny !== true;
         await client.approveRun(runId, requestId, allow);
         ctx.log(`${runId} ${allow ? 'approved' : 'denied'} (${requestId})`);
@@ -342,8 +348,7 @@ export function registerOrchestrateCommands(
     )
     .action(
       async (runId: string, text: string[], opts: { resume?: boolean }) => {
-        const baseUrl = await baseUrlFor(ctx);
-        const client = createApiClient(baseUrl);
+        const { client } = await daemonFor(ctx);
         const meta = await client.sendRunMessage(runId, text.join(' '), {
           resume: opts.resume,
         });
@@ -359,8 +364,7 @@ export function registerOrchestrateCommands(
     .command('cancel <runId>')
     .description('Cancel a live run')
     .action(async (runId: string) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
       await client.cancelRun(runId);
       ctx.log(`${runId} cancelled`);
     });
@@ -370,8 +374,7 @@ export function registerOrchestrateCommands(
     .description("Show a run's unified diff (pipe-friendly)")
     .option('--files', 'list changed files with status instead of the patch')
     .action(async (runId: string, opts: { files?: boolean }) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
       const result = await client.getRunDiff(runId);
       ctx.log(
         opts.files === true ? formatDiffFiles(result.files) : result.patch
@@ -383,8 +386,7 @@ export function registerOrchestrateCommands(
     .description('Review a finished run: merge, discard, or open a PR')
     .action(async (runId: string, action: string) => {
       const validated = validateReviewAction(action);
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
       const meta = await client.reviewRun(runId, validated);
       ctx.log(
         `${runId} reviewed: ${validated}` +

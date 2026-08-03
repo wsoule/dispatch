@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 function json(res: Response): Promise<any> {
   return res.json();
@@ -39,6 +40,7 @@ beforeEach(async () => {
     port: 0,
     writeDaemonFile: false,
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 

@@ -20,6 +20,7 @@ import type {
   LinearTeam,
   LinearViewer,
 } from '../src/linear/client.js';
+import { useTestAuth } from './testAuth.js';
 
 const STATES: LinearWorkflowState[] = [
   { id: 's-todo', name: 'Todo', type: 'unstarted' },
@@ -97,6 +98,7 @@ beforeEach(async () => {
     writeDaemonFile: false,
     linearClient: stub,
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 

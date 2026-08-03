@@ -14,6 +14,7 @@ import {
 import { useState } from 'react';
 
 import { useStickToBottom } from '../../hooks/useStickToBottom';
+import type { DecideAvailability } from '../../lib/daemonAuth';
 import { groupLogEntries } from '../../lib/runLog';
 import { isTerminalRunState } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
@@ -97,6 +98,9 @@ interface RunLogViewProps {
    * (paths + reason) once its id arrives — `null` when there isn't one. */
   pendingScopeRequest: RunScopeRequest | null;
   onDecideScopeRequest: (granted: boolean) => Promise<void>;
+  /** Whether this window can decide at all — see `decideAvailability`. */
+  scopeDecide: DecideAvailability;
+  onRestartDaemon: () => Promise<void>;
   /** Resumes a terminal run with feedback (the same action the Diff tab's "Request changes"
    * button drives) — this view offers it too once the run is done, so talking to the agent
    * works the same way (one composer, always in the same place) whether the run is still
@@ -119,6 +123,8 @@ export function RunLogView({
   onAnswerQuestion,
   pendingScopeRequest,
   onDecideScopeRequest,
+  scopeDecide,
+  onRestartDaemon,
   onRequestChanges,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
@@ -259,6 +265,8 @@ export function RunLogView({
           paths={pendingScopeRequest.paths}
           reason={pendingScopeRequest.reason}
           onDecide={onDecideScopeRequest}
+          availability={scopeDecide}
+          onRestartDaemon={onRestartDaemon}
         />
       )}
 

@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { isDaemonHealthy, readDaemonFile } from '../src/daemon.js';
+import { daemonAuth, isDaemonHealthy, readDaemonFile } from '../src/daemon.js';
 import { createDispatchMcpServer } from '../src/index.js';
 
 // Resolves dispatchd's bin script the same way `dispatch ui`/`dispatch serve`
@@ -47,14 +47,16 @@ function initGitRepo(dir: string): void {
 // Polls this test's own DISPATCH_HOME-scoped daemon file + health check
 // until dispatchd finishes booting (or `timeoutMs` elapses), reusing the
 // exact reader under test rather than a second copy of the same logic.
-async function waitForHealthyPort(
+async function waitForHealthyDaemon(
   rootDir: string,
   timeoutMs = 5000
-): Promise<number> {
+): Promise<{ port: number; auth: Record<string, string> }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const info = readDaemonFile(rootDir);
-    if (info !== null && (await isDaemonHealthy(info.port))) return info.port;
+    if (info !== null && (await isDaemonHealthy(info.port))) {
+      return { port: info.port, auth: daemonAuth(info) };
+    }
     await sleep(50);
   }
   throw new Error('dispatchd did not become healthy in time');
@@ -144,7 +146,7 @@ describe('run_list (live daemon)', () => {
       stderr: 'ignore',
     });
     try {
-      const port = await waitForHealthyPort(root);
+      const { port, auth } = await waitForHealthyDaemon(root);
 
       const client = await connectClient(root);
       const empty = (await client.callTool({
@@ -163,13 +165,13 @@ describe('run_list (live daemon)', () => {
       const baseUrl = `http://127.0.0.1:${port}`;
       const taskRes = await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...auth },
         body: JSON.stringify({ title: 'Dispatch for run_list smoke' }),
       });
       const task = (await taskRes.json()) as { meta: { id: string } };
       await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...auth },
         body: JSON.stringify({ executor: 'fake' }),
       });
 

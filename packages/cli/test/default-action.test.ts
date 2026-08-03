@@ -56,6 +56,7 @@ describe('bare `dispatch` in an uninitialized directory', () => {
           pid: process.pid,
           rootDir: root,
           startedAt: new Date().toISOString(),
+          agentToken: 'test-agent-token',
         })
       );
 
@@ -115,6 +116,7 @@ describe('bare `dispatch` in an uninitialized directory', () => {
           pid: process.pid,
           rootDir: root,
           startedAt: new Date().toISOString(),
+          agentToken: 'test-agent-token',
         })
       );
 
