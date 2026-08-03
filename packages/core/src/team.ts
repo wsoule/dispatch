@@ -3,6 +3,8 @@ import { parse, stringify } from 'yaml';
 // Pure roster shapes and transforms, no node:* imports — the server owns
 // reading and writing `.dispatch/team.yml`.
 
+export class TeamParseError extends Error {}
+
 export interface TeamMember {
   handle: string;
   email: string;
@@ -32,15 +34,36 @@ export function handleFromEmail(email: string, taken: Set<string>): string {
 }
 
 export function parseTeam(yaml: string): TeamMember[] {
-  const raw = yaml.trim() === '' ? null : parse(yaml);
-  const members = raw?.members;
+  let raw: unknown;
+  try {
+    raw = yaml.trim() === '' ? null : parse(yaml);
+  } catch (err) {
+    // A conflicted team.yml must be reported, never silently replaced.
+    throw new TeamParseError(`invalid team.yml: ${(err as Error).message}`);
+  }
+  const members = (raw as { members?: unknown } | null)?.members;
   if (!Array.isArray(members)) return [];
-  return members.map((m) => ({
-    handle: String(m.handle),
-    email: String(m.email),
-    displayName: String(m.displayName ?? m.handle),
-    emails: Array.isArray(m.emails) ? m.emails.map(String) : [],
-  }));
+  // An entry without a usable handle and email is dropped, not coerced —
+  // a fabricated "undefined" handle produces an unparseable actor ref.
+  return members.flatMap((m: unknown) => {
+    const entry = m as Partial<TeamMember>;
+    if (typeof entry?.handle !== 'string' || typeof entry?.email !== 'string') {
+      return [];
+    }
+    return [
+      {
+        handle: entry.handle,
+        email: entry.email,
+        displayName:
+          typeof entry.displayName === 'string'
+            ? entry.displayName
+            : entry.handle,
+        emails: Array.isArray(entry.emails)
+          ? entry.emails.filter((e): e is string => typeof e === 'string')
+          : [],
+      },
+    ];
+  });
 }
 
 export function serializeTeam(members: TeamMember[]): string {
