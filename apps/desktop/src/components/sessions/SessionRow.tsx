@@ -1,8 +1,8 @@
 import { formatRelativeTime, sessionDisplayName } from '../../lib/format';
 import { modelDisplayName } from '../../lib/models';
 import type { Session } from '../../lib/types';
-import { ProjectDot } from '../ui/ProjectDot';
 import { statusDotClass } from './sessionDisplay';
+import { ProjectDot } from '@/ui/chrome/ProjectDot';
 
 interface SessionRowProps {
   session: Session;

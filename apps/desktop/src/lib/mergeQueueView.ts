@@ -4,7 +4,7 @@ import type {
   VerifyStepResult,
 } from '@dispatch/client';
 
-import type { Step } from '@/components/ui/StepStrip';
+import type { Step } from '@/ui/chrome/StepStrip';
 
 /**
  * The Landing view's read model over the merge queue.

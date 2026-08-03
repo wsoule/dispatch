@@ -12,7 +12,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import { TaskBoard } from '../components/tasks/TaskBoard';
-import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { showArchiveToggle } from '../lib/archiveToggle';
@@ -24,6 +23,7 @@ import { parseViewMode, VIEW_MODE_STORAGE_KEY } from '../lib/tasksViewMode';
 import { MilestonesView } from './MilestonesView';
 import { TasksListView } from './TasksListView';
 import { Button } from '@/ui/button';
+import { Segmented } from '@/ui/chrome/Segmented';
 import { Skeleton } from '@/ui/skeleton';
 
 interface BoardViewProps {

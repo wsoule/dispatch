@@ -15,7 +15,6 @@ import { useEffect, useState } from 'react';
 
 import { describeDaemonError } from '../components/shell/DaemonUnavailable';
 import { ProjectSettingsSection } from '../components/shell/ProjectSettingsSection';
-import { StatTile } from '../components/ui/StatTile';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import {
@@ -28,6 +27,7 @@ import { MODELS } from '../lib/models';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
+import { StatTile } from '@/ui/chrome/StatTile';
 import { Input } from '@/ui/input';
 import {
   Select,
