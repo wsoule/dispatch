@@ -1,13 +1,22 @@
+import type { CartoBlastRadius, CartoReader } from '@dispatch/core/carto';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   buildDepMap,
+  createCartoDepMap,
   DepMapCache,
   depMapSourceDirs,
   isSkippedPath,
+  normalizeBlastRadius,
 } from '../src/depmap.js';
 
 let root: string;
@@ -214,5 +223,112 @@ describe('buildDepMap against this repository', () => {
     // Known gap: this test spawns the built CLI rather than importing it, so
     // no static edge reaches it — it is correctly NOT found here.
     expect(dependents).not.toContain('packages/cli/test/mcp-stdio-e2e.test.ts');
+  });
+});
+
+// A reader that answers from a canned map, standing in for a real container.
+function fakeReader(
+  map: Record<string, { count: number; hops: number; files: unknown[] }>
+): CartoReader {
+  return {
+    blastRadius: (file: string) =>
+      map[file] ?? { count: 0, hops: 0, files: [] },
+  };
+}
+
+describe('createCartoDepMap', () => {
+  it('answers dependents from carto', () => {
+    const depMap = createCartoDepMap(
+      root,
+      fakeReader({
+        'src/a.ts': {
+          count: 2,
+          hops: 2,
+          files: [
+            { path: 'src/c.ts', hops: 2 },
+            { path: 'src/b.ts', hops: 1 },
+          ],
+        },
+      }),
+      buildDepMap(root)
+    );
+    // Direct importer first — depth beats the alphabet, matching buildDepMap.
+    expect(depMap.dependents('src/a.ts')).toEqual(['src/b.ts', 'src/c.ts']);
+  });
+
+  it('falls back to the scanner when carto throws', () => {
+    writeFixtureWorkspace();
+    const fallback = buildDepMap(root);
+    const throwing: CartoReader = {
+      blastRadius: () => {
+        throw new Error('container corrupt');
+      },
+    };
+    const depMap = createCartoDepMap(root, throwing, fallback);
+    expect(depMap.dependents('packages/a/src/index.ts')).toEqual(
+      fallback.dependents('packages/a/src/index.ts')
+    );
+  });
+
+  it('caches the failure instead of retrying per file', () => {
+    let calls = 0;
+    const throwing: CartoReader = {
+      blastRadius: () => {
+        calls += 1;
+        throw new Error('container corrupt');
+      },
+    };
+    const depMap = createCartoDepMap(root, throwing, buildDepMap(root));
+    depMap.dependents('src/a.ts');
+    depMap.dependents('src/b.ts');
+    depMap.dependents('src/c.ts');
+    expect(calls).toBe(1);
+  });
+
+  it('always serves mirrors from the scanner, never from carto', () => {
+    writeFixtureWorkspace();
+    const fallback = buildDepMap(root);
+    const depMap = createCartoDepMap(root, fakeReader({}), fallback);
+    expect(depMap.mirrors('packages/a/src/index.ts')).toEqual(
+      fallback.mirrors('packages/a/src/index.ts')
+    );
+  });
+
+  it('normalizes the recorded real carto response', () => {
+    const raw = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, 'fixtures/carto-blast-radius.json'),
+        'utf8'
+      )
+    ) as CartoBlastRadius;
+    const files = normalizeBlastRadius(raw);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.every((f) => typeof f === 'string')).toBe(true);
+    // Ordering must be non-decreasing in hop distance, like buildDepMap's.
+    expect(files).toEqual([...new Set(files)]);
+  });
+
+  it('sorts the fixture by hop distance then name, independent of normalizeBlastRadius itself', () => {
+    const raw = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, 'fixtures/carto-blast-radius.json'),
+        'utf8'
+      )
+    ) as CartoBlastRadius;
+    // Expected order computed straight off the fixture's own `file` /
+    // `hop_distance` keys, not by re-running the function under test.
+    const expected = (raw.files as { file: string; hop_distance: number }[])
+      .slice()
+      .sort((a, b) =>
+        a.hop_distance !== b.hop_distance
+          ? a.hop_distance - b.hop_distance
+          : a.file < b.file
+            ? -1
+            : a.file > b.file
+              ? 1
+              : 0
+      )
+      .map((e) => e.file);
+    expect(normalizeBlastRadius(raw)).toEqual(expected);
   });
 });
