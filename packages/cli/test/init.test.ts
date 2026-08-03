@@ -156,6 +156,13 @@ describe('dispatch init — carto container build', () => {
     expect(gitignore.match(/\.carto\//g)).toHaveLength(1);
   });
 
+  it('starts .carto/ on its own line when .gitignore lacks a trailing newline', async () => {
+    writeFileSync(join(root, '.gitignore'), 'node_modules');
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
+    expect(gitignore).toBe('node_modules\n.carto/\n');
+  });
+
   // Regardless of whether the real machine running this has carto installed,
   // pointing PATH at nothing reproduces "carto not available" — the case
   // this integration exists to degrade from, not depend on ambient state.

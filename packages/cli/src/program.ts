@@ -21,9 +21,8 @@ import { registerTaskCommands } from './commands/task.js';
 import type { CliContext } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
 
-// Appends a `.carto/` ignore entry to the project's .gitignore, creating the
-// file if needed. carto's local index is a per-machine build artifact, not
-// something to commit. No-op if some existing line already ignores it.
+// Appends a `.carto/` ignore entry to .gitignore (creating it if needed);
+// no-op if a `.carto` line is already there. carto's index is per-machine.
 function ensureCartoIgnored(rootDir: string): void {
   const path = join(rootDir, '.gitignore');
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
@@ -71,9 +70,8 @@ export function makeProgram(ctx: CliContext): Command {
         registerMcpServer(ctx.cwd);
         ctx.log('Registered the dispatch MCP server in .mcp.json');
       }
-      // carto.enabled: 'on' means Dispatch may build the container itself;
-      // an absent or unusable binary here just means later dependency-graph
-      // lookups degrade to the built-in scanner, so this never blocks init.
+      // 'on' means Dispatch may build the container itself; an absent or
+      // unusable binary just degrades later lookups, so this never blocks init.
       if (loadConfig(ctx.cwd).carto.enabled === 'on') {
         const discovery = discoverCarto();
         if (discovery.ok) {
