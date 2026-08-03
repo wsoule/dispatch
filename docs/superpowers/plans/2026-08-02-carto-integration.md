@@ -99,7 +99,10 @@ the working repo.
 
 ```bash
 export AGENT=1
-npm install -g carto-md          # the one sanctioned npm use: carto is not a workspace dep
+# carto is a third-party global CLI, not a workspace dep, so the catalog rule
+# does not apply. Prefer bun; fall back to npm only if the native
+# better-sqlite3/tree-sitter builds fail under it, and record which was used.
+bun install -g carto-md || npm install -g carto-md
 carto --version                  # record the exact version
 git clone /Users/wyatsoule/Sites/dispatch /tmp/carto-spike-clone
 cd /tmp/carto-spike-clone
@@ -246,7 +249,12 @@ import { discoverCarto } from '../src/carto.js';
 function writeFakeCarto(binDir: string, version: string): void {
   mkdirSync(binDir, { recursive: true });
   const file = join(binDir, 'carto');
-  writeFileSync(file, `#!/bin/sh\necho "${version}"\n`);
+  // CORRECTED: the real binary prints `carto-md <version>`, not a bare
+  // version. Task 0 recorded this and this plan failed to propagate it, so
+  // the original stub echoed a bare version, the parser split on '.' and got
+  // NaN for every REAL install, and discoverCarto rejected working carto
+  // everywhere while every test passed. Stubs must match observed output.
+  writeFileSync(file, `#!/bin/sh\necho "carto-md ${version}"\n`);
   chmodSync(file, 0o755);
 }
 
@@ -685,9 +693,14 @@ export function pinHookWorkingDirs(projectRoot: string): string[] {
 }
 ```
 
-Note: `BARE_SYNC_RE` is a module-level regex with the `g` flag, so `lastIndex`
-must be reset between `.test()` and `.replace()`. Without that reset the second
-call silently misses.
+Note (corrected during implementation): an earlier draft of this plan claimed
+the `BARE_SYNC_RE.lastIndex = 0` reset was load-bearing and that a test could
+catch its removal. **That was wrong.** `String.prototype.replace` with a global
+regex sets `lastIndex` to 0 itself before matching (per
+`RegExp.prototype[@@replace]`), and a failed `.test()` also resets it — so the
+manual reset is redundant and no test can distinguish its presence. Verified
+empirically. Keep the line as cheap defensive insurance if you like, but do not
+write a test that pretends to cover it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -791,6 +804,17 @@ export function cartoInit(
   redirectCartoOutput(projectRoot);
   pinHookWorkingDirs(projectRoot);
 
+  // Exit status alone is NOT trustworthy: carto 2.1.3 prints
+  // "Fatal error: Could not locate the bindings file" and still exits 0,
+  // leaving .carto/ with only config.json. Measured in Task 0. The container
+  // existing is the only honest success signal.
+  if (!existsSync(join(projectRoot, '.carto', 'carto.db'))) {
+    const stderr = (run.stderr ?? '').trim();
+    return {
+      ok: false,
+      detail: stderr || 'carto init produced no container',
+    };
+  }
   return run.status === 0
     ? { ok: true, detail: `indexed with carto ${binary.version}` }
     : { ok: false, detail: (run.stderr ?? '').trim() || 'carto init failed' };
@@ -893,9 +917,13 @@ If `writeConfig` does not already exist in that file, add a local helper that
 writes `.dispatch/config.yml` under a fresh `mkdtempSync` root and returns the
 root.
 
-**Note on YAML:** `enabled: off` parses as the boolean `false` in YAML 1.1. The
-parser must accept both the string `'off'` and boolean `false` as the `off`
-mode, and both `'on'` and `true` as `on`. Cover this in the test above.
+**Note on YAML (corrected during implementation):** an earlier draft claimed
+`enabled: off` parses as boolean `false` because of YAML 1.1. **That was wrong**
+for this repo — the `yaml` package defaults to the YAML 1.2 core schema, where
+bare `on`/`off`/`yes`/`no` all parse as _strings_. Verified empirically. Only
+bare `true`/`false` are real booleans. The boolean normalization is still
+required, but to handle `enabled: true` / `enabled: false`, not `on`/`off`. Test
+against the spellings that are genuinely booleans, or the test proves nothing.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -929,7 +957,7 @@ In `packages/core/src/config.ts`, add a parser mirroring the existing block
 parsers:
 
 ```ts
-// YAML 1.1 parses bare `on`/`off` as booleans, so both spellings are accepted.
+// Bare `true`/`false` are real YAML booleans; accept them as on/off too.
 function parseCarto(raw: unknown): CartoConfig {
   if (raw === undefined || raw === null) return { ...DEFAULT_CARTO };
   if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -1098,9 +1126,12 @@ export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
     }
     if (typeof file === 'object' && file !== null) {
       const record = file as Record<string, unknown>;
-      const path = record.path ?? record.file;
+      // Entries are
+      // { file, hop_distance }; `path`/`hops` are tolerated fallbacks.
+      const path = record.file ?? record.path;
       if (typeof path !== 'string') continue;
-      const hops = typeof record.hops === 'number' ? record.hops : raw.hops;
+      const rawHops = record.hop_distance ?? record.hops;
+      const hops = typeof rawHops === 'number' ? rawHops : raw.hops;
       entries.push({ path, hops });
     }
   }
@@ -1172,7 +1203,12 @@ it('normalizes the recorded real carto response', () => {
   const files = normalizeBlastRadius(raw);
   expect(files.length).toBeGreaterThan(0);
   expect(files.every((f) => typeof f === 'string')).toBe(true);
-  // Ordering must be non-decreasing in hop distance, like buildDepMap's.
+  // CORRECTED: this assertion only proves there are no duplicates — Set
+  // preserves insertion order, so it says nothing about hop ordering despite
+  // what the original comment here claimed. Recompute the expected order
+  // independently from the fixture's own `file`/`hop_distance` fields and
+  // compare against normalizeBlastRadius's output, or the ordering the sort
+  // exists for is untested.
   expect(files).toEqual([...new Set(files)]);
 });
 ```
@@ -1466,7 +1502,12 @@ describe('buildCartoMcpServerConfig', () => {
       version: '2.1.3',
     });
     expect(config.type).toBe('stdio');
-    expect(config.command).toContain('carto');
+    // CORRECTED: with the shell wrapper (which Task 0 made unconditional),
+    // `command` is `/bin/sh` and the carto path lives in `args`. Assert on
+    // `args`. Also cast to McpStdioServerConfig before reading stdio-only
+    // fields, matching how buildDispatchMcpServerConfig's own tests in this
+    // file do it — the union type does not expose them.
+    expect(config.args.join(' ')).toContain('carto');
     // The SDK serializes env into the spawned CLI's argv, visible via `ps`.
     for (const key of Object.keys(config.env ?? {})) {
       expect(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL']).toContain(key);
@@ -1528,30 +1569,41 @@ export function buildCartoMcpServerConfig(
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
+  // Task 0 confirmed McpStdioServerConfig has NO cwd field, so the working
+  // directory can only be set by wrapping the command in a shell.
   return {
     type: 'stdio',
-    command: binary.path,
-    args: ['serve'],
+    command: '/bin/sh',
+    args: [
+      '-c',
+      // CORRECTED (security): JSON.stringify escapes only `"` and `\`, NOT
+      // `$` or backticks, and sh performs command substitution inside double
+      // quotes. Interpolating a path here was arbitrary code execution in the
+      // daemon. Pass values as positional parameters instead — sh never
+      // re-parses those.
+      'cd "$1" && exec "$2" serve',
+      'sh',
+      projectRoot,
+      binary.path,
+    ],
     env,
-    cwd: projectRoot,
   };
 }
 ```
 
-**If Task 0 Step 6 found no `cwd` field on `McpStdioServerConfig`**, replace the
-return with a shell wrapper instead — and keep the comment explaining why:
+**Known upstream defect — read before testing this task.** `carto serve`
+currently starts but never connects its MCP transport: `src/cli/serve.js` does a
+bare `require('../mcp/server')`, and `src/mcp/server.js` only calls
+`server.connect()` under an `if (require.main === module)` guard, which is false
+when required through the `carto` bin. Filed upstream as
+[theanshsonkar/carto#9](https://github.com/theanshsonkar/carto/issues/9).
 
-```ts
-return {
-  type: 'stdio',
-  command: '/bin/sh',
-  args: [
-    '-c',
-    `cd ${JSON.stringify(projectRoot)} && exec ${JSON.stringify(binary.path)} serve`,
-  ],
-  env,
-};
-```
+Consequence for this task: the config produced here is **correct**, but an
+end-to-end handshake against `carto serve` will time out until upstream ships a
+fix. Write and verify the config-shape tests (they are pure unit tests and pass
+today); do **not** add an end-to-end MCP handshake test, and do not work around
+the bug by spawning `src/mcp/server.js` directly — that reaches into carto's
+private file layout and will break when the real fix lands.
 
 - [ ] **Step 4: Register it on the query**
 
@@ -1658,7 +1710,7 @@ if (config.carto.enabled !== 'off') {
     ctx.log(`carto ${discovery.binary.version} at ${discovery.binary.path}`);
   } else {
     ctx.log(
-      `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: brew install carto`
+      `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: bun install -g carto-md`
     );
   }
 }
@@ -1776,7 +1828,7 @@ const available = discovery.ok;
 
 if (!available) {
   console.warn(
-    '[carto-integration] SKIPPED — carto is not installed. Install it (brew install carto) to run these.'
+    '[carto-integration] SKIPPED — carto is not installed. Install it (bun install -g carto-md) to run these.'
   );
 }
 
@@ -1817,26 +1869,21 @@ git commit -m "test(server): exercise a real carto container when one is install
 
 ---
 
-### Task 10: Homebrew formula and docs
+### Task 10: Docs
 
 **Files:**
 
-- Modify: `~/Sites/homebrew-tap` (separate repo — the dispatch cask)
 - Modify: `README.md`
 
-- [ ] **Step 1: Add carto as a cask dependency**
+**Scope note (decided during pre-flight):** the original plan added
+`depends_on formula: "carto"` to the tap's dispatch cask. `brew info carto`
+confirms **no such formula exists**, in homebrew-core or elsewhere, so that step
+is dropped and no tap repo is touched. Delivery is a global npm/bun install,
+documented here. Writing a real carto formula — a Node CLI with native
+`better-sqlite3` and `tree-sitter` bindings — is its own piece of work, not a
+step of this plan.
 
-In the tap repo's dispatch cask, add:
-
-```ruby
-  depends_on formula: "carto"
-```
-
-If no `carto` formula exists in homebrew-core, this task instead documents
-`npm install -g carto-md` in the README and the cask change is dropped. **Check
-first:** `brew info carto`.
-
-- [ ] **Step 2: Document it in the README**
+- [ ] **Step 1: Document it in the README**
 
 Add to the README beneath the install section:
 
@@ -1848,15 +1895,14 @@ files a change can break, which drives review scope and gives dispatched agents
 its MCP tools. Without it, Dispatch falls back to a built-in TypeScript-only
 scanner — `dispatch doctor` reports which is in use.
 
-    brew install carto     # or: npm install -g carto-md
+    bun install -g carto-md     # or: npm install -g carto-md
 
 Set `carto.enabled: off` in `.dispatch/config.yml` to disable it.
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
-cd /Users/wyatsoule/Sites/dispatch
 export AGENT=1 && bun run format
 git add README.md
 git commit -m "docs: document carto as an optional dependency graph backend"

@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import type { CliContext } from '../src/context.js';
 import { checkMergeDriverSetup } from '../src/mergeDriver.js';
@@ -17,6 +23,41 @@ beforeEach(() => {
   lines = [];
   ctx = { cwd: root, log: (l) => lines.push(l) };
 });
+
+// A fake `carto` binary in its own PATH-prepended directory, so discoverCarto
+// finds it without depending on whether real carto happens to be installed
+// on the machine running this. `succeeds` controls whether its `init`
+// subcommand leaves behind the `.carto/carto.db` cartoInit() checks for.
+function stubCartoBinDir(succeeds: boolean): string {
+  const binDir = mkdtempSync(join(tmpdir(), 'dispatch-cli-carto-bin-'));
+  const initBody = succeeds
+    ? 'mkdir -p .carto && echo x > .carto/carto.db && exit 0'
+    : 'exit 1';
+  writeFileSync(
+    join(binDir, 'carto'),
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo "carto-md 2.1.3"\nelif [ "$1" = "init" ]; then\n  ${initBody}\nelse\n  exit 1\nfi\n`
+  );
+  chmodSync(join(binDir, 'carto'), 0o755);
+  return binDir;
+}
+
+// Runs `fn` with `binDir`'s stub carto discoverable: it goes on PATH and the
+// suite-wide DISPATCH_CARTO_DISABLED opt-out (test/setup.ts) is lifted for
+// the call. Both are restored even if `fn` throws or rejects.
+async function withCarto<T>(binDir: string, fn: () => Promise<T>): Promise<T> {
+  const originalPath = process.env.PATH;
+  const originalDisabled = process.env.DISPATCH_CARTO_DISABLED;
+  process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`;
+  delete process.env.DISPATCH_CARTO_DISABLED;
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalDisabled !== undefined) {
+      process.env.DISPATCH_CARTO_DISABLED = originalDisabled;
+    }
+  }
+}
 
 describe('dispatch init', () => {
   it('scaffolds .dispatch and reports success', async () => {
@@ -137,5 +178,85 @@ describe('dispatch init — task-file merge driver registration', () => {
         .split('\n')
         .filter((l) => l === '.dispatch/tasks/*.md merge=dispatch-task')
     ).toHaveLength(1);
+  });
+});
+
+describe('dispatch init — carto container build', () => {
+  it('builds the container when a usable carto binary is on PATH', async () => {
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    expect(existsSync(join(root, '.carto/carto.db'))).toBe(true);
+    expect(lines.join('\n')).toContain('Indexed the repo with carto 2.1.3');
+  });
+
+  it('adds .carto/ to .gitignore when the container is built', async () => {
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.carto/');
+  });
+
+  // The upgrade case: `.dispatch/` already exists, so init's scaffold step is
+  // skipped entirely, but a container still gets built and still needs the
+  // ignore — otherwise the SQLite container lands untracked and unignored.
+  it('adds .carto/ to .gitignore in an already-initialized project', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(existsSync(join(root, '.gitignore'))).toBe(false);
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.carto/');
+  });
+
+  it('does not duplicate an existing .carto ignore entry', async () => {
+    writeFileSync(join(root, '.gitignore'), 'node_modules\n.carto/\n');
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
+    expect(gitignore.match(/\.carto\//g)).toHaveLength(1);
+  });
+
+  it('starts .carto/ on its own line when .gitignore lacks a trailing newline', async () => {
+    writeFileSync(join(root, '.gitignore'), 'node_modules');
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
+    expect(gitignore).toBe('node_modules\n.carto/\n');
+  });
+
+  // DISPATCH_CARTO_DISABLED (test/setup.ts) reproduces "carto not available"
+  // whether or not this machine has carto installed — the case this
+  // integration exists to degrade from, not depend on ambient state.
+  it('degrades quietly when carto is unavailable', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(existsSync(join(root, '.carto'))).toBe(false);
+    expect(lines.join('\n')).toContain('Initialized');
+    expect(lines.join('\n')).not.toContain('Indexed the repo');
+  });
+
+  it('reports skipped rather than throwing when carto init fails', async () => {
+    await withCarto(stubCartoBinDir(false), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    expect(existsSync(join(root, '.carto/carto.db'))).toBe(false);
+    expect(lines.join('\n')).toContain('carto index skipped');
+  });
+
+  it('does not attempt to build the container when carto.enabled is off', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    writeFileSync(
+      join(root, '.dispatch/config.yml'),
+      `${readFileSync(join(root, '.dispatch/config.yml'), 'utf8')}carto:\n  enabled: off\n`
+    );
+    lines = [];
+    await withCarto(stubCartoBinDir(true), () =>
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    );
+    expect(existsSync(join(root, '.carto'))).toBe(false);
+    expect(lines.join('\n')).not.toContain('Indexed the repo');
+    expect(lines.join('\n')).not.toContain('carto index skipped');
   });
 });

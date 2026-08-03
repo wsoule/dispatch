@@ -1,9 +1,15 @@
 import { TaskStore } from '@dispatch/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { type CliContext, CliError } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
@@ -14,6 +20,35 @@ let ctx: CliContext;
 
 async function run(...argv: string[]) {
   await makeProgram(ctx).parseAsync(argv, { from: 'user' });
+}
+
+// Scaffolds a fresh .dispatch/ project via the real `init` command, then
+// drops the given files (paths relative to the project root) on top.
+function writeProject(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
+  makeProgram({ cwd: dir, log: () => {} }).parse(['init'], { from: 'user' });
+  for (const [path, content] of Object.entries(files)) {
+    const full = join(dir, path);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  return dir;
+}
+
+// Runs `doctor` against `root` with a capturing CliContext, returning the
+// joined log output. carto is absent for these runs via the suite-wide
+// DISPATCH_CARTO_DISABLED (test/setup.ts). A CliError from issues found is
+// swallowed since these tests only assert on what got logged.
+function runDoctor(root: string) {
+  const out: string[] = [];
+  try {
+    makeProgram({ cwd: root, log: (l) => out.push(l) }).parse(['doctor'], {
+      from: 'user',
+    });
+  } catch {
+    // doctor throws CliError when issues are found; irrelevant here
+  }
+  return out.join('\n');
 }
 
 beforeEach(async () => {
@@ -160,6 +195,32 @@ describe('doctor', () => {
     expect(report.issues).toHaveLength(1);
     expect(report.issues[0].file).toMatch(/\.md$/);
     expect(report.issues[0].file).toBe(files[0]);
+  });
+
+  it('warns when the dependency map would be empty', () => {
+    // A project with no TypeScript at all: the built-in scanner can only
+    // ever return [], which is the silent-degradation case this warning
+    // exists to expose.
+    const root = writeProject({ 'main.go': 'package main\n' });
+    const out = runDoctor(root);
+    expect(out).toContain('dependency map');
+  });
+
+  it('reports carto as absent without failing, and suppresses the empty-map warning when TypeScript is present', () => {
+    const root = writeProject({ 'src/a.ts': 'export const a = 1;\n' });
+    const out = runDoctor(root);
+    expect(out).toContain('carto');
+    expect(out).not.toContain('Error');
+    // The install line must name the command that actually produces a working
+    // native build; `bun install -g` never did.
+    expect(out).toContain('npm install -g carto-md');
+    expect(out).not.toContain('bun install -g');
+    // TypeScript sources are present, so the built-in scanner isn't blind
+    // here — the warning must NOT fire. This is the AND-conjunction in
+    // doctor.ts's guard (`!discovery.ok && !hasTypeScriptSources(...)`);
+    // without this assertion a regression to `!discovery.ok` alone would go
+    // unnoticed, since the Go-project test above passes either way.
+    expect(out).not.toContain('warning: no carto container');
   });
 });
 

@@ -1,6 +1,7 @@
 import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -36,6 +37,18 @@ let fakeHome: string;
 let repo: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
+// Every queue a test builds, so afterEach can stop it: a 'blocked-environment'
+// entry arms a 15s self-retry that otherwise fires long after the test ended.
+const liveQueues: MergeQueue[] = [];
+
+function makeQueue(
+  ...args: ConstructorParameters<typeof MergeQueue>
+): MergeQueue {
+  const queue = new MergeQueue(...args);
+  liveQueues.push(queue);
+  return queue;
+}
+
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
   process.env.DISPATCH_HOME = fakeHome;
@@ -43,6 +56,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Before the env restore below, so a timer firing mid-teardown still writes
+  // into this test's own fakeHome rather than the shared fallback one.
+  for (const queue of liveQueues) queue.stop();
+  liveQueues.length = 0;
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -300,7 +317,7 @@ describe('MergeQueue verify timeout', () => {
       }
       return await stub.run(cwd, cmd);
     };
-    const queue = new MergeQueue(harness, runner);
+    const queue = makeQueue(harness, runner);
 
     queue.enqueue(hangs);
     queue.enqueue(fine);
@@ -327,7 +344,7 @@ describe('MergeQueue entry stateSince', () => {
     const harness = makeHarness();
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     const queued = queue.snapshot().entries[0];
@@ -371,7 +388,7 @@ describe('MergeQueue verify output streaming', () => {
       }
       return await stub.run(cwd, cmd);
     };
-    const queue = new MergeQueue(harness, runner);
+    const queue = makeQueue(harness, runner);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -408,7 +425,7 @@ describe('MergeQueue verify output streaming', () => {
       }
       return await stub.run(cwd, cmd);
     };
-    const queue = new MergeQueue(harness, runner);
+    const queue = makeQueue(harness, runner);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -428,7 +445,7 @@ describe('MergeQueue.enqueue', () => {
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     const seen = captureEvents(harness.events);
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const entry = queue.enqueue(runId);
     expect(entry.state).toBe('queued');
@@ -444,7 +461,7 @@ describe('MergeQueue.enqueue', () => {
   it('404s an unknown run id', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     expect(() => queue.enqueue('r-000000')).toThrow(OrchestratorNotFoundError);
   });
 
@@ -460,7 +477,7 @@ describe('MergeQueue.enqueue', () => {
     const task = harness.store.create({ title: 'Still running' });
     const meta = await harness.orchestrator.dispatch(task.meta.id, 'stuck');
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     expect(() => queue.enqueue(meta.id)).toThrow(OrchestratorConflictError);
   });
 
@@ -469,7 +486,7 @@ describe('MergeQueue.enqueue', () => {
     const { runId } = await dispatchAndFinish(harness);
     harness.orchestrator.review(runId, 'discard');
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     expect(() => queue.enqueue(runId)).toThrow(OrchestratorConflictError);
   });
 
@@ -480,7 +497,7 @@ describe('MergeQueue.enqueue', () => {
     // Make the run's own rebase hang so the entry stays queued/active long
     // enough for the second enqueue call to observe it still present.
     stub.rebaseResult = { ok: true, stdout: '', stderr: '' };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     queue.enqueue(runId);
     expect(() => queue.enqueue(runId)).toThrow(OrchestratorConflictError);
   });
@@ -491,7 +508,7 @@ describe('MergeQueue local-run happy path', () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -519,7 +536,7 @@ describe('MergeQueue local-run happy path', () => {
     writeVerifyCommand(harness.rootDir, 'echo verifying');
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -540,7 +557,7 @@ describe('MergeQueue local-run happy path', () => {
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     stub.verifyResult = { ok: false, stdout: '', stderr: 'assertion failed' };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -563,7 +580,7 @@ describe('MergeQueue local-run happy path', () => {
       'Good rebase'
     );
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     stub.rebaseResult = { ok: false, stdout: '', stderr: 'CONFLICT' };
     queue.enqueue(badRunId);
@@ -605,7 +622,7 @@ describe('MergeQueue auto-push on drain', () => {
     const events = captureEvents(harness.events);
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().entries.length === 0);
@@ -630,7 +647,7 @@ describe('MergeQueue auto-push on drain', () => {
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     stub.pushResult = { ok: false, stdout: '', stderr: 'no auth' };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().entries.length === 0);
@@ -649,7 +666,7 @@ describe('MergeQueue auto-push on drain', () => {
     const events = captureEvents(harness.events);
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().entries.length === 0);
@@ -674,7 +691,7 @@ describe('MergeQueue auto-push on drain', () => {
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     stub.pushResult = { ok: false, stdout: '', stderr: 'no auth' };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(
@@ -721,7 +738,7 @@ describe('MergeQueue auto-push on drain', () => {
       }
       return originalRun(cwd, cmd);
     };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(firstRunId);
     // The first entry has already merged and pump() is now blocked inside
@@ -766,7 +783,7 @@ describe('MergeQueue environmental blockers', () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     // The exact real-world trigger: one stray untracked file at the repo root.
     writeFileSync(join(harness.rootDir, 'stray-download.zip'), 'nope\n');
@@ -792,7 +809,7 @@ describe('MergeQueue environmental blockers', () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const stray = join(harness.rootDir, 'stray-download.zip');
     writeFileSync(stray, 'nope\n');
@@ -819,7 +836,7 @@ describe('MergeQueue environmental blockers', () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const strayA = join(harness.rootDir, 'stray-download.zip');
     writeFileSync(strayA, 'nope\n');
@@ -864,7 +881,7 @@ describe('MergeQueue environmental blockers', () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run, {
+    const queue = makeQueue(harness, stub.run, {
       blockedRetryDelayMs: 10,
     });
 
@@ -881,6 +898,33 @@ describe('MergeQueue environmental blockers', () => {
     expect(harness.store.get(taskId)?.meta.status).toBe('done');
   });
 
+  // What teardown relies on: a queue keeping this timer past its own test
+  // pumps against a deleted worktree and persists into the wrong DISPATCH_HOME.
+  it('stops the blocked-retry timer, so a torn-down queue never persists again', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const stub = new StubRunner();
+    const queue = makeQueue(harness, stub.run, {
+      blockedRetryDelayMs: 10,
+    });
+
+    const stray = join(harness.rootDir, 'stray-download.zip');
+    writeFileSync(stray, 'nope\n');
+    queue.enqueue(runId);
+    await waitFor(
+      () => queue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+
+    queue.stop();
+    // Clearing the blocker and the state file makes a surviving timer loud: it
+    // would pump, merge the entry, and write merge-queue.json straight back.
+    rmSync(stray);
+    rmSync(mergeQueuePath(harness.rootDir));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(existsSync(mergeQueuePath(harness.rootDir))).toBe(false);
+    expect(queue.snapshot().history).toHaveLength(0);
+  });
+
   // The IMPORTANT fix: removing the sole blocked entry must not leave its
   // retry timer armed against an empty queue. remove()'s own kick() (added
   // alongside this test) drives pump() into the empty-queue branch, which is
@@ -889,7 +933,7 @@ describe('MergeQueue environmental blockers', () => {
     const harness = makeHarness();
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run, {
+    const queue = makeQueue(harness, stub.run, {
       blockedRetryDelayMs: 10,
     });
 
@@ -933,7 +977,7 @@ describe('MergeQueue environmental blockers', () => {
     const { runId: first } = await dispatchAndFinish(harness, 'First');
     const { runId: second } = await dispatchAndFinish(harness, 'Second');
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     writeFileSync(join(harness.rootDir, 'stray-download.zip'), 'nope\n');
     queue.enqueue(first);
@@ -955,7 +999,7 @@ describe('MergeQueue environmental blockers', () => {
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
     stub.rebaseResult = { ok: false, stdout: '', stderr: 'CONFLICT' };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -970,7 +1014,7 @@ describe('MergeQueue environmental blockers', () => {
     const harness = makeHarness();
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const first = new MergeQueue(harness, stub.run);
+    const first = makeQueue(harness, stub.run);
 
     const stray = join(harness.rootDir, 'stray-download.zip');
     writeFileSync(stray, 'nope\n');
@@ -982,7 +1026,7 @@ describe('MergeQueue environmental blockers', () => {
     // Environment fixed while the "daemon" was down, then a fresh queue over
     // the same rootDir picks the entry back up and merges it.
     rmSync(stray);
-    const second = new MergeQueue(harness, stub.run);
+    const second = makeQueue(harness, stub.run);
     await waitFor(() => second.snapshot().history.length === 1);
     expect(second.snapshot().history[0].state).toBe('merged');
   });
@@ -999,7 +1043,7 @@ describe('MergeQueue PR-run happy path', () => {
       'https://github.com/example/repo/pull/1'
     );
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -1064,7 +1108,7 @@ describe('MergeQueue dependency gating', () => {
     const runB = metaB.id;
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runB);
     await waitFor(
@@ -1105,7 +1149,7 @@ describe('MergeQueue dependency gating', () => {
     const runB = metaB.id;
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runB);
     await waitFor(
@@ -1167,7 +1211,7 @@ describe('MergeQueue.enqueueStack', () => {
     const harness = makeHarness();
     const { taskA, taskB, taskC, runB, runC } = await makeStack(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const entries = queue.enqueueStack(taskC);
     expect(entries.map((e) => e.taskId)).toEqual([taskB, taskC]);
@@ -1196,7 +1240,7 @@ describe('MergeQueue.enqueueStack', () => {
       }
       return originalRun(cwd, cmd);
     };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     queue.enqueue(runB);
     await waitFor(
@@ -1217,7 +1261,7 @@ describe('MergeQueue.enqueueStack', () => {
     const harness = makeHarness();
     const task = harness.store.create({ title: 'Lonely task' });
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     expect(() => queue.enqueueStack(task.meta.id)).toThrow(
       OrchestratorConflictError
     );
@@ -1227,13 +1271,13 @@ describe('MergeQueue.enqueueStack', () => {
     const harness = makeHarness();
     const { taskC, runB, runC } = await makeStack(harness);
     const stub = new StubRunner();
-    const queue1 = new MergeQueue(harness, stub.run);
+    const queue1 = makeQueue(harness, stub.run);
     queue1.enqueueStack(taskC);
 
     // A second MergeQueue over the exact same rootDir stands in for a daemon
     // restart — it must reload what queue1 just persisted synchronously via
     // broadcast()'s writeFileSync, not start from an empty queue.
-    const queue2 = new MergeQueue(harness, stub.run);
+    const queue2 = makeQueue(harness, stub.run);
     const runIds = queue2.snapshot().entries.map((e) => e.runId);
     expect(runIds).toContain(runB);
     expect(runIds).toContain(runC);
@@ -1246,7 +1290,7 @@ describe('MergeQueue.enqueueReady', () => {
     const { runId: runA } = await dispatchAndFinish(harness, 'independent');
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const entries = queue.enqueueReady();
     const ids = entries.map((e) => e.runId);
@@ -1261,7 +1305,7 @@ describe('MergeQueue.enqueueReady', () => {
   it('returns [] rather than throwing when nothing in the registry is eligible', () => {
     const harness = makeHarness();
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     expect(queue.enqueueReady()).toEqual([]);
   });
 
@@ -1275,7 +1319,7 @@ describe('MergeQueue.enqueueReady', () => {
     harness.store.update(taskId, { status: 'cancelled' });
     harness.cache.rebuild(harness.store);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     expect(queue.enqueueReady()).toEqual([]);
     expect(queue.snapshot().entries.map((e) => e.runId)).not.toContain(runId);
@@ -1290,7 +1334,7 @@ describe('MergeQueue.enqueueReady', () => {
     harness.store.update(taskId, { archivedAt: new Date().toISOString() });
     harness.cache.rebuild(harness.store);
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const entries = queue.enqueueReady();
     expect(entries.map((e) => e.runId)).toContain(runId);
@@ -1312,7 +1356,7 @@ describe('MergeQueue.remove', () => {
     );
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     queue.enqueue(runA);
     queue.enqueue(metaB.id);
     // runA processes immediately (no blockers); wait for it to land in
@@ -1341,7 +1385,7 @@ describe('MergeQueue.remove', () => {
       }
       return originalRun(cwd, cmd);
     };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     queue.enqueue(runId);
 
     await waitFor(
@@ -1358,7 +1402,7 @@ describe('MergeQueue.remove', () => {
   it('404s removing a run that is not in the queue', () => {
     const harness = makeHarness();
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     expect(() => queue.remove('r-nope')).toThrow(OrchestratorNotFoundError);
   });
 });
@@ -1368,7 +1412,7 @@ describe('MergeQueue persistence', () => {
     const harness = makeHarness();
     const { runId } = await dispatchAndFinish(harness);
     const stub = new StubRunner();
-    const queue1 = new MergeQueue(harness, stub.run);
+    const queue1 = makeQueue(harness, stub.run);
     queue1.enqueue(runId);
 
     // A second MergeQueue over the exact same rootDir/orchestrator stands in
@@ -1378,7 +1422,7 @@ describe('MergeQueue persistence', () => {
     // own `await Promise.resolve()` before touching any entry (see its
     // comment), so nothing has had a chance to advance this entry past
     // `queued` yet.
-    const queue2 = new MergeQueue(harness, stub.run);
+    const queue2 = makeQueue(harness, stub.run);
     const reloaded = queue2.snapshot().entries.find((e) => e.runId === runId);
     expect(reloaded?.state).toBe('queued');
   });
@@ -1406,7 +1450,7 @@ describe('MergeQueue persistence', () => {
     );
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     // Retrying is safe for the same reason the old "re-enqueue to retry" advice
     // was: the rebase/verify/merge steps are idempotent against a half-done
@@ -1458,7 +1502,7 @@ describe('MergeQueue persistence', () => {
     );
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const filed = queue.snapshot().history.find((e) => e.runId === runId);
     expect(filed?.state).toBe('failed');
@@ -1496,7 +1540,7 @@ describe('MergeQueue persistence', () => {
     // Rebase fails, so the entry stays put rather than merging and clearing —
     // leaving the persisted attempt count observable on disk.
     stub.rebaseResult = { ok: false, stdout: '', stderr: 'CONFLICT' };
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     await waitFor(() => queue.snapshot().history.length === 1);
 
     const persisted = JSON.parse(
@@ -1514,7 +1558,7 @@ describe('MergeQueue persistence', () => {
     writeFileSync(mergeQueuePath(harness.rootDir), '{not valid json');
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
     expect(queue.snapshot()).toEqual({ entries: [], history: [] });
   });
 
@@ -1542,7 +1586,7 @@ describe('MergeQueue persistence', () => {
     );
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const loaded = queue.snapshot().entries.filter((e) => e.runId === runId);
     expect(loaded).toHaveLength(1);
@@ -1578,7 +1622,7 @@ describe('MergeQueue persistence', () => {
     harness.orchestrator.review(runId, 'discard');
 
     const stub = new StubRunner();
-    const queue = new MergeQueue(harness, stub.run);
+    const queue = makeQueue(harness, stub.run);
 
     const dropped = queue.snapshot().history.find((e) => e.runId === runId);
     expect(dropped?.state).toBe('failed');
@@ -1593,7 +1637,7 @@ describe('MergeQueue restack of stacked dependents', () => {
   it('restacks a dependent run after its blocker merges, and resyncs its worktree', async () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
 
     const tipBefore = runGitSync(harness.rootDir, [
       'rev-parse',
@@ -1643,7 +1687,7 @@ describe('MergeQueue restack of stacked dependents', () => {
   it('writes a backup ref holding the dependent tip before restacking it', async () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     const tipBefore = runGitSync(harness.rootDir, [
       'rev-parse',
       dependentRun.branch,
@@ -1666,7 +1710,7 @@ describe('MergeQueue restack of stacked dependents', () => {
   it('restacks via plain git when jj is unavailable, replaying only the dependent commits', async () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     const tipBefore = runGitSync(harness.rootDir, [
       'rev-parse',
       dependentRun.branch,
@@ -1730,7 +1774,7 @@ describe('MergeQueue restack of stacked dependents', () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
     const { run, jjCalls } = makeJjStubRunner();
-    const queue = new MergeQueue(harness, run);
+    const queue = makeQueue(harness, run);
     const tipBefore = runGitSync(harness.rootDir, [
       'rev-parse',
       dependentRun.branch,
@@ -1841,7 +1885,7 @@ describe('MergeQueue restack edge cases', () => {
       harness.orchestrator.list().find((r) => r.id === metaB.id)?.stackParents
     ).toEqual([blockerRun.branch]);
 
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(runA);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'merged')
@@ -1933,7 +1977,7 @@ describe('MergeQueue restack edge cases', () => {
     expect(dependent.stackParents).toEqual([blockerA.branch, blockerB.branch]);
     expect(dependent.baseBranch).toBe(`dispatch/stack-base-${taskC.meta.id}`);
 
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(runA);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2001,7 +2045,7 @@ describe('MergeQueue restack edge cases', () => {
       }
       return { ok: true, stdout: '', stderr: '' };
     };
-    const queue = new MergeQueue(harness, runner);
+    const queue = makeQueue(harness, runner);
 
     queue.enqueue(runId);
     await waitFor(() => queue.snapshot().history.length === 1);
@@ -2052,7 +2096,7 @@ describe('MergeQueue restack edge cases', () => {
       }
       return defaultCommandRunner(cwd, cmd);
     };
-    const queue = new MergeQueue(harness, runner);
+    const queue = makeQueue(harness, runner);
 
     queue.enqueue(blockerRun.id);
     await waitFor(() =>
@@ -2098,7 +2142,7 @@ describe('MergeQueue restack edge cases', () => {
   it('persists a repointed baseBranch so a transcript replay recovers it', async () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
 
     queue.enqueue(blockerRun.id);
     await waitFor(() =>
@@ -2171,7 +2215,7 @@ describe('MergeQueue multi-parent dependent that was live when its blocker merge
     expect(dependent.stackParents).not.toContain(stackBase);
     expect(dependent.stackParents).toContain(blockerA.branch);
 
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(runA);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2212,7 +2256,7 @@ describe('MergeQueue multi-parent dependent that was live when its blocker merge
 
     // A second pass (the boot sweep re-deriving from durable state) must not
     // flag it again.
-    const queue2 = new MergeQueue(harness, noJjRunner);
+    const queue2 = makeQueue(harness, noJjRunner);
     await waitFor(() => queue2.snapshot().entries.length === 0);
     expect(activity.split('multi-parent base')).toHaveLength(2);
   });
@@ -2233,7 +2277,7 @@ describe('MergeQueue refuses a run whose base was discarded', () => {
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
     harness.orchestrator.review(blockerRun.id, 'discard');
 
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(dependentRun.id);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'failed')
@@ -2269,7 +2313,7 @@ describe('MergeQueue refuses a run whose base was discarded', () => {
       'B work, uncommitted\n'
     );
 
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(blockerRun.id);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2357,7 +2401,7 @@ describe('MergeQueue and a request-changes run sharing a worktree', () => {
     // worktree out from under it.
     writeFileSync(join(dependentRun.worktreePath, 'in-flight.txt'), 'wip\n');
 
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(blockerRun.id);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2442,7 +2486,7 @@ describe('MergeQueue and a dependent whose blocker was discarded mid-run', () =>
         'awaiting-approval'
     );
 
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     harness.orchestrator.review(runA, 'discard');
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(
@@ -2479,7 +2523,7 @@ describe('MergeQueue restack persistence across a restart', () => {
   it('replays a restacked dependent as restacked, and a reboot does not flag it', async () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(blockerRun.id);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2503,7 +2547,7 @@ describe('MergeQueue restack persistence across a restart', () => {
     expect(
       rebooted.list().find((r) => r.id === dependentRun.id)?.stackParents
     ).toBeUndefined();
-    const bootQueue = new MergeQueue(
+    const bootQueue = makeQueue(
       { ...harness, orchestrator: rebooted },
       noJjRunner
     );
@@ -2526,7 +2570,7 @@ describe('MergeQueue backup ref cleanup', () => {
   it('prunes a run backup refs when its worktree is removed', async () => {
     const harness = makeHarness();
     const { blockerRun, dependentRun } = await makeStackedPair(harness);
-    const queue = new MergeQueue(harness, noJjRunner);
+    const queue = makeQueue(harness, noJjRunner);
     queue.enqueue(blockerRun.id);
     await waitFor(() =>
       queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2566,7 +2610,7 @@ describe('MergeQueue against real jj', () => {
         dependentRun.branch,
       ]).trim();
 
-      const queue = new MergeQueue(harness, defaultCommandRunner);
+      const queue = makeQueue(harness, defaultCommandRunner);
       queue.enqueue(blockerRun.id);
       await waitFor(() =>
         queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2657,7 +2701,7 @@ describe('MergeQueue against real jj', () => {
         }
         return defaultCommandRunner(cwd, cmd);
       };
-      const queue = new MergeQueue(harness, runner);
+      const queue = makeQueue(harness, runner);
 
       queue.enqueue(blockerRun.id);
       await waitFor(() =>
@@ -2742,7 +2786,7 @@ describe('MergeQueue against real jj', () => {
         dependent.branch,
       ]).trim();
 
-      const queue = new MergeQueue(harness, defaultCommandRunner);
+      const queue = makeQueue(harness, defaultCommandRunner);
       queue.enqueue(runA);
       await waitFor(() =>
         queue.snapshot().history.some((e) => e.state === 'merged')
@@ -2875,7 +2919,7 @@ describe('MergeQueue against real jj', () => {
         liveC.branch,
       ]).trim();
 
-      const queue = new MergeQueue(harness, defaultCommandRunner);
+      const queue = makeQueue(harness, defaultCommandRunner);
       queue.enqueue(runA);
       await waitFor(() =>
         queue.snapshot().history.some((e) => e.state === 'merged')

@@ -35,7 +35,21 @@ export interface DispatchConfig {
   /** How to run this project for a `verify` run to exercise it. Absent means
    *  the verify stage has nothing to dispatch, so a task simply skips it. */
   verify?: VerifyConfig;
+  carto: CartoConfig;
 }
+
+/** Whether Dispatch uses carto for the dependency graph, and whether it may
+ *  build the container itself. `on` is a build policy, never a requirement —
+ *  an absent binary always degrades to the built-in scanner. */
+export type CartoMode = 'on' | 'detect' | 'off';
+
+export interface CartoConfig {
+  enabled: CartoMode;
+}
+
+export const CARTO_MODES: readonly CartoMode[] = ['on', 'detect', 'off'];
+
+export const DEFAULT_CARTO: CartoConfig = { enabled: 'on' };
 
 /** The run recipe a `verify` run exercises the project with — none of these
  *  are required, since a project may need only one of them explained. */
