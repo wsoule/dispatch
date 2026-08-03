@@ -465,7 +465,10 @@ async function withdrawQuestion(
   auth: Record<string, string>
 ): Promise<void> {
   try {
-    await fetch(`${base}/${id}`, { method: 'DELETE', headers: auth });
+    await fetch(`${base}/${id}`, {
+      method: 'DELETE',
+      headers: { ...auth, 'content-type': 'application/json' },
+    });
   } catch {
     // The daemon being unreachable is exactly one of the reasons we gave up.
   }
