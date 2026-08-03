@@ -115,7 +115,7 @@ function App() {
   // The app is scoped to a single project — the one it was launched from (see
   // `commands::current_project_root`'s doc comment for the `tauri dev`-vs-packaged-app
   // resolution). This replaces the old `listProjects` + per-path `hasDispatch` fan-out, which
-  // enumerated every project Relay had ever seen (100+ on a real machine, many stale/deleted)
+  // enumerated every project the app had ever seen (100+ on a real machine, many stale/deleted)
   // and ran a `Promise.all` over all of them: one slow/failing entry there took the *whole*
   // batch down, leaving every view stuck on `portLoading`'s "Loading" state forever, and even
   // when it didn't outright fail, it could just as easily resolve to an unrelated project
@@ -150,7 +150,7 @@ function App() {
     queryKey: ['switcher-projects'],
     queryFn: async () => {
       // Two sources, resolved together: the persistent registry (projects the user has
-      // explicitly added/opened) and Relay's discovered projects (dispatch-enabled paths it
+      // explicitly added/opened) and the watcher's discovered projects (dispatch-enabled paths it
       // already knows about). `allSettled` on the discovery side so a single stale/missing
       // path can never reject the batch.
       const [registered, discovered] = await Promise.all([

@@ -27,7 +27,7 @@ function browserParam(name: string): string | null {
 }
 
 export function listProjects(): Promise<ProjectSummary[]> {
-  // Relay's project enumeration is backed by Tauri IPC; in the browser dev
+  // Project enumeration is backed by Tauri IPC; in the browser dev
   // harness there's no backend, so degrade to an empty list rather than
   // throwing (the switcher dropdown simply shows only the active project).
   if (!isTauri()) return Promise.resolve([]);
@@ -140,7 +140,7 @@ export function restartDispatchd(root: string): Promise<DaemonConnection> {
 /** The single project this window is scoped to — the app's one active project root, resolved
  * on the backend (see `commands::current_project_root`'s doc comment for the `tauri dev` vs
  * packaged-app resolution). Replaces the old `listProjects` + per-path `hasDispatch` fan-out
- * that used to decide which of Relay's *many* discovered projects was "active" — this app is a
+ * that used to decide which of the *many* discovered projects was "active" — this app is a
  * single-project workspace now, not a switcher.
  *
  * Resolves to `null` — not a rejection — on a genuine first run (empty registry, no launch
