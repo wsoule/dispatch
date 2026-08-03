@@ -8,6 +8,11 @@ import { openClaudeQuery } from './orchestrator/claudeCli.js';
 /**
  * Groups related inbox items with a model, so one piece of work described two
  * ways lands together — past what lib/inboxCluster.ts's local pass can match.
+ *
+ * Takes whatever items its caller hands it; it does no reading of its own. The inbox is
+ * partitioned one file per actor, so the caller passes `InboxStore.listAll()` rather than
+ * `list()` here — clustering has to see the whole team's captures, not just one actor's file,
+ * or two people describing the same work in their own inboxes would never group.
  */
 
 export interface InboxClusterGroup {

@@ -322,15 +322,23 @@ export async function startServer(
   );
   mergeQueue.startAutoRefresh();
 
-  // The brain-dump inbox, and the one-time fold of the retired notes store into it. Run at
-  // startup rather than behind a user action because it is idempotent (see migrateNotes) and
-  // because a daemon that has already read notes.json should never serve an inbox that is
-  // missing them — a half-migrated state is the one outcome worth ruling out entirely.
-  const inboxStore = new InboxStore(rootDir);
+  // The brain-dump inbox, scoped to this daemon's own actor, plus the one-time folds of older
+  // storage shapes into it: the legacy single shared `inbox.md` (pre-dating per-actor files) and,
+  // before that, the retired `notes.json` store. Both run at startup rather than behind a user
+  // action because both are idempotent (see migrateLegacy/migrateNotes) and because a daemon that
+  // has already read one should never serve an inbox that is missing it — a half-migrated state
+  // is the one outcome worth ruling out entirely.
+  const inboxStore = new InboxStore(rootDir, actorContext.member.handle);
+  const migratedLegacy = inboxStore.migrateLegacy();
+  if (migratedLegacy > 0) {
+    console.log(
+      `dispatchd: migrated ${migratedLegacy} item(s) from .dispatch/inbox.md into .dispatch/inbox/${actorContext.member.handle}.md`
+    );
+  }
   const migrated = inboxStore.migrateNotes(rootDir);
   if (migrated > 0) {
     console.log(
-      `dispatchd: migrated ${migrated} note(s) from .dispatch/notes.json into .dispatch/inbox.md`
+      `dispatchd: migrated ${migrated} note(s) from .dispatch/notes.json into .dispatch/inbox/${actorContext.member.handle}.md`
     );
   }
 
