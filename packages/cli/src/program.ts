@@ -1,10 +1,12 @@
 import {
   DISPATCH_DIR,
+  loadConfig,
   TaskStore,
   upsertRegisteredProject,
 } from '@dispatch/core';
+import { cartoInit, discoverCarto } from '@dispatch/core/carto';
 import { Command } from 'commander';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -19,6 +21,17 @@ import { registerTaskCommands } from './commands/task.js';
 import type { CliContext } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
 
+// Appends a `.carto/` ignore entry to the project's .gitignore, creating the
+// file if needed. carto's local index is a per-machine build artifact, not
+// something to commit. No-op if some existing line already ignores it.
+function ensureCartoIgnored(rootDir: string): void {
+  const path = join(rootDir, '.gitignore');
+  const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  if (/^\.carto\/?\s*$/m.test(existing)) return;
+  const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+  writeFileSync(path, `${existing}${prefix}.carto/\n`);
+}
+
 // Scaffolds `.dispatch/` for `ctx.cwd` if it isn't there yet. Shared by
 // `dispatch init` (explicit, always reports what happened) and the bare
 // default action (implicit, only ever runs this on a project's very first
@@ -28,6 +41,7 @@ import { registerMcpServer } from './mcpConfig.js';
 function initIfMissing(ctx: CliContext): boolean {
   if (existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'))) return false;
   TaskStore.init(ctx.cwd);
+  ensureCartoIgnored(ctx.cwd);
   return true;
 }
 
@@ -56,6 +70,20 @@ export function makeProgram(ctx: CliContext): Command {
       if (opts.mcp !== false) {
         registerMcpServer(ctx.cwd);
         ctx.log('Registered the dispatch MCP server in .mcp.json');
+      }
+      // carto.enabled: 'on' means Dispatch may build the container itself;
+      // an absent or unusable binary here just means later dependency-graph
+      // lookups degrade to the built-in scanner, so this never blocks init.
+      if (loadConfig(ctx.cwd).carto.enabled === 'on') {
+        const discovery = discoverCarto();
+        if (discovery.ok) {
+          const result = cartoInit(ctx.cwd, discovery.binary);
+          ctx.log(
+            result.ok
+              ? `Indexed the repo with carto ${discovery.binary.version}`
+              : `carto index skipped: ${result.detail}`
+          );
+        }
       }
     });
 

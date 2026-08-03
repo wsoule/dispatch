@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { type CliContext, CliError } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
@@ -12,6 +18,45 @@ let ctx: CliContext;
 
 async function run(...argv: string[]) {
   await makeProgram(ctx).parseAsync(argv, { from: 'user' });
+}
+
+// Scaffolds a fresh .dispatch/ project via the real `init` command, then
+// drops the given files (paths relative to the project root) on top.
+function writeProject(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
+  makeProgram({ cwd: dir, log: () => {} }).parse(['init'], { from: 'user' });
+  for (const [path, content] of Object.entries(files)) {
+    const full = join(dir, path);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+  }
+  return dir;
+}
+
+// Runs `doctor` against `root` with a capturing CliContext, temporarily
+// applying env overrides (e.g. a PATH that hides carto) for the duration of
+// the call. Returns the joined log output; a CliError from issues found is
+// swallowed since these tests only assert on what got logged.
+function runDoctor(root: string, envOverrides: Record<string, string> = {}) {
+  const out: string[] = [];
+  const previous: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(envOverrides)) {
+    previous[key] = process.env[key];
+    process.env[key] = value;
+  }
+  try {
+    makeProgram({ cwd: root, log: (l) => out.push(l) }).parse(['doctor'], {
+      from: 'user',
+    });
+  } catch {
+    // doctor throws CliError when issues are found; irrelevant here
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  return out.join('\n');
 }
 
 beforeEach(async () => {
@@ -158,5 +203,22 @@ describe('doctor', () => {
     expect(report.issues).toHaveLength(1);
     expect(report.issues[0].file).toMatch(/\.md$/);
     expect(report.issues[0].file).toBe(files[0]);
+  });
+
+  it('warns when the dependency map would be empty', () => {
+    // A project with no TypeScript at all: the built-in scanner can only
+    // ever return [], which is the silent-degradation case this warning
+    // exists to expose. PATH is overridden so the warning fires regardless
+    // of whether carto happens to be installed on the machine running this.
+    const root = writeProject({ 'main.go': 'package main\n' });
+    const out = runDoctor(root, { PATH: '/nonexistent' });
+    expect(out).toContain('dependency map');
+  });
+
+  it('reports carto as absent without failing', () => {
+    const root = writeProject({ 'src/a.ts': 'export const a = 1;\n' });
+    const out = runDoctor(root, { PATH: '/nonexistent' });
+    expect(out).toContain('carto');
+    expect(out).not.toContain('Error');
   });
 });
