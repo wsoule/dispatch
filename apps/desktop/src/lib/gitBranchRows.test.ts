@@ -1,7 +1,12 @@
 import type { BranchEntry, GitBranchWithRun } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { buildBranchRows, filterBranchRows } from './gitBranchRows';
+import {
+  buildBranchRows,
+  canActOnBranchRow,
+  filterBranchRows,
+  forceDeleteDefault,
+} from './gitBranchRows';
 
 function gitBranch(overrides: Partial<GitBranchWithRun>): GitBranchWithRun {
   return {
@@ -76,6 +81,59 @@ describe('buildBranchRows', () => {
       'dispatch/active',
       'plain',
     ]);
+  });
+});
+
+// One row for the branch `dispatch/t-1`, joined to whatever worktree entry the
+// case supplies — an empty list gives the plain-branch (no worktree) shape.
+const rowFor = (entries: BranchEntry[]) =>
+  buildBranchRows([gitBranch({ name: 'dispatch/t-1' })], entries)[0];
+
+describe('canActOnBranchRow', () => {
+  test('a live run’s worktree is off limits', () => {
+    expect(
+      canActOnBranchRow(
+        rowFor([worktree({ branch: 'dispatch/t-1', status: 'active' })])
+      )
+    ).toBe(false);
+  });
+
+  test('every other worktree status is actionable', () => {
+    for (const status of ['reviewable', 'orphan', 'leftover'] as const) {
+      expect(
+        canActOnBranchRow(
+          rowFor([worktree({ branch: 'dispatch/t-1', status })])
+        )
+      ).toBe(true);
+    }
+  });
+
+  test('a plain branch with no dispatch worktree is actionable', () => {
+    expect(canActOnBranchRow(rowFor([]))).toBe(true);
+  });
+});
+
+describe('forceDeleteDefault', () => {
+  test('pre-arms force only for a branch known to be unmerged', () => {
+    expect(
+      forceDeleteDefault(
+        rowFor([worktree({ branch: 'dispatch/t-1', mergedIntoBase: false })])
+      )
+    ).toBe(true);
+  });
+
+  test('a merged branch does not open pre-armed', () => {
+    expect(
+      forceDeleteDefault(
+        rowFor([worktree({ branch: 'dispatch/t-1', mergedIntoBase: true })])
+      )
+    ).toBe(false);
+  });
+
+  test('a plain branch, whose merge status dispatch never tracked, does not open pre-armed', () => {
+    // No worktree entry means unknown, not unmerged — a `!== true` test here
+    // would arm force delete on every non-dispatch branch in the list.
+    expect(forceDeleteDefault(rowFor([]))).toBe(false);
   });
 });
 

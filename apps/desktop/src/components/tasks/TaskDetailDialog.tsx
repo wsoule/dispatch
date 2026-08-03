@@ -41,6 +41,7 @@ import {
   useAdjudicateFinding,
   useEpicLedger,
   useFixLoop,
+  useProjectLedger,
   useTaskFindings,
   useTaskVerification,
 } from '../../hooks/useOrchestration';
@@ -49,12 +50,16 @@ import {
   countOpenFindings,
   groupOpenFindingsBySeverity,
 } from '../../lib/findings';
+import type { FixLoopTone } from '../../lib/fixLoopStatus';
 import {
   fixLoopNeedsRuling,
   fixLoopStatusLabel,
+  fixLoopStopDetail,
+  fixLoopTone,
   willEscalateNextRound,
 } from '../../lib/fixLoopStatus';
 import { formatRelativeTimeFromIso } from '../../lib/format';
+import { taskLedgerEntries } from '../../lib/ledgerScope';
 import { pushToLinearError, resolveLinearLink } from '../../lib/linearSettings';
 import { mergeLadderLabel, mergeLadderState } from '../../lib/mergeLadder';
 import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
@@ -66,7 +71,10 @@ import {
   enrichPlanError,
 } from '../../lib/taskEnrich';
 import { revealInFinder } from '../../lib/tauri';
-import { summarizeVerification } from '../../lib/verificationSummary';
+import {
+  summarizeVerification,
+  verificationCheckDetail,
+} from '../../lib/verificationSummary';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
@@ -495,8 +503,15 @@ function FindingsPanel({
   );
 }
 
-// Capped renders with the same "needs you" amber treatment as an agent's
-// question — that is exactly what it is.
+// Only a loop actually waiting on a ruling gets the "needs you" amber
+// treatment; an errored one reads as a failure and the rest stay neutral.
+const FIX_LOOP_TONE_CLASS: Record<FixLoopTone, string> = {
+  waiting:
+    'border-state-waiting-edge bg-state-waiting-surface text-state-waiting',
+  failed: 'border-destructive/30 bg-destructive/10 text-destructive',
+  neutral: 'border-border/60',
+};
+
 function FixLoopSection({
   fixLoop,
   escalation,
@@ -504,24 +519,29 @@ function FixLoopSection({
   fixLoop: FixLoopState;
   escalation: EscalationStep[];
 }) {
-  const capped = fixLoop.state === 'capped';
   const escalates = willEscalateNextRound(fixLoop, escalation);
+  const detail = fixLoopStopDetail(fixLoop);
   return (
     <MainSection title="Fix loop">
       <div
         className={cn(
-          'flex items-center gap-2 rounded-md border px-2.5 py-2 text-[13px]',
-          capped
-            ? 'border-state-waiting-edge bg-state-waiting-surface text-state-waiting'
-            : 'border-border/60'
+          'flex flex-col gap-1 rounded-md border px-2.5 py-2 text-[13px]',
+          FIX_LOOP_TONE_CLASS[fixLoopTone(fixLoop)]
         )}
       >
-        <ShieldAlert className="size-3.5 shrink-0" />
-        <span>{fixLoopStatusLabel(fixLoop)}</span>
-        {escalates && (
-          <span className="text-muted-foreground ml-auto text-[11px]">
-            Next round hands off to a fresh implementer
-          </span>
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="size-3.5 shrink-0" />
+          <span>{fixLoopStatusLabel(fixLoop)}</span>
+          {escalates && (
+            <span className="text-muted-foreground ml-auto text-[11px]">
+              Next round hands off to a fresh implementer
+            </span>
+          )}
+        </div>
+        {detail !== null && (
+          <p className="pl-[1.375rem] text-[12px] whitespace-pre-wrap opacity-90">
+            {detail}
+          </p>
         )}
       </div>
     </MainSection>
@@ -577,18 +597,33 @@ function VerificationSection({
         )}
         {result !== null && result.checks.length > 0 && (
           <ul className="flex flex-col gap-1">
-            {result.checks.map((check, i) => (
-              <li key={i} className="text-[12px]">
-                <span
-                  className={
-                    check.pass ? 'text-state-review' : 'text-state-failed'
-                  }
-                >
-                  {check.pass ? '✓' : '✗'}
-                </span>{' '}
-                <span className="text-foreground/90">{check.check}</span>
-              </li>
-            ))}
+            {result.checks.map((check, i) => {
+              const detail = verificationCheckDetail(check);
+              return (
+                <li key={i} className="text-[12px]">
+                  <span
+                    className={
+                      check.pass ? 'text-state-review' : 'text-state-failed'
+                    }
+                  >
+                    {check.pass ? '✓' : '✗'}
+                  </span>{' '}
+                  <span className="text-foreground/90">{check.check}</span>
+                  {detail !== null && (
+                    <dl className="text-muted-foreground mt-0.5 ml-[1.1rem] grid grid-cols-[4rem_1fr] gap-x-2 text-[11.5px]">
+                      <dt>Expected</dt>
+                      <dd className="text-foreground/80 break-words">
+                        {detail.expected}
+                      </dd>
+                      <dt>Actual</dt>
+                      <dd className="text-state-failed break-words">
+                        {detail.actual}
+                      </dd>
+                    </dl>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         {result !== null && result.artifacts.length > 0 && (
@@ -603,14 +638,16 @@ function VerificationSection({
                       console.error(`Failed to reveal ${path}:`, err);
                     });
                   }}
-                  className="border-border/60 text-muted-foreground hover:text-foreground rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                  title={path}
+                  className="border-border/60 text-muted-foreground hover:text-foreground max-w-full min-w-0 rounded border px-1.5 py-0.5 text-left font-mono text-[11px] break-all"
                 >
                   {path}
                 </button>
               ) : (
                 <span
                   key={path}
-                  className="text-muted-foreground rounded border border-transparent px-1.5 py-0.5 font-mono text-[11px]"
+                  title={path}
+                  className="text-muted-foreground max-w-full min-w-0 rounded border border-transparent px-1.5 py-0.5 font-mono text-[11px] break-all"
                 >
                   {path}
                 </span>
@@ -637,8 +674,8 @@ const LEDGER_KIND_LABEL: Record<LedgerEntry['kind'], string> = {
   handoff: 'Handoff',
 };
 
-// An epic's carried-forward findings/decisions, grouped by kind and
-// attributed to the task that raised each one.
+// Carried-forward findings/decisions — an epic's, or a plain task's own —
+// grouped by kind and attributed to the task that raised each one.
 function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
   if (entries.length === 0) return null;
   const groups = LEDGER_KIND_ORDER.map((kind) => ({
@@ -660,16 +697,18 @@ function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
                   className="border-border/60 rounded-md border px-2.5 py-2"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-medium">
+                    <span className="min-w-0 text-[13px] font-medium break-words">
                       {entry.title}
                     </span>
                     {entry.sourceTaskId !== null && (
-                      <span className="text-muted-foreground ml-auto font-mono text-[11px]">
+                      <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[11px]">
                         {entry.sourceTaskId}
                       </span>
                     )}
                   </div>
-                  <p className="text-muted-foreground mt-1 text-[12.5px] whitespace-pre-wrap">
+                  {/* Scope grants put absolute paths in here, which have no
+                      break opportunity of their own. */}
+                  <p className="text-muted-foreground mt-1 text-[12.5px] break-words whitespace-pre-wrap">
                     {entry.detail}
                   </p>
                 </li>
@@ -826,13 +865,22 @@ export function TaskDetailDialog({
   );
   const { result: verification, error: verificationError } =
     useTaskVerification(client, port, doc.meta.id);
+  const isEpic = doc.meta.kind === 'epic';
   // Only ever meaningful for an epic — `useEpicLedger` no-ops (empty,
   // disabled) when `epicId` is undefined, so this is safe on a plain task.
-  const { entries: ledgerEntries, error: ledgerError } = useEpicLedger(
+  const { entries: epicLedgerEntries, error: epicLedgerError } = useEpicLedger(
     client,
     port,
-    doc.meta.kind === 'epic' ? doc.meta.id : undefined
+    isEpic ? doc.meta.id : undefined
   );
+  // A plain task's own entries live in the project-wide bucket instead, which
+  // is the only place a scope grant on an epic-less task is ever recorded.
+  const { entries: projectLedger, error: projectLedgerError } =
+    useProjectLedger(client, port, !isEpic);
+  const ledgerEntries = isEpic
+    ? epicLedgerEntries
+    : taskLedgerEntries(projectLedger, doc.meta.id);
+  const ledgerError = isEpic ? epicLedgerError : projectLedgerError;
   const adjudicateFinding = useAdjudicateFinding(client, port);
 
   async function pushToLinear() {
@@ -1136,14 +1184,12 @@ export function TaskDetailDialog({
                   </div>
                 )}
 
-                {doc.meta.kind === 'epic' && ledgerError !== null && (
+                {ledgerError !== null && (
                   <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12.5px]">
                     Couldn&rsquo;t load the ledger: {ledgerError}
                   </div>
                 )}
-                {doc.meta.kind === 'epic' && (
-                  <LedgerSection entries={ledgerEntries} />
-                )}
+                <LedgerSection entries={ledgerEntries} />
 
                 {onEnrich !== undefined && (
                   <div className="-mt-2 flex flex-col gap-2">

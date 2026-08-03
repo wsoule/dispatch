@@ -40,11 +40,14 @@ export function ScopeRequestCard({
         </span>
       </div>
       <p className="text-[13px]">{reason}</p>
-      <ul className="flex flex-col gap-0.5">
+      {/* Wrapped, never truncated: this is what the grant applies to, so a
+          path the user cannot read in full is a permission they cannot judge. */}
+      <ul className="flex min-w-0 flex-col gap-0.5">
         {paths.map((path) => (
           <li
             key={path}
-            className="text-muted-foreground font-mono text-[11px]"
+            title={path}
+            className="text-muted-foreground max-w-full min-w-0 font-mono text-[11px] break-all"
           >
             {path}
           </li>

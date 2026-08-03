@@ -13,6 +13,7 @@ import { GitDiffPane } from './GitDiffPane';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { formatBytes } from '@/lib/formatBytes';
 import type { BranchRowVM } from '@/lib/gitBranchRows';
+import { canActOnBranchRow } from '@/lib/gitBranchRows';
 import type {
   GitFileRow,
   GitRightPane as GitRightPaneState,
@@ -184,7 +185,7 @@ export function GitRightPane(props: GitRightPaneProps) {
     const row = props.selectedBranch;
     if (row === undefined) return null;
     const worktree = row.worktree;
-    const canAct = worktree === undefined || worktree.status !== 'active';
+    const canAct = canActOnBranchRow(row);
     const canDiscard =
       worktree?.status === 'reviewable' && worktree.runId !== undefined;
     return (

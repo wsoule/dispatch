@@ -27,6 +27,8 @@ export interface GitHealth {
   staleBytes: number;
   /** Refs nothing owns any more — no automatic path will ever clean these up. */
   orphans: BranchEntry[];
+  /** Orphans whose commits already landed on base — the bulk-delete set. */
+  mergedOrphans: BranchEntry[];
   /** Worktrees with uncommitted changes, which no bulk action may touch. */
   dirty: number;
   /** Stacked on another branch's unmerged work, so not independently removable. */
@@ -55,6 +57,11 @@ export function computeGitHealth(
     const at = Date.parse(b.lastCommitAt);
     return Number.isFinite(at) && now - at > STALE_AFTER_MS;
   });
+  // 'leftover' sits with 'orphan': the run was already reviewed, so nothing
+  // owns the ref and no automatic path will reclaim it either.
+  const orphans = branches.filter(
+    (b) => b.status === 'orphan' || b.status === 'leftover'
+  );
 
   return {
     branches: branches.length,
@@ -64,11 +71,8 @@ export function computeGitHealth(
     reclaimableBytes: bytesOf(reclaimable),
     stale,
     staleBytes: bytesOf(stale),
-    // 'leftover' sits with 'orphan': the run was already reviewed, so nothing
-    // owns the ref and no automatic path will reclaim it either.
-    orphans: branches.filter(
-      (b) => b.status === 'orphan' || b.status === 'leftover'
-    ),
+    orphans,
+    mergedOrphans: orphans.filter((b) => b.mergedIntoBase),
     dirty: onDisk.filter((b) => b.dirty).length,
     stacked: branches.filter(
       (b) => b.stackParents !== undefined && b.stackParents.length > 0

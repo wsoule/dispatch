@@ -1,7 +1,10 @@
 import type { VerificationResult } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { summarizeVerification } from './verificationSummary';
+import {
+  summarizeVerification,
+  verificationCheckDetail,
+} from './verificationSummary';
 
 function result(overrides: Partial<VerificationResult>): VerificationResult {
   return {
@@ -47,5 +50,43 @@ describe('summarizeVerification', () => {
       failCount: 1,
       label: '2/3 checks passed',
     });
+  });
+});
+
+describe('verificationCheckDetail', () => {
+  test('a failing check carries the diagnostic, which is the whole point of it', () => {
+    expect(
+      verificationCheckDetail({
+        check: 'Reject an expired discount code',
+        expected: '410 and no discount applied',
+        actual: '200, discount applied anyway',
+        pass: false,
+      })
+    ).toEqual({
+      expected: '410 and no discount applied',
+      actual: '200, discount applied anyway',
+    });
+  });
+
+  test('a passing check has nothing to add', () => {
+    expect(
+      verificationCheckDetail({
+        check: 'a',
+        expected: '200',
+        actual: '200',
+        pass: true,
+      })
+    ).toBeNull();
+  });
+
+  test('a failing check with no recorded expectation shows nothing rather than empty lines', () => {
+    expect(
+      verificationCheckDetail({
+        check: 'a',
+        expected: '  ',
+        actual: '',
+        pass: false,
+      })
+    ).toBeNull();
   });
 });

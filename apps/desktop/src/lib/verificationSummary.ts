@@ -1,4 +1,4 @@
-import type { VerificationResult } from '@dispatch/client';
+import type { VerificationCheck, VerificationResult } from '@dispatch/client';
 
 export interface VerificationSummary {
   passCount: number;
@@ -21,4 +21,22 @@ export function summarizeVerification(
       ? 'No checks were exercised'
       : `${passCount}/${result.checks.length} checks passed`;
   return { passCount, failCount, label };
+}
+
+export interface VerificationCheckDetail {
+  expected: string;
+  actual: string;
+}
+
+/** The expected-vs-actual pair worth showing under a check, or null. A check
+ *  name says what was tried, never how it went wrong; a passing check matched,
+ *  so restating both adds nothing there. */
+export function verificationCheckDetail(
+  check: VerificationCheck
+): VerificationCheckDetail | null {
+  if (check.pass) return null;
+  const expected = check.expected.trim();
+  const actual = check.actual.trim();
+  if (expected === '' && actual === '') return null;
+  return { expected, actual };
 }

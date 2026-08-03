@@ -65,6 +65,20 @@ export function buildBranchRows(
   });
 }
 
+/** Whether delete/free-disk/discard may be offered for a row: never on a live
+ *  run's worktree. Stated once because the branch list and the detail pane both
+ *  gate on it, and disagreeing means one offers Delete on a running agent. */
+export function canActOnBranchRow(row: BranchRowVM): boolean {
+  return row.worktree === undefined || row.worktree.status !== 'active';
+}
+
+/** Whether the delete-branch confirm opens with "Force delete" pre-ticked —
+ *  only for a branch dispatch positively knows is unmerged, since unknown
+ *  merge status must not pre-arm a destructive default. */
+export function forceDeleteDefault(row: BranchRowVM): boolean {
+  return row.worktree?.mergedIntoBase === false;
+}
+
 /** Narrows `rows` to one `GitSummary` bucket, by branch name, so a health chip's count and
  * the rows it reveals can never disagree. */
 export function filterBranchRows(
