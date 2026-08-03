@@ -42,8 +42,11 @@
   },
   "devDependencies": {
     "@dispatch/core": "workspace:*",
+    "@happy-dom/global-registrator": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@tauri-apps/cli": "catalog:",
+    "@testing-library/dom": "catalog:",
+    "@testing-library/react": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
