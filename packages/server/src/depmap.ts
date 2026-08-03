@@ -434,12 +434,19 @@ export function createSourceChangeHandler(
     }
     if (binary === null) return;
     inFlight = true;
-    void sync(options.rootDir, binary).then(() => {
-      inFlight = false;
-      // The container just changed under the cached map, which was
-      // invalidated before the sync started.
-      options.cache.invalidate();
-    });
+    void sync(options.rootDir, binary)
+      .then(() => {
+        // The container just changed under the cached map, which was
+        // invalidated before the sync started.
+        options.cache.invalidate();
+      })
+      .catch(() => {
+        // A rejecting sync must still release the guard, or every later
+        // change event would be silently dropped for the daemon's life.
+      })
+      .finally(() => {
+        inFlight = false;
+      });
   };
 }
 

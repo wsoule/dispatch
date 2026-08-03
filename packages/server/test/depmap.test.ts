@@ -543,6 +543,7 @@ describe('createSourceChangeHandler', () => {
     (release as unknown as () => void)();
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
     // Finishing invalidates again, so the next review reads the fresh
     // container, and releases the single-flight guard.
     expect(counter.invalidations).toBe(4);
@@ -569,5 +570,37 @@ describe('createSourceChangeHandler', () => {
     handler();
     expect(counter.invalidations).toBe(2);
     expect(syncs).toBe(0);
+  });
+
+  it('releases the single-flight guard when sync rejects', async () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let syncs = 0;
+    let reject: ((err: Error) => void) | null = null;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => foundBinary,
+      sync: () => {
+        syncs += 1;
+        return new Promise<CartoRunResult>((_resolve, rej) => {
+          reject = rej;
+        });
+      },
+    });
+    handler();
+    expect(syncs).toBe(1);
+    (reject as unknown as (err: Error) => void)(
+      new Error('carto sync blew up')
+    );
+    // Flush the rejected promise's .catch/.finally reactions before asserting.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    // If inFlight were never reset on rejection, this second change would be
+    // dropped and syncs would stay at 1 for the rest of the daemon's life.
+    handler();
+    expect(syncs).toBe(2);
   });
 });
