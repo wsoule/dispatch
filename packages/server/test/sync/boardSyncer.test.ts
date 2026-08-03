@@ -243,6 +243,7 @@ describe('BoardSyncer.syncOnce', () => {
     // mechanics, which are not this task's concern.
     const worktreeA = SyncWorktree.open(a, run);
     if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    const beforeSha = runGitSync(worktreeA.path, ['rev-parse', 'HEAD']).trim();
     runGitSync(worktreeA.path, [
       'pull',
       '--rebase',
@@ -261,7 +262,11 @@ describe('BoardSyncer.syncOnce', () => {
       '2026-08-03T00:00:00.000Z'
     );
 
-    const written = syncerFor(a).materialize();
+    // materialize() no longer remembers a "last materialized" boundary on
+    // its own (that in-memory state was itself a resurrection bug across a
+    // daemon restart) — the caller supplies the range explicitly, here the
+    // worktree's HEAD from just before the manual pull above.
+    const written = syncerFor(a).materialize(beforeSha);
     expect(written).toBe(0);
     const localCopy = storeA.get(doc.meta.id);
     expect(localCopy?.meta.title).toBe('Newer from alice');
@@ -343,7 +348,8 @@ describe('BoardSyncer.syncOnce', () => {
     );
     expect(existsSync(join(a, '.dispatch', 'tasks'))).toBe(true);
 
-    // A direct, already-materialized call is idempotent: nothing new to write.
+    // A bare call (no `before` supplied) is always a no-op — there is no
+    // persisted "last materialized" pointer to fall back on.
     expect(syncerFor(a).materialize()).toBe(0);
 
     rmSync(origin, { recursive: true, force: true });
@@ -370,6 +376,35 @@ describe('BoardSyncer.syncOnce', () => {
     await syncerFor(a).syncOnce();
     expect(storeA.get(doc.meta.id)).toBeNull();
 
+    await syncerFor(a).syncOnce();
+    expect(storeA.get(doc.meta.id)).toBeNull();
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('a task deleted locally stays deleted across a daemon restart', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const doc = storeA.create({
+      title: 'Local only, then deleted, then restarted',
+    });
+    await syncerFor(a).syncOnce();
+
+    const localFile = storeA.taskFilePath(doc.meta.id);
+    expect(localFile).not.toBeNull();
+    rmSync(localFile as string);
+    expect(storeA.get(doc.meta.id)).toBeNull();
+
+    await syncerFor(a).syncOnce();
+    expect(storeA.get(doc.meta.id)).toBeNull();
+
+    // Simulate a daemon restart: drop the cached syncer and construct a
+    // brand-new BoardSyncer for the same rootDir. Any in-memory-only
+    // "last materialized" bookkeeping is gone with it — the fix must not
+    // depend on it surviving.
+    resetSyncers();
     await syncerFor(a).syncOnce();
     expect(storeA.get(doc.meta.id)).toBeNull();
 
