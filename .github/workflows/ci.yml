@@ -85,8 +85,8 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
 
-      # `apps/desktop/src-tauri` was vendored from Relay (see apps/desktop/README.md)
-      # and is not fmt-clean or clippy-clean as-is: `cargo fmt --check` reformats
+      # `apps/desktop/src-tauri` is not fmt-clean or clippy-clean as-is:
+      # `cargo fmt --check` reformats
       # dozens of pre-existing lines, and `cargo clippy -- -D warnings` fails on
       # pre-existing findings (an unused import, a manual range-contains, two
       # too-many-arguments functions, a `.nth(0)` call). Both were verified

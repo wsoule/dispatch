@@ -45,7 +45,6 @@
     "*.patch",
     "README",
     ".dispatch",
-    ".mcp.json",
-    "Relay"
+    ".mcp.json"
   ]
 }
