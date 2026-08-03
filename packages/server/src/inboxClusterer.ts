@@ -140,6 +140,28 @@ export class InboxClusterer {
 }
 
 /**
+ * Narrows cluster groups down to items in `localIds` — the caller's own actor file — dropping any
+ * group left with fewer than two local items.
+ *
+ * `cluster()` is handed every teammate's items (see the caller in api.ts, which passes
+ * `InboxStore.listAll()`) so the model can group work described across different people's
+ * inboxes. But display and convert both resolve ids against the local actor's own file only, so a
+ * group carrying another actor's item id would overstate its count, seed a selection the UI can't
+ * resolve, and fail convert outright — this is what keeps the HTTP response itself local-only.
+ */
+export function filterGroupsToLocalItems(
+  groups: InboxClusterGroup[],
+  localIds: Set<string>
+): InboxClusterGroup[] {
+  return groups
+    .map((g) => ({
+      ...g,
+      itemIds: g.itemIds.filter((id) => localIds.has(id)),
+    }))
+    .filter((g) => g.itemIds.length >= 2);
+}
+
+/**
  * Drops anything the model got wrong before it reaches the user.
  *
  * A model asked for ids will occasionally invent one, reuse one across two groups, or return a
