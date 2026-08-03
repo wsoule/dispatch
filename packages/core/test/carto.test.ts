@@ -9,7 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { discoverCarto } from '../src/carto.js';
+import { discoverCarto, openCartoReader } from '../src/carto.js';
 
 // Writes an executable stub named `carto` that prints `version` for --version.
 function writeFakeCarto(binDir: string, version: string): void {
@@ -55,6 +55,32 @@ describe('discoverCarto', () => {
       const result = discoverCarto({ PATH: binDir }, []);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('unsupported-version');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('openCartoReader', () => {
+  it('reports no-container when .carto is absent, rather than throwing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const result = openCartoReader(root);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('no-container');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports load-failed when .carto exists but is unreadable', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      mkdirSync(join(root, '.carto'), { recursive: true });
+      writeFileSync(join(root, '.carto', 'carto.db'), 'not a database');
+      const result = openCartoReader(root);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('load-failed');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
