@@ -240,4 +240,23 @@ describe('POST /api/linear/disconnect', () => {
     const status = await json(await fetch(`${baseUrl}/api/linear/status`));
     expect(status.keySource).toBeNull();
   });
+
+  it('reports the env as the key source, and disconnect cannot clear it', async () => {
+    process.env.LINEAR_API_KEY = 'lin_api_from_env';
+
+    const before = await json(await fetch(`${baseUrl}/api/linear/status`));
+    expect(before).toMatchObject({ connected: true, keySource: 'env' });
+
+    const res = await fetch(`${baseUrl}/api/linear/disconnect`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+
+    // Clearing the stored file cannot unset an environment variable, so the
+    // daemon is still connected — keySource is what makes that legible.
+    expect(await json(res)).toMatchObject({
+      connected: true,
+      keySource: 'env',
+    });
+  });
 });
