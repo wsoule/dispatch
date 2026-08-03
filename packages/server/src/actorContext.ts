@@ -18,6 +18,16 @@ export type GitReader = (args: string[]) => string | null;
 const FALLBACK_EMAIL = 'local@localhost';
 const FALLBACK_NAME = 'Local';
 
+// Spelled out rather than `||`/`??`: a blank string must fall back too, and
+// `??` alone would keep it.
+function orFallback(
+  value: string | null | undefined,
+  fallback: string
+): string {
+  const trimmed = value?.trim();
+  return trimmed !== undefined && trimmed !== '' ? trimmed : fallback;
+}
+
 // Same override/fallback rule as daemonfile.ts's `daemonHome()` and
 // orchestrator/paths.ts's `dispatchHome()` — no injectable param, just this.
 function userStateHome(): string {
@@ -66,8 +76,8 @@ export class ActorContext {
   ) {}
 
   static resolve(rootDir: string, runGit: GitReader): ActorContext {
-    const email = runGit(['config', 'user.email'])?.trim() ?? FALLBACK_EMAIL;
-    const name = runGit(['config', 'user.name'])?.trim() ?? FALLBACK_NAME;
+    const email = orFallback(runGit(['config', 'user.email']), FALLBACK_EMAIL);
+    const name = orFallback(runGit(['config', 'user.name']), FALLBACK_NAME);
     const dir = join(rootDir, DISPATCH_DIR);
     const file = join(dir, 'team.yml');
     const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
