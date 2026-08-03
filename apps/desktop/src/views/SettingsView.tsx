@@ -15,7 +15,13 @@ import { useEffect, useState } from 'react';
 
 import { describeDaemonError } from '../components/shell/DaemonUnavailable';
 import { ProjectSettingsSection } from '../components/shell/ProjectSettingsSection';
+import { useDiffDisplaySettings } from '../hooks/useDiffDisplaySettings';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type {
+  DiffIndicatorStyle,
+  DiffInlineHighlight,
+  DiffLayout,
+} from '../lib/diffDisplay';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import {
   formatSyncCounts,
@@ -27,6 +33,8 @@ import { MODELS } from '../lib/models';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
+import type { SegmentedOption } from '@/ui/chrome/Segmented';
+import { Segmented } from '@/ui/chrome/Segmented';
 import { StatTile } from '@/ui/chrome/StatTile';
 import { Input } from '@/ui/input';
 import {
@@ -135,6 +143,127 @@ function ModelRolesSection({
           );
         })}
       </div>
+    </section>
+  );
+}
+
+const DIFF_LAYOUT_OPTIONS: SegmentedOption<DiffLayout>[] = [
+  { value: 'split', label: 'Split' },
+  { value: 'unified', label: 'Unified' },
+];
+
+const DIFF_INDICATOR_OPTIONS: SegmentedOption<DiffIndicatorStyle>[] = [
+  { value: 'bars', label: 'Bars' },
+  { value: 'classic', label: 'Classic' },
+  { value: 'none', label: 'None' },
+];
+
+// Human names for `lineDiffType`, not the raw prop values — four options is one too many for a
+// comfortable `Segmented` row at narrow widths, so this renders as a `Select` instead.
+const DIFF_INLINE_HIGHLIGHT_OPTIONS: {
+  value: DiffInlineHighlight;
+  label: string;
+}[] = [
+  { value: 'word-alt', label: 'Word (alt)' },
+  { value: 'word', label: 'Word' },
+  { value: 'char', label: 'Character' },
+  { value: 'none', label: 'None' },
+];
+
+/**
+ * How diffs render everywhere a diff appears — Runs, Pull Requests, and the Git page all read
+ * this same preference. Backed by `useDiffDisplaySettings`, so a change here takes effect on any
+ * of those views immediately, without a restart.
+ */
+function DiffDisplaySection() {
+  const [settings, updateSettings] = useDiffDisplaySettings();
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        Diffs
+      </h2>
+      <p className="text-muted-foreground text-[12px]">
+        How diffs render across Runs, Pull Requests, and the Git page.
+      </p>
+      <div className="border-border flex items-center gap-3 border-b py-2">
+        <span className="text-muted-foreground w-40 flex-shrink-0 text-[13px]">
+          Layout
+        </span>
+        <Segmented
+          value={settings.layout}
+          onChange={(layout) => updateSettings({ layout })}
+          options={DIFF_LAYOUT_OPTIONS}
+          label="Diff layout"
+        />
+      </div>
+      <div className="border-border flex items-center gap-3 border-b py-2">
+        <span className="text-muted-foreground w-40 flex-shrink-0 text-[13px]">
+          Change indicators
+        </span>
+        <Segmented
+          value={settings.indicators}
+          onChange={(indicators) => updateSettings({ indicators })}
+          options={DIFF_INDICATOR_OPTIONS}
+          label="Diff change indicators"
+        />
+      </div>
+      <div className="border-border flex items-center gap-3 border-b py-2">
+        <span className="text-muted-foreground w-40 flex-shrink-0 text-[13px]">
+          Inline highlighting
+        </span>
+        <Select
+          value={settings.inlineHighlight}
+          onValueChange={(value) =>
+            updateSettings({ inlineHighlight: value as DiffInlineHighlight })
+          }
+        >
+          <SelectTrigger
+            size="sm"
+            aria-label="Inline highlighting"
+            className="w-[160px] text-[12px]"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DIFF_INLINE_HIGHLIGHT_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={settings.showBackgrounds}
+          onChange={(e) =>
+            updateSettings({ showBackgrounds: e.target.checked })
+          }
+          className="accent-accent size-3.5"
+        />
+        <span className="text-[13px]">Show backgrounds on changed lines</span>
+      </label>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={settings.showLineNumbers}
+          onChange={(e) =>
+            updateSettings({ showLineNumbers: e.target.checked })
+          }
+          className="accent-accent size-3.5"
+        />
+        <span className="text-[13px]">Show line numbers</span>
+      </label>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={settings.wrapLines}
+          onChange={(e) => updateSettings({ wrapLines: e.target.checked })}
+          className="accent-accent size-3.5"
+        />
+        <span className="text-[13px]">Wrap long lines</span>
+      </label>
     </section>
   );
 }
@@ -653,6 +782,9 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
           </div>
         )}
       </section>
+
+      <Separator />
+      <DiffDisplaySection />
 
       {data.config !== null && (
         <>
