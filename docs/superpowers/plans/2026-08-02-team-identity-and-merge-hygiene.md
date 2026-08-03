@@ -45,6 +45,17 @@ surfaces) get their own plans.
 - `bun run lint` inherits a red baseline from `main` (errors in
   `apps/desktop/**` and `packages/web/**`). Only treat _new_ errors in files
   this plan touches as failures.
+- `bun run tsc` carries 4 pre-existing `PlanRecord.role` errors in
+  `apps/desktop`. Same rule: only new ones count.
+- **`bun test packages/server/test/` takes ~237s and exceeds the default 120s
+  tool timeout.** Run it with an explicit timeout of 400000 ms, or it is
+  auto-backgrounded and the run appears to hang. `bun test packages/core/test/`
+  is sub-second and needs no special handling.
+- **The pre-commit hook runs `oxlint --type-aware --fix`, which rewrites `||`
+  into `??` via `typescript/prefer-nullish-coalescing` — during the commit,
+  silently.** It has already reintroduced one fixed bug this way. Where an empty
+  string must fall back, do not write `||`: use an explicit comparison or a
+  named helper, and re-check the file after committing.
 
 ---
 
