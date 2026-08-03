@@ -2042,7 +2042,9 @@ function buildInboxEnrichPrompt(item: InboxItem): string {
 async function clusterInbox(ctx: ApiContext): Promise<Response> {
   const clusterer = ctx.inboxClusterer ?? new InboxClusterer(ctx.rootDir);
   try {
-    const groups = await clusterer.cluster(ctx.inboxStore.list());
+    // listAll(), not list(): clustering has to see every teammate's captures, not just this
+    // daemon's own actor file, or two people describing the same work would never group.
+    const groups = await clusterer.cluster(ctx.inboxStore.listAll());
     return jsonResponse({ groups, error: null });
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });

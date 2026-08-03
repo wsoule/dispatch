@@ -583,8 +583,9 @@ function ExplainerPopover() {
           <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
             Nothing here is a commitment. Items sit in the inbox until you make
             them tasks, hand them to the planner, or dismiss them. Everything is
-            written to <span className="dense-meta">.dispatch/inbox.md</span> in
-            your repo — edit it by hand any time.
+            written to your own file under{' '}
+            <span className="dense-meta">.dispatch/inbox/</span> in your repo —
+            edit it by hand any time.
           </p>
         </div>
         <div>

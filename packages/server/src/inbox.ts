@@ -1,14 +1,25 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * The brain-dump inbox: everything you notice, before you decide whether it matters.
  *
- * Stored as markdown at `.dispatch/inbox.md` rather than JSON (the way `notes.json` was),
- * because the whole premise of the surface is that capture must be frictionless — and the
- * cheapest possible capture is opening the file in your editor and typing a line. That means the
- * parser has to accept what a human would plausibly write, not just what this file emits:
+ * Stored as markdown at `.dispatch/inbox/<handle>.md`, one file per actor, rather than JSON (the
+ * way `notes.json` was) or a single shared file (the way this store started). Brain-dump capture
+ * is personal, and a single file rewritten whole on every change is the worst possible shape for
+ * concurrent writers — two teammates capturing thoughts at once would conflict destructively.
+ * Partitioning per actor removes that conflict class outright. The whole premise of the surface
+ * is that capture must be frictionless — and the cheapest possible capture is opening the file in
+ * your editor and typing a line. That means the parser has to accept what a human would plausibly
+ * write, not just what this file emits:
  *
  *     - [ ] (bug) diffs go blank mid-run
  *     - [ ] a bare line with no kind at all
@@ -46,6 +57,11 @@ export interface InboxItem {
   /** The agent run that flagged it, when an agent did. */
   createdByRunId: string | null;
   created: string;
+}
+
+/** An item as returned by `listAll()`, tagged with the actor whose file it came from. */
+export interface InboxItemWithActor extends InboxItem {
+  actor: string;
 }
 
 export interface AddInboxInput {
@@ -200,11 +216,23 @@ export function serializeInbox(items: InboxItem[]): string {
   return lines.join('\n');
 }
 
+// Same shape as the roster handle regex (@dispatch/core's actor.ts), checked
+// again here because a handle becomes a filename below and must not be able
+// to contain a path separator or a `..` segment.
+const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
+
 export class InboxStore {
+  private readonly rootDir: string;
+  private readonly dir: string;
   private readonly file: string;
 
-  constructor(rootDir: string) {
-    this.file = join(rootDir, '.dispatch', 'inbox.md');
+  constructor(rootDir: string, handle: string) {
+    if (!HANDLE.test(handle)) {
+      throw new Error(`invalid actor handle for inbox file: ${handle}`);
+    }
+    this.rootDir = rootDir;
+    this.dir = join(rootDir, '.dispatch', 'inbox');
+    this.file = join(this.dir, `${handle}.md`);
   }
 
   private read(): InboxItem[] {
@@ -217,13 +245,37 @@ export class InboxStore {
   }
 
   private write(items: InboxItem[]): void {
-    mkdirSync(dirname(this.file), { recursive: true });
+    mkdirSync(this.dir, { recursive: true });
     writeFileSync(this.file, serializeInbox(items));
   }
 
   /** Open items first, in file order — the inbox reads top-down like the file does. */
   list(): InboxItem[] {
     return this.read();
+  }
+
+  /**
+   * Reads every actor's inbox file, each item tagged with the handle its filename carries.
+   *
+   * Used by clustering, which has to see the whole team's captures to group related thoughts —
+   * everything else (`list`, `add`, `update`, ...) stays scoped to this actor's own file, because
+   * capture itself is personal. A file that fails to parse is skipped rather than failing the
+   * whole read, same tolerance `list()` gives a single file.
+   */
+  listAll(): InboxItemWithActor[] {
+    if (!existsSync(this.dir)) return [];
+    const items: InboxItemWithActor[] = [];
+    for (const entry of readdirSync(this.dir).sort()) {
+      if (!entry.endsWith('.md')) continue;
+      const actor = entry.slice(0, -'.md'.length);
+      try {
+        const markdown = readFileSync(join(this.dir, entry), 'utf8');
+        for (const item of parseInbox(markdown)) items.push({ ...item, actor });
+      } catch {
+        continue;
+      }
+    }
+    return items;
   }
 
   /** Splits `text` into one item per line and prepends them, newest capture first. */
@@ -346,6 +398,38 @@ export class InboxStore {
     }
     if (brought.length === 0) return 0;
     this.write([...existing, ...brought]);
+    return brought.length;
+  }
+
+  /**
+   * One-time migration of the legacy single-file `.dispatch/inbox.md` into this actor's own file.
+   *
+   * Must be lossless even if the daemon crashes mid-migration or a teammate's file already has
+   * content: items already present (matched by text, same rule `migrateNotes` uses) are skipped
+   * rather than duplicated, and the legacy file is only deleted after its content is folded in —
+   * so a re-run after an interrupted one still has something to migrate. Once the legacy file is
+   * gone, later runs are a no-op. Returns how many items it brought across.
+   */
+  migrateLegacy(): number {
+    const legacyFile = join(this.rootDir, '.dispatch', 'inbox.md');
+    if (!existsSync(legacyFile)) return 0;
+
+    let legacyItems: InboxItem[];
+    try {
+      legacyItems = parseInbox(readFileSync(legacyFile, 'utf8'));
+    } catch {
+      // Unreadable legacy file: leave it in place rather than deleting content we could not
+      // recover — the one outcome worse than a stalled migration is a lost one.
+      return 0;
+    }
+
+    const existing = this.read();
+    const seen = new Set(existing.map((i) => i.text));
+    const brought = legacyItems.filter((i) => !seen.has(i.text));
+    if (brought.length > 0) {
+      this.write([...existing, ...brought]);
+    }
+    unlinkSync(legacyFile);
     return brought.length;
   }
 }
