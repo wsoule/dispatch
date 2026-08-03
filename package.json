@@ -31,6 +31,7 @@
       "@types/react-dom": "19.2.3",
       "@typescript/native-preview": "7.0.0-dev.20260128.1",
       "@vitejs/plugin-react": "6.0.3",
+      "acorn": "8.16.0",
       "class-variance-authority": "0.7.1",
       "clsx": "2.1.1",
       "commander": "13.1.0",
