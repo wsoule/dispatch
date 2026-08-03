@@ -32,6 +32,7 @@ export {
 } from './graph.js';
 export type { TaskStack } from './graph.js';
 export { slugify } from './slug.js';
+export { isOutstanding } from './timeline.js';
 export type {
   CreateInput,
   ListFilter,
