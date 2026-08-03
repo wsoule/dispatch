@@ -122,13 +122,51 @@ export class BoardSyncer {
       trunk,
     ]);
     if (pull.status !== 0) {
-      // Never leave the worktree mid-rebase — the next syncOnce() must find
-      // it clean; the commit above already sits safely in its history.
-      this.run(this.worktree.path, ['rebase', '--abort']);
+      // REBASE_HEAD only resolves once a rebase has actually started, so it
+      // distinguishes a genuine content conflict from a pull that never got
+      // that far — a fetch failure (offline, unreachable origin), for
+      // instance, which is degraded connectivity rather than a conflict.
+      const rebasing = this.run(this.worktree.path, [
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        'REBASE_HEAD',
+      ]);
+      if (rebasing.status === 0) {
+        const conflicts = this.run(this.worktree.path, [
+          'diff',
+          '--name-only',
+          '--diff-filter=U',
+        ]);
+        const paths = conflicts.stdout
+          .split('\n')
+          .filter((line) => line.trim().length > 0);
+        // Never leave the worktree mid-rebase — the next syncOnce() must
+        // find it clean; the commit above already sits safely in its
+        // history.
+        this.run(this.worktree.path, ['rebase', '--abort']);
+        // Drop the syncer's own unpushed scratch commit and land back on
+        // trunk's freshly-fetched tip. rootDir is never touched, so this
+        // loses nothing: the next syncOnce() simply recommits whatever the
+        // user's file currently holds, fresh on top of trunk — the same
+        // last-write-wins rule the staging loop above already applies
+        // (isOutstanding), so recovery needs no manual conflict resolution.
+        this.run(this.worktree.path, [
+          'reset',
+          '--hard',
+          `refs/remotes/origin/${trunk}`,
+        ]);
+        return {
+          pushed: 0,
+          pulled: 0,
+          state: 'blocked',
+          detail: `conflict in ${paths.join(', ')}`,
+        };
+      }
       return {
         pushed: 0,
         pulled: 0,
-        state: 'blocked',
+        state: 'local-only',
         detail: errorText(pull),
       };
     }
