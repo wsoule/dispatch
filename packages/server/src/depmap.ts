@@ -325,47 +325,44 @@ export class DepMapCache {
   }
 }
 
-// carto's `files` entries carry their own hop distance. Sorting by
-// (hops, name) reproduces buildDepMap's ordering exactly, so a high-fanout
-// file's direct importers survive review.ts's cap of 20.
+// A path reachable via more than one route keeps only its closest hop, then
+// the result sorts by (hops, name) ascending to match buildDepMap's ordering.
 export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
-  const entries: { path: string; hops: number }[] = [];
+  // path -> nearest hop distance seen for it, so a duplicate route can only
+  // ever shrink the recorded distance, never add a second entry.
+  const closest = new Map<string, number>();
   for (const file of raw.files) {
+    let path: string | undefined;
+    let hops: number | undefined;
     if (typeof file === 'string') {
-      entries.push({ path: file, hops: raw.hops });
+      path = file;
+      hops = raw.hops;
+    } else if (typeof file === 'object' && file !== null) {
+      const record = file as Record<string, unknown>;
+      // Entries are { file, hop_distance }; `path`/`hops` are tolerated fallbacks.
+      const rawPath = record.file ?? record.path;
+      if (typeof rawPath !== 'string') continue;
+      path = rawPath;
+      const rawHops = record.hop_distance ?? record.hops;
+      hops = typeof rawHops === 'number' ? rawHops : raw.hops;
+    } else {
       continue;
     }
-    if (typeof file === 'object' && file !== null) {
-      const record = file as Record<string, unknown>;
-      // Key names pinned by the Task 0 fixture: entries are
-      // { file, hop_distance }. `path`/`hops` are tolerated fallbacks only.
-      const path = record.file ?? record.path;
-      if (typeof path !== 'string') continue;
-      const rawHops = record.hop_distance ?? record.hops;
-      const hops = typeof rawHops === 'number' ? rawHops : raw.hops;
-      entries.push({ path, hops });
-    }
+    const existing = closest.get(path);
+    if (existing === undefined || hops < existing) closest.set(path, hops);
   }
-  return entries
-    .sort((a, b) =>
-      a.hops !== b.hops
-        ? a.hops - b.hops
-        : a.path < b.path
-          ? -1
-          : a.path > b.path
-            ? 1
-            : 0
+  return [...closest.entries()]
+    .sort(([pa, ha], [pb, hb]) =>
+      ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
     )
-    .map((e) => e.path);
+    .map(([path]) => path);
 }
 
 /** Why a CartoDepMap stopped using carto, for the caller to surface once. */
 export type CartoDegradation = { file: string; detail: string };
 
-// dependents() from carto, mirrors() from the scanner — carto has no notion
-// of Dispatch's hand-mirror comments, so that half never moves. A single
-// throw retires carto for this instance's lifetime: a broken container must
-// not be retried once per file across a 40-file diff.
+// dependents() from carto, mirrors() from the scanner (carto has no notion
+// of hand-mirror comments). A throw retires carto for this instance's life.
 export function createCartoDepMap(
   rootDir: string,
   reader: CartoReader,

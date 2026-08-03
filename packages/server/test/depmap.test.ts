@@ -331,4 +331,30 @@ describe('createCartoDepMap', () => {
       .map((e) => e.file);
     expect(normalizeBlastRadius(raw)).toEqual(expected);
   });
+
+  it('dedupes a path reachable by two routes, keeping the closer hop', () => {
+    const raw = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, 'fixtures/carto-blast-radius.json'),
+        'utf8'
+      )
+    ) as CartoBlastRadius;
+    // The fixture already lists this path once at hop 5; add a second route
+    // to it at hop 1, as carto would if two different files imported it.
+    const duplicated: CartoBlastRadius = {
+      ...raw,
+      files: [
+        ...raw.files,
+        { file: 'apps/desktop/src/main.tsx', hop_distance: 1 },
+      ],
+    };
+    const files = normalizeBlastRadius(duplicated);
+    // No new path was added, so the unique count is unchanged.
+    expect(files.length).toBe(raw.files.length);
+    expect(files.filter((f) => f === 'apps/desktop/src/main.tsx').length).toBe(
+      1
+    );
+    // Sorted at hop 1's position (alphabetically first there), not hop 5's.
+    expect(files[0]).toBe('apps/desktop/src/main.tsx');
+  });
 });
