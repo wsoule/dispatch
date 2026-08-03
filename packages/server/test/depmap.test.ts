@@ -16,6 +16,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
+import type { DepMap } from '../src/depmap.js';
 import {
   buildDepMap,
   createCartoDepMap,
@@ -247,8 +248,17 @@ function fakeReader(
   };
 }
 
+// A DepMap whose dependents() is a fixed, caller-ordered list, standing in
+// for the scanner so a merge test controls both inputs precisely.
+function fakeDepMap(dependents: string[]): DepMap {
+  return {
+    dependents: () => dependents,
+    mirrors: () => [],
+  };
+}
+
 describe('createCartoDepMap', () => {
-  it('answers dependents from carto', () => {
+  it('answers dependents from carto alone when the scanner has nothing to add', () => {
     const depMap = createCartoDepMap(
       root,
       fakeReader({
@@ -261,10 +271,78 @@ describe('createCartoDepMap', () => {
           ],
         },
       }),
-      buildDepMap(root)
+      fakeDepMap([])
     );
     // Direct importer first — depth beats the alphabet, matching buildDepMap.
     expect(depMap.dependents('src/a.ts')).toEqual(['src/b.ts', 'src/c.ts']);
+  });
+
+  it('unions carto and the scanner, deduplicated', () => {
+    const carto = fakeReader({
+      'src/a.ts': {
+        count: 3,
+        hops: 0,
+        files: [
+          { file: 'src/carto-only-1.ts', hop_distance: 1 },
+          { file: 'src/shared.ts', hop_distance: 1 },
+          { file: 'src/carto-only-2.ts', hop_distance: 2 },
+        ],
+      },
+    });
+    const fallback = fakeDepMap(['src/shared.ts', 'src/scanner-only.ts']);
+    const depMap = createCartoDepMap(root, carto, fallback);
+    const result = depMap.dependents('src/a.ts');
+    expect(new Set(result)).toEqual(
+      new Set([
+        'src/carto-only-1.ts',
+        'src/shared.ts',
+        'src/carto-only-2.ts',
+        'src/scanner-only.ts',
+      ])
+    );
+    expect(result.length).toBe(4);
+  });
+
+  it('round-robin merges so each list keeps its own first entry near the front', () => {
+    const carto = fakeReader({
+      'src/a.ts': {
+        count: 5,
+        hops: 0,
+        files: ['c1', 'c2', 'c3', 'c4', 'c5'].map((file, i) => ({
+          file,
+          hop_distance: i,
+        })),
+      },
+    });
+    const fallback = fakeDepMap(['s1', 's2', 's3']);
+    const depMap = createCartoDepMap(root, carto, fallback);
+    const result = depMap.dependents('src/a.ts');
+    // A naive concatenation would put every scanner-only entry after all 5
+    // carto entries — this asserts positions, not just membership.
+    expect(result[0]).toBe('c1');
+    expect(result[1]).toBe('s1');
+    expect(result.indexOf('c1')).toBeLessThan(2);
+    expect(result.indexOf('s1')).toBeLessThan(2);
+  });
+
+  it('keeps a duplicate exactly once, at its earliest position in the merge', () => {
+    const carto = fakeReader({
+      'src/a.ts': {
+        count: 2,
+        hops: 0,
+        files: [
+          { file: 'src/x.ts', hop_distance: 0 },
+          { file: 'src/dup.ts', hop_distance: 1 },
+        ],
+      },
+    });
+    const fallback = fakeDepMap(['src/dup.ts', 'src/y.ts']);
+    const depMap = createCartoDepMap(root, carto, fallback);
+    const result = depMap.dependents('src/a.ts');
+    expect(result.filter((f) => f === 'src/dup.ts').length).toBe(1);
+    // Round-robin visits carto's src/x.ts, then fallback's src/dup.ts, before
+    // carto ever reaches its own (later) src/dup.ts entry.
+    expect(result).toEqual(['src/x.ts', 'src/dup.ts', 'src/y.ts']);
   });
 
   it('falls back to the scanner when carto throws', () => {
@@ -281,7 +359,7 @@ describe('createCartoDepMap', () => {
     );
   });
 
-  it('caches the failure instead of retrying per file', () => {
+  it('caches the failure instead of retrying per file, and reports it once', () => {
     let calls = 0;
     const throwing: CartoReader = {
       blastRadius: () => {
@@ -289,11 +367,15 @@ describe('createCartoDepMap', () => {
         throw new Error('container corrupt');
       },
     };
-    const depMap = createCartoDepMap(root, throwing, buildDepMap(root));
+    const degradations: string[] = [];
+    const depMap = createCartoDepMap(root, throwing, buildDepMap(root), (d) =>
+      degradations.push(d.detail)
+    );
     depMap.dependents('src/a.ts');
     depMap.dependents('src/b.ts');
     depMap.dependents('src/c.ts');
     expect(calls).toBe(1);
+    expect(degradations.length).toBe(1);
   });
 
   it('always serves mirrors from the scanner, never from carto', () => {
