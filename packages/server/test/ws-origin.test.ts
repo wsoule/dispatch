@@ -51,9 +51,8 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-// Opens /ws with the given Origin and reports the first message it received,
-// or null when the handshake failed. Settled before `ws.close()`, which
-// dispatches `close` synchronously and would otherwise overwrite a message.
+// Opens /ws with the given Origin and reports its first message, or null when
+// the handshake failed. Settles before `ws.close()`, which would overwrite it.
 function connect(
   origin: string | null
 ): Promise<{ opened: boolean; firstMessage: string | null }> {

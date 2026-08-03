@@ -491,8 +491,7 @@ export class WorktreeManager {
   }
 
   // Boot-time hygiene: a directory under `worktreesRoot` that no known
-  // transcript (`keepPaths`) references is a leftover from a crash. An empty
-  // keep-set means the enumeration found nothing — a reason to do nothing.
+  // transcript (`keepPaths`) references is a leftover from a crash.
   pruneOrphans(worktreesRoot: string, keepPaths: Set<string>): void {
     if (!existsSync(worktreesRoot)) return;
     let entries: string[];

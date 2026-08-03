@@ -417,11 +417,8 @@ async function createRun(
 
   const executorName =
     typeof executorField === 'string' ? executorField : 'claude';
-  // A request that omits `model` falls back to the project's configured
-  // `models.execute` rather than leaving it undefined — a client that never
-  // sends one (a script, an older UI build) still runs on the model the
-  // project actually chose in settings, not whatever the SDK happens to
-  // default to.
+  // Omitting `model` falls back to the project's configured `models.execute`,
+  // so a script or an older UI build still runs on the model settings chose.
   const model =
     typeof modelField === 'string'
       ? modelField
@@ -570,9 +567,8 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     ) {
       return errorResponse(400, 'models must be an object');
     }
-    // Same deal as permissionMode: the valid role set and per-role string check live in core
-    // next to updateConfig, which rejects an unknown role or bad value before writing anything —
-    // that ConfigError becomes the 400 below.
+    // Like permissionMode: core's updateConfig rejects an unknown role or bad
+    // value before writing, and that ConfigError becomes the 400 below.
     patch.models = body.models as Partial<ModelConfig>;
   }
   if ('linear' in body) {
@@ -2037,9 +2033,8 @@ function buildInboxEnrichPrompt(item: InboxItem): string {
 }
 
 /**
- * POST /api/inbox/cluster — ask a model which captured items are really one piece of work.
- * Runs automatically in the background (BrainDumpView), so always 200 with `error` set on
- * failure rather than a 502 — a background pass must never read as a hard failure.
+ * POST /api/inbox/cluster — ask a model which captured items are one piece of
+ * work. Always 200 with `error` set, since it runs unattended in the background.
  */
 async function clusterInbox(ctx: ApiContext): Promise<Response> {
   const clusterer = ctx.inboxClusterer ?? new InboxClusterer(ctx.rootDir);
@@ -2159,9 +2154,8 @@ export function isTrustedOrigin(origin: string): boolean {
   );
 }
 
-// A body-less cross-origin POST skips the preflight, and CORS headers are added
-// only after the handler ran, so a foreign origin has to be refused before any
-// route matches — this daemon has no other authentication.
+// CORS cannot stop a body-less cross-origin POST (no preflight, and headers go
+// on only after the handler ran) — this daemon has no other authentication.
 export function rejectUntrustedOrigin(req: Request): Response | null {
   if (READ_ONLY_METHODS.has(req.method)) return null;
   const origin = req.headers.get('origin');

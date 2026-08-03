@@ -182,10 +182,8 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
     prevCommitShas.current = shas;
   }, [log]);
 
-  // Identity is the stash's sha, not its `ref` (`stash@{0}`) — that ref is positional and
-  // shifts for other entries whenever one is pushed or dropped.
-  // Panels are short enough that j/k routinely moves the selection out of view; without this
-  // the highlight is invisible and keyboard navigation reads as doing nothing.
+  // Panels are short enough that j/k routinely moves the selection out of view,
+  // where the highlight is invisible and keyboard nav reads as doing nothing.
   useEffect(() => {
     containerRef.current
       ?.querySelector(
@@ -194,6 +192,8 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
       ?.scrollIntoView({ block: 'nearest' });
   }, [panelState]);
 
+  // Identity is the stash's sha, not its positional `ref` (`stash@{0}`), which
+  // shifts for other entries whenever one is pushed or dropped.
   const prevStashShas = useRef<string[]>([]);
   useEffect(() => {
     const shas = stashes.map((s) => s.sha);

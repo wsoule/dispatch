@@ -5,9 +5,8 @@ import { join } from 'node:path';
 import type { PlanRecord } from '../src/api';
 import { PATCHABLE_FINDING_VERDICTS, PLAN_ROLES } from '../src/api';
 
-// The types in api.ts are hand-copied from dispatchd, which this package cannot
-// import across the workspace boundary. These tests read the server source as
-// text and compare the copies, so drift fails here instead of at runtime.
+// api.ts's types are hand-copied from dispatchd, which this package cannot
+// import, so these read the server source as text and fail on drift.
 function serverSource(...segments: string[]): string {
   return readFileSync(
     join(import.meta.dir, '..', '..', 'server', 'src', ...segments),

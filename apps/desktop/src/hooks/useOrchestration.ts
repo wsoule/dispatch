@@ -165,8 +165,7 @@ export function useEpicLedger(
 }
 
 /** The project-wide ledger — entries filed with no epic, which is where a
- *  scope grant on a parentless task lands. Callers narrow it with
- *  `taskLedgerEntries`. */
+ *  scope grant on a parentless task lands. */
 export function useProjectLedger(
   client: ApiClient | null,
   port: number | undefined,

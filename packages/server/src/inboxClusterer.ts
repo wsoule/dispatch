@@ -6,22 +6,8 @@ import type { InboxItem } from './inbox.js';
 import { openClaudeQuery } from './orchestrator/claudeCli.js';
 
 /**
- * Groups related inbox items using a model, so "diffs go blank mid-run" and "the review pane is
- * empty while an agent works" land together — the same bug described twice, sharing not one word.
- *
- * This complements rather than replaces the local heuristic in the desktop app
- * (lib/inboxCluster.ts). The two answer different questions and have different costs:
- *
- * - The local pass is free and instant, so it runs on every render as a passive hint. It can only
- *   see shared vocabulary.
- * - This pass costs a call and a couple of seconds, so it is explicitly user-triggered. It sees
- *   meaning.
- *
- * Haiku by default (`config.models.cluster`, see packages/core/src/config.ts's DEFAULT_MODELS).
- * This is a short classification over a handful of one-line strings — the cheapest, fastest model
- * in the family is the right tool, and paying Opus rates to sort a todo list would be
- * indefensible. No tools are granted either: clustering is about the text in front of it, so
- * letting it read the repo would only add latency and a way to go wrong.
+ * Groups related inbox items with a model, so one piece of work described two
+ * ways lands together — past what lib/inboxCluster.ts's local pass can match.
  */
 
 export interface InboxClusterGroup {
@@ -78,9 +64,8 @@ const MIN_ITEMS = 3;
  * automatically, with nothing watching a spinner to cancel it by hand. */
 const CLUSTER_TIMEOUT_MS = 60_000;
 
-// The SDK itself tests for abort this way internally (name === 'AbortError', or a fetch
-// cancellation message) — matched here so a real cancellation is never confused with a
-// same-timing but unrelated failure.
+// The SDK signals an abort as either an AbortError or a fetch-cancellation
+// message, so a real cancellation is never read as an unrelated failure.
 function isAbortError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -100,14 +85,12 @@ export class InboxClusterer {
     const open = items.filter((i) => !i.done);
     if (open.length < MIN_ITEMS) return [];
 
-    // Fresh per-call read (same pattern PlanManager and mergeQueue.ts use for their own
-    // config.yml-sourced settings), so a settings change takes effect on the next cluster
-    // request with no daemon restart.
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), CLUSTER_TIMEOUT_MS);
     try {
       const options: Options = {
         cwd: this.rootDir,
+        // Read per call, so a settings change applies with no daemon restart.
         model: loadConfig(this.rootDir).models.cluster,
         permissionMode: 'plan',
         // No tools: this is a judgement about the strings above, not about the repo.

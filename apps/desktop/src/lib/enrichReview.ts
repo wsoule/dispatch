@@ -1,8 +1,7 @@
 import type { PlanRecord } from '@dispatch/client';
 
-/** The sections an "Add detail" pass proposes — the same shape whether the target is an
- * existing task (`taskEnrich.ts`'s `TaskEnrichDraft`) or a raw inbox capture, since both
- * proposals come back through the same planner output (`PlannedTask` in `@dispatch/client`). */
+/** The sections an "Add detail" pass proposes — the same shape for an existing
+ * task or a raw inbox capture, since both come back as a `PlannedTask`. */
 export interface EnrichDraft {
   description: string;
   acceptanceCriteria: string[];
@@ -15,10 +14,8 @@ export type EnrichViewState =
   | { kind: 'failed'; error: string };
 
 /**
- * Maps a polled plan record onto what a review panel should show. Reads only the first task
- * the planner proposed — the enrich prompts all ask for exactly one — and folds "ready but the
- * proposal has nothing usable" into `failed`, since silence there would read as a dead button
- * rather than a pass that genuinely found nothing to add.
+ * Maps a polled plan record onto what a review panel should show. Reads only
+ * the first proposed task; "ready but nothing usable" folds into `failed`.
  */
 export function enrichViewState(
   record: PlanRecord | undefined
@@ -55,10 +52,8 @@ export function enrichViewState(
 }
 
 /**
- * Flattens a draft into the single free-text body an inbox item's `text` field holds — the
- * same "description, blank line, `Acceptance criteria:` bullet block" convention
- * `taskDraftToCreateInput` (packages/client/src/api.ts) already uses to fold a structured
- * draft into one text field.
+ * Flattens a draft into the single free-text body an inbox item's `text` holds,
+ * matching `taskDraftToCreateInput`'s description + bullet-block convention.
  */
 export function formatEnrichedInboxText(draft: EnrichDraft): string {
   const parts = [draft.description];

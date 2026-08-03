@@ -207,11 +207,8 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
   /**
-   * Starts an AI draft that adds the detail a one-line capture is missing. Its own slot,
-   * `inboxEnrich` — kept apart from `enrichPlan` (a task's own draft) and `notePlanId` (the
-   * unbuilt note-promotion feature's slot) so none of the three can clobber another's in-flight
-   * draft. The proposal lands on `inboxEnrichPlanRecord` for that row to review; nothing is
-   * written until `handleApplyInboxEnrich`.
+   * Starts an AI draft that adds the detail a one-line capture is missing. Its
+   * own slot, so it can't clobber `enrichPlan`'s or `notePlanId`'s draft.
    */
   handleEnrichInboxItem: (id: string) => Promise<void>;
   /** Which inbox item the open draft belongs to, so another row doesn't show it. */
@@ -233,9 +230,8 @@ export interface DispatchProjectData {
   enrichPlanRecord: PlanRecord | undefined;
   /** Drops the open draft — Discard, and the cleanup after it's been applied. */
   handleDismissEnrich: () => void;
-  /** Model-backed grouping of related captures, run automatically in the background by
-   * BrainDumpView. Always resolves — `error` carries a failed/timed-out model call rather than
-   * throwing, so a background pass never surfaces as a hard failure. */
+  /** Model-backed grouping of related captures, run in the background by
+   * BrainDumpView. Always resolves — `error` carries a failed model call. */
   handleClusterInbox: () => Promise<{
     groups: import('@dispatch/client').InboxClusterGroup[];
     error: string | null;
@@ -460,10 +456,8 @@ export function useDispatchProject(
     taskId: string;
     planId: string;
   } | null>(null);
-  // The brain dump row's "Add detail" slot — carries the inbox item it was started from, same
-  // shape as `enrichPlan` and for the same reason: its proposal gets written back onto that
-  // item (via PATCH /api/inbox/:id), not confirmed into a second task, so it can't share
-  // `notePlanId` (the unbuilt note-promotion feature's slot) or `enrichPlan` (a task's own).
+  // The brain dump row's "Add detail" slot. Its own slot, since its proposal is
+  // patched onto that inbox item rather than confirmed into a task.
   const [inboxEnrich, setInboxEnrich] = useState<{
     itemId: string;
     planId: string;
@@ -1065,8 +1059,7 @@ export function useDispatchProject(
               queryKey: fixLoopKey(port, event.taskId),
             });
             // A stopped loop needs a human — a toast plus a durable inbox row,
-            // worded from the stop reason so the row does not outlive what it
-            // asks for.
+            // worded from the stop reason.
             const liveTasks =
               queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
             const taskTitle =
@@ -1476,9 +1469,8 @@ export function useDispatchProject(
       model?: string
     ): Promise<void> => {
       if (client === null) return;
-      // A real ('claude') dispatch always carries a model — the per-dispatch override if given,
-      // otherwise the user's stored localStorage override layered over the project's configured
-      // `models.execute` (see lib/models.ts's resolveExecuteModel). The fake executor ignores it.
+      // A real ('claude') dispatch always carries a model: the per-dispatch
+      // override, else resolveExecuteModel's. The fake executor ignores it.
       const meta = await client.createRun(taskId, {
         executor,
         model: model ?? resolveExecuteModel(config),
@@ -1815,8 +1807,7 @@ export function useDispatchProject(
   );
 
   // The AI half of "Add detail" on a brain dump row: the proposal lands on
-  // `inboxEnrichPlanRecord` for that row to review inline, and nothing is written until
-  // `handleApplyInboxEnrich` patches it onto the item.
+  // `inboxEnrichPlanRecord`, and nothing is written until it's applied.
   const handleEnrichInboxItem = useCallback(
     async (id: string): Promise<void> => {
       if (client === null) throw new Error('dispatchd client not ready');

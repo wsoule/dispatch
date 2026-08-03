@@ -31,10 +31,8 @@ function initDispatchGitRepo(): string {
 // ever reach a handler.
 const HOSTILE = 'https://evil.example';
 
-// Every state-changing route that reaches its handler without reading a
-// request body, and so has no content-type check standing in front of it.
-// A body-less cross-origin POST to any of these is a CORS simple request:
-// no preflight, sent regardless of origin.
+// Every state-changing route that reaches its handler without reading a body,
+// so a cross-origin POST to one is a CORS simple request: no preflight.
 const BODYLESS_POST_ROUTES = [
   '/api/runs/r-1/resume',
   '/api/runs/r-1/cancel',

@@ -57,18 +57,9 @@ export interface PlannerTurn {
   sessionId?: string;
 }
 
-// The load-bearing planner seam (mirrors Executor in types.ts): a durable,
-// read-only planning *conversation* rather than a single prompt-in/proposal-
-// out call. `start` opens the conversation from the user's first prompt;
-// `sendMessage` continues an existing one with a follow-up user message,
-// resuming from the prior turn's `sessionId` so context carries across turns.
-// Both return a PlannerTurn. FakePlanner (tests) and ClaudePlanner (the real
-// Agent SDK, permissionMode 'plan', SDK session resume between turns) both
-// implement this so PlanManager never branches on which one is running. A
-// rejected promise means the turn failed — the registry maps that straight to
-// `state: 'failed'`.
-// `model` is optional on both methods (PlanManager resolves it per call);
-// `mode` defaults to 'plan' and is passed 'draft' for the startDraft flow.
+// The load-bearing planner seam (mirrors Executor in types.ts): a durable
+// planning *conversation*, where `sendMessage` resumes the prior `sessionId`.
+// FakePlanner and ClaudePlanner implement it interchangeably.
 export interface Planner {
   start(
     prompt: string,

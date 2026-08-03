@@ -117,7 +117,6 @@ function safeRebuild(store: TaskStore, cache: TaskCache): void {
 
 // The origin to echo back in `Access-Control-Allow-Origin`, or null when it is
 // untrusted — a wildcard would let any page you visit read this daemon's tasks.
-// `isTrustedOrigin` is the one definition, shared with the router and `/ws`.
 function resolveCorsOrigin(origin: string | null): string | null {
   if (origin === null) return null;
   return isTrustedOrigin(origin) ? origin : null;
@@ -440,9 +439,8 @@ export async function startServer(
       }
 
       if (url.pathname.startsWith('/api/')) {
-        // Bun's 10s default idle timeout is shorter than a model turn (see
-        // inboxClusterer.ts's CLUSTER_TIMEOUT_MS) — raised for every /api/ route so any
-        // future handler that blocks the same way is covered without a per-path list.
+        // Bun's 10s idle timeout is shorter than a model turn, so raise it for
+        // every /api/ route rather than keeping a per-path list.
         srv.timeout(req, 65);
         return withCors(await handleApi(req, apiCtx), origin);
       }

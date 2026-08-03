@@ -362,7 +362,6 @@ describe('agent_message (fake live daemon)', () => {
 
   // tools.ts keeps its own untyped copy of TERMINAL_RUN_STATES, so a state
   // added server-side and missed here advertises a dead run as a live target.
-  // Driving these off the server's own set covers whatever it holds today.
   for (const state of serverTerminalRunStates()) {
     it(`treats a ${state} run as dead: not a target, not a suggestion`, async () => {
       daemon = new FakeDaemon();
