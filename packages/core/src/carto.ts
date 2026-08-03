@@ -135,34 +135,43 @@ const CARTO_HOOKS = [
   'post-rewrite',
 ];
 
-// Worktrees share the common git dir, so carto's own hook line runs with cwd
-// set to the worktree, where .carto/ does not exist. `--git-common-dir`
-// resolves to the main repo's .git from inside any linked worktree, so its
-// parent is always the project root.
+// Worktrees share the common git dir; `--git-common-dir` resolves to the
+// project root from any linked worktree.
 const PINNED_SYNC_LINE =
   '(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && carto sync) >/dev/null 2>&1 || true';
 
 const BARE_SYNC_RE = /^\s*carto sync\b.*$/gm;
 
-// Rewrites carto's inserted `carto sync` line in each installed hook to pin
-// its working directory. Idempotent: a line already containing
-// --git-common-dir is left alone, and carto's own installer skips any hook
-// whose contents already mention `carto sync`, so re-running `carto init`
-// will not undo this.
+// Rewrites each hook's `carto sync` line to pin its working directory.
+// Idempotent, and skips rather than throws on any hook it can't read/write.
 export function pinHookWorkingDirs(projectRoot: string): string[] {
   const hooksDir = join(projectRoot, '.git', 'hooks');
   if (!existsSync(hooksDir)) return [];
+  let present: Set<string>;
+  try {
+    present = new Set(readdirSync(hooksDir));
+  } catch {
+    return [];
+  }
   const rewritten: string[] = [];
-  const present = new Set(readdirSync(hooksDir));
   for (const name of CARTO_HOOKS) {
     if (!present.has(name)) continue;
     const path = join(hooksDir, name);
-    const body = readFileSync(path, 'utf8');
+    let body: string;
+    try {
+      body = readFileSync(path, 'utf8');
+    } catch {
+      continue;
+    }
     if (body.includes('--git-common-dir')) continue;
     if (!BARE_SYNC_RE.test(body)) continue;
     BARE_SYNC_RE.lastIndex = 0;
-    writeFileSync(path, body.replace(BARE_SYNC_RE, PINNED_SYNC_LINE));
-    rewritten.push(path);
+    try {
+      writeFileSync(path, body.replace(BARE_SYNC_RE, PINNED_SYNC_LINE));
+      rewritten.push(path);
+    } catch {
+      // leave this hook unpinned; not fatal
+    }
   }
   return rewritten;
 }
@@ -172,9 +181,8 @@ export interface CartoRunResult {
   detail: string;
 }
 
-// carto writes .carto/config.json with `output: 'AGENTS.md'`, and every later
-// `carto sync` resolves its destination from that key. Repointing it once
-// makes AGENTS.md permanently safe.
+// carto sync resolves its output destination from config.json's `output`
+// key; repointing it once keeps AGENTS.md permanently safe.
 export function redirectCartoOutput(projectRoot: string): void {
   const path = join(projectRoot, '.carto', 'config.json');
   if (!existsSync(path)) return;
@@ -188,10 +196,8 @@ export function redirectCartoOutput(projectRoot: string): void {
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-// Builds the container, containing carto init's two side effects on files
-// Dispatch owns: AGENTS.md is snapshotted and restored across the single init
-// call, then permanently protected by repointing config.output; the four
-// installed hooks get their working directory pinned.
+// Runs carto init, containing its side effects on files Dispatch owns:
+// AGENTS.md is snapshotted/restored around the call, then hooks are pinned.
 export function cartoInit(
   projectRoot: string,
   binary: CartoBinary
@@ -199,7 +205,16 @@ export function cartoInit(
   const agents = join(projectRoot, 'AGENTS.md');
   const backup = join(projectRoot, '.carto-agents-backup');
   const hadAgents = existsSync(agents);
-  if (hadAgents) copyFileSync(agents, backup);
+  if (hadAgents) {
+    try {
+      copyFileSync(agents, backup);
+    } catch (err) {
+      return {
+        ok: false,
+        detail: `could not snapshot AGENTS.md before carto init: ${(err as Error).message}`,
+      };
+    }
+  }
 
   const run = spawnSync(binary.path, ['init'], {
     cwd: projectRoot,
@@ -207,18 +222,36 @@ export function cartoInit(
   });
 
   if (hadAgents) {
-    copyFileSync(backup, agents);
-    unlinkSync(backup);
+    try {
+      copyFileSync(backup, agents);
+    } catch (err) {
+      try {
+        unlinkSync(backup);
+      } catch {
+        // best-effort; the restore failure below is what the caller needs
+      }
+      return {
+        ok: false,
+        detail: `could not restore AGENTS.md after carto init: ${(err as Error).message}`,
+      };
+    }
+    try {
+      unlinkSync(backup);
+    } catch {
+      // best-effort; AGENTS.md itself was already restored successfully
+    }
   } else if (existsSync(agents)) {
-    unlinkSync(agents);
+    try {
+      unlinkSync(agents);
+    } catch {
+      // best-effort; leaves the file carto created, not the original
+    }
   }
   redirectCartoOutput(projectRoot);
   pinHookWorkingDirs(projectRoot);
 
-  // Exit status alone is NOT trustworthy: carto 2.1.3 prints
-  // "Fatal error: Could not locate the bindings file" and still exits 0,
-  // leaving .carto/ with only config.json. Measured in Task 0. The container
-  // existing is the only honest success signal.
+  // Exit status alone isn't trustworthy: carto can exit 0 after a fatal
+  // error, so the container's existence is the real success signal.
   if (!existsSync(join(projectRoot, '.carto', 'carto.db'))) {
     const stderr = (run.stderr ?? '').trim();
     return {
