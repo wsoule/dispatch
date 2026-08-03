@@ -97,7 +97,7 @@ export interface ActiveSessionSummary {
 export interface DashboardStats {
   total_cost_usd: number;
   total_sessions: number;
-  /** Count of every project Relay knows about, independent of `top_projects`'s cap. */
+  /** Count of every known project, independent of `top_projects`'s cap. */
   total_projects: number;
   /** Oldest first, one entry per day, 365 days long (today inclusive). */
   daily_activity: DailyActivity[];

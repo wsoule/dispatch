@@ -1,12 +1,24 @@
 import { TaskStore } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { EventEmitter } from 'node:events';
+import type { FSWatcher } from 'node:fs';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { isSkippedPath } from '../src/depmap.js';
-import type { Watcher } from '../src/watcher.js';
+import type { Watcher, WatchFactory } from '../src/watcher.js';
 import { watchSourceDirs, watchTasks } from '../src/watcher.js';
+
+// Stands in for an FSWatcher so a test can emit the async 'error' event a real
+// one only produces under an OS condition (inotify ENOSPC) darwin cannot stage.
+class FakeFSWatcher extends EventEmitter {
+  closed = false;
+
+  close(): void {
+    this.closed = true;
+  }
+}
 
 let root: string;
 let store: TaskStore;
@@ -144,4 +156,50 @@ describe('watchSourceDirs', () => {
     writeFileSync(realFile, 'export const x = 1;\n');
     await changed;
   }, 30_000);
+});
+
+describe('a watch that fails after it started', () => {
+  // An inotify ENOSPC while a recursive watch registers a new subdirectory
+  // arrives this way. It cannot be staged on darwin, so the watcher is faked.
+  it('is logged and closed by watchSourceDirs rather than rethrown', () => {
+    const fake = new FakeFSWatcher();
+    const factory: WatchFactory = () => fake as unknown as FSWatcher;
+    // Unguarded, an EventEmitter rethrows an 'error' nobody listens for — which
+    // is what makes a missing listener a dead daemon rather than a dead watch.
+    expect(() => fake.emit('error', new Error('ENOSPC'))).toThrow('ENOSPC');
+
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      watcher = watchSourceDirs(
+        [root],
+        () => {},
+        () => false,
+        factory
+      );
+      expect(() =>
+        fake.emit('error', new Error('ENOSPC: inotify watch limit reached'))
+      ).not.toThrow();
+      expect(String(errors.mock.calls[0]?.[0])).toContain(root);
+      expect(String(errors.mock.calls[0]?.[0])).toContain('ENOSPC');
+    } finally {
+      errors.mockRestore();
+    }
+    expect(fake.closed).toBe(true);
+  });
+
+  it('is logged and closed by watchTasks rather than rethrown', () => {
+    const fake = new FakeFSWatcher();
+    const factory: WatchFactory = () => fake as unknown as FSWatcher;
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      watcher = watchTasks(store.tasksDir, () => {}, factory);
+      expect(() =>
+        fake.emit('error', new Error('EMFILE: too many open files'))
+      ).not.toThrow();
+      expect(String(errors.mock.calls[0]?.[0])).toContain(store.tasksDir);
+    } finally {
+      errors.mockRestore();
+    }
+    expect(fake.closed).toBe(true);
+  });
 });

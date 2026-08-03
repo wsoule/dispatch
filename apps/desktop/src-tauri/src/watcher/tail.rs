@@ -62,7 +62,7 @@ mod tests {
     impl TempFile {
         fn new(name: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
-                "relay-tail-test-{}-{name}.jsonl",
+                "dispatch-tail-test-{}-{name}.jsonl",
                 std::process::id()
             ));
             Self(path)

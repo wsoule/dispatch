@@ -999,6 +999,16 @@ export function injectedDaemonToken(): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+// Whether a request should declare `content-type: application/json`. Reads are
+// excluded on purpose: a content-type on a GET would make it a non-simple
+// cross-origin request and cost a preflight for nothing.
+function isStateChanging(init: RequestInit | undefined): boolean {
+  if (init?.body !== undefined) return true;
+  return STATE_CHANGING_METHODS.has((init?.method ?? 'GET').toUpperCase());
+}
+
 // Shared fetch wrapper: resolves against `target.baseUrl`, presents its token,
 // throws with the server's `{ error }` message (falling back to the status
 // code) on any non-2xx response, and parses the body as JSON on success. Every
@@ -1009,9 +1019,11 @@ async function request<T>(
   init?: RequestInit
 ): Promise<T> {
   // Defaults content-type here (not per call site), so a bare `{ body: ... }`
-  // still passes the server's Content-Type gate.
+  // still passes the server's Content-Type gate. It goes on every state-changing
+  // request, body or not, so the gate can be a blanket rule rather than one the
+  // body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
   const headers = new Headers(init?.headers);
-  if (init?.body !== undefined && !headers.has('content-type')) {
+  if (!headers.has('content-type') && isStateChanging(init)) {
     headers.set('content-type', 'application/json');
   }
   if (target.token !== undefined) {

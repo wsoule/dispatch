@@ -140,6 +140,8 @@ function branchEntryStatus(meta: RunMeta | undefined): BranchEntryStatus {
  */
 export class Orchestrator {
   private readonly registry = new RunRegistry();
+  // In-flight scheduled surveys, keyed by run — see surveySettled().
+  private readonly scheduledSurveys = new Map<string, Promise<void>>();
   private readonly worktrees: WorktreeManager;
   // Only ever used on the multi-blocker dispatch path (see resolveBase):
   // constructing it is inert — it shells out to jj lazily, per call — so an
@@ -1004,11 +1006,24 @@ export class Orchestrator {
   // Fire-and-forget survey. No caller is left to receive a rejection, and this
   // decides `failed` vs `interrupted-dirty`, so a failure is logged, not lost.
   private scheduleSurvey(runId: string): void {
-    void this.surveyAndUpgradeIfDirty(runId).catch((err: unknown) => {
-      console.error(
-        `dispatchd: survey of run ${runId} failed: ${(err as Error).message}`
-      );
-    });
+    const done = this.surveyAndUpgradeIfDirty(runId)
+      .catch((err: unknown) => {
+        console.error(
+          `dispatchd: survey of run ${runId} failed: ${(err as Error).message}`
+        );
+      })
+      .finally(() => {
+        if (this.scheduledSurveys.get(runId) === done) {
+          this.scheduledSurveys.delete(runId);
+        }
+      });
+    this.scheduledSurveys.set(runId, done);
+  }
+
+  // Resolves once the scheduled survey for a run has settled, so a caller can
+  // wait on the state it decides instead of guessing at how long it takes.
+  surveySettled(runId: string): Promise<void> {
+    return this.scheduledSurveys.get(runId) ?? Promise.resolve();
   }
 
   // Surveys a run already marked `failed` outside handleFinish (a boot
@@ -1027,6 +1042,9 @@ export class Orchestrator {
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.state !== 'failed') return;
     if (meta.reviewedAt !== undefined) return;
+    // A resume took the worktree over while this survey was in flight, so what
+    // it found is that run's tree, not a record of how this one was left.
+    if (this.registry.list().some((r) => r.resumedFrom === runId)) return;
     const now = new Date().toISOString();
     this.registry.updateMeta(runId, {
       state: 'interrupted-dirty',

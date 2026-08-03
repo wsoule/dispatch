@@ -162,7 +162,7 @@ pub struct DailyActivity {
 pub struct DashboardStats {
     pub total_cost_usd: f64,
     pub total_sessions: i64,
-    /// Count of every project Relay knows about — independent of `top_projects`'s cap, so
+    /// Count of every known project — independent of `top_projects`'s cap, so
     /// this stays accurate once there are more projects than the "highest usage" list shows.
     pub total_projects: i64,
     /// Oldest first, one entry per day, `HEATMAP_DAYS` long (today inclusive).
@@ -359,8 +359,8 @@ fn render_report_markdown(report: &ReportData) -> String {
     out
 }
 
-/// Opens `url` in the user's default browser — macOS only, matching Relay's current
-/// platform scope.
+/// Opens `url` in the user's default browser — macOS only, matching the app's
+/// current platform scope.
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     Command::new("open")
@@ -370,7 +370,7 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("failed to open {url}: {e}"))
 }
 
-/// Reveals `path` in Finder — macOS only, matching Relay's current platform scope (see the
+/// Reveals `path` in Finder — macOS only, matching the app's platform scope (see the
 /// README's "Requirements"). Used by the Reports view's "Reveal in Finder" button right after
 /// `export_report` writes a file, so the user doesn't have to hunt through Downloads for it.
 #[tauri::command]

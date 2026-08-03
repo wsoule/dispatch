@@ -46,7 +46,9 @@ pub fn run() {
       }
 
       let app_data_dir = app.path().app_data_dir()?;
-      let db_path = app_data_dir.join("relay.db");
+      // Pre-0.1 installs wrote to `relay.db`; adopt it so upgrades keep their history.
+      db::adopt_legacy_db(&app_data_dir, "relay.db", "dispatch.db")?;
+      let db_path = app_data_dir.join("dispatch.db");
       let conn = db::open(&db_path)?;
       // Backfill cost_usd once at startup for sessions ingested before cost calculation
       // existed (their cost_usd is stuck at 0 in the DB otherwise).
