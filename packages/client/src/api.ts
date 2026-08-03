@@ -405,8 +405,17 @@ export interface CreateFindingInput {
   recommendation?: FindingRecommendation;
 }
 
+// Mirrors PATCHABLE_VERDICTS in packages/server/src/api/findings.ts: `parked`
+// and `blocked` are adjudications and only land through the adjudicate route.
+export const PATCHABLE_FINDING_VERDICTS = [
+  'open',
+  'addressed',
+] as const satisfies readonly FindingVerdict[];
+export type PatchableFindingVerdict =
+  (typeof PATCHABLE_FINDING_VERDICTS)[number];
+
 export interface UpdateFindingPatch {
-  verdict?: FindingVerdict;
+  verdict?: PatchableFindingVerdict;
   ruling?: string | null;
 }
 
@@ -684,6 +693,11 @@ export interface PlannerQuestion {
   options: string[];
 }
 
+// Mirrors PlanRecord.role in packages/server/src/orchestrator/plan.ts: which
+// `config.models` role the plan resolves its model from, not a message author.
+export const PLAN_ROLES = ['plan', 'enrich'] as const;
+export type PlanRole = (typeof PLAN_ROLES)[number];
+
 // Mirrors PlanRecord in packages/server/src/orchestrator/plan.ts — the body
 // of `GET /api/plan/:id`. A plan is a multi-turn conversation: `messages` is
 // the running transcript, `proposal` the latest working proposal, and
@@ -693,6 +707,9 @@ export interface PlanRecord {
   id: string;
   prompt: string;
   plannerName: string;
+  /** `enrich` for a thread expanding an existing task, inbox item or note;
+   *  `plan` for the ordinary prompt-first flow. */
+  role: PlanRole;
   state: PlanState;
   messages: PlanMessage[];
   proposal?: PlanProposal;
@@ -1417,8 +1434,8 @@ export interface ApiClient {
   // so this is the explicit "I've cleaned up, try again" nudge. Never errors on
   // an unblocked queue; returns the resulting snapshot either way.
   recheckMergeQueue(): Promise<MergeQueueSnapshot>;
-  // The findings/ledger carry-forward surface — `updateFinding` is how a
-  // controller rules a finding addressed/parked/blocked.
+  // The findings/ledger carry-forward surface — `updateFinding` reopens or
+  // clears a finding; parking and blocking go through `adjudicateFinding`.
   fetchFindings(filter?: {
     taskId?: string;
     verdict?: FindingVerdict;

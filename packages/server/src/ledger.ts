@@ -19,27 +19,69 @@ export interface LedgerListFilter {
   epicId?: string | null;
 }
 
+// How many times add() will re-roll an id before giving up. Far beyond what
+// randomness needs; it only bounds a generator that keeps returning a taken id.
+const MINT_ATTEMPTS = 32;
+
 export class LedgerStore {
   private readonly file: string;
+  private readonly generateId: (now: string) => string;
+  // Ids already reported as colliding, so a damaged file logs once, not on
+  // every read.
+  private readonly reportedCollisions = new Set<string>();
 
-  constructor(rootDir: string) {
+  constructor(
+    rootDir: string,
+    generateId: (now: string) => string = generateLedgerId
+  ) {
     this.file = join(rootDir, '.dispatch', 'ledger.jsonl');
+    this.generateId = generateId;
   }
 
-  // Same compaction contract as FindingStore.read(): last write per id wins.
+  // Same compaction contract as FindingStore.read(): keyed by id + createdAt, so
+  // a duplicated line collapses but two entries sharing one id both survive.
   private read(): LedgerEntry[] {
     if (!existsSync(this.file)) return [];
-    const byId = new Map<string, LedgerEntry>();
+    const byRecord = new Map<string, LedgerEntry>();
+    const firstKeyForId = new Map<string, string>();
     for (const line of readFileSync(this.file, 'utf8').split('\n')) {
       if (line.trim() === '') continue;
       try {
         const record = JSON.parse(line) as LedgerEntry;
-        byId.set(record.id, record);
+        const key = `${record.id}\n${record.createdAt}`;
+        const first = firstKeyForId.get(record.id);
+        if (first === undefined) firstKeyForId.set(record.id, key);
+        else if (first !== key) this.reportCollision(record.id);
+        byRecord.set(key, record);
       } catch {
         // A hand-corrupted line costs itself, not the rest of the ledger.
       }
     }
-    return [...byId.values()];
+    return [...byRecord.values()];
+  }
+
+  // A repeated id with a different createdAt is two entries, not a duplicate
+  // line — both are kept, since a lost entry is a lost constraint or hazard.
+  private reportCollision(id: string): void {
+    if (this.reportedCollisions.has(id)) return;
+    this.reportedCollisions.add(id);
+    console.error(
+      `dispatchd: ledger id ${id} belongs to more than one entry in ${this.file}. ` +
+        'Both are kept; edit the file to give the newer one a distinct id.'
+    );
+  }
+
+  // Mirrors ScopeRequestRegistry.mintId: re-roll until the id is one no entry
+  // in the file already uses, since a 6-hex-char space collides in practice.
+  private mintId(now: string): string {
+    const taken = new Set(this.read().map((e) => e.id));
+    for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt += 1) {
+      const id = this.generateId(now);
+      if (!taken.has(id)) return id;
+    }
+    throw new Error(
+      `could not mint an unused ledger id in ${MINT_ATTEMPTS} attempts`
+    );
   }
 
   private append(record: LedgerEntry): void {
@@ -50,7 +92,7 @@ export class LedgerStore {
   add(input: AddLedgerInput): LedgerEntry {
     const now = new Date().toISOString();
     const record: LedgerEntry = {
-      id: generateLedgerId(now),
+      id: this.mintId(now),
       epicId: input.epicId ?? null,
       sourceTaskId: input.sourceTaskId ?? null,
       kind: input.kind,
