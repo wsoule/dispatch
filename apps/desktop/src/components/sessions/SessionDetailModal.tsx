@@ -13,7 +13,6 @@ import {
 import type { FileChanged } from '../../lib/types';
 import { DiffModal } from '../../views/DiffModal';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
-import { StatTile } from '../ui/StatTile';
 import { AgentIcon } from './AgentIcon';
 import { ExportControl } from './ExportControl';
 import {
@@ -23,6 +22,7 @@ import {
 } from './sessionDisplay';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
+import { StatTile } from '@/ui/chrome/StatTile';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
 import { Skeleton } from '@/ui/skeleton';
 

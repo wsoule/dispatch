@@ -26,6 +26,7 @@ describe('LedgerStore', () => {
       kind: 'hazard',
       title: 'withActionFeedback swallows rejections',
       detail: 'every catch downstream of it is dead code',
+      authoredBy: '',
     });
     expect(entry.epicId).toBeNull();
     expect(entry.sourceTaskId).toBeNull();
@@ -38,8 +39,8 @@ describe('LedgerStore', () => {
   test('two adds append two lines, both readable back', () => {
     const dir = root();
     const store = new LedgerStore(dir);
-    store.add({ kind: 'decision', title: 'a', detail: 'a' });
-    store.add({ kind: 'constraint', title: 'b', detail: 'b' });
+    store.add({ kind: 'decision', title: 'a', detail: 'a', authoredBy: '' });
+    store.add({ kind: 'constraint', title: 'b', detail: 'b', authoredBy: '' });
 
     const file = readFileSync(join(dir, '.dispatch', 'ledger.jsonl'), 'utf8');
     expect(file.trim().split('\n')).toHaveLength(2);
@@ -48,12 +49,18 @@ describe('LedgerStore', () => {
 
   test('list({ epicId }) filters to that epic, including project-wide-only when epicId is null', () => {
     const store = new LedgerStore(root());
-    const wide = store.add({ kind: 'decision', title: 'a', detail: 'a' });
+    const wide = store.add({
+      kind: 'decision',
+      title: 'a',
+      detail: 'a',
+      authoredBy: '',
+    });
     const scoped = store.add({
       epicId: 'e-111111',
       kind: 'decision',
       title: 'b',
       detail: 'b',
+      authoredBy: '',
     });
 
     expect(store.list({ epicId: null }).map((e) => e.id)).toEqual([wide.id]);
@@ -70,6 +77,7 @@ describe('LedgerStore', () => {
         kind: 'hazard',
         title: 'shared trap',
         detail: 'watch out',
+        authoredBy: '',
       });
 
       expect(store.entriesFor('t-under-epic', 'e-111111')).toEqual([entry]);
@@ -83,6 +91,7 @@ describe('LedgerStore', () => {
         kind: 'constraint',
         title: 'always run bun run format',
         detail: 'before every commit',
+        authoredBy: '',
       });
 
       expect(store.entriesFor('t-a', 'e-111111')).toEqual([entry]);
@@ -97,6 +106,7 @@ describe('LedgerStore', () => {
         title: 'use fetch retries',
         detail: 'retry POSTs up to 3 times',
         appliesTo: ['t-target'],
+        authoredBy: '',
       });
 
       expect(store.entriesFor('t-target', 'e-111111')).toEqual([entry]);
@@ -113,6 +123,7 @@ describe('LedgerStore', () => {
         title: 'the migration renames this column',
         detail: 'coordinate with the other epic',
         appliesTo: ['t-target'],
+        authoredBy: '',
       });
 
       expect(store.entriesFor('t-target', 'e-222222')).toEqual([entry]);
@@ -252,8 +263,18 @@ describe('LedgerStore id collisions', () => {
     const minted = ['l-dupdup', 'l-dupdup', 'l-fresh1'];
     let next = 0;
     const store = new LedgerStore(dir, () => minted[next++] ?? 'l-exhaust');
-    const first = store.add({ kind: 'decision', title: 'a', detail: 'a' });
-    const second = store.add({ kind: 'hazard', title: 'b', detail: 'b' });
+    const first = store.add({
+      kind: 'decision',
+      title: 'a',
+      detail: 'a',
+      authoredBy: '',
+    });
+    const second = store.add({
+      kind: 'hazard',
+      title: 'b',
+      detail: 'b',
+      authoredBy: '',
+    });
 
     expect(first.id).toBe('l-dupdup');
     expect(second.id).toBe('l-fresh1');
@@ -263,9 +284,47 @@ describe('LedgerStore id collisions', () => {
   test('add() throws rather than reusing an id when every attempt is taken', () => {
     const dir = root();
     const store = new LedgerStore(dir, () => 'l-always');
-    store.add({ kind: 'decision', title: 'a', detail: 'a' });
+    store.add({ kind: 'decision', title: 'a', detail: 'a', authoredBy: '' });
     expect(() =>
-      store.add({ kind: 'hazard', title: 'b', detail: 'b' })
+      store.add({ kind: 'hazard', title: 'b', detail: 'b', authoredBy: '' })
     ).toThrow(/unused ledger id/);
+  });
+});
+
+describe('LedgerStore attribution', () => {
+  test('round-trips the actor that authored an entry', () => {
+    const root_ = root();
+    const store = new LedgerStore(root_);
+    const written = store.add({
+      kind: 'decision',
+      title: 'x',
+      detail: 'y',
+      authoredBy: 'agent:wyat/claude',
+    });
+    expect(new LedgerStore(root_).list()).toContainEqual(
+      expect.objectContaining({
+        id: written.id,
+        authoredBy: 'agent:wyat/claude',
+      })
+    );
+  });
+
+  // ledger.jsonl is append-only and pre-dates authoredBy, so a legacy line
+  // must still load with the field defaulted rather than undefined.
+  test('defaults authoredBy on an entry written before attribution existed', () => {
+    const dir = root();
+    seedLines(dir, [
+      {
+        id: 'l-legacy',
+        epicId: null,
+        sourceTaskId: null,
+        kind: 'decision',
+        title: 'old',
+        detail: '',
+        appliesTo: [],
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ]);
+    expect(new LedgerStore(dir).list()[0]?.authoredBy).toBe('');
   });
 });

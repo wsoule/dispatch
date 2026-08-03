@@ -49,3 +49,45 @@ describe('appendActivity', () => {
     expect(getSection(out, 'Activity')).toContain('fabricated');
   });
 });
+
+describe('appendActivity attribution', () => {
+  it('appends the actor when one is given', () => {
+    const body = appendActivity(
+      '## Activity\n',
+      'moved to in-review',
+      'human:wyat'
+    );
+    expect(body).toContain('- moved to in-review — human:wyat');
+  });
+
+  it('omits the suffix when no actor is given', () => {
+    const body = appendActivity('## Activity\n', 'moved to in-review');
+    expect(body.trimEnd().endsWith('- moved to in-review')).toBe(true);
+  });
+
+  it('escapes the line before the actor is appended', () => {
+    const body = appendActivity(
+      '## Activity\n',
+      '## not a heading',
+      'human:wyat'
+    );
+    expect(body).toContain('— human:wyat');
+    expect(body).not.toMatch(/^## not a heading$/m);
+  });
+
+  it('drops a malformed actor instead of writing it into the file', () => {
+    const body = appendActivity(
+      '## Activity\n',
+      'moved to in-review',
+      'not a valid ref'
+    );
+    expect(body).toContain('- moved to in-review');
+    expect(body).not.toContain('not a valid ref');
+    expect(body).not.toContain('—');
+  });
+
+  it('accepts the unassigned sentinel "none" as an actor', () => {
+    const body = appendActivity('## Activity\n', 'auto-closed', 'none');
+    expect(body).toContain('- auto-closed — none');
+  });
+});

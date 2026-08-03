@@ -7,6 +7,7 @@ import {
   TaskStore,
 } from '@dispatch/core';
 import type {
+  ActorContext,
   CommandEvidence,
   MutationEvidence,
   OrchestratorConfig,
@@ -86,6 +87,12 @@ export interface OrchestratorContext {
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
   // to one over `rootDir`, same pattern as `ledgerStore`.
   findingStore?: FindingStore;
+  // Who to credit on an Activity line when a call site doesn't say so itself
+  // (see the `actor` opts on dispatch/review/sendMessage below). Optional —
+  // a test that omits it gets the pre-attribution behavior (an unattributed
+  // Activity line), same as an UpdatePatch that never sets `activityActor`.
+  // Production (index.ts) always supplies the one resolved at daemon boot.
+  actorContext?: ActorContext;
   // Overrides CLAIMS_REFRESH_COOLDOWN_MS — test-injection seam only, so a
   // cooldown test isn't stuck waiting out the real 5s production window.
   claimsRefreshCooldownMs?: number;
@@ -289,7 +296,11 @@ export class Orchestrator {
   async dispatch(
     taskId: string,
     executorName: string,
-    opts: { model?: string } = {}
+    // `actor` credits who caused this dispatch: omitted (the API's manual
+    // dispatch) defaults to the daemon's human, but an automatic caller
+    // (EpicEngine's auto-fill) passes 'none' explicitly — no human pressed
+    // dispatch for that specific task.
+    opts: { model?: string; actor?: string } = {}
   ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
@@ -352,6 +363,7 @@ export class Orchestrator {
       {
         status: 'in-progress',
         appendActivity: `${now} dispatched (${executorName}, branch ${branch})`,
+        activityActor: opts.actor ?? this.ctx.actorContext?.humanRef,
       },
       now
     );
@@ -489,6 +501,9 @@ export class Orchestrator {
           meta.taskId,
           {
             appendActivity: `${now} [run ${runId}] worktree removed; branch ${meta.branch} kept — it has unmerged commits`,
+            // Mechanical cleanup of an aux run's worktree — no one asked for
+            // this specific action, the daemon is just tidying up.
+            activityActor: 'none',
           },
           now
         );
@@ -579,10 +594,17 @@ export class Orchestrator {
 
   // Appends one Activity line to a task, mirroring EpicEngine's
   // appendEpicActivity (epic.ts) so stack decisions leave the same durable
-  // trail every other orchestrator lifecycle event does.
+  // trail every other orchestrator lifecycle event does. Every caller
+  // (stacked-dispatch jj bookkeeping, the merge queue's own restack notes via
+  // appendRunTaskActivity) is the daemon narrating its own mechanics, not a
+  // human or agent decision — so this always credits 'none'.
   private appendTaskActivity(taskId: string, text: string): void {
     const now = new Date().toISOString();
-    this.ctx.store.update(taskId, { appendActivity: `${now} ${text}` }, now);
+    this.ctx.store.update(
+      taskId,
+      { appendActivity: `${now} ${text}`, activityActor: 'none' },
+      now
+    );
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
   }
@@ -678,10 +700,14 @@ export class Orchestrator {
   // come to rest with a resumable session, and re-dispatches into the *same*
   // worktree/branch rather than provisioning a new one. Otherwise this is a
   // plain mid-run message to a live run's executor.
+  // `actor` (resume path only) credits who asked for the redispatch: omitted
+  // (the API's chat composer) defaults to the daemon's human; FixLoop's own
+  // automatic escalation passes 'none' explicitly — no one typed anything,
+  // the loop just moved to its next round.
   sendMessage(
     runId: string,
     text: string,
-    opts: { resume?: boolean } = {}
+    opts: { resume?: boolean; actor?: string } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
 
@@ -727,7 +753,11 @@ export class Orchestrator {
         );
       }
       this.requireNoOpenPr(meta);
-      return this.requestChanges(meta, text);
+      return this.requestChanges(
+        meta,
+        text,
+        opts.actor ?? this.ctx.actorContext?.humanRef
+      );
     }
 
     if (TERMINAL_RUN_STATES.has(meta.state)) {
@@ -916,7 +946,12 @@ export class Orchestrator {
     this.bestEffort(`recording cancel for run ${runId}`, () => {
       this.ctx.store.update(
         meta.taskId,
-        { appendActivity: `${now} [run ${runId}] cancelled` },
+        {
+          appendActivity: `${now} [run ${runId}] cancelled`,
+          // cancel() has exactly one caller: the human pressing Cancel via
+          // the API — never something an agent or the daemon decides itself.
+          activityActor: this.ctx.actorContext?.humanRef,
+        },
         now
       );
       this.ctx.cache.rebuild(this.ctx.store);
@@ -1151,10 +1186,18 @@ export class Orchestrator {
   // `reviewedAt` has already been merged or discarded, and doing either
   // again would double-apply the task-status change or double-remove an
   // already-gone worktree/branch.
-  review(runId: string, action: string): RunMeta {
+  // `actor` credits who reviewed this run: omitted (the API's Merge/Discard
+  // buttons) defaults to the daemon's human; the merge queue's own automatic
+  // merge passes 'none' explicitly — nobody clicked anything for that one.
+  review(
+    runId: string,
+    action: string,
+    opts: { actor?: string } = {}
+  ): RunMeta {
     if (action !== 'merge' && action !== 'discard') {
       throw new OrchestratorClientError(`invalid review action: ${action}`);
     }
+    const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
     const meta = this.requireRun(runId);
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
       throw new OrchestratorConflictError(
@@ -1177,7 +1220,7 @@ export class Orchestrator {
 
     let mergeCommit: string | undefined;
     if (action === 'merge') {
-      mergeCommit = this.mergeRun(meta, now);
+      mergeCommit = this.mergeRun(meta, now, actor);
     } else {
       this.persistDiffSnapshot(meta);
       // Not while something else still needs the directory — a sibling run
@@ -1190,6 +1233,7 @@ export class Orchestrator {
         {
           status: 'todo',
           appendActivity: `${now} run ${runId} discarded`,
+          activityActor: actor,
         },
         now
       );
@@ -1293,6 +1337,9 @@ export class Orchestrator {
       {
         status: 'done',
         appendActivity: `${now} run ${runId} merged via PR (${meta.prUrl ?? 'unknown url'})`,
+        // The PR poller noticed GitHub reports it merged — whoever actually
+        // merged it did so on GitHub, outside anything dispatch can see.
+        activityActor: 'none',
       },
       now
     );
@@ -1318,7 +1365,11 @@ export class Orchestrator {
   // the previous order staged the *edited* task file before merging, so git
   // refused the second run's merge with "local changes ... would be
   // overwritten").
-  private mergeRun(meta: RunMeta, now: string): string | undefined {
+  private mergeRun(
+    meta: RunMeta,
+    now: string,
+    actor: string | undefined
+  ): string | undefined {
     // All three gates below describe the MAIN CHECKOUT, not this run, and all
     // three clear the moment the user commits/stashes/checks out — so they
     // throw MergeEnvironmentError rather than a plain conflict, which is what
@@ -1413,6 +1464,7 @@ export class Orchestrator {
       {
         status: 'done',
         appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
+        activityActor: actor,
       },
       now
     );
@@ -2065,8 +2117,12 @@ export class Orchestrator {
     const task = this.ctx.store.get(meta.taskId);
     if (task !== null) {
       const now = new Date().toISOString();
+      // Both callers (a dead executor found mid-run, a start() call that
+      // never got off the ground) are the daemon detecting its own crash
+      // recovery — no human or agent decided this.
       const patch: UpdatePatch = {
         appendActivity: `${now} ${activityNote}`,
+        activityActor: 'none',
       };
       if (task.meta.status === 'in-progress') patch.status = 'in-review';
       this.ctx.store.update(meta.taskId, patch, now);
@@ -2318,7 +2374,12 @@ export class Orchestrator {
           const now = new Date().toISOString();
           this.ctx.store.update(
             meta.taskId,
-            { appendActivity: `${now} [hook error] ${message}` },
+            {
+              appendActivity: `${now} [hook error] ${message}`,
+              // A subscriber (e.g. the epic engine) threw — the daemon's own
+              // bookkeeping failed, not something a person or agent did.
+              activityActor: 'none',
+            },
             now
           );
           this.ctx.cache.rebuild(this.ctx.store);
@@ -2447,6 +2508,10 @@ export class Orchestrator {
       if (task === null) return;
       const patch: UpdatePatch = {
         appendActivity: `${now} [run ${runId}] finished: ${effectiveFinish.state} — ${filesChanged} files, $${cost}`,
+        // The run's own executor reaching its own terminal state — credited
+        // to the agent that ran it, not whoever happens to be operating the
+        // daemon right now.
+        activityActor: this.ctx.actorContext?.agentRef(meta.executor),
       };
       if (task.meta.status === 'in-progress') patch.status = 'in-review';
       this.ctx.store.update(meta.taskId, patch, now);
@@ -2494,7 +2559,11 @@ export class Orchestrator {
 
   // The request-changes path: same task/branch/worktree as `oldMeta`, but a
   // fresh run id and transcript, resuming the executor's prior session.
-  private requestChanges(oldMeta: RunMeta, text: string): RunMeta {
+  private requestChanges(
+    oldMeta: RunMeta,
+    text: string,
+    actor: string | undefined
+  ): RunMeta {
     const {
       executor,
       name: executorName,
@@ -2568,6 +2637,7 @@ export class Orchestrator {
       {
         status: 'in-progress',
         appendActivity: `${now} requested changes (run ${runId}): ${text}${substitutionNote}`,
+        activityActor: actor,
       },
       now
     );
@@ -2665,6 +2735,9 @@ export class Orchestrator {
       {
         status: 'in-progress',
         appendActivity: `${now} resumed after ${meta.state} (run ${newRunId})${substitutionNote}`,
+        // resumeRun() has exactly one caller: the human pressing Resume via
+        // the API.
+        activityActor: this.ctx.actorContext?.humanRef,
       },
       now
     );

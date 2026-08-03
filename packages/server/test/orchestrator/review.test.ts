@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch/core';
 import type { Finding, TaskDoc, TaskRisk } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -115,6 +115,7 @@ function finding(overrides: Partial<Finding> = {}): Finding {
     round: 0,
     createdAt: '2026-08-02T00:00:00.000Z',
     updatedAt: '2026-08-02T00:00:00.000Z',
+    raisedBy: '',
     ...overrides,
   };
 }
@@ -654,6 +655,11 @@ class ScriptedReviewer implements Executor {
 // dependency scope, so they don't have to scan a real workspace.
 const EMPTY_DEP_MAP: DepMap = { dependents: () => [], mirrors: () => [] };
 
+// Fixed git identity so ReviewRunner's actorContext resolves deterministically
+// (handle 'test', from the local part of the email) across every test.
+const testGitReader = (args: string[]): string =>
+  args.includes('user.email') ? 'test@example.com' : 'Test';
+
 function setupReview(
   reviewer: Executor,
   depMap: DepMapProvider = { get: () => EMPTY_DEP_MAP }
@@ -685,6 +691,7 @@ function setupReview(
     depMap,
     events,
     orchestrator,
+    actorContext: ActorContext.resolve(repo, testGitReader),
   });
   return { orchestrator, runner, findingStore, ledgerStore, store };
 }
@@ -743,6 +750,8 @@ describe('ReviewRunner', () => {
     expect(blocking?.detail).toBe('probed against a scratch clone');
     expect(blocking?.file).toBe('src.ts');
     expect(blocking?.runId).toBe(meta.id);
+    // Credited to the agent that ran the review, not the local developer.
+    expect(blocking?.raisedBy).toBe('agent:test/claude');
     expect(orchestrator.getRun(meta.id)?.meta.state).toBe('finished');
 
     expect(reviewer.lastPrompt).toContain('Adversarial review');
@@ -984,11 +993,14 @@ describe('ReviewRunner', () => {
     const undeclared = findings.find((f) => f.file === 'src.ts');
     expect(undeclared?.severity).toBe('minor');
     expect(undeclared?.title).toContain('outside declared writes');
+    // Mechanically detected by the harness itself, not raised by anyone.
+    expect(undeclared?.raisedBy).toBe('none');
 
     const hazards = ledgerStore.list().filter((e) => e.kind === 'hazard');
     expect(hazards).toHaveLength(1);
     expect(hazards[0].sourceTaskId).toBe(task.meta.id);
     expect(hazards[0].detail).toContain('src.ts');
+    expect(hazards[0].authoredBy).toBe('none');
   });
 });
 

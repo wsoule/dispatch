@@ -20,6 +20,14 @@ export {
   schedulableBatch,
   tasksConflict,
 } from './conflicts.js';
+export {
+  ActorRefError,
+  formatActorRef,
+  isValidAssignee,
+  parseActorRef,
+  UNASSIGNED,
+} from './actor.js';
+export type { ActorKind, ActorRef } from './actor.js';
 export { slugify } from './slug.js';
 export {
   untrustedBlock,
@@ -38,6 +46,8 @@ export {
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
 export { TaskStore, DISPATCH_DIR } from './store.js';
+export { mergeTaskFile } from './mergeTask.js';
+export { mergeTeamFile } from './mergeTeam.js';
 export type {
   CreateInput,
   UpdatePatch,
@@ -120,3 +130,23 @@ export {
   upsertRegisteredProject,
 } from './registry.js';
 export type { RegisteredProject } from './registry.js';
+export {
+  handleFromEmail,
+  parseTeam,
+  serializeTeam,
+  TeamParseError,
+  upsertMember,
+} from './team.js';
+export type { TeamMember } from './team.js';
+export { ActorContext } from './actorContext.js';
+export type { GitReader } from './actorContext.js';
+export {
+  checkMergeDriverSetup,
+  checkTeamMergeDriverSetup,
+  GITATTRIBUTES_LINE,
+  mergeGitAttributes,
+  registerMergeDriverGitConfig,
+  registerTeamMergeDriverGitConfig,
+  TEAM_GITATTRIBUTES_LINE,
+  writeGitAttributes,
+} from './mergeDriverSetup.js';

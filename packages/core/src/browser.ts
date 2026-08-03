@@ -14,6 +14,14 @@ export type { LedgerEntry, LedgerKind } from './ledger.js';
 export type { CommandEvidence, MutationEvidence } from './evidence.js';
 export { schedulableBatch, tasksConflict } from './conflicts.js';
 export {
+  ActorRefError,
+  formatActorRef,
+  isValidAssignee,
+  parseActorRef,
+  UNASSIGNED,
+} from './actor.js';
+export type { ActorKind, ActorRef } from './actor.js';
+export {
   computeStack,
   dispatchableTasks,
   findDependencyCycles,
@@ -31,3 +39,11 @@ export type {
   ListSafeResult,
   UpdatePatch,
 } from './store.js';
+export {
+  handleFromEmail,
+  parseTeam,
+  serializeTeam,
+  TeamParseError,
+  upsertMember,
+} from './team.js';
+export type { TeamMember } from './team.js';

@@ -1,9 +1,9 @@
 import type { DiffResult, RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 
-import { SectionLabel } from '../ui/SectionLabel';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 interface RunSidebarProps {
   meta: RunMeta;

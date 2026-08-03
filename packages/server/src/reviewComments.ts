@@ -111,7 +111,11 @@ export function resolveAnchor(
 }
 
 export class ReviewCommentStore {
-  constructor(private readonly rootDir: string) {}
+  constructor(
+    private readonly rootDir: string,
+    // Serialized ActorRef credited when an add/reply supplies no author.
+    private readonly defaultAuthor: string
+  ) {}
 
   private file(runId: string): string {
     return reviewCommentsPath(this.rootDir, runId);
@@ -147,7 +151,7 @@ export class ReviewCommentStore {
       line: input.line,
       ...(input.startLine !== undefined ? { startLine: input.startLine } : {}),
       anchorText: input.anchorText,
-      author: input.author ?? 'You',
+      author: input.author ?? this.defaultAuthor,
       body: input.body,
       resolved: false,
       pending: input.pending ?? true,
@@ -164,7 +168,7 @@ export class ReviewCommentStore {
     runId: string,
     commentId: string,
     body: string,
-    author = 'You',
+    author = this.defaultAuthor,
     now = new Date().toISOString()
   ): ReviewComment {
     const all = this.list(runId);

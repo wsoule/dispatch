@@ -1,5 +1,5 @@
-import type { CartoMode } from '@dispatch/core';
-import { loadConfig, TaskStore } from '@dispatch/core';
+import { ActorContext, loadConfig, TaskStore } from '@dispatch/core';
+import type { CartoMode, GitReader } from '@dispatch/core';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -233,6 +233,15 @@ async function serveStatic(
   return null;
 }
 
+// ActorContext's GitReader seam: git/commands.ts has no single-value config
+// reader, so this is a thin synchronous wrapper instead.
+function makeGitReader(rootDir: string): GitReader {
+  return (args) => {
+    const result = Bun.spawnSync(['git', ...args], { cwd: rootDir });
+    return result.exitCode === 0 ? result.stdout.toString().trim() : null;
+  };
+}
+
 /**
  * Boots the dispatchd HTTP + WebSocket server for one dispatch project
  * (`rootDir`): a Bun.serve instance backed by an in-memory task cache that is
@@ -247,6 +256,11 @@ export async function startServer(
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
   const tokens = opts.tokens ?? mintDaemonTokens();
+
+  // Who this daemon acts as. Resolved first, before anything touches the
+  // store, so a teammate is registered on the roster ahead of any task edit
+  // this process might make.
+  const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
 
   const store = new TaskStore(rootDir);
   const cache = new TaskCache();
@@ -304,6 +318,8 @@ export async function startServer(
         kind: 'hazard',
         title: 'dependency map degraded',
         detail: `carto unavailable, using the built-in scanner: ${detail}`,
+        // Detected by the dep-map cache itself, not raised by a teammate.
+        authoredBy: 'none',
       });
     },
   });
@@ -324,6 +340,7 @@ export async function startServer(
     events,
     jj,
     ledgerStore,
+    actorContext,
   });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
@@ -355,7 +372,13 @@ export async function startServer(
   // via `registerPlanners`) and the epic dispatch engine, both wired against
   // the same store/cache/events/orchestrator every other request handler
   // shares.
-  const planManager = new PlanManager({ rootDir, store, cache, events });
+  const planManager = new PlanManager({
+    rootDir,
+    store,
+    cache,
+    events,
+    actorContext,
+  });
   if (opts.registerPlanners !== undefined) {
     opts.registerPlanners(planManager);
   } else {
@@ -367,6 +390,7 @@ export async function startServer(
     cache,
     events,
     orchestrator,
+    actorContext,
   });
 
   // PR capability is detected once, here at boot, and never rechecked per
@@ -375,7 +399,7 @@ export async function startServer(
   // health check or review action would be wasted work.
   const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
   const prManager = new PrManager(
-    { rootDir, store, cache, events, orchestrator },
+    { rootDir, store, cache, events, orchestrator, actorContext },
     prCapability,
     opts.prCommandRunner
   );
@@ -390,15 +414,23 @@ export async function startServer(
   );
   mergeQueue.startAutoRefresh();
 
-  // The brain-dump inbox, and the one-time fold of the retired notes store into it. Run at
-  // startup rather than behind a user action because it is idempotent (see migrateNotes) and
-  // because a daemon that has already read notes.json should never serve an inbox that is
-  // missing them — a half-migrated state is the one outcome worth ruling out entirely.
-  const inboxStore = new InboxStore(rootDir);
+  // The brain-dump inbox, scoped to this daemon's own actor, plus the one-time folds of older
+  // storage shapes into it: the legacy single shared `inbox.md` (pre-dating per-actor files) and,
+  // before that, the retired `notes.json` store. Both run at startup rather than behind a user
+  // action because both are idempotent (see migrateLegacy/migrateNotes) and because a daemon that
+  // has already read one should never serve an inbox that is missing it — a half-migrated state
+  // is the one outcome worth ruling out entirely.
+  const inboxStore = new InboxStore(rootDir, actorContext.member.handle);
+  const migratedLegacy = inboxStore.migrateLegacy();
+  if (migratedLegacy > 0) {
+    console.log(
+      `dispatchd: migrated ${migratedLegacy} item(s) from .dispatch/inbox.md into .dispatch/inbox/${actorContext.member.handle}.md`
+    );
+  }
   const migrated = inboxStore.migrateNotes(rootDir);
   if (migrated > 0) {
     console.log(
-      `dispatchd: migrated ${migrated} note(s) from .dispatch/notes.json into .dispatch/inbox.md`
+      `dispatchd: migrated ${migrated} note(s) from .dispatch/notes.json into .dispatch/inbox/${actorContext.member.handle}.md`
     );
   }
 
@@ -430,6 +462,7 @@ export async function startServer(
     depMap: depMapCache,
     events,
     orchestrator,
+    actorContext,
   });
 
   // Verification as its own dispatched run kind, exercising finished work
@@ -453,6 +486,7 @@ export async function startServer(
     reviewRunner,
     findingStore,
     fixLoopStore: new FixLoopStore(rootDir),
+    actorContext,
   });
   // Runs after reconcileOnBoot has force-failed the previous process's runs,
   // so a loop waiting on one of them sees a terminal run and moves on.
@@ -480,11 +514,12 @@ export async function startServer(
     reviewRunner,
     verificationRunner,
     fixLoop,
-    reviewComments: new ReviewCommentStore(rootDir),
+    reviewComments: new ReviewCommentStore(rootDir, actorContext.humanRef),
     questions,
     scopeRequests,
     linearSync,
     gitRepo,
+    actorContext,
     tokens,
   };
 

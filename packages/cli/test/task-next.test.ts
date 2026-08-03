@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +9,12 @@ import { makeProgram } from '../src/program.js';
 let root: string;
 let lines: string[];
 let ctx: CliContext;
+
+// `task status` resolves an ActorContext (git identity + team.yml roster),
+// which writes a known-handle file under DISPATCH_HOME — isolate it per the
+// shared test-setup contract (see packages/server/test/setup.ts).
+let fakeHome: string;
+const originalDispatchHome = process.env.DISPATCH_HOME;
 
 async function run(...argv: string[]) {
   await makeProgram(ctx).parseAsync(argv, { from: 'user' });
@@ -21,10 +27,18 @@ async function createTask(...args: string[]): Promise<string> {
 }
 
 beforeEach(async () => {
+  fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-cli-home-'));
+  process.env.DISPATCH_HOME = fakeHome;
   root = mkdtempSync(join(tmpdir(), 'dispatch-cli-'));
   lines = [];
   ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
+});
+
+afterEach(() => {
+  if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
+  else process.env.DISPATCH_HOME = originalDispatchHome;
+  rmSync(fakeHome, { recursive: true, force: true });
 });
 
 describe('task next', () => {

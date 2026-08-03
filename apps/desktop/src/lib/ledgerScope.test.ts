@@ -13,6 +13,7 @@ function entry(overrides: Partial<LedgerEntry>): LedgerEntry {
     detail: 'src/app.ts — needed to wire the new route',
     appliesTo: [],
     createdAt: '2026-01-01T00:00:00.000Z',
+    authoredBy: '',
     ...overrides,
   };
 }

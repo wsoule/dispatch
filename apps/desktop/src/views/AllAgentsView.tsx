@@ -3,12 +3,12 @@ import { Radio } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { StateDot } from '../components/ui/StateDot';
 import { deriveFeedState } from '../lib/feedState';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { modelDisplayName } from '../lib/models';
 import { deriveRunDisposition } from '../lib/runState';
 import { cn } from '@/lib/utils';
+import { StateDot } from '@/ui/chrome/StateDot';
 import { Skeleton } from '@/ui/skeleton';
 
 interface AllAgentsViewProps {

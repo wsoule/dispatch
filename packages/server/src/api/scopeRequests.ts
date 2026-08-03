@@ -120,6 +120,7 @@ function recordGrantedLedgerEntry(
     kind: 'decision',
     title: `Scope extended for run ${runId}`,
     detail,
+    authoredBy: ctx.actorContext.humanRef,
   });
   ctx.events.broadcast({ type: 'ledger.changed' });
 }

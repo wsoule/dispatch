@@ -1,8 +1,8 @@
 import type { RunMeta } from '@dispatch/client';
 import { GitPullRequest, GitPullRequestArrow } from 'lucide-react';
 
-import { SectionLabel } from '../ui/SectionLabel';
 import { cn } from '@/lib/utils';
+import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 export interface ReviewQueueItem {
   run: RunMeta;

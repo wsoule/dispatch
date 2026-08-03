@@ -49,6 +49,7 @@ export async function amendTask(
       source === null
         ? `${body.overrides} — ${body.reason}`
         : `${body.overrides} — ${body.reason} (source: ${source})`,
+    authoredBy: ctx.actorContext.humanRef,
   });
 
   ctx.events.broadcast({ type: 'task.changed' });
