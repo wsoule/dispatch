@@ -91,7 +91,10 @@ const taskSummaryShape = {
   blockedBy: z.array(z.string()),
   labels: z.array(z.string()),
   priority: z.enum(PRIORITIES as unknown as [string, ...string[]]),
-  assignee: z.enum(ASSIGNEES as unknown as [string, ...string[]]),
+  // A named assignee (e.g. `human:wyat`, `agent:wyat/claude`) is valid on
+  // disk but not one of the legacy ASSIGNEES enum values — same reasoning
+  // as `status` above, which already widened for custom statuses.
+  assignee: z.string(),
   // Drives review depth and model tier, so an agent picking work needs it.
   risk: z.enum(TASK_RISKS as unknown as [string, ...string[]]),
   // Set once a verify run has actually exercised this task's work.

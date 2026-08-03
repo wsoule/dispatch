@@ -272,6 +272,25 @@ describe('task_get', () => {
     expect(callToolText(result)).toContain('missing frontmatter');
     expect(callToolText(result)).toContain("run 'dispatch doctor'");
   });
+
+  // Regression: taskMetaShape's `assignee` used to be z.enum(ASSIGNEES), the
+  // legacy agent|human|none triple. A named assignee written to disk (the
+  // file parser accepts `human:wyat` / `agent:wyat/claude`) made the SDK's
+  // own output validation throw instead of returning the task.
+  it('returns a named assignee without an output-validation error', async () => {
+    const store = new TaskStore(root);
+    const doc = store.create({ title: 'Assigned' });
+    store.update(doc.meta.id, { assignee: 'human:wyat' });
+
+    const result = (await client.callTool({
+      name: 'task_get',
+      arguments: { id: doc.meta.id },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(
+      (result.structuredContent!.meta as { assignee: string }).assignee
+    ).toBe('human:wyat');
+  });
 });
 
 describe('task_list', () => {
@@ -348,6 +367,22 @@ describe('task_list', () => {
     expect(problems).toEqual([
       "corrupt.md: missing frontmatter — run 'dispatch doctor'",
     ]);
+  });
+
+  // Regression: task_list is board-wide, so one task file carrying a named
+  // assignee used to brick the whole list with an output-validation error.
+  it('returns a named assignee without an output-validation error', async () => {
+    const store = new TaskStore(root);
+    const doc = store.create({ title: 'Assigned' });
+    store.update(doc.meta.id, { assignee: 'human:wyat' });
+
+    const result = (await client.callTool({
+      name: 'task_list',
+      arguments: {},
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    const tasks = result.structuredContent?.tasks as { assignee: string }[];
+    expect(tasks.map((t) => t.assignee)).toEqual(['human:wyat']);
   });
 });
 
