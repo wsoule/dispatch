@@ -45,13 +45,20 @@ let fakeHome: string;
 let repo: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
+// Finishes a ScriptedReviewer has scheduled but not yet delivered — a review
+// landing after teardown writes its transcript to a home that is already gone.
+let scriptedFinishes: Promise<void>[] = [];
+
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
   process.env.DISPATCH_HOME = fakeHome;
   repo = initGitRepo('dispatch-review-');
 });
 
-afterEach(() => {
+afterEach(async () => {
+  const inFlight = scriptedFinishes;
+  scriptedFinishes = [];
+  await Promise.all(inFlight);
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -613,17 +620,28 @@ class ScriptedReviewer implements Executor {
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     this.lastPrompt = opts.prompt;
     const match = /as one JSON object: (\S+)/.exec(opts.prompt);
-    setTimeout(() => {
-      try {
-        if (this.output !== null && match !== null) {
-          writeFileSync(match[1], this.output);
-        }
-      } catch {
-        // The run directory can be torn down before this fires; the finish
-        // below still has to happen so nothing hangs.
-      }
-      events.onFinish({ state: 'finished' });
-    }, 0);
+    // Registered so afterEach can await it: a stray timer's throw is charged
+    // to whichever file bun happens to be running when it fires.
+    scriptedFinishes.push(
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          try {
+            if (this.output !== null && match !== null) {
+              writeFileSync(match[1], this.output);
+            }
+          } catch {
+            // The run directory can be torn down before this fires; the
+            // finish below still has to happen so nothing hangs.
+          }
+          try {
+            events.onFinish({ state: 'finished' });
+          } finally {
+            // Resolved even on a throw, so teardown never waits on a dead run.
+            resolve();
+          }
+        }, 0);
+      })
+    );
     return {
       interrupt: async () => {},
       send: () => {},

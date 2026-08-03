@@ -172,9 +172,9 @@ describe('run claims', () => {
                 text: 'wrote second.ts',
               },
             },
-            // Keeps the run 'running' long enough to assert against, with
-            // no idle-transition of its own; cancel() below stops it early.
-            { delayMs: 300 },
+            // Keeps the run 'running' long enough to assert against, with no
+            // idle-transition of its own; cancel() below ends it immediately.
+            { delayMs: 10_000 },
           ],
           finish: { state: 'finished', costUsd: 0, turns: 1 },
         })
@@ -182,14 +182,14 @@ describe('run claims', () => {
       const task = store.create({ title: 'Task', writes: ['a.ts'] });
       const meta = await orchestrator.dispatch(task.meta.id, 'fake');
 
-      // Short timeout, inside the 300ms delay: only onEntry can satisfy this
-      // before an idle transition's own forced refresh could confound it.
+      // Must land inside the delay above so only onEntry can satisfy it, with
+      // slack for a loaded machine's slow `git status` subprocess.
       await waitFor(
         () =>
           (
             orchestrator.list().find((r) => r.id === meta.id)?.claims ?? []
           ).includes('first.ts'),
-        150
+        3000
       );
       expect(orchestrator.list().find((r) => r.id === meta.id)?.state).toBe(
         'running'
@@ -209,7 +209,9 @@ describe('run claims', () => {
     orchestrator.registerExecutor(
       'fake',
       new FakeExecutor({
-        steps: [{ delayMs: 2000 }],
+        // Longer than the waitFor below, so the run is still running when the
+        // trailing write lands rather than racing its own timeout.
+        steps: [{ delayMs: 10_000 }],
         finish: { state: 'finished', costUsd: 0, turns: 1 },
       })
     );

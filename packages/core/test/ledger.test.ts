@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { generateLedgerId } from '../src/ids.js';
-import type { LedgerEntry, LedgerKind } from '../src/ledger.js';
-
-const KINDS: LedgerKind[] = ['constraint', 'hazard', 'decision', 'handoff'];
+import type { LedgerEntry } from '../src/ledger.js';
 
 describe('generateLedgerId', () => {
   it('mints the l-<6 hex> shape used by LedgerEntry.id', () => {
@@ -23,26 +21,24 @@ describe('LedgerEntry shape', () => {
     createdAt: '2026-07-13T00:00:00Z',
   };
 
-  it('accepts every declared kind', () => {
-    for (const kind of KINDS) {
-      expect({ ...base, kind }.kind).toBe(kind);
-    }
+  it('round-trips through JSON', () => {
+    const revived = JSON.parse(JSON.stringify(base)) as LedgerEntry;
+    expect(revived).toEqual(base);
   });
 
-  it('allows epicId and sourceTaskId to be null, appliesTo to be empty', () => {
+  // JSON.stringify drops undefined, so a field turned optional rather than
+  // nullable would silently vanish from a stored project-wide entry.
+  it('round-trips a project-wide entry with its nulls, not as absent keys', () => {
     const projectWide: LedgerEntry = {
       ...base,
       epicId: null,
       sourceTaskId: null,
       appliesTo: [],
     };
-    expect(projectWide.epicId).toBeNull();
-    expect(projectWide.sourceTaskId).toBeNull();
-    expect(projectWide.appliesTo).toEqual([]);
-  });
-
-  it('round-trips through JSON', () => {
-    const revived = JSON.parse(JSON.stringify(base)) as LedgerEntry;
-    expect(revived).toEqual(base);
+    const revived = JSON.parse(JSON.stringify(projectWide)) as LedgerEntry;
+    expect(revived).toEqual(projectWide);
+    expect(Object.keys(revived).sort()).toEqual(
+      Object.keys(projectWide).sort()
+    );
   });
 });

@@ -197,10 +197,10 @@ describe('isSkippedPath', () => {
 describe('buildDepMap against this repository', () => {
   const repoRoot = join(import.meta.dirname, '..', '..', '..');
 
-  it("detects packages/cli/src/apiClient.ts's real mirror comment for packages/server/src/events.ts", () => {
+  it("detects packages/client/src/api.ts's real mirror comments for packages/server/src/events.ts", () => {
     const map = buildDepMap(repoRoot);
     expect(map.mirrors('packages/server/src/events.ts')).toContain(
-      'packages/cli/src/apiClient.ts'
+      'packages/client/src/api.ts'
     );
   });
 

@@ -196,7 +196,12 @@ describe('POST /api/linear/connect', () => {
 
 describe('POST /api/linear/sync', () => {
   it('returns a summary explaining why an unconfigured project cannot sync', async () => {
-    const res = await fetch(`${baseUrl}/api/linear/sync`, { method: 'POST' });
+    // Body-less, but still typed: every mutating route rejects a POST without
+    // the JSON content-type, which is the daemon's CSRF defence.
+    const res = await fetch(`${baseUrl}/api/linear/sync`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
     expect(res.status).toBe(200);
     const summary = await json(res);
     expect(summary.errors).toEqual(['no Linear team selected']);
