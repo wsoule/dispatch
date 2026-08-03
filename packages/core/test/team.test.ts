@@ -4,6 +4,7 @@ import {
   handleFromEmail,
   parseTeam,
   serializeTeam,
+  TeamParseError,
   upsertMember,
 } from '../src/team.js';
 
@@ -52,6 +53,27 @@ describe('parseTeam / serializeTeam', () => {
     const yaml =
       'members:\n  - handle: a\n    email: a@x.com\n    displayName: A\n';
     expect(parseTeam(yaml)[0]?.emails).toEqual([]);
+  });
+
+  it('throws a typed error on malformed yaml rather than losing the roster', () => {
+    expect(() =>
+      parseTeam('members:\n  - handle: a\n  email: a@x.com')
+    ).toThrow(TeamParseError);
+  });
+
+  it('drops an entry with no usable handle or email', () => {
+    expect(parseTeam('members:\n  - displayName: A\n')).toEqual([]);
+  });
+
+  it('drops an entry whose handle is not a scalar', () => {
+    expect(
+      parseTeam('members:\n  - handle:\n      nested: x\n    email: a@x.com\n')
+    ).toEqual([]);
+  });
+
+  it('defaults displayName to the handle when it is absent', () => {
+    const yaml = 'members:\n  - handle: a\n    email: a@x.com\n';
+    expect(parseTeam(yaml)[0]?.displayName).toBe('a');
   });
 });
 

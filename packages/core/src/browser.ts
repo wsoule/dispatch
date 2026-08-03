@@ -43,6 +43,7 @@ export {
   handleFromEmail,
   parseTeam,
   serializeTeam,
+  TeamParseError,
   upsertMember,
 } from './team.js';
 export type { TeamMember } from './team.js';
