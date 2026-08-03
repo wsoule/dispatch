@@ -54,6 +54,7 @@ function ledgerEntry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
     detail: 'display keys are not stable across a rename',
     appliesTo: [],
     createdAt: '2026-07-20T00:00:00.000Z',
+    authoredBy: '',
     ...overrides,
   };
 }
@@ -73,6 +74,7 @@ function finding(overrides: Partial<Finding> = {}): Finding {
     round: 0,
     createdAt: '2026-08-02T00:00:00.000Z',
     updatedAt: '2026-08-02T00:00:00.000Z',
+    raisedBy: '',
     ...overrides,
   };
 }

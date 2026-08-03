@@ -1,5 +1,6 @@
 import YAML from 'yaml';
 
+import { isValidAssignee } from './actor.js';
 import type {
   Assignee,
   Priority,
@@ -8,7 +9,7 @@ import type {
   TaskMeta,
   TaskRisk,
 } from './types.js';
-import { ASSIGNEES, KINDS, PRIORITIES, TASK_RISKS } from './types.js';
+import { KINDS, PRIORITIES, TASK_RISKS } from './types.js';
 
 export class TaskParseError extends Error {
   constructor(
@@ -54,7 +55,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw.priority != null && !PRIORITIES.includes(raw.priority as Priority)) {
     throw new TaskParseError(`invalid priority: ${String(raw.priority)}`, file);
   }
-  if (raw.assignee != null && !ASSIGNEES.includes(raw.assignee as Assignee)) {
+  if (raw.assignee != null && !isValidAssignee(String(raw.assignee))) {
     throw new TaskParseError(`invalid assignee: ${String(raw.assignee)}`, file);
   }
   if (raw['self-review'] != null && typeof raw['self-review'] !== 'boolean') {
@@ -220,10 +221,20 @@ export function setSection(
  * Appends an activity bullet. Assumes `## Activity` is the LAST section of the
  * body (the store's create template guarantees this).
  */
-export function appendActivity(body: string, line: string): string {
+export function appendActivity(
+  body: string,
+  line: string,
+  actor?: string
+): string {
   // `line` is caller-supplied text (e.g. an agent's task_comment) appended
   // straight onto the body, so it's escaped the same as setSection's content.
-  const entry = `- ${escapeHeadingLines(line)}`;
+  // `actor` is validated as a well-formed ActorRef (isValidAssignee covers
+  // the same wire format); a malformed value is dropped rather than trusted
+  // verbatim into a committed file.
+  const validActor =
+    actor !== undefined && isValidAssignee(actor) ? actor : undefined;
+  const suffix = validActor === undefined ? '' : ` — ${validActor}`;
+  const entry = `- ${escapeHeadingLines(line)}${suffix}`;
   if (!/^## Activity\s*$/m.test(body)) {
     return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
   }

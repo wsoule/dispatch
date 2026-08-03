@@ -1,9 +1,9 @@
 import type { RunMeta, RunState } from '@dispatch/client';
 
 import { deriveRunDisposition, runDispositionLabel } from '../../lib/runState';
-import { StateDot } from '@/components/ui/StateDot';
 import type { FeedState } from '@/lib/feedState';
 import { cn } from '@/lib/utils';
+import { StateDot } from '@/ui/chrome/StateDot';
 
 // Mirrors `statusTone` in lib/taskDisplay.ts's spirit (map a fixed enum to a
 // deliberate color) but for RunState rather than a task's tracker-config

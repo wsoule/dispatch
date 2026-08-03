@@ -178,6 +178,7 @@ describe('record_decision (fake daemon)', () => {
         title: 'withActionFeedback swallows rejections',
         detail: 'every catch downstream of it is dead code',
         appliesTo: [],
+        runId: 'r-self1',
       },
     ]);
   });
@@ -202,6 +203,7 @@ describe('record_decision (fake daemon)', () => {
         title: 't',
         detail: 'd',
         appliesTo: [],
+        runId: 'r-self1',
       },
     ]);
   });

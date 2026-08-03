@@ -1,6 +1,13 @@
-import { readRegistry } from '@dispatch/core';
+import { checkMergeDriverSetup, readRegistry } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -133,6 +140,117 @@ describe('bare `dispatch` in an uninitialized directory', () => {
 
       expect(lines.join('\n')).not.toContain('Initialized');
       expect(readRegistry()).toHaveLength(1);
+    } finally {
+      await testServer.stop(true);
+    }
+  });
+
+  // Regression: writeGitAttributes + registerMergeDriverGitConfig used to
+  // run only from the explicit `dispatch init` subcommand, so a desktop-first
+  // user (who only ever hits this bare-command path) never got the merge
+  // driver registered at all.
+  it('registers the task-file merge driver on first init', async () => {
+    spawnSync('git', ['init', '-q'], { cwd: root });
+
+    const testServer = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === '/api/health') {
+          return Response.json({ ok: true, version: '0.0.1' });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    try {
+      const daemonsDir = join(fakeHome, '.dispatch', 'daemons');
+      mkdirSync(daemonsDir, { recursive: true });
+      writeFileSync(
+        daemonFilePath(root),
+        JSON.stringify({
+          port: testServer.port,
+          pid: process.pid,
+          rootDir: root,
+          startedAt: new Date().toISOString(),
+          agentToken: 'test-agent-token',
+        })
+      );
+
+      const ctx: CliContext = {
+        cwd: root,
+        log: (l) => lines.push(l),
+        openApp: () => {},
+        openBrowser: () => {},
+      };
+
+      await makeProgram(ctx).parseAsync([], { from: 'user' });
+
+      expect(readFileSync(join(root, '.gitattributes'), 'utf8')).toContain(
+        '.dispatch/tasks/*.md merge=dispatch-task'
+      );
+      expect(checkMergeDriverSetup(root)).toEqual({
+        gitattributes: true,
+        gitConfig: true,
+      });
+    } finally {
+      await testServer.stop(true);
+    }
+  });
+
+  // Regression: initIfMissing used to skip driver registration entirely once
+  // `.dispatch/tasks` already existed, so a project scaffolded before the
+  // drivers shipped (or that lost its local git config) was never repaired
+  // by the bare `dispatch` command — only an explicit `dispatch init` did.
+  it('repairs the merge drivers on an already-initialized project', async () => {
+    spawnSync('git', ['init', '-q'], { cwd: root });
+    mkdirSync(join(root, '.dispatch', 'tasks'), { recursive: true });
+    expect(checkMergeDriverSetup(root)).toEqual({
+      gitattributes: false,
+      gitConfig: false,
+    });
+
+    const testServer = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === '/api/health') {
+          return Response.json({ ok: true, version: '0.0.1' });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    try {
+      const daemonsDir = join(fakeHome, '.dispatch', 'daemons');
+      mkdirSync(daemonsDir, { recursive: true });
+      writeFileSync(
+        daemonFilePath(root),
+        JSON.stringify({
+          port: testServer.port,
+          pid: process.pid,
+          rootDir: root,
+          startedAt: new Date().toISOString(),
+          agentToken: 'test-agent-token',
+        })
+      );
+
+      const ctx: CliContext = {
+        cwd: root,
+        log: (l) => lines.push(l),
+        openApp: () => {},
+        openBrowser: () => {},
+      };
+
+      await makeProgram(ctx).parseAsync([], { from: 'user' });
+
+      // Driver registration ran even though .dispatch/tasks already existed
+      // — initIfMissing returned false, but still repaired the drivers.
+      expect(lines.join('\n')).not.toContain('Initialized');
+      expect(checkMergeDriverSetup(root)).toEqual({
+        gitattributes: true,
+        gitConfig: true,
+      });
     } finally {
       await testServer.stop(true);
     }

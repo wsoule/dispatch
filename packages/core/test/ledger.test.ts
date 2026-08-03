@@ -19,6 +19,7 @@ describe('LedgerEntry shape', () => {
     detail: 'Never decode the session token client-side.',
     appliesTo: ['t-def456'],
     createdAt: '2026-07-13T00:00:00Z',
+    authoredBy: 'human:wyat',
   };
 
   it('round-trips through JSON', () => {

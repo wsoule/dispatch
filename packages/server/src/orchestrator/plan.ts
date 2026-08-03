@@ -1,5 +1,5 @@
 import { generateDraftId, loadConfig } from '@dispatch/core';
-import type { TaskStore } from '@dispatch/core';
+import type { ActorContext, TaskStore } from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';
@@ -125,6 +125,10 @@ export interface PlanManagerContext {
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
+  // Optional, same "tests may omit it" contract as OrchestratorContext's own
+  // field — confirm() below falls back to an unattributed Activity line when
+  // it's absent.
+  actorContext?: ActorContext;
 }
 
 // Builds the markdown body TaskStore.create's `description` param receives
@@ -551,6 +555,9 @@ export class PlanManager {
         epicId,
         {
           appendActivity: `${now} [plan] confirmed with undeclared writes on at least one task — epic dispatch holds each of those until no run is live anywhere in the project, not only in this epic`,
+          // confirm() is only ever reached through the human-facing plan
+          // confirmation endpoint — no agent tool confirms a plan.
+          activityActor: this.ctx.actorContext?.humanRef,
         },
         now
       );

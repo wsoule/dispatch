@@ -6,12 +6,12 @@ import { ReviewCommentsPanel } from '../components/runs/ReviewCommentsPanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { buildReviewQueue, ReviewQueue } from '../components/runs/ReviewQueue';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { deriveFeedState } from '../lib/feedState';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
+import { StateDot } from '@/ui/chrome/StateDot';
 
 interface ReviewViewProps {
   data: DispatchProjectData;

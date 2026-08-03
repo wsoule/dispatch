@@ -101,6 +101,7 @@ export async function createFinding(
     line: typeof body.line === 'number' ? body.line : null,
     round: typeof body.round === 'number' ? body.round : undefined,
     recommendation: body.recommendation as FindingRecommendation | undefined,
+    raisedBy: ctx.actorContext.humanRef,
   });
   ctx.events.broadcast({ type: 'finding.changed' });
   return jsonResponse(finding, 201);
@@ -167,6 +168,18 @@ export function listLedger(ctx: ApiContext, url: URL): Response {
   );
 }
 
+// Credits whoever actually authored the entry. `runId` is how
+// record_decision (an MCP tool an agent can only call mid-run) says "this
+// came from the run I'm in" — when it resolves, that run's own executor gets
+// the credit, not the person operating this daemon. An unresolvable runId
+// (stale, or made up) is credited to no one rather than guessed at, and a
+// request with no runId at all is a human calling the endpoint directly.
+function ledgerAuthorFor(ctx: ApiContext, runId: string | null): string {
+  if (runId === null) return ctx.actorContext.humanRef;
+  const run = ctx.orchestrator.getRun(runId);
+  return run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor);
+}
+
 // POST /api/ledger — a decision or hazard worth carrying to later tasks.
 export async function createLedgerEntry(
   req: Request,
@@ -181,6 +194,7 @@ export async function createLedgerEntry(
     title?: unknown;
     detail?: unknown;
     appliesTo?: unknown;
+    runId?: unknown;
   };
   if (typeof body.kind !== 'string' || !LEDGER_KINDS.includes(body.kind)) {
     return errorResponse(
@@ -201,6 +215,9 @@ export async function createLedgerEntry(
   ) {
     return errorResponse(400, 'invalid appliesTo: expected a list of strings');
   }
+  if (body.runId !== undefined && typeof body.runId !== 'string') {
+    return errorResponse(400, 'invalid runId: expected a string');
+  }
   const entry = ctx.ledgerStore.add({
     epicId: typeof body.epicId === 'string' ? body.epicId : null,
     sourceTaskId:
@@ -209,6 +226,10 @@ export async function createLedgerEntry(
     title: body.title,
     detail: body.detail,
     appliesTo: body.appliesTo,
+    authoredBy: ledgerAuthorFor(
+      ctx,
+      typeof body.runId === 'string' ? body.runId : null
+    ),
   });
   ctx.events.broadcast({ type: 'ledger.changed' });
   return jsonResponse(entry, 201);

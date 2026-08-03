@@ -8,6 +8,11 @@ import { openClaudeQuery } from './orchestrator/claudeCli.js';
 /**
  * Groups related inbox items with a model, so one piece of work described two
  * ways lands together — past what lib/inboxCluster.ts's local pass can match.
+ *
+ * Takes whatever items its caller hands it; it does no reading of its own. The inbox is
+ * partitioned one file per actor, so the caller passes `InboxStore.listAll()` rather than
+ * `list()` here — clustering has to see the whole team's captures, not just one actor's file,
+ * or two people describing the same work in their own inboxes would never group.
  */
 
 export interface InboxClusterGroup {
@@ -132,6 +137,28 @@ export class InboxClusterer {
       clearTimeout(timer);
     }
   }
+}
+
+/**
+ * Narrows cluster groups down to items in `localIds` — the caller's own actor file — dropping any
+ * group left with fewer than two local items.
+ *
+ * `cluster()` is handed every teammate's items (see the caller in api.ts, which passes
+ * `InboxStore.listAll()`) so the model can group work described across different people's
+ * inboxes. But display and convert both resolve ids against the local actor's own file only, so a
+ * group carrying another actor's item id would overstate its count, seed a selection the UI can't
+ * resolve, and fail convert outright — this is what keeps the HTTP response itself local-only.
+ */
+export function filterGroupsToLocalItems(
+  groups: InboxClusterGroup[],
+  localIds: Set<string>
+): InboxClusterGroup[] {
+  return groups
+    .map((g) => ({
+      ...g,
+      itemIds: g.itemIds.filter((id) => localIds.has(id)),
+    }))
+    .filter((g) => g.itemIds.length >= 2);
 }
 
 /**

@@ -18,8 +18,6 @@ import { RunSidebar } from '../components/runs/RunSidebar';
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { StackBadge, StackRail } from '../components/tasks/StackRail';
-import { IconToggle } from '../components/ui/IconToggle';
-import { Segmented } from '../components/ui/Segmented';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useResizablePane } from '../hooks/useResizablePane';
 import { useScopeRequest } from '../hooks/useScopeRequest';
@@ -30,6 +28,8 @@ import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { IconToggle } from '@/ui/chrome/IconToggle';
+import { Segmented } from '@/ui/chrome/Segmented';
 import { Skeleton } from '@/ui/skeleton';
 
 type RunTab = 'session' | 'diff';

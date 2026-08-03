@@ -21,7 +21,7 @@ import type {
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import type { ActorContext, TaskDoc } from '@dispatch/core';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { amendTask } from './api/amendments.js';
@@ -68,7 +68,7 @@ import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
-import { InboxClusterer } from './inboxClusterer.js';
+import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
 import type { LedgerStore } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
@@ -135,6 +135,8 @@ export interface ApiContext {
   tokens: DaemonTokens;
   // Test-injection seam only, same as `inboxClusterer` above.
   commitMessageGenerator?: CommitMessageGenerator;
+  // Who this daemon acts as, resolved once at boot from git config.
+  actorContext: ActorContext;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -369,7 +371,53 @@ async function updateTask(
   );
   if (fieldsError) return errorResponse(400, fieldsError);
 
+  // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
+  // task drawer, or a direct API call — so any Activity line it appends is
+  // credited to this daemon's human, never whatever the client sent (an
+  // untrusted body must not be able to forge attribution).
+  if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
+    patch.activityActor = ctx.actorContext.humanRef;
+  }
+
   const doc = ctx.store.update(id, patch);
+  ctx.cache.rebuild(ctx.store);
+  ctx.events.broadcast({ type: 'task.changed' });
+  return jsonResponse(doc);
+}
+
+// Credits whoever actually left the comment. `runId` is how the MCP
+// `task_comment` tool (called BY an agent from inside a run) says "this came
+// from the run I'm in" — mirrors findings.ts's ledgerAuthorFor, but unlike
+// that helper a missing/unresolvable runId here is NEVER the daemon's human:
+// this endpoint has no other caller, so an unresolvable run must still yield
+// 'none' rather than crediting whoever happens to be operating the daemon.
+function commentAuthorFor(ctx: ApiContext, runId: string | null): string {
+  if (runId === null) return 'none';
+  const run = ctx.orchestrator.getRun(runId);
+  return run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor);
+}
+
+// POST /api/tasks/:id/comment — task_comment's proxy target: an agent's
+// mid-run note appended to the task's Activity log.
+async function createTaskComment(
+  req: Request,
+  ctx: ApiContext,
+  id: string
+): Promise<Response> {
+  if (ctx.store.get(id) === null) {
+    return errorResponse(404, `task not found: ${id}`);
+  }
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown; runId?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const runId = typeof body.runId === 'string' ? body.runId : null;
+  const doc = ctx.store.update(id, {
+    appendActivity: `${new Date().toISOString()} ${body.text}`,
+    activityActor: commentAuthorFor(ctx, runId),
+  });
   ctx.cache.rebuild(ctx.store);
   ctx.events.broadcast({ type: 'task.changed' });
   return jsonResponse(doc);
@@ -1773,7 +1821,7 @@ async function updateNote(
     (typeof body.kind !== 'string' ||
       !NOTE_KINDS.includes(body.kind as NoteKind))
   ) {
-    return errorResponse(400, `invalid kind: ${String(body.kind)}`);
+    return errorResponse(400, `invalid kind: ${JSON.stringify(body.kind)}`);
   }
   try {
     const note = ctx.noteStore.update(id, {
@@ -2042,8 +2090,17 @@ function buildInboxEnrichPrompt(item: InboxItem): string {
 async function clusterInbox(ctx: ApiContext): Promise<Response> {
   const clusterer = ctx.inboxClusterer ?? new InboxClusterer(ctx.rootDir);
   try {
-    const groups = await clusterer.cluster(ctx.inboxStore.list());
-    return jsonResponse({ groups, error: null });
+    // listAll(), not list(): clustering has to see every teammate's captures, not just this
+    // daemon's own actor file, or two people describing the same work would never group. But
+    // the response has to stay local: display (BrainDumpView) and convert both resolve ids
+    // against list() only, so a group carrying a teammate's item id would overstate its count,
+    // seed selection with an id the UI can't resolve, and fail convert outright. Filtering here
+    // — rather than widening display/convert to cross-file reads — also keeps a teammate's
+    // private capture text from ever reaching the local UI or a future model call over it.
+    const localIds = new Set(ctx.inboxStore.list().map((i) => i.id));
+    const groups = await clusterer.cluster(ctx.inboxStore.listAll());
+    const localGroups = filterGroupsToLocalItems(groups, localIds);
+    return jsonResponse({ groups: localGroups, error: null });
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
@@ -2488,6 +2545,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await createRun(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'comment' &&
+        method === 'POST'
+      ) {
+        return await createTaskComment(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&

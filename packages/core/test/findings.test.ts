@@ -26,6 +26,7 @@ describe('Finding shape', () => {
     round: 0,
     createdAt: '2026-07-13T00:00:00Z',
     updatedAt: '2026-07-13T00:00:00Z',
+    raisedBy: 'agent:wyat/claude',
   };
 
   it('round-trips through JSON', () => {

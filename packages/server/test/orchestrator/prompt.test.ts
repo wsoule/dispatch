@@ -14,6 +14,7 @@ function fixtureLedgerEntry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
     detail: 'every catch downstream of it is dead code — check response.ok',
     appliesTo: [],
     createdAt: '2026-07-20T00:00:00.000Z',
+    authoredBy: '',
     ...overrides,
   };
 }

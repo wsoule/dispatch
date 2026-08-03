@@ -1,5 +1,11 @@
 #!/usr/bin/env bun
-import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
+import {
+  DISPATCH_DIR,
+  registerMergeDriverGitConfig,
+  registerTeamMergeDriverGitConfig,
+  TaskStore,
+  writeGitAttributes,
+} from '@dispatch/core';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -376,11 +382,19 @@ if (portArg !== undefined && Number.isNaN(port)) {
 // caller to shell out to the CLI first) so that logic stays in TS and this
 // one bin covers both "start a daemon" and "start a daemon, initializing the
 // project first" in a single spawn.
-if (
-  args.includes('--init') &&
-  !existsSync(join(rootDir, DISPATCH_DIR, 'tasks'))
-) {
-  TaskStore.init(rootDir);
+if (args.includes('--init')) {
+  if (!existsSync(join(rootDir, DISPATCH_DIR, 'tasks'))) {
+    TaskStore.init(rootDir);
+  }
+  // The CLI's `dispatch init` registers the merge drivers; this is the
+  // desktop app's equivalent init path (GetStartedView's add-project flow),
+  // so it must register the same drivers or they ship dark for every
+  // desktop-first project. Runs unconditionally, not only on a fresh scaffold
+  // above — a project added before the drivers existed, or whose local git
+  // config lost them, only ever gets repaired through this same flag.
+  writeGitAttributes(rootDir);
+  registerMergeDriverGitConfig(rootDir);
+  registerTeamMergeDriverGitConfig(rootDir);
 }
 
 const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';

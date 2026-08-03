@@ -5,6 +5,13 @@ import { join, resolve } from 'node:path';
 
 const BIN = resolve(import.meta.dirname, '../dist/cli.js');
 let repo: string;
+// `task status` resolves an ActorContext (git identity + team.yml roster),
+// which writes a known-handle file under DISPATCH_HOME — the child process
+// otherwise inherits the shared fallback home from packages/server/test/
+// setup.ts's preload, which the test-setup contract there forbids writing
+// into (see its own doc comment). Isolated once for the whole file since
+// this suite never touches it directly.
+let dispatchHome: string;
 
 // Runs a command in the temp repo and returns trimmed stdout; throws on
 // non-zero exit so a failing CLI invocation fails the test loudly.
@@ -14,6 +21,7 @@ function run(cmd: string[]): string {
     cwd: repo,
     stdout: 'pipe',
     stderr: 'pipe',
+    env: { ...process.env, DISPATCH_HOME: dispatchHome },
   });
   if (proc.exitCode !== 0) {
     throw new Error(
@@ -29,6 +37,7 @@ function dispatch(...args: string[]): string {
 
 beforeAll(() => {
   repo = mkdtempSync(join(tmpdir(), 'dispatch-e2e-'));
+  dispatchHome = mkdtempSync(join(tmpdir(), 'dispatch-e2e-home-'));
   run(['git', 'init', '-q']);
 }, 20_000);
 

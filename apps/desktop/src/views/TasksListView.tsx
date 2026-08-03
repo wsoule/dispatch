@@ -12,7 +12,6 @@ import {
   StatusControl,
 } from '../components/tasks/PropertyControls';
 import { StackBadge } from '../components/tasks/StackRail';
-import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { deriveEpicPulse } from '../lib/epicPulse';
 import { formatRelativeTimeFromIso } from '../lib/format';
@@ -20,6 +19,7 @@ import { resolveListKeyCommand } from '../lib/keyboard';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { cn } from '@/lib/utils';
+import { StateDot } from '@/ui/chrome/StateDot';
 
 interface TasksListViewProps {
   data: DispatchProjectData;

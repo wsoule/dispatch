@@ -11,12 +11,12 @@ import { FeedFilterBar } from '../components/overview/FeedFilterBar';
 import type { FeedRowActions } from '../components/overview/FeedRow';
 import { FeedRow } from '../components/overview/FeedRow';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { buildFeed, FEED_GROUPS } from '../lib/controlRoom';
 import type { FeedState } from '../lib/feedState';
 import { FEED_STATE_LABEL, isUrgentState } from '../lib/feedState';
 import { cn } from '@/lib/utils';
+import { StateDot } from '@/ui/chrome/StateDot';
 
 interface OverviewViewProps {
   data: DispatchProjectData;

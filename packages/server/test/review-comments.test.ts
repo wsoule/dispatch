@@ -36,7 +36,7 @@ function comment(over: Partial<ReviewComment> = {}): ReviewComment {
     file: 'src/a.ts',
     line: 3,
     anchorText: '  const x = 1;',
-    author: 'You',
+    author: 'human:wyat',
     body: 'do not swallow this',
     resolved: false,
     pending: false,
@@ -114,13 +114,13 @@ describe('resolveAnchor', () => {
 describe('ReviewCommentStore', () => {
   test('adds and reads back across instances', () => {
     const dir = root();
-    new ReviewCommentStore(dir).add('r-1', {
+    new ReviewCommentStore(dir, '').add('r-1', {
       file: 'src/a.ts',
       line: 3,
       anchorText: 'x',
       body: 'look at this',
     });
-    const all = new ReviewCommentStore(dir).list('r-1');
+    const all = new ReviewCommentStore(dir, '').list('r-1');
     expect(all).toHaveLength(1);
     expect(all[0]?.body).toBe('look at this');
     expect(all[0]?.resolved).toBe(false);
@@ -128,14 +128,14 @@ describe('ReviewCommentStore', () => {
 
   test('comments are scoped per run', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'one' });
     expect(store.list('r-2')).toEqual([]);
   });
 
   test('replies append in order and stay on the thread', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     const c = store.add('r-1', {
       file: 'a',
       line: 1,
@@ -150,7 +150,7 @@ describe('ReviewCommentStore', () => {
 
   test('resolve toggles both ways and persists', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     const c = store.add('r-1', {
       file: 'a',
       line: 1,
@@ -165,13 +165,13 @@ describe('ReviewCommentStore', () => {
 
   test('replying to a missing comment throws rather than silently doing nothing', () => {
     expect(() =>
-      new ReviewCommentStore(root()).reply('r-1', 'rc-nope', 'x')
+      new ReviewCommentStore(root(), '').reply('r-1', 'rc-nope', 'x')
     ).toThrow(/not found/);
   });
 
   test('remove drops just that comment', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     const a = store.add('r-1', {
       file: 'a',
       line: 1,
@@ -184,7 +184,44 @@ describe('ReviewCommentStore', () => {
   });
 
   test('a run with no comments reads as empty, not an error', () => {
-    expect(new ReviewCommentStore(root()).list('r-never')).toEqual([]);
+    expect(new ReviewCommentStore(root(), '').list('r-never')).toEqual([]);
+  });
+});
+
+describe('ReviewCommentStore attribution', () => {
+  test('an added comment defaults to the store’s configured author', () => {
+    const store = new ReviewCommentStore(root(), 'human:wyat');
+    const c = store.add('r-1', {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'b',
+    });
+    expect(c.author).toBe('human:wyat');
+  });
+
+  test('an explicit author overrides the store default', () => {
+    const store = new ReviewCommentStore(root(), 'human:wyat');
+    const c = store.add('r-1', {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'b',
+      author: 'agent:wyat/claude',
+    });
+    expect(c.author).toBe('agent:wyat/claude');
+  });
+
+  test('a reply defaults to the store’s configured author', () => {
+    const store = new ReviewCommentStore(root(), 'human:wyat');
+    const c = store.add('r-1', {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'b',
+    });
+    const replied = store.reply('r-1', c.id, 'reply text');
+    expect(replied.replies[0]?.author).toBe('human:wyat');
   });
 });
 
@@ -192,7 +229,9 @@ describe('formatCommentsForAgent', () => {
   test('includes file, line, the anchored code, the comment and its replies', () => {
     const out = formatCommentsForAgent([
       comment({
-        replies: [{ id: 'rr-1', author: 'You', body: 'and this', created: '' }],
+        replies: [
+          { id: 'rr-1', author: 'human:wyat', body: 'and this', created: '' },
+        ],
       }),
     ]);
     expect(out).toContain('src/a.ts');
@@ -231,7 +270,7 @@ describe('formatCommentsForAgent', () => {
 describe('pending review batching', () => {
   test('a new comment is pending by default', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     const c = store.add('r-1', {
       file: 'a',
       line: 1,
@@ -242,7 +281,7 @@ describe('pending review batching', () => {
   });
 
   test('pending can be opted out of, for a reply-style immediate note', () => {
-    const store = new ReviewCommentStore(root());
+    const store = new ReviewCommentStore(root(), '');
     const c = store.add('r-1', {
       file: 'a',
       line: 1,
@@ -255,7 +294,7 @@ describe('pending review batching', () => {
 
   // The whole point of staging: the agent hears about a review once, when it is submitted.
   test('a pending comment never reaches the agent', () => {
-    const store = new ReviewCommentStore(root());
+    const store = new ReviewCommentStore(root(), '');
     store.add('r-1', {
       file: 'a',
       line: 1,
@@ -267,21 +306,21 @@ describe('pending review batching', () => {
 
   test('publishing releases them, and then they do reach the agent', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'now send' });
     expect(store.publishPending('r-1')).toBe(1);
     expect(formatCommentsForAgent(store.list('r-1'))).toContain('now send');
   });
 
   test('publishing twice releases nothing the second time', () => {
-    const store = new ReviewCommentStore(root());
+    const store = new ReviewCommentStore(root(), '');
     store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
     expect(store.publishPending('r-1')).toBe(1);
     expect(store.publishPending('r-1')).toBe(0);
   });
 
   test('pendingCount is what the review bar counts down', () => {
-    const store = new ReviewCommentStore(root());
+    const store = new ReviewCommentStore(root(), '');
     store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'one' });
     store.add('r-1', { file: 'a', line: 2, anchorText: 'y', body: 'two' });
     store.add('r-1', {
@@ -296,7 +335,7 @@ describe('pending review batching', () => {
 
   test('publishing one run does not touch another', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
     store.add('r-2', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
     store.publishPending('r-1');
@@ -307,7 +346,7 @@ describe('pending review batching', () => {
 describe('range comments', () => {
   test('a range is stored and round-trips', () => {
     const dir = root();
-    const store = new ReviewCommentStore(dir);
+    const store = new ReviewCommentStore(dir, '');
     store.add('r-1', {
       file: 'a',
       line: 12,
@@ -315,7 +354,7 @@ describe('range comments', () => {
       anchorText: 'x',
       body: 'this whole block',
     });
-    expect(new ReviewCommentStore(dir).list('r-1')[0]).toMatchObject({
+    expect(new ReviewCommentStore(dir, '').list('r-1')[0]).toMatchObject({
       line: 12,
       startLine: 8,
     });

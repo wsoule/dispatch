@@ -12,7 +12,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { EnrichReview } from '../components/tasks/EnrichReview';
-import { SectionLabel } from '../components/ui/SectionLabel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { EnrichDraft } from '../lib/enrichReview';
 import { enrichViewState, formatEnrichedInboxText } from '../lib/enrichReview';
@@ -21,6 +20,7 @@ import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
+import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 // Mirrors InboxClusterer's own MIN_ITEMS (packages/server/src/inboxClusterer.ts) — the sidebar
 // copy and the auto-cluster trigger must agree on this threshold.
@@ -583,8 +583,9 @@ function ExplainerPopover() {
           <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
             Nothing here is a commitment. Items sit in the inbox until you make
             them tasks, hand them to the planner, or dismiss them. Everything is
-            written to <span className="dense-meta">.dispatch/inbox.md</span> in
-            your repo — edit it by hand any time.
+            written to your own file under{' '}
+            <span className="dense-meta">.dispatch/inbox/</span> in your repo —
+            edit it by hand any time.
           </p>
         </div>
         <div>

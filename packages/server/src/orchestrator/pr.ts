@@ -1,4 +1,4 @@
-import type { TaskStore } from '@dispatch/core';
+import type { ActorContext, TaskStore } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
@@ -166,6 +166,10 @@ export interface PrManagerContext {
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
+  // Optional, same "tests may omit it" contract as OrchestratorContext's own
+  // field — openPr() below falls back to an unattributed Activity line when
+  // it's absent.
+  actorContext?: ActorContext;
 }
 
 // A CI check rollup summarized to counts the UI can render as a compact
@@ -379,7 +383,12 @@ export class PrManager {
     const now = new Date().toISOString();
     this.ctx.store.update(
       meta.taskId,
-      { appendActivity: `${now} run ${runId} opened PR: ${url}` },
+      {
+        appendActivity: `${now} run ${runId} opened PR: ${url}`,
+        // openPr() has exactly one caller: the human pressing the PR review
+        // action via the API.
+        activityActor: this.ctx.actorContext?.humanRef,
+      },
       now
     );
     this.ctx.cache.rebuild(this.ctx.store);

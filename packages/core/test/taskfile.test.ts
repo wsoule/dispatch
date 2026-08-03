@@ -496,3 +496,56 @@ describe('parseTaskFile frontmatter shape validation', () => {
     expect(parseTaskFile(text).meta.status).toBe('someday');
   });
 });
+
+describe('assignee validation', () => {
+  const frontmatter = (assignee: string) =>
+    [
+      '---',
+      'id: t-abc123',
+      'title: Example',
+      'status: todo',
+      'kind: task',
+      'parent: null',
+      'milestone: null',
+      'blockedBy: []',
+      'labels: []',
+      'priority: none',
+      `assignee: ${assignee}`,
+      'created: 2026-08-02T00:00:00.000Z',
+      'updated: 2026-08-02T00:00:00.000Z',
+      'external: null',
+      'selfReview: true',
+      'writes: []',
+      'risk: routine',
+      'model: null',
+      'exercised: false',
+      '---',
+      '',
+      '## Description',
+      '',
+    ].join('\n');
+
+  it('accepts a named actor', () => {
+    const doc = parseTaskFile(frontmatter('human:wyat'), 'f.md');
+    expect(doc.meta.assignee).toBe('human:wyat');
+  });
+
+  it('accepts an operator-scoped agent', () => {
+    const doc = parseTaskFile(frontmatter('agent:wyat/claude'), 'f.md');
+    expect(doc.meta.assignee).toBe('agent:wyat/claude');
+  });
+
+  it('still accepts the legacy values', () => {
+    for (const legacy of ['agent', 'human', 'none']) {
+      expect(parseTaskFile(frontmatter(legacy), 'f.md').meta.assignee).toBe(
+        legacy
+      );
+    }
+  });
+
+  it('rejects a malformed actor', () => {
+    expect(() => parseTaskFile(frontmatter('robot:x'), 'f.md')).toThrow(
+      TaskParseError
+    );
+  });
+});

@@ -2,12 +2,12 @@ import { CircleCheck, TriangleAlert } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { SectionLabel } from '../components/ui/SectionLabel';
-import { StepStrip } from '../components/ui/StepStrip';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { heldCount, toQueueRows } from '../lib/mergeQueueView';
 import { cn } from '@/lib/utils';
+import { SectionLabel } from '@/ui/chrome/SectionLabel';
+import { StepStrip } from '@/ui/chrome/StepStrip';
 
 interface LandingViewProps {
   data: DispatchProjectData;

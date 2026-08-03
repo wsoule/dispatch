@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -10,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 import type { CliContext } from '../src/context.js';
+import { checkMergeDriverSetup } from '../src/mergeDriver.js';
 import { makeProgram } from '../src/program.js';
 
 let root: string;
@@ -134,6 +136,48 @@ describe('dispatch init — .mcp.json registration', () => {
     expect(lines.join('\n')).not.toContain(
       'Registered the dispatch MCP server'
     );
+  });
+});
+
+describe('dispatch init — task-file merge driver registration', () => {
+  it('writes .gitattributes and the local git config in a git repo', async () => {
+    spawnSync('git', ['init', '-q'], { cwd: root });
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(readFileSync(join(root, '.gitattributes'), 'utf8')).toContain(
+      '.dispatch/tasks/*.md merge=dispatch-task'
+    );
+    expect(checkMergeDriverSetup(root)).toEqual({
+      gitattributes: true,
+      gitConfig: true,
+    });
+    expect(lines.join('\n')).toContain(
+      'task-file and team-roster merge drivers'
+    );
+  });
+
+  // Regression (minor half of the same finding): registerMergeDriverGitConfig's
+  // spawnSync exit codes used to go unchecked, so `dispatch init` claimed
+  // success even when `git config` failed — e.g. run outside a git repo.
+  it('reports honestly when git config registration fails (no git repo)', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(lines.join('\n')).not.toContain('Registered the task-file');
+    expect(lines.join('\n')).toContain(
+      'Could not register the merge driver git config'
+    );
+  });
+
+  it('re-running init on an already-initialized project does not duplicate the .gitattributes line', async () => {
+    spawnSync('git', ['init', '-q'], { cwd: root });
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    const first = readFileSync(join(root, '.gitattributes'), 'utf8');
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    const second = readFileSync(join(root, '.gitattributes'), 'utf8');
+    expect(second).toBe(first);
+    expect(
+      second
+        .split('\n')
+        .filter((l) => l === '.dispatch/tasks/*.md merge=dispatch-task')
+    ).toHaveLength(1);
   });
 });
 

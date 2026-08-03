@@ -21,6 +21,8 @@ export interface AddFindingInput {
   line?: number | null;
   round?: number;
   recommendation?: FindingRecommendation;
+  /** Serialized ActorRef of whoever raised it. */
+  raisedBy: string;
 }
 
 export interface FindingUpdatePatch {
@@ -82,11 +84,13 @@ export class FindingStore {
     for (const line of readFileSync(this.file, 'utf8').split('\n')) {
       if (line.trim() === '') continue;
       try {
-        const record: unknown = JSON.parse(line);
-        if (!isFinding(record)) {
+        const parsed: unknown = JSON.parse(line);
+        if (!isFinding(parsed)) {
           this.reportInvalidLine(line);
           continue;
         }
+        // Older lines pre-date raisedBy; default it so they stay loadable.
+        const record: Finding = { ...parsed, raisedBy: parsed.raisedBy ?? '' };
         const key = `${record.id}\n${record.createdAt}`;
         const first = firstKeyForId.get(record.id);
         if (first === undefined) firstKeyForId.set(record.id, key);
@@ -172,6 +176,7 @@ export class FindingStore {
       round: input.round ?? 0,
       createdAt: now,
       updatedAt: now,
+      raisedBy: input.raisedBy,
       // Spread rather than set, so a finding raised without one keeps exactly
       // the shape it had before reviewers were asked for a recommendation.
       ...(input.recommendation !== undefined
