@@ -22,6 +22,22 @@ function dispatchHome(): string {
   return home !== undefined && home !== '' ? home : homedir();
 }
 
+// Production GitRunner: shells out for real. Mirrors the test harness's own
+// `run` in test/sync/helpers.ts exactly, kept separate so src/ has no
+// dependency on test code.
+export const defaultGitRunner: GitRunner = (cwd, args) => {
+  const result = Bun.spawnSync(['git', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  return {
+    status: result.exitCode,
+    stdout: result.stdout.toString('utf8'),
+    stderr: result.stderr.toString('utf8'),
+  };
+};
+
 // Same hash-of-rootDir key as linear/state.ts's linearStatePath and
 // daemonfile.ts's daemonFileKey, so this worktree's location never collides
 // across projects sharing one DISPATCH_HOME.

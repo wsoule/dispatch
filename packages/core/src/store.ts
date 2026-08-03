@@ -29,8 +29,12 @@ import type {
 
 export const DISPATCH_DIR = '.dispatch';
 
+// New projects opt into the board syncer by default; every project
+// initialized before this plan has `autoCommit: false` already written to
+// its own config.yml, so loadConfig's file value wins and nothing existing
+// starts pushing.
 const DEFAULT_CONFIG = `statuses: [backlog, todo, in-progress, in-review, done, cancelled]
-autoCommit: false
+autoCommit: true
 `;
 
 export interface CreateInput {
