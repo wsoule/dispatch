@@ -66,6 +66,7 @@ pub fn run() {
       app.manage(summarize::InFlight(Mutex::new(std::collections::HashSet::new())));
       app.manage(summarize::HttpClient(reqwest::Client::new()));
       app.manage(sidecar::DispatchdChildren::new());
+      app.manage(sidecar::SpawnedAppTokens::new());
 
       watcher::start(app.handle().clone());
       spawn_idle_sweep(app.handle().clone());
@@ -85,6 +86,7 @@ pub fn run() {
       commands::get_file_diff_for_session_file,
       commands::open_url,
       commands::ensure_dispatchd,
+      commands::restart_dispatchd,
       commands::has_dispatch,
       commands::current_project_root,
       commands::list_registered_projects,

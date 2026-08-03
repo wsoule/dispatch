@@ -15,9 +15,9 @@
 //! runs the standalone `bun build --compile`d binaries bundled under the
 //! app's Resource dir, so a shipped app needs neither `bun` nor the checkout.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -35,6 +35,25 @@ struct DaemonFileInfo {
     root_dir: String,
     #[allow(dead_code)]
     started_at: String,
+    /// Request-tier credential, written to the 0600 daemon file. `Option` on
+    /// purpose: a daemon file left behind by a build predating token auth still
+    /// parses (and is then treated as "no token"), instead of failing to
+    /// deserialize and silently routing every attach into a fresh spawn.
+    #[serde(default)]
+    agent_token: Option<String>,
+}
+
+/// What the frontend needs to talk to a dispatchd: its port plus whichever
+/// credentials this app actually holds. `app_token` is present only when this
+/// app spawned the daemon and read the token off its stdout — it is never read
+/// from disk, because a token at rest is one `cat` away for any agent running
+/// as the same user, which is the hole this whole scheme exists to close.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonConnection {
+    pub port: u16,
+    pub app_token: Option<String>,
+    pub agent_token: Option<String>,
 }
 
 /// The subset of dispatchd's `/api/health` response this cares about: `ok`
@@ -455,6 +474,47 @@ fn record_output_line(tail: &OutputTail, log_file: &Option<Arc<Mutex<std::fs::Fi
     }
 }
 
+/// The exact prefix `packages/server/src/bin.ts` prints the app token behind,
+/// once, on its own line. Treated as the machine-readable contract between the
+/// daemon and this app.
+const APP_TOKEN_PREFIX: &str = "DISPATCH_APP_TOKEN=";
+
+/// Matches `^DISPATCH_APP_TOKEN=(.+)$` and returns the token. A trailing `\r`
+/// is stripped so a CRLF-terminated line still yields a clean value, and an
+/// empty value is rejected so a bare prefix never registers as a credential.
+fn parse_app_token_line(line: &str) -> Option<&str> {
+    let token = line.strip_prefix(APP_TOKEN_PREFIX)?.trim_end_matches('\r');
+    (!token.is_empty()).then_some(token)
+}
+
+/// In-memory holder for the app token captured off a spawned daemon's stdout.
+type AppTokenSlot = Arc<Mutex<Option<String>>>;
+
+/// Handles one line of child output. The app-token line is captured into
+/// `app_token` and swallowed — it must not reach `log`, the ring buffer that
+/// gets quoted into timeout errors, or the on-disk daemon log, all three of
+/// which would put a decide-tier credential at rest somewhere an agent already
+/// reads. Every other line is forwarded and recorded unchanged.
+fn handle_output_line(
+    line: &str,
+    from_stderr: bool,
+    app_token: &AppTokenSlot,
+    tail: &OutputTail,
+    log_file: &Option<Arc<Mutex<std::fs::File>>>,
+) {
+    if let Some(token) = parse_app_token_line(line) {
+        *app_token.lock().unwrap() = Some(token.to_string());
+        log::info!("dispatchd: captured the app token from stdout (value withheld)");
+        return;
+    }
+    if from_stderr {
+        log::warn!("dispatchd: {line}");
+    } else {
+        log::info!("dispatchd: {line}");
+    }
+    record_output_line(tail, log_file, line);
+}
+
 /// Spawns background threads that forward a child process's stdout/stderr
 /// lines into Rust's `log` (prefixed so they're identifiable among the app's
 /// own log output — see `BunSpawner`'s doc comment for why this matters),
@@ -462,8 +522,14 @@ fn record_output_line(tail: &OutputTail, log_file: &Option<Arc<Mutex<std::fs::Fi
 /// and tee-ing it to `log_path` so a user can inspect the daemon's own output
 /// after the fact, without needing to reproduce a failure live. `log_path` is
 /// truncated up front so each new spawn starts a fresh log rather than
-/// accumulating output across restarts.
-fn forward_child_output(child: &mut Child, tail: OutputTail, log_path: PathBuf) {
+/// accumulating output across restarts. The one line that does *not* take that
+/// route is the app token — see `handle_output_line`.
+fn forward_child_output(
+    child: &mut Child,
+    tail: OutputTail,
+    log_path: PathBuf,
+    app_token: AppTokenSlot,
+) {
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -478,20 +544,20 @@ fn forward_child_output(child: &mut Child, tail: OutputTail, log_path: PathBuf) 
     if let Some(stdout) = child.stdout.take() {
         let tail = Arc::clone(&tail);
         let log_file = log_file.clone();
+        let app_token = Arc::clone(&app_token);
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                log::info!("dispatchd: {line}");
-                record_output_line(&tail, &log_file, &line);
+                handle_output_line(&line, false, &app_token, &tail, &log_file);
             }
         });
     }
     if let Some(stderr) = child.stderr.take() {
         let tail = Arc::clone(&tail);
         let log_file = log_file.clone();
+        let app_token = Arc::clone(&app_token);
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                log::warn!("dispatchd: {line}");
-                record_output_line(&tail, &log_file, &line);
+                handle_output_line(&line, true, &app_token, &tail, &log_file);
             }
         });
     }
@@ -565,6 +631,46 @@ impl Default for DispatchdChildren {
     }
 }
 
+/// App tokens captured from daemons *this app instance spawned*, keyed by
+/// project root and stamped with the pid that produced them. Memory only, for
+/// the app's lifetime — nothing here is ever written anywhere.
+///
+/// It exists because `ensure_dispatchd` is called repeatedly for the same root
+/// (project switches, retries, remounts) and every call after the first takes
+/// the attach fast path, which has no stdout to read. Without this, the app
+/// would silently drop to request tier moments after spawning the daemon that
+/// handed it the token.
+pub struct SpawnedAppTokens(Mutex<HashMap<String, (u32, String)>>);
+
+impl SpawnedAppTokens {
+    pub fn new() -> Self {
+        Self(Mutex::new(HashMap::new()))
+    }
+
+    fn remember(&self, root: &str, pid: u32, token: &str) {
+        self.0
+            .lock()
+            .unwrap()
+            .insert(root.to_string(), (pid, token.to_string()));
+    }
+
+    /// The remembered token for `root`, but only if `pid` — read from the
+    /// daemon file we are about to attach to — is the same process we captured
+    /// it from. A different pid means our daemon died and something else now
+    /// serves this root, so the old token is not just useless but wrong.
+    fn get(&self, root: &str, pid: u32) -> Option<String> {
+        let map = self.0.lock().unwrap();
+        let (remembered_pid, token) = map.get(root)?;
+        (*remembered_pid == pid).then(|| token.clone())
+    }
+}
+
+impl Default for SpawnedAppTokens {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // 15s, not 5s: a just-installed notarized release binary can pay Gatekeeper
 // or AV-scan latency on its very first launch (macOS re-verifying the
 // signature/notarization before it's allowed to execute at all), which can
@@ -626,17 +732,49 @@ async fn poll_for_healthy_daemon(
     }
 }
 
-/// Returns a healthy dispatchd port for `root`: the fast path reuses an
+/// How long to wait, after a freshly spawned daemon reports healthy, for its
+/// `DISPATCH_APP_TOKEN=` line to arrive on stdout. The daemon writes its daemon
+/// file (which is what health polling finds) *before* printing the token, so
+/// the two can land out of order by a few milliseconds; this is the slack for
+/// that, not a real expectation of delay.
+const APP_TOKEN_WAIT: Duration = Duration::from_secs(3);
+
+/// Polls the in-memory slot `forward_child_output` fills until the app token
+/// shows up or `timeout` elapses. `None` means the daemon never printed one.
+async fn wait_for_app_token(slot: &AppTokenSlot, timeout: Duration) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(token) = slot.lock().unwrap().clone() {
+            return Some(token);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Returns a healthy dispatchd connection for `root`: the fast path reuses an
 /// already-running daemon (found via its daemon file + a passing health
 /// check); otherwise spawns a fresh one through `spawner` and polls until
 /// it's healthy or `POLL_TIMEOUT` elapses. `children` collects every process
 /// this call spawns, for the caller to track for kill-on-exit.
+///
+/// The returned `app_token` is present only on a spawn (or a re-attach to a
+/// daemon this app spawned earlier — see `SpawnedAppTokens`). Attaching to a
+/// daemon someone else started yields request tier only; there is deliberately
+/// no disk fallback for the app token.
+///
+/// `force_spawn` skips the reuse fast path, for the user-initiated restart that
+/// upgrades an attached (request-tier) session to a spawned (decide-tier) one.
 pub async fn ensure_dispatchd(
     spawner: &dyn DaemonSpawner,
     children: &DispatchdChildren,
+    app_tokens: &SpawnedAppTokens,
     launch: DaemonLaunch,
     root: &str,
-) -> Result<u16, String> {
+    force_spawn: bool,
+) -> Result<DaemonConnection, String> {
     let root = normalize_root(root)?;
     let root = root.as_str();
     let client = reqwest::Client::new();
@@ -653,10 +791,14 @@ pub async fn ensure_dispatchd(
     // `resolveRaceWinner` in packages/cli/src/commands/daemon.ts — harmless
     // here for the same reason: whichever daemon's write lands last is the
     // one every subsequent health check and root lookup will find anyway.
-    if !needs_init(root) {
+    if !needs_init(root) && !force_spawn {
         if let Some(info) = read_daemon_file(root) {
             if is_healthy(&client, info.port).await {
-                return Ok(info.port);
+                return Ok(DaemonConnection {
+                    port: info.port,
+                    app_token: app_tokens.get(root, info.pid),
+                    agent_token: info.agent_token,
+                });
             }
         }
     }
@@ -694,17 +836,44 @@ pub async fn ensure_dispatchd(
 
     let log_path = daemon_log_path(root);
     let tail: OutputTail = Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_LINES)));
+    let app_token_slot: AppTokenSlot = Arc::new(Mutex::new(None));
 
     let mut child = spawner.spawn(&launch, root)?;
-    forward_child_output(&mut child, Arc::clone(&tail), log_path.clone());
+    let spawned_pid = child.id();
+    forward_child_output(
+        &mut child,
+        Arc::clone(&tail),
+        log_path.clone(),
+        Arc::clone(&app_token_slot),
+    );
     children.push(child);
 
-    poll_for_healthy_daemon(&client, root, POLL_TIMEOUT)
+    let port = poll_for_healthy_daemon(&client, root, POLL_TIMEOUT)
         .await
         .ok_or_else(|| {
             let lines: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
             format_timeout_error(POLL_TIMEOUT, &describe_launch(&launch), &lines, &log_path)
-        })
+        })?;
+
+    // The healthy daemon on `port` is only ours if the daemon file it wrote
+    // names the pid we spawned; a lost race with another daemon for this root
+    // means the token we captured authorizes a process nobody is talking to.
+    let info = read_daemon_file(root);
+    let ours = info.as_ref().map(|i| i.pid) == Some(spawned_pid);
+    let app_token = if ours {
+        wait_for_app_token(&app_token_slot, APP_TOKEN_WAIT).await
+    } else {
+        None
+    };
+    if let Some(token) = &app_token {
+        app_tokens.remember(root, spawned_pid, token);
+    }
+
+    Ok(DaemonConnection {
+        port,
+        app_token,
+        agent_token: info.and_then(|i| i.agent_token),
+    })
 }
 
 /// True if `root` looks like a Dispatch project — i.e. it has a `.dispatch/`
@@ -929,6 +1098,27 @@ mod tests {
         assert_eq!(info.port, 4771);
         assert_eq!(info.pid, 123);
         assert_eq!(info.root_dir, "/tmp/x");
+        assert_eq!(info.agent_token, None);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn read_daemon_file_at_reads_the_agent_token_when_present() {
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-agent-token-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("daemon.json");
+        fs::write(
+            &path,
+            r#"{"port":4771,"pid":123,"rootDir":"/tmp/x","startedAt":"2026-07-20T00:00:00.000Z","agentToken":"a1b2c3"}"#,
+        )
+        .unwrap();
+
+        let info = read_daemon_file_at(&path).expect("should parse");
+        assert_eq!(info.agent_token.as_deref(), Some("a1b2c3"));
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1033,9 +1223,15 @@ mod tests {
         let children = DispatchdChildren::new();
         let manifest_dir = Path::new("/repo/apps/desktop/src-tauri");
 
-        let result =
-            ensure_dispatchd(&FailingSpawner, &children, dev_launch(manifest_dir), root)
-                .await;
+        let result = ensure_dispatchd(
+            &FailingSpawner,
+            &children,
+            &SpawnedAppTokens::new(),
+            dev_launch(manifest_dir),
+            root,
+            false,
+        )
+        .await;
 
         assert_eq!(result, Err("bun: command not found".to_string()));
         assert!(children.0.lock().unwrap().is_empty());
@@ -1128,7 +1324,12 @@ mod tests {
         let log_path = dir.join("daemon.log");
         let tail: OutputTail = Arc::new(Mutex::new(VecDeque::new()));
 
-        forward_child_output(&mut child, Arc::clone(&tail), log_path.clone());
+        forward_child_output(
+            &mut child,
+            Arc::clone(&tail),
+            log_path.clone(),
+            Arc::new(Mutex::new(None)),
+        );
         child.wait().expect("child exits");
         // The forwarding threads read asynchronously off the now-exited child's
         // pipes; give them a moment to finish draining before asserting.
@@ -1144,6 +1345,125 @@ mod tests {
         assert!(logged.contains("from-stderr"));
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parse_app_token_line_matches_only_the_exact_prefixed_line() {
+        assert_eq!(parse_app_token_line("DISPATCH_APP_TOKEN=abc123"), Some("abc123"));
+        // CRLF-terminated stdout still yields a clean value.
+        assert_eq!(parse_app_token_line("DISPATCH_APP_TOKEN=abc123\r"), Some("abc123"));
+        // A bare prefix is not a credential.
+        assert_eq!(parse_app_token_line("DISPATCH_APP_TOKEN="), None);
+        assert_eq!(parse_app_token_line("dispatchd listening on http://127.0.0.1:45999"), None);
+        // The prefix only counts at the start of a line, so prose mentioning it
+        // (like the daemon's own follow-up hint) is forwarded normally.
+        assert_eq!(
+            parse_app_token_line("dispatchd: set DISPATCH_APP_TOKEN=... to decide"),
+            None
+        );
+    }
+
+    /// The property this whole change exists to protect: the app token must not
+    /// reach the ring buffer (quoted verbatim into timeout errors) or the
+    /// on-disk daemon log, which lives in the same directory an agent reads to
+    /// find the daemon's port.
+    #[test]
+    fn forward_child_output_captures_the_app_token_without_leaking_it_anywhere() {
+        let secret = "1fd6795f95a7f0381838dd5284185bc8ded5018784733bfc20871d92b42dc4df";
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "echo 'dispatchd listening on http://127.0.0.1:45999'; \
+                 echo 'DISPATCH_APP_TOKEN={secret}'; \
+                 echo 'dispatchd: that token authorizes approval decisions'"
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-token-strip-{}",
+            std::process::id()
+        ));
+        let log_path = dir.join("daemon.log");
+        let tail: OutputTail = Arc::new(Mutex::new(VecDeque::new()));
+        let slot: AppTokenSlot = Arc::new(Mutex::new(None));
+
+        forward_child_output(&mut child, Arc::clone(&tail), log_path.clone(), Arc::clone(&slot));
+        child.wait().expect("child exits");
+        std::thread::sleep(Duration::from_millis(200));
+
+        assert_eq!(slot.lock().unwrap().as_deref(), Some(secret));
+
+        let captured: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
+        assert!(captured.iter().any(|l| l.contains("listening on")));
+        assert!(captured.iter().any(|l| l.contains("authorizes approval decisions")));
+        assert!(!captured.iter().any(|l| l.contains(secret)));
+        assert!(!captured.iter().any(|l| l.contains(APP_TOKEN_PREFIX)));
+
+        let logged = fs::read_to_string(&log_path).expect("log file was written");
+        assert!(logged.contains("listening on"));
+        assert!(!logged.contains(secret));
+        assert!(!logged.contains(APP_TOKEN_PREFIX));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Same guarantee for stderr: nothing prints the token there today, but a
+    /// stream that skipped the filter would be a silent way back to disk.
+    #[test]
+    fn handle_output_line_strips_the_token_from_stderr_too() {
+        let secret = "deadbeefdeadbeef";
+        let tail: OutputTail = Arc::new(Mutex::new(VecDeque::new()));
+        let slot: AppTokenSlot = Arc::new(Mutex::new(None));
+
+        handle_output_line(
+            &format!("DISPATCH_APP_TOKEN={secret}"),
+            true,
+            &slot,
+            &tail,
+            &None,
+        );
+
+        assert_eq!(slot.lock().unwrap().as_deref(), Some(secret));
+        assert!(tail.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn spawned_app_tokens_only_returns_a_token_for_the_pid_that_produced_it() {
+        let tokens = SpawnedAppTokens::new();
+        tokens.remember("/tmp/proj", 4242, "app-token");
+
+        assert_eq!(tokens.get("/tmp/proj", 4242).as_deref(), Some("app-token"));
+        // A different pid on the same root means our daemon died and something
+        // else serves it now — the remembered token is not just stale, it is wrong.
+        assert_eq!(tokens.get("/tmp/proj", 9999), None);
+        assert_eq!(tokens.get("/tmp/other", 4242), None);
+    }
+
+    #[tokio::test]
+    async fn wait_for_app_token_returns_none_when_the_daemon_never_prints_one() {
+        let slot: AppTokenSlot = Arc::new(Mutex::new(None));
+        assert_eq!(
+            wait_for_app_token(&slot, Duration::from_millis(10)).await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_for_app_token_picks_up_a_token_that_arrives_late() {
+        let slot: AppTokenSlot = Arc::new(Mutex::new(None));
+        let writer = Arc::clone(&slot);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            *writer.lock().unwrap() = Some("late-token".to_string());
+        });
+        assert_eq!(
+            wait_for_app_token(&slot, Duration::from_secs(2)).await.as_deref(),
+            Some("late-token")
+        );
     }
 
     #[test]
@@ -1178,5 +1498,282 @@ mod tests {
 
         children.kill_all();
         assert!(children.0.lock().unwrap().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Live end-to-end against a real dispatchd.
+    //
+    // `#[ignore]` because it needs `bun` and the monorepo checkout, and because
+    // it sets `DISPATCH_HOME`, which is process-global and would corrupt the
+    // parallel tests above. Run it on its own:
+    //
+    //   cargo test --lib -- --ignored --test-threads=1 live_daemon
+    // -----------------------------------------------------------------------
+
+    /// Every file under `dir`, recursively.
+    fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_files(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+
+    fn init_git_project(proj: &Path) {
+        fs::create_dir_all(proj).unwrap();
+        fs::write(proj.join("README.md"), "# live daemon fixture\n").unwrap();
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "T"],
+            vec!["add", "-A"],
+            vec!["commit", "-qm", "init"],
+        ] {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(proj)
+                .args(&args)
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?} failed");
+        }
+    }
+
+    async fn post_json(
+        client: &reqwest::Client,
+        url: &str,
+        token: &str,
+        body: serde_json::Value,
+    ) -> (u16, String) {
+        let response = client
+            .post(url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await
+            .expect("request sends");
+        let status = response.status().as_u16();
+        (status, response.text().await.unwrap_or_default())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn live_daemon_spawn_gets_decide_tier_and_leaks_nothing_to_disk() {
+        let scratch = std::env::temp_dir().join(format!(
+            "dispatch-live-daemon-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let dispatch_home = scratch.join("home");
+        let proj = scratch.join("proj");
+        let _ = fs::remove_dir_all(&scratch);
+        fs::create_dir_all(&dispatch_home).unwrap();
+        init_git_project(&proj);
+
+        std::env::set_var("DISPATCH_HOME", &dispatch_home);
+        // Keeps the fake executor's run parked in `running` long enough to open
+        // a scope request against it.
+        std::env::set_var("DISPATCH_FAKE_LINGER_MS", "600000");
+
+        let root = proj.to_string_lossy().to_string();
+        let children = DispatchdChildren::new();
+        let app_tokens = SpawnedAppTokens::new();
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let spawned = ensure_dispatchd(
+            &BunSpawner,
+            &children,
+            &app_tokens,
+            dev_launch(manifest_dir),
+            &root,
+            false,
+        )
+        .await
+        .expect("dispatchd comes up");
+
+        let app_token = spawned
+            .app_token
+            .clone()
+            .expect("a spawned daemon hands over its app token");
+        let agent_token = spawned
+            .agent_token
+            .clone()
+            .expect("the daemon file carries an agent token");
+        assert_eq!(app_token.len(), 64);
+        assert!(app_token.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(app_token, agent_token);
+
+        // --- the property: the app token is nowhere at rest ---
+        let log_path = daemon_log_path(&root);
+        let logged = fs::read_to_string(&log_path).expect("daemon log written");
+        assert!(logged.contains("listening on"), "log should still be useful");
+        assert!(!logged.contains(&app_token), "app token reached the daemon log");
+        assert!(!logged.contains(APP_TOKEN_PREFIX));
+
+        let mut files = Vec::new();
+        walk_files(&dispatch_home, &mut files);
+        assert!(!files.is_empty(), "DISPATCH_HOME should not be empty");
+        let leaked: Vec<&PathBuf> = files
+            .iter()
+            .filter(|p| {
+                fs::read_to_string(p)
+                    .map(|c| c.contains(&app_token))
+                    .unwrap_or(false)
+            })
+            .collect();
+        eprintln!(
+            "[live] port={} appToken=<64 hex, withheld> agentToken={}…\n\
+             [live] scanned {} files under {} — {} contain the app token\n\
+             [live] daemon log ({}):\n{}",
+            spawned.port,
+            &agent_token[..8],
+            files.len(),
+            dispatch_home.display(),
+            leaked.len(),
+            log_path.display(),
+            logged.trim_end(),
+        );
+        assert!(leaked.is_empty(), "app token found at rest in {leaked:?}");
+
+        // --- a decide-tier action, with each credential ---
+        let http = reqwest::Client::new();
+        let base = format!("http://127.0.0.1:{}", spawned.port);
+
+        let (_, body) = post_json(
+            &http,
+            &format!("{base}/api/tasks"),
+            &agent_token,
+            serde_json::json!({ "title": "live fixture" }),
+        )
+        .await;
+        let task_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["meta"]["id"]
+            .as_str()
+            .expect("task created")
+            .to_string();
+
+        let (_, body) = post_json(
+            &http,
+            &format!("{base}/api/tasks/{task_id}/runs"),
+            &agent_token,
+            serde_json::json!({ "executor": "fake" }),
+        )
+        .await;
+        let run_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+            .as_str()
+            .expect("run created")
+            .to_string();
+
+        for _ in 0..100 {
+            let state = http
+                .get(format!("{base}/api/runs/{run_id}"))
+                .bearer_auth(&agent_token)
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .map(|v| v["meta"]["state"].as_str().unwrap_or("?").to_string())
+                .unwrap_or_default();
+            if state == "running" {
+                break;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+
+        let open_scope_request = |token: String| {
+            let http = http.clone();
+            let base = base.clone();
+            let run_id = run_id.clone();
+            async move {
+                let (_, body) = post_json(
+                    &http,
+                    &format!("{base}/api/runs/{run_id}/scope-requests"),
+                    &token,
+                    serde_json::json!({
+                        "paths": ["packages/core/src/browser.ts"],
+                        "reason": "needs a type this file never re-exports",
+                    }),
+                )
+                .await;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+                    .as_str()
+                    .expect("scope request created")
+                    .to_string()
+            }
+        };
+
+        // The credential an attached app would hold: 403, on the exact code the
+        // UI keys its "Restart daemon to enable approvals" affordance on.
+        let sr_denied = open_scope_request(agent_token.clone()).await;
+        let (status, body) = post_json(
+            &http,
+            &format!("{base}/api/runs/{run_id}/scope-requests/{sr_denied}/decide"),
+            &agent_token,
+            serde_json::json!({ "granted": true, "reason": "self-granted from an agent shell" }),
+        )
+        .await;
+        eprintln!("[live] decide with the agent token  -> {status} {body}");
+        assert_eq!(status, 403, "agent token must not reach decide tier: {body}");
+        assert!(body.contains("auth_insufficient_tier"), "body was {body}");
+
+        // The credential a spawning app holds: the decision lands.
+        let sr_allowed = open_scope_request(agent_token.clone()).await;
+        let (status, body) = post_json(
+            &http,
+            &format!("{base}/api/runs/{run_id}/scope-requests/{sr_allowed}/decide"),
+            &app_token,
+            serde_json::json!({ "granted": true, "reason": "approved by the human at the app" }),
+        )
+        .await;
+        eprintln!("[live] decide with the app token    -> {status} {body}");
+        assert_eq!(status, 200, "app token should decide: {body}");
+        assert!(body.contains("\"granted\":true"), "body was {body}");
+
+        // --- re-attaching ---
+        // Same app instance, second call: the fast path finds the daemon we
+        // spawned and must not silently drop to request tier.
+        let reattached = ensure_dispatchd(
+            &BunSpawner,
+            &children,
+            &app_tokens,
+            dev_launch(manifest_dir),
+            &root,
+            false,
+        )
+        .await
+        .expect("reattach");
+        assert_eq!(reattached.app_token.as_deref(), Some(app_token.as_str()));
+
+        // A different app instance (or a restart of this one) attaching to a
+        // daemon it did not spawn: request tier only, and no disk fallback.
+        let attached = ensure_dispatchd(
+            &BunSpawner,
+            &children,
+            &SpawnedAppTokens::new(),
+            dev_launch(manifest_dir),
+            &root,
+            false,
+        )
+        .await
+        .expect("attach");
+        eprintln!(
+            "[live] reattach (same app instance) canDecide={}\n\
+             [live] attach   (fresh app instance) canDecide={} hasAgentToken={}",
+            reattached.app_token.is_some(),
+            attached.app_token.is_some(),
+            attached.agent_token.is_some(),
+        );
+        assert_eq!(attached.port, spawned.port);
+        assert_eq!(attached.app_token, None);
+        assert_eq!(attached.agent_token.as_deref(), Some(agent_token.as_str()));
+
+        children.kill_all();
+        let _ = fs::remove_dir_all(&scratch);
     }
 }
