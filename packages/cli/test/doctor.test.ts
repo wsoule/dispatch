@@ -221,3 +221,54 @@ describe('doctor — task-file merge driver', () => {
     ).toBe(true);
   });
 });
+
+// Mirrors the task-file suite above — team.yml's driver is reported the
+// same way, just under its own git config key.
+describe('doctor — team-roster merge driver', () => {
+  let gitRoot: string;
+  let gitLines: string[];
+  let gitCtx: CliContext;
+
+  async function runGit(...argv: string[]) {
+    await makeProgram(gitCtx).parseAsync(argv, { from: 'user' });
+  }
+
+  beforeEach(() => {
+    gitRoot = mkdtempSync(join(tmpdir(), 'dispatch-cli-git-'));
+    spawnSync('git', ['init', '-q'], { cwd: gitRoot });
+    gitLines = [];
+    gitCtx = { cwd: gitRoot, log: (l) => gitLines.push(l) };
+  });
+
+  it('is quiet once dispatch init has registered the driver', async () => {
+    await runGit('init');
+    gitLines = [];
+    await runGit('doctor');
+    expect(gitLines.join('\n')).toMatch(/ok — 0 tasks/);
+  });
+
+  it('flags the local git config as missing after init in another clone', async () => {
+    await runGit('init');
+    spawnSync(
+      'git',
+      ['config', '--local', '--unset', 'merge.dispatch-team.driver'],
+      { cwd: gitRoot }
+    );
+    gitLines = [];
+    await expect(runGit('doctor', '--json')).rejects.toThrow(/1 issue/);
+    const report = JSON.parse(gitLines.join('\n'));
+    expect(report.issues).toHaveLength(1);
+    expect(report.issues[0].problem).toMatch(/merge\.dispatch-team/);
+  });
+
+  it('flags a missing .gitattributes line when dispatch init never wrote one', async () => {
+    TaskStore.init(gitRoot);
+    await expect(runGit('doctor', '--json')).rejects.toThrow();
+    const report = JSON.parse(gitLines.join('\n'));
+    expect(
+      report.issues.some((i: { problem: string }) =>
+        i.problem.includes('missing team-roster merge driver line')
+      )
+    ).toBe(true);
+  });
+});

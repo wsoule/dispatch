@@ -10,7 +10,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type CliContext, CliError } from '../context.js';
-import { checkMergeDriverSetup } from '../mergeDriver.js';
+import {
+  checkMergeDriverSetup,
+  checkTeamMergeDriverSetup,
+} from '../mergeDriver.js';
 import { requireStore } from './task.js';
 
 interface Issue {
@@ -126,11 +129,11 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         });
       }
 
-      // Absent the driver, git falls back to ordinary line conflicts on task
-      // files — degraded, not broken, but worth flagging. The two halves can
-      // disagree because only .gitattributes is committed; a fresh clone
-      // needs `dispatch init` re-run to pick up the local git config. Only
-      // meaningful inside an actual git repo — skip it otherwise.
+      // Absent a driver, git falls back to ordinary line conflicts on task
+      // files or the team roster — degraded, not broken, but worth flagging.
+      // The two halves can disagree because only .gitattributes is committed;
+      // a fresh clone needs `dispatch init` re-run to pick up the local git
+      // config. Only meaningful inside an actual git repo — skip it otherwise.
       if (existsSync(join(ctx.cwd, '.git'))) {
         const driver = checkMergeDriverSetup(ctx.cwd);
         if (!driver.gitattributes) {
@@ -143,6 +146,19 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
           issues.push({
             file: '.git/config',
             problem: `merge.dispatch-task driver not configured — run: dispatch init`,
+          });
+        }
+        const teamDriver = checkTeamMergeDriverSetup(ctx.cwd);
+        if (!teamDriver.gitattributes) {
+          issues.push({
+            file: '.gitattributes',
+            problem: `missing team-roster merge driver line — run: dispatch init`,
+          });
+        }
+        if (!teamDriver.gitConfig) {
+          issues.push({
+            file: '.git/config',
+            problem: `merge.dispatch-team driver not configured — run: dispatch init`,
           });
         }
       }

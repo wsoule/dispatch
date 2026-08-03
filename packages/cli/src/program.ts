@@ -14,6 +14,7 @@ import {
 } from './commands/daemon.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerMergeTaskCommand } from './commands/mergeTask.js';
+import { registerMergeTeamCommand } from './commands/mergeTeam.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerTaskCommands } from './commands/task.js';
@@ -21,26 +22,28 @@ import type { CliContext } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
 import {
   registerMergeDriverGitConfig,
+  registerTeamMergeDriverGitConfig,
   writeGitAttributes,
 } from './mergeDriver.js';
 
-// Scaffolds `.dispatch/` for `ctx.cwd` if it isn't there yet. Shared by
-// `dispatch init` (explicit, always reports what happened) and the bare
-// default action (implicit, only ever runs this on a project's very first
-// `dispatch` invocation) so the check-then-scaffold logic lives in exactly
-// one place. Returns whether it actually ran the scaffold — callers use that
-// to decide what to log and whether to also register the MCP server.
+// Scaffolds `.dispatch/` for `ctx.cwd` if it isn't there yet, and (re-)
+// registers the merge drivers unconditionally. Shared by `dispatch init`
+// (explicit, always reports what happened) and the bare default action
+// (implicit) so the check-then-scaffold logic lives in exactly one place.
+// Driver registration runs on every call, not just a fresh scaffold — a
+// project initialized before the drivers existed, or whose local git config
+// lost them (e.g. a fresh clone), only ever gets repaired if something
+// unconditional touches it, and the bare `dispatch` command is by far the
+// most common path back into an existing project. Returns whether it
+// actually scaffolded — callers use that to decide what to log and whether
+// to also register the MCP server.
 function initIfMissing(ctx: CliContext): boolean {
-  if (existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'))) return false;
-  TaskStore.init(ctx.cwd);
-  // Register the merge driver on every path that scaffolds a project, not
-  // just the explicit `dispatch init` subcommand — the bare `dispatch`
-  // command (below) and the desktop app's init route (server/src/bin.ts's
-  // `--init` flag) both go through this function and must not ship the
-  // driver dark.
+  const alreadyInitialized = existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'));
+  if (!alreadyInitialized) TaskStore.init(ctx.cwd);
   writeGitAttributes(ctx.cwd);
   registerMergeDriverGitConfig(ctx.cwd);
-  return true;
+  registerTeamMergeDriverGitConfig(ctx.cwd);
+  return !alreadyInitialized;
 }
 
 export function makeProgram(ctx: CliContext): Command {
@@ -70,16 +73,18 @@ export function makeProgram(ctx: CliContext): Command {
         ctx.log('Registered the dispatch MCP server in .mcp.json');
       }
       // Idempotent — safe to call again even when initIfMissing already ran
-      // it above, and this is what re-registers the driver for a project
-      // whose local git config lost it (e.g. a fresh clone).
+      // it above, and this is what re-registers the drivers for a project
+      // whose local git config lost them (e.g. a fresh clone).
       writeGitAttributes(ctx.cwd);
-      if (registerMergeDriverGitConfig(ctx.cwd)) {
+      const taskDriverOk = registerMergeDriverGitConfig(ctx.cwd);
+      const teamDriverOk = registerTeamMergeDriverGitConfig(ctx.cwd);
+      if (taskDriverOk && teamDriverOk) {
         ctx.log(
-          'Registered the task-file merge driver (.gitattributes + git config)'
+          'Registered the task-file and team-roster merge drivers (.gitattributes + git config)'
         );
       } else {
         ctx.log(
-          'Could not register the task-file merge driver git config — ' +
+          'Could not register the merge driver git config — ' +
             'is this a git repository, and is git on PATH?'
         );
       }
@@ -123,6 +128,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerOrchestrateCommands(program, ctx);
   registerPlanCommands(program, ctx);
   registerMergeTaskCommand(program, ctx);
+  registerMergeTeamCommand(program, ctx);
 
   return program;
 }
