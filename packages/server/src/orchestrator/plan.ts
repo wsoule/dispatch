@@ -58,13 +58,8 @@ export interface PlanRecord {
   // (sendMessage) re-resolves the same planner the opening turn used — a plan
   // is one continuous conversation with one backend.
   plannerName: string;
-  // Which config.models role this conversation resolves its model from —
-  // 'plan' for the ordinary plan flow, 'enrich' for task/inbox/note
-  // enrichment (api.ts's enrichTask/enrichInbox/enrichNote). Stored (rather
-  // than resolved once at startPlan and forgotten) so a follow-up sendMessage
-  // re-reads `config.models` for the SAME role, matching orchestrator.ts's
-  // own "a follow-up answers on the same model the conversation started
-  // with" rule for run resumes.
+  // Which config.models role resolves this conversation's model ('enrich' for
+  // api.ts's enrich* flows). Stored so follow-ups re-read the same role.
   role: 'plan' | 'enrich';
   state: PlanState;
   // The full conversation transcript, appended to on every turn: the user
@@ -191,23 +186,15 @@ export class PlanManager {
     return [...this.planners.keys()];
   }
 
-  // Fresh per-call read of `config.models` (same pattern mergeQueue.ts uses
-  // for `verifyCommand`, so a settings change takes effect on the very next
-  // call with no restart) resolved to the one role's model id.
+  // Fresh per-call read of `config.models`, so a settings change takes effect
+  // on the very next call with no daemon restart.
   private resolveModel(role: 'plan' | 'enrich'): string {
     const { models } = loadConfig(this.ctx.rootDir);
     return role === 'enrich' ? models.enrich : models.plan;
   }
 
-  // Opens a plan conversation against `prompt` on the named planner (defaults
-  // to 'claude') and returns its id immediately — the actual Planner call
-  // happens fire-and-forget (mirrors Orchestrator.dispatch()'s
-  // executor.start() pattern), with the opening turn landing via runTurn()'s
-  // state update + `plan.changed` broadcast. `sourceNoteId` is carried
-  // through onto the record untouched for note-derived plans (see the field's
-  // comment) — it changes nothing about how the plan itself runs. `role`
-  // (default 'plan') picks which `config.models` entry this conversation
-  // runs on — api.ts's enrichTask/enrichInbox/enrichNote pass 'enrich'.
+  // Opens a plan conversation and returns its id immediately; the Planner call
+  // is fire-and-forget, landing via runTurn()'s `plan.changed` broadcast.
   startPlan(
     prompt: string,
     plannerName = 'claude',

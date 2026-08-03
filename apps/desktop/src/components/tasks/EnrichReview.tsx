@@ -1,18 +1,15 @@
 import { Button } from '@/ui/button';
 
-/** The sections an "Add detail" pass proposes — structurally the same as `lib/enrichReview.ts`'s
- * `EnrichDraft` and `lib/taskEnrich.ts`'s `TaskEnrichDraft`; kept as a plain inline shape here so
- * this component doesn't have to pick a caller to depend on. */
+/** The sections an "Add detail" pass proposes — structurally `EnrichDraft`, but
+ * inline here so this component depends on neither caller's module. */
 interface EnrichReviewDraft {
   description: string;
   acceptanceCriteria: string[];
 }
 
 /**
- * A drafted "Add detail" proposal, shown for a yes/no before anything is written. Read-only:
- * wording changes happen in whatever it gets applied onto, not here. Shared between the task
- * detail dialog and the brain dump row's inline panel — same proposal shape, same review action
- * either way, just different copy for what "Apply" does.
+ * A drafted "Add detail" proposal, shown read-only for a yes/no before anything
+ * is written. Shared by the task dialog and the brain dump row's inline panel.
  */
 export function EnrichReview({
   draft,

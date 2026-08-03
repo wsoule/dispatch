@@ -144,11 +144,8 @@ export function formatEpicProgress(progress: EpicProgress): string {
   return lines.join('\n');
 }
 
-// The exit code `dispatch run --watch` uses at any terminal state: 0 finished, 1 failed,
-// 130 cancelled (the conventional "killed by Ctrl+C"). `null` while still running.
-//
-// Every RunState is listed on purpose: a `default: return null` reads a newly
-// added terminal state as "still running" and hangs `--watch` forever.
+// The exit code `dispatch run --watch` uses at a terminal state, null while
+// running. Every RunState is listed so a new one can't silently hang --watch.
 export function exitCodeForRunState(state: RunState): number | null {
   switch (state) {
     case 'finished':

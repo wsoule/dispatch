@@ -469,9 +469,8 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
-  // Frees a finished non-execute run's throwaway worktree. Aux agents can edit,
-  // and cancel never auto-commits, so the tree is committed first; a branch with
-  // commits the base lacks keeps its ref, since `branch -D` would strand them.
+  // Frees a finished non-execute run's throwaway worktree. Commits first (aux
+  // agents can edit), and spares the branch if it holds commits the base lacks.
   cleanupAuxRun(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined || runKind(meta) === 'execute') return;

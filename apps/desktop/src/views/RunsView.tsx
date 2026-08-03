@@ -136,12 +136,8 @@ export function RunsView({
     splitRef
   );
 
-  // How many runs the archive filter is currently holding back — drives the toggle's
-  // visibility and label. Computed independently of `data.visibleRuns` (which stops
-  // excluding anything the moment `showArchived` is true, so its difference from
-  // `data.runs` collapses to 0 right when the toggle is on): without this, the
-  // control gating on "is anything hidden" would delete itself as soon as it's
-  // switched on, leaving no way to switch it back off.
+  // How many runs the archive filter is holding back. Computed from `data.runs`
+  // rather than `visibleRuns`, which stops excluding anything once it's on.
   const archivedTaskIds = useMemo(
     () => new Set(data.archivedTasks.map((t) => t.meta.id)),
     [data.archivedTasks]

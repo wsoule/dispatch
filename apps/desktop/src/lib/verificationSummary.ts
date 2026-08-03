@@ -28,9 +28,8 @@ export interface VerificationCheckDetail {
   actual: string;
 }
 
-/** The expected-vs-actual pair worth showing under a check, or null. A check
- *  name says what was tried, never how it went wrong; a passing check matched,
- *  so restating both adds nothing there. */
+/** The expected-vs-actual pair worth showing under a check, or null — a passing
+ *  check matched, and a check's name already says what was tried. */
 export function verificationCheckDetail(
   check: VerificationCheck
 ): VerificationCheckDetail | null {

@@ -1,8 +1,5 @@
-// The Claude models a run can be dispatched with. The project's actual default lives in
-// `.dispatch/config.yml` (config.models.execute, edited from the Settings "Models" section) —
-// localStorage here holds only a per-device OVERRIDE of that, persisted the same way the
-// board's List/Board toggle is so it survives restarts; the per-dispatch picker writes it, and
-// resolveExecuteModel() is what layers it over the project's config value.
+// The Claude models a run can be dispatched with. localStorage here holds only
+// a per-device override of the project's `.dispatch/config.yml` default.
 
 export interface ModelOption {
   /** SDK model id passed straight through to the Agent SDK's `query({ options: { model } })`. */
@@ -44,10 +41,8 @@ export const DEFAULT_MODEL = MODELS[0].id;
 
 const STORAGE_KEY = 'dispatch:default-model';
 
-// Reads the user's per-device model override, if one is stored and still a valid choice.
-// Guarded for a missing `localStorage` (never throws, e.g. during SSR/tests) and validated
-// against the known list so a stale/removed id can't leave dispatch pointed at a model that no
-// longer exists. Returns undefined when there is no override to apply.
+// Reads the user's per-device model override, if one is stored and is still a
+// valid choice. Never throws when `localStorage` is missing (SSR/tests).
 function readStoredOverride(): string | undefined {
   if (typeof window === 'undefined') return undefined;
   const stored = window.localStorage.getItem(STORAGE_KEY);
@@ -56,17 +51,14 @@ function readStoredOverride(): string | undefined {
     : undefined;
 }
 
-// The user's chosen default dispatch model, or the built-in default. Used to seed the
-// per-dispatch model picker's own initial value — see resolveExecuteModel for the
-// config-aware resolution every dispatch actually runs with.
+// The user's chosen default dispatch model, or the built-in one. Seeds the
+// picker; see resolveExecuteModel for what a dispatch actually runs on.
 export function readDefaultModel(): string {
   return readStoredOverride() ?? DEFAULT_MODEL;
 }
 
-// The model a dispatch should actually run on: the user's stored per-device override if they've
-// set one, otherwise the project's configured `models.execute` (config.yml, edited from
-// Settings), falling back further to the hardcoded default if config hasn't loaded yet.
-// localStorage is an override layered over config, not the source of truth.
+// The model a dispatch actually runs on: the per-device override if set, else
+// the project's configured `models.execute`, else the hardcoded default.
 export function resolveExecuteModel(
   config: { models?: { execute?: string } } | null | undefined
 ): string {

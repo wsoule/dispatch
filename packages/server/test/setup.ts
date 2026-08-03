@@ -3,9 +3,8 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Preloaded before every test file (see bunfig.toml). Runs, transcripts,
-// worktrees and daemon files all fall back to the real home directory when
-// DISPATCH_HOME is unset, so point it somewhere throwaway first.
+// Preloaded before every test file (see bunfig.toml). Runs, worktrees and
+// daemon files fall back to the real home when DISPATCH_HOME is unset.
 const fallbackHome = mkdtempSync(join(tmpdir(), 'dispatch-fallback-home-'));
 process.env.DISPATCH_HOME = fallbackHome;
 

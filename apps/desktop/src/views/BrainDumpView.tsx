@@ -95,10 +95,8 @@ export function BrainDumpView({
     runClusterRef.current = runCluster;
   });
 
-  // Automatic grouping: debounced after the open-item set changes, and skipped entirely below
-  // the minimum, on a mere reorder (see shouldRecluster), or while a call is already in flight —
-  // `grouping` in the dep array re-evaluates once that call settles, picking up any set change
-  // that happened while it was running instead of firing a second, concurrent, billable call.
+  // Automatic grouping, debounced after the open-item set changes. `grouping`
+  // is in the deps so a settled call re-runs this instead of racing a second.
   useEffect(() => {
     if (grouping) return;
     if (

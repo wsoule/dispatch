@@ -7,8 +7,7 @@ import { RUN_STATES } from '../src/apiClient.js';
 import { exitCodeForRunState } from '../src/orchestrateFormat.js';
 
 // Nothing in the type system notices when the server grows a run state the
-// CLI's hand-kept mirror never hears about, so these read the server's own
-// source — via the same package.json anchor `dispatch serve` resolves.
+// CLI's hand-kept mirror never hears about, so this reads the server's source.
 function readOrchestratorTypes(): string {
   const pkgJsonPath = createRequire(import.meta.url).resolve(
     '@dispatch/server/package.json'

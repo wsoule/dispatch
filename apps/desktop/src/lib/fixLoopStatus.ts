@@ -10,8 +10,7 @@ export type FixLoopStop = NonNullable<FixLoopState['stopReason']>;
 export type FixLoopTone = 'waiting' | 'failed' | 'neutral';
 
 /** Why a stopped loop stopped. A loop capped before this field existed has no
- *  `stopReason`; the server's own fallback is `rounds-exhausted`, so match it
- *  rather than inventing a fourth state for old rows. */
+ *  `stopReason`, so fall back to the server's own `rounds-exhausted`. */
 export function fixLoopStopReason(state: FixLoopState): FixLoopStop {
   return state.stopReason ?? 'rounds-exhausted';
 }
@@ -46,8 +45,7 @@ function cappedLabel(state: FixLoopState): string {
 }
 
 /** Whether the adjudication control renders. Only `rounds-exhausted` leaves
- *  anything to rule on — the other two would put up a CTA with nothing behind
- *  it and no way to dismiss it. */
+ *  anything to rule on; the others would be a CTA with nothing behind it. */
 export function fixLoopNeedsRuling(state: FixLoopState | null): boolean {
   return (
     state !== null &&

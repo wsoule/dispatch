@@ -59,9 +59,8 @@ function daemonStatusLabel(data: DispatchProjectData): string {
   return data.client !== null ? 'running' : 'not running';
 }
 
-// One row per config.models role, mirroring the doc comments on ModelConfig in
-// packages/core/src/config.ts so picking a cheap model for a cheap role doesn't require reading
-// the config schema.
+// One row per config.models role, mirroring ModelConfig's doc comments in
+// packages/core/src/config.ts so the schema doesn't have to be read.
 const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
   execute: { label: 'Coding runs', hint: 'The agent that edits the repo.' },
   plan: { label: 'Planning', hint: 'Multi-turn planning conversations.' },
@@ -83,11 +82,8 @@ const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
   },
 };
 
-// The models section: one dropdown per agent role in `config.models`, persisted straight to
-// `.dispatch/config.yml` via handleUpdateConfig — so the CLI and daemon see the same choice, not
-// just this browser. `execute` (coding runs) is still overridable per-dispatch and per-device
-// (localStorage, see lib/models.ts's resolveExecuteModel) — this is what that override layers
-// on top of.
+// The models section: one dropdown per role in `config.models`, persisted to
+// `.dispatch/config.yml` so the CLI and daemon see the same choice.
 function ModelRolesSection({
   config,
   onSave,
@@ -570,11 +566,8 @@ function LinearSection({ data }: { data: DispatchProjectData }) {
 }
 
 /**
- * Settings for the active project: the writable half (verify command, auto-commit, epic
- * concurrency, permission posture, per-role models — all persisted to `.dispatch/config.yml` in
- * the repo, so the CLI and daemon see the same values), and read-only daemon status. The daemon
- * stays read-only deliberately: the sidecar is process-managed, not something this view should
- * be able to kill or restart. No placeholder sections — only what exists renders.
+ * Settings for the active project: the writable `.dispatch/config.yml` half,
+ * plus daemon status, read-only because the sidecar is process-managed.
  */
 export function SettingsView({ activeProject, data }: SettingsViewProps) {
   if (activeProject === null) {

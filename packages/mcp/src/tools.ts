@@ -229,9 +229,8 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
   }
 }
 
-// A plain local copy of @dispatch/server's TERMINAL_RUN_STATES, since
-// @dispatch/mcp has no dependency on that Bun-only package. `interrupted-dirty`
-// counts: a failed run holding uncommitted work, with nothing to inject into.
+// A local copy of @dispatch/server's TERMINAL_RUN_STATES, since @dispatch/mcp
+// can't depend on that Bun-only package. `interrupted-dirty` counts as dead.
 const TERMINAL_RUN_STATES = new Set([
   'finished',
   'failed',

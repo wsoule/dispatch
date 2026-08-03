@@ -1,6 +1,5 @@
 // Agent-written text lands in another agent's context, where it can forge
 // prompt structure; anything rendering it uses one of the three helpers here.
-// Task-file escaping in `taskfile.ts` is a different job.
 
 // Line breaks in every form a value could use to escape its line.
 const LINE_BREAKS = /[\r\n\v\f\u0085\u2028\u2029]+/g;

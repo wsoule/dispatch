@@ -345,17 +345,10 @@ export class EpicEngine {
     }
   }
 
-  // Dispatches ready children via schedulableBatch (conflicts.ts): up to the
-  // concurrency cap, and never two with overlapping `writes` in one batch.
-  //
-  // C1: readiness is computed over the FULL task set (`dispatchableTasks`
-  // gates a blocker on being in-review/done/cancelled, but treats a blocker
-  // id that isn't in the array it's given as automatically satisfied — see
-  // core's own dispatchableTasks/readyTasks doc comments) and only *then*
-  // intersected with this epic's children. Passing just `children` here
-  // would silently ignore a blocker that genuinely exists elsewhere in the
-  // project (a different epic, or no epic at all) simply because it isn't a
-  // sibling.
+  // Dispatches ready children via schedulableBatch (conflicts.ts): concurrency
+  // cap, no two overlapping `writes` in one batch. Readiness runs over the FULL
+  // task set first, since dispatchableTasks treats a blocker it wasn't given as
+  // satisfied — a blocker in another epic, or in none, must still count.
   private async fillQueue(epicId: string): Promise<void> {
     const session = this.sessions.get(epicId);
     if (session === undefined || !session.active) return;
