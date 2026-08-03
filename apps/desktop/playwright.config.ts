@@ -12,13 +12,19 @@ const VITE_PORT = 5199;
 
 export default defineConfig({
   testDir: './e2e',
-  // Screenshots differ subtly across machines; keep CI honest but not flaky.
-  expect: { toHaveScreenshot: { maxDiffPixelRatio: 0.01 } },
+  // An absolute budget, not a ratio: 1% of a 1036x1161 shot is ~12k pixels, which
+  // is a whole toolbar row's worth of controls moving without the gate noticing.
+  expect: { toHaveScreenshot: { maxDiffPixels: 200 } },
   use: {
     baseURL: `http://localhost:${VITE_PORT}/?root=${ROOT}&port=${DAEMON_PORT}`,
-    colorScheme: 'dark',
     viewport: { width: 1036, height: 1161 },
   },
+  // Both themes get baselines: the spec's headline decision is full light/dark
+  // parity, and dark-only shots hid a `failed` mark that was invisible on white.
+  projects: [
+    { name: 'dark', use: { colorScheme: 'dark' } },
+    { name: 'light', use: { colorScheme: 'light' } },
+  ],
   webServer: [
     {
       command: `DISPATCH_HOME=${HOME} bun ${REPO}/packages/server/src/bin.ts --root ${ROOT} --port ${DAEMON_PORT}`,
