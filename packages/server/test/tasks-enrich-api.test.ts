@@ -50,7 +50,12 @@ class RecordingPlanner implements Planner {
 
   async start(prompt: string): Promise<PlannerTurn> {
     this.prompts.push(prompt);
-    return { reply: 'drafted a task', proposal: this.proposal, sessionId: '1' };
+    return {
+      reply: 'drafted a task',
+      proposal: this.proposal,
+      questions: [],
+      sessionId: '1',
+    };
   }
 
   async sendMessage(
@@ -58,7 +63,12 @@ class RecordingPlanner implements Planner {
     message: string
   ): Promise<PlannerTurn> {
     this.prompts.push(message);
-    return { reply: 'refined', proposal: this.proposal, sessionId: '2' };
+    return {
+      reply: 'refined',
+      proposal: this.proposal,
+      questions: [],
+      sessionId: '2',
+    };
   }
 }
 

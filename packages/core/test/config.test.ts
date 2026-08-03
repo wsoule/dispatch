@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ConfigError, loadConfig } from '../src/config.js';
+import {
+  ConfigError,
+  DEFAULT_FIX_LOOP,
+  DEFAULT_LINEAR,
+  DEFAULT_MODELS,
+  loadConfig,
+} from '../src/config.js';
 
 let root: string;
 beforeEach(() => {
@@ -27,6 +33,9 @@ describe('loadConfig', () => {
         epicConcurrency: 3,
         verifyTimeoutSec: 600,
       },
+      models: DEFAULT_MODELS,
+      linear: DEFAULT_LINEAR,
+      fixLoop: DEFAULT_FIX_LOOP,
     });
   });
   it('merges file values over defaults', () => {

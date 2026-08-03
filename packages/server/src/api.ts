@@ -1,5 +1,6 @@
 import {
   ASSIGNEES,
+  clearCredential,
   ConfigError,
   getSection,
   KINDS,
@@ -8,32 +9,89 @@ import {
   TaskParseError,
   TaskStore,
   updateConfig,
+  writeCredential,
 } from '@dispatch/core';
 import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  FixLoopConfig,
+  LinearConfig,
+  ModelConfig,
   UpdatePatch,
+  VerifyConfig,
 } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
+import { amendTask } from './api/amendments.js';
+import {
+  createFinding,
+  createLedgerEntry,
+  listFindings,
+  listLedger,
+  updateFinding,
+} from './api/findings.js';
+import {
+  adjudicateFinding,
+  advanceFixLoop,
+  getFixLoop,
+} from './api/fixLoop.js';
+import {
+  errorResponse,
+  jsonResponse,
+  readJsonBody,
+  readJsonBodyOptional,
+} from './api/http.js';
+import { listTaskFindings, startTaskReview } from './api/review.js';
+import { listRunClaims } from './api/runClaims.js';
+import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
+import {
+  decideScopeRequest,
+  getScopeRequest,
+  requestScope,
+} from './api/scopeRequests.js';
+import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { EventBus } from './events.js';
+import type { FindingStore } from './findings.js';
+import {
+  COMMIT_SHA_UNRESOLVED_PREFIX,
+  CONFIRM_REQUIRED_ERROR,
+  INVALID_REF_ERROR,
+  INVALID_REMOTE_ERROR,
+  INVALID_STASH_INDEX_ERROR,
+  PATH_ESCAPE_ERROR,
+} from './git/commands.js';
+import type { GitOutcome, GitRepo } from './git/commands.js';
+import { CommitMessageGenerator } from './git/commitMessage.js';
+import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { InboxClusterer } from './inboxClusterer.js';
+import type { LedgerStore } from './ledger.js';
+import { HttpLinearClient } from './linear/client.js';
+import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import type { EpicEngine } from './orchestrator/epic.js';
+import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager } from './orchestrator/pr.js';
+import type {
+  QuestionRegistry,
+  RunQuestion,
+} from './orchestrator/questions.js';
+import { QUESTION_POLL_MS } from './orchestrator/questions.js';
+import type { ReviewRunner } from './orchestrator/review.js';
+import type { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from './orchestrator/types.js';
+import type { VerificationRunner } from './orchestrator/verify.js';
 import {
   formatCommentsForAgent,
   ReviewCommentStore,
@@ -56,23 +114,24 @@ export interface ApiContext {
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
   inboxStore: InboxStore;
+  findingStore: FindingStore;
+  ledgerStore: LedgerStore;
+  reviewRunner: ReviewRunner;
+  verificationRunner: VerificationRunner;
+  fixLoop: FixLoop;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
+  questions: QuestionRegistry;
+  scopeRequests: ScopeRequestRegistry;
+  linearSync: LinearSync;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
   prCapability: boolean;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  });
-}
-
-function errorResponse(status: number, message: string): Response {
-  return jsonResponse({ error: message }, status);
+  // The Git page's backend — see packages/server/src/git/commands.ts.
+  gitRepo: GitRepo;
+  // Test-injection seam only, same as `inboxClusterer` above.
+  commitMessageGenerator?: CommitMessageGenerator;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -204,49 +263,6 @@ function validateTaskFields(
   return null;
 }
 
-async function readJsonBody(
-  req: Request
-): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
-  try {
-    const value = await req.json();
-    if (typeof value !== 'object' || value === null) {
-      return {
-        ok: false,
-        response: errorResponse(400, 'invalid body: expected a JSON object'),
-      };
-    }
-    return { ok: true, value };
-  } catch {
-    return { ok: false, response: errorResponse(400, 'invalid JSON body') };
-  }
-}
-
-// Same contract as readJsonBody, but an empty request body is treated as `{}`
-// rather than a 400 — used for endpoints where every field is optional (only
-// POST /api/tasks/:id/runs today: `executor` defaults when omitted), so a
-// client that sends no body at all isn't penalized for it.
-async function readJsonBodyOptional(
-  req: Request
-): Promise<
-  | { ok: true; value: Record<string, unknown> }
-  | { ok: false; response: Response }
-> {
-  const text = await req.text();
-  if (text.trim() === '') return { ok: true, value: {} };
-  try {
-    const value = JSON.parse(text);
-    if (typeof value !== 'object' || value === null) {
-      return {
-        ok: false,
-        response: errorResponse(400, 'invalid body: expected a JSON object'),
-      };
-    }
-    return { ok: true, value: value as Record<string, unknown> };
-  } catch {
-    return { ok: false, response: errorResponse(400, 'invalid JSON body') };
-  }
-}
-
 async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -268,15 +284,8 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   return jsonResponse(doc, 201);
 }
 
-// POST /api/tasks/draft — the natural-language single-task creator: turns a
-// free-text description into one structured task draft (title, description,
-// acceptanceCriteria, priority) the client reviews and then saves through the
-// normal POST /api/tasks path. `planner` is optional and follows createRun's
-// `executor` / startPlan's `planner` contract exactly — a name outside what's
-// registered on this PlanManager is a 400 naming every valid option. Unlike
-// startPlan this awaits the planner and returns the draft directly (no plan
-// record, no confirm step) since a lone draft is reviewed-then-created, not
-// confirmed.
+// POST /api/tasks/draft — starts a background planner turn and returns the
+// DraftRecord immediately (202); `planner` follows createRun's `executor` contract.
 async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -297,8 +306,44 @@ async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   }
   const plannerName =
     typeof body.planner === 'string' ? body.planner : 'claude';
-  const draft = await ctx.planManager.draftTask(body.prompt, plannerName);
-  return jsonResponse(draft);
+  const draft = ctx.planManager.startDraft(body.prompt, plannerName);
+  return jsonResponse(draft, 202);
+}
+
+// GET /api/tasks/drafts — every draft currently held in memory (running,
+// ready, or failed — until dismissed), newest first.
+function listDrafts(ctx: ApiContext): Response {
+  return jsonResponse(ctx.planManager.listDrafts());
+}
+
+// GET /api/tasks/drafts/:id — one draft record, 404 for an unknown id (via
+// handleApi's outer OrchestratorNotFoundError catch).
+function getDraft(ctx: ApiContext, id: string): Response {
+  return jsonResponse(ctx.planManager.getDraft(id));
+}
+
+// DELETE /api/tasks/drafts/:id — dismisses a draft; getDraft() below 404s
+// an unknown id before dismissDraft runs.
+function dismissDraft(ctx: ApiContext, id: string): Response {
+  ctx.planManager.getDraft(id);
+  ctx.planManager.dismissDraft(id);
+  return jsonResponse({ ok: true });
+}
+
+// POST /api/tasks/drafts/:id/message — mirrors sendPlanMessage's shape for a draft.
+async function sendDraftMessage(
+  req: Request,
+  ctx: ApiContext,
+  draftId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const record = ctx.planManager.sendDraftMessage(draftId, body.text);
+  return jsonResponse(record, 202);
 }
 
 async function updateTask(
@@ -372,8 +417,14 @@ async function createRun(
 
   const executorName =
     typeof executorField === 'string' ? executorField : 'claude';
+  // Omitting `model` falls back to the project's configured `models.execute`,
+  // so a script or an older UI build still runs on the model settings chose.
+  const model =
+    typeof modelField === 'string'
+      ? modelField
+      : loadConfig(ctx.rootDir).models.execute;
   const meta = await ctx.orchestrator.dispatch(taskId, executorName, {
-    model: modelField,
+    model,
   });
   return jsonResponse(meta, 201);
 }
@@ -508,14 +559,130 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // writes anything, and that ConfigError becomes the 400 below.
     patch.permissionMode = body.permissionMode;
   }
+  if ('models' in body) {
+    if (
+      typeof body.models !== 'object' ||
+      body.models === null ||
+      Array.isArray(body.models)
+    ) {
+      return errorResponse(400, 'models must be an object');
+    }
+    // Like permissionMode: core's updateConfig rejects an unknown role or bad
+    // value before writing, and that ConfigError becomes the 400 below.
+    patch.models = body.models as Partial<ModelConfig>;
+  }
+  if ('linear' in body) {
+    if (
+      typeof body.linear !== 'object' ||
+      body.linear === null ||
+      Array.isArray(body.linear)
+    ) {
+      return errorResponse(400, 'linear must be an object');
+    }
+    if ('apiKey' in (body.linear as Record<string, unknown>)) {
+      return errorResponse(
+        400,
+        'the Linear API key is set through POST /api/linear/connect, not config'
+      );
+    }
+    // Same deal as models: core validates each field before writing, and that
+    // ConfigError becomes the 400 below.
+    patch.linear = body.linear as Partial<LinearConfig>;
+  }
+  if ('fixLoop' in body) {
+    if (
+      typeof body.fixLoop !== 'object' ||
+      body.fixLoop === null ||
+      Array.isArray(body.fixLoop)
+    ) {
+      return errorResponse(400, 'fixLoop must be an object');
+    }
+    // Same deal as models/linear: core validates cap/escalation before
+    // writing, and that ConfigError becomes the 400 below.
+    patch.fixLoop = body.fixLoop as Partial<FixLoopConfig>;
+  }
+  if ('verify' in body) {
+    if (
+      typeof body.verify !== 'object' ||
+      body.verify === null ||
+      Array.isArray(body.verify)
+    ) {
+      return errorResponse(400, 'verify must be an object');
+    }
+    // Same deal as models/linear: core validates each field before writing,
+    // and that ConfigError becomes the 400 below.
+    patch.verify = body.verify as Partial<VerifyConfig>;
+  }
 
   try {
     const config = updateConfig(ctx.rootDir, patch);
     ctx.events.broadcast({ type: 'config.changed' });
+    // A changed interval or enabled flag only takes effect once the poll timer is rebuilt.
+    ctx.linearSync.start();
     return jsonResponse(config);
   } catch (err) {
     return errorResponse(400, (err as Error).message);
   }
+}
+
+// Maps a Linear client failure onto a status code: a bad key is the caller's
+// problem, a throttle is worth surfacing distinctly, anything else is upstream.
+function linearErrorResponse(failure: {
+  kind: string;
+  error: string;
+}): Response {
+  const status =
+    failure.kind === 'auth' ? 401 : failure.kind === 'rate-limit' ? 429 : 502;
+  return errorResponse(status, failure.error);
+}
+
+// POST /api/linear/connect — check the key against `viewer` before storing it in
+// `~/.dispatch/credentials.json`. The response carries the authenticated user, never the key.
+async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { apiKey?: unknown };
+  if (typeof body.apiKey !== 'string' || body.apiKey.trim() === '') {
+    return errorResponse(400, 'apiKey must be a non-empty string');
+  }
+  const apiKey = body.apiKey.trim();
+  const result = await new HttpLinearClient(apiKey).viewer();
+  if (!result.ok) return linearErrorResponse(result);
+  writeCredential('linear', { apiKey });
+  ctx.events.broadcast({ type: 'config.changed' });
+  return jsonResponse({ connected: true, viewer: result.data });
+}
+
+// POST /api/linear/disconnect — forget the stored key. A LINEAR_API_KEY in the
+// environment still wins afterwards, which `status.keySource` makes visible.
+function disconnectLinear(ctx: ApiContext): Response {
+  clearCredential('linear');
+  ctx.events.broadcast({ type: 'config.changed' });
+  return jsonResponse(ctx.linearSync.status());
+}
+
+// GET /api/linear/teams — the team picker's options.
+async function linearTeams(ctx: ApiContext): Promise<Response> {
+  const client = ctx.linearSync.client();
+  if (client === null)
+    return errorResponse(409, 'no Linear API key configured');
+  const result = await client.teams();
+  return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
+}
+
+// GET /api/linear/states?teamId= — the workflow states a status map can point at.
+async function linearStates(
+  ctx: ApiContext,
+  teamId: string | null
+): Promise<Response> {
+  if (teamId === null || teamId.trim() === '') {
+    return errorResponse(400, 'teamId is required');
+  }
+  const client = ctx.linearSync.client();
+  if (client === null)
+    return errorResponse(409, 'no Linear API key configured');
+  const result = await client.workflowStates(teamId);
+  return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
 }
 
 // GET /api/runs/:id/comments — every review comment on this run's diff.
@@ -793,6 +960,327 @@ function deleteBranch(ctx: ApiContext, branch: string, url: URL): Response {
   return jsonResponse({ ok: true });
 }
 
+// A `GitBranch` joined with whatever run claims that name, mirroring
+// Orchestrator.listBranches' join but for every branch, not just dispatch/*.
+export interface GitBranchWithRun extends GitBranch {
+  runId?: string;
+  taskId?: string;
+  taskTitle?: string;
+}
+
+// GET /api/git/branches's core: every local/remote branch git knows about,
+// annotated with the run that owns it when one does.
+async function gitBranches(
+  ctx: ApiContext
+): Promise<GitOutcome<{ branches: GitBranchWithRun[] }>> {
+  const result = await ctx.gitRepo.branches();
+  if (!result.ok) return result;
+  const runByBranch = new Map(
+    ctx.orchestrator.list().map((r) => [r.branch, r])
+  );
+  const branches = result.branches.map((branch) => {
+    const run = runByBranch.get(branch.name);
+    return {
+      ...branch,
+      runId: run?.id,
+      taskId: run?.taskId,
+      taskTitle: run?.taskTitle,
+    };
+  });
+  return { ok: true, branches };
+}
+
+// GitRepo's own pre-flight rejections never touch git, so `alwaysBroadcast`
+// below must not fire for them even though they report `ok: false`.
+const PRE_FLIGHT_REJECTIONS: ReadonlySet<string> = new Set([
+  PATH_ESCAPE_ERROR,
+  INVALID_REF_ERROR,
+  INVALID_REMOTE_ERROR,
+  CONFIRM_REQUIRED_ERROR,
+  INVALID_STASH_INDEX_ERROR,
+]);
+
+// Shared by every `/api/git/*` mutation route; `alwaysBroadcast` covers ops
+// that can mutate the tree even on `ok: false` (a conflicted pull or discard).
+function gitMutationResponse(
+  ctx: ApiContext,
+  result: GitOutcome,
+  opts: { alwaysBroadcast?: boolean } = {}
+): Response {
+  const mutated =
+    result.ok ||
+    (opts.alwaysBroadcast === true &&
+      !PRE_FLIGHT_REJECTIONS.has(result.stderr));
+  if (mutated) ctx.events.broadcast({ type: 'git.changed' });
+  return jsonResponse(result);
+}
+
+// Shared shape check for the routes that take a list of file paths (stage,
+// unstage, discard) — requires a non-empty array of non-empty strings.
+function requirePathList(value: unknown): string[] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((v) => typeof v === 'string' && v !== '')
+  ) {
+    return null;
+  }
+  return value as string[];
+}
+
+async function gitStage(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const paths = requirePathList((parsed.value as { paths?: unknown }).paths);
+  if (paths === null)
+    return errorResponse(400, 'paths is required: a non-empty list of strings');
+  return gitMutationResponse(ctx, await ctx.gitRepo.stage(paths));
+}
+
+async function gitUnstage(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const paths = requirePathList((parsed.value as { paths?: unknown }).paths);
+  if (paths === null)
+    return errorResponse(400, 'paths is required: a non-empty list of strings');
+  return gitMutationResponse(ctx, await ctx.gitRepo.unstage(paths));
+}
+
+// POST /api/git/discard — destructive (drops uncommitted work with no undo),
+// so it 400s outright unless the body carries `confirm: true`.
+async function gitDiscard(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { paths?: unknown; confirm?: unknown };
+  const paths = requirePathList(body.paths);
+  if (paths === null)
+    return errorResponse(400, 'paths is required: a non-empty list of strings');
+  if (body.confirm !== true) {
+    return errorResponse(
+      400,
+      'discard is destructive and requires confirm: true'
+    );
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.discard(paths, true), {
+    alwaysBroadcast: true,
+  });
+}
+
+async function gitStageHunk(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const patch = (parsed.value as { patch?: unknown }).patch;
+  if (typeof patch !== 'string' || patch === '') {
+    return errorResponse(400, 'patch is required');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.stageHunk(patch));
+}
+
+async function gitUnstageHunk(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const patch = (parsed.value as { patch?: unknown }).patch;
+  if (typeof patch !== 'string' || patch === '') {
+    return errorResponse(400, 'patch is required');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.unstageHunk(patch));
+}
+
+async function gitCommit(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { message?: unknown; amend?: unknown };
+  if (typeof body.message !== 'string' || body.message.trim() === '') {
+    return errorResponse(400, 'message is required');
+  }
+  if (body.amend !== undefined && typeof body.amend !== 'boolean') {
+    return errorResponse(400, 'amend must be a boolean');
+  }
+  const result = await ctx.gitRepo.commit({
+    message: body.message,
+    amend: body.amend === true,
+  });
+  // The commit itself can still have landed even when this reports `ok:
+  // false` (rev-parse failed to confirm the sha) — broadcast that case too.
+  const shaUnresolved =
+    !result.ok && result.stderr.startsWith(COMMIT_SHA_UNRESOLVED_PREFIX);
+  return gitMutationResponse(ctx, result, { alwaysBroadcast: shaUnresolved });
+}
+
+// POST /api/git/commit-message — the agent-focused route. 400s when nothing
+// is staged; 502s a model failure rather than a generic 500.
+async function gitCommitMessage(
+  _req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const diff = await ctx.gitRepo.diff({ staged: true });
+  if (!diff.ok) return errorResponse(409, diff.stderr);
+  if (diff.patch.trim() === '') {
+    return errorResponse(400, 'no staged changes to summarize');
+  }
+  const generator =
+    ctx.commitMessageGenerator ?? new CommitMessageGenerator(ctx.rootDir);
+  try {
+    const message = await generator.generate(diff.patch);
+    return jsonResponse({ message });
+  } catch (err) {
+    return errorResponse(502, (err as Error).message);
+  }
+}
+
+async function gitCheckout(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const branch = (parsed.value as { branch?: unknown }).branch;
+  if (typeof branch !== 'string' || branch === '') {
+    return errorResponse(400, 'branch is required');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.checkout(branch));
+}
+
+async function gitCreateBranch(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { name?: unknown; from?: unknown };
+  if (typeof body.name !== 'string' || body.name === '') {
+    return errorResponse(400, 'name is required');
+  }
+  if (body.from !== undefined && typeof body.from !== 'string') {
+    return errorResponse(400, 'from must be a string');
+  }
+  return gitMutationResponse(
+    ctx,
+    await ctx.gitRepo.createBranch(body.name, body.from)
+  );
+}
+
+// DELETE /api/git/branch/:name — `force: true` (git's `-D`) 400s unless the
+// body also carries `confirm: true`; a plain `-d` delete needs no confirm.
+async function gitDeleteBranch(
+  req: Request,
+  ctx: ApiContext,
+  name: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { force?: unknown; confirm?: unknown };
+  const force = body.force === true;
+  if (force && body.confirm !== true) {
+    return errorResponse(
+      400,
+      'deleting an unmerged branch is destructive and requires confirm: true'
+    );
+  }
+  return gitMutationResponse(
+    ctx,
+    await ctx.gitRepo.deleteBranch(name, force, body.confirm === true)
+  );
+}
+
+async function gitStashPush(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const message = (parsed.value as { message?: unknown }).message;
+  if (message !== undefined && typeof message !== 'string') {
+    return errorResponse(400, 'message must be a string');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashPush(message));
+}
+
+function requireStashIndex(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+async function gitStashPop(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const index = requireStashIndex((parsed.value as { index?: unknown }).index);
+  if (index === null)
+    return errorResponse(400, 'index is required: a non-negative integer');
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashPop(index), {
+    alwaysBroadcast: true,
+  });
+}
+
+// POST /api/git/stash/drop — destructive (the stash entry is gone for good),
+// so it 400s outright unless the body carries `confirm: true`.
+async function gitStashDrop(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { index?: unknown; confirm?: unknown };
+  const index = requireStashIndex(body.index);
+  if (index === null)
+    return errorResponse(400, 'index is required: a non-negative integer');
+  if (body.confirm !== true) {
+    return errorResponse(
+      400,
+      'dropping a stash is destructive and requires confirm: true'
+    );
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.stashDrop(index, true));
+}
+
+async function gitFetch(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const remote = (parsed.value as { remote?: unknown }).remote;
+  if (remote !== undefined && typeof remote !== 'string') {
+    return errorResponse(400, 'remote must be a string');
+  }
+  return gitMutationResponse(ctx, await ctx.gitRepo.fetch(remote));
+}
+
+async function gitPush(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const setUpstream = (parsed.value as { setUpstream?: unknown }).setUpstream;
+  if (setUpstream !== undefined && typeof setUpstream !== 'boolean') {
+    return errorResponse(400, 'setUpstream must be a boolean');
+  }
+  return gitMutationResponse(
+    ctx,
+    await ctx.gitRepo.push({ setUpstream: setUpstream === true })
+  );
+}
+
+async function gitCherryPick(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const sha = (parsed.value as { sha?: unknown }).sha;
+  if (typeof sha !== 'string' || sha === '')
+    return errorResponse(400, 'sha is required');
+  return gitMutationResponse(ctx, await ctx.gitRepo.cherryPick(sha), {
+    alwaysBroadcast: true,
+  });
+}
+
+async function gitRevert(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const sha = (parsed.value as { sha?: unknown }).sha;
+  if (typeof sha !== 'string' || sha === '')
+    return errorResponse(400, 'sha is required');
+  return gitMutationResponse(ctx, await ctx.gitRepo.revert(sha), {
+    alwaysBroadcast: true,
+  });
+}
+
+// Absent -> undefined; a valid non-negative integer -> that number;
+// otherwise -> null so the route can 400 instead of passing NaN to git.
+function parseCountParam(raw: string | null): number | undefined | null {
+  if (raw === null) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
 // GET /api/runs/:id/pr — the run's GitHub PR status + conversation, read live
 // via gh (see PrManager.getPrDetail). 409s a run with no open PR.
 async function getPr(
@@ -978,6 +1466,123 @@ async function messageUser(
   }
   const meta = ctx.orchestrator.messageUser(runId, body.text);
   return jsonResponse(meta);
+}
+
+// The transcript text a question lands as, so the session log records what
+// was asked without depending on a card the user may already have dismissed.
+function questionEntryText(question: string, options: string[]): string {
+  if (options.length === 0) return question;
+  return `${question}\n\n${options.map((o) => `- ${o}`).join('\n')}`;
+}
+
+// POST /api/runs/:id/questions — `ask_user` posts here, then long-polls the
+// GET below. `messageUser` writes the entry and gates this to a live run.
+async function askQuestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { question?: unknown; options?: unknown };
+  if (typeof body.question !== 'string' || body.question.trim() === '') {
+    return errorResponse(400, 'invalid question: question is required');
+  }
+  if (
+    body.options !== undefined &&
+    (!Array.isArray(body.options) ||
+      body.options.some((o) => typeof o !== 'string'))
+  ) {
+    return errorResponse(400, 'invalid options: expected an array of strings');
+  }
+  const question = body.question.trim();
+  const options = ((body.options as string[] | undefined) ?? [])
+    .map((o) => o.trim())
+    .filter((o) => o !== '');
+
+  ctx.orchestrator.messageUser(runId, questionEntryText(question, options));
+  const record = ctx.questions.ask(runId, question, options);
+  ctx.events.broadcast({
+    type: 'question.asked',
+    runId,
+    questionId: record.id,
+  });
+  return jsonResponse(record, 201);
+}
+
+// Resolves a question id against its own run, so one run can never read or
+// answer another run's question by guessing an id.
+function questionFor(
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): RunQuestion | null {
+  const record = ctx.questions.get(questionId);
+  return record !== undefined && record.runId === runId ? record : null;
+}
+
+// GET /api/runs/:id/questions/:qid — `?wait=1` parks for up to
+// QUESTION_POLL_MS. Coming back unanswered means "poll again", not an error.
+async function getQuestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): Promise<Response> {
+  const record = questionFor(ctx, runId, questionId);
+  if (record === null) {
+    return errorResponse(404, `question not found: ${questionId}`);
+  }
+  const wait = new URL(req.url).searchParams.get('wait') === '1';
+  if (!wait) return jsonResponse(record);
+  return jsonResponse(
+    await ctx.questions.waitForAnswer(questionId, QUESTION_POLL_MS)
+  );
+}
+
+// POST /api/runs/:id/questions/:qid/answer — unblocks whatever is parked on
+// the long-poll above. 409s on a second answer: the first one already went.
+async function answerQuestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { answer?: unknown };
+  if (typeof body.answer !== 'string' || body.answer.trim() === '') {
+    return errorResponse(400, 'invalid answer: answer is required');
+  }
+  if (questionFor(ctx, runId, questionId) === null) {
+    return errorResponse(404, `question not found: ${questionId}`);
+  }
+  const record = ctx.questions.answer(questionId, body.answer.trim());
+  // The agent already has the answer by this point, so a run that vanished
+  // out from under the transcript write must not turn this into a failure.
+  try {
+    ctx.orchestrator.recordAnswer(runId, body.answer.trim());
+  } catch (err) {
+    if (!(err instanceof OrchestratorNotFoundError)) throw err;
+  }
+  ctx.events.broadcast({ type: 'question.answered', runId, questionId });
+  ctx.events.broadcast({ type: 'run.changed' });
+  return jsonResponse(record);
+}
+
+// DELETE /api/runs/:id/questions/:qid — the asking agent stopped listening
+// (its tool call was cancelled or gave up), so the card must stop asking.
+function withdrawQuestion(
+  ctx: ApiContext,
+  runId: string,
+  questionId: string
+): Response {
+  if (questionFor(ctx, runId, questionId) === null) {
+    return errorResponse(404, `question not found: ${questionId}`);
+  }
+  ctx.questions.withdraw(questionId);
+  ctx.events.broadcast({ type: 'question.closed', runId });
+  return new Response(null, { status: 204 });
 }
 
 // POST /api/plan. `planner` is optional (defaults to 'claude'), same
@@ -1260,6 +1865,11 @@ async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
     createdByRunId:
       typeof body.createdByRunId === 'string' ? body.createdByRunId : null,
   });
+  // `splitCapture` strips bullet and checkbox prefixes, so text that is only
+  // markers stores nothing — a 201 there would claim a capture that never was.
+  if (created.length === 0) {
+    return errorResponse(400, 'text contained no capturable lines');
+  }
   ctx.events.broadcast({ type: 'inbox.changed' });
   return jsonResponse(created, 201);
 }
@@ -1423,20 +2033,16 @@ function buildInboxEnrichPrompt(item: InboxItem): string {
 }
 
 /**
- * POST /api/inbox/cluster — ask a model which captured items are really one piece of work.
- *
- * Explicitly user-triggered rather than automatic, because unlike the desktop's local heuristic
- * this costs a model call: a suggestion that quietly bills you on every render is not a
- * suggestion. Failures return 502 with the reason rather than an empty list, so "the model is
- * unreachable" never reads as "nothing here is related".
+ * POST /api/inbox/cluster — ask a model which captured items are one piece of
+ * work. Always 200 with `error` set, since it runs unattended in the background.
  */
 async function clusterInbox(ctx: ApiContext): Promise<Response> {
   const clusterer = ctx.inboxClusterer ?? new InboxClusterer(ctx.rootDir);
   try {
     const groups = await clusterer.cluster(ctx.inboxStore.list());
-    return jsonResponse({ groups });
+    return jsonResponse({ groups, error: null });
   } catch (err) {
-    return errorResponse(502, (err as Error).message);
+    return jsonResponse({ groups: [], error: (err as Error).message });
   }
 }
 
@@ -1453,7 +2059,8 @@ function enrichInbox(ctx: ApiContext, id: string): Response {
   const record = ctx.planManager.startPlan(
     buildInboxEnrichPrompt(item),
     'claude',
-    item.id
+    item.id,
+    'enrich'
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -1505,7 +2112,9 @@ function enrichTask(ctx: ApiContext, id: string): Response {
   }
   const record = ctx.planManager.startPlan(
     buildTaskEnrichPrompt(task),
-    'claude'
+    'claude',
+    undefined,
+    'enrich'
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -1524,9 +2133,35 @@ function enrichNote(ctx: ApiContext, id: string): Response {
   const record = ctx.planManager.startPlan(
     buildNoteEnrichPrompt(note),
     'claude',
-    note.id
+    note.id,
+    'enrich'
   );
   return jsonResponse({ planId: record.id }, 202);
+}
+
+// Methods that only read; everything else counts as a state change, so a route
+// added later is guarded by default rather than by opting in.
+const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// Origins allowed to drive this daemon — the same set resolveCorsOrigin in
+// index.ts uses to decide whether a response may be read.
+export function isTrustedOrigin(origin: string): boolean {
+  return (
+    origin === 'tauri://localhost' ||
+    origin === 'https://tauri.localhost' ||
+    origin === 'http://tauri.localhost' ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  );
+}
+
+// CORS cannot stop a body-less cross-origin POST (no preflight, and headers go
+// on only after the handler ran) — this daemon has no other authentication.
+export function rejectUntrustedOrigin(req: Request): Response | null {
+  if (READ_ONLY_METHODS.has(req.method)) return null;
+  const origin = req.headers.get('origin');
+  // Browsers always send Origin on a state change; the CLI, MCP and curl never do.
+  if (origin === null || isTrustedOrigin(origin)) return null;
+  return errorResponse(403, 'cross-origin request rejected');
 }
 
 export async function handleApi(
@@ -1539,6 +2174,9 @@ export async function handleApi(
     .split('/')
     .filter(Boolean);
   const method = req.method;
+
+  const untrusted = rejectUntrustedOrigin(req);
+  if (untrusted !== null) return untrusted;
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
@@ -1571,6 +2209,48 @@ export async function handleApi(
       return await patchConfig(req, ctx);
     }
 
+    if (segments[0] === 'linear' && segments.length === 2) {
+      if (segments[1] === 'status' && method === 'GET') {
+        return jsonResponse(ctx.linearSync.status());
+      }
+      if (segments[1] === 'connect' && method === 'POST') {
+        return await connectLinear(req, ctx);
+      }
+      if (segments[1] === 'disconnect' && method === 'POST') {
+        return disconnectLinear(ctx);
+      }
+      if (segments[1] === 'teams' && method === 'GET') {
+        return await linearTeams(ctx);
+      }
+      // GET /api/linear/links — issue UUID -> { identifier, url }, so a client
+      // holding only `TaskMeta.external` can render a real "ENG-123" chip.
+      if (segments[1] === 'links' && method === 'GET') {
+        return jsonResponse(ctx.linearSync.links());
+      }
+      // POST /api/linear/import — bring down Linear issues that have no local
+      // task. Deliberately explicit: an ordinary sync never imports a backlog.
+      if (segments[1] === 'import' && method === 'POST') {
+        return jsonResponse(await ctx.linearSync.importIssues());
+      }
+      if (segments[1] === 'states' && method === 'GET') {
+        return await linearStates(ctx, url.searchParams.get('teamId'));
+      }
+      // POST /api/linear/sync — run a pass now. An optional `taskIds` array pushes exactly
+      // those tasks, bypassing the gate that keeps a first sync from flooding the workspace.
+      if (segments[1] === 'sync' && method === 'POST') {
+        const parsed = await readJsonBodyOptional(req);
+        if (!parsed.ok) return parsed.response;
+        const raw = parsed.value.taskIds;
+        if (
+          raw !== undefined &&
+          (!Array.isArray(raw) || !raw.every((v) => typeof v === 'string'))
+        ) {
+          return errorResponse(400, 'taskIds must be a list of strings');
+        }
+        return jsonResponse(await ctx.linearSync.syncOnce(raw));
+      }
+    }
+
     if (segments[0] === 'tasks') {
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(
@@ -1591,6 +2271,37 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await draftTask(req, ctx);
+      }
+      // Checked before the generic `:id` GET branch below, so "drafts"
+      // isn't treated as a task id.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'drafts' &&
+        method === 'GET'
+      ) {
+        return listDrafts(ctx);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'drafts' &&
+        method === 'GET'
+      ) {
+        return getDraft(ctx, segments[2]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'drafts' &&
+        method === 'DELETE'
+      ) {
+        return dismissDraft(ctx, segments[2]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[1] === 'drafts' &&
+        segments[3] === 'message' &&
+        method === 'POST'
+      ) {
+        return await sendDraftMessage(req, ctx, segments[2]);
       }
       if (
         segments.length === 3 &&
@@ -1622,6 +2333,64 @@ export async function handleApi(
       ) {
         return await createRun(req, ctx, segments[1]);
       }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review' &&
+        method === 'POST'
+      ) {
+        return await startTaskReview(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'verify' &&
+        method === 'POST'
+      ) {
+        return await startTaskVerification(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'verification' &&
+        method === 'GET'
+      ) {
+        return getTaskVerification(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'findings' &&
+        method === 'GET'
+      ) {
+        return listTaskFindings(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'fix-loop' &&
+        method === 'GET'
+      ) {
+        return getFixLoop(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'amend' &&
+        method === 'POST'
+      ) {
+        return await amendTask(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'fix-loop' &&
+        segments[3] === 'advance' &&
+        method === 'POST'
+      ) {
+        return await advanceFixLoop(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'findings' &&
+        segments[4] === 'adjudicate' &&
+        method === 'POST'
+      ) {
+        return await adjudicateFinding(req, ctx, segments[1], segments[3]);
+      }
     }
 
     if (segments[0] === 'runs') {
@@ -1629,6 +2398,13 @@ export async function handleApi(
         return jsonResponse(
           ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
         );
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'claims' &&
+        method === 'GET'
+      ) {
+        return listRunClaims(ctx);
       }
       if (segments.length === 2 && method === 'GET') {
         const result = ctx.orchestrator.getRun(segments[1]);
@@ -1660,6 +2436,29 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'evidence' &&
+        method === 'POST'
+      ) {
+        return await createRunEvidence(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'mutations' &&
+        method === 'POST'
+      ) {
+        return await createRunMutation(req, ctx, segments[1]);
+      }
+      // POST /api/runs/:id/resume — agent-death recovery: dispatches a fresh
+      // run into the same worktree, carrying the prior run's survey.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'resume' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.orchestrator.resumeRun(segments[1]), 201);
       }
       if (
         segments.length === 3 &&
@@ -1751,6 +2550,70 @@ export async function handleApi(
       ) {
         return await messageUser(req, ctx, segments[1]);
       }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'questions' &&
+        method === 'POST'
+      ) {
+        return await askQuestion(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'questions' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(ctx.questions.listOpen(segments[1]));
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'questions' &&
+        method === 'GET'
+      ) {
+        return await getQuestion(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'questions' &&
+        method === 'DELETE'
+      ) {
+        return withdrawQuestion(ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'questions' &&
+        segments[4] === 'answer' &&
+        method === 'POST'
+      ) {
+        return await answerQuestion(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'scope-requests' &&
+        method === 'POST'
+      ) {
+        return await requestScope(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'scope-requests' &&
+        method === 'GET'
+      ) {
+        return await getScopeRequest(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'scope-requests' &&
+        segments[4] === 'decide' &&
+        method === 'POST'
+      ) {
+        return await decideScopeRequest(req, ctx, segments[1], segments[3]);
+      }
+    }
+
+    // GET /api/questions — every open question across every run, for the
+    // app's "an agent is waiting on you" surfaces.
+    if (segments[0] === 'questions' && segments.length === 1) {
+      if (method === 'GET') return jsonResponse(ctx.questions.listOpen());
     }
 
     // GET /api/prs (item B): every open PR in the repo — see
@@ -1813,6 +2676,194 @@ export async function handleApi(
           .map((part) => decodeURIComponent(part))
           .join('/');
         return deleteBranch(ctx, branch, url);
+      }
+    }
+
+    // The Git page — status/log/branches/diff reads plus staging, committing,
+    // checkout, stash, and remote mutations against the main checkout.
+    if (segments[0] === 'git') {
+      if (
+        segments.length === 2 &&
+        segments[1] === 'status' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(await ctx.gitRepo.status());
+      }
+      if (segments.length === 2 && segments[1] === 'log' && method === 'GET') {
+        const limit = parseCountParam(url.searchParams.get('limit'));
+        if (limit === null)
+          return errorResponse(400, 'limit must be a non-negative integer');
+        const skip = parseCountParam(url.searchParams.get('skip'));
+        if (skip === null)
+          return errorResponse(400, 'skip must be a non-negative integer');
+        return jsonResponse(
+          await ctx.gitRepo.log({
+            ref: url.searchParams.get('ref') ?? undefined,
+            limit,
+            skip,
+          })
+        );
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'branches' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(await gitBranches(ctx));
+      }
+      if (segments.length === 2 && segments[1] === 'diff' && method === 'GET') {
+        return jsonResponse(
+          await ctx.gitRepo.diff({
+            staged: url.searchParams.get('staged') === '1',
+            path: url.searchParams.get('path') ?? undefined,
+          })
+        );
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'commit' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(
+          await ctx.gitRepo.diffCommit(decodeURIComponent(segments[2]))
+        );
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stage' &&
+        method === 'POST'
+      ) {
+        return await gitStage(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'unstage' &&
+        method === 'POST'
+      ) {
+        return await gitUnstage(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stage-hunk' &&
+        method === 'POST'
+      ) {
+        return await gitStageHunk(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'unstage-hunk' &&
+        method === 'POST'
+      ) {
+        return await gitUnstageHunk(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'discard' &&
+        method === 'POST'
+      ) {
+        return await gitDiscard(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'commit' &&
+        method === 'POST'
+      ) {
+        return await gitCommit(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'commit-message' &&
+        method === 'POST'
+      ) {
+        return await gitCommitMessage(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'checkout' &&
+        method === 'POST'
+      ) {
+        return await gitCheckout(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'branch' &&
+        method === 'POST'
+      ) {
+        return await gitCreateBranch(req, ctx);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'branch' &&
+        method === 'DELETE'
+      ) {
+        return await gitDeleteBranch(req, ctx, decodeURIComponent(segments[2]));
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stash' &&
+        method === 'POST'
+      ) {
+        return await gitStashPush(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'stash' &&
+        method === 'GET'
+      ) {
+        return jsonResponse(await ctx.gitRepo.stashList());
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'stash' &&
+        segments[2] === 'pop' &&
+        method === 'POST'
+      ) {
+        return await gitStashPop(req, ctx);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'stash' &&
+        segments[2] === 'drop' &&
+        method === 'POST'
+      ) {
+        return await gitStashDrop(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'fetch' &&
+        method === 'POST'
+      ) {
+        return await gitFetch(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'pull' &&
+        method === 'POST'
+      ) {
+        return gitMutationResponse(ctx, await ctx.gitRepo.pull(), {
+          alwaysBroadcast: true,
+        });
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'push' &&
+        method === 'POST'
+      ) {
+        return await gitPush(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'cherry-pick' &&
+        method === 'POST'
+      ) {
+        return await gitCherryPick(req, ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'revert' &&
+        method === 'POST'
+      ) {
+        return await gitRevert(req, ctx);
       }
     }
 
@@ -1882,6 +2933,27 @@ export async function handleApi(
         method === 'POST'
       ) {
         return enrichInbox(ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'findings') {
+      if (segments.length === 1 && method === 'GET') {
+        return listFindings(ctx, url);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await createFinding(req, ctx);
+      }
+      if (segments.length === 2 && method === 'PATCH') {
+        return await updateFinding(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'ledger') {
+      if (segments.length === 1 && method === 'GET') {
+        return listLedger(ctx, url);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await createLedgerEntry(req, ctx);
       }
     }
 

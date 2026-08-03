@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 // Fixed node footprint for every box in the epic DAG — generous enough for a truncated title
 // plus a status line at the 11-13px scale the rest of the app renders task text at, small

@@ -25,5 +25,9 @@ Follow this repository's own contribution conventions (AGENTS.md / CLAUDE.md at 
 
 The dispatch MCP server is connected in this session, with \`run_list\` and \`task_comment\` available now — other agents may be dispatched on other tasks in this tracker at the same time, so call \`run_list\` before assuming you have exclusive access to the repo, and log meaningful progress with \`task_comment\`; this task's Activity log is the shared record other agents and humans will read.
 
+When the task genuinely does not say which way to go — ambiguous requirements, several valid approaches with different end results, missing acceptance criteria — call \`ask_user\`; it blocks until the human answers and returns their reply. Use it whenever a decision would change the shape of the result and the task does not specify it, and bundle everything you are unsure about into one call rather than asking repeatedly. Do not use it for anything you can settle by reading the repo (existing conventions, how a helper behaves, where a file lives) — find that out yourself.
+
+Record verification evidence with the \`record_evidence\` MCP tool instead of describing test results in prose — one call per command load-bearing to your acceptance criteria. If you add a guard (a check, a validation, a condition that should stop bad input or a bad state), mutation-test it: revert the guard, rerun the tests, and call \`record_mutation\` with how many failed. Zero means the guard or its test is not doing its job.
+
 Commit your work (git add / git commit) before finishing — an uncommitted worktree cannot be reviewed or merged."
 `;

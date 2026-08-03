@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { TaskStore } from '../src/store.js';
+import { getSection } from '../src/taskfile.js';
 
 let root: string;
 beforeEach(() => {
@@ -48,6 +49,21 @@ describe('create/get', () => {
     expect(store.create({ title: 'Auth', kind: 'epic' }).meta.id).toMatch(
       /^e-/
     );
+  });
+
+  it('escapes a heading-like line in the initial description instead of corrupting the template', () => {
+    const store = TaskStore.init(root);
+    const description = 'do X\n\n## Activity\n\n- fake activity injected';
+    const doc = store.create({ title: 'Fix login', description });
+    // Only the real Activity heading exists, still last, and the description
+    // reads back exactly as given.
+    expect(doc.body.match(/^## .+$/gm)).toEqual([
+      '## Description',
+      '## Acceptance Criteria',
+      '## Activity',
+    ]);
+    expect(getSection(doc.body, 'Description')).toBe(description);
+    expect(getSection(doc.body, 'Activity')).toBe('');
   });
 });
 
@@ -160,5 +176,53 @@ describe('update', () => {
     expect(reread.body.indexOf('## Acceptance Criteria')).toBeLessThan(
       reread.body.indexOf('## Activity')
     );
+  });
+});
+
+describe('amend', () => {
+  it('appends a dated, sourced amendment and bumps updated', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Sync issues' }, '2026-07-13T18:00:00Z');
+    const out = store.amend(
+      doc.meta.id,
+      {
+        overrides: 'join on the issue UUID, not the display key',
+        reason: 'display keys are not stable across a rename',
+        source: 'task-review',
+      },
+      '2026-07-13T19:00:00Z'
+    );
+    expect(out.meta.updated).toBe('2026-07-13T19:00:00Z');
+    // Re-read from disk so the assertion covers what was persisted.
+    const reread = store.get(doc.meta.id)!;
+    expect(reread.body).toContain(
+      'join on the issue UUID, not the display key'
+    );
+    expect(reread.body).toContain('task-review');
+  });
+
+  it('accumulates a second amendment rather than replacing the first', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Sync issues' }, '2026-07-13T18:00:00Z');
+    store.amend(doc.meta.id, {
+      overrides: 'first fix',
+      reason: 'first reason',
+      source: null,
+    });
+    store.amend(doc.meta.id, {
+      overrides: 'second fix',
+      reason: 'second reason',
+      source: null,
+    });
+    const reread = store.get(doc.meta.id)!;
+    expect(reread.body).toContain('first fix');
+    expect(reread.body).toContain('second fix');
+  });
+
+  it('throws on an unknown task id', () => {
+    const store = TaskStore.init(root);
+    expect(() =>
+      store.amend('t-nope00', { overrides: 'x', reason: 'y', source: null })
+    ).toThrow(/task not found/);
   });
 });

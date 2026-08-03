@@ -8,6 +8,7 @@ const TERMINAL_RUN_STATES: ReadonlySet<RunState> = new Set([
   'finished',
   'failed',
   'cancelled',
+  'interrupted-dirty',
 ]);
 
 export function isTerminalRunState(state: RunState): boolean {

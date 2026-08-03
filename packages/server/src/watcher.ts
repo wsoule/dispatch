@@ -36,3 +36,44 @@ export function watchTasks(tasksDir: string, onChange: () => void): Watcher {
     },
   };
 }
+
+// Watches each of `dirs` recursively; a dir that fails to watch is skipped.
+// `shouldIgnore` filters events by path, e.g. a build's own dist/ output.
+export function watchSourceDirs(
+  dirs: string[],
+  onChange: () => void,
+  shouldIgnore: (changedPath: string) => boolean = () => false
+): Watcher {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const schedule = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      onChange();
+    }, DEBOUNCE_MS);
+  };
+  const watchers = dirs.flatMap((dir) => {
+    if (!existsSync(dir)) return [];
+    try {
+      return [
+        watch(dir, { recursive: true }, (_event, filename) => {
+          if (filename !== null && shouldIgnore(filename)) return;
+          schedule();
+        }),
+      ];
+    } catch (err) {
+      // Logged, not swallowed: a dropped watch (e.g. an inotify limit) leaves
+      // the depmap silently stale otherwise.
+      console.error(
+        `dispatchd: failed to watch ${dir} for source changes: ${(err as Error).message}`
+      );
+      return [];
+    }
+  });
+  return {
+    close() {
+      if (timer !== null) clearTimeout(timer);
+      for (const w of watchers) w.close();
+    },
+  };
+}

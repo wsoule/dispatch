@@ -11,16 +11,20 @@ import { generateTaskId } from './ids.js';
 import { slugify } from './slug.js';
 import {
   appendActivity,
+  appendAmendment,
+  escapeHeadingLines,
   parseTaskFile,
   serializeTaskFile,
   setSection,
 } from './taskfile.js';
+import type { Amendment } from './taskfile.js';
 import type {
   Assignee,
   Priority,
   TaskDoc,
   TaskKind,
   TaskMeta,
+  TaskRisk,
 } from './types.js';
 
 export const DISPATCH_DIR = '.dispatch';
@@ -41,6 +45,9 @@ export interface CreateInput {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  writes?: string[];
+  risk?: TaskRisk;
+  model?: string | null;
 }
 
 export interface UpdatePatch {
@@ -53,13 +60,20 @@ export interface UpdatePatch {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  writes?: string[];
+  risk?: TaskRisk;
+  // null clears a per-task override, falling back to config.models.
+  model?: string | null;
+  // The id of this task in an external tracker (`linear:<uuid>`), or null to unlink it.
+  external?: string | null;
   // null clears archivedAt (unarchive); a string sets it; undefined leaves it untouched.
   archivedAt?: string | null;
+  // Set once a verify run passes. Never cleared by a patch — a later failing
+  // verify run leaves it exactly as it was.
+  exercised?: boolean;
   appendActivity?: string;
-  // Free-text body sections (edited as whole-section replacements via
-  // taskfile.ts's setSection), so the app can edit a task's Description and
-  // Acceptance Criteria the same way it edits frontmatter fields. Unlike the
-  // meta fields above these live in the markdown body, not the frontmatter.
+  // Free-text body sections (replaced via taskfile.ts's setSection), edited
+  // the same way as frontmatter fields but living in the markdown body.
   description?: string;
   acceptanceCriteria?: string;
 }
@@ -123,8 +137,15 @@ export class TaskStore {
       updated: now,
       external: null,
       selfReview: input.selfReview ?? true,
+      writes: input.writes ?? [],
+      risk: input.risk ?? 'routine',
+      model: input.model ?? null,
+      exercised: false,
     };
-    const body = `\n## Description\n\n${input.description ?? ''}\n\n## Acceptance Criteria\n\n## Activity\n`;
+    // The initial description is caller-supplied, so it's escaped the same
+    // way setSection escapes a later edit to the same section.
+    const description = escapeHeadingLines(input.description ?? '');
+    const body = `\n## Description\n\n${description}\n\n## Acceptance Criteria\n\n## Activity\n`;
     const doc: TaskDoc = { meta, body };
     writeFileSync(
       join(this.tasksDir, `${id}-${slugify(input.title)}.md`),
@@ -149,11 +170,8 @@ export class TaskStore {
     return this.filterAndSort(docs, filter);
   }
 
-  // Same scan as list(), but a file that fails to parse (corrupt frontmatter,
-  // missing required field, etc.) is collected as an error instead of
-  // throwing and aborting the whole scan — callers that must keep serving the
-  // rest of the task set even when one file is bad (the daemon's cache
-  // rebuild) use this instead of list().
+  // Same scan as list(), but a bad file is collected as an error instead of
+  // aborting the scan — used where one bad file must not stop the rest.
   listSafe(filter: ListFilter = {}): ListSafeResult {
     if (!this.isInitialized()) return { docs: [], errors: [] };
     const docs: TaskDoc[] = [];
@@ -172,9 +190,8 @@ export class TaskStore {
     return { docs: this.filterAndSort(docs, filter), errors };
   }
 
-  // Shared filter + sort semantics for list() and listSafe(): filter by
-  // status/kind/parent, then sort by created timestamp (ties broken by id) so
-  // both methods return tasks in the same stable order.
+  // Shared filter + sort for list()/listSafe(): by status/kind/parent, then
+  // by created timestamp (ties broken by id), so both return the same order.
   private filterAndSort(docs: TaskDoc[], filter: ListFilter): TaskDoc[] {
     return docs
       .filter((d) =>
@@ -200,9 +217,8 @@ export class TaskStore {
     const file = this.taskFilePath(id);
     if (!file) throw new Error(`task not found: ${id}`);
     const doc = parseTaskFile(readFileSync(file, 'utf8'), file);
-    // `description`/`acceptanceCriteria` and `appendActivity` target the
-    // markdown body, not the frontmatter, so they're pulled out here and never
-    // spread into `meta` — only the remaining fields are frontmatter.
+    // description/acceptanceCriteria/appendActivity target the markdown body,
+    // not the frontmatter, so they're pulled out before the meta spread below.
     const {
       appendActivity: activityLine,
       description,
@@ -226,6 +242,22 @@ export class TaskStore {
       body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
     if (activityLine) body = appendActivity(body, activityLine);
     const next: TaskDoc = { meta, body };
+    writeFileSync(file, serializeTaskFile(next));
+    return next;
+  }
+
+  // Records a dated, sourced correction against a task's spec, additive to
+  // whatever amendments already exist rather than replacing them.
+  amend(
+    id: string,
+    input: Omit<Amendment, 'date'>,
+    now: string = new Date().toISOString()
+  ): TaskDoc {
+    const file = this.taskFilePath(id);
+    if (!file) throw new Error(`task not found: ${id}`);
+    const doc = parseTaskFile(readFileSync(file, 'utf8'), file);
+    const body = appendAmendment(doc.body, { ...input, date: now });
+    const next: TaskDoc = { meta: { ...doc.meta, updated: now }, body };
     writeFileSync(file, serializeTaskFile(next));
     return next;
   }

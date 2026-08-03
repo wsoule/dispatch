@@ -6,8 +6,9 @@ import type {
   TaskDoc,
   TaskKind,
   TaskMeta,
+  TaskRisk,
 } from './types.js';
-import { ASSIGNEES, KINDS, PRIORITIES } from './types.js';
+import { ASSIGNEES, KINDS, PRIORITIES, TASK_RISKS } from './types.js';
 
 export class TaskParseError extends Error {
   constructor(
@@ -62,7 +63,16 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw['archived-at'] != null && typeof raw['archived-at'] !== 'string') {
     throw new TaskParseError(`invalid archived-at: expected a string`, file);
   }
-  for (const key of ['blocked-by', 'labels'] as const) {
+  if (raw.exercised != null && typeof raw.exercised !== 'boolean') {
+    throw new TaskParseError(`invalid exercised: expected a boolean`, file);
+  }
+  if (raw.risk != null && !TASK_RISKS.includes(raw.risk as TaskRisk)) {
+    throw new TaskParseError(`invalid risk: ${String(raw.risk)}`, file);
+  }
+  if (raw.model != null && typeof raw.model !== 'string') {
+    throw new TaskParseError(`invalid model: expected a string`, file);
+  }
+  for (const key of ['blocked-by', 'labels', 'writes'] as const) {
     const value = raw[key];
     if (
       value != null &&
@@ -91,6 +101,10 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     // Absent means on: self-review is the default, so a file only carries the key once the
     // task has explicitly opted out (see serializeTaskFile).
     selfReview: (raw['self-review'] as boolean | undefined) ?? true,
+    writes: (raw.writes as string[] | undefined) ?? [],
+    risk: (raw.risk as TaskRisk | undefined) ?? 'routine',
+    model: raw.model ?? null,
+    exercised: (raw.exercised as boolean | undefined) ?? false,
     ...(raw['archived-at'] == null ? {} : { archivedAt: raw['archived-at'] }),
   };
   return { meta, body: content.slice(m[0].length) };
@@ -112,13 +126,18 @@ export function serializeTaskFile(doc: TaskDoc): string {
     created: meta.created,
     updated: meta.updated,
     external: meta.external,
-    // Only the opt-out is written. Self-review is the default, so omitting the key on the
-    // common (enabled) case keeps a plain task's frontmatter free of a line that just restates
-    // the default — the same reason the parser treats an absent key as `true`.
+    // Only the opt-out is written — self-review defaults to true, so an
+    // absent key already means "on," matching how the parser treats it.
     ...(meta.selfReview ? {} : { 'self-review': false }),
+    // Unlike blocked-by/labels, an empty writes list is meaningful ("declared
+    // nothing") rather than "unset", so it always serializes.
+    writes: meta.writes,
+    ...(meta.risk === 'routine' ? {} : { risk: meta.risk }),
+    ...(meta.model === null ? {} : { model: meta.model }),
     ...(meta.archivedAt === undefined
       ? {}
       : { 'archived-at': meta.archivedAt }),
+    ...(meta.exercised ? { exercised: true } : {}),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }
@@ -139,25 +158,37 @@ function splitSections(body: string): {
   return { preamble: parts[0], sections };
 }
 
+// Escapes a line that looks like a `## ` section boundary, so stored
+// content can't be mistaken for one by splitSections on the next parse.
+export function escapeHeadingLines(content: string): string {
+  return content
+    .split('\n')
+    .map((line) => (/^\\*## /.test(line) ? `\\${line}` : line))
+    .join('\n');
+}
+
+// The read-side inverse of escapeHeadingLines.
+function unescapeHeadingLines(content: string): string {
+  return content
+    .split('\n')
+    .map((line) => (/^\\+## /.test(line) ? line.slice(1) : line))
+    .join('\n');
+}
+
 /**
  * Reads the text under a `## <heading>` section, trimmed. The read counterpart
  * of `setSection`; `''` when the heading is absent or has nothing under it.
  */
 export function getSection(body: string, heading: string): string {
   const { sections } = splitSections(body);
-  return sections.find((s) => s.heading === heading)?.content.trim() ?? '';
+  const content =
+    sections.find((s) => s.heading === heading)?.content.trim() ?? '';
+  return unescapeHeadingLines(content);
 }
 
 /**
- * Replaces the text under a `## <heading>` section of the body, preserving
- * every other section and their order. Used to make the free-text body
- * sections (Description, Acceptance Criteria) editable from the app the same
- * way frontmatter fields already are, without the caller having to
- * hand-splice markdown. If the heading doesn't exist yet it's inserted before
- * `## Activity` (so the append-only activity log stays last, matching the
- * create template) or appended when there's no Activity section. `content` is
- * trimmed and re-wrapped in the template's blank-line spacing so repeated
- * edits round-trip to stable output.
+ * Replaces a `## <heading>` section's text, preserving the other sections and
+ * their order; inserts a missing heading before `## Activity` (or appends it).
  */
 export function setSection(
   body: string,
@@ -167,10 +198,10 @@ export function setSection(
   const { preamble, sections } = splitSections(body);
 
   const trimmed = content.trim();
-  // The template wraps a section's text in a blank line on each side; an empty
-  // section collapses to just those blank lines so the next heading still has
-  // breathing room.
-  const wrapped = trimmed === '' ? '\n\n' : `\n\n${trimmed}\n\n`;
+  // A line in `trimmed` that looks like a boundary is escaped before storage
+  // — otherwise a future parse would split on it (see escapeHeadingLines).
+  const escaped = escapeHeadingLines(trimmed);
+  const wrapped = trimmed === '' ? '\n\n' : `\n\n${escaped}\n\n`;
 
   const existing = sections.find((s) => s.heading === heading);
   if (existing !== undefined) {
@@ -190,9 +221,60 @@ export function setSection(
  * body (the store's create template guarantees this).
  */
 export function appendActivity(body: string, line: string): string {
-  const entry = `- ${line}`;
+  // `line` is caller-supplied text (e.g. an agent's task_comment) appended
+  // straight onto the body, so it's escaped the same as setSection's content.
+  const entry = `- ${escapeHeadingLines(line)}`;
   if (!/^## Activity\s*$/m.test(body)) {
     return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
   }
   return `${body.trimEnd()}\n${entry}\n`;
+}
+
+/**
+ * Removes a `## <heading>` section entirely, heading included — unlike
+ * `setSection(body, heading, '')`, which leaves an empty heading in place.
+ */
+export function removeSection(body: string, heading: string): string {
+  const { preamble, sections } = splitSections(body);
+  return (
+    preamble +
+    sections
+      .filter((s) => s.heading !== heading)
+      .map((s) => `## ${s.heading}${s.content}`)
+      .join('')
+  );
+}
+
+// A correction recorded against a task's spec after the fact — what changes,
+// why, and (optionally) where the correction came from.
+export interface Amendment {
+  date: string;
+  reason: string;
+  overrides: string;
+  source: string | null;
+}
+
+// One amendment as a dated markdown block; `formatAmendment` output is joined
+// by `appendAmendment` so a task can accumulate more than one over time.
+function formatAmendment(amendment: Amendment): string {
+  const lines = [
+    `### ${amendment.date}`,
+    `**Overrides:** ${amendment.overrides}`,
+    `**Reason:** ${amendment.reason}`,
+  ];
+  if (amendment.source !== null) {
+    lines.push(`**Source:** ${amendment.source}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Appends a new amendment to the `## Amendments` section, keeping every prior
+ * one — corrections accumulate rather than overwrite a task's history.
+ */
+export function appendAmendment(body: string, amendment: Amendment): string {
+  const existing = getSection(body, 'Amendments');
+  const entry = formatAmendment(amendment);
+  const content = existing === '' ? entry : `${existing}\n\n${entry}`;
+  return setSection(body, 'Amendments', content);
 }

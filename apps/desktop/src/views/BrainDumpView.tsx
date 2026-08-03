@@ -1,13 +1,32 @@
 import type { InboxClusterGroup, InboxItem, InboxKind } from '@dispatch/client';
-import { Bot, Combine, Inbox, Sparkles, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import {
+  Bot,
+  CircleHelp,
+  Combine,
+  Inbox,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { EnrichReview } from '../components/tasks/EnrichReview';
 import { SectionLabel } from '../components/ui/SectionLabel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type { EnrichDraft } from '../lib/enrichReview';
+import { enrichViewState, formatEnrichedInboxText } from '../lib/enrichReview';
+import { shouldRecluster } from '../lib/inboxAutoCluster';
 import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
+
+// Mirrors InboxClusterer's own MIN_ITEMS (packages/server/src/inboxClusterer.ts) — the sidebar
+// copy and the auto-cluster trigger must agree on this threshold.
+const CLUSTER_MIN_ITEMS = 3;
+// Settling time before auto-clustering fires, so a fast typist doesn't trigger a call per line.
+const CLUSTER_DEBOUNCE_MS = 1500;
 
 interface BrainDumpViewProps {
   data: DispatchProjectData;
@@ -45,16 +64,56 @@ export function BrainDumpView({
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The model-backed grouping is a separate, explicit act from the free local hint below, so it
-  // gets its own state: null until asked, [] once asked and told there is nothing related.
+  // Clustering runs automatically (see the effects below); `clusterError` deliberately isn't
+  // routed through `error` above — a background pass failing must not read as a hard failure.
   const [groups, setGroups] = useState<InboxClusterGroup[] | null>(null);
   const [grouping, setGrouping] = useState(false);
+  const [clusterError, setClusterError] = useState<string | null>(null);
+  // The id set the last cluster call covered, and the set the current in-flight call is for —
+  // feed `shouldRecluster` and the staleness guard inside `runCluster` below.
+  const lastClusteredIdsRef = useRef<string[] | null>(null);
+  const inFlightIdsRef = useRef<string[] | null>(null);
+  // Always points at this render's `runCluster`, so the debounce effect can call the latest
+  // closure without listing it as a dependency (its identity churns every render via `data`).
+  const runClusterRef = useRef<(ids: string[]) => void>(() => {});
 
   const inbox = data.inbox;
   const open = useMemo(() => inbox.filter((i) => !i.done), [inbox]);
   const sorted = useMemo(() => inbox.filter((i) => i.done), [inbox]);
   const cluster = useMemo(() => findCluster(inbox), [inbox]);
+  const openItemIds = useMemo(() => open.map((i) => i.id), [open]);
   const pendingLines = splitCaptureLines(draft).length;
+
+  // The one in-flight/last "Add detail" draft this view can show — mirrors `enrichPlanRecord`'s
+  // single-slot shape on the task dialog; `enrichItemId` says which row it belongs to.
+  const enrichItemId = data.inboxEnrichItemId;
+  const enrichState = enrichViewState(data.inboxEnrichPlanRecord);
+
+  // Keeps runClusterRef current every render (see its own comment above). Both effects below
+  // must run unconditionally, above the early return, so hook order never depends on the daemon.
+  useEffect(() => {
+    runClusterRef.current = runCluster;
+  });
+
+  // Automatic grouping, debounced after the open-item set changes. `grouping`
+  // is in the deps so a settled call re-runs this instead of racing a second.
+  useEffect(() => {
+    if (grouping) return;
+    if (
+      !shouldRecluster(
+        openItemIds,
+        lastClusteredIdsRef.current,
+        CLUSTER_MIN_ITEMS
+      )
+    ) {
+      return;
+    }
+    const timer = setTimeout(
+      () => runClusterRef.current(openItemIds),
+      CLUSTER_DEBOUNCE_MS
+    );
+    return () => clearTimeout(timer);
+  }, [openItemIds, grouping]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -107,16 +166,28 @@ export function BrainDumpView({
     });
   }
 
-  function findRelated(): void {
+  // Runs one cluster call, shared by the auto effect and the manual refresh button. Refuses a
+  // second concurrent call, and drops a response once `ids` is no longer the tracked set.
+  function runCluster(ids: string[]): void {
+    if (grouping) return; // one call in flight at a time — a second would be a second bill
+    inFlightIdsRef.current = ids;
     setGrouping(true);
-    setError(null);
     void (async () => {
       try {
-        setGroups(await data.handleClusterInbox());
+        const { groups: result, error: clusterErr } =
+          await data.handleClusterInbox();
+        if (inFlightIdsRef.current !== ids) return; // superseded — drop it
+        lastClusteredIdsRef.current = ids;
+        setClusterError(clusterErr);
+        // A failed/timed-out background pass keeps whatever grouping was last shown rather
+        // than blanking it out from under the user.
+        if (clusterErr === null) setGroups(result);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (inFlightIdsRef.current !== ids) return;
+        lastClusteredIdsRef.current = ids;
+        setClusterError(err instanceof Error ? err.message : String(err));
       } finally {
-        setGrouping(false);
+        if (inFlightIdsRef.current === ids) setGrouping(false);
       }
     })();
   }
@@ -124,6 +195,16 @@ export function BrainDumpView({
   function addDetail(id: string): void {
     void guard(async () => {
       await data.handleEnrichInboxItem(id);
+    });
+  }
+
+  // Writes the drafted description/criteria back onto the item's `text` and drops the draft.
+  function applyEnrichDraft(id: string, enrichDraft: EnrichDraft): void {
+    void guard(async () => {
+      await data.handleApplyInboxEnrich(
+        id,
+        formatEnrichedInboxText(enrichDraft)
+      );
     });
   }
 
@@ -226,17 +307,55 @@ export function BrainDumpView({
           ) : (
             <ul className="mt-2 flex flex-col gap-1">
               {open.map((it) => (
-                <InboxRow
-                  key={it.id}
-                  item={it}
-                  selected={selected.has(it.id)}
-                  busy={busy}
-                  onToggle={() => toggle(it.id)}
-                  onMakeTask={() => convert([it.id])}
-                  onAddDetail={() => addDetail(it.id)}
-                  onPlan={() => onPlanText(it.text)}
-                  onDismiss={() => dismiss([it.id])}
-                />
+                <Fragment key={it.id}>
+                  <InboxRow
+                    item={it}
+                    selected={selected.has(it.id)}
+                    busy={busy}
+                    enriching={
+                      enrichItemId === it.id && enrichState.kind === 'running'
+                    }
+                    onToggle={() => toggle(it.id)}
+                    onMakeTask={() => convert([it.id])}
+                    onAddDetail={() => addDetail(it.id)}
+                    onPlan={() => onPlanText(it.text)}
+                    onDismiss={() => dismiss([it.id])}
+                  />
+                  {/* The draft belongs to at most one row at a time — rendered right under it,
+                  not in a modal, so applying or dismissing stays in the flow of the list. */}
+                  {enrichItemId === it.id && enrichState.kind !== 'idle' && (
+                    <li className="px-1 pb-1.5">
+                      {enrichState.kind === 'running' && (
+                        <p className="text-muted-foreground text-[12.5px]">
+                          Reading the repo…
+                        </p>
+                      )}
+                      {enrichState.kind === 'failed' && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-state-failed text-[12.5px]">
+                            {enrichState.error}
+                          </span>
+                          <BarButton onClick={data.handleDismissInboxEnrich}>
+                            Dismiss
+                          </BarButton>
+                        </div>
+                      )}
+                      {enrichState.kind === 'ready' && (
+                        <EnrichReview
+                          draft={enrichState.draft}
+                          applying={busy}
+                          applyLabel="Apply"
+                          discardLabel="Dismiss"
+                          note="Applying replaces the captured line above."
+                          onApply={() =>
+                            applyEnrichDraft(it.id, enrichState.draft)
+                          }
+                          onDiscard={data.handleDismissInboxEnrich}
+                        />
+                      )}
+                    </li>
+                  )}
+                </Fragment>
               ))}
             </ul>
           )}
@@ -309,29 +428,52 @@ export function BrainDumpView({
         )}
 
         <div>
-          {/* Two passes, deliberately distinct. The hint above is free and instant but can only
-              see shared words; this one asks a model and so costs a call and a moment, which is
-              why it is a button rather than something that fires on its own. */}
+          {/* The free hint above is instant; this one asks a model, so it runs automatically
+              rather than on a click. The refresh icon is the manual escape hatch. */}
           <SectionLabel
             trailing={
-              <button
-                type="button"
-                onClick={findRelated}
-                disabled={grouping || open.length < 3}
-                className="text-accent-foreground text-[11px] disabled:opacity-40"
-              >
-                {grouping ? 'Looking…' : 'Find related'}
-              </button>
+              <span className="flex items-center gap-1.5">
+                {grouping && (
+                  <span className="text-muted-foreground text-[11px]">
+                    Grouping…
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => runCluster(openItemIds)}
+                  disabled={grouping || openItemIds.length < CLUSTER_MIN_ITEMS}
+                  aria-label={
+                    clusterError !== null
+                      ? `Refresh groups (last attempt failed: ${clusterError})`
+                      : 'Refresh groups'
+                  }
+                  title={
+                    clusterError !== null
+                      ? `Last attempt failed: ${clusterError}`
+                      : 'Refresh groups'
+                  }
+                  className={cn(
+                    'rounded p-0.5 disabled:opacity-40',
+                    clusterError !== null
+                      ? 'text-state-failed'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <RefreshCw
+                    className={cn('size-3.5', grouping && 'animate-spin')}
+                  />
+                </button>
+              </span>
             }
           >
             Group into epics
           </SectionLabel>
           {groups === null ? (
-            <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
-              {open.length < 3
-                ? 'Capture a few more and this can look for things that belong together.'
-                : 'Reads your captures and suggests which ones are really one piece of work.'}
-            </p>
+            openItemIds.length < CLUSTER_MIN_ITEMS ? (
+              <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
+                Capture a few more to enable grouping.
+              </p>
+            ) : null
           ) : groups.length === 0 ? (
             <p className="text-muted-foreground mt-2 text-[12.5px]">
               Nothing here looks related.
@@ -376,6 +518,66 @@ export function BrainDumpView({
           )}
         </div>
 
+        {/* The explainer prose that used to sit here permanently now lives behind one
+            hover/focus-reachable footer affordance — see ExplainerPopover below. */}
+        <div className="mt-auto flex justify-center">
+          <ExplainerPopover />
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+// Reveals the explainer prose on hover, click, or keyboard focus — controlled state, since
+// Radix's Popover only opens on click by default. Escape or a click outside dismisses it.
+function ExplainerPopover() {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Moving the pointer away must not close an explainer the user tabbed or clicked into,
+  // which would otherwise leave a focused trigger with nothing showing.
+  function closeUnlessTriggerFocused() {
+    if (document.activeElement !== triggerRef.current) setOpen(false);
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          ref={triggerRef}
+          type="button"
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={closeUnlessTriggerFocused}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          // Suppresses Radix's own click-to-toggle, which would close a popover that
+          // hovering or focusing the button has already opened.
+          onClick={(e) => e.preventDefault()}
+          className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]"
+        >
+          <CircleHelp className="size-3.5" />
+          What is this?
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="center"
+        // Radix would focus the content on open, blurring the trigger and closing this
+        // straight back up; keeping focus on the trigger is what makes Tab reveal it.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={closeUnlessTriggerFocused}
+        className="flex flex-col gap-3.5"
+      >
+        <div>
+          <SectionLabel>Group into epics</SectionLabel>
+          <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
+            Reads your captures and suggests which ones are really one piece of
+            work — automatically, a moment after what you've captured changes.
+            Use the refresh icon to force another look.
+          </p>
+        </div>
         <div>
           <SectionLabel>How this works</SectionLabel>
           <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
@@ -385,15 +587,14 @@ export function BrainDumpView({
             your repo — edit it by hand any time.
           </p>
         </div>
-
         <div>
           <SectionLabel>Keys</SectionLabel>
           <dl className="mt-2 flex flex-col gap-1.5">
             <Key combo="⌘⏎" what="drop into the inbox" />
           </dl>
         </div>
-      </aside>
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -433,6 +634,7 @@ function InboxRow({
   item,
   selected,
   busy,
+  enriching,
   onToggle,
   onMakeTask,
   onAddDetail,
@@ -442,6 +644,9 @@ function InboxRow({
   item: InboxItem;
   selected: boolean;
   busy: boolean;
+  /** Whether this row's own "Add detail" draft is currently being drafted — disables and
+   * relabels just its button, distinct from `busy` (every button in the view). */
+  enriching: boolean;
   onToggle: () => void;
   onMakeTask: () => void;
   onAddDetail: () => void;
@@ -490,8 +695,8 @@ function InboxRow({
         </BarButton>
         {/* Sends this one line to the planner to be turned into a properly specified task —
             the thing a one-liner is missing is context, not wording. */}
-        <BarButton onClick={onAddDetail} disabled={busy}>
-          Add detail
+        <BarButton onClick={onAddDetail} disabled={busy || enriching}>
+          {enriching ? 'Reading the repo…' : 'Add detail'}
         </BarButton>
         <BarButton onClick={onPlan} disabled={busy}>
           Plan it

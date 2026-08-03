@@ -9,7 +9,11 @@ import type {
 } from '../apiClient.js';
 import { createApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
-import { formatEpicProgress, formatProposal } from '../orchestrateFormat.js';
+import {
+  formatEpicProgress,
+  formatPlanNeedsReply,
+  formatProposal,
+} from '../orchestrateFormat.js';
 import { singleFlight } from '../singleFlight.js';
 import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
@@ -26,14 +30,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Polls `GET /api/plan/:id` until the planner leaves 'running' (ready or
-// failed), for callers that didn't ask to watch this over WS. The plan spec
-// allows either WS or poll for this — polling keeps `dispatch plan` simple
-// and avoids opening a socket for what's usually a few-second wait.
-//
-// M6: exported so tests can drive it directly against a scripted ApiClient
-// (packages/cli/test/plan-poll.test.ts) instead of needing a real planner
-// that takes `timeoutMs` to actually settle.
+// Polls `GET /api/plan/:id` until the planner leaves 'running'. Polling keeps
+// `dispatch plan` simple rather than opening a socket for a few-second wait.
 export async function pollUntilSettled(
   client: ApiClient,
   planId: string,
@@ -45,35 +43,15 @@ export async function pollUntilSettled(
     if (record.state !== 'running') return record;
     await sleep(200);
   } while (Date.now() < deadline);
-  // M6: a plan that never settles isn't a dead end — the planner keeps
-  // running server-side regardless of this CLI invocation giving up on it,
-  // so point at the one command that can still check on it later.
+  // The planner keeps running server-side after this invocation gives up, so
+  // point at the command that can still check on it later.
   throw new CliError(
     `plan ${planId} has not settled after ${timeoutMs}ms — check it later with: dispatch plan show ${planId}`
   );
 }
 
-// Watches an epic dispatch session over WS and resolves once a fetched
-// progress snapshot reports `active: false` (the session ended — see
-// EpicEngine.completeEpic). Mirrors commands/orchestrate.ts's
-// createRunWatcher in every structural way that matters:
-//
-// - M4: `fetchProgress` is wrapped in `singleFlight` so however many
-//   `task.changed`/`run.changed` events land close together (a review
-//   merge touches both) collapse into exactly one HTTP call in flight at a
-//   time, never a race between overlapping ones — and its rejection is
-//   always routed through `fail()`, never left as a bare fire-and-forget
-//   `.catch`-less promise that could crash the process with an unhandled
-//   rejection if the daemon died mid-fetch.
-// - I2(a): refetches on every successful (re)connect (`onOpen`), not only
-//   on a WS event — the only way to recover a completion that happened
-//   during a disconnected gap.
-// - I2(b)/C1: `onGiveUp` rejects `waitForExit()` with a CliError instead of
-//   reconnecting forever; every caller MUST wrap this in try/finally and
-//   call `dispose()` unconditionally, exactly like createRunWatcher.
-//
-// `connectOptions` is exposed only for tests (packages/cli/test/
-// epic-watcher.test.ts); production callers never pass it.
+// Watches an epic dispatch session over WS and resolves once a progress snapshot reports
+// `active: false`. Callers MUST wrap it in try/finally and always call `dispose()`.
 export function createEpicWatcher(
   baseUrl: string,
   fetchProgress: () => Promise<EpicProgress>,
@@ -90,8 +68,8 @@ export function createEpicWatcher(
     resolveExit = resolve;
     rejectExit = reject;
   });
-  // See createRunWatcher's identical guard: makes the rejection never
-  // "unhandled" regardless of whether/when the caller awaits waitForExit().
+  // Keeps the rejection from ever being "unhandled" regardless of when the
+  // caller awaits waitForExit().
   exitPromise.catch(() => {});
 
   function fail(err: Error): void {
@@ -143,7 +121,8 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .description('Turn a prompt into a proposed epic + tasks');
   plan.addHelpText(
     'after',
-    '\nStart a plan with:\n  dispatch plan <prompt...> [--planner claude|fake] [--json] [--yes]'
+    '\nStart a plan with:\n  dispatch plan <prompt...> [--planner claude|fake] [--json] [--yes]' +
+      '\nAnswer the planner with:\n  dispatch plan reply <planId> <message...>'
   );
 
   plan
@@ -187,8 +166,20 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
           throw new CliError(`plan failed: ${record.error ?? 'unknown error'}`);
         }
         const proposal = record.proposal;
+        // A first turn can settle 'ready' with clarifying questions and no
+        // proposal — show them and the reply command instead of a bare error.
         if (proposal === undefined) {
-          throw new CliError(`plan ${record.id} has no proposal`);
+          ctx.log(
+            opts.json === true
+              ? JSON.stringify(record, null, 2)
+              : formatPlanNeedsReply(record)
+          );
+          if (opts.yes === true) {
+            throw new CliError(
+              `plan ${record.id} is waiting on your answer — nothing was confirmed`
+            );
+          }
+          return;
         }
 
         if (opts.yes === true) {
@@ -236,7 +227,9 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
         const record = await client.getPlan(planId);
         if (record.proposal === undefined) {
           throw new CliError(
-            `plan ${planId} has no proposal to confirm (state: ${record.state})`
+            record.questions.length > 0
+              ? `plan ${planId} is waiting on ${record.questions.length} question(s) — see them with: dispatch plan show ${planId}`
+              : `plan ${planId} has no proposal to confirm (state: ${record.state})`
           );
         }
         proposal = record.proposal;
@@ -250,9 +243,8 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
       );
     });
 
-  // M6: the follow-up `dispatch plan` itself points at once a plan hasn't
-  // settled within `--timeout` — also useful any time later, for a plan
-  // that settled long after the original `dispatch plan` invocation ended.
+  // The follow-up `dispatch plan` points at when a plan hasn't settled within
+  // `--timeout`, and for checking back on one later.
   plan
     .command('show <planId>')
     .option('--json')
@@ -270,10 +262,61 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
           `plan ${record.id}: ${record.state}` +
             (record.error !== undefined ? ` — ${record.error}` : '')
         );
+        if (record.state === 'ready') ctx.log(formatPlanNeedsReply(record));
         return;
       }
       ctx.log(formatProposal(record.proposal));
     });
+
+  // Answers a planner's clarifying questions (or refines a proposal) without
+  // leaving the CLI — one more turn on the same plan conversation.
+  plan
+    .command('reply <planId> <message...>')
+    .option('--json')
+    .option(
+      '--timeout <seconds>',
+      'how long to poll for the turn to settle before giving up',
+      '60'
+    )
+    .action(
+      async (
+        planId: string,
+        messageParts: string[],
+        opts: { json?: boolean; timeout: string }
+      ) => {
+        const baseUrl = await baseUrlFor(ctx);
+        const client = createApiClient(baseUrl);
+        const timeoutSeconds = Number(opts.timeout);
+        if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+          throw new CliError(
+            `invalid --timeout: ${opts.timeout} (expected a positive number of seconds)`
+          );
+        }
+
+        await client.sendPlanMessage(planId, messageParts.join(' '));
+        const record = await pollUntilSettled(
+          client,
+          planId,
+          timeoutSeconds * 1000
+        );
+        if (record.state === 'failed') {
+          throw new CliError(`plan failed: ${record.error ?? 'unknown error'}`);
+        }
+        if (opts.json === true) {
+          ctx.log(JSON.stringify(record, null, 2));
+          return;
+        }
+        ctx.log(
+          record.proposal === undefined
+            ? formatPlanNeedsReply(record)
+            : [
+                formatProposal(record.proposal),
+                '',
+                `dispatch plan confirm ${record.id}`,
+              ].join('\n')
+        );
+      }
+    );
 
   const epic = program
     .command('epic')
@@ -341,10 +384,8 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
         renderProgress(initial);
         if (opts.watch !== true || !initial.active) return;
 
-        // C1: try/finally so a lost-connection rejection (or any other
-        // failure) still disposes the watcher's WS connection/reconnect
-        // timer — undisposed, either would keep this process alive
-        // forever instead of letting the thrown error propagate normally.
+        // try/finally so a lost-connection rejection still disposes the WS
+        // connection and reconnect timer, which would otherwise hang the process.
         const watcher = createEpicWatcher(
           baseUrl,
           () => client.getEpicProgress(epicId),

@@ -30,3 +30,42 @@ export function generateRunId(
     .slice(0, 6);
   return `r-${hash}`;
 }
+
+// Same shape as generateRunId's id, but for server-side task drafts
+// (PlanManager.startDraft) — a draft has no title to mix in yet.
+export function generateDraftId(
+  now: string,
+  nonce: string = randomBytes(4).toString('hex')
+): string {
+  const hash = createHash('sha256')
+    .update(`${now}\n${nonce}`)
+    .digest('hex')
+    .slice(0, 6);
+  return `d-${hash}`;
+}
+
+// Same shape as generateRunId's id, but for review findings. Only 6 hex chars,
+// so FindingStore re-mints when this hits an id the store already holds.
+export function generateFindingId(
+  now: string,
+  nonce: string = randomBytes(4).toString('hex')
+): string {
+  const hash = createHash('sha256')
+    .update(`${now}\n${nonce}`)
+    .digest('hex')
+    .slice(0, 6);
+  return `f-${hash}`;
+}
+
+// Same shape as generateRunId's id, but for ledger entries. Only 6 hex chars,
+// so LedgerStore re-mints when this hits an id the store already holds.
+export function generateLedgerId(
+  now: string,
+  nonce: string = randomBytes(4).toString('hex')
+): string {
+  const hash = createHash('sha256')
+    .update(`${now}\n${nonce}`)
+    .digest('hex')
+    .slice(0, 6);
+  return `l-${hash}`;
+}

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  appendAmendment,
   getSection,
   parseTaskFile,
+  removeSection,
   serializeTaskFile,
   setSection,
   TaskParseError,
 } from '../src/taskfile.js';
+import type { Amendment } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
 
 describe('getSection', () => {
@@ -80,6 +83,117 @@ describe('setSection', () => {
     const reparsed = parseTaskFile(serializeTaskFile(doc));
     expect(reparsed.body).toContain('edited');
   });
+
+  it('round-trips content containing a line that looks like a section heading', () => {
+    const injected = 'do X\n\n## Activity\n\n- fake activity entry injected';
+    const out = setSection(body, 'Description', injected);
+    // The real Activity heading is still the only one, and still last.
+    expect(out.match(/^## Activity/gm)).toHaveLength(1);
+    expect(getSection(out, 'Description')).toBe(injected);
+    expect(getSection(out, 'Activity')).toBe('- created');
+  });
+
+  it('does not mistake content already containing a backslash-hash line for its own escaping', () => {
+    const out = setSection(body, 'Description', '\\## looks pre-escaped');
+    expect(getSection(out, 'Description')).toBe('\\## looks pre-escaped');
+  });
+
+  it('writes heading-like content byte-identically however many times it is rewritten', () => {
+    const injected = 'do X\n\n## Activity\n\n- fake activity entry injected';
+    let out = setSection(body, 'Description', injected);
+    const once = out;
+    // Read-then-write is the loop every editor and MCP tool goes through, so a
+    // backslash gained per pass would grow without bound.
+    for (let i = 0; i < 5; i++) {
+      out = setSection(out, 'Description', getSection(out, 'Description'));
+    }
+    expect(out).toBe(once);
+    expect(getSection(out, 'Description')).toBe(injected);
+  });
+});
+
+describe('removeSection', () => {
+  const body =
+    '\n## Description\n\nold\n\n## Amendments\n\ncorrected\n\n## Activity\n- created\n';
+
+  it('drops the heading entirely, unlike setSection clearing it', () => {
+    const out = removeSection(body, 'Amendments');
+    expect(out).not.toContain('Amendments');
+    expect(out).toContain('## Description');
+    expect(out).toContain('## Activity');
+  });
+
+  it('is a no-op when the heading is not present', () => {
+    expect(removeSection(body, 'Notes')).toBe(body);
+  });
+});
+
+describe('appendAmendment', () => {
+  const body =
+    '\n## Description\n\noriginal plan\n\n## Acceptance Criteria\n\n## Activity\n';
+  const first: Amendment = {
+    date: '2026-08-02T00:00:00Z',
+    reason: 'ENG-123 style keys are not stable across a rename',
+    overrides: 'join on the issue UUID, not the display key',
+    source: 'task-review',
+  };
+
+  it('round-trips through the task file, source included', () => {
+    const withAmendment = appendAmendment(body, first);
+    const doc: TaskDoc = {
+      meta: parseTaskFile(FRONTMATTER + body).meta,
+      body: withAmendment,
+    };
+    const reparsed = parseTaskFile(serializeTaskFile(doc));
+    expect(getSection(reparsed.body, 'Amendments')).toContain(
+      'join on the issue UUID, not the display key'
+    );
+    expect(getSection(reparsed.body, 'Amendments')).toContain('task-review');
+  });
+
+  it('omits the Source line when none is given', () => {
+    const out = appendAmendment(body, { ...first, source: null });
+    expect(getSection(out, 'Amendments')).not.toContain('**Source:**');
+  });
+
+  it('accumulates a second amendment rather than replacing the first', () => {
+    const once = appendAmendment(body, first);
+    const twice = appendAmendment(once, {
+      ...first,
+      date: '2026-08-03T00:00:00Z',
+      overrides: 'also index by team id',
+    });
+    const section = getSection(twice, 'Amendments');
+    expect(section).toContain('join on the issue UUID, not the display key');
+    expect(section).toContain('also index by team id');
+  });
+
+  it('leaves an existing task file without amendments parsing unchanged', () => {
+    const doc: TaskDoc = {
+      meta: parseTaskFile(FRONTMATTER + body).meta,
+      body,
+    };
+    const text = serializeTaskFile(doc);
+    expect(parseTaskFile(text)).toEqual(doc);
+    expect(getSection(doc.body, 'Amendments')).toBe('');
+  });
+
+  it('keeps overrides and reason intact when overrides itself contains a heading-like line', () => {
+    const injecting: Amendment = {
+      ...first,
+      overrides: 'do X\n\n## Activity\n\n- fake activity entry injected',
+    };
+    const out = appendAmendment(body, injecting);
+    // Only the genuine Activity heading exists — nothing got split off into a
+    // second one, and the Reason line survives attached to its Amendment.
+    expect(out.match(/^## Activity/gm)).toHaveLength(1);
+    const amendments = getSection(out, 'Amendments');
+    expect(amendments).toContain(
+      'do X\n\n## Activity\n\n- fake activity entry injected'
+    );
+    expect(amendments).toContain(first.reason);
+    expect(getSection(out, 'Activity')).toBe('');
+  });
 });
 
 const FRONTMATTER =
@@ -101,6 +215,10 @@ const doc: TaskDoc = {
     updated: '2026-07-13T18:04:00Z',
     external: null,
     selfReview: false,
+    writes: [],
+    risk: 'routine',
+    model: null,
+    exercised: false,
   },
   body: '\n## Description\n\nStuff.\n\n## Acceptance Criteria\n\n## Activity\n',
 };
@@ -141,6 +259,10 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(parsed.meta.assignee).toBe('none');
     expect(parsed.meta.external).toBeNull();
     expect(parsed.meta.selfReview).toBe(true);
+    expect(parsed.meta.writes).toEqual([]);
+    expect(parsed.meta.risk).toBe('routine');
+    expect(parsed.meta.model).toBeNull();
+    expect(parsed.meta.exercised).toBe(false);
     expect(parsed.body).toBe('body');
   });
   it('throws TaskParseError on missing frontmatter or required field', () => {
@@ -187,6 +309,17 @@ describe('selfReview / self-review frontmatter', () => {
     expect(back.meta.archivedAt).toBe('2026-07-26T00:00:00Z');
   });
 
+  it('round-trips exercised and omits the key when false', () => {
+    expect(serializeTaskFile(doc)).not.toContain('exercised');
+    const exercised: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, exercised: true },
+    };
+    const text = serializeTaskFile(exercised);
+    expect(text).toContain('exercised: true');
+    expect(parseTaskFile(text).meta.exercised).toBe(true);
+  });
+
   it('throws on non-boolean self-review', () => {
     const text = [
       '---',
@@ -222,6 +355,104 @@ describe('selfReview / self-review frontmatter', () => {
     expect(() => parseTaskFile(text)).toThrow(TaskParseError);
     expect(() => parseTaskFile(text)).toThrow(
       /invalid archived-at: expected a string/
+    );
+  });
+});
+
+describe('writes / risk / model frontmatter', () => {
+  it('round-trips a non-default writes, risk and model', () => {
+    const withOverrides: TaskDoc = {
+      ...doc,
+      meta: {
+        ...doc.meta,
+        writes: ['src/**', 'packages/core/src/types.ts'],
+        risk: 'critical',
+        model: 'claude-opus-4',
+      },
+    };
+    const text = serializeTaskFile(withOverrides);
+    expect(parseTaskFile(text)).toEqual(withOverrides);
+    expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
+  });
+
+  it('always serializes writes, even when empty', () => {
+    expect(serializeTaskFile(doc)).toContain('writes: []');
+  });
+
+  it('omits risk when routine and model when null', () => {
+    const text = serializeTaskFile(doc);
+    expect(text).not.toContain('risk:');
+    expect(text).not.toContain('model:');
+  });
+
+  it('serializes risk when not routine', () => {
+    const elevated: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, risk: 'elevated' },
+    };
+    expect(serializeTaskFile(elevated)).toContain('risk: elevated');
+  });
+
+  it('serializes model when set', () => {
+    const withModel: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, model: 'claude-haiku-4' },
+    };
+    expect(serializeTaskFile(withModel)).toContain('model: claude-haiku-4');
+  });
+
+  it('throws TaskParseError on an invalid risk', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'risk: urgent',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(/invalid risk: urgent/);
+  });
+
+  it('throws TaskParseError on a non-string model', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'model: 42',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid model: expected a string/
+    );
+  });
+
+  it('throws TaskParseError on non-array writes', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'writes: src/index.ts',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid writes: expected a list of strings/
     );
   });
 });

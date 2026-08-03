@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 import { EpicDagView } from './EpicDagView';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';

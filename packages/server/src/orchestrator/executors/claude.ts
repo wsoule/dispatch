@@ -90,6 +90,10 @@ const MCP_ENV_PASSTHROUGH: readonly string[] = [
   'DISPATCH_HOME',
 ];
 
+// Per-call ceiling the CLI enforces on dispatch's own MCP tools. Must stay
+// above `ask_user`'s 30-minute wait budget or it cuts that tool call off.
+const DISPATCH_MCP_TOOL_TIMEOUT_MS = 31 * 60_000;
+
 function buildDispatchMcpServerConfig(
   cwd: string,
   projectRoot: string,
@@ -116,13 +120,20 @@ function buildDispatchMcpServerConfig(
   // serve`, where the TS entry runs through `bun` as before.
   const mcpBin = process.env.DISPATCH_MCP_BIN;
   if (mcpBin !== undefined && mcpBin !== '') {
-    return { type: 'stdio', command: mcpBin, args: ['--root', cwd], env };
+    return {
+      type: 'stdio',
+      command: mcpBin,
+      args: ['--root', cwd],
+      env,
+      timeout: DISPATCH_MCP_TOOL_TIMEOUT_MS,
+    };
   }
   return {
     type: 'stdio',
     command: 'bun',
     args: [resolveMcpBin(), '--root', cwd],
     env,
+    timeout: DISPATCH_MCP_TOOL_TIMEOUT_MS,
   };
 }
 
@@ -159,6 +170,10 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
   'MultiEdit',
   'NotebookEdit',
 ]);
+
+// Auto-allowed alongside the edit tools under `acceptEdits`: gating it would
+// make the user approve a tool call before being shown the question it asks.
+const ASK_USER_TOOL = 'mcp__dispatch__ask_user';
 
 // Builds the one SDKUserMessage shape this executor ever sends: plain text,
 // no images or tool results. Both the initial task prompt and any mid-run
@@ -433,7 +448,7 @@ export class ClaudeExecutor implements Executor {
       }
       if (
         opts.permissionMode === 'acceptEdits' &&
-        AUTO_ALLOWED_EDIT_TOOLS.has(toolName)
+        (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) || toolName === ASK_USER_TOOL)
       ) {
         return { behavior: 'allow', updatedInput: input };
       }

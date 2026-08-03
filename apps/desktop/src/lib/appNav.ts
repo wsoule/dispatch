@@ -5,19 +5,8 @@
 // component below it receives plain props derived from this state plus dispatch callbacks,
 // the same "dumb view, smart root" split TasksPanel used for the old dispatch-only pane.
 
-/** The three primary views for whichever project is active. `board` is the single "Tasks"
- * destination — a Kanban/list toggle lives inside `BoardView` itself now rather than the old
- * separate `tasks` nav item (Linear doesn't split "board" and "issue list" into two places in
- * its own nav either); Runs is the split log/review layout, Plans is the composer + proposal
- * review. The `board` id is kept (rather than renamed to e.g. `tasks`) so this type, the
- * reducer below, and every test against it stay untouched by the nav collapse — only
- * `Sidebar`'s single nav row and its label changed.
- *
- * `new-task` is the odd one out: it's a full-page *destination* (the describe-what-you-want
- * task creator, Plans' single-task sibling) but not a nav *item* — `Sidebar` lists its rows
- * explicitly, so it never appears in the rail. You get there from a "New task" affordance and
- * leave via Escape/Cancel/save, which is why it has its own open/close actions below rather
- * than being reached through a plain `setProjectView`. */
+/** The primary views for whichever project is active. `new-task` never renders
+ * — App.tsx reads it as "open the AI composer" and hands the old view back. */
 export type ProjectView =
   | 'overview'
   | 'board'
@@ -46,10 +35,8 @@ export interface NavState {
   peekTaskId: string | null;
   /** Run id shown in the Runs view's right pane, or `null` when nothing is selected. */
   activeRunId: string | null;
-  /** Where closing the full-page task creator returns to. Captured when it opens so
-   * Escape/Cancel lands back on whatever you were looking at (a board column's "+" returns to
-   * the board, the "c" shortcut pressed on Runs returns to Runs) instead of always dumping
-   * you on one fixed view. */
+  /** Which view to snap `projectView` back to once the AI composer dialog opens — a board
+   * column's "+" returns to the board, rather than one fixed view. */
   newTaskReturnView: ProjectView;
   paletteOpen: boolean;
   /**
@@ -120,7 +107,8 @@ export type NavAction =
   | { type: 'closePeek' }
   | { type: 'openRun'; runId: string }
   | { type: 'closeRun' }
-  /** Opens the full-page task creator, remembering the view to come back to. */
+  /** Routes to `new-task`, remembering the view to come back to — App.tsx reads reaching this
+   * state as "open the AI composer dialog". */
   | { type: 'openNewTask' }
   | { type: 'closeNewTask' }
   | { type: 'openPalette' }
@@ -128,10 +116,8 @@ export type NavAction =
   | { type: 'togglePalette' }
   | { type: 'back' }
   | { type: 'forward' }
-  /** Context-sensitive close: the command palette wins over the task peek (it renders on
-   * top), which in turn wins over the full-page task creator (a whole view, so the outermost
-   * layer), and each one being open swallows the Escape entirely rather than also clearing
-   * the next — a single Escape press should undo exactly one layer of UI. */
+  /** Context-sensitive close: the command palette wins over the task peek, and each one open
+   * swallows the Escape rather than also clearing the next layer. */
   | { type: 'escape' };
 
 export function navReducer(state: NavState, action: NavAction): NavState {

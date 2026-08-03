@@ -1,3 +1,4 @@
+import type { DraftRecord } from '@dispatch/client';
 import {
   Bell,
   Brain,
@@ -20,6 +21,7 @@ import { Fragment, useEffect, useState } from 'react';
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
 import { CountChip } from '../ui/CountChip';
+import { DraftTray } from './DraftTray';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -116,6 +118,12 @@ interface SidebarProps {
    * toggles the inbox popover via `onToggleInbox` instead. */
   unreadCount: number;
   onToggleInbox: () => void;
+  /** Every AI task draft currently held in memory, newest first — feeds the drafts tray
+   * rendered next to the notifications bell (see `components/shell/DraftTray.tsx`). */
+  drafts: DraftRecord[];
+  /** Opens the review dialog for a ready draft. */
+  onOpenDraft: (id: string) => void;
+  onDismissDraft: (id: string) => void;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
   /** Whether the project switcher dropdown is open (its project list is loaded lazily on
@@ -157,6 +165,9 @@ export function Sidebar({
   spendToday,
   unreadCount,
   onToggleInbox,
+  drafts,
+  onOpenDraft,
+  onDismissDraft,
   onSetProjectView,
   onSetGlobalView,
   switcherOpen,
@@ -365,6 +376,13 @@ export function Sidebar({
       </nav>
 
       <div className="bg-border my-3 h-px w-full" />
+
+      <DraftTray
+        drafts={drafts}
+        collapsed={collapsed}
+        onOpenDraft={onOpenDraft}
+        onDismissDraft={onDismissDraft}
+      />
 
       <button
         type="button"

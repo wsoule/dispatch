@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type {
+  GitKeyboardContext,
   GlobalKeyboardContext,
   KeyInput,
   ListKeyboardContext,
@@ -9,6 +10,7 @@ import {
   isInteractiveControlTagName,
   isTypingTagName,
   resolveCardKeyAction,
+  resolveGitKeyCommand,
   resolveGlobalKeyCommand,
   resolveListKeyCommand,
 } from './keyboard';
@@ -229,5 +231,104 @@ describe('navigation shortcuts', () => {
     expect(
       resolveGlobalKeyCommand({ key: '3', metaKey: false, ctrlKey: false }, ctx)
     ).toBeNull();
+  });
+});
+
+const baseGitCtx: GitKeyboardContext = { isTyping: false };
+
+describe('resolveGitKeyCommand', () => {
+  test('bare digits 1-5 focus the matching panel', () => {
+    expect(resolveGitKeyCommand(key('1'), baseGitCtx)).toEqual({
+      kind: 'focus-panel',
+      panel: 'status',
+    });
+    expect(resolveGitKeyCommand(key('2'), baseGitCtx)).toEqual({
+      kind: 'focus-panel',
+      panel: 'files',
+    });
+    expect(resolveGitKeyCommand(key('5'), baseGitCtx)).toEqual({
+      kind: 'focus-panel',
+      panel: 'stashes',
+    });
+  });
+
+  test('j/k move the selection, space toggles stage', () => {
+    expect(resolveGitKeyCommand(key('j'), baseGitCtx)).toEqual({
+      kind: 'move',
+      delta: 1,
+    });
+    expect(resolveGitKeyCommand(key('k'), baseGitCtx)).toEqual({
+      kind: 'move',
+      delta: -1,
+    });
+    expect(resolveGitKeyCommand(key(' '), baseGitCtx)).toEqual({
+      kind: 'toggle-stage',
+    });
+  });
+
+  test('shifted letters resolve to a different command than their lowercase form', () => {
+    expect(resolveGitKeyCommand(key('a'), baseGitCtx)).toEqual({
+      kind: 'stage-all',
+    });
+    expect(resolveGitKeyCommand(key('A'), baseGitCtx)).toEqual({
+      kind: 'amend',
+    });
+    expect(resolveGitKeyCommand(key('s'), baseGitCtx)).toEqual({
+      kind: 'stash',
+    });
+    expect(resolveGitKeyCommand(key('S'), baseGitCtx)).toEqual({
+      kind: 'stash-pop',
+    });
+    expect(resolveGitKeyCommand(key('p'), baseGitCtx)).toEqual({
+      kind: 'pull',
+    });
+    expect(resolveGitKeyCommand(key('P'), baseGitCtx)).toEqual({
+      kind: 'push',
+    });
+  });
+
+  test('remaining single-letter and symbol commands', () => {
+    expect(resolveGitKeyCommand(key('c'), baseGitCtx)).toEqual({
+      kind: 'commit',
+    });
+    expect(resolveGitKeyCommand(key('d'), baseGitCtx)).toEqual({
+      kind: 'discard',
+    });
+    expect(resolveGitKeyCommand(key('b'), baseGitCtx)).toEqual({
+      kind: 'new-branch',
+    });
+    expect(resolveGitKeyCommand(key('Enter'), baseGitCtx)).toEqual({
+      kind: 'checkout',
+    });
+    expect(resolveGitKeyCommand(key('f'), baseGitCtx)).toEqual({
+      kind: 'fetch',
+    });
+    expect(resolveGitKeyCommand(key('/'), baseGitCtx)).toEqual({
+      kind: 'filter',
+    });
+    expect(resolveGitKeyCommand(key('?'), baseGitCtx)).toEqual({
+      kind: 'help',
+    });
+  });
+
+  test('nothing resolves while typing, except nothing is exempted (unlike the global layer)', () => {
+    const typing = { isTyping: true };
+    expect(resolveGitKeyCommand(key('1'), typing)).toBeNull();
+    expect(resolveGitKeyCommand(key('j'), typing)).toBeNull();
+    expect(resolveGitKeyCommand(key('?'), typing)).toBeNull();
+  });
+
+  test('a held modifier never resolves a Git page command', () => {
+    expect(
+      resolveGitKeyCommand(key('j', { metaKey: true }), baseGitCtx)
+    ).toBeNull();
+    expect(
+      resolveGitKeyCommand(key('1', { ctrlKey: true }), baseGitCtx)
+    ).toBeNull();
+  });
+
+  test('unrelated keys resolve to null', () => {
+    expect(resolveGitKeyCommand(key('x'), baseGitCtx)).toBeNull();
+    expect(resolveGitKeyCommand(key('Tab'), baseGitCtx)).toBeNull();
   });
 });

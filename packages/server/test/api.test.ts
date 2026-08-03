@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,10 +23,16 @@ function taskFileNames(rootDir: string): string[] {
 }
 
 let root: string;
+let fakeHome: string;
 let handle: ServerHandle;
 let baseUrl: string;
+const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(async () => {
+  // startServer hydrates the merge queue, which writes run state under
+  // DISPATCH_HOME — left unset it lands in the real home, one dir per test.
+  fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
+  process.env.DISPATCH_HOME = fakeHome;
   root = mkdtempSync(join(tmpdir(), 'dispatch-server-'));
   TaskStore.init(root);
   handle = await startServer({
@@ -39,6 +45,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await handle.stop();
+  if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
+  else process.env.DISPATCH_HOME = originalDispatchHome;
+  rmSync(fakeHome, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 });
 
 describe('GET /api/health', () => {
@@ -85,6 +95,10 @@ describe('GET /api/health', () => {
   });
 });
 
+// Every method @dispatch/client sends. A method missing from the preflight
+// response makes the browser drop the real request before it is ever sent.
+const CLIENT_METHODS = ['GET', 'POST', 'PATCH', 'DELETE'] as const;
+
 describe('CORS preflight', () => {
   it('answers a trusted OPTIONS preflight with 204 and the allow headers', async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, {
@@ -95,11 +109,27 @@ describe('CORS preflight', () => {
     expect(res.headers.get('access-control-allow-origin')).toBe(
       'http://localhost:5173'
     );
-    expect(res.headers.get('access-control-allow-methods')).toContain('PATCH');
     expect(res.headers.get('access-control-allow-headers')).toContain(
       'content-type'
     );
   });
+
+  for (const method of CLIENT_METHODS) {
+    it(`allows ${method} in the preflight response`, async () => {
+      const res = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'http://localhost:5173',
+          'access-control-request-method': method,
+        },
+      });
+      expect(res.status).toBe(204);
+      const allowed = (res.headers.get('access-control-allow-methods') ?? '')
+        .split(',')
+        .map((value) => value.trim());
+      expect(allowed).toContain(method);
+    });
+  }
 
   it('gives an untrusted preflight no CORS header (browser will block it)', async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, {

@@ -5,7 +5,7 @@ import type {
   RepoPr,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 import {
   ChevronLeft,
   ExternalLink,

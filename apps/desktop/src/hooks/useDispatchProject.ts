@@ -1,39 +1,59 @@
 import type {
   ApiClient,
+  DraftRecord,
   EpicProgress,
+  LinearIssueLink,
+  LinearStatus,
+  LinearSyncSummary,
+  LinearTeam,
+  LinearViewer,
+  LinearWorkflowState,
   MergeQueueSnapshot,
   PlanProposal,
   PlanRecord,
   RepoPr,
   RunDetail,
   RunMeta,
+  RunQuestion,
   RunState,
-  TaskDraft,
 } from '@dispatch/client';
 import { createApiClient } from '@dispatch/client';
 import type {
   CreateInput,
   DispatchConfig,
+  ModelConfig,
   TaskDoc,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch/core/browser';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { hideArchivedRuns } from '../lib/archiveFilter';
+import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
-import { readDefaultModel } from '../lib/models';
+import { resolveExecuteModel } from '../lib/models';
 import { notify } from '../lib/notifications';
 import { isTerminalRunState } from '../lib/runState';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd } from '../lib/tauri';
+import { gitQueryRootKey } from './useGit';
+import {
+  findingsQueryRootKey,
+  fixLoopKey,
+  ledgerQueryRootKey,
+  taskVerificationKey,
+} from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
 // only the live event carries it (see the WS effect below).
 type PendingApproval = { requestId: string; toolName: string };
+
+// Same shape/reason as `PendingApproval`, for `scope.requested` — there is no
+// listing route for open scope requests, only the live WS event carries the id.
+type PendingScopeRequest = { requestId: string };
 
 // Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
 // own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
@@ -106,6 +126,9 @@ export interface DispatchProjectData {
    * loading/empty state while this is `null` — callers should show a project-level "starting
    * the task daemon…" state, matching the previous TasksPanel behavior. */
   client: ApiClient | null;
+  /** The active project's dispatchd port, `undefined` until it resolves — exposed so a view
+   * can scope its own query keys (e.g. `useGit`) the same way this hook's queries do. */
+  port: number | undefined;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -184,11 +207,18 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
   /**
-   * Starts an AI draft that adds the detail a one-line capture is missing. Lands on
-   * `notePlanRecord` (the second plan slot, kept apart from the Plans view's own so starting
-   * one cannot clobber an open plan) and writes nothing until `handleConfirmNotePlan`.
+   * Starts an AI draft that adds the detail a one-line capture is missing. Its
+   * own slot, so it can't clobber `enrichPlan`'s or `notePlanId`'s draft.
    */
   handleEnrichInboxItem: (id: string) => Promise<void>;
+  /** Which inbox item the open draft belongs to, so another row doesn't show it. */
+  inboxEnrichItemId: string | null;
+  inboxEnrichPlanRecord: PlanRecord | undefined;
+  /** Drops the open draft without writing anything — Dismiss, and the cleanup after Apply. */
+  handleDismissInboxEnrich: () => void;
+  /** Writes the drafted body back onto the inbox item via the ordinary PATCH /api/inbox/:id
+   * update path, then drops the draft. */
+  handleApplyInboxEnrich: (itemId: string, text: string) => Promise<void>;
   /**
    * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
    * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
@@ -200,10 +230,12 @@ export interface DispatchProjectData {
   enrichPlanRecord: PlanRecord | undefined;
   /** Drops the open draft — Discard, and the cleanup after it's been applied. */
   handleDismissEnrich: () => void;
-  /** Model-backed grouping of related captures. Costs a call, so callers trigger it explicitly. */
-  handleClusterInbox: () => Promise<
-    import('@dispatch/client').InboxClusterGroup[]
-  >;
+  /** Model-backed grouping of related captures, run in the background by
+   * BrainDumpView. Always resolves — `error` carries a failed model call. */
+  handleClusterInbox: () => Promise<{
+    groups: import('@dispatch/client').InboxClusterGroup[];
+    error: string | null;
+  }>;
 
   /** Line-level review comments on the selected run's diff. */
   reviewComments: import('@dispatch/client').ReviewComment[];
@@ -233,7 +265,35 @@ export interface DispatchProjectData {
     epicConcurrency?: number;
     verifyTimeoutSec?: number;
     permissionMode?: string;
+    models?: Partial<ModelConfig>;
+    linear?: {
+      enabled?: boolean;
+      teamId?: string | null;
+      statusMap?: Record<string, string>;
+      intervalSec?: number;
+      direction?: 'both' | 'pull' | 'push';
+    };
   }) => Promise<void>;
+  /** `null` until the status query has ever resolved. Carries no API key — only where the
+   * daemon found one (`keySource`), never what it is. */
+  linearStatus: LinearStatus | null;
+  /** This Linear workspace's teams, fetched once connected — the Settings team picker. */
+  linearTeams: LinearTeam[];
+  /** The configured team's workflow states — the status-map editor's per-row `<select>`
+   * options. Empty until a team is chosen. */
+  linearStates: LinearWorkflowState[];
+  /** Issue UUID -> display identifier/URL, for resolving `TaskMeta.external` into a real chip. */
+  linearLinks: Record<string, LinearIssueLink>;
+  handleConnectLinear: (
+    apiKey: string
+  ) => Promise<{ connected: boolean; viewer: LinearViewer }>;
+  handleDisconnectLinear: () => Promise<void>;
+  /** Runs a sync pass now, returning its summary. With `taskIds`, pushes exactly those tasks
+   * regardless of the cursor filter — the task dialog's "Push to Linear" action. */
+  handleSyncLinear: (taskIds?: string[]) => Promise<LinearSyncSummary>;
+  /** Brings down every Linear issue in the configured team that has no local task yet — the
+   * explicit opt-in a fresh clone or new machine needs, since sync never bulk-imports on its own. */
+  handleImportLinear: () => Promise<LinearSyncSummary>;
   /** Returns the per-item outcome so a partial failure can be surfaced, not swallowed. */
   handleConvertInbox: (
     ids: string[]
@@ -256,6 +316,23 @@ export interface DispatchProjectData {
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
   pendingApprovals: Map<string, PendingApproval>;
+  /** Run id -> the scope request its agent is blocked on, seen live via
+   * `scope.requested` — see `pendingApprovals` for why. */
+  pendingScopeRequests: Map<string, PendingScopeRequest>;
+  handleDecideScopeRequest: (
+    runId: string,
+    requestId: string,
+    granted: boolean,
+    reason?: string
+  ) => Promise<void>;
+  /** Run id -> every question that run's agent is blocked on, oldest first. Usually one, but
+   * an agent can dispatch several `ask_user` calls in the same turn. */
+  openQuestions: Map<string, RunQuestion[]>;
+  handleAnswerQuestion: (
+    runId: string,
+    questionId: string,
+    answer: string
+  ) => Promise<void>;
 
   planId: string | null;
   setPlanId: (planId: string | null) => void;
@@ -264,12 +341,21 @@ export interface DispatchProjectData {
   handleUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
   moveTaskStatus: (id: string, status: string) => Promise<void>;
   handleCreate: (input: CreateInput) => Promise<void>;
-  /** Natural-language single-task creation: turns a free-text description into a
-   * structured `TaskDraft` (via the planner/Agent-SDK backend, constrained to one
-   * task) for the caller to review and then persist with `handleCreate` — the
-   * language-driven sibling of the structured `handleCreate` form. Returns the
-   * draft without saving; nothing is written until `handleCreate` runs. */
-  handleDraftTask: (prompt: string) => Promise<TaskDraft>;
+  /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
+   * tray. Running and ready drafts survive navigation and a tray reopen; see `drafts`. */
+  drafts: DraftRecord[];
+  /** Starts a background single-task draft and returns immediately with its `running`
+   * record; the tray/`drafts` picks up its progress via `draft.changed`. */
+  handleStartDraft: (prompt: string) => Promise<DraftRecord>;
+  /** Dismisses a draft so it stops appearing in the tray — used both for "Discard" in the
+   * review dialog and for "Create task", once a ready draft has become a real task. */
+  handleDismissDraft: (id: string) => Promise<void>;
+  /** Post a follow-up message (typically answers to its clarifying questions) on an existing
+   * draft. Returns the 202 record, already back in `running`. */
+  handleSendDraftMessage: (
+    draftId: string,
+    text: string
+  ) => Promise<DraftRecord>;
   handleDispatch: (
     taskId: string,
     executor?: 'fake' | 'claude',
@@ -357,6 +443,9 @@ export function useDispatchProject(
   const [pendingApprovals, setPendingApprovals] = useState<
     Map<string, PendingApproval>
   >(new Map());
+  const [pendingScopeRequests, setPendingScopeRequests] = useState<
+    Map<string, PendingScopeRequest>
+  >(new Map());
   const [planId, setPlanId] = useState<string | null>(null);
   // The Notes hub's own plan slot: the AI task draft started off a single note, kept apart
   // from `planId` so the two views never overwrite each other's in-flight proposal.
@@ -365,6 +454,12 @@ export function useDispatchProject(
   // because those proposals get confirmed into new tasks and these get patched onto one.
   const [enrichPlan, setEnrichPlan] = useState<{
     taskId: string;
+    planId: string;
+  } | null>(null);
+  // The brain dump row's "Add detail" slot. Its own slot, since its proposal is
+  // patched onto that inbox item rather than confirmed into a task.
+  const [inboxEnrich, setInboxEnrich] = useState<{
+    itemId: string;
     planId: string;
   } | null>(null);
   // Task 8: last drain-push failure reported by `queue.drained`, for the
@@ -474,6 +569,9 @@ export function useDispatchProject(
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
+  // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
+  // on `draft.changed`.
+  const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
   const reviewQueryKey = useMemo(
     () => ['dispatch-review', port, selectedRunId],
     [port, selectedRunId]
@@ -488,6 +586,7 @@ export function useDispatchProject(
   );
   const repoPrsQueryKey = useMemo(() => ['dispatch-repo-prs', port], [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
+  const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
   // countMergeReady's own-task/blocker lookups — `tasks` below stays the
   // default board-view (archived-excluded) list every other consumer here
@@ -495,6 +594,18 @@ export function useDispatchProject(
   // missing from countMergeReady's lookup map entirely and read as
   // "not done", wrongly inflating the "Merge all ready" count.
   const allTasksQueryKey = useMemo(() => ['dispatch-tasks-all', port], [port]);
+  const linearStatusQueryKey = useMemo(
+    () => ['dispatch-linear-status', port],
+    [port]
+  );
+  const linearTeamsQueryKey = useMemo(
+    () => ['dispatch-linear-teams', port],
+    [port]
+  );
+  const linearLinksQueryKey = useMemo(
+    () => ['dispatch-linear-links', port],
+    [port]
+  );
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
@@ -519,6 +630,53 @@ export function useDispatchProject(
       return client.fetchConfig();
     },
     enabled: client !== null,
+  });
+  // Scoped to the configured team, so switching teams in Settings fetches that team's own
+  // states instead of showing the previous team's list while the new one loads.
+  const linearStatesQueryKey = useMemo(
+    () => ['dispatch-linear-states', port, config?.linear.teamId ?? null],
+    [port, config?.linear.teamId]
+  );
+  const { data: linearStatus } = useQuery({
+    queryKey: linearStatusQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLinearStatus();
+    },
+    enabled: client !== null,
+  });
+  const { data: linearTeams } = useQuery({
+    queryKey: linearTeamsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLinearTeams();
+    },
+    enabled: client !== null && linearStatus?.connected === true,
+  });
+  // Reads from disk, not the Linear API, so it stays available for chip rendering even while
+  // disconnected — a task linked before a key was removed should still show its identifier.
+  const { data: linearLinks } = useQuery({
+    queryKey: linearLinksQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLinearLinks();
+    },
+    enabled: client !== null,
+  });
+  const linearTeamId = config?.linear.teamId ?? null;
+  const { data: linearStates } = useQuery({
+    queryKey: linearStatesQueryKey,
+    queryFn: () => {
+      if (client === null || linearTeamId === null) {
+        throw new Error('no Linear team selected');
+      }
+      return client.fetchLinearStates(linearTeamId);
+    },
+    enabled:
+      client !== null &&
+      linearStatus?.connected === true &&
+      linearTeamId !== null &&
+      linearTeamId.trim() !== '',
   });
   const { data: readyTasks } = useQuery({
     queryKey: readyQueryKey,
@@ -587,11 +745,33 @@ export function useDispatchProject(
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
 
+  // Every unanswered agent question across every run, refetched on the
+  // `question.*` events below so one asked in a closed view still surfaces.
+  const { data: openQuestionList } = useQuery({
+    queryKey: questionsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchOpenQuestions();
+    },
+    enabled: client !== null,
+  });
+
   const { data: notes } = useQuery({
     queryKey: notesQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchNotes();
+    },
+    enabled: client !== null,
+  });
+
+  // Feeds the app-wide drafts tray; refetched on `draft.changed` regardless of whether the
+  // composer that started a draft is still open.
+  const { data: drafts } = useQuery({
+    queryKey: draftsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchDrafts();
     },
     enabled: client !== null,
   });
@@ -671,6 +851,11 @@ export function useDispatchProject(
     client,
     port,
     enrichPlan?.planId ?? null
+  );
+  const inboxEnrichPlanRecord = usePlanRecord(
+    client,
+    port,
+    inboxEnrich?.planId ?? null
   );
 
   // Task 6: the merge queue snapshot — same "poll on mount, refetch on the
@@ -803,19 +988,111 @@ export function useDispatchProject(
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
             void notify('Approval needed', `${event.toolName} — ${taskTitle}`);
+          } else if (event.type === 'question.asked') {
+            void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+            // Same cache-read reason as approval.requested above: this effect's
+            // captured `runs` can be stale, so the title comes from the query cache.
+            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+            const taskTitle =
+              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+              event.runId;
+            void notify('An agent has a question', taskTitle);
+          } else if (
+            event.type === 'question.answered' ||
+            event.type === 'question.closed'
+          ) {
+            void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+          } else if (event.type === 'scope.requested') {
+            setPendingScopeRequests((prev) => {
+              const next = new Map(prev);
+              next.set(event.runId, { requestId: event.requestId });
+              return next;
+            });
+            const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
+            const taskTitle =
+              liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
+              event.runId;
+            void notify('An agent needs scope approval', taskTitle);
+          } else if (event.type === 'scope.decided') {
+            setPendingScopeRequests((prev) => {
+              if (!prev.has(event.runId)) return prev;
+              const next = new Map(prev);
+              next.delete(event.runId);
+              return next;
+            });
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
             });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
+          } else if (event.type === 'draft.changed') {
+            void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
           } else if (event.type === 'review.changed') {
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
+          } else if (event.type === 'git.changed') {
+            // Prefix match: invalidates every query useGit.ts builds in one call.
+            void queryClient.invalidateQueries({ queryKey: gitQueryRootKey });
+            // A git-level mutation can change dispatch's own worktree bookkeeping too, so
+            // the Branches panel's GitSummary chips don't go stale until a manual refresh.
+            void queryClient.invalidateQueries({ queryKey: branchesQueryKey });
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
+            });
+          } else if (event.type === 'finding.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: findingsQueryRootKey(port),
+            });
+          } else if (event.type === 'ledger.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: ledgerQueryRootKey(port),
+            });
+          } else if (event.type === 'fixloop.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: fixLoopKey(port, event.taskId),
+            });
+          } else if (event.type === 'fixloop.capped') {
+            void queryClient.invalidateQueries({
+              queryKey: fixLoopKey(port, event.taskId),
+            });
+            // A stopped loop needs a human — a toast plus a durable inbox row,
+            // worded from the stop reason.
+            const liveTasks =
+              queryClient.getQueryData<TaskDoc[]>(allTasksQueryKey);
+            const taskTitle =
+              liveTasks?.find((t) => t.meta.id === event.taskId)?.meta.title ??
+              event.taskId;
+            const notice = fixLoopCappedNotice(
+              taskTitle,
+              event.reason,
+              event.message
+            );
+            void notify(notice.title, taskTitle);
+            onRecordInbox([
+              {
+                ts: new Date().toISOString(),
+                title: notice.title,
+                body: notice.body,
+                target: { kind: 'task', taskId: event.taskId },
+              },
+            ]);
+          } else if (event.type === 'verification.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: taskVerificationKey(port, event.taskId),
+            });
+          } else if (event.type === 'linear.changed') {
+            // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so
+            // Settings reflects it immediately rather than waiting on its own poll.
+            void queryClient.invalidateQueries({
+              queryKey: linearStatusQueryKey,
+            });
+            // The pass may have linked a new issue — refetch so a chip appears without
+            // waiting for this window's own action to trigger it.
+            void queryClient.invalidateQueries({
+              queryKey: linearLinksQueryKey,
             });
           } else if (event.type === 'queue.drained') {
             // The drain reviewed runs (tasks/runs move to done) and may have
@@ -896,11 +1173,15 @@ export function useDispatchProject(
     readyQueryKey,
     runsQueryKey,
     notesQueryKey,
+    draftsQueryKey,
     inboxQueryKey,
     reviewQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     branchesQueryKey,
+    questionsQueryKey,
+    linearStatusQueryKey,
+    linearLinksQueryKey,
     port,
     onRecordInbox,
   ]);
@@ -913,6 +1194,24 @@ export function useDispatchProject(
       for (const runId of next.keys()) {
         const meta = runs.find((r) => r.id === runId);
         if (meta === undefined || meta.state !== 'awaiting-approval') {
+          next.delete(runId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [runs]);
+
+  // Same cleanup as pendingApprovals above, but keyed on the run going
+  // terminal — a scope request doesn't move `meta.state` like an approval.
+  useEffect(() => {
+    if (runs === undefined) return;
+    setPendingScopeRequests((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const runId of next.keys()) {
+        const meta = runs.find((r) => r.id === runId);
+        if (meta === undefined || isTerminalRunState(meta.state)) {
           next.delete(runId);
           changed = true;
         }
@@ -934,6 +1233,17 @@ export function useDispatchProject(
     }
     return map;
   }, [runs]);
+
+  // Keyed by run so a view holding one run finds its questions in one lookup.
+  const openQuestions = useMemo(() => {
+    const map = new Map<string, RunQuestion[]>();
+    for (const question of openQuestionList ?? []) {
+      const existing = map.get(question.runId);
+      if (existing === undefined) map.set(question.runId, [question]);
+      else existing.push(question);
+    }
+    return map;
+  }, [openQuestionList]);
 
   const latestRunByTaskId = useMemo(() => {
     const map = new Map<string, RunMeta>();
@@ -994,16 +1304,48 @@ export function useDispatchProject(
     [client, queryClient, tasksQueryKey, readyQueryKey]
   );
 
-  // No cache invalidation here on purpose: drafting is read-only (it only asks
-  // the planner to structure the text) and persists nothing — the returned
-  // draft is handed to the caller to review and then save via `handleCreate`,
-  // which is where the task list actually refetches.
-  const handleDraftTask = useCallback(
-    async (prompt: string): Promise<TaskDraft> => {
+  // Seeds the drafts query with the 202's `running` record immediately, so the tray shows it
+  // without waiting on a refetch.
+  const handleStartDraft = useCallback(
+    async (prompt: string): Promise<DraftRecord> => {
       if (client === null) throw new Error('dispatchd client not ready');
-      return client.draftTask(prompt);
+      const record = await client.draftTask(prompt);
+      queryClient.setQueryData<DraftRecord[]>(draftsQueryKey, (prev) => [
+        record,
+        ...(prev ?? []),
+      ]);
+      return record;
     },
-    [client]
+    [client, queryClient, draftsQueryKey]
+  );
+
+  // Removed from the cache optimistically, ahead of the round trip, so the tray row
+  // disappears the instant it's actioned.
+  const handleDismissDraft = useCallback(
+    async (id: string): Promise<void> => {
+      if (client === null) return;
+      queryClient.setQueryData<DraftRecord[]>(draftsQueryKey, (prev) =>
+        prev?.filter((d) => d.id !== id)
+      );
+      await client.dismissDraft(id);
+      void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+    },
+    [client, queryClient, draftsQueryKey]
+  );
+
+  // Seeds the drafts cache with the 202's `running` record (mirrors handleSendPlanMessage),
+  // then invalidates to re-sync once the follow-up turn settles via `draft.changed`.
+  const handleSendDraftMessage = useCallback(
+    async (draftId: string, text: string): Promise<DraftRecord> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const record = await client.sendDraftMessage(draftId, text);
+      queryClient.setQueryData<DraftRecord[]>(draftsQueryKey, (prev) =>
+        prev?.map((d) => (d.id === draftId ? record : d))
+      );
+      void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+      return record;
+    },
+    [client, queryClient, draftsQueryKey]
   );
 
   const handleCreateNote = useCallback(
@@ -1127,11 +1469,11 @@ export function useDispatchProject(
       model?: string
     ): Promise<void> => {
       if (client === null) return;
-      // A real ('claude') dispatch always carries a model — the per-dispatch override if given,
-      // otherwise the user's saved default. The fake executor ignores it.
+      // A real ('claude') dispatch always carries a model: the per-dispatch
+      // override, else resolveExecuteModel's. The fake executor ignores it.
       const meta = await client.createRun(taskId, {
         executor,
-        model: model ?? readDefaultModel(),
+        model: model ?? resolveExecuteModel(config),
       });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
@@ -1140,6 +1482,7 @@ export function useDispatchProject(
     },
     [
       client,
+      config,
       queryClient,
       runsQueryKey,
       tasksQueryKey,
@@ -1166,6 +1509,39 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, runsQueryKey, port]
+  );
+
+  const handleDecideScopeRequest = useCallback(
+    async (
+      runId: string,
+      requestId: string,
+      granted: boolean,
+      reason?: string
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.decideScopeRequest(runId, requestId, granted, reason);
+      setPendingScopeRequests((prev) => {
+        const next = new Map(prev);
+        next.delete(runId);
+        return next;
+      });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, port]
+  );
+
+  const handleAnswerQuestion = useCallback(
+    async (
+      runId: string,
+      questionId: string,
+      answer: string
+    ): Promise<void> => {
+      if (client === null) return;
+      await client.answerQuestion(runId, questionId, answer);
+      void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
+    },
+    [client, queryClient, questionsQueryKey, port]
   );
 
   const handleSendMessage = useCallback(
@@ -1430,13 +1806,33 @@ export function useDispatchProject(
     [client, invalidateInbox, queryClient, tasksQueryKey]
   );
 
+  // The AI half of "Add detail" on a brain dump row: the proposal lands on
+  // `inboxEnrichPlanRecord`, and nothing is written until it's applied.
   const handleEnrichInboxItem = useCallback(
     async (id: string): Promise<void> => {
-      if (client === null) return;
+      if (client === null) throw new Error('dispatchd client not ready');
+      // Clear first, or the previous pass's draft stays up while this one runs.
+      setInboxEnrich(null);
       const { planId } = await client.enrichInbox(id);
-      setNotePlanId(planId);
+      setInboxEnrich({ itemId: id, planId });
     },
     [client]
+  );
+
+  const handleDismissInboxEnrich = useCallback((): void => {
+    setInboxEnrich(null);
+  }, []);
+
+  // Writes the drafted body back onto the inbox item through the ordinary update path (the same
+  // PATCH /api/inbox/:id route the row's other edits use), then drops the draft.
+  const handleApplyInboxEnrich = useCallback(
+    async (itemId: string, text: string): Promise<void> => {
+      if (client === null) return;
+      await client.updateInbox(itemId, { text });
+      invalidateInbox();
+      setInboxEnrich(null);
+    },
+    [client, invalidateInbox]
   );
 
   // The AI half of specifying an existing task: the proposal lands on `enrichPlanRecord` for
@@ -1532,6 +1928,14 @@ export function useDispatchProject(
       epicConcurrency?: number;
       verifyTimeoutSec?: number;
       permissionMode?: string;
+      models?: Partial<ModelConfig>;
+      linear?: {
+        enabled?: boolean;
+        teamId?: string | null;
+        statusMap?: Record<string, string>;
+        intervalSec?: number;
+        direction?: 'both' | 'pull' | 'push';
+      };
     }): Promise<void> => {
       if (client === null) return;
       await client.updateConfig(patch);
@@ -1540,10 +1944,70 @@ export function useDispatchProject(
     [client, queryClient, configQueryKey]
   );
 
+  // Posts the key once via POST /api/linear/connect and never sees it again — the response
+  // carries the viewer Linear validated it against, not the key itself.
+  const handleConnectLinear = useCallback(
+    async (
+      apiKey: string
+    ): Promise<{ connected: boolean; viewer: LinearViewer }> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const result = await client.connectLinear(apiKey);
+      void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
+      return result;
+    },
+    [client, queryClient, linearStatusQueryKey]
+  );
+
+  const handleDisconnectLinear = useCallback(async (): Promise<void> => {
+    if (client === null) return;
+    await client.disconnectLinear();
+    void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
+    void queryClient.invalidateQueries({ queryKey: linearTeamsQueryKey });
+  }, [client, queryClient, linearStatusQueryKey, linearTeamsQueryKey]);
+
+  const handleSyncLinear = useCallback(
+    async (taskIds?: string[]): Promise<LinearSyncSummary> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const result = await client.syncLinear(taskIds);
+      void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
+      void queryClient.invalidateQueries({ queryKey: linearLinksQueryKey });
+      // A push-only pass never broadcasts task.changed (that only fires on a pull), so the
+      // tasks caches need their own invalidation here too — same shape as handleImportLinear.
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
+      return result;
+    },
+    [
+      client,
+      queryClient,
+      linearStatusQueryKey,
+      linearLinksQueryKey,
+      tasksQueryKey,
+      allTasksQueryKey,
+    ]
+  );
+
+  const handleImportLinear =
+    useCallback(async (): Promise<LinearSyncSummary> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const result = await client.importLinearIssues();
+      void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
+      void queryClient.invalidateQueries({ queryKey: linearLinksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: allTasksQueryKey });
+      return result;
+    }, [
+      client,
+      queryClient,
+      linearStatusQueryKey,
+      linearLinksQueryKey,
+      tasksQueryKey,
+      allTasksQueryKey,
+    ]);
+
   const handleClusterInbox = useCallback(async () => {
-    if (client === null) return [];
-    const { groups } = await client.clusterInbox();
-    return groups;
+    if (client === null) return { groups: [], error: null };
+    return await client.clusterInbox();
   }, [client]);
 
   // Retries every entry the queue is holding on a `blocked-environment` (a dirty checkout, a
@@ -1572,6 +2036,7 @@ export function useDispatchProject(
 
   return {
     client,
+    port,
     portLoading,
     portError,
     portErrorDetail,
@@ -1619,6 +2084,10 @@ export function useDispatchProject(
     setNotePlanId,
     notePlanRecord,
     pendingApprovals,
+    pendingScopeRequests,
+    handleDecideScopeRequest,
+    openQuestions,
+    handleAnswerQuestion,
 
     planId,
     setPlanId,
@@ -1627,7 +2096,10 @@ export function useDispatchProject(
     handleUpdate,
     moveTaskStatus,
     handleCreate,
-    handleDraftTask,
+    drafts: drafts ?? [],
+    handleStartDraft,
+    handleDismissDraft,
+    handleSendDraftMessage,
     handleDispatch,
     handleApprove,
     handleSendMessage,
@@ -1659,6 +2131,10 @@ export function useDispatchProject(
     handleDismissInbox,
     handleConvertInbox,
     handleEnrichInboxItem,
+    inboxEnrichItemId: inboxEnrich?.itemId ?? null,
+    inboxEnrichPlanRecord,
+    handleDismissInboxEnrich,
+    handleApplyInboxEnrich,
     handleEnrichTask,
     enrichTaskId: enrichPlan?.taskId ?? null,
     enrichPlanRecord,
@@ -1671,5 +2147,13 @@ export function useDispatchProject(
     handleSendBack,
     handleSubmitReview,
     handleUpdateConfig,
+    linearStatus: linearStatus ?? null,
+    linearTeams: linearTeams ?? [],
+    linearStates: linearStates ?? [],
+    linearLinks: linearLinks ?? {},
+    handleConnectLinear,
+    handleDisconnectLinear,
+    handleSyncLinear,
+    handleImportLinear,
   };
 }

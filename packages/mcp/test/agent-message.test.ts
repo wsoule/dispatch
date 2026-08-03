@@ -2,7 +2,14 @@ import { TaskStore } from '@dispatch/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
 import { join } from 'node:path';
@@ -81,6 +88,26 @@ class FakeDaemon {
   stop(): void {
     void this.server?.stop(true);
   }
+}
+
+// The orchestrator's terminal run states, read from the server's own source
+// via its one exported subpath (the package itself is Bun-only).
+function serverTerminalRunStates(): string[] {
+  const pkgJsonPath = createRequire(import.meta.url).resolve(
+    '@dispatch/server/package.json'
+  );
+  const source = readFileSync(
+    join(dirname(pkgJsonPath), 'src', 'orchestrator', 'types.ts'),
+    'utf8'
+  ).replace(/\/\/.*$/gm, '');
+  const match =
+    /export const TERMINAL_RUN_STATES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/.exec(
+      source
+    );
+  if (match === null) {
+    throw new Error('no TERMINAL_RUN_STATES set in the server source');
+  }
+  return [...(match[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1] ?? '');
 }
 
 let fakeHome: string;
@@ -332,6 +359,40 @@ describe('agent_message (fake live daemon)', () => {
       { text: 'hello', fromRunId: 'r-caller1' },
     ]);
   });
+
+  // tools.ts keeps its own untyped copy of TERMINAL_RUN_STATES, so a state
+  // added server-side and missed here advertises a dead run as a live target.
+  for (const state of serverTerminalRunStates()) {
+    it(`treats a ${state} run as dead: not a target, not a suggestion`, async () => {
+      daemon = new FakeDaemon();
+      daemon.runs = [
+        {
+          id: 'r-dead1',
+          taskId: 't-aaa',
+          taskTitle: 'Terminal task',
+          state,
+        },
+      ];
+      writeFakeDaemonFile(daemon.start());
+      const client = await connectClient(root);
+
+      const byTask = (await client.callTool({
+        name: 'agent_message',
+        arguments: { taskId: 't-aaa', text: 'hello' },
+      })) as ToolCallResult;
+      expect(byTask.isError).toBe(true);
+      expect(byTask.content[0]?.text).toMatch(/no live runs at all/);
+
+      const byRun = (await client.callTool({
+        name: 'agent_message',
+        arguments: { runId: 'r-other', text: 'hello' },
+      })) as ToolCallResult;
+      expect(byRun.isError).toBe(true);
+      expect(byRun.content[0]?.text).not.toContain('r-dead1');
+
+      expect(daemon.injectedTexts).toEqual([]);
+    });
+  }
 
   it('omits fromRunId when DISPATCH_RUN_ID is unset', async () => {
     delete process.env.DISPATCH_RUN_ID;

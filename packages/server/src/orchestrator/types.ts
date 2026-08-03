@@ -125,13 +125,32 @@ export type RunState =
   | 'awaiting-approval'
   | 'finished'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  // A `failed` that left uncommitted work behind — see RunSurvey.
+  | 'interrupted-dirty';
+
+// What a run was dispatched to do. 'execute' writes the code; 'review' judges
+// a diff and emits findings; 'verify' runs checks against finished work.
+export type RunKind = 'execute' | 'review' | 'verify';
 
 export const TERMINAL_RUN_STATES: ReadonlySet<RunState> = new Set([
   'finished',
   'failed',
   'cancelled',
+  'interrupted-dirty',
 ]);
+
+// What survived a run that did not finish cleanly, read straight from its
+// worktree's git status — recovery info instead of a hand inspection.
+export interface RunSurvey {
+  runId: string;
+  branch: string;
+  staged: string[];
+  unstaged: string[];
+  untracked: string[];
+  lastCommit: { sha: string; subject: string } | null;
+  cleanTree: boolean;
+}
 
 // Everything the registry/transcript/API need to describe a run, independent
 // of whether it is still live (has a real ExecutorRun) or is being replayed
@@ -213,6 +232,20 @@ export interface RunMeta {
   // fixed "base discarded" label is wrong for the two restack cases, where the
   // base merged perfectly well.
   baseDiscardedReason?: string;
+  // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
+  survey?: RunSurvey;
+  // Absent on every run recorded before review runs existed, so readers go
+  // through runKind() rather than reading this field directly.
+  kind?: RunKind;
+  // Files this run is touching, seeded from the task's `writes` at dispatch
+  // and grown from git status as it actually edits things.
+  claims?: string[];
+}
+
+// A run's kind, defaulted for the transcripts and registry entries written
+// before `kind` existed.
+export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
+  return meta.kind ?? 'execute';
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

@@ -1,5 +1,5 @@
 import type { DiffResult, RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 import { SectionLabel } from '../ui/SectionLabel';
 import { formatRelativeTimeFromIso } from '@/lib/format';

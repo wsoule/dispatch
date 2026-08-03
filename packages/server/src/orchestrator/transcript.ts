@@ -1,3 +1,4 @@
+import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
 import {
   appendFileSync,
   existsSync,
@@ -7,7 +8,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { NormalizedEntry, RunMeta, RunState } from './types.js';
+import type { NormalizedEntry, RunMeta, RunState, RunSurvey } from './types.js';
 
 export interface TranscriptHeaderLine {
   type: 'header';
@@ -17,6 +18,20 @@ export interface TranscriptHeaderLine {
 export interface TranscriptEntryLine {
   type: 'entry';
   entry: NormalizedEntry;
+}
+
+// A command the implementer ran, recorded via `record_evidence` rather than
+// narrated in the run's own output — see CommandEvidence.
+export interface TranscriptEvidenceLine {
+  type: 'evidence';
+  evidence: CommandEvidence;
+}
+
+// A mutation-test result, recorded via `record_mutation` — see
+// MutationEvidence for why `testsFailed: 0` matters.
+export interface TranscriptMutationLine {
+  type: 'mutation';
+  mutation: MutationEvidence;
 }
 
 // Finish fields (costUsd/turns/sessionId/error) only become known once a run
@@ -74,12 +89,26 @@ export interface TranscriptStateLine {
   stackParents?: string[];
   baseDiscarded?: boolean;
   baseDiscardedReason?: string;
+  // See RunMeta.survey — rides along on the state line that marks a run
+  // `failed`/`interrupted-dirty`, exactly like the other finish fields above.
+  survey?: RunSurvey;
 }
 
 export type TranscriptLine =
   | TranscriptHeaderLine
   | TranscriptEntryLine
-  | TranscriptStateLine;
+  | TranscriptStateLine
+  | TranscriptEvidenceLine
+  | TranscriptMutationLine;
+
+// The full picture of one run: its meta, its log entries, and its recorded
+// evidence — what `GET /api/runs/:id` returns.
+export interface RunDetail {
+  meta: RunMeta;
+  entries: NormalizedEntry[];
+  evidence: CommandEvidence[];
+  mutations: MutationEvidence[];
+}
 
 /**
  * One run's on-disk JSONL transcript: a header line carrying the run's
@@ -102,6 +131,16 @@ export class Transcript {
     appendFileSync(this.path, `${JSON.stringify(line)}\n`);
   }
 
+  appendEvidence(evidence: CommandEvidence): void {
+    const line: TranscriptEvidenceLine = { type: 'evidence', evidence };
+    appendFileSync(this.path, `${JSON.stringify(line)}\n`);
+  }
+
+  appendMutation(mutation: MutationEvidence): void {
+    const line: TranscriptMutationLine = { type: 'mutation', mutation };
+    appendFileSync(this.path, `${JSON.stringify(line)}\n`);
+  }
+
   appendState(
     state: RunState,
     ts: string = new Date().toISOString(),
@@ -120,6 +159,7 @@ export class Transcript {
       stackParents?: string[];
       baseDiscarded?: boolean;
       baseDiscardedReason?: string;
+      survey?: RunSurvey;
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
@@ -176,9 +216,7 @@ function narrowedStackParents(
 // has no in-memory registry yet) and by GET /api/runs/:id as a fallback for
 // runs the registry no longer holds. The header supplies the base meta; the
 // last state line (if any) overrides state and any finish fields it carried.
-export function replayTranscript(
-  path: string
-): { meta: RunMeta; entries: NormalizedEntry[] } | null {
+export function replayTranscript(path: string): RunDetail | null {
   const lines = new Transcript(path).read();
   const header = lines.find(
     (line): line is TranscriptHeaderLine => line.type === 'header'
@@ -187,9 +225,15 @@ export function replayTranscript(
 
   let meta = header.meta;
   const entries: NormalizedEntry[] = [];
+  const evidence: CommandEvidence[] = [];
+  const mutations: MutationEvidence[] = [];
   for (const line of lines) {
     if (line.type === 'entry') {
       entries.push(line.entry);
+    } else if (line.type === 'evidence') {
+      evidence.push(line.evidence);
+    } else if (line.type === 'mutation') {
+      mutations.push(line.mutation);
     } else if (line.type === 'state') {
       meta = {
         ...meta,
@@ -213,8 +257,9 @@ export function replayTranscript(
         baseDiscarded: line.baseDiscarded ?? meta.baseDiscarded,
         baseDiscardedReason:
           line.baseDiscardedReason ?? meta.baseDiscardedReason,
+        survey: line.survey ?? meta.survey,
       };
     }
   }
-  return { meta, entries };
+  return { meta, entries, evidence, mutations };
 }

@@ -1,4 +1,9 @@
-import { dispatchableTasks, loadConfig } from '@dispatch/core';
+import {
+  claimConflictsWithWrites,
+  dispatchableTasks,
+  loadConfig,
+  schedulableBatch,
+} from '@dispatch/core';
 import type { TaskDoc, TaskStore } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
@@ -52,7 +57,15 @@ export interface EpicEngineContext {
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
+  // Test-injection seam for the self-retry delay below, so a test can watch a
+  // stalled fill recover without sleeping the production window.
+  fillRetryDelayMs?: number;
 }
+
+// How long a fill that failed outright waits before retrying itself, and how
+// many consecutive retries one epic gets before it stops on its own.
+const DEFAULT_FILL_RETRY_DELAY_MS = 15_000;
+const MAX_FILL_RETRIES = 3;
 
 /**
  * The epic-level parallel dispatch engine (spec §5 Dispatch step 6): starting
@@ -71,8 +84,17 @@ export class EpicEngine {
   // One serialization chain per epic — see scheduleFill() for why fillQueue
   // can no longer simply be called from the run-lifecycle hooks.
   private readonly fillChains = new Map<string, Promise<void>>();
+  // Self-retry state per epic: the pending timer and how many consecutive
+  // retries it has already spent (see armFillRetry).
+  private readonly fillRetryTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  private readonly fillRetryAttempts = new Map<string, number>();
+  private readonly fillRetryDelayMs: number;
 
   constructor(private readonly ctx: EpicEngineContext) {
+    this.fillRetryDelayMs = ctx.fillRetryDelayMs ?? DEFAULT_FILL_RETRY_DELAY_MS;
     // Two distinct triggers can make an epic's next dispatch decision stale:
     // a run reaching a terminal state (frees a concurrency slot, and — since
     // Orchestrator.handleFinish moves the task to `in-review` before firing
@@ -162,6 +184,7 @@ export class EpicEngine {
       );
     }
     session.active = false;
+    this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
       'epic dispatch stopped (new dispatches halted; live runs continue)'
@@ -268,9 +291,37 @@ export class EpicEngine {
   // down. Failures are recorded rather than propagated, matching
   // invokeHooksSafely's rule for a throwing subscriber.
   private scheduleFill(epicId: string): void {
-    void this.enqueueFill(epicId).catch((err: unknown) => {
-      this.recordFillFailure(epicId, err);
-    });
+    void this.enqueueFill(epicId).then(
+      () => this.fillRetryAttempts.delete(epicId),
+      (err: unknown) => {
+        this.recordFillFailure(epicId, err);
+        this.armFillRetry(epicId);
+      }
+    );
+  }
+
+  // A fill that dispatched nothing fires no lifecycle hook, so nothing else
+  // would ever retry it. Bounded: a failure that repeats is not transient.
+  private armFillRetry(epicId: string): void {
+    const attempts = (this.fillRetryAttempts.get(epicId) ?? 0) + 1;
+    if (attempts > MAX_FILL_RETRIES) return;
+    this.fillRetryAttempts.set(epicId, attempts);
+    clearTimeout(this.fillRetryTimers.get(epicId));
+    const timer = setTimeout(() => {
+      this.fillRetryTimers.delete(epicId);
+      const session = this.sessions.get(epicId);
+      if (session === undefined || !session.active) return;
+      this.scheduleFill(epicId);
+    }, this.fillRetryDelayMs);
+    // Never a reason to keep the daemon (or a test process) alive.
+    timer.unref?.();
+    this.fillRetryTimers.set(epicId, timer);
+  }
+
+  private clearFillRetry(epicId: string): void {
+    clearTimeout(this.fillRetryTimers.get(epicId));
+    this.fillRetryTimers.delete(epicId);
+    this.fillRetryAttempts.delete(epicId);
   }
 
   // The durable half of that rule: invokeHooksSafely doesn't just log a
@@ -294,20 +345,10 @@ export class EpicEngine {
     }
   }
 
-  // Dispatches ready children up to the session's concurrency cap. Reads a
-  // fresh live-run count on every call (rather than tracking a separate
-  // counter that could drift from reality) — cheap at epic scale, and it's
-  // the actual registry, not a shadow copy, that the concurrency guarantee
-  // has to hold against.
-  //
-  // C1: readiness is computed over the FULL task set (`dispatchableTasks`
-  // gates a blocker on being in-review/done/cancelled, but treats a blocker
-  // id that isn't in the array it's given as automatically satisfied — see
-  // core's own dispatchableTasks/readyTasks doc comments) and only *then*
-  // intersected with this epic's children. Passing just `children` here
-  // would silently ignore a blocker that genuinely exists elsewhere in the
-  // project (a different epic, or no epic at all) simply because it isn't a
-  // sibling.
+  // Dispatches ready children via schedulableBatch (conflicts.ts): concurrency
+  // cap, no two overlapping `writes` in one batch. Readiness runs over the FULL
+  // task set first, since dispatchableTasks treats a blocker it wasn't given as
+  // satisfied — a blocker in another epic, or in none, must still count.
   private async fillQueue(epicId: string): Promise<void> {
     const session = this.sessions.get(epicId);
     if (session === undefined || !session.active) return;
@@ -319,7 +360,7 @@ export class EpicEngine {
       .filter(
         (r) => childIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
       ).length;
-    let slots = session.concurrency - liveCount;
+    const slots = session.concurrency - liveCount;
     if (slots <= 0) return;
 
     // childIds now includes archived children (see childrenOf); dispatchability
@@ -327,16 +368,27 @@ export class EpicEngine {
     const ready = dispatchableTasks(this.ctx.cache.query()).filter(
       (t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined
     );
-    for (const task of ready) {
-      if (slots <= 0) break;
+    // A live run's footprint can have grown past its task's declared writes
+    // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
+    const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);
+    // An undeclared task (`writes: []`) therefore waits on ANY live claim until
+    // that run goes terminal — nothing reaps one, so a parked run waits on a human.
+    const clearOfLiveRuns = ready.filter(
+      (t) =>
+        !liveClaims.some((claim) =>
+          claimConflictsWithWrites(claim, t.meta.writes)
+        )
+    );
+    const batch = schedulableBatch(
+      clearOfLiveRuns.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),
+      slots
+    );
+    for (const taskId of batch) {
       try {
-        await this.ctx.orchestrator.dispatch(task.meta.id, session.executor);
-        slots--;
+        await this.ctx.orchestrator.dispatch(taskId, session.executor);
       } catch (err) {
-        // A task that already picked up a live run between the readiness
-        // snapshot above and this dispatch call (e.g. someone manually
-        // dispatched it outside the epic session) just gets skipped — every
-        // other error is a real bug and must surface, not be swallowed.
+        // A task that already picked up a live run outside this session
+        // (raced between the readiness snapshot and here) just gets skipped.
         if (err instanceof OrchestratorConflictError) continue;
         throw err;
       }
@@ -366,6 +418,7 @@ export class EpicEngine {
     if (session === undefined || session.completedAt !== undefined) return;
     session.completedAt = new Date().toISOString();
     session.active = false;
+    this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
       'epic dispatch session ended — no children left to dispatch'

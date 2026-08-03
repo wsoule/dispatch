@@ -1,5 +1,10 @@
-import type { PlannedTask, PlanState, ProposalAction } from '@dispatch/client';
-import type { Priority } from '@dispatch/core';
+import type {
+  PlannedTask,
+  PlannerQuestion,
+  PlanState,
+  ProposalAction,
+} from '@dispatch/client';
+import type { Priority } from '@dispatch/core/browser';
 import {
   AlertTriangle,
   Check,
@@ -17,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { PlanQuestionsForm } from '../components/plans/PlanQuestionsForm';
 import { Markdown } from '../components/runs/Markdown';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
@@ -174,6 +180,9 @@ interface PlanConversationProps {
   busy: boolean;
   /** This plan's tasks are already written, so the conversation is closed. */
   confirmed: boolean;
+  /** The latest turn's clarifying questions, if any — rendered as an answerable form above
+   * the composer. */
+  questions: PlannerQuestion[];
   onSend: (text: string) => Promise<void>;
 }
 
@@ -188,6 +197,7 @@ function PlanConversation({
   items,
   busy,
   confirmed,
+  questions,
   onSend,
 }: PlanConversationProps) {
   const [text, setText] = useState('');
@@ -263,6 +273,14 @@ function PlanConversation({
           );
         })}
       </div>
+
+      {!confirmed && questions.length > 0 && (
+        <PlanQuestionsForm
+          questions={questions}
+          disabled={busy || sending}
+          onSend={onSend}
+        />
+      )}
 
       <div className="border-border flex flex-col gap-1.5 border-t pt-3">
         {error !== null && (
@@ -647,6 +665,7 @@ export function PlansView({
             items={thread}
             busy={turnRunning}
             confirmed={planConfirmed}
+            questions={data.planRecord?.questions ?? []}
             onSend={sendFollowUp}
           />
         )

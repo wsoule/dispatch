@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 
 // Mirrors packages/web/src/taskGraph.ts's `isTerminal`/`computeBlockedIds` —
 // display-only blocked-badge logic duplicated here rather than pulled from

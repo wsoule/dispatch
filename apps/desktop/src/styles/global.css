@@ -98,3 +98,20 @@ button {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
+
+/* A slim always-drawn scrollbar for panes that scroll inside a small box. Deliberately no
+   `scrollbar-width`: setting it makes the engine ignore these rules entirely. */
+.scroll-affordance::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scroll-affordance::-webkit-scrollbar-thumb {
+  background: rgb(128 128 128 / 45%);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 4px;
+}
+
+.scroll-affordance::-webkit-scrollbar-track {
+  background: transparent;
+}

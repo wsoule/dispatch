@@ -3,6 +3,7 @@ import { ExternalLink, Layers2, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
 import { modelLabel } from '../../lib/models';
+import { RunKindBadge } from './RunKindBadge';
 import { RunStatePill } from './RunStatePill';
 import { Button } from '@/ui/button';
 
@@ -58,6 +59,7 @@ export function RunDetailHeader({
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-3">
         <RunStatePill meta={meta} />
+        <RunKindBadge kind={meta.kind} />
         {meta.branch !== undefined && (
           <span className="text-muted-foreground truncate font-mono text-[11px]">
             {meta.branch}

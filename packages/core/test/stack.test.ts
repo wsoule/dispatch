@@ -24,6 +24,10 @@ function mkTask(
       updated: created,
       external: null,
       selfReview: false,
+      writes: [],
+      risk: 'routine',
+      model: null,
+      exercised: false,
     },
     body: '',
   };

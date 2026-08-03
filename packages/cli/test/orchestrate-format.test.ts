@@ -5,6 +5,7 @@ import type {
   EpicProgress,
   NormalizedEntry,
   PlanProposal,
+  PlanRecord,
   RunMeta,
 } from '../src/apiClient.js';
 import {
@@ -13,6 +14,7 @@ import {
   formatDiffFiles,
   formatEntry,
   formatEpicProgress,
+  formatPlanNeedsReply,
   formatProposal,
   formatRunsTable,
 } from '../src/orchestrateFormat.js';
@@ -84,6 +86,52 @@ describe('formatEntry', () => {
       text: 'user: please fix the typo',
     };
     expect(formatEntry(entry)).toBe('[system] user: please fix the typo');
+  });
+
+  it('renders an inbound agent message with its sender label', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'heads up, I own auth.ts',
+      from: 'agent',
+      fromLabel: 'Fix login (r-abc123)',
+    };
+    expect(formatEntry(entry)).toBe(
+      '[message from Fix login (r-abc123)] heads up, I own auth.ts'
+    );
+  });
+
+  it('renders an unlabelled agent message with the generic sender', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'ping',
+      from: 'agent',
+    };
+    expect(formatEntry(entry)).toBe('[message from another agent] ping');
+  });
+
+  it('renders this run\'s own message to the human as "to you"', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'the migration looks risky',
+      from: 'agent',
+      toUser: true,
+    };
+    expect(formatEntry(entry)).toBe(
+      '[message to you] the migration looks risky'
+    );
+  });
+
+  it('renders a human message from the Session composer', () => {
+    const entry: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      text: 'use the v2 endpoint',
+      from: 'user',
+    };
+    expect(formatEntry(entry)).toBe('[message from user] use the v2 endpoint');
   });
 
   it('returns null for an entry with no text and no special handling', () => {
@@ -241,6 +289,49 @@ describe('formatEpicProgress', () => {
   });
 });
 
+describe('formatPlanNeedsReply', () => {
+  function record(overrides: Partial<PlanRecord> = {}): PlanRecord {
+    return {
+      id: 'plan-1',
+      prompt: 'add search',
+      state: 'ready',
+      messages: [],
+      questions: [],
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      ...overrides,
+    };
+  }
+
+  it('lists the questions, their options, and the reply command', () => {
+    const text = formatPlanNeedsReply(
+      record({
+        messages: [
+          { role: 'user', text: 'add search', at: '2026-01-01T00:00:00Z' },
+          {
+            role: 'assistant',
+            text: 'A couple of things first.',
+            at: '2026-01-01T00:00:01Z',
+          },
+        ],
+        questions: [
+          { id: 'q1', question: 'Which backend?', options: ['sqlite', 'pg'] },
+        ],
+      })
+    );
+    expect(text).toContain('A couple of things first.');
+    expect(text).toContain('1. Which backend?');
+    expect(text).toContain('sqlite | pg');
+    expect(text).toContain('dispatch plan reply plan-1');
+  });
+
+  it('still points at the reply command when there are no questions', () => {
+    const text = formatPlanNeedsReply(record());
+    expect(text).toContain('did not propose any tasks');
+    expect(text).toContain('dispatch plan reply plan-1');
+  });
+});
+
 describe('exitCodeForRunState', () => {
   it('maps finished to 0', () => {
     expect(exitCodeForRunState('finished')).toBe(0);
@@ -250,6 +341,11 @@ describe('exitCodeForRunState', () => {
   });
   it('maps cancelled to 130', () => {
     expect(exitCodeForRunState('cancelled')).toBe(130);
+  });
+  // Without this, --watch reads the state as "still running" and waits for an
+  // exit that already happened.
+  it('maps interrupted-dirty to 1, like the failed run it came from', () => {
+    expect(exitCodeForRunState('interrupted-dirty')).toBe(1);
   });
   it('returns null for a non-terminal state', () => {
     expect(exitCodeForRunState('running')).toBeNull();

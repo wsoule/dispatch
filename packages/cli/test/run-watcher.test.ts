@@ -90,6 +90,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     reviewRun: () => Promise.reject(new Error('not used')),
     startPlan: () => Promise.reject(new Error('not used')),
     getPlan: () => Promise.reject(new Error('not used')),
+    sendPlanMessage: () => Promise.reject(new Error('not used')),
     confirmPlan: () => Promise.reject(new Error('not used')),
     startEpic: () => Promise.reject(new Error('not used')),
     stopEpic: () => Promise.reject(new Error('not used')),
@@ -102,7 +103,12 @@ describe('createRunWatcher', () => {
     const lines: string[] = [];
     const created: FakeSocket[] = [];
     const client = makeClient(() =>
-      Promise.resolve({ meta: makeRunMeta(), entries: [] })
+      Promise.resolve({
+        meta: makeRunMeta(),
+        entries: [],
+        evidence: [],
+        mutations: [],
+      })
     );
     const watcher = createRunWatcher(
       { cwd: '/tmp', log: (l) => lines.push(l) },
@@ -137,7 +143,12 @@ describe('createRunWatcher', () => {
     const created: FakeSocket[] = [];
     let state: RunMeta['state'] = 'running';
     const client = makeClient(() =>
-      Promise.resolve({ meta: makeRunMeta({ state }), entries: [] })
+      Promise.resolve({
+        meta: makeRunMeta({ state }),
+        entries: [],
+        evidence: [],
+        mutations: [],
+      })
     );
     const watcher = createRunWatcher(
       { cwd: '/tmp', log: () => {} },
@@ -177,7 +188,12 @@ describe('createRunWatcher', () => {
   it('rejects waitForExit with a CliError once the connection is given up on', async () => {
     const created: FakeSocket[] = [];
     const client = makeClient(() =>
-      Promise.resolve({ meta: makeRunMeta(), entries: [] })
+      Promise.resolve({
+        meta: makeRunMeta(),
+        entries: [],
+        evidence: [],
+        mutations: [],
+      })
     );
     const watcher = createRunWatcher(
       { cwd: '/tmp', log: () => {} },
@@ -299,7 +315,12 @@ describe('createRunWatcher', () => {
     const lines: string[] = [];
     const created: FakeSocket[] = [];
     const client = makeClient(() =>
-      Promise.resolve({ meta: makeRunMeta(), entries: [] })
+      Promise.resolve({
+        meta: makeRunMeta(),
+        entries: [],
+        evidence: [],
+        mutations: [],
+      })
     );
     const watcher = createRunWatcher(
       { cwd: '/tmp', log: (l) => lines.push(l) },

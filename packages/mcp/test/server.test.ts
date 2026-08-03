@@ -49,12 +49,17 @@ describe('server identity', () => {
     expect(server.server.constructor.name).toBe('Server');
   });
 
-  it('lists all five task tools plus run_list, agent_message, message_user, and dispatch_note', async () => {
+  it('lists all five task tools plus run_list, agent_message, message_user, ask_user, request_scope, dispatch_note, record_decision, record_evidence, and record_mutation', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'agent_message',
+      'ask_user',
       'dispatch_note',
       'message_user',
+      'record_decision',
+      'record_evidence',
+      'record_mutation',
+      'request_scope',
       'run_list',
       'task_comment',
       'task_get',
@@ -101,6 +106,25 @@ describe('task_save', () => {
     expect(meta.title).toBe('Build parser');
     expect(meta.priority).toBe('high');
     expect(meta.id).toMatch(/^t-[0-9a-f]{6}$/);
+  });
+
+  it('creates a task with a declared write-set, then replaces it on update', async () => {
+    const created = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Declares writes', writes: ['a.ts', 'b.ts'] },
+    })) as ToolCallResult;
+    const createdMeta = created.structuredContent?.meta as {
+      id: string;
+      writes: string[];
+    };
+    expect(createdMeta.writes).toEqual(['a.ts', 'b.ts']);
+
+    const updated = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: createdMeta.id, writes: ['c.ts'] },
+    })) as ToolCallResult;
+    const updatedMeta = updated.structuredContent?.meta as { writes: string[] };
+    expect(updatedMeta.writes).toEqual(['c.ts']);
   });
 
   it('rejects an empty title on create', async () => {

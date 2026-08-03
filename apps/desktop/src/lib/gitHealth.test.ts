@@ -85,6 +85,32 @@ describe('computeGitHealth', () => {
     expect(health.orphans.map((b) => b.branch)).toEqual(['o', 'l']);
   });
 
+  test('mergedOrphans is the same orphan set narrowed to landed work', () => {
+    // A leftover ref is as safe to bulk-delete as an orphan once its commits
+    // landed; counting it in one place and not the other showed two numbers.
+    const health = computeGitHealth(
+      [
+        branch({ branch: 'o-merged', status: 'orphan', mergedIntoBase: true }),
+        branch({ branch: 'o-unmerged', status: 'orphan' }),
+        branch({
+          branch: 'l-merged',
+          status: 'leftover',
+          mergedIntoBase: true,
+        }),
+        branch({
+          branch: 'r-merged',
+          status: 'reviewable',
+          mergedIntoBase: true,
+        }),
+      ],
+      NOW
+    );
+    expect(health.mergedOrphans.map((b) => b.branch)).toEqual([
+      'o-merged',
+      'l-merged',
+    ]);
+  });
+
   test('stacked branches are identified so bulk actions can leave them alone', () => {
     const health = computeGitHealth(
       [

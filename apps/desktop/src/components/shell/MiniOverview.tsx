@@ -43,6 +43,7 @@ export function MiniOverview({
         blockedIds: data.blockedIds,
         mergeQueue: data.mergeQueue,
         pendingApprovals: data.pendingApprovals,
+        openQuestions: data.openQuestions,
         query: '',
         activeStates: new Set(),
         collapsed: new Set(),
@@ -56,6 +57,7 @@ export function MiniOverview({
       data.blockedIds,
       data.mergeQueue,
       data.pendingApprovals,
+      data.openQuestions,
     ]
   );
 

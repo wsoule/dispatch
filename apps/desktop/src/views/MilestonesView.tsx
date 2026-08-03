@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { Target, TriangleAlert } from 'lucide-react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';

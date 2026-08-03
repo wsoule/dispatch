@@ -3,15 +3,22 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
-import { handleApi } from './api.js';
+import { handleApi, isTrustedOrigin } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
+import { DepMapCache, depMapSourceDirs, isSkippedPath } from './depmap.js';
 import { EventBus } from './events.js';
+import { FindingStore } from './findings.js';
+import { GitRepo } from './git/commands.js';
 import { InboxStore } from './inbox.js';
+import { LedgerStore } from './ledger.js';
+import type { LinearClient } from './linear/client.js';
+import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
@@ -19,8 +26,12 @@ import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
+import { QuestionRegistry } from './orchestrator/questions.js';
+import { ReviewRunner } from './orchestrator/review.js';
+import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
+import { VerificationRunner } from './orchestrator/verify.js';
 import { ReviewCommentStore } from './reviewComments.js';
-import { watchTasks } from './watcher.js';
+import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
   port: number;
@@ -71,6 +82,9 @@ export interface StartServerOptions {
   // How often PrManager polls open PRs for a merged state. Defaults to the
   // plan's 60s; tests pass something much shorter.
   prPollIntervalMs?: number;
+  // Replaces credential lookup with a ready-made Linear client, so no sync test
+  // ever reaches the network.
+  linearClient?: LinearClient;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -101,29 +115,11 @@ function safeRebuild(store: TaskStore, cache: TaskCache): void {
   }
 }
 
-// Returns the origin to echo back in `Access-Control-Allow-Origin`, or null if
-// the origin is not trusted (so no CORS header is sent and the browser blocks
-// it). A wildcard `*` would be dangerous here: this daemon dispatches coding
-// agents, so any web page you visit could otherwise fetch `127.0.0.1:<port>`
-// and read your tasks or trigger a run (the loopback DNS-rebinding class). We
-// trust only the app's own webview origins and loopback dev origins; a real
-// site like `https://evil.com` matches none of these, so its reads are blocked
-// and its JSON mutations never pass preflight.
-export function resolveCorsOrigin(origin: string | null): string | null {
+// The origin to echo back in `Access-Control-Allow-Origin`, or null when it is
+// untrusted — a wildcard would let any page you visit read this daemon's tasks.
+function resolveCorsOrigin(origin: string | null): string | null {
   if (origin === null) return null;
-  // Packaged Tauri webview (scheme varies by platform).
-  if (
-    origin === 'tauri://localhost' ||
-    origin === 'https://tauri.localhost' ||
-    origin === 'http://tauri.localhost'
-  ) {
-    return origin;
-  }
-  // Loopback dev origins (vite dev server / browser dev harness), any port.
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-    return origin;
-  }
-  return null;
+  return isTrustedOrigin(origin) ? origin : null;
 }
 
 // Adds CORS headers so the desktop webview / browser dev harness (a different
@@ -136,7 +132,7 @@ function withCors(res: Response, origin: string | null): Response {
     res.headers.set('access-control-allow-origin', allowed);
     res.headers.set(
       'access-control-allow-methods',
-      'GET, POST, PATCH, OPTIONS'
+      'GET, POST, PATCH, DELETE, OPTIONS'
     );
     res.headers.set('access-control-allow-headers', 'content-type');
     // The allowed origin is request-dependent, so caches must key on it.
@@ -211,6 +207,15 @@ export async function startServer(
     events.broadcast({ type: 'task.changed' });
   });
 
+  // The reverse-dependency map ReviewRunner scopes reviews with, rebuilt
+  // lazily and invalidated whenever the workspace's own source changes.
+  const depMapCache = new DepMapCache(rootDir);
+  const sourceWatcher = watchSourceDirs(
+    depMapSourceDirs(rootDir),
+    () => depMapCache.invalidate(),
+    isSkippedPath
+  );
+
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
@@ -225,12 +230,37 @@ export async function startServer(
   // probed jj through that seam would decide a demo repo was jj-colocated and
   // take the jj rebase path against a repo with no jj at all.
   const jj = new JjManager(rootDir);
-  const orchestrator = new Orchestrator({ rootDir, store, cache, events, jj });
+  // Shared with apiCtx below so a decision an agent records mid-run is
+  // visible to buildTaskPrompt on the very next dispatch, no restart needed.
+  const ledgerStore = new LedgerStore(rootDir);
+  const orchestrator = new Orchestrator({
+    rootDir,
+    store,
+    cache,
+    events,
+    jj,
+    ledgerStore,
+  });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
   }
+  // Questions an agent raised mid-run. A run going terminal drops its own, so
+  // the app never shows a card whose answer nobody is listening for.
+  const questions = new QuestionRegistry();
+  orchestrator.onRunTerminal((meta) => {
+    if (questions.closeRun(meta.id) > 0) {
+      events.broadcast({ type: 'question.closed', runId: meta.id });
+    }
+  });
+  // Same lifecycle for out-of-scope edit requests: a run that ends still
+  // holding one open should not leave it dangling for a human to find later.
+  const scopeRequests = new ScopeRequestRegistry();
+  orchestrator.onRunTerminal((meta) => {
+    scopeRequests.closeRun(meta.id);
+  });
+
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
@@ -241,7 +271,7 @@ export async function startServer(
   // via `registerPlanners`) and the epic dispatch engine, both wired against
   // the same store/cache/events/orchestrator every other request handler
   // shares.
-  const planManager = new PlanManager({ store, cache, events });
+  const planManager = new PlanManager({ rootDir, store, cache, events });
   if (opts.registerPlanners !== undefined) {
     opts.registerPlanners(planManager);
   } else {
@@ -288,6 +318,65 @@ export async function startServer(
     );
   }
 
+  // Bidirectional Linear sync. The poll timer only starts when the config enables it; the
+  // debounced push rides the same `task.changed` signal the UI listens to.
+  const linearSync = new LinearSync({
+    rootDir,
+    store,
+    cache,
+    events,
+    client: opts.linearClient,
+  });
+  const unsubscribeLinear = events.subscribe((event) => {
+    if (event.type === 'task.changed') linearSync.notifyTaskChanged();
+  });
+  linearSync.start();
+
+  // Shares PrManager/MergeQueue's command-runner seam (opts.prCommandRunner).
+  const gitRepo = new GitRepo(rootDir, opts.prCommandRunner);
+
+  // Review dispatched as its own run kind. Built at boot because it subscribes
+  // to the terminal hook that ingests a review's findings.
+  const findingStore = new FindingStore(rootDir);
+  const reviewRunner = new ReviewRunner({
+    rootDir,
+    store,
+    findingStore,
+    ledgerStore,
+    depMap: depMapCache,
+    events,
+    orchestrator,
+  });
+
+  // Verification as its own dispatched run kind, exercising finished work
+  // rather than reading its diff.
+  const verificationRunner = new VerificationRunner({
+    rootDir,
+    store,
+    cache,
+    events,
+    orchestrator,
+  });
+
+  // Constructed after ReviewRunner on purpose: terminal hooks fire in
+  // registration order, so a review's findings land before the loop reacts.
+  const fixLoop = new FixLoop({
+    rootDir,
+    store,
+    cache,
+    events,
+    orchestrator,
+    reviewRunner,
+    findingStore,
+    fixLoopStore: new FixLoopStore(rootDir),
+  });
+  // Runs after reconcileOnBoot has force-failed the previous process's runs,
+  // so a loop waiting on one of them sees a terminal run and moves on.
+  const resumedLoops = fixLoop.resumeOnBoot();
+  if (resumedLoops > 0) {
+    console.log(`dispatchd: resumed ${resumedLoops} stalled fix loop(s)`);
+  }
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -302,7 +391,16 @@ export async function startServer(
     prCapability,
     noteStore: new NoteStore(rootDir),
     inboxStore,
+    findingStore,
+    ledgerStore,
+    reviewRunner,
+    verificationRunner,
+    fixLoop,
     reviewComments: new ReviewCommentStore(rootDir),
+    questions,
+    scopeRequests,
+    linearSync,
+    gitRepo,
   };
 
   const server = Bun.serve({
@@ -313,6 +411,15 @@ export async function startServer(
       const origin = req.headers.get('origin');
 
       if (url.pathname === '/ws') {
+        // CORS never applies to a WebSocket, so without this an untrusted page
+        // could upgrade and read the whole event stream. A null Origin is a
+        // non-browser client, which the router's guard lets through too.
+        if (origin !== null && !isTrustedOrigin(origin)) {
+          return withCors(
+            new Response('cross-origin websocket rejected', { status: 403 }),
+            origin
+          );
+        }
         if (srv.upgrade(req)) return undefined;
         return withCors(
           new Response('expected websocket upgrade', { status: 400 }),
@@ -332,6 +439,9 @@ export async function startServer(
       }
 
       if (url.pathname.startsWith('/api/')) {
+        // Bun's 10s idle timeout is shorter than a model turn, so raise it for
+        // every /api/ route rather than keeping a per-path list.
+        srv.timeout(req, 65);
         return withCors(await handleApi(req, apiCtx), origin);
       }
 
@@ -396,8 +506,11 @@ export async function startServer(
     mergeQueue,
     async stop() {
       watcher.close();
+      sourceWatcher.close();
       prManager.stopPolling();
       mergeQueue.stop();
+      unsubscribeLinear();
+      await linearSync.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on

@@ -1,4 +1,9 @@
-import type { CreateInput, Priority, TaskDoc, TaskKind } from '@dispatch/core';
+import type {
+  CreateInput,
+  Priority,
+  TaskDoc,
+  TaskKind,
+} from '@dispatch/core/browser';
 import { useState } from 'react';
 
 import { Button } from '../../ui/button';

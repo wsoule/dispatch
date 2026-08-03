@@ -1,5 +1,5 @@
 import type { RunMeta, RunState } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core';
+import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
@@ -78,6 +78,7 @@ const RUN_STATE_LABEL: Record<RunState, string> = {
   finished: 'Finished',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  'interrupted-dirty': 'Interrupted',
 };
 
 /**

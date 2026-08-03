@@ -1,0 +1,5 @@
+[test]
+
+# bunfig.toml is read from the process's cwd only, so this copy covers
+# `bun run test`, which runs each package's script from its own directory.
+preload = ["./test/setup.ts"]

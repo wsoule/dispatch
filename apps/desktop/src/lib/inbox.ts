@@ -10,7 +10,8 @@
 export type InboxTarget =
   | { kind: 'run'; runId: string }
   | { kind: 'queue' }
-  | { kind: 'runs-page' };
+  | { kind: 'runs-page' }
+  | { kind: 'task'; taskId: string };
 
 export interface InboxEntry {
   /** `${ts}:${title}`, with a numeric suffix appended when that base collides with another

@@ -1,4 +1,4 @@
-import type { Priority } from '@dispatch/core';
+import type { Priority } from '@dispatch/core/browser';
 
 import { cn } from '@/lib/utils';
 

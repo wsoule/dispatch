@@ -1,28 +1,14 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { loadConfig } from '@dispatch/core';
 
 import type { InboxItem } from './inbox.js';
 import { openClaudeQuery } from './orchestrator/claudeCli.js';
 
 /**
- * Groups related inbox items using a model, so "diffs go blank mid-run" and "the review pane is
- * empty while an agent works" land together — the same bug described twice, sharing not one word.
- *
- * This complements rather than replaces the local heuristic in the desktop app
- * (lib/inboxCluster.ts). The two answer different questions and have different costs:
- *
- * - The local pass is free and instant, so it runs on every render as a passive hint. It can only
- *   see shared vocabulary.
- * - This pass costs a call and a couple of seconds, so it is explicitly user-triggered. It sees
- *   meaning.
- *
- * Haiku, deliberately. This is a short classification over a handful of one-line strings — the
- * cheapest, fastest model in the family is the right tool, and paying Opus rates to sort a todo
- * list would be indefensible. No tools are granted either: clustering is about the text in front
- * of it, so letting it read the repo would only add latency and a way to go wrong.
+ * Groups related inbox items with a model, so one piece of work described two
+ * ways lands together — past what lib/inboxCluster.ts's local pass can match.
  */
-
-const CLUSTER_MODEL = 'claude-haiku-4-5-20251001';
 
 export interface InboxClusterGroup {
   /** A title for the epic these items would become. */
@@ -74,6 +60,20 @@ function buildPrompt(items: InboxItem[]): string {
 /** Anything below this and there is nothing to group. */
 const MIN_ITEMS = 3;
 
+/** A hung model call must not pin the request open forever now that clustering runs
+ * automatically, with nothing watching a spinner to cancel it by hand. */
+const CLUSTER_TIMEOUT_MS = 60_000;
+
+// The SDK signals an abort as either an AbortError or a fetch-cancellation
+// message, so a real cancellation is never read as an unrelated failure.
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === 'AbortError' ||
+      err.message.includes('FetchRequestCanceledException'))
+  );
+}
+
 export class InboxClusterer {
   constructor(
     private readonly rootDir: string,
@@ -85,35 +85,52 @@ export class InboxClusterer {
     const open = items.filter((i) => !i.done);
     if (open.length < MIN_ITEMS) return [];
 
-    const options: Options = {
-      cwd: this.rootDir,
-      model: CLUSTER_MODEL,
-      permissionMode: 'plan',
-      // No tools: this is a judgement about the strings above, not about the repo.
-      allowedTools: [],
-      outputFormat: { type: 'json_schema', schema: SCHEMA },
-    };
-
-    const sdkQuery: Query = openClaudeQuery(
-      this.queryFn,
-      buildPrompt(open),
-      options
-    );
-
-    for await (const message of sdkQuery) {
-      if (message.type !== 'result') continue;
-      if (message.subtype !== 'success') {
-        throw new Error(`clustering failed: ${message.subtype}`);
-      }
-      if (message.structured_output === undefined) {
-        throw new Error('clustering returned no structured output');
-      }
-      const parsed = message.structured_output as {
-        groups?: InboxClusterGroup[];
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), CLUSTER_TIMEOUT_MS);
+    try {
+      const options: Options = {
+        cwd: this.rootDir,
+        // Read per call, so a settings change applies with no daemon restart.
+        model: loadConfig(this.rootDir).models.cluster,
+        permissionMode: 'plan',
+        // No tools: this is a judgement about the strings above, not about the repo.
+        allowedTools: [],
+        outputFormat: { type: 'json_schema', schema: SCHEMA },
+        abortController,
       };
-      return sanitize(parsed.groups ?? [], open);
+
+      const sdkQuery: Query = openClaudeQuery(
+        this.queryFn,
+        buildPrompt(open),
+        options
+      );
+
+      for await (const message of sdkQuery) {
+        if (message.type !== 'result') continue;
+        if (message.subtype !== 'success') {
+          throw new Error(`clustering failed: ${message.subtype}`);
+        }
+        if (message.structured_output === undefined) {
+          throw new Error('clustering returned no structured output');
+        }
+        const parsed = message.structured_output as {
+          groups?: InboxClusterGroup[];
+        };
+        return sanitize(parsed.groups ?? [], open);
+      }
+      return [];
+    } catch (err) {
+      // Checking the signal alone would mislabel a genuine failure that happens to land right
+      // at the 60s mark — only an error the abort itself caused is a timeout.
+      if (isAbortError(err)) {
+        throw new Error(
+          `clustering timed out after ${CLUSTER_TIMEOUT_MS / 1000}s`
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return [];
   }
 }
 

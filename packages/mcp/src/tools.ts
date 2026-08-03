@@ -5,8 +5,10 @@ import {
   loadConfig,
   PRIORITIES,
   readyTasks,
+  TASK_RISKS,
   TaskParseError,
   TaskStore,
+  untrustedInline,
 } from '@dispatch/core';
 import type { ListSafeError, TaskDoc } from '@dispatch/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -76,18 +78,24 @@ function validate<T extends string>(
   return value as T;
 }
 
-// TaskSummary: TaskMeta minus `external`, used by task_list/task_next to keep
-// list payloads small (bodies are never included in a list response).
+// TaskSummary: the fields task_list/task_next return, chosen to keep list
+// payloads small (no body, and none of taskMetaShape's extras below).
 const taskSummaryShape = {
   id: z.string(),
   title: z.string(),
   status: z.string(),
   kind: z.enum(KINDS as unknown as [string, ...string[]]),
   parent: z.string().nullable(),
+  // The grouping above epics, free-form and `null` when unassigned.
+  milestone: z.string().nullable(),
   blockedBy: z.array(z.string()),
   labels: z.array(z.string()),
   priority: z.enum(PRIORITIES as unknown as [string, ...string[]]),
   assignee: z.enum(ASSIGNEES as unknown as [string, ...string[]]),
+  // Drives review depth and model tier, so an agent picking work needs it.
+  risk: z.enum(TASK_RISKS as unknown as [string, ...string[]]),
+  // Set once a verify run has actually exercised this task's work.
+  exercised: z.boolean(),
   created: z.string(),
   updated: z.string(),
 };
@@ -95,6 +103,11 @@ const taskSummaryShape = {
 const taskMetaShape = {
   ...taskSummaryShape,
   external: z.string().nullable(),
+  writes: z.array(z.string()),
+  selfReview: z.boolean(),
+  model: z.string().nullable(),
+  // Only present once a reconciler decided the task's merge landed.
+  archivedAt: z.string().optional(),
 };
 
 function toSummary(doc: TaskDoc) {
@@ -104,10 +117,13 @@ function toSummary(doc: TaskDoc) {
     status,
     kind,
     parent,
+    milestone,
     blockedBy,
     labels,
     priority,
     assignee,
+    risk,
+    exercised,
     created,
     updated,
   } = doc.meta;
@@ -117,10 +133,13 @@ function toSummary(doc: TaskDoc) {
     status,
     kind,
     parent,
+    milestone,
     blockedBy,
     labels,
     priority,
     assignee,
+    risk,
+    exercised,
     created,
     updated,
   };
@@ -210,11 +229,14 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
   }
 }
 
-// Mirrors @dispatch/server's orchestrator/types.ts TERMINAL_RUN_STATES —
-// kept as a plain local copy (like run_list's loosely-typed RunMeta) since
-// @dispatch/mcp intentionally has no dependency on the Bun-only
-// @dispatch/server package.
-const TERMINAL_RUN_STATES = new Set(['finished', 'failed', 'cancelled']);
+// A local copy of @dispatch/server's TERMINAL_RUN_STATES, since @dispatch/mcp
+// can't depend on that Bun-only package. `interrupted-dirty` counts as dead.
+const TERMINAL_RUN_STATES = new Set([
+  'finished',
+  'failed',
+  'cancelled',
+  'interrupted-dirty',
+]);
 
 interface LiveRunLike {
   id: string;
@@ -258,7 +280,11 @@ function noLiveTargetMessage(target: string, live: LiveRunLike[]): string {
   if (live.length === 0) {
     return `no live run for ${target} — there are no live runs at all right now`;
   }
-  const listing = live.map((r) => `${r.id} (${r.taskTitle})`).join(', ');
+  // Task titles are agent-writable and land in the caller's context, so they
+  // are folded onto one line rather than quoted raw.
+  const listing = live
+    .map((r) => `${r.id} (${untrustedInline(r.taskTitle)})`)
+    .join(', ');
   return `no live run for ${target} — live runs: ${listing}`;
 }
 
@@ -387,6 +413,301 @@ async function messageUser(
   }
 }
 
+/** How long `ask_user` waits, and how hard it polls while waiting. */
+export interface QuestionTiming {
+  /** Total budget across every poll before giving up on an answer. */
+  totalWaitMs: number;
+  /** Per-request timeout; longer than the daemon's own 30s poll window. */
+  requestTimeoutMs: number;
+  /** Pause after a clean unanswered poll, and after a failed one. */
+  retryDelayMs: number;
+  errorDelayMs: number;
+}
+
+// The MCP client aborts a tool call at its own tool timeout, so the executor
+// sets that ceiling above `totalWaitMs` for this server — see claude.ts.
+export const DEFAULT_QUESTION_TIMING: QuestionTiming = {
+  totalWaitMs: 30 * 60_000,
+  requestTimeoutMs: 45_000,
+  retryDelayMs: 250,
+  errorDelayMs: 2000,
+};
+
+interface QuestionRecord {
+  id: string;
+  answer: string | null;
+}
+
+const UNANSWERED_NOTE =
+  'No one answered in time. Proceed on your best judgement, and state the ' +
+  'assumption you made in your final summary and in a task_comment.';
+
+// One poll's abort signal: its own timeout, plus the client's cancellation
+// when there is one, so a cancelled tool call doesn't sit out the full poll.
+function pollSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
+}
+
+// Best-effort DELETE of a question this tool has stopped waiting on, so the
+// app stops offering an answer box nothing is listening to.
+async function withdrawQuestion(base: string, id: string): Promise<void> {
+  try {
+    await fetch(`${base}/${id}`, { method: 'DELETE' });
+  } catch {
+    // The daemon being unreachable is exactly one of the reasons we gave up.
+  }
+}
+
+// Posts the question, then long-polls `?wait=1` until a human answers. An
+// unanswered poll is normal; a 404 means the daemon forgot the question.
+async function askUser(
+  rootDir: string,
+  args: { question: string; options?: string[] },
+  timing: QuestionTiming,
+  signal?: AbortSignal
+): Promise<ToolOutcome> {
+  if (args.question.trim() === '') {
+    return toolError('question must not be empty');
+  }
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'ask_user requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — no one to ask');
+  }
+  const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/questions`;
+
+  let question: QuestionRecord;
+  try {
+    const res = await fetch(base, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        question: args.question,
+        options: args.options ?? [],
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `ask_user failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    question = (await res.json()) as QuestionRecord;
+  } catch (err) {
+    return toolError(`ask_user failed: ${(err as Error).message}`);
+  }
+
+  const deadline = Date.now() + timing.totalWaitMs;
+  // Set when the daemon has already forgotten the question, so the give-up
+  // path below knows there is nothing left to retract.
+  let gone = false;
+  while (Date.now() < deadline && signal?.aborted !== true) {
+    let polled: QuestionRecord | null = null;
+    try {
+      const res = await fetch(`${base}/${question.id}?wait=1`, {
+        signal: pollSignal(timing.requestTimeoutMs, signal),
+      });
+      if (res.status === 404) {
+        gone = true;
+        break;
+      }
+      if (res.ok) polled = (await res.json()) as QuestionRecord;
+    } catch {
+      // A dropped or timed-out poll says nothing about the answer; ask again.
+    }
+    const answer = polled?.answer ?? null;
+    if (answer !== null) return toolResult({ answer });
+    if (signal !== undefined && signal.aborted) break;
+    // A clean poll can be repeated at once; a failed one backs off so a
+    // down daemon isn't hammered for the rest of the budget.
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        polled !== null ? timing.retryDelayMs : timing.errorDelayMs
+      )
+    );
+  }
+
+  // Nobody is listening for an answer any more — whether the budget ran out
+  // or the client cancelled the call — so retract the question.
+  if (!gone) await withdrawQuestion(base, question.id);
+  return {
+    content: [{ type: 'text', text: UNANSWERED_NOTE }],
+    structuredContent: { answer: '' },
+  };
+}
+
+/** How long `request_scope` waits, and how hard it polls while waiting. */
+export interface ScopeTiming {
+  /** Total budget across every poll before self-denying. */
+  totalWaitMs: number;
+  /** Per-request timeout; longer than the daemon's own 30s poll window. */
+  requestTimeoutMs: number;
+  /** Pause after a clean undecided poll, and after a failed one. */
+  retryDelayMs: number;
+  errorDelayMs: number;
+}
+
+// Same numbers as DEFAULT_QUESTION_TIMING, and the same reasoning: the
+// executor's MCP client timeout sits above totalWaitMs (see claude.ts).
+export const DEFAULT_SCOPE_TIMING: ScopeTiming = {
+  totalWaitMs: 30 * 60_000,
+  requestTimeoutMs: 45_000,
+  retryDelayMs: 250,
+  errorDelayMs: 2000,
+};
+
+interface ScopeRequestRecord {
+  id: string;
+  granted: boolean | null;
+  decisionReason: string | null;
+}
+
+const EXPIRED_SCOPE_REASON =
+  'No one decided in time. Treat this as denied: proceed within your ' +
+  'original fence, and report the blocker in your final summary and in a ' +
+  'task_comment.';
+
+// Reached the total budget with no decision — denies on the agent's behalf,
+// unless a decision landed in the instant before this call, which wins instead.
+async function selfDenyExpiredScope(
+  base: string,
+  id: string,
+  timing: ScopeTiming
+): Promise<{ granted: boolean; reason: string }> {
+  try {
+    const res = await fetch(`${base}/${id}/decide`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        granted: false,
+        reason: EXPIRED_SCOPE_REASON,
+      }),
+      signal: AbortSignal.timeout(timing.requestTimeoutMs),
+    });
+    if (res.ok) {
+      const record = (await res.json()) as ScopeRequestRecord;
+      return {
+        granted: record.granted ?? false,
+        reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
+      };
+    }
+    if (res.status === 409) {
+      const current = await fetch(`${base}/${id}`, {
+        signal: AbortSignal.timeout(timing.requestTimeoutMs),
+      });
+      if (current.ok) {
+        const record = (await current.json()) as ScopeRequestRecord;
+        return {
+          granted: record.granted ?? false,
+          reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
+        };
+      }
+    }
+  } catch {
+    // The daemon is unreachable at the very end of the budget — deny locally.
+  }
+  return { granted: false, reason: EXPIRED_SCOPE_REASON };
+}
+
+// Posts the scope request, then long-polls `?wait=1` until it is decided. An
+// undecided poll is normal; a 404 means the daemon forgot the request.
+async function requestScope(
+  rootDir: string,
+  args: { paths: string[]; reason: string },
+  timing: ScopeTiming,
+  signal?: AbortSignal
+): Promise<ToolOutcome> {
+  if (args.paths.length === 0) {
+    return toolError('paths must not be empty');
+  }
+  if (args.reason.trim() === '') {
+    return toolError('reason must not be empty');
+  }
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'request_scope requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — no one to ask');
+  }
+  const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/scope-requests`;
+
+  let request: ScopeRequestRecord;
+  try {
+    const res = await fetch(base, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: args.paths, reason: args.reason }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `request_scope failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    request = (await res.json()) as ScopeRequestRecord;
+  } catch (err) {
+    return toolError(`request_scope failed: ${(err as Error).message}`);
+  }
+
+  const deadline = Date.now() + timing.totalWaitMs;
+  // Set when the daemon has already forgotten the request (its run closed),
+  // so the give-up path below knows there is nothing left to decide.
+  let gone = false;
+  while (Date.now() < deadline && signal?.aborted !== true) {
+    let polled: ScopeRequestRecord | null = null;
+    try {
+      const res = await fetch(`${base}/${request.id}?wait=1`, {
+        signal: pollSignal(timing.requestTimeoutMs, signal),
+      });
+      if (res.status === 404) {
+        gone = true;
+        break;
+      }
+      if (res.ok) polled = (await res.json()) as ScopeRequestRecord;
+    } catch {
+      // A dropped or timed-out poll says nothing about the decision; ask again.
+    }
+    // `typeof`, not a not-null check: anything that isn't a boolean must keep
+    // waiting and end at the self-deny rather than escape as a grant.
+    if (polled !== null && typeof polled.granted === 'boolean') {
+      return toolResult({
+        granted: polled.granted,
+        reason: polled.decisionReason ?? '',
+      });
+    }
+    if (signal !== undefined && signal.aborted) break;
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        polled !== null ? timing.retryDelayMs : timing.errorDelayMs
+      )
+    );
+  }
+
+  // Budget exhausted (or the client cancelled): a timeout must never read as
+  // permission, so this denies rather than leaving the agent blocked forever.
+  const outcome = gone
+    ? { granted: false, reason: EXPIRED_SCOPE_REASON }
+    : await selfDenyExpiredScope(base, request.id, timing);
+  return {
+    content: [{ type: 'text', text: outcome.reason }],
+    structuredContent: outcome,
+  };
+}
+
 // Proxies `POST /api/notes` — the agent side of the notes/triage hub. Lets an
 // agent capture triage it finds mid-run ("this file is huge, refactor it"), a
 // follow-up to do after merge, or a plain note, without derailing to file a
@@ -436,9 +757,175 @@ async function dispatchNote(
       );
     }
     const created = (await res.json()) as { id: string }[];
-    return toolResult({ ok: true, id: created[0]?.id ?? null });
+    // The inbox can 201 and still store nothing (a title of pure bullet
+    // punctuation), and no id breaks this tool's own `id: string` schema.
+    const id = created[0]?.id;
+    if (id === undefined) {
+      return toolError(
+        'dispatch_note failed: nothing was captured from that title — ' +
+          'give it some words, not just punctuation'
+      );
+    }
+    return toolResult({ ok: true, id });
   } catch (err) {
     return toolError(`dispatch_note failed: ${(err as Error).message}`);
+  }
+}
+
+// Looks up the calling run's task and that task's parent epic — best-effort,
+// since an unresolved one just makes the ledger entry project-wide instead.
+async function callingTaskAndEpic(
+  port: number,
+  runId: string
+): Promise<{ taskId: string | null; epicId: string | null }> {
+  try {
+    const runRes = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}`);
+    if (!runRes.ok) return { taskId: null, epicId: null };
+    const run = (await runRes.json()) as { taskId?: string };
+    if (typeof run.taskId !== 'string') return { taskId: null, epicId: null };
+    const taskRes = await fetch(
+      `http://127.0.0.1:${port}/api/tasks/${run.taskId}`
+    );
+    if (!taskRes.ok) return { taskId: run.taskId, epicId: null };
+    const task = (await taskRes.json()) as {
+      meta?: { parent?: string | null };
+    };
+    return { taskId: run.taskId, epicId: task.meta?.parent ?? null };
+  } catch {
+    return { taskId: null, epicId: null };
+  }
+}
+
+// Proxies `POST /api/ledger` so a discovery an agent makes mid-run reaches
+// every later task in the epic without a human relaying it by hand.
+async function recordDecision(
+  rootDir: string,
+  args: {
+    kind: 'decision' | 'hazard';
+    title: string;
+    detail: string;
+    appliesTo?: string[];
+  }
+): Promise<ToolOutcome> {
+  if (args.title.trim() === '') return toolError('title must not be empty');
+  if (args.detail.trim() === '') return toolError('detail must not be empty');
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'record_decision requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — cannot record a decision');
+  }
+  const { taskId, epicId } = await callingTaskAndEpic(daemon.port, runId);
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/ledger`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        epicId,
+        sourceTaskId: taskId,
+        kind: args.kind,
+        title: args.title,
+        detail: args.detail,
+        appliesTo: args.appliesTo ?? [],
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `record_decision failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    const created = (await res.json()) as { id: string };
+    return toolResult({ ok: true, id: created.id });
+  } catch (err) {
+    return toolError(`record_decision failed: ${(err as Error).message}`);
+  }
+}
+
+// Proxies `POST /api/runs/:id/evidence` — a command the calling run actually
+// ran, recorded as data instead of narrated in the run's own report.
+async function recordEvidence(
+  rootDir: string,
+  args: {
+    command: string;
+    exitCode: number;
+    durationMs: number;
+    summary: string;
+  }
+): Promise<ToolOutcome> {
+  if (args.command.trim() === '') return toolError('command must not be empty');
+  if (args.summary.trim() === '') return toolError('summary must not be empty');
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'record_evidence requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — cannot record evidence');
+  }
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${daemon.port}/api/runs/${runId}/evidence`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(args),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `record_evidence failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    return toolResult({ ok: true });
+  } catch (err) {
+    return toolError(`record_evidence failed: ${(err as Error).message}`);
+  }
+}
+
+// Proxies `POST /api/runs/:id/mutations` — a guard reverted and the tests
+// re-run. `testsFailed: 0` is what buildReviewPrompt flags to the reviewer.
+async function recordMutation(
+  rootDir: string,
+  args: { guard: string; file: string; testsFailed: number }
+): Promise<ToolOutcome> {
+  if (args.guard.trim() === '') return toolError('guard must not be empty');
+  if (args.file.trim() === '') return toolError('file must not be empty');
+  const runId = callingRunId();
+  if (runId === undefined) {
+    return toolError(
+      'record_mutation requires a live dispatch run context (DISPATCH_RUN_ID not set)'
+    );
+  }
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
+    return toolError('dispatchd not running — cannot record a mutation result');
+  }
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${daemon.port}/api/runs/${runId}/mutations`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(args),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return toolError(
+        `record_mutation failed: ${body.error ?? `HTTP ${res.status}`}`
+      );
+    }
+    return toolResult({ ok: true });
+  } catch (err) {
+    return toolError(`record_mutation failed: ${(err as Error).message}`);
   }
 }
 
@@ -450,8 +937,11 @@ async function dispatchNote(
 // that starts or stops after this MCP server started is picked up too).
 export function registerDispatchTools(
   server: McpServer,
-  rootDir: string
+  rootDir: string,
+  opts: { questionTiming?: QuestionTiming; scopeTiming?: ScopeTiming } = {}
 ): void {
+  const questionTiming = opts.questionTiming ?? DEFAULT_QUESTION_TIMING;
+  const scopeTiming = opts.scopeTiming ?? DEFAULT_SCOPE_TIMING;
   server.registerTool(
     'task_list',
     {
@@ -528,7 +1018,7 @@ export function registerDispatchTools(
         'Upsert a task. Omit id to create (title required) — creating is NOT ' +
         'idempotent; calling this twice without an id makes two tasks. With id, ' +
         'only the provided fields change — omitted fields are untouched, ' +
-        'blockedBy/labels are full replacements. kind and description apply on ' +
+        'blockedBy/labels/writes are full replacements. kind and description apply on ' +
         'create only; there is no supported way to change kind or rewrite the ' +
         'description section after creation.',
       // Enum-shaped fields (kind, priority, assignee) are typed as plain
@@ -546,6 +1036,9 @@ export function registerDispatchTools(
         priority: z.string().optional(),
         assignee: z.string().optional(),
         description: z.string().optional(),
+        // Files this task expects to touch, for the epic scheduler. Omitted
+        // means "unknown", which serializes against everything.
+        writes: z.array(z.string()).optional(),
       },
       outputSchema: { meta: z.object(taskMetaShape), body: z.string() },
       // No idempotentHint: creating (no id) makes a new task every call, so
@@ -575,6 +1068,7 @@ export function registerDispatchTools(
             labels: input.labels ?? [],
             blockedBy: input.blockedBy ?? [],
             assignee,
+            writes: input.writes,
           });
           return toolResult({ meta: doc.meta, body: doc.body });
         }
@@ -591,6 +1085,7 @@ export function registerDispatchTools(
           labels: input.labels,
           priority,
           assignee,
+          writes: input.writes,
         };
         // `kind` and `description` are the only fields a caller could have
         // sent that don't end up in `patch` (both are create-only — see
@@ -658,9 +1153,11 @@ export function registerDispatchTools(
       description:
         "List this project's dispatchd orchestrator runs (live + recent) " +
         'so an agent can see whether other agents already have runs in ' +
-        'flight before assuming exclusive access to the repo. Returns an ' +
-        "empty list with a note when dispatchd isn't running — that's a " +
-        'normal, not-an-error response, not every project runs the daemon.',
+        'flight — each live run includes `claims`, the files it has ' +
+        'declared or actually touched — before assuming exclusive access ' +
+        'to the repo. Returns an empty list with a note when dispatchd ' +
+        "isn't running — that's a normal, not-an-error response, not " +
+        'every project runs the daemon.',
       outputSchema: {
         runs: z.array(z.record(z.string(), z.unknown())),
         note: z.string().optional(),
@@ -722,6 +1219,58 @@ export function registerDispatchTools(
   );
 
   server.registerTool(
+    'ask_user',
+    {
+      title: 'Ask the human a question and wait',
+      description:
+        'Ask the human running this task a question and block until they ' +
+        'answer — use this whenever a decision would change the shape of ' +
+        'the result and the task does not specify it (ambiguous ' +
+        'requirements, several valid approaches, missing acceptance ' +
+        'criteria). Prefer asking once with several bundled questions over ' +
+        'many round trips. Do not use it for anything you can determine by ' +
+        'reading the repo. Pass `options` for the answers you consider ' +
+        'likely; the human can still reply with anything. Returns their ' +
+        'answer, or an empty answer if nobody responds in time, in which ' +
+        'case proceed on your best judgement and note the assumption. ' +
+        'Requires a live dispatch run context.',
+      inputSchema: {
+        question: z.string(),
+        options: z.array(z.string()).optional(),
+      },
+      outputSchema: { answer: z.string() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ question, options }, extra) =>
+      askUser(rootDir, { question, options }, questionTiming, extra.signal)
+  );
+
+  server.registerTool(
+    'request_scope',
+    {
+      title: 'Ask to edit outside your fence, and wait',
+      description:
+        'Ask to make a specific out-of-scope edit and block until it is ' +
+        'granted or denied — use this when your assigned scope cannot ' +
+        'compile or complete correctly without touching a file outside it ' +
+        '(e.g. a shared barrel that never re-exported a type your own code ' +
+        'needs). Do not use it to expand scope for convenience; only for a ' +
+        'genuine dead end. List every path you need in `paths` and explain ' +
+        'why in `reason`. If nobody decides in time, this returns denied — ' +
+        'proceed within your original fence and report the blocker in your ' +
+        'final summary and in a task_comment. Requires a live dispatch run context.',
+      inputSchema: {
+        paths: z.array(z.string()),
+        reason: z.string(),
+      },
+      outputSchema: { granted: z.boolean(), reason: z.string() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ paths, reason }, extra) =>
+      requestScope(rootDir, { paths, reason }, scopeTiming, extra.signal)
+  );
+
+  server.registerTool(
     'dispatch_note',
     {
       title: 'Add a note or triage item',
@@ -741,5 +1290,78 @@ export function registerDispatchTools(
       annotations: { readOnlyHint: false },
     },
     ({ kind, title, body }) => dispatchNote(rootDir, { kind, title, body })
+  );
+
+  server.registerTool(
+    'record_decision',
+    {
+      title: 'Record a decision or hazard for later tasks',
+      description:
+        'Write a decision or hazard to the project ledger so later tasks ' +
+        'in this epic see it in their own dispatch prompt — the fix for a ' +
+        'shared trap other tasks would otherwise walk into blind (a ' +
+        'wrapper that swallows rejections, a flaky command, a required env ' +
+        'var), or a call you made that others should follow. Use `hazard` ' +
+        'for something that will bite another task; `decision` for a ' +
+        'choice made that others should stay consistent with. Omit ' +
+        '`appliesTo` to apply it to every task in this epic (or the whole ' +
+        'project, if this task has none); pass specific task ids to target ' +
+        'only them.',
+      inputSchema: {
+        kind: z.enum(['decision', 'hazard']),
+        title: z.string(),
+        detail: z.string(),
+        appliesTo: z.array(z.string()).optional(),
+      },
+      outputSchema: { ok: z.boolean(), id: z.string() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ kind, title, detail, appliesTo }) =>
+      recordDecision(rootDir, { kind, title, detail, appliesTo })
+  );
+
+  server.registerTool(
+    'record_evidence',
+    {
+      title: 'Record command evidence',
+      description:
+        'Record a command you actually ran as verification evidence, ' +
+        'instead of describing the result in prose in your final report. ' +
+        'Call it once per command load-bearing to your acceptance criteria ' +
+        '— the build, the linter, the test run. The reviewer sees this as ' +
+        'data, not a claim.',
+      inputSchema: {
+        command: z.string(),
+        exitCode: z.number().int(),
+        durationMs: z.number().nonnegative(),
+        summary: z.string(),
+      },
+      outputSchema: { ok: z.boolean() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ command, exitCode, durationMs, summary }) =>
+      recordEvidence(rootDir, { command, exitCode, durationMs, summary })
+  );
+
+  server.registerTool(
+    'record_mutation',
+    {
+      title: 'Record a mutation test result',
+      description:
+        'Record the result of mutation-testing a guard you added: revert ' +
+        'the guard, rerun the tests, and report how many failed. ' +
+        '`testsFailed: 0` is flagged to the reviewer as a sign the guard is ' +
+        'dead or its test is vacuous — call this for every guard you add, ' +
+        'not just the ones you expect to pass.',
+      inputSchema: {
+        guard: z.string(),
+        file: z.string(),
+        testsFailed: z.number().int().nonnegative(),
+      },
+      outputSchema: { ok: z.boolean() },
+      annotations: { readOnlyHint: false },
+    },
+    ({ guard, file, testsFailed }) =>
+      recordMutation(rootDir, { guard, file, testsFailed })
   );
 }
