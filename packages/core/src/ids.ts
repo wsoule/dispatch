@@ -46,8 +46,8 @@ export function generateDraftId(
   return `d-${hash}`;
 }
 
-// Same shape as generateRunId's id, but for review findings — minted one at a
-// time as a review run raises them.
+// Same shape as generateRunId's id, but for review findings. Only 6 hex chars,
+// so FindingStore re-mints when this hits an id the store already holds.
 export function generateFindingId(
   now: string,
   nonce: string = randomBytes(4).toString('hex')
@@ -59,7 +59,8 @@ export function generateFindingId(
   return `f-${hash}`;
 }
 
-// Same shape as generateRunId's id, but for ledger entries.
+// Same shape as generateRunId's id, but for ledger entries. Only 6 hex chars,
+// so LedgerStore re-mints when this hits an id the store already holds.
 export function generateLedgerId(
   now: string,
   nonce: string = randomBytes(4).toString('hex')

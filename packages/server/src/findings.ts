@@ -34,28 +34,69 @@ export interface FindingListFilter {
   severity?: FindingSeverity;
 }
 
+// How many times add() will re-roll an id before giving up. Far beyond what
+// randomness needs; it only bounds a generator that keeps returning a taken id.
+const MINT_ATTEMPTS = 32;
+
 export class FindingStore {
   private readonly file: string;
+  private readonly generateId: (now: string) => string;
+  // Ids already reported as colliding, so a damaged file logs once, not on
+  // every read.
+  private readonly reportedCollisions = new Set<string>();
 
-  constructor(rootDir: string) {
+  constructor(
+    rootDir: string,
+    generateId: (now: string) => string = generateFindingId
+  ) {
     this.file = join(rootDir, '.dispatch', 'findings.jsonl');
+    this.generateId = generateId;
   }
 
-  // Compacts the append-only file into current state: last line written
-  // for a given id wins, in that id's first-seen order.
+  // Compacts the append-only file, keyed by id + createdAt because update()
+  // re-appends both — so two records that minted one id both survive.
   private read(): Finding[] {
     if (!existsSync(this.file)) return [];
-    const byId = new Map<string, Finding>();
+    const byRecord = new Map<string, Finding>();
+    const firstKeyForId = new Map<string, string>();
     for (const line of readFileSync(this.file, 'utf8').split('\n')) {
       if (line.trim() === '') continue;
       try {
         const record = JSON.parse(line) as Finding;
-        byId.set(record.id, record);
+        const key = `${record.id}\n${record.createdAt}`;
+        const first = firstKeyForId.get(record.id);
+        if (first === undefined) firstKeyForId.set(record.id, key);
+        else if (first !== key) this.reportCollision(record.id);
+        byRecord.set(key, record);
       } catch {
         // A hand-corrupted line costs itself, not the rest of the store.
       }
     }
-    return [...byId.values()];
+    return [...byRecord.values()];
+  }
+
+  // A repeated id with a different createdAt is two findings, not an edit —
+  // both are kept, but get()/update() can only address the older one.
+  private reportCollision(id: string): void {
+    if (this.reportedCollisions.has(id)) return;
+    this.reportedCollisions.add(id);
+    console.error(
+      `dispatchd: finding id ${id} belongs to more than one record in ${this.file}. ` +
+        'Both are kept; edit the file to give the newer one a distinct id.'
+    );
+  }
+
+  // Mirrors ScopeRequestRegistry.mintId: re-roll until the id is one no record
+  // in the file already uses, since a 6-hex-char space collides in practice.
+  private mintId(now: string): string {
+    const taken = new Set(this.read().map((f) => f.id));
+    for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt += 1) {
+      const id = this.generateId(now);
+      if (!taken.has(id)) return id;
+    }
+    throw new Error(
+      `could not mint an unused finding id in ${MINT_ATTEMPTS} attempts`
+    );
   }
 
   private append(record: Finding): void {
@@ -84,7 +125,7 @@ export class FindingStore {
   add(input: AddFindingInput): Finding {
     const now = new Date().toISOString();
     const record: Finding = {
-      id: generateFindingId(now),
+      id: this.mintId(now),
       taskId: input.taskId,
       runId: input.runId,
       severity: input.severity,

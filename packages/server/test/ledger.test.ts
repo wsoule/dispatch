@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,16 @@ import { LedgerStore } from '../src/ledger';
 
 function root(): string {
   return mkdtempSync(join(tmpdir(), 'dispatch-ledger-'));
+}
+
+// Writes ledger.jsonl directly so a test can put lines in the file that the
+// store would never mint on its own — here, two entries sharing one id.
+function seedLines(dir: string, records: Record<string, unknown>[]): void {
+  mkdirSync(join(dir, '.dispatch'), { recursive: true });
+  writeFileSync(
+    join(dir, '.dispatch', 'ledger.jsonl'),
+    `${records.map((r) => JSON.stringify(r)).join('\n')}\n`
+  );
 }
 
 describe('LedgerStore', () => {
@@ -97,5 +107,88 @@ describe('LedgerStore', () => {
       const store = new LedgerStore(root());
       expect(store.entriesFor('t-a', null)).toEqual([]);
     });
+  });
+});
+
+describe('LedgerStore id collisions', () => {
+  // Ledger entries are injected into later task prompts, so an entry dropped by
+  // id-keyed compaction is a constraint the next agent never hears about.
+  test('two entries sharing an id both survive compaction', () => {
+    const dir = root();
+    seedLines(dir, [
+      {
+        id: 'l-abc123',
+        epicId: null,
+        sourceTaskId: null,
+        kind: 'constraint',
+        title: 'the older entry',
+        detail: 'never widen the public API without a version bump',
+        appliesTo: [],
+        createdAt: '2026-07-01T00:00:00.000Z',
+      },
+      {
+        id: 'l-abc123',
+        epicId: null,
+        sourceTaskId: null,
+        kind: 'hazard',
+        title: 'the newer entry',
+        detail: 'the watcher misses renames on APFS',
+        appliesTo: [],
+        createdAt: '2026-07-02T00:00:00.000Z',
+      },
+    ]);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const store = new LedgerStore(dir);
+      expect(store.list()).toHaveLength(2);
+      expect(store.entriesFor('t-a', null).map((e) => e.title)).toEqual([
+        'the older entry',
+        'the newer entry',
+      ]);
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect(String(errors.mock.calls[0]?.[0])).toContain('l-abc123');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  // The same line twice is one entry duplicated (a bad merge, a copied file),
+  // not two entries — compaction should still collapse it.
+  test('a line duplicated verbatim still compacts to one entry', () => {
+    const dir = root();
+    const line = {
+      id: 'l-dupdup',
+      epicId: null,
+      sourceTaskId: null,
+      kind: 'decision',
+      title: 'one entry',
+      detail: 'written twice',
+      appliesTo: [],
+      createdAt: '2026-07-01T00:00:00.000Z',
+    };
+    seedLines(dir, [line, line]);
+    expect(new LedgerStore(dir).list()).toHaveLength(1);
+  });
+
+  test('add() re-mints when the generator hands back an id the file already holds', () => {
+    const dir = root();
+    const minted = ['l-dupdup', 'l-dupdup', 'l-fresh1'];
+    let next = 0;
+    const store = new LedgerStore(dir, () => minted[next++] ?? 'l-exhaust');
+    const first = store.add({ kind: 'decision', title: 'a', detail: 'a' });
+    const second = store.add({ kind: 'hazard', title: 'b', detail: 'b' });
+
+    expect(first.id).toBe('l-dupdup');
+    expect(second.id).toBe('l-fresh1');
+    expect(store.list()).toHaveLength(2);
+  });
+
+  test('add() throws rather than reusing an id when every attempt is taken', () => {
+    const dir = root();
+    const store = new LedgerStore(dir, () => 'l-always');
+    store.add({ kind: 'decision', title: 'a', detail: 'a' });
+    expect(() =>
+      store.add({ kind: 'hazard', title: 'b', detail: 'b' })
+    ).toThrow(/unused ledger id/);
   });
 });
