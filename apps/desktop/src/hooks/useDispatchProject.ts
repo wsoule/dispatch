@@ -683,7 +683,7 @@ export function useDispatchProject(
   const {
     data: linearTeams,
     error: linearTeamsError,
-    refetch: refetchLinearTeams,
+    refetch: refetchTeamsQuery,
   } = useQuery({
     queryKey: linearTeamsQueryKey,
     queryFn: () => {
@@ -709,7 +709,7 @@ export function useDispatchProject(
   const {
     data: linearStates,
     error: linearStatesError,
-    refetch: refetchLinearStates,
+    refetch: refetchStatesQuery,
   } = useQuery({
     queryKey: linearStatesQueryKey,
     queryFn: () => {
@@ -726,6 +726,16 @@ export function useDispatchProject(
     // Same reasoning as linearTeams: a rejected fetch is a settled answer, not a blip.
     retry: false,
   });
+  // TanStack's own `refetch` is stable, so wrapping it in useCallback with it as the only
+  // dependency gives callers (e.g. a Settings Retry button) an identity that never churns.
+  const refetchLinearTeams = useCallback(
+    () => void refetchTeamsQuery(),
+    [refetchTeamsQuery]
+  );
+  const refetchLinearStates = useCallback(
+    () => void refetchStatesQuery(),
+    [refetchStatesQuery]
+  );
   const { data: readyTasks } = useQuery({
     queryKey: readyQueryKey,
     queryFn: () => {
@@ -2251,10 +2261,10 @@ export function useDispatchProject(
     linearStatus: linearStatus ?? null,
     linearTeams: linearTeams ?? [],
     linearTeamsError,
-    refetchLinearTeams: () => void refetchLinearTeams(),
+    refetchLinearTeams,
     linearStates: linearStates ?? [],
     linearStatesError,
-    refetchLinearStates: () => void refetchLinearStates(),
+    refetchLinearStates,
     linearLinks: linearLinks ?? {},
     handleConnectLinear,
     handleDisconnectLinear,
