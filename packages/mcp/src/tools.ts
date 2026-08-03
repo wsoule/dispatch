@@ -8,6 +8,7 @@ import {
   TASK_RISKS,
   TaskParseError,
   TaskStore,
+  untrustedInline,
 } from '@dispatch/core';
 import type { ListSafeError, TaskDoc } from '@dispatch/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -280,7 +281,11 @@ function noLiveTargetMessage(target: string, live: LiveRunLike[]): string {
   if (live.length === 0) {
     return `no live run for ${target} — there are no live runs at all right now`;
   }
-  const listing = live.map((r) => `${r.id} (${r.taskTitle})`).join(', ');
+  // Task titles are agent-writable and land in the caller's context, so they
+  // are folded onto one line rather than quoted raw.
+  const listing = live
+    .map((r) => `${r.id} (${untrustedInline(r.taskTitle)})`)
+    .join(', ');
   return `no live run for ${target} — live runs: ${listing}`;
 }
 

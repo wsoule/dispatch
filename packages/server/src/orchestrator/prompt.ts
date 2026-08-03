@@ -1,55 +1,17 @@
-import { getSection, removeSection } from '@dispatch/core';
+import {
+  getSection,
+  removeSection,
+  untrustedBlock,
+  untrustedFenced,
+  untrustedInline,
+} from '@dispatch/core';
 import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 
 import type { RunSurvey } from './types.js';
 
-// Agent-written text lands in the next agent's prompt, where it can forge
-// prompt structure; every builder here renders it through one of the three
-// helpers below. Core's escaping is a different job — it keeps a stored `## `
-// from re-splitting the task file, and `getSection` undoes it on the way out.
-
-// Line breaks in every form a value could use to escape its line.
-const LINE_BREAKS = /[\r\n\v\f\u0085\u2028\u2029]+/g;
-
-// Lines that read as prompt structure rather than content: a markdown heading
-// at any level, or a tilde run long enough to be a quoting fence.
-const STRUCTURAL_LINE = /^\s*(?:#{1,6}[ \t]|~{4,})/;
-const FENCE_RUN = /~{4,}/;
-
-// The fence `untrustedFenced` starts from; widened as needed so the content
-// it wraps can never contain its own delimiter.
-const FENCE_BAR = '~~~~~~~~';
-
-// An untrusted value sitting inside a line of prompt text (a title, a command,
-// a summary), folded so it cannot start a line of its own.
-export function untrustedInline(text: string): string {
-  return text.replace(LINE_BREAKS, ' ').trim();
-}
-
-// An untrusted multi-line value, with every line that would otherwise pose as
-// a heading or a fence neutralised.
-export function untrustedBlock(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => (STRUCTURAL_LINE.test(line) ? `\\${line}` : line))
-    .join('\n');
-}
-
-// An untrusted block between labelled fences, its own fence-like lines escaped
-// and the delimiter widened until the content cannot contain it.
-export function untrustedFenced(label: string, text: string): string {
-  const body = text
-    .split('\n')
-    .map((line) => (FENCE_RUN.test(line) ? `\\${line}` : line))
-    .join('\n');
-  let bar = FENCE_BAR;
-  let fence = `${bar} ${label} ${bar}`;
-  while (body.includes(fence)) {
-    bar += '~';
-    fence = `${bar} ${label} ${bar}`;
-  }
-  return [fence, body, fence].join('\n');
-}
+// Re-exported from core (where @dispatch/mcp can reach them too) because
+// every prompt builder in this package imports them from './prompt.js'.
+export { untrustedBlock, untrustedFenced, untrustedInline };
 
 // Terse bulleted section for entries carried forward, or null (no header
 // at all) when there are none — this goes into every dispatch prompt.

@@ -3,7 +3,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
-import { handleApi } from './api.js';
+import { handleApi, isTrustedOrigin } from './api.js';
 import type { ApiContext } from './api.js';
 import { TaskCache } from './cache.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
@@ -115,29 +115,12 @@ function safeRebuild(store: TaskStore, cache: TaskCache): void {
   }
 }
 
-// Returns the origin to echo back in `Access-Control-Allow-Origin`, or null if
-// the origin is not trusted (so no CORS header is sent and the browser blocks
-// it). A wildcard `*` would be dangerous here: this daemon dispatches coding
-// agents, so any web page you visit could otherwise fetch `127.0.0.1:<port>`
-// and read your tasks or trigger a run (the loopback DNS-rebinding class). We
-// trust only the app's own webview origins and loopback dev origins; a real
-// site like `https://evil.com` matches none of these, so its reads are blocked
-// and its JSON mutations never pass preflight.
-export function resolveCorsOrigin(origin: string | null): string | null {
+// The origin to echo back in `Access-Control-Allow-Origin`, or null when it is
+// untrusted — a wildcard would let any page you visit read this daemon's tasks.
+// `isTrustedOrigin` is the one definition, shared with the router and `/ws`.
+function resolveCorsOrigin(origin: string | null): string | null {
   if (origin === null) return null;
-  // Packaged Tauri webview (scheme varies by platform).
-  if (
-    origin === 'tauri://localhost' ||
-    origin === 'https://tauri.localhost' ||
-    origin === 'http://tauri.localhost'
-  ) {
-    return origin;
-  }
-  // Loopback dev origins (vite dev server / browser dev harness), any port.
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-    return origin;
-  }
-  return null;
+  return isTrustedOrigin(origin) ? origin : null;
 }
 
 // Adds CORS headers so the desktop webview / browser dev harness (a different
@@ -429,6 +412,15 @@ export async function startServer(
       const origin = req.headers.get('origin');
 
       if (url.pathname === '/ws') {
+        // CORS never applies to a WebSocket, so without this an untrusted page
+        // could upgrade and read the whole event stream. A null Origin is a
+        // non-browser client, which the router's guard lets through too.
+        if (origin !== null && !isTrustedOrigin(origin)) {
+          return withCors(
+            new Response('cross-origin websocket rejected', { status: 403 }),
+            origin
+          );
+        }
         if (srv.upgrade(req)) return undefined;
         return withCors(
           new Response('expected websocket upgrade', { status: 400 }),
