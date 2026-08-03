@@ -37,10 +37,8 @@ export class BoardSyncer {
     private readonly run: GitRunner
   ) {}
 
-  // Wraps the (entirely synchronous, since GitRunner is synchronous) sync
-  // logic in a Promise so the public surface can grow an async step later
-  // (e.g. an LLM-generated commit message) without a breaking signature
-  // change.
+  // The body is synchronous (GitRunner is synchronous); the wrapper keeps
+  // room for a future async step (e.g. a generated commit message).
   syncOnce(): Promise<SyncResult> {
     return Promise.resolve(this.syncOnceSync());
   }
@@ -52,9 +50,8 @@ export class BoardSyncer {
     const remoteStore = new TaskStore(this.worktree.path);
     const tasksDir = join(this.worktree.path, '.dispatch', 'tasks');
 
-    // Only a task whose content moved past what the sync worktree already
-    // has gets mirrored — a stale checkout must never push the board
-    // backwards (see 53190d6).
+    // Only a task that moved past the sync worktree's version is mirrored —
+    // a stale checkout must never push the board backwards (see 53190d6).
     const staged: string[] = [];
     for (const doc of localStore.listSafe().docs) {
       const sourceFile = localStore.taskFilePath(doc.meta.id);
@@ -63,8 +60,8 @@ export class BoardSyncer {
       try {
         lastAccounted = remoteStore.get(doc.meta.id)?.meta.updated;
       } catch {
-        // A corrupt copy in our own sync worktree isn't a version to hold
-        // against — treat it as never-accounted-for and overwrite it.
+        // A corrupt copy in the sync worktree isn't a version to hold
+        // against — overwrite it.
         lastAccounted = undefined;
       }
       if (!isOutstanding(doc.meta.updated, lastAccounted)) continue;
@@ -100,9 +97,8 @@ export class BoardSyncer {
       trunk,
     ]);
     if (pull.status !== 0) {
-      // Never leave the worktree mid-rebase — a future syncOnce() must find
-      // it clean, and the commit above is already safe in the sync
-      // worktree's history regardless of whether this pull lands.
+      // Never leave the worktree mid-rebase — the next syncOnce() must find
+      // it clean; the commit above already sits safely in its history.
       this.run(this.worktree.path, ['rebase', '--abort']);
       return {
         pushed: 0,
