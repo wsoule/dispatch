@@ -1,3 +1,4 @@
+import { ApiError } from '@dispatch/client';
 import type {
   LinearIssueLink,
   LinearStatus,
@@ -252,21 +253,31 @@ describe('describeKeySource', () => {
 });
 
 describe('describeFetchFailure', () => {
+  // The real client throws ApiError('<server prose>', <status>) — the message never contains
+  // the status digits, so these must be built the way the client actually builds them.
   it('reads a 401 as a rejected key rather than a missing one', () => {
-    expect(describeFetchFailure(new Error('401 Unauthorized'))).toContain(
-      'rejected'
-    );
+    expect(
+      describeFetchFailure(new ApiError('Authentication required', 401))
+    ).toContain('rejected');
   });
 
   it('reads a 409 as no key configured', () => {
     expect(
-      describeFetchFailure(new Error('409 no Linear API key configured'))
+      describeFetchFailure(new ApiError('no Linear API key configured', 409))
     ).toContain('No Linear API key');
   });
 
   it('passes an unrecognised failure through rather than inventing a cause', () => {
     expect(describeFetchFailure(new Error('socket hang up'))).toContain(
       'socket hang up'
+    );
+  });
+
+  // A 502 from Linear itself is neither of the two named cases and must not be
+  // mislabelled as one.
+  it('passes an unnamed status through with its message', () => {
+    expect(describeFetchFailure(new ApiError('upstream boom', 502))).toContain(
+      'upstream boom'
     );
   });
 });

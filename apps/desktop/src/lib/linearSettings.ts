@@ -1,3 +1,4 @@
+import { ApiError } from '@dispatch/client';
 import type {
   LinearIssueLink,
   LinearStatus,
@@ -108,10 +109,13 @@ export function describeKeySource(status: LinearStatus): {
  *  was rejected, which otherwise looks identical to having no key at all. */
 export function describeFetchFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes('401')) {
+  // Key on ApiError's numeric status, never the message: the message is the server's prose
+  // (`body.error`) and carries no status digits, as ApiError's own `code` doc comment warns.
+  const status = error instanceof ApiError ? error.status : null;
+  if (status === 401) {
     return 'Linear rejected this key — it may have been revoked. Reconnect with a new one.';
   }
-  if (message.includes('409')) {
+  if (status === 409) {
     return 'No Linear API key is configured.';
   }
   return `Couldn’t reach Linear: ${message}`;
