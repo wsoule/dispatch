@@ -18,6 +18,33 @@ Or grab an installer from the
 (Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
 signed and notarized (Developer ID) as of v0.1.1.
 
+### Dependency graph (optional)
+
+Dispatch can use [Carto](https://github.com/theanshsonkar/carto) to compute
+which files a change can break, which narrows code-review scope to the actual
+blast radius instead of just the changed files. Without it, Dispatch falls back
+to a built-in scanner that only understands TypeScript/TSX — on a Go, Python, or
+Rust repo it finds nothing, and review scope silently shrinks to the changed
+files alone. `dispatch doctor` reports which backend is in use, including a
+warning when there's neither carto nor TypeScript to work from.
+
+    bun install -g carto-md     # or: npm install -g carto-md
+
+`carto.enabled` in `.dispatch/config.yml` controls the policy (default `on`):
+`on` builds a carto container if one is missing, `detect` uses one only if it
+already exists, and `off` sticks to the built-in scanner. `on` is a build
+policy, not a requirement — a missing `carto` binary always degrades to the
+scanner rather than failing. `dispatch init` adds the gitignored `.carto/` build
+output to `.gitignore` automatically.
+
+Two things worth knowing before installing: carto's native dependencies
+(`better-sqlite3`, `tree-sitter`) don't build under every Node version — a
+current LTS is the reliable choice, and it's worth trying `npm install -g` if
+the `bun install -g` above fails to build them. Also, carto's MCP server
+(`carto serve`) is wired into dispatched agents' tool config, but upstream it
+currently doesn't connect its transport, so the integration is inert until
+that's fixed — see [carto#9](https://github.com/theanshsonkar/carto/issues/9).
+
 ## Quickstart
 
     bun install && bun run build
