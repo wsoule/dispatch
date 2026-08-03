@@ -42,3 +42,4 @@ tsconfig.tsbuildinfo
 dispatch-fix-changed-files.zip
 apps/desktop/test-results/
 apps/desktop/playwright-report/
+.carto/

@@ -1,0 +1,127 @@
+{
+  "file": "packages/core/src/index.ts",
+  "hops": 5,
+  "count": 30,
+  "files": [
+    {
+      "file": "packages/cli/src/apiClient.ts",
+      "hop_distance": 1
+    },
+    {
+      "file": "packages/cli/src/cli.ts",
+      "hop_distance": 1
+    },
+    {
+      "file": "packages/cli/src/commands/doctor.ts",
+      "hop_distance": 1
+    },
+    {
+      "file": "packages/cli/src/commands/task.ts",
+      "hop_distance": 1
+    },
+    {
+      "file": "packages/cli/src/program.ts",
+      "hop_distance": 1
+    },
+    {
+      "file": "packages/client/src/api.ts",
+      "hop_distance": 1
+    },
+    {
+      "file": "packages/client/src/index.ts",
+      "hop_distance": 2
+    },
+    {
+      "file": "packages/web/src/main.tsx",
+      "hop_distance": 2
+    },
+    {
+      "file": "apps/desktop/src/components/git/BranchesPanel.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/git/CommitsPanel.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/git/DispatchAgentDialog.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/git/GitRightPane.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/git/GitSummary.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/git/StashesPanel.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/git/StatusPanel.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/plans/PlanQuestionsForm.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/runs/MergeLadderDot.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/runs/PierreReviewDiff.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/runs/PrReviewPanel.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/runs/QueueMergeControl.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/runs/ReviewCommentsPanel.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/runs/ReviewFileTree.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/components/runs/ReviewQueue.tsx",
+      "hop_distance": 3
+    },
+    {
+      "file": "apps/desktop/src/App.tsx",
+      "hop_distance": 4
+    },
+    {
+      "file": "apps/desktop/src/components/shell/MiniOverview.tsx",
+      "hop_distance": 4
+    },
+    {
+      "file": "apps/desktop/src/views/BoardView.tsx",
+      "hop_distance": 4
+    },
+    {
+      "file": "apps/desktop/src/views/LandingView.tsx",
+      "hop_distance": 4
+    },
+    {
+      "file": "apps/desktop/src/views/MilestonesView.tsx",
+      "hop_distance": 4
+    },
+    {
+      "file": "apps/desktop/src/views/OverviewView.tsx",
+      "hop_distance": 4
+    },
+    {
+      "file": "apps/desktop/src/main.tsx",
+      "hop_distance": 5
+    }
+  ]
+}
