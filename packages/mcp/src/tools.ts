@@ -831,6 +831,9 @@ async function recordDecision(
         title: args.title,
         detail: args.detail,
         appliesTo: args.appliesTo ?? [],
+        // Lets the daemon credit the agent actually running this call
+        // instead of the human operating the daemon.
+        runId,
       }),
     });
     if (!res.ok) {
