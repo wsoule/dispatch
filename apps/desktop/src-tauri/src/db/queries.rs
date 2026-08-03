@@ -1,7 +1,7 @@
+use crate::parser::record::UsageKind;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectSummary {
@@ -61,6 +61,9 @@ pub struct FileChanged {
 
 #[derive(Debug, Clone, Default)]
 pub struct TokenDelta {
+    /// Decides how `upsert_session` folds these numbers into the session's stored counters
+    /// — see `UsageKind`.
+    pub kind: UsageKind,
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub cache_read_tokens: i64,
@@ -164,8 +167,29 @@ pub fn upsert_session(
         .optional()?
         .is_some();
 
+    // A delta source contributes this record's own tokens, so the counters accumulate. A
+    // cumulative source re-reports the session total in full on every record, so the counters
+    // take the larger value instead — which also makes the write idempotent, so re-tailing a
+    // file from offset 0 (after a restart, or the repair in migration 0008) converges on the
+    // right totals rather than multiplying them by the record count.
+    let fold = match delta.kind {
+        UsageKind::Delta => {
+            "prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+             completion_tokens = completion_tokens + excluded.completion_tokens,
+             cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+             cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens"
+        }
+        UsageKind::Cumulative => {
+            "prompt_tokens = MAX(prompt_tokens, excluded.prompt_tokens),
+             completion_tokens = MAX(completion_tokens, excluded.completion_tokens),
+             cache_read_tokens = MAX(cache_read_tokens, excluded.cache_read_tokens),
+             cache_creation_tokens = MAX(cache_creation_tokens, excluded.cache_creation_tokens)"
+        }
+    };
+
     conn.execute(
-        "INSERT INTO sessions (
+        &format!(
+            "INSERT INTO sessions (
             id, project_id, agent, model, started_at, last_activity_at, status,
             prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens,
             raw_log_path
@@ -176,10 +200,8 @@ pub fn upsert_session(
             started_at = MIN(started_at, excluded.started_at),
             last_activity_at = MAX(last_activity_at, excluded.last_activity_at),
             status = 'active',
-            prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-            completion_tokens = completion_tokens + excluded.completion_tokens,
-            cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-            cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens",
+            {fold}"
+        ),
         params![
             session_id,
             project_id,
@@ -267,6 +289,20 @@ pub fn set_ingest_state(
         params![file_path, byte_offset, partial_line, mtime, now],
     )?;
     Ok(())
+}
+
+/// Clears the stored before/after text on file changes older than `before_epoch`, keeping the
+/// rows themselves so path/line-count history and every aggregate over it stay intact. Those
+/// two blobs are the bulk of the database — they exist to render an on-demand diff for a
+/// recent change, which is not worth unbounded growth for edits nobody will open again.
+/// Returns how many rows were cleared.
+pub fn prune_file_diff_content(conn: &Connection, before_epoch: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE files_changed
+         SET old_content = NULL, new_content = NULL
+         WHERE occurred_at < ?1 AND (old_content IS NOT NULL OR new_content IS NOT NULL)",
+        params![before_epoch],
+    )
 }
 
 // --- Read side (frontend commands) ---
@@ -441,12 +477,7 @@ pub fn update_summary(conn: &Connection, session_id: &str, summary: &str) -> rus
     Ok(())
 }
 
-/// Sets `title` from a session's "ai-title" record. Also renames that session's linked
-/// board card away from its "New session" placeholder (see `auto_create_card_for_session`)
-/// if it's still sitting on that placeholder — this arrives well before the idle-sweep's
-/// tag/summary passes would otherwise be the first thing to give the card a real name, and
-/// a no-op `UPDATE ... WHERE title = 'New session'` is harmless if the user already renamed
-/// it themselves.
+/// Sets `title` from a session's "ai-title" record.
 pub fn update_session_title(
     conn: &Connection,
     session_id: &str,
@@ -455,10 +486,6 @@ pub fn update_session_title(
     conn.execute(
         "UPDATE sessions SET title = ?2 WHERE id = ?1",
         params![session_id, title],
-    )?;
-    conn.execute(
-        "UPDATE cards SET title = ?2, updated_at = ?3 WHERE session_id = ?1 AND title = 'New session'",
-        params![session_id, title, chrono::Utc::now().timestamp()],
     )?;
     Ok(())
 }
@@ -820,215 +847,152 @@ pub fn daily_activity_counts(
     rows.collect()
 }
 
-// --- Kanban board ---
-//
-// The board/card feature's own UI (a per-project kanban board embedded in the old
-// `ProjectDetail`'s "Board" tab) was cut along with the rest of the Sessions-hub tab
-// consolidation, and with it every command/query that only that UI called (`get_board`,
-// `create_card`, `move_card`, `update_card`, `delete_card`, `link_session_to_card`,
-// `create_column`, `rename_column`, `most_recent_active_session_id_for_project`,
-// `set_card_pending_launch`, plus their `Board`/`Column`/`Card`/`CardLaunchContext` types).
-// What's left below is only what session ingestion itself still depends on: every ingested
-// session still gets a board (`ensure_board_for_project`) and an auto-created card
-// (`auto_create_card_for_session`), and the idle sweep still moves that card between role
-// columns as the session progresses (`sync_card_for_session`) — none of that reads from or
-// writes to a UI, so it stays untouched.
+#[cfg(test)]
+mod token_fold_tests {
+    use super::*;
 
-/// The four columns every new board is seeded with, in display order. Roles are fixed at
-/// creation time and never reassigned in v1 — auto-sync (`sync_card_for_session`) depends on
-/// exactly one column per board carrying each role.
-const SEEDED_COLUMNS: [(&str, &str); 4] = [
-    ("Todo", "todo"),
-    ("In Progress", "in_progress"),
-    ("Review", "review"),
-    ("Done", "done"),
-];
-
-/// Returns the board id for `project_id`, creating the board and its four role-tagged
-/// columns if this is the first time this project has been seen. Idempotent and safe to call
-/// on every project touch — relies on the caller already holding the single shared DB lock
-/// (see `db::Db`), so the existence check and insert below can't race with another writer.
-pub fn ensure_board_for_project(conn: &Connection, project_id: &str) -> rusqlite::Result<String> {
-    let existing: Option<String> = conn
-        .query_row(
-            "SELECT id FROM boards WHERE project_id = ?1",
-            params![project_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(board_id) = existing {
-        return Ok(board_id);
+    fn in_memory_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
+        conn
     }
 
-    let board_id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "INSERT INTO boards (id, project_id, created_at) VALUES (?1, ?2, ?3)",
-        params![board_id, project_id, now],
-    )?;
+    fn ingest(conn: &Connection, agent: &str, kind: UsageKind, prompt: i64, completion: i64) {
+        upsert_project(conn, "p1", "fixture", "/fixture", 1000).unwrap();
+        upsert_session(
+            conn,
+            "s1",
+            "p1",
+            agent,
+            Some("m"),
+            1000,
+            "/log.jsonl",
+            &TokenDelta {
+                kind,
+                prompt_tokens: prompt,
+                completion_tokens: completion,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+            },
+        )
+        .unwrap();
+    }
 
-    for (position, (name, role)) in SEEDED_COLUMNS.iter().enumerate() {
+    fn totals(conn: &Connection) -> (i64, i64) {
+        conn.query_row(
+            "SELECT prompt_tokens, completion_tokens FROM sessions WHERE id = 's1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn delta_records_accumulate() {
+        let conn = in_memory_db();
+        ingest(&conn, "claude", UsageKind::Delta, 100, 10);
+        ingest(&conn, "claude", UsageKind::Delta, 50, 5);
+        assert_eq!(totals(&conn), (150, 15));
+    }
+
+    /// The bug this fold exists to prevent: three `token_count` events reporting a session
+    /// total of 100 → 300 → 600 must leave the session at 600, not their 1000-token sum.
+    #[test]
+    fn cumulative_records_keep_the_running_total_rather_than_summing_it() {
+        let conn = in_memory_db();
+        ingest(&conn, "codex", UsageKind::Cumulative, 100, 10);
+        ingest(&conn, "codex", UsageKind::Cumulative, 300, 30);
+        ingest(&conn, "codex", UsageKind::Cumulative, 600, 60);
+        assert_eq!(totals(&conn), (600, 60));
+    }
+
+    /// What makes migration 0008's repair work: re-tailing a log from offset 0 replays every
+    /// record, and the totals must land where they already were.
+    #[test]
+    fn replaying_cumulative_records_is_idempotent() {
+        let conn = in_memory_db();
+        for _ in 0..2 {
+            ingest(&conn, "codex", UsageKind::Cumulative, 100, 10);
+            ingest(&conn, "codex", UsageKind::Cumulative, 600, 60);
+        }
+        assert_eq!(totals(&conn), (600, 60));
+    }
+
+    /// Codex re-reports the same total on an idle turn; that must not walk the counter back
+    /// either, which is why the fold is MAX rather than a plain assignment.
+    #[test]
+    fn a_lower_cumulative_report_never_lowers_the_stored_total() {
+        let conn = in_memory_db();
+        ingest(&conn, "codex", UsageKind::Cumulative, 600, 60);
+        ingest(&conn, "codex", UsageKind::Cumulative, 100, 10);
+        assert_eq!(totals(&conn), (600, 60));
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    fn in_memory_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
+        upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
         conn.execute(
-            "INSERT INTO columns (id, board_id, name, role, position, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![Uuid::new_v4().to_string(), board_id, name, role, position as i64, now],
-        )?;
+            "INSERT INTO sessions (id, project_id, agent, started_at, last_activity_at, status, raw_log_path)
+             VALUES ('s1', 'p1', 'claude', 1000, 1000, 'active', '')",
+            [],
+        )
+        .unwrap();
+        conn
     }
 
-    Ok(board_id)
-}
+    #[test]
+    fn clears_content_before_the_cutoff_and_keeps_the_row() {
+        let conn = in_memory_db();
+        insert_file_changed(&conn, "s1", "old.rs", "edit", 1, 1, 100, Some("was"), Some("now"))
+            .unwrap();
 
-fn next_position_in_column(conn: &Connection, column_id: &str) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COALESCE(MAX(position), -1) + 1 FROM cards WHERE column_id = ?1",
-        params![column_id],
-        |row| row.get(0),
-    )
-}
+        assert_eq!(prune_file_diff_content(&conn, 200).unwrap(), 1);
 
-/// How long a card stays eligible to adopt a freshly-spawned session after being stamped
-/// pending (see `adopt_pending_card_for_session`). Long enough to cover a cold `claude` boot
-/// writing its first log line, short enough that an unrelated session started minutes later in
-/// the same project won't get misattributed.
-///
-/// Nothing in the app currently stamps a card's `pending_launch_at` — the one caller that did
-/// (a "launch/attach a terminal session from this card" command) was removed along with the
-/// rest of the per-project kanban board UI it belonged to (see this module's "Kanban board"
-/// section comment) — so `adopt_pending_card_for_session` below always takes its `false`
-/// (auto-create) branch in practice today. It's kept rather than inlined to `false` because the
-/// ingestion path that calls it (`session_builder::ingest_record`) is intentionally left
-/// untouched by that UI cut, and the SQL itself is a harmless, cheap no-op query when no card is
-/// ever stamped.
-const PENDING_LAUNCH_WINDOW_SECS: i64 = 120;
-
-/// Reconciles a brand-new session against a card that spawned it. If `project_id` has an
-/// unlinked card stamped with a recent `pending_launch_at` (within `PENDING_LAUNCH_WINDOW_SECS`,
-/// most-recent stamp wins), links `session_id` into that card, clears the stamp, and syncs it
-/// to the `in_progress` column — then returns `true` so the caller skips auto-creating a
-/// duplicate. Returns `false` (leaving the normal `auto_create_card_for_session` path to run)
-/// when no eligible card exists. The card keeps its user-authored title; only the linkage
-/// changes. See `PENDING_LAUNCH_WINDOW_SECS`'s doc comment for why the `true` branch is
-/// currently unreachable in practice.
-pub fn adopt_pending_card_for_session(
-    conn: &Connection,
-    project_id: &str,
-    session_id: &str,
-) -> rusqlite::Result<bool> {
-    let cutoff = chrono::Utc::now().timestamp() - PENDING_LAUNCH_WINDOW_SECS;
-    let card_id: Option<String> = conn
-        .query_row(
-            "SELECT c.id
-             FROM cards c
-             JOIN boards b ON b.id = c.board_id
-             WHERE b.project_id = ?1
-               AND c.session_id IS NULL
-               AND c.pending_launch_at IS NOT NULL
-               AND c.pending_launch_at >= ?2
-             ORDER BY c.pending_launch_at DESC
-             LIMIT 1",
-            params![project_id, cutoff],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(card_id) = card_id else {
-        return Ok(false);
-    };
-
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "UPDATE cards SET session_id = ?2, pending_launch_at = NULL, updated_at = ?3 WHERE id = ?1",
-        params![card_id, session_id, now],
-    )?;
-    sync_card_for_session(conn, session_id, "in_progress")?;
-    Ok(true)
-}
-
-/// A card whose `session_id` matches an ingested session, created the moment that session
-/// starts (see `session_builder::ingest_record`). No-ops if a card is already linked to this
-/// session (replay-safe, same spirit as `upsert_session`'s idempotent accumulation) or if the
-/// board's `in_progress` column can't be found (shouldn't happen in v1 — role columns aren't
-/// deletable — but degrading silently beats panicking the ingest path over a UI-layer row).
-pub fn auto_create_card_for_session(
-    conn: &Connection,
-    board_id: &str,
-    session_id: &str,
-    title: &str,
-) -> rusqlite::Result<()> {
-    let already_linked: bool = conn
-        .query_row(
-            "SELECT 1 FROM cards WHERE session_id = ?1",
-            params![session_id],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some();
-    if already_linked {
-        return Ok(());
+        let (path, added, old, new): (String, i64, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT file_path, lines_added, old_content, new_content FROM files_changed",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!((path.as_str(), added), ("old.rs", 1));
+        assert_eq!((old, new), (None, None));
     }
 
-    let column_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM columns WHERE board_id = ?1 AND role = 'in_progress'",
-            params![board_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(column_id) = column_id else {
-        return Ok(());
-    };
+    #[test]
+    fn leaves_content_at_or_after_the_cutoff_alone() {
+        let conn = in_memory_db();
+        insert_file_changed(&conn, "s1", "new.rs", "edit", 1, 1, 300, Some("was"), Some("now"))
+            .unwrap();
 
-    let id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
-    let position = next_position_in_column(conn, &column_id)?;
+        assert_eq!(prune_file_diff_content(&conn, 200).unwrap(), 0);
 
-    conn.execute(
-        "INSERT INTO cards (id, board_id, column_id, session_id, title, description, position, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?7)",
-        params![id, board_id, column_id, session_id, title, position, now],
-    )?;
+        let new: Option<String> = conn
+            .query_row("SELECT new_content FROM files_changed", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(new.as_deref(), Some("now"));
+    }
 
-    Ok(())
+    #[test]
+    fn a_second_prune_reports_nothing_left_to_clear() {
+        let conn = in_memory_db();
+        insert_file_changed(&conn, "s1", "old.rs", "edit", 1, 1, 100, Some("was"), Some("now"))
+            .unwrap();
+
+        prune_file_diff_content(&conn, 200).unwrap();
+        assert_eq!(prune_file_diff_content(&conn, 200).unwrap(), 0);
+    }
 }
-
-/// Moves whichever card is linked to `session_id` to its board's column with the given
-/// `role`, appending it to the end of that column. Called on every session status
-/// transition (start → 'in_progress', idle-sweep finalize → 'review') — always wins over
-/// wherever the user last dragged the card, per the design's "auto-sync always wins on
-/// transition" rule. No-ops if no card is linked to this session, or if the target role
-/// column doesn't exist on the card's board.
-pub fn sync_card_for_session(conn: &Connection, session_id: &str, role: &str) -> rusqlite::Result<()> {
-    let linked: Option<(String, String)> = conn
-        .query_row(
-            "SELECT id, board_id FROM cards WHERE session_id = ?1",
-            params![session_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let Some((card_id, board_id)) = linked else {
-        return Ok(());
-    };
-
-    let column_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM columns WHERE board_id = ?1 AND role = ?2",
-            params![board_id, role],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(column_id) = column_id else {
-        return Ok(());
-    };
-
-    let now = chrono::Utc::now().timestamp();
-    let position = next_position_in_column(conn, &column_id)?;
-    conn.execute(
-        "UPDATE cards SET column_id = ?2, position = ?3, updated_at = ?4 WHERE id = ?1",
-        params![card_id, column_id, position, now],
-    )?;
-
-    Ok(())
-}
-
 
 #[cfg(test)]
 mod file_diff_span_tests {
@@ -1038,7 +1002,6 @@ mod file_diff_span_tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
         conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0003_kanban.sql")).unwrap();
         conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
         conn
     }
@@ -1101,7 +1064,6 @@ mod report_tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
         conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0003_kanban.sql")).unwrap();
         conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
         conn
     }
@@ -1230,98 +1192,6 @@ mod report_tests {
 }
 
 #[cfg(test)]
-mod kanban_tests {
-    use super::*;
-
-    fn in_memory_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0003_kanban.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0005_plan.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0006_card_pending_launch.sql")).unwrap();
-        conn
-    }
-
-    fn seed_session_only(conn: &Connection, project_id: &str, session_id: &str) {
-        conn.execute(
-            "INSERT INTO sessions (id, project_id, agent, started_at, last_activity_at, status, raw_log_path)
-             VALUES (?1, ?2, 'claude', 1000, 1000, 'active', '')",
-            params![session_id, project_id],
-        )
-        .unwrap();
-    }
-
-    fn seed_project_and_session(conn: &Connection, project_id: &str, session_id: &str) {
-        upsert_project(conn, project_id, "fixture", "/fixture", 1000).unwrap();
-        seed_session_only(conn, project_id, session_id);
-    }
-
-    fn column_role_for_card(conn: &Connection, card_id: &str) -> Option<String> {
-        conn.query_row(
-            "SELECT col.role FROM cards c JOIN columns col ON col.id = c.column_id WHERE c.id = ?1",
-            params![card_id],
-            |r| r.get(0),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn ensure_board_for_project_is_idempotent_and_seeds_four_role_columns() {
-        let conn = in_memory_db();
-        upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
-
-        let board_id_1 = ensure_board_for_project(&conn, "p1").unwrap();
-        let board_id_2 = ensure_board_for_project(&conn, "p1").unwrap();
-        assert_eq!(board_id_1, board_id_2, "second call must not create a second board");
-
-        let column_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM columns WHERE board_id = ?1", params![board_id_1], |r| r.get(0))
-            .unwrap();
-        assert_eq!(column_count, 4);
-
-        let roles: Vec<String> = {
-            let mut stmt = conn
-                .prepare("SELECT role FROM columns WHERE board_id = ?1 ORDER BY position ASC")
-                .unwrap();
-            stmt.query_map(params![board_id_1], |r| r.get(0))
-                .unwrap()
-                .collect::<rusqlite::Result<_>>()
-                .unwrap()
-        };
-        assert_eq!(roles, vec!["todo", "in_progress", "review", "done"]);
-    }
-
-    #[test]
-    fn sync_card_for_session_moves_linked_card_to_the_target_role_column() {
-        let conn = in_memory_db();
-        seed_project_and_session(&conn, "p1", "s1");
-        let board_id = ensure_board_for_project(&conn, "p1").unwrap();
-        auto_create_card_for_session(&conn, &board_id, "s1", "New session").unwrap();
-
-        let card_id: String = conn.query_row("SELECT id FROM cards", [], |r| r.get(0)).unwrap();
-        assert_eq!(column_role_for_card(&conn, &card_id).as_deref(), Some("in_progress"));
-
-        sync_card_for_session(&conn, "s1", "review").unwrap();
-        assert_eq!(column_role_for_card(&conn, &card_id).as_deref(), Some("review"));
-    }
-
-    #[test]
-    fn sync_card_for_session_is_a_noop_when_no_card_is_linked() {
-        let conn = in_memory_db();
-        seed_project_and_session(&conn, "p1", "s1");
-        ensure_board_for_project(&conn, "p1").unwrap();
-
-        // No card was ever created for "s1" — must not error.
-        sync_card_for_session(&conn, "s1", "review").unwrap();
-
-        let card_count: i64 = conn.query_row("SELECT COUNT(*) FROM cards", [], |r| r.get(0)).unwrap();
-        assert_eq!(card_count, 0);
-    }
-}
-
-#[cfg(test)]
 mod list_query_tests {
     use super::*;
     use std::collections::HashSet;
@@ -1330,7 +1200,6 @@ mod list_query_tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
         conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0003_kanban.sql")).unwrap();
         conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
         conn
     }
