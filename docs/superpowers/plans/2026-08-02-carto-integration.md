@@ -249,7 +249,12 @@ import { discoverCarto } from '../src/carto.js';
 function writeFakeCarto(binDir: string, version: string): void {
   mkdirSync(binDir, { recursive: true });
   const file = join(binDir, 'carto');
-  writeFileSync(file, `#!/bin/sh\necho "${version}"\n`);
+  // CORRECTED: the real binary prints `carto-md <version>`, not a bare
+  // version. Task 0 recorded this and this plan failed to propagate it, so
+  // the original stub echoed a bare version, the parser split on '.' and got
+  // NaN for every REAL install, and discoverCarto rejected working carto
+  // everywhere while every test passed. Stubs must match observed output.
+  writeFileSync(file, `#!/bin/sh\necho "carto-md ${version}"\n`);
   chmodSync(file, 0o755);
 }
 
@@ -1121,8 +1126,8 @@ export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
     }
     if (typeof file === 'object' && file !== null) {
       const record = file as Record<string, unknown>;
-      // Key names pinned by the Task 0 fixture: entries are
-      // { file, hop_distance }. `path`/`hops` are tolerated fallbacks only.
+      // Entries are
+      // { file, hop_distance }; `path`/`hops` are tolerated fallbacks.
       const path = record.file ?? record.path;
       if (typeof path !== 'string') continue;
       const rawHops = record.hop_distance ?? record.hops;
