@@ -842,4 +842,26 @@ describe('buildCartoMcpServerConfig', () => {
     });
     expect(JSON.stringify(config)).toContain('/proj');
   });
+
+  // Security: a projectRoot (user-configured) or binary.path (from a PATH
+  // entry) containing shell metacharacters must never be able to run as a
+  // command. Interpolating either into the `-c` script text — even
+  // JSON-escaped, which only escapes `"` and `\`, not `$` or backticks — lets
+  // a `$(...)` payload execute inside double quotes under POSIX sh. Passing
+  // both as positional parameters ($1/$2) instead means the shell binds them
+  // to variables without ever re-parsing their contents as script text.
+  it('passes projectRoot as a positional shell parameter, never spliced into the script text', () => {
+    const maliciousRoot = '/tmp/proj$(touch /tmp/should-not-exist)';
+    const config = buildCartoMcpServerConfig(maliciousRoot, {
+      path: '/opt/homebrew/bin/carto',
+      version: '2.1.3',
+    }) as McpStdioServerConfig;
+    const script = config.args?.[1] ?? '';
+    // The payload must not appear inside the `-c` script text itself...
+    expect(script).not.toContain(maliciousRoot);
+    expect(script).not.toContain('$(');
+    // ...only as a separate argv element, which sh assigns to $1 verbatim
+    // and never re-parses.
+    expect(config.args).toContain(maliciousRoot);
+  });
 });
