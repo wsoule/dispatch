@@ -228,8 +228,12 @@ export function appendActivity(
 ): string {
   // `line` is caller-supplied text (e.g. an agent's task_comment) appended
   // straight onto the body, so it's escaped the same as setSection's content.
-  // `actor` is a validated ActorRef, so it needs no escaping.
-  const suffix = actor === undefined ? '' : ` — ${actor}`;
+  // `actor` is validated as a well-formed ActorRef (isValidAssignee covers
+  // the same wire format); a malformed value is dropped rather than trusted
+  // verbatim into a committed file.
+  const validActor =
+    actor !== undefined && isValidAssignee(actor) ? actor : undefined;
+  const suffix = validActor === undefined ? '' : ` — ${validActor}`;
   const entry = `- ${escapeHeadingLines(line)}${suffix}`;
   if (!/^## Activity\s*$/m.test(body)) {
     return `${body.trimEnd()}\n\n## Activity\n\n${entry}\n`;
