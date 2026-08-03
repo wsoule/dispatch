@@ -8,6 +8,7 @@ import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 // Item B: GET /api/prs — every open PR in the repo (not just ones dispatch
 // itself opened). Same escape hatch as every other *-api.test.ts file:
@@ -181,6 +182,7 @@ describe('GET /api/prs', () => {
         },
       }),
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs`);
@@ -208,6 +210,7 @@ describe('GET /api/prs', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs`);
@@ -232,6 +235,7 @@ describe('GET /api/prs/:number/detail', () => {
         viewResult: viewResultForRepoPr(),
       }),
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/detail`);
@@ -253,6 +257,7 @@ describe('GET /api/prs/:number/detail', () => {
       writeDaemonFile: false,
       prCommandRunner: stubRunner({ listResult: listResultWithRepoPr() }),
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/999/detail`);
@@ -270,6 +275,7 @@ describe('GET /api/prs/:number/detail', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/detail`);
@@ -294,6 +300,7 @@ describe('POST /api/prs/:number/review', () => {
         return scripted(cwd, cmd);
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/review`, {
@@ -316,6 +323,7 @@ describe('POST /api/prs/:number/review', () => {
       writeDaemonFile: false,
       prCommandRunner: stubRunner({ listResult: listResultWithRepoPr() }),
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/999/review`, {
@@ -333,6 +341,7 @@ describe('POST /api/prs/:number/review', () => {
       writeDaemonFile: false,
       prCommandRunner: stubRunner({ listResult: listResultWithRepoPr() }),
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/review`, {
@@ -349,6 +358,7 @@ describe('POST /api/prs/:number/review', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/review`, {
@@ -377,6 +387,7 @@ describe('POST /api/prs/:number/comment', () => {
         return scripted(cwd, cmd);
       },
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/comment`, {
@@ -399,6 +410,7 @@ describe('POST /api/prs/:number/comment', () => {
       writeDaemonFile: false,
       prCommandRunner: stubRunner({ listResult: listResultWithRepoPr() }),
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/999/comment`, {
@@ -416,6 +428,7 @@ describe('POST /api/prs/:number/comment', () => {
       writeDaemonFile: false,
       prCommandRunner: stubRunner({ listResult: listResultWithRepoPr() }),
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/comment`, {
@@ -432,6 +445,7 @@ describe('POST /api/prs/:number/comment', () => {
       port: 0,
       writeDaemonFile: false,
     });
+    useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/comment`, {

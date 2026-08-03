@@ -3,6 +3,8 @@ export {
   connectEvents,
   createApiClient,
   httpToWs,
+  injectedDaemonToken,
+  isInsufficientTier,
   PATCHABLE_FINDING_VERDICTS,
   PLAN_ROLES,
   taskDraftToCreateInput,

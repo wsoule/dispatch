@@ -15,7 +15,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { basename } from 'node:path';
 import { z } from 'zod';
 
-import { isDaemonHealthy, readDaemonFile } from './daemon.js';
+import type { DaemonFileInfo } from './daemon.js';
+import { daemonAuth, isDaemonHealthy, readDaemonFile } from './daemon.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
 // (and core's ConfigError) via wrap() and turns it into an MCP tool-error
@@ -219,7 +220,9 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
     return noDaemonResult();
   }
   try {
-    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`);
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`, {
+      headers: daemonAuth(daemon),
+    });
     if (!res.ok) return noDaemonResult();
     const runs = await res.json();
     if (!Array.isArray(runs)) return noDaemonResult();
@@ -252,16 +255,18 @@ interface LiveRunLike {
 // message instead of duplicating run_list's daemon-plumbing tolerance here.
 async function fetchLiveRuns(
   rootDir: string
-): Promise<{ port: number; runs: LiveRunLike[] } | null> {
+): Promise<{ daemon: DaemonFileInfo; runs: LiveRunLike[] } | null> {
   const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) return null;
   try {
-    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`);
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`, {
+      headers: daemonAuth(daemon),
+    });
     if (!res.ok) return null;
     const runs = await res.json();
     if (!Array.isArray(runs)) return null;
     return {
-      port: daemon.port,
+      daemon,
       runs: (runs as LiveRunLike[]).filter(
         (r) => !TERMINAL_RUN_STATES.has(r.state)
       ),
@@ -342,10 +347,13 @@ async function agentMessage(
   try {
     const fromRunId = callingRunId();
     const res = await fetch(
-      `http://127.0.0.1:${live.port}/api/runs/${match.id}/inject`,
+      `http://127.0.0.1:${live.daemon.port}/api/runs/${match.id}/inject`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...daemonAuth(live.daemon),
+        },
         body: JSON.stringify(
           fromRunId !== undefined
             ? { text: args.text, fromRunId }
@@ -395,7 +403,7 @@ async function messageUser(
       `http://127.0.0.1:${daemon.port}/api/runs/${runId}/message-user`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
         body: JSON.stringify({ text: args.text }),
       }
     );
@@ -451,9 +459,13 @@ function pollSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
 
 // Best-effort DELETE of a question this tool has stopped waiting on, so the
 // app stops offering an answer box nothing is listening to.
-async function withdrawQuestion(base: string, id: string): Promise<void> {
+async function withdrawQuestion(
+  base: string,
+  id: string,
+  auth: Record<string, string>
+): Promise<void> {
   try {
-    await fetch(`${base}/${id}`, { method: 'DELETE' });
+    await fetch(`${base}/${id}`, { method: 'DELETE', headers: auth });
   } catch {
     // The daemon being unreachable is exactly one of the reasons we gave up.
   }
@@ -482,12 +494,13 @@ async function askUser(
     return toolError('dispatchd not running — no one to ask');
   }
   const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/questions`;
+  const auth = daemonAuth(daemon);
 
   let question: QuestionRecord;
   try {
     const res = await fetch(base, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
       body: JSON.stringify({
         question: args.question,
         options: args.options ?? [],
@@ -512,6 +525,7 @@ async function askUser(
     let polled: QuestionRecord | null = null;
     try {
       const res = await fetch(`${base}/${question.id}?wait=1`, {
+        headers: auth,
         signal: pollSignal(timing.requestTimeoutMs, signal),
       });
       if (res.status === 404) {
@@ -537,7 +551,7 @@ async function askUser(
 
   // Nobody is listening for an answer any more — whether the budget ran out
   // or the client cancelled the call — so retract the question.
-  if (!gone) await withdrawQuestion(base, question.id);
+  if (!gone) await withdrawQuestion(base, question.id, auth);
   return {
     content: [{ type: 'text', text: UNANSWERED_NOTE }],
     structuredContent: { answer: '' },
@@ -577,15 +591,23 @@ const EXPIRED_SCOPE_REASON =
 
 // Reached the total budget with no decision — denies on the agent's behalf,
 // unless a decision landed in the instant before this call, which wins instead.
+//
+// The decide route is decide-tier, and this package only ever holds the agent
+// token, so against a token-guarded daemon the POST is refused and the denial
+// is local to the tool's return value. That is the intended shape: an agent
+// must not be able to write a decision into the ledger, not even its own
+// denial. Any refusal therefore falls through to the read-back below, which is
+// also what catches a real decision that landed at the last instant.
 async function selfDenyExpiredScope(
   base: string,
   id: string,
-  timing: ScopeTiming
+  timing: ScopeTiming,
+  auth: Record<string, string>
 ): Promise<{ granted: boolean; reason: string }> {
   try {
     const res = await fetch(`${base}/${id}/decide`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...auth },
       body: JSON.stringify({
         granted: false,
         reason: EXPIRED_SCOPE_REASON,
@@ -599,17 +621,16 @@ async function selfDenyExpiredScope(
         reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
       };
     }
-    if (res.status === 409) {
-      const current = await fetch(`${base}/${id}`, {
-        signal: AbortSignal.timeout(timing.requestTimeoutMs),
-      });
-      if (current.ok) {
-        const record = (await current.json()) as ScopeRequestRecord;
-        return {
-          granted: record.granted ?? false,
-          reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
-        };
-      }
+    const current = await fetch(`${base}/${id}`, {
+      headers: auth,
+      signal: AbortSignal.timeout(timing.requestTimeoutMs),
+    });
+    if (current.ok) {
+      const record = (await current.json()) as ScopeRequestRecord;
+      return {
+        granted: record.granted ?? false,
+        reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
+      };
     }
   } catch {
     // The daemon is unreachable at the very end of the budget — deny locally.
@@ -643,12 +664,13 @@ async function requestScope(
     return toolError('dispatchd not running — no one to ask');
   }
   const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/scope-requests`;
+  const auth = daemonAuth(daemon);
 
   let request: ScopeRequestRecord;
   try {
     const res = await fetch(base, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...auth },
       body: JSON.stringify({ paths: args.paths, reason: args.reason }),
     });
     if (!res.ok) {
@@ -670,6 +692,7 @@ async function requestScope(
     let polled: ScopeRequestRecord | null = null;
     try {
       const res = await fetch(`${base}/${request.id}?wait=1`, {
+        headers: auth,
         signal: pollSignal(timing.requestTimeoutMs, signal),
       });
       if (res.status === 404) {
@@ -701,7 +724,7 @@ async function requestScope(
   // permission, so this denies rather than leaving the agent blocked forever.
   const outcome = gone
     ? { granted: false, reason: EXPIRED_SCOPE_REASON }
-    : await selfDenyExpiredScope(base, request.id, timing);
+    : await selfDenyExpiredScope(base, request.id, timing, auth);
   return {
     content: [{ type: 'text', text: outcome.reason }],
     structuredContent: outcome,
@@ -743,7 +766,7 @@ async function dispatchNote(
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/inbox`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
       body: JSON.stringify({
         kind: KIND[args.kind] ?? 'note',
         text,
@@ -775,16 +798,21 @@ async function dispatchNote(
 // Looks up the calling run's task and that task's parent epic — best-effort,
 // since an unresolved one just makes the ledger entry project-wide instead.
 async function callingTaskAndEpic(
-  port: number,
+  daemon: DaemonFileInfo,
   runId: string
 ): Promise<{ taskId: string | null; epicId: string | null }> {
+  const port = daemon.port;
+  const headers = daemonAuth(daemon);
   try {
-    const runRes = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}`);
+    const runRes = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}`, {
+      headers,
+    });
     if (!runRes.ok) return { taskId: null, epicId: null };
     const run = (await runRes.json()) as { taskId?: string };
     if (typeof run.taskId !== 'string') return { taskId: null, epicId: null };
     const taskRes = await fetch(
-      `http://127.0.0.1:${port}/api/tasks/${run.taskId}`
+      `http://127.0.0.1:${port}/api/tasks/${run.taskId}`,
+      { headers }
     );
     if (!taskRes.ok) return { taskId: run.taskId, epicId: null };
     const task = (await taskRes.json()) as {
@@ -819,11 +847,11 @@ async function recordDecision(
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
     return toolError('dispatchd not running — cannot record a decision');
   }
-  const { taskId, epicId } = await callingTaskAndEpic(daemon.port, runId);
+  const { taskId, epicId } = await callingTaskAndEpic(daemon, runId);
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/ledger`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
       body: JSON.stringify({
         epicId,
         sourceTaskId: taskId,
@@ -874,7 +902,7 @@ async function recordEvidence(
       `http://127.0.0.1:${daemon.port}/api/runs/${runId}/evidence`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
         body: JSON.stringify(args),
       }
     );
@@ -913,7 +941,7 @@ async function recordMutation(
       `http://127.0.0.1:${daemon.port}/api/runs/${runId}/mutations`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
         body: JSON.stringify(args),
       }
     );

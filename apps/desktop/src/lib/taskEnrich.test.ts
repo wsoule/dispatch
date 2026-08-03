@@ -23,6 +23,7 @@ function planRecord(over: Partial<PlanRecord> = {}): PlanRecord {
     id: 'pl-1',
     prompt: 'add detail',
     plannerName: 'claude',
+    role: 'enrich',
     state: 'ready',
     messages: [],
     proposal: { tasks: [plannedTask()] },

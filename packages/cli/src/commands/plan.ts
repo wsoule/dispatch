@@ -20,10 +20,17 @@ import { connectEvents } from '../watch.js';
 import { ensureDaemon } from './daemon.js';
 import { requireStore } from './task.js';
 
-async function baseUrlFor(ctx: CliContext): Promise<string> {
+async function daemonFor(
+  ctx: CliContext
+): Promise<{ baseUrl: string; token: string; client: ApiClient }> {
   requireStore(ctx);
-  const { port } = await ensureDaemon(ctx);
-  return `http://127.0.0.1:${port}`;
+  const { port, agentToken } = await ensureDaemon(ctx);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  return {
+    baseUrl,
+    token: agentToken,
+    client: createApiClient(baseUrl, agentToken),
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -58,7 +65,7 @@ export function createEpicWatcher(
   onProgress: (progress: EpicProgress) => void,
   connectOptions: Pick<
     ConnectEventsOptions,
-    'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures'
+    'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures' | 'token'
   > = {}
 ): { waitForExit: () => Promise<void>; dispose: () => void } {
   let settled = false;
@@ -145,8 +152,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
           timeout: string;
         }
       ) => {
-        const baseUrl = await baseUrlFor(ctx);
-        const client = createApiClient(baseUrl);
+        const { client } = await daemonFor(ctx);
         const prompt = promptParts.join(' ');
         const timeoutSeconds = Number(opts.timeout);
         if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
@@ -217,8 +223,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
       'confirm an edited proposal read from this JSON file instead of the one the planner produced'
     )
     .action(async (planId: string, opts: { file?: string }) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
 
       let proposal: PlanProposal;
       if (opts.file !== undefined) {
@@ -249,8 +254,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .command('show <planId>')
     .option('--json')
     .action(async (planId: string, opts: { json?: boolean }) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
       const record = await client.getPlan(planId);
 
       if (opts.json === true) {
@@ -284,8 +288,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
         messageParts: string[],
         opts: { json?: boolean; timeout: string }
       ) => {
-        const baseUrl = await baseUrlFor(ctx);
-        const client = createApiClient(baseUrl);
+        const { client } = await daemonFor(ctx);
         const timeoutSeconds = Number(opts.timeout);
         if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
           throw new CliError(
@@ -332,8 +335,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
         epicId: string,
         opts: { concurrency?: string; executor: string; json?: boolean }
       ) => {
-        const baseUrl = await baseUrlFor(ctx);
-        const client = createApiClient(baseUrl);
+        const { client } = await daemonFor(ctx);
         const session = await client.startEpic(epicId, {
           concurrency:
             opts.concurrency !== undefined
@@ -353,8 +355,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .command('stop <epicId>')
     .option('--json')
     .action(async (epicId: string, opts: { json?: boolean }) => {
-      const baseUrl = await baseUrlFor(ctx);
-      const client = createApiClient(baseUrl);
+      const { client } = await daemonFor(ctx);
       const session = await client.stopEpic(epicId);
       ctx.log(
         opts.json === true
@@ -369,8 +370,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
     .option('--watch', 'stream run/task events until the dispatch session ends')
     .action(
       async (epicId: string, opts: { json?: boolean; watch?: boolean }) => {
-        const baseUrl = await baseUrlFor(ctx);
-        const client = createApiClient(baseUrl);
+        const { baseUrl, token, client } = await daemonFor(ctx);
 
         const renderProgress = (progress: EpicProgress): void => {
           ctx.log(
@@ -389,7 +389,8 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
         const watcher = createEpicWatcher(
           baseUrl,
           () => client.getEpicProgress(epicId),
-          renderProgress
+          renderProgress,
+          { token }
         );
         try {
           await watcher.waitForExit();

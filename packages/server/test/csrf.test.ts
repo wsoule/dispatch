@@ -9,6 +9,7 @@ import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import { FakePlanner } from '../src/orchestrator/planners/fake.js';
 import { runGitSync } from './orchestrator/helpers.js';
+import { useTestAuth } from './testAuth.js';
 
 // `Response.json()` types as `Promise<unknown>` under this repo's DOM-less
 // tsconfig — same escape hatch the other API suites use.
@@ -82,6 +83,7 @@ beforeEach(async () => {
       );
     },
   });
+  useTestAuth(handle);
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
 
