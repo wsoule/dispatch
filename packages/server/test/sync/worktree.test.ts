@@ -91,6 +91,31 @@ describe('SyncWorktree.open', () => {
     rmSync(repo, { recursive: true, force: true });
     rmSync(upstream, { recursive: true, force: true });
   });
+
+  it('falls through to local main when origin/HEAD is a stale symref (target branch renamed or deleted)', () => {
+    const repo = initGitRepo();
+    // `git symbolic-ref` only writes the ref FILE — it never checks the
+    // target exists. This is exactly what a remote's default branch being
+    // renamed or deleted leaves behind: the local symref still reads back
+    // successfully, but resolves to nothing.
+    runGitSync(repo, [
+      'symbolic-ref',
+      'refs/remotes/origin/HEAD',
+      'refs/remotes/origin/ghost-branch',
+    ]);
+    const readBack = runGitSync(repo, [
+      'symbolic-ref',
+      'refs/remotes/origin/HEAD',
+    ]).trim();
+    expect(readBack).toBe('refs/remotes/origin/ghost-branch');
+
+    const worktree = SyncWorktree.open(repo, run);
+    expect(worktree).not.toBeNull();
+    expect(worktree?.trunkRef()).toBe('main');
+    expect(() => worktree?.ensure()).not.toThrow();
+    expect(existsSync(worktree?.path ?? '')).toBe(true);
+    rmSync(repo, { recursive: true, force: true });
+  });
 });
 
 describe('SyncWorktree location', () => {
@@ -119,6 +144,47 @@ describe('SyncWorktree.ensure / remove', () => {
     const trunkHead = runGitSync(repo, ['rev-parse', 'main']).trim();
     expect(head).toBe(trunkHead);
     rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('checks out via the origin/<trunk> fallback when no local branch of that name exists', () => {
+    const upstream = mkdtempSync(join(tmpdir(), 'dispatch-origin-'));
+    runGitSync(upstream, ['init', '--bare', '-b', 'main']);
+
+    const repo = initGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', upstream]);
+    // Push local main's content to a differently-named branch on origin, so
+    // after fetching the repo has refs/remotes/origin/trunk but NO local
+    // refs/heads/trunk at all — the exact gap checkoutRef()'s fallback to
+    // `origin/<trunk>` exists to cover.
+    runGitSync(repo, ['push', 'origin', 'main:trunk']);
+    runGitSync(repo, ['fetch', 'origin']);
+    runGitSync(repo, [
+      'symbolic-ref',
+      'refs/remotes/origin/HEAD',
+      'refs/remotes/origin/trunk',
+    ]);
+    const localTrunk = run(repo, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      'refs/heads/trunk',
+    ]);
+    expect(localTrunk.status).not.toBe(0);
+
+    const worktree = SyncWorktree.open(repo, run);
+    expect(worktree?.trunkRef()).toBe('trunk');
+
+    worktree?.ensure();
+
+    expect(existsSync(worktree?.path ?? '')).toBe(true);
+    const head = runGitSync(worktree?.path ?? '', ['rev-parse', 'HEAD']).trim();
+    const originTrunkHead = runGitSync(repo, [
+      'rev-parse',
+      'origin/trunk',
+    ]).trim();
+    expect(head).toBe(originTrunkHead);
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(upstream, { recursive: true, force: true });
   });
 
   it('is a clean no-op when called a second time', () => {
