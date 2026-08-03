@@ -385,17 +385,50 @@ content is skipped rather than pushed backwards."
   `BoardSyncer.materialize(): number` returns how many files were written into
   the user's working tree.
 
-After the pull, teammate changes sit in the sync worktree. Copy them into the
-user's working tree — but **per file, gated by the same monotonic rule in the
-other direction**: a working-tree copy that is newer than the incoming one is a
-local edit that has not synced yet and must not be clobbered. Skip it; the next
-`syncOnce()` will push it.
+**Amended 2026-08-03 after review.** This section originally said to scan the
+sync worktree and gate every file with the monotonic rule. That is wrong, and
+the first implementation shipped the defect it produces: a task file the user
+deletes locally is never staged for removal (the push loop only iterates files
+that exist), so it survives in the sync worktree, and the scan then writes it
+back — `isOutstanding(incoming, undefined)` is unconditionally true, because an
+absent local file and a never-seen local file are indistinguishable. Worse, it
+sticks: the resurrected copy's `updated` now matches the worktree's, so the push
+gate sees nothing outstanding and the deletion can never take. It re-resurrects
+every cycle.
 
-That rule is the whole of this task's correctness. Without it, a fast typist
-loses an edit every time a teammate's change lands mid-write.
+**Materialize from what the pull actually changed, not from a directory scan.**
+Capture the sync worktree's HEAD before `git pull --rebase`, and afterwards ask
+git which paths moved:
+
+```
+git diff --name-only --diff-filter=ACMR <before>..<after> -- .dispatch/tasks
+git diff --name-only --diff-filter=D    <before>..<after> -- .dispatch/tasks
+```
+
+The first set is written into the user's working tree, the second removed from
+it. A path the pull did not touch is never written and never deleted, so a local
+deletion survives and a brand-new local task that has not synced yet cannot be
+swept away.
+
+**The monotonic rule still applies, but only to the changed set.** For each
+incoming path, `isOutstanding(incoming.updated, localCopy.updated)` decides
+whether to write: a working-tree copy newer than the incoming one is an unsynced
+local edit and must not be clobbered. Skip it; the next `syncOnce()` pushes it.
+Without that, a fast typist loses an edit every time a teammate's change lands
+mid-write.
+
+This also removes a hazard the reviewer flagged separately: `materialize()` is
+public, and under the scan approach calling it standalone — before the staging
+loop had mirrored a new local task — would delete that task as "missing
+remotely." Driven from a diff, it has no opinion about paths the pull did not
+touch, so the call-order invariant disappears rather than needing documenting.
 
 `.dispatch/` is already excluded from the orchestrator's dirty gate, so writing
 into the working tree does not destabilize a run.
+
+Local deletions still do not _propagate_ to teammates — the push side never
+issues `git rm`. That is a real gap, but it is a separate deliverable and is
+recorded for a later plan rather than folded in here.
 
 - [ ] **Step 1: Write the failing test**
 
