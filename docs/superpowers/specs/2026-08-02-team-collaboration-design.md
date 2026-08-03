@@ -1,18 +1,16 @@
 # Spec: Team collaboration — actors, board sync, presence, and claims
 
-**Date:** 2026-08-02 **Status:** approved; implementation deferred
+**Date:** 2026-08-02 **Status:** approved; ready for implementation plan
 
-Implementation is held until the in-flight branches land. Several agents are
-making major changes concurrently — `feat/orchestration-capabilities` among them
-— and this spec touches `packages/core/src/types.ts`, the orchestrator, and the
-desktop task components, all of which are moving. Re-read §4's file references
-against the tree before planning; they were accurate at `main` @`40ee234` and at
-`feat/orchestration-capabilities` @`689a634`.
+Every §4 file reference was re-verified against `main` @`0b6ce89` — the merge
+that landed the orchestration layer — and the blocking dependency is resolved:
+§4.11's audit export needs the `risk` / `writes` / `model` / `findings` /
+`ledger` model, which is now on `main`.
 
-Sequencing note: §4.11's audit export depends on the `risk` / `writes` / `model`
-/ `findings` / `ledger` model added in `6ec45d9`, which lives on
-`feat/orchestration-capabilities`, not `main`. The implementation branch either
-stacks on that branch or waits for it to merge.
+Two claims changed under re-verification and the sections were rewritten rather
+than patched: §4.9.1 (the merged tree already ships the right conflict
+primitives — reuse them, do not invent a parallel set) and §4.8's `Claim` shape
+(carry the run's _observed_ footprint, not the task's declared `writes`).
 
 Reference point: [Mesh](https://entire.vc/mesh/) — "task management for human +
 AI teams," MCP-native, event-driven, Go + Postgres + NATS, self-hosted. Mesh
@@ -35,8 +33,8 @@ distinct things break:
 | 7   | Alice's agent cannot see Bob's            | `run_list`/`agent_message` are loopback-scoped             |
 
 Failure 1 deserves emphasis: `autoCommit` is defaulted in
-`packages/core/src/config.ts:53`, validated at `config.ts:307`, and editable
-from the Settings screen via `packages/server/src/api.ts:518` — and no code path
+`packages/core/src/config.ts:68`, validated at `config.ts:431`, and editable
+from the Settings screen via `packages/server/src/api.ts:541` — and no code path
 reads it. (`autoCommitIfDirty` in the orchestrator is unrelated; that is
 run-scoped worktree cleanup.) A task edit today writes a markdown file and
 stops. The durable half of team sync is not stale; it never leaves the machine.
@@ -258,11 +256,11 @@ The loop, driven by the existing `.dispatch/` watcher
    (§4.4) so a branch checkout that reverts task content is ignored rather than
    propagated.
 3. Commit in the sync worktree, staging **only** paths under `.dispatch/` — the
-   same narrow-staging discipline `orchestrator.ts:1029` already applies.
+   same narrow-staging discipline `orchestrator.ts:1389` already applies.
 4. `pull --rebase`, then push.
 5. Incoming teammate changes are materialized from the sync worktree back into
    the user's working tree. `.dispatch/` is already excluded from the
-   orchestrator's dirty gate (`orchestrator.ts:950`), so this does not
+   orchestrator's dirty gate (`orchestrator.ts:1310`), so this does not
    destabilize a run.
 
 The user's index and `HEAD` are never touched. You can be on any branch,
@@ -308,7 +306,7 @@ matches the founding spec's "per-task file conflicts only; rare,
 human-resolvable" claim. `doctor` reports when the driver is missing.
 
 **`ledger.jsonl` and `findings.jsonl` need no driver.** They are already
-`appendFileSync` (`server/src/ledger.ts:47`, `server/src/findings.ts:57`) —
+`appendFileSync` (`server/src/ledger.ts:89`, `server/src/findings.ts:104`) —
 append-only and union-mergeable. The spec states this explicitly so the property
 is understood as load-bearing rather than incidental.
 
@@ -346,9 +344,10 @@ export interface Claim {
   taskId: string;
   claimedAt: string; // earliest-wins resolution key (§4.9)
   runId: string | null; // null for a manual human claim
-  /** The task's declared `writes`, carried so remote actors can run
-   *  `tasksConflict` without fetching the task file. Empty = undeclared. */
-  writes: string[];
+  /** The run's *observed* footprint, straight from `Orchestrator.liveClaims()`
+   *  — not the task's declared `writes`, which the footprint outgrows. Refreshed
+   *  on every heartbeat because it grows mid-run. Empty = touched nothing yet. */
+  claims: string[];
 }
 
 export interface PresenceSource {
@@ -401,7 +400,7 @@ passive warning either — those get scrolled past. The dispatch path returns a
 conflict the UI renders as a decision: _"Bob's agent has been on this for 4m —
 dispatch anyway?"_
 
-**Branch corroboration.** `orchestrator.ts:1063` already enumerates every
+**Branch corroboration.** `orchestrator.ts:1417` already enumerates every
 `dispatch/*` branch ref in git. A remote branch for a task is a durable claim
 even when presence is stale, so the claim check consults both: presence is fast
 and advisory, branches are slow and durable. When presence is unavailable
@@ -409,31 +408,51 @@ entirely (§6), branch corroboration is the sole signal and the UI says so.
 
 #### 4.9.1 Write-set overlap across machines
 
-`689a634` added write-set conflict detection to the epic scheduler:
-`packages/core/src/conflicts.ts` exposes `tasksConflict(a, b)` and
-`schedulableBatch(ready, limit)`, and the engine now batches only mutually
-non-conflicting ready tasks rather than the first N.
+**Superseded on 2026-08-02 by what landed in `0b6ce89`.** An earlier draft of
+this section proposed a bespoke cross-machine rule. The merged tree already has
+the right primitives, and this section now describes reusing them rather than
+inventing a parallel set.
 
-That guarantee is **single-machine only**, and its absence across machines is a
-gap same-task claims do not cover. Alice dispatching `t-aaa` and Bob dispatching
-`t-bbb` never collide on task id, but if both declare
-`packages/core/src/types.ts` they produce two branches racing the same file —
-precisely what `schedulableBatch` refuses to do locally.
+`packages/core/src/conflicts.ts` exposes three functions, and the distinction
+between the first two is the whole design:
 
-So the claim check runs `tasksConflict` between the candidate's `writes` and
-every live remote claim's `writes`, and reuses `conflicts.ts` rather than
-reimplementing the matcher. Claims carry their write-set (§4.8) so this costs no
-extra fetch.
+- `tasksConflict(a, b)` — symmetric; an empty set means _unknown_, so it
+  conflicts with everything. Correct for **scheduling**, where the cost of
+  guessing wrong is one serialized batch.
+- `claimConflictsWithWrites(claim, writes)` — an empty **claim** means "has not
+  touched anything yet," so it blocks nothing. Correct for **claims**, where a
+  universal block would strand people.
+- `schedulableBatch(ready, limit)` — greedy non-conflicting batching.
 
-**The unknown-write-set rule inverts across the machine boundary,
-deliberately.** Locally, `tasksConflict` treats an empty write-set as
-conflicting with everything, and the cost is one serialized batch — cheap and
-invisible. Remotely, the same rule would warn on every dispatch of an undeclared
-task whenever any teammate was running anything, which is noise that trains
-people to click through. So across machines an empty write-set on either side
-yields **no signal**, and only a declared overlap raises the soft block of §4.9.
-State this in the implementation, because reusing `tasksConflict` naively
-inherits the local rule and produces exactly the wrong behavior.
+`Orchestrator.liveClaims()` returns `{ runId, taskId, claims }[]`, where
+`claims` is the run's _observed_ footprint. `epic.ts` already notes that a live
+run's footprint "can have grown past its task's declared writes" — so claims are
+empirical, not declared, and that is what makes them trustworthy enough to block
+on.
+
+**The team layer changes the input set, not the rule.** The local scheduler
+feeds `liveClaims()` from one registry; the team check feeds it from one
+registry plus every live remote presence record. Same function, same polarity,
+wider input. Presence records therefore carry `claims` (§4.8), refreshed each
+heartbeat because the footprint grows mid-run.
+
+The asymmetry is worth stating because it is easy to get backwards: an
+undeclared _candidate_ against a non-empty remote claim **does** conflict —
+`claimConflictsWithWrites(['a.ts'], [])` is `true` — because the remote side has
+concrete evidence of a file being touched. Only an empty _claim_ is silent.
+
+**The liveness hazard grows across machines and needs an answer here.**
+`epic.ts` already warns: "an undeclared task waits on ANY live claim until that
+run goes terminal — nothing reaps one, so a parked run waits on a human."
+Locally that stalls your own queue and you can see why. Across machines, a
+teammate's parked run would silently block your undeclared dispatches with no
+visible cause. Three mitigations, all required:
+
+1. A claim from a presence record past the staleness threshold (§4.8) is
+   ignored, so a crashed or closed app cannot block indefinitely.
+2. The soft-block override of §4.9 always applies — a remote claim is advice.
+3. The conflict surfaces _which_ actor, _which_ run, and _which_ path collided,
+   so a stall is never mysterious.
 
 A consequence worth naming: `writes` stops being a scheduling hint and becomes
 the team's collision-avoidance substrate, which raises the value of the planner
@@ -564,7 +583,7 @@ this testable in `bun test` with no mocks:
 - presence goes stale after the threshold and releases claims
 - write-set overlap (§4.9.1): clone A claims a task writing `core/src/types.ts`;
   clone B dispatching a _different_ task writing the same path is warned — and,
-  in the paired case, is **not** warned when either side's `writes` is empty
+  in the paired case, is **not** warned when the remote claim is empty
 - outbox message delivered from clone A to clone B
 - push rejection degrades to local-only without losing commits
 
