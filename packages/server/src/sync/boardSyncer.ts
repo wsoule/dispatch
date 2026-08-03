@@ -21,12 +21,6 @@ export interface SyncResult {
 
 export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled';
 
-// git's magic empty-tree object: diffing against it lists every path in the
-// target tree as added. Used as materialize()'s starting point when this
-// BoardSyncer has never materialized before, so a fresh worktree's entire
-// initial checkout is treated as incoming rather than as a scan target.
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-
 const TASKS_DIR = join('.dispatch', 'tasks');
 
 // Prefers stderr, falling back to stdout — some git failures print to
@@ -44,12 +38,6 @@ function errorText(result: { stdout: string; stderr: string }): string {
  * separate checkout the user never sees.
  */
 export class BoardSyncer {
-  // The sync worktree's HEAD as of the last successful materialize() call —
-  // null until the first one. Diffing forward from here (rather than
-  // scanning the whole tree) is what lets a local deletion survive: a path
-  // the pull never touched between then and now is never visited.
-  private lastMaterializedHead: string | null = null;
-
   constructor(
     private readonly rootDir: string,
     private readonly worktree: SyncWorktree,
@@ -110,6 +98,23 @@ export class BoardSyncer {
     }
 
     const trunk = this.worktree.trunkRef();
+
+    // Captured immediately before the pull: materialize()'s diff must cover
+    // exactly what the pull brings in, not this cycle's own staged commit
+    // above (already reflected in this HEAD) and nothing from before it —
+    // there is deliberately no persisted "last materialized" pointer to
+    // fall back on (see materialize()'s doc comment for why).
+    const beforePull = this.run(this.worktree.path, ['rev-parse', 'HEAD']);
+    if (beforePull.status !== 0) {
+      // No commit reachable in the worktree at all — possible only for a
+      // genuinely empty repo. There's no safe revision to diff from, and
+      // guessing one (e.g. the empty tree) is exactly the resurrection bug
+      // this design avoids, so this cycle simply skips materializing.
+      console.error(
+        `board sync: could not resolve the sync worktree's HEAD before pulling (${this.rootDir}); skipping materialize() this cycle: ${errorText(beforePull)}`
+      );
+    }
+
     const pull = this.run(this.worktree.path, [
       'pull',
       '--rebase',
@@ -132,7 +137,8 @@ export class BoardSyncer {
     // whatever else landed) — copy it into the user's working tree before
     // attempting the push, so a push failure doesn't also withhold pulled
     // content the user already has a right to see.
-    const changed = this.materialize();
+    const changed =
+      beforePull.status === 0 ? this.materialize(beforePull.stdout.trim()) : 0;
 
     const push = this.run(this.worktree.path, [
       'push',
@@ -158,34 +164,44 @@ export class BoardSyncer {
 
   /**
    * Applies exactly what changed in the sync worktree's `.dispatch/tasks`
-   * since the last call — added/modified paths are copied into the user's
-   * working tree (gated per file by the same monotonic rule as the push
-   * side, but reversed: a working-tree copy newer than the incoming one is
-   * an unsynced local edit and is left alone for the next syncOnce() to
-   * push), and removed paths are deleted from it.
+   * between `before` and the worktree's current HEAD — added/modified paths
+   * are copied into the user's working tree (gated per file by the same
+   * monotonic rule as the push side, but reversed: a working-tree copy
+   * newer than the incoming one is an unsynced local edit and is left alone
+   * for the next syncOnce() to push), and removed paths are deleted from it.
    *
-   * Deliberately driven by a git diff over a HEAD range rather than a scan
-   * of either tree: a scan can't tell "trunk never had this" apart from
-   * "the user deleted this on purpose" — both look like a missing local
-   * file — and ends up resurrecting deletions every cycle. A path outside
-   * the diffed range is never visited, so a local deletion (which never
-   * gets staged for removal — the push side has no `git rm` step) survives,
-   * and a brand-new local task that hasn't synced yet can't be swept away
-   * by a standalone call. Runs regardless of which branch the working tree
-   * currently has checked out — the board is trunk's state.
+   * `before` should be a revision reachable in the sync worktree — normally
+   * its own HEAD as of immediately before syncOnce()'s pull, so the range
+   * covers exactly what that pull brought in. Deliberately driven by a git
+   * diff over that range rather than a scan of either tree: a scan can't
+   * tell "trunk never had this" apart from "the user deleted this on
+   * purpose" — both look like a missing local file — and ends up
+   * resurrecting deletions. A path outside the diffed range is never
+   * visited, so a local deletion (which never gets staged for removal — the
+   * push side has no `git rm` step) survives.
+   *
+   * Omitting `before` makes this a no-op (returns 0): there is deliberately
+   * no persisted "last materialized" pointer and no empty-tree fallback to
+   * diff from when the caller doesn't supply one. Either of those would
+   * resurrect a local deletion the moment the process restarts or the
+   * worktree is rebuilt (a fresh BoardSyncer, or a fresh checkout, has no
+   * memory of what was already materialized, so it can't tell "nothing to
+   * do" apart from "everything is new" without being told). It's also what
+   * keeps a standalone call safe on a syncer whose staging loop hasn't run
+   * yet: an unsynced local task was never mentioned in any range, so it's
+   * never a deletion candidate. Runs regardless of which branch the working
+   * tree currently has checked out — the board is trunk's state.
    */
-  materialize(): number {
+  materialize(before?: string): number {
+    if (before === undefined) return 0;
     this.worktree.ensure();
 
     const head = this.run(this.worktree.path, ['rev-parse', 'HEAD']);
     if (head.status !== 0) return 0;
     const after = head.stdout.trim();
-    const before = this.lastMaterializedHead ?? EMPTY_TREE;
     if (before === after) return 0;
 
-    const changed = this.applyRange(before, after);
-    this.lastMaterializedHead = after;
-    return changed;
+    return this.applyRange(before, after);
   }
 
   // The one-shot worker behind materialize(): writes the added/modified set
