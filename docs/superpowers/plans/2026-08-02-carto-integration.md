@@ -1576,7 +1576,15 @@ export function buildCartoMcpServerConfig(
     command: '/bin/sh',
     args: [
       '-c',
-      `cd ${JSON.stringify(projectRoot)} && exec ${JSON.stringify(binary.path)} serve`,
+      // CORRECTED (security): JSON.stringify escapes only `"` and `\`, NOT
+      // `$` or backticks, and sh performs command substitution inside double
+      // quotes. Interpolating a path here was arbitrary code execution in the
+      // daemon. Pass values as positional parameters instead — sh never
+      // re-parses those.
+      'cd "$1" && exec "$2" serve',
+      'sh',
+      projectRoot,
+      binary.path,
     ],
     env,
   };
