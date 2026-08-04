@@ -28,3 +28,11 @@ export function unansweredCount(
 ): number {
   return questions.filter((q) => (answers[q.id] ?? '').trim() === '').length;
 }
+
+/** Stable key for a question set — id and text of each question, JSON-encoded so a
+ * recycled id or a delimiter in the question body can't collide two sets together. */
+export function questionsSignature(
+  questions: readonly PlannerQuestion[]
+): string {
+  return JSON.stringify(questions.map((q) => [q.id, q.question]));
+}

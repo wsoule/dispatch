@@ -276,9 +276,8 @@ const Q1_AGAIN: PlannerQuestion = {
 };
 
 describe('diffQuestionNotifications', () => {
-  // An unanswered question is a live obligation the moment tracking can see it, not
-  // stale news to sit out — so a draft already holding a question on the very first
-  // call still notifies (unlike diffRunNotifications/diffQueueNotifications' states).
+  // An unanswered question is a live obligation from the first call, unlike
+  // diffRunNotifications/diffQueueNotifications' states.
   test('a first sighting of a live question notifies', () => {
     const { notifications, next } = diffQuestionNotifications(
       emptyQuestionTracking(),

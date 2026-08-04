@@ -3,7 +3,11 @@ import { MessageCircleQuestion } from 'lucide-react';
 import { useState } from 'react';
 
 import { Markdown } from '../runs/Markdown';
-import { composeAnswers, unansweredCount } from '@/lib/planQuestions';
+import {
+  composeAnswers,
+  questionsSignature,
+  unansweredCount,
+} from '@/lib/planQuestions';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
 
@@ -26,6 +30,16 @@ export function PlanQuestionsForm({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Resets answers only when the rendered question set genuinely changes (by id+text
+  // signature, since planner ids repeat across rounds) — not on every send — so an
+  // in-flight or failed turn keeps what the user typed instead of blanking it out.
+  const signature = questionsSignature(questions);
+  const [trackedSignature, setTrackedSignature] = useState(signature);
+  if (signature !== trackedSignature) {
+    setTrackedSignature(signature);
+    setAnswers({});
+  }
+
   function setAnswer(id: string, value: string) {
     setAnswers((prev) => ({ ...prev, [id]: value }));
   }
@@ -35,7 +49,6 @@ export function PlanQuestionsForm({
     setError(null);
     try {
       await onSend(composeAnswers(questions, nextAnswers));
-      setAnswers({});
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
