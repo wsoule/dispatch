@@ -277,7 +277,15 @@ export function PierreReviewDiff({
           // the `overflow-auto` instead leaves this element's `scrollTop` permanently 0, so
           // the window of rendered rows never advances past the first screenful. This element
           // must be the actual scroll container.
-          className="size-full overflow-auto"
+          //
+          // `flex-1` rather than `size-full`/`h-full`: the caller (`ReviewView`) makes this
+          // element's parent a flex column, so this sizes directly off that container's own
+          // resolved height. A percentage height here would instead have to resolve through
+          // that flex column's own height, which itself was only ever a stretch-resolved grid
+          // cell — a chain some engines collapse to zero rather than a real pixel value, which
+          // reads as this pane rendering only its (non-virtualized) file header and nothing
+          // else. `flex-1` sizes off the immediate container directly, with no such chain.
+          className="min-h-0 w-full flex-1 overflow-auto"
         />
       </PierreWorkerPool>
     </ErrorBoundary>
