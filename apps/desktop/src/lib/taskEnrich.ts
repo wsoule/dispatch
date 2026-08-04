@@ -40,6 +40,8 @@ export function enrichPlanError(record: PlanRecord | undefined): string | null {
   if (record.state === 'failed') {
     return record.error ?? 'the planner failed to draft any detail';
   }
+  // Waiting on the user is not a failure — the questions form renders instead.
+  if (record.questions.length > 0) return null;
   if (enrichDraftFromPlan(record) === null) {
     return 'the planner came back with nothing to add';
   }

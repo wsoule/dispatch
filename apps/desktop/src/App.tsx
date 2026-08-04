@@ -374,6 +374,17 @@ function App() {
         ) ?? null)
       : null;
 
+  // Local consts so narrowing survives the closure (TaskDetailDialog has no `data` prop).
+  // Raw `sendPlanMessage`, not the `data.` wrapper, which answers a different plan slot.
+  const enrichPlanRecord = data.enrichPlanRecord;
+  const enrichClient = data.client;
+  const onAnswerEnrich =
+    enrichClient !== null && enrichPlanRecord !== undefined
+      ? async (message: string) => {
+          await enrichClient.sendPlanMessage(enrichPlanRecord.id, message);
+        }
+      : undefined;
+
   // The draft the draft view is showing, resolved from nav state — `null` when the id
   // points at a draft that has since been dismissed or evicted.
   const activeDraft =
@@ -866,6 +877,7 @@ function App() {
                 : undefined
             }
             onDismissEnrich={data.handleDismissEnrich}
+            onAnswerEnrich={onAnswerEnrich}
             onOpenRun={(runId) => {
               dispatchNav({ type: 'closePeek' });
               selectProjectView('runs');
