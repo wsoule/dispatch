@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.196Z
-updated: 2026-08-04T18:10:47.037Z
+updated: 2026-08-04T18:55:12.674Z
 external: null
 writes:
   - packages/server/src/orchestrator/wardenTools.ts
@@ -34,3 +34,4 @@ Acceptance criteria:
 ## Activity
 - 2026-08-04T18:07:39.220Z dispatched (claude, branch dispatch/t-f8358c-warden-tool-registry-status-mutating-act-38d3e7) — none
 - 2026-08-04T18:10:47.037Z Starting. Surveyed the seams this needs: OrchestratorContext (orchestrator.ts:76) carries store/cache/events but NOT mergeQueue/questions/ledgerStore — those live on ApiContext (api.ts:104). Plan: wardenTools.ts defines its own WardenToolContext bundling orchestrator + the three registries, so it stays constructible in tests without booting an API. Pending approvals are only reachable today via RunRegistry.getPendingApproval(runId) (no listing), so adding two additive read-only accessors to Orchestrator/RunRegistry. No packages/mcp changes. — none
+- 2026-08-04T18:55:12.674Z Self-review found three real defects that the passing tests had missed — all cases where a comment/description asserted behaviour the code did not honour: (1) deny_run's tool description said the run "continues without it", but denial fails the run (approval-decision.test.ts proves it) — a misleading description is a misleading prompt; (2) pendingApprovals() reported ghost approvals, since orchestrator.ts:757 (approve) is the ONLY place a run's pendingApproval is cleared, so a run cancelled mid-gate keeps the record forever — now gated on state === 'awaiting-approval' in both pendingApprovals() and pendingApprovalFor(); (3) applyAction flipped status to 'applied' AFTER awaiting tool.apply, so two concurrent applies (a chat-UI double-click) both passed the pending check and both executed — now claimed before the await, rolled back to 'pending' on failure. Each fix has a test that fails without it. — none
