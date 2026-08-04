@@ -42,3 +42,16 @@ test('an unchanged field saves nothing on blur', async () => {
   fireEvent.blur(screen.getByLabelText('Verify command'));
   expect(saved).toEqual([]);
 });
+
+// Clicking the sentence, not just the checkbox square, is the hit target people
+// actually use — that only works if the text stays wrapped in a real <label>.
+test('clicking the auto-commit label text toggles and saves', async () => {
+  const saved: unknown[] = [];
+  render(
+    <GeneralSection config={config} onSave={async (p) => void saved.push(p)} />
+  );
+  fireEvent.click(
+    screen.getByText('Let an agent commit its own work as it goes')
+  );
+  expect(saved).toEqual([{ autoCommit: true }]);
+});
