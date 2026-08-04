@@ -20,7 +20,9 @@ import type {
   VerifyConfig,
 } from '@dispatch/core';
 import type { ActorContext, TaskDoc } from '@dispatch/core';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { amendTask } from './api/amendments.js';
 import {
@@ -61,7 +63,8 @@ import {
   INVALID_STASH_INDEX_ERROR,
   PATH_ESCAPE_ERROR,
 } from './git/commands.js';
-import type { GitOutcome, GitRepo } from './git/commands.js';
+import type { GitOutcome } from './git/commands.js';
+import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
@@ -881,6 +884,64 @@ async function linearStates(
     return errorResponse(409, 'no Linear API key configured');
   const result = await client.workflowStates(teamId);
   return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
+}
+
+/** Content hash used as the edit precondition — see readRunFile / applyRunEdit. */
+export function sha256Hex(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/**
+ * Rejects a path that could escape the worktree it is joined onto. Routes that
+ * touch the working tree directly need this because they bypass `GitRepo`,
+ * which does its own `safePath` check on every pathspec it passes to git.
+ */
+export function isWorktreeRelativePath(path: string): boolean {
+  if (path === '' || path.startsWith('-') || path.startsWith('/')) return false;
+  return !path.split('/').includes('..');
+}
+
+/**
+ * GET /api/runs/:id/file — one side of a file in the run's worktree.
+ *
+ * Backs the diff renderer's `loadDiffFiles`: a patch alone only carries its own
+ * hunks, so expansion and edit mode both need the file's real contents.
+ */
+async function readRunFile(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const url = new URL(req.url);
+  const path = url.searchParams.get('path');
+  const side = url.searchParams.get('side') ?? 'new';
+  if (path === null || path === '')
+    return errorResponse(400, 'path is required');
+  if (!isWorktreeRelativePath(path)) {
+    return errorResponse(400, PATH_ESCAPE_ERROR);
+  }
+  if (side !== 'old' && side !== 'new') {
+    return errorResponse(400, `invalid side: ${side} (expected old|new)`);
+  }
+  const detail = ctx.orchestrator.getRun(runId);
+  if (detail === null) return errorResponse(404, `run not found: ${runId}`);
+  const meta = detail.meta;
+  if (!existsSync(meta.worktreePath)) {
+    return errorResponse(409, 'worktree-missing');
+  }
+  const repo = new GitRepo(meta.worktreePath);
+  if (side === 'old') {
+    const shown = await repo.show(meta.baseBranch, path);
+    if (!shown.ok) return errorResponse(404, shown.stderr);
+    return jsonResponse({
+      contents: shown.contents,
+      sha: sha256Hex(shown.contents),
+    });
+  }
+  const onDisk = join(meta.worktreePath, path);
+  if (!existsSync(onDisk)) return errorResponse(404, `no such file: ${path}`);
+  const contents = readFileSync(onDisk, 'utf8');
+  return jsonResponse({ contents, sha: sha256Hex(contents) });
 }
 
 // GET /api/runs/:id/comments — every review comment on this run's diff.
@@ -2826,6 +2887,9 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      if (segments.length === 3 && segments[2] === 'file' && method === 'GET') {
+        return await readRunFile(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&

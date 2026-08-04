@@ -1386,6 +1386,13 @@ export interface ApiClient {
     error: string | null;
   }>;
 
+  /** One side of a file in a run's worktree. `sha` is the precondition for applyRunEdit. */
+  fetchRunFile(
+    runId: string,
+    path: string,
+    side: 'old' | 'new'
+  ): Promise<{ contents: string; sha: string }>;
+
   // Line-level review comments on a run's diff, and the send-back that carries the unresolved
   // ones to the agent.
   fetchReviewComments(runId: string): Promise<ReviewComment[]>;
@@ -1839,6 +1846,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     clusterInbox: () =>
       request(target, '/api/inbox/cluster', { method: 'POST' }),
+    fetchRunFile: (runId, path, side) =>
+      request(
+        target,
+        `/api/runs/${encodeURIComponent(runId)}/file?path=${encodeURIComponent(path)}&side=${side}`
+      ),
     fetchReviewComments: (runId) =>
       request(target, `/api/runs/${encodeURIComponent(runId)}/comments`),
     addReviewComment: (runId, input) =>
