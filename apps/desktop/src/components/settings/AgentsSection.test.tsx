@@ -57,7 +57,9 @@ test('an edited concurrency value saves on blur', async () => {
   render(
     <AgentsSection config={config} onSave={async (p) => void saved.push(p)} />
   );
-  const input = screen.getByLabelText('Epic concurrency');
+  const input = screen.getByLabelText(
+    'How many run at once when you dispatch an epic'
+  );
   fireEvent.change(input, { target: { value: '5' } });
   fireEvent.blur(input);
   expect(saved).toEqual([{ epicConcurrency: 5 }]);

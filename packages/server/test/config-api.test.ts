@@ -104,10 +104,7 @@ describe('PATCH /api/config — orchestrator caps', () => {
     expect(config.orchestrator.maxBudgetUsd).toBe(12.5);
   });
 
-  it('accepts null to clear a cap', async () => {
-    // Set it first: clearing a key that was never written hits a pre-existing
-    // YAML edge case in core's updateConfig, outside this task's scope.
-    await patchConfig({ maxTurns: 40 });
+  it('accepts null to clear a cap that was never set', async () => {
     const res = await patchConfig({ maxTurns: null });
     expect(res.status).toBe(200);
     const config = await json<{ orchestrator: { maxTurns?: number } }>(res);

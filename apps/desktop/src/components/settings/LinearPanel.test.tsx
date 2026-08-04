@@ -1,5 +1,5 @@
 import { ApiError } from '@dispatch/client';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { dataWith } from './fixtures.test-helper';
@@ -30,6 +30,27 @@ test('a failed team fetch explains the empty picker and offers a retry', () => {
   );
   expect(screen.getByText(/rejected this key/)).toBeDefined();
   expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined();
+});
+
+// Pins the button to actual behaviour, not just its presence — a deleted
+// onClick would still pass a "the button exists" assertion.
+test('clicking Retry on a failed team fetch calls refetchLinearTeams', () => {
+  let calls = 0;
+  render(
+    <LinearPanel
+      data={dataWith({
+        keySource: 'file',
+        connected: true,
+        linearTeams: [],
+        linearTeamsError: new ApiError('Unauthorized', 401),
+        refetchLinearTeams: () => {
+          calls += 1;
+        },
+      })}
+    />
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(calls).toBe(1);
 });
 
 test('a file-sourced key leaves Disconnect enabled', () => {
