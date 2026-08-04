@@ -25,9 +25,14 @@ const BIN = resolve(import.meta.dirname, '../src/bin.ts');
 // Needed because the daemon this spawns boots (and, when `--init` is passed,
 // initializes the project) asynchronously in a child process — there's no
 // synchronous signal from the parent's point of view.
+//
+// 30s, not a tighter budget: every call site here waits on a REAL `bun BIN`
+// subprocess boot plus (for the merge-driver tests) two more `git config`
+// subprocesses, which can run slow under CPU contention with no call site
+// overriding this default — raise it here, not per call.
 async function waitFor(
   predicate: () => boolean,
-  timeoutMs = 10_000,
+  timeoutMs = 30_000,
   intervalMs = 50
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -82,7 +87,9 @@ describe('bin.ts --init', () => {
     expect(initialized).toBe(true);
     expect(existsSync(tasksDir)).toBe(true);
     expect(existsSync(configPath)).toBe(true);
-  }, 15_000);
+    // 45s: headroom past waitFor's 30s default so a genuine failure fails
+    // cleanly instead of getting cut off by bun's own per-test timeout.
+  }, 45_000);
 
   // Regression: this is the desktop app's project-init path
   // (GetStartedView -> TaskStore.init(rootDir) equivalent), which used to
@@ -103,11 +110,18 @@ describe('bin.ts --init', () => {
       }
     );
 
-    // Wait on the actual end state (both halves registered), not just the
-    // .gitattributes write — registerMergeDriverGitConfig's two `git config`
-    // subprocess calls run after it and take real time to complete.
+    // Wait on BOTH drivers, not just the task one this test names — bin.ts
+    // registers task then team sequentially (registerMergeDriverGitConfig,
+    // then registerTeamMergeDriverGitConfig), and this test asserts on both
+    // below. Waiting on task alone was a genuine race: task's `git config`
+    // calls can land, and this predicate return true, before team's own two
+    // calls have run, which showed up as an intermittent failure on the
+    // checkTeamMergeDriverSetup assertion below — not a timeout, since it
+    // failed in ~250ms, well inside even the old 10s budget.
     const registered = await waitFor(
-      () => checkMergeDriverSetup(rootDir!).gitConfig
+      () =>
+        checkMergeDriverSetup(rootDir!).gitConfig &&
+        checkTeamMergeDriverSetup(rootDir!).gitConfig
     );
     expect(registered).toBe(true);
     expect(readFileSync(gitattributesPath, 'utf8')).toContain(
@@ -121,7 +135,9 @@ describe('bin.ts --init', () => {
       gitattributes: true,
       gitConfig: true,
     });
-  }, 15_000);
+    // 45s: headroom past waitFor's 30s default so a genuine failure fails
+    // cleanly instead of getting cut off by bun's own per-test timeout.
+  }, 45_000);
 
   // Regression: --init used to gate driver registration behind the same
   // "tasks dir missing" check as TaskStore.init, so a project that predates
@@ -160,7 +176,9 @@ describe('bin.ts --init', () => {
       gitattributes: true,
       gitConfig: true,
     });
-  }, 15_000);
+    // 45s: headroom past waitFor's 30s default so a genuine failure fails
+    // cleanly instead of getting cut off by bun's own per-test timeout.
+  }, 45_000);
 
   it('does not initialize the project when --init is absent', async () => {
     rootDir = mkdtempSync(join(tmpdir(), 'dispatch-bin-init-root-'));
@@ -188,5 +206,7 @@ describe('bin.ts --init', () => {
     // actually distinguishes "the project was initialized" from "the daemon
     // merely tolerated a missing tasks dir."
     expect(existsSync(configPath)).toBe(false);
-  }, 15_000);
+    // 45s: headroom past waitFor's 30s default so a genuine failure fails
+    // cleanly instead of getting cut off by bun's own per-test timeout.
+  }, 45_000);
 });

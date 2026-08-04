@@ -1,4 +1,9 @@
-import { ActorContext, loadConfig, TaskStore } from '@dispatch/core';
+import {
+  ActorContext,
+  isMergeDriverResolvable,
+  loadConfig,
+  TaskStore,
+} from '@dispatch/core';
 import type { CartoMode, GitReader } from '@dispatch/core';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +48,8 @@ import { ReviewRunner } from './orchestrator/review.js';
 import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import { ReviewCommentStore } from './reviewComments.js';
+import { BoardSyncScheduler } from './sync/scheduler.js';
+import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -103,6 +110,10 @@ export interface StartServerOptions {
   // Fixed tokens instead of freshly minted ones, so a test can present a known
   // value. Production never passes this.
   tokens?: DaemonTokens;
+  // Debounce for the board syncer's response to a local task-file change.
+  // Defaults to BoardSyncScheduler's own multi-second default; tests pass
+  // something much shorter.
+  boardSyncDebounceMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -279,6 +290,43 @@ export async function startServer(
     events.broadcast({ type: 'task.changed' });
   });
 
+  // The board syncer: commits and pushes outstanding task files from a
+  // private worktree, gated on config.yml's `autoCommit`. No trunk to pin to
+  // (no origin/HEAD, no local main/master) means no syncer at all — logged
+  // once here rather than left silent, but never fatal to boot.
+  const syncWorktree = SyncWorktree.open(rootDir, defaultGitRunner);
+  const boardSyncScheduler =
+    syncWorktree === null
+      ? null
+      : new BoardSyncScheduler({
+          rootDir,
+          worktree: syncWorktree,
+          actor: actorContext,
+          run: defaultGitRunner,
+          events,
+          debounceMs: opts.boardSyncDebounceMs,
+        });
+  if (boardSyncScheduler === null) {
+    console.log(
+      `dispatchd: no trunk resolvable for ${rootDir}; board sync disabled`
+    );
+  }
+  // Rides the same `task.changed` signal LinearSync's push debounce does —
+  // the watcher above is one source of it, API mutation handlers are
+  // another, so an edit made through either path reaches the board.
+  const unsubscribeBoardSync = events.subscribe((event) => {
+    if (event.type === 'task.changed') boardSyncScheduler?.notifyTaskChanged();
+  });
+
+  // The reverse-dependency map ReviewRunner scopes reviews with, rebuilt
+  // lazily and invalidated whenever the workspace's own source changes.
+  const depMapCache = new DepMapCache(rootDir);
+  const sourceWatcher = watchSourceDirs(
+    depMapSourceDirs(rootDir),
+    () => depMapCache.invalidate(),
+    isSkippedPath
+  );
+
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
@@ -392,6 +440,20 @@ export async function startServer(
     orchestrator,
     actorContext,
   });
+
+  // Same one-time-at-boot treatment as prCapability below: whether the task
+  // merge driver git config actually points at something resolvable on this
+  // daemon's PATH. A missing binary never corrupts anything (git treats an
+  // unrunnable driver as a genuine conflict), but it silently downgrades
+  // every concurrent same-task edit from a field-level merge to a plain
+  // line-based one — worth surfacing once at boot (see GET /api/sync) rather
+  // than leaving it undiagnosable.
+  const mergeDriverOk = isMergeDriverResolvable(rootDir);
+  if (!mergeDriverOk) {
+    console.log(
+      `dispatchd: the task merge driver ('dispatch merge-task') is not resolvable on PATH for ${rootDir} — concurrent edits will fall back to line-based merging`
+    );
+  }
 
   // PR capability is detected once, here at boot, and never rechecked per
   // request — a project's gh/remote setup essentially never changes while
@@ -521,6 +583,8 @@ export async function startServer(
     gitRepo,
     actorContext,
     tokens,
+    boardSyncScheduler,
+    mergeDriverOk,
   };
 
   const server = Bun.serve({
@@ -647,6 +711,8 @@ export async function startServer(
       mergeQueue.stop();
       unsubscribeLinear();
       await linearSync.stop();
+      unsubscribeBoardSync();
+      boardSyncScheduler?.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on

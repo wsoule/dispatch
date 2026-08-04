@@ -7,12 +7,13 @@ import { join } from 'node:path';
 // Mirrors daemonfile.ts's `daemonHome()` — kept as a separate copy here
 // rather than an import so the orchestrator module has no dependency on the
 // daemon-file module, but the env var and fallback rule must stay identical.
-// This is the fifth copy of this exact scheme: packages/server/src/
+// This is the fifth of six copies of this exact scheme: packages/server/src/
 // daemonfile.ts (the writer/source of truth), packages/cli/src/commands/
 // daemon.ts, packages/mcp/src/daemon.ts, and apps/desktop/src-tauri/src/
-// sidecar.rs's `daemon_home` are the other four (all keying daemon files
-// specifically, unlike this one) — update all five together if this scheme
-// ever changes.
+// sidecar.rs's `daemon_home` are four of the other five (all keying daemon
+// files specifically, unlike this one); packages/server/src/sync/worktree.ts's
+// `dispatchHome()` is the sixth, keying the board syncer's private worktree —
+// update all six together if this scheme ever changes.
 function dispatchHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();

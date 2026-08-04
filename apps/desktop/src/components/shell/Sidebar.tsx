@@ -1,4 +1,4 @@
-import type { DraftRecord } from '@dispatch/client';
+import type { DraftRecord, SyncStatus } from '@dispatch/client';
 import {
   Bell,
   Brain,
@@ -21,6 +21,7 @@ import { Fragment, useEffect, useState } from 'react';
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
 import { DraftTray } from './DraftTray';
+import { SyncChip } from './SyncChip';
 import { cn } from '@/lib/utils';
 import { CountChip } from '@/ui/chrome/CountChip';
 import {
@@ -134,6 +135,11 @@ interface SidebarProps {
    * (or always empty in the browser dev harness, where only the active project is reachable). */
   switchProjects: SwitchProject[];
   onSelectProject: (path: string) => void;
+  /** The board syncer's status — `null` until it has ever loaded, in which case the chip
+   * renders nothing. */
+  syncStatus: SyncStatus | null;
+  /** Flips `.dispatch/config.yml`'s `autoCommit` off — the sync chip's kill switch. */
+  onDisableAutoCommit: () => void;
   /** True once project resolution has settled with no active project (a genuine first run:
    * empty registry, no launch arg, no dev checkout above the binary) — swaps the "Resolving
    * project…" placeholder for an actionable "Add project…" row instead of leaving the sidebar
@@ -174,6 +180,8 @@ export function Sidebar({
   onToggleSwitcher,
   switchProjects,
   onSelectProject,
+  syncStatus,
+  onDisableAutoCommit,
   noProjectYet,
   onAddProject,
 }: SidebarProps) {
@@ -445,6 +453,15 @@ export function Sidebar({
           );
         })}
       </nav>
+
+      {/* The board syncer's status. Hidden when collapsed, same as the spend line below — an
+          icon-only rail has no room for a sentence. */}
+      {!collapsed && hasActiveProject && (
+        <SyncChip
+          status={syncStatus}
+          onDisableAutoCommit={onDisableAutoCommit}
+        />
+      )}
 
       {/* Today's spend. The mockup put this in the window titlebar, which Tauri owns and this
           app cannot draw into — the foot of the rail is the same glanceable place we can
