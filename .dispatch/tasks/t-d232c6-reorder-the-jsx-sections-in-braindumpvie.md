@@ -5,7 +5,7 @@ title: Reorder the JSX sections in BrainDumpView to render the 'Group into
   suggestions appear after the inbox items (lines 430-519 after lines 299-362);
   they should appear before. This improves UX by showing epic-grouping hints
   before the raw item list, helping users think about structure earlier.
-status: in-progress
+status: in-review
 kind: task
 parent: null
 milestone: null
@@ -14,7 +14,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-04T18:06:50.010Z
-updated: 2026-08-04T18:22:32.652Z
+updated: 2026-08-04T18:24:09.282Z
 external: null
 writes: []
 ---
@@ -34,3 +34,4 @@ Three adaptations beyond the raw move: wrapper <div> → <section> to match the 
 Verified: format/lint clean, desktop tsc + vite build pass, inbox clustering unit suites 15/15. Visually confirmed via the Playwright harness (a11y snapshot shows "Group into epics" preceding "Inbox" in DOM order; rendered screenshot shows the two headings aligned in the main column).
 
 NOTE FOR REVIEW — the committed Playwright baselines e2e/views.spec.ts-snapshots/braindump-{light,dark}-darwin.png are now stale and must be regenerated (`bun run e2e:update --grep braindump`) on a machine with a clean storefront fixture. I deliberately did NOT regenerate them: unmodified HEAD already fails on this machine by 458px, all of it the env-specific sidebar warning ("Board sync is off" / "dispatch command isn't resolvable" / "Task merge driver not set up", which varied between runs). Updating here would have baked that local noise into the shared baselines. — none
+- 2026-08-04T18:24:09.282Z [run r-d5ee92] finished: finished — 1 files, $5.57 — agent:wsoule679/claude
