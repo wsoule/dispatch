@@ -368,8 +368,8 @@ export function RunsView({
               <RunDetailHeader
                 meta={data.runDetail.meta}
                 cost={liveCostUsd(data.runDetail.meta, data.runDetail.entries)}
-                live={!isTerminalRunState(selected.state)}
                 onCancel={() => data.handleCancelRun(selected.id)}
+                onStop={() => data.handleStopRun(selected.id)}
                 trailing={
                   <div className="flex shrink-0 items-center gap-1">
                     <Segmented<RunTab>
