@@ -224,7 +224,6 @@ export interface PrDetail {
 export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
 
 // One open PR in the repo, from `gh pr list --json …` — the body of
-// One open PR in the repo, from `gh pr list --json …` — the body of
 // `GET /api/prs`. Carries the same status the review UI shows, so the queue
 // renders every row from one batched call instead of a `gh pr view` per PR.
 export interface RepoPr {
