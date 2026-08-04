@@ -1,9 +1,18 @@
-import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
+import type {
+  DraftRecord,
+  MergeQueueEntry,
+  PlannerQuestion,
+  PlanRecord,
+  RunMeta,
+  RunQuestion,
+} from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
+  diffQuestionNotifications,
   diffQueueNotifications,
   diffRunNotifications,
+  emptyQuestionTracking,
 } from './notificationEdges';
 
 // Minimal RunMeta fixture — only the fields diffRunNotifications reads
@@ -241,5 +250,213 @@ describe('diffQueueNotifications', () => {
     ]);
     expect(notifications).toEqual([]);
     expect(next.get('r1')).toBe('merged');
+  });
+});
+
+function draft(id: string, questions: PlannerQuestion[]): DraftRecord {
+  return {
+    id,
+    prompt: 'add an export button',
+    plannerName: 'claude',
+    state: 'ready',
+    message: '',
+    proposal: null,
+    questions,
+    error: null,
+    createdAt: '2026-08-03T00:00:00.000Z',
+    updatedAt: '2026-08-03T00:00:00.000Z',
+  };
+}
+
+const Q1: PlannerQuestion = { id: 'q1', question: 'Scope?', options: [] };
+const Q1_AGAIN: PlannerQuestion = {
+  id: 'q1',
+  question: 'Which format?',
+  options: [],
+};
+
+describe('diffQuestionNotifications', () => {
+  // An unanswered question is a live obligation the moment tracking can see it, not
+  // stale news to sit out — so a draft already holding a question on the very first
+  // call still notifies (unlike diffRunNotifications/diffQueueNotifications' states).
+  test('a first sighting of a live question notifies', () => {
+    const { notifications, next } = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [Q1])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(1);
+    expect(next.askers.has('draft:d-1')).toBe(true);
+  });
+
+  test('a first sighting with no questions does not notify', () => {
+    const { notifications } = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(0);
+  });
+
+  test('notifies when a tracked draft gains questions', () => {
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [])],
+      undefined,
+      new Map()
+    );
+    const { notifications } = diffQuestionNotifications(
+      first.next,
+      [draft('d-1', [Q1])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].target).toEqual({ kind: 'draft', draftId: 'd-1' });
+  });
+
+  test('an unchanged question set does not re-notify', () => {
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [])],
+      undefined,
+      new Map()
+    );
+    const second = diffQuestionNotifications(
+      first.next,
+      [draft('d-1', [Q1])],
+      undefined,
+      new Map()
+    );
+    expect(second.notifications).toHaveLength(1);
+    const third = diffQuestionNotifications(
+      second.next,
+      [draft('d-1', [Q1])],
+      undefined,
+      new Map()
+    );
+    expect(third.notifications).toHaveLength(0);
+  });
+
+  // Planner question ids are model-authored and only unique within a turn, so a
+  // second round routinely reuses "q1". Keying on ids alone would go silent.
+  test('a second round reusing the id q1 still notifies', () => {
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [Q1])],
+      undefined,
+      new Map()
+    );
+    const { notifications } = diffQuestionNotifications(
+      first.next,
+      [draft('d-1', [Q1_AGAIN])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(1);
+  });
+
+  // A `|`-joined signature lets a question body containing "|" collide two
+  // structurally different sets onto the same string — this pins the JSON encoding.
+  test('question sets that would collide under a delimiter-joined signature still notify', () => {
+    const collideA: PlannerQuestion = { id: 'x', question: 'a|b', options: [] };
+    const collideB: PlannerQuestion = { id: 'x|a', question: 'b', options: [] };
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [collideA])],
+      undefined,
+      new Map()
+    );
+    const { notifications } = diffQuestionNotifications(
+      first.next,
+      [draft('d-1', [collideB])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(1);
+  });
+
+  test('an answered draft does not notify', () => {
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [Q1])],
+      undefined,
+      new Map()
+    );
+    const { notifications } = diffQuestionNotifications(
+      first.next,
+      [draft('d-1', [])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(0);
+  });
+
+  // Run question ids are globally unique (server-minted), so a first sighting of
+  // an id is the edge — no signature needed.
+  test('notifies once for a newly seen run question', () => {
+    const question: RunQuestion = {
+      id: 'q-abc123',
+      runId: 'r-1',
+      question: 'Which branch?',
+      options: [],
+      askedAt: '2026-08-03T00:00:00.000Z',
+      answer: null,
+      answeredAt: null,
+    };
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [],
+      undefined,
+      new Map()
+    );
+    const second = diffQuestionNotifications(
+      first.next,
+      [],
+      undefined,
+      new Map([['r-1', [question]]])
+    );
+    expect(second.notifications).toHaveLength(1);
+    expect(second.notifications[0].target).toEqual({
+      kind: 'run',
+      runId: 'r-1',
+    });
+    const third = diffQuestionNotifications(
+      second.next,
+      [],
+      undefined,
+      new Map([['r-1', [question]]])
+    );
+    expect(third.notifications).toHaveLength(0);
+  });
+
+  test('a plan that gains questions notifies with a plan target', () => {
+    const base: PlanRecord = {
+      id: 'plan-1',
+      prompt: 'build the thing',
+      plannerName: 'claude',
+      role: 'plan',
+      state: 'ready',
+      messages: [],
+      questions: [],
+      createdAt: '2026-08-03T00:00:00.000Z',
+      updatedAt: '2026-08-03T00:00:00.000Z',
+    };
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [],
+      base,
+      new Map()
+    );
+    const { notifications } = diffQuestionNotifications(
+      first.next,
+      [],
+      { ...base, questions: [Q1] },
+      new Map()
+    );
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].target).toEqual({ kind: 'plan', planId: 'plan-1' });
   });
 });
