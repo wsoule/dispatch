@@ -122,4 +122,31 @@ describe('PlanManager.sendDraftMessage', () => {
       OrchestratorNotFoundError
     );
   });
+
+  // Mirrors PlanManager.sendMessage's own "keeps the questions when the answering
+  // turn fails" test — runDraftTurn's catch is a separate code path, and unlike a
+  // PlanRecord a DraftRecord keeps no user-message transcript to fall back on.
+  it('keeps the questions when the answering turn fails', async () => {
+    const manager = makeManager(
+      new FakePlanner({
+        ok: true,
+        turns: [
+          {
+            reply: 'a question first',
+            proposal: null,
+            questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+          },
+        ],
+      })
+    );
+    const started = manager.startDraft('draft something vague');
+    await waitFor(() => manager.getDraft(started.id).state !== 'running');
+
+    manager.sendDraftMessage(started.id, 'desktop only');
+    await waitFor(() => manager.getDraft(started.id).state !== 'running');
+
+    const record = manager.getDraft(started.id);
+    expect(record.state).toBe('failed');
+    expect(record.questions).toHaveLength(1);
+  });
 });
