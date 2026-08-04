@@ -1,5 +1,5 @@
-statuses: [backlog, todo, in-progress, in-review, done, cancelled]
-autoCommit: false
+statuses: [ backlog, todo, in-progress, in-review, done, cancelled ]
+autoCommit: true
 # Run by the merge queue in each run's own worktree after a clean rebase and
 # before the squash-merge, so a branch that breaks the build never lands. A
 # worktree is a fresh checkout with no node_modules or dist/, and @dispatch/*

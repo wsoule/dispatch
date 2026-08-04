@@ -1,7 +1,7 @@
 ---
 id: t-8e5196
 title: Build a full-page, describe-what-you-want task creator
-status: todo
+status: done
 kind: task
 parent: e-359627
 milestone: null
@@ -11,8 +11,9 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-26T19:06:42.667Z
-updated: 2026-07-27T01:27:00.223Z
+updated: 2026-08-03T23:18:58.012Z
 external: null
+writes: []
 ---
 
 ## Description

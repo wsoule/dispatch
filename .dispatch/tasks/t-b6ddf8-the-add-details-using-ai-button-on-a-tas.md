@@ -1,7 +1,7 @@
 ---
 id: t-b6ddf8
 title: The "add details" using ai button on a task does not work.
-status: in-review
+status: done
 kind: task
 parent: null
 milestone: null
@@ -10,8 +10,9 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-28T18:45:21.707Z
-updated: 2026-07-28T19:17:05.063Z
+updated: 2026-08-03T23:19:26.723Z
 external: null
+writes: []
 ---
 
 ## Description
