@@ -1747,6 +1747,9 @@ export function useDispatchProject(
   // Submitting a review or a comment returns the refreshed PrDetail, which we
   // write straight into the PR query's cache so the conversation/status update
   // without a second round trip.
+  //
+  // The repo-PRs list is invalidated too — the review queue reads this PR's
+  // decision and checks from there, on a poll that would otherwise lag 60s.
   const handlePrReview = useCallback(
     async (
       runId: string,
@@ -1756,8 +1759,9 @@ export function useDispatchProject(
       if (client === null) return;
       const detail = await client.reviewPr(runId, event, body);
       queryClient.setQueryData(runPrQueryKey, detail);
+      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
     },
-    [client, queryClient, runPrQueryKey]
+    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
   );
 
   const handlePrComment = useCallback(
@@ -1765,8 +1769,9 @@ export function useDispatchProject(
       if (client === null) return;
       const detail = await client.commentPr(runId, body);
       queryClient.setQueryData(runPrQueryKey, detail);
+      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
     },
-    [client, queryClient, runPrQueryKey]
+    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
   );
 
   const handleWorkEpic = useCallback(
