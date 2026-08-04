@@ -73,3 +73,22 @@ test('newest first, so the queue reads like an inbox', () => {
   );
   expect(queue[0]?.isPr).toBe(true);
 });
+
+test('an archived run is excluded from the queue', () => {
+  const queue = buildReviewQueue([run({ archivedAt: '2026-08-01T00:00:00Z' })]);
+  expect(queue).toHaveLength(0);
+});
+
+test('a finished run that was already reviewed is excluded', () => {
+  const queue = buildReviewQueue([run({ reviewedAt: '2026-08-01T00:00:00Z' })]);
+  expect(queue).toHaveLength(0);
+});
+
+test('a run with a prUrl not in the repo PR list still gets a row', () => {
+  const queue = buildReviewQueue([
+    run({ prUrl: 'https://github.com/example/repo/pull/404' }),
+  ]);
+  expect(queue).toHaveLength(1);
+  expect(queue[0]?.target).toEqual({ kind: 'run', runId: 'r-1' });
+  expect(queue[0]?.pr).toBeUndefined();
+});

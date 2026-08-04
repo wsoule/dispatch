@@ -14,7 +14,7 @@ export interface ReviewQueueItem {
   isPr: boolean;
   /** Sort key, newest first. */
   updatedAt: string;
-  /** Present for a run-backed row — turns/cost meta and the send-back path. */
+  /** Present for a run-backed row — turns/cost and the send-back path. */
   run?: RunMeta;
   /** Present for any row with GitHub status to render. */
   pr?: RepoPr;
@@ -139,8 +139,9 @@ function Row({
 }
 
 /**
- * Runs awaiting review plus every open repo PR, newest first. A dispatch-
- * opened PR arrives via both sources; the run-backed row wins since only it reaches send-back.
+ * Runs awaiting review plus every open repo PR, newest first. A
+ * dispatch-opened PR arrives via both sources; the run-backed row
+ * wins, since only it reaches send-back.
  */
 export function buildReviewQueue(
   runs: RunMeta[],
