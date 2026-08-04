@@ -1,9 +1,9 @@
-import type { ReviewComment } from '@dispatch/client';
+import type { Finding, ReviewComment } from '@dispatch/client';
 import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs';
 import { processPatch } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { CodeView } from '@pierre/diffs/react';
-import { MessageSquarePlus } from 'lucide-react';
+import { MessageSquarePlus, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ErrorBoundary } from '../shell/ErrorBoundary';
@@ -15,6 +15,7 @@ import { toDiffRenderOptions } from '@/lib/diffDisplay';
 /** What each annotation carries, so `renderAnnotation` knows what to draw. */
 type Annotation =
   | { kind: 'threads'; file: string; comments: ReviewComment[] }
+  | { kind: 'findings'; file: string; findings: Finding[] }
   | {
       kind: 'composer';
       file: string;
@@ -38,6 +39,8 @@ interface PierreReviewDiffProps {
   viewed?: ReadonlySet<string>;
   /** Restricts rendering to one file. Omit for the whole patch in one scroller. */
   only?: string;
+  /** Open agent-review findings, rendered on their own lines beside the reviewer's threads. */
+  findings?: Finding[];
   /**
    * A comment to scroll to. Changing this scrolls the diff; the caller bumps it (rather than
    * calling a method) so the jump is declarative and survives the view remounting.
@@ -65,6 +68,7 @@ export function PierreReviewDiff({
   onReply,
   viewed,
   only,
+  findings,
   scrollTo,
 }: PierreReviewDiffProps) {
   // Where a composer is currently open, keyed the same way annotations are.
@@ -123,6 +127,23 @@ export function PierreReviewDiff({
         });
       }
 
+      // The agent review's findings, anchored the same way threads are. A finding with no line
+      // has nothing to point at here and belongs to the case panel instead.
+      const findingsByLine = new Map<number, Finding[]>();
+      for (const f of findings ?? []) {
+        if (f.file !== fileDiff.name || f.line === null) continue;
+        const bucket = findingsByLine.get(f.line);
+        if (bucket === undefined) findingsByLine.set(f.line, [f]);
+        else bucket.push(f);
+      }
+      for (const [line, list] of findingsByLine) {
+        annotations.push({
+          side: 'additions',
+          lineNumber: line,
+          metadata: { kind: 'findings', file: fileDiff.name, findings: list },
+        });
+      }
+
       if (composing !== null && composing.file === fileDiff.name) {
         annotations.push({
           side: 'additions',
@@ -148,7 +169,7 @@ export function PierreReviewDiff({
         collapsed: viewed?.has(fileDiff.name) ?? false,
       };
     });
-  }, [files, comments, composing, viewed]);
+  }, [files, comments, findings, composing, viewed]);
 
   const renderAnnotation = useCallback(
     (annotation: { metadata?: Annotation }) => {
@@ -171,6 +192,31 @@ export function PierreReviewDiff({
               setComposing(null);
             }}
           />
+        );
+      }
+      if (meta.kind === 'findings') {
+        return (
+          <div className="flex flex-col gap-1 py-1">
+            {meta.findings.map((f) => (
+              <div
+                key={f.id}
+                className="border-state-waiting/40 bg-state-waiting/5 rounded-md border-l-2 px-2 py-1"
+              >
+                <div className="flex items-center gap-1.5 text-[12px]">
+                  <TriangleAlert className="text-state-waiting size-3 shrink-0" />
+                  {/* Marked as the agent's claim rather than the reviewer's note: the two sit on
+                      the same line and must not be mistaken for each other. */}
+                  <span className="dense-meta shrink-0">
+                    agent · {f.severity}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{f.title}</span>
+                </div>
+                <p className="text-muted-foreground text-[11px] leading-snug">
+                  {f.detail}
+                </p>
+              </div>
+            ))}
+          </div>
         );
       }
       return (
