@@ -1,4 +1,10 @@
-import { readCredentials, TaskStore, writeCredential } from '@dispatch/core';
+import {
+  normalizeProjectPath,
+  readCredentials,
+  TaskStore,
+  writeCredential,
+  writeProjectCredential,
+} from '@dispatch/core';
 import type {
   LinearIssue,
   LinearIssueInput,
@@ -236,7 +242,12 @@ describe('POST /api/linear/import', () => {
 
 describe('POST /api/linear/disconnect', () => {
   it('clears the stored key and reports the resulting status', async () => {
+    writeProjectCredential(root, 'linear', { apiKey: 'lin_api_project_key' });
     await fetch(`${baseUrl}/api/linear/disconnect`, { method: 'POST' });
+
+    expect(
+      readCredentials().projects?.[normalizeProjectPath(root)]
+    ).toBeUndefined();
     const status = await json(await fetch(`${baseUrl}/api/linear/status`));
     expect(status.keySource).toBeNull();
   });
