@@ -347,7 +347,11 @@ export function PullRequestsView({
     }
   }, [otherPrs, selectedRepoPrNumber]);
 
-  const repoPrDetail = useRepoPrDetail(data.client, selectedRepoPrNumber);
+  const repoPrDetail = useRepoPrDetail(
+    data.client,
+    data.port,
+    selectedRepoPrNumber
+  );
 
   // One entry per run currently pending/active in the queue (never history — a row's pill only
   // ever reflects the queue's *live* state, the same "go refetch" semantics as everywhere else).

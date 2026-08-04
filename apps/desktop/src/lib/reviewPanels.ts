@@ -4,11 +4,16 @@
  * A reading preference belonging to one person at one desk, so localStorage
  * rather than the run — the same reasoning as `reviewViewed`.
  */
-export type ReviewPanel = 'files' | 'threads';
+export type ReviewPanel = 'files' | 'threads' | 'review';
 
 // Files open because a multi-file review needs navigation; threads closed
-// because most reviews start with nothing in them.
-const DEFAULTS: Record<ReviewPanel, boolean> = { files: true, threads: false };
+// because most reviews start with nothing in them. `review` is the PR rail,
+// and it opens because approving a PR is only possible from inside it.
+const DEFAULTS: Record<ReviewPanel, boolean> = {
+  files: true,
+  threads: false,
+  review: true,
+};
 
 function key(panel: ReviewPanel): string {
   return `dispatch:review-panel:${panel}`;
