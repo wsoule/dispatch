@@ -149,7 +149,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
             How many run at once when you dispatch an epic
           </span>
           <Input
-            aria-label="Epic concurrency"
+            aria-label="How many run at once when you dispatch an epic"
             value={concurrency}
             onChange={(e) => setConcurrency(e.target.value)}
             onBlur={() => {
