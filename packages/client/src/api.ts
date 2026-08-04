@@ -1350,6 +1350,8 @@ export interface ApiClient {
   // same way every other PR route does when this project lacks the `pr`
   // capability.
   fetchRepoPrDetail(number: number): Promise<PrDetail>;
+  /** The PR's diff in the same shape `fetchRunDiff` returns. */
+  fetchRepoPrDiff(number: number): Promise<DiffResult>;
   reviewRepoPr(
     number: number,
     event: PrReviewEvent,
@@ -1791,6 +1793,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     fetchRepoPrs: () => request(target, '/api/prs'),
     fetchRepoPrDetail: (number) => request(target, `/api/prs/${number}/detail`),
+    fetchRepoPrDiff: (number) => request(target, `/api/prs/${number}/diff`),
     reviewRepoPr: (number, event, body) =>
       request(target, `/api/prs/${number}/review`, {
         method: 'POST',

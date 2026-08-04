@@ -1,4 +1,9 @@
-import type { ApiClient, PrDetail, PrReviewEvent } from '@dispatch/client';
+import type {
+  ApiClient,
+  DiffResult,
+  PrDetail,
+  PrReviewEvent,
+} from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 
@@ -6,6 +11,8 @@ export interface RepoPrDetailData {
   prDetail: PrDetail | undefined;
   prDetailLoading: boolean;
   prDetailError: string | null;
+  prDiff: DiffResult | undefined;
+  prDiffLoading: boolean;
   handleReview: (event: PrReviewEvent, body?: string) => Promise<void>;
   handleComment: (body: string) => Promise<void>;
 }
@@ -55,6 +62,18 @@ export function useRepoPrDetail(
   const prDetailError =
     prDetailErrorDetail instanceof Error ? prDetailErrorDetail.message : null;
 
+  const { data: prDiff, isLoading: prDiffLoading } = useQuery({
+    queryKey: ['dispatch-repo-pr-diff', client?.baseUrl, number],
+    queryFn: () => {
+      if (client === null || number === null) {
+        throw new Error('no repo PR selected');
+      }
+      return client.fetchRepoPrDiff(number);
+    },
+    enabled: client !== null && number !== null,
+    retry: false,
+  });
+
   // Submitting a review or a comment returns the refreshed PrDetail, which we
   // write straight into this query's cache — same one-round-trip pattern as
   // useDispatchProject's handlePrReview/handlePrComment.
@@ -80,6 +99,8 @@ export function useRepoPrDetail(
     prDetail,
     prDetailLoading,
     prDetailError,
+    prDiff,
+    prDiffLoading,
     handleReview,
     handleComment,
   };
