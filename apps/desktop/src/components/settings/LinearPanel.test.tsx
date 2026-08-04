@@ -15,6 +15,7 @@ test('an env-sourced key hides Disconnect, says where the key came from, and kee
   );
   expect(screen.queryByRole('button', { name: /Disconnect/ })).toBeNull();
   expect(screen.getByText(/LINEAR_API_KEY/)).toBeDefined();
+  expect(screen.getByPlaceholderText('Linear API key')).toBeDefined();
   expect(screen.getByRole('combobox', { name: 'Team' })).toBeDefined();
 });
 
@@ -63,6 +64,7 @@ test('a project-sourced key leaves Disconnect enabled', () => {
     name: /Disconnect/,
   });
   expect(button.disabled).toBe(false);
+  expect(screen.queryByPlaceholderText('Linear API key')).toBeNull();
 });
 
 // The shared machine-wide key is a read-only fallback — there is no Disconnect for it, only
