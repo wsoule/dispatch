@@ -95,6 +95,7 @@ import {
   formatCommentsForAgent,
   ReviewCommentStore,
 } from './reviewComments.js';
+import type { ReviewTarget } from './reviewTarget.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 
@@ -885,7 +886,7 @@ async function linearStates(
 
 // GET /api/runs/:id/comments — every review comment on this run's diff.
 function listReviewComments(ctx: ApiContext, runId: string): Response {
-  return jsonResponse(ctx.reviewComments.list(runId));
+  return jsonResponse(ctx.reviewComments.list({ kind: 'run', runId }));
 }
 
 /**
@@ -920,17 +921,20 @@ async function addReviewComment(
   if (typeof body.body !== 'string' || body.body.trim() === '') {
     return errorResponse(400, 'body is required');
   }
-  const comment = ctx.reviewComments.add(runId, {
-    file: body.file,
-    line: body.line,
-    startLine:
-      typeof body.startLine === 'number' && Number.isInteger(body.startLine)
-        ? body.startLine
-        : undefined,
-    anchorText: typeof body.anchorText === 'string' ? body.anchorText : '',
-    body: body.body.trim(),
-    pending: body.pending !== false,
-  });
+  const comment = ctx.reviewComments.add(
+    { kind: 'run', runId },
+    {
+      file: body.file,
+      line: body.line,
+      startLine:
+        typeof body.startLine === 'number' && Number.isInteger(body.startLine)
+          ? body.startLine
+          : undefined,
+      anchorText: typeof body.anchorText === 'string' ? body.anchorText : '',
+      body: body.body.trim(),
+      pending: body.pending !== false,
+    }
+  );
   ctx.events.broadcast({ type: 'review.changed', runId });
   return jsonResponse(comment, 201);
 }
@@ -950,7 +954,7 @@ async function updateReviewComment(
   }
   try {
     const comment = ctx.reviewComments.setResolved(
-      runId,
+      { kind: 'run', runId },
       commentId,
       body.resolved
     );
@@ -976,7 +980,7 @@ async function replyReviewComment(
   }
   try {
     const comment = ctx.reviewComments.reply(
-      runId,
+      { kind: 'run', runId },
       commentId,
       body.body.trim()
     );
@@ -1021,10 +1025,11 @@ async function submitReview(
     );
   }
   const summary = typeof body.body === 'string' ? body.body.trim() : '';
+  const target: ReviewTarget = { kind: 'run', runId };
 
   // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
   // run. The other two verdicts are meaningful on their own.
-  const pendingBefore = ctx.reviewComments.pendingCount(runId);
+  const pendingBefore = ctx.reviewComments.pendingCount(target);
   if (verdict === 'request-changes' && summary === '' && pendingBefore === 0) {
     return errorResponse(
       400,
@@ -1032,11 +1037,11 @@ async function submitReview(
     );
   }
 
-  const published = ctx.reviewComments.publishPending(runId);
+  const published = ctx.reviewComments.publishPending(target);
   ctx.events.broadcast({ type: 'review.changed', runId });
 
   if (verdict === 'request-changes') {
-    const threads = formatCommentsForAgent(ctx.reviewComments.list(runId));
+    const threads = formatCommentsForAgent(ctx.reviewComments.list(target));
     const message = [summary, threads].filter((p) => p !== '').join('\n\n');
     try {
       const meta = ctx.orchestrator.sendMessage(runId, message);
@@ -1112,7 +1117,9 @@ async function sendBackRun(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { note?: unknown };
   const note = typeof body.note === 'string' ? body.note.trim() : '';
-  const threads = formatCommentsForAgent(ctx.reviewComments.list(runId));
+  const threads = formatCommentsForAgent(
+    ctx.reviewComments.list({ kind: 'run', runId })
+  );
 
   if (note === '' && threads === '') {
     return errorResponse(
