@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 
 // One git invocation: `cwd` to run it in, `args` after `git`. Injected rather
 // than shelled out internally so tests can point every command at a real
@@ -69,6 +76,51 @@ function rootHash(rootDir: string): string {
   return createHash('sha256').update(rootDir).digest('hex').slice(0, 12);
 }
 
+// `git sparse-checkout init --cone` writes `extensions.worktreeConfig = true`
+// into the repo's SHARED `.git/config` as a side effect — this reads that
+// flag back, `--local` only (never global/system), matching exactly what
+// `sparse-checkout` itself reads and writes.
+function worktreeConfigExtensionEnabled(
+  rootDir: string,
+  run: GitRunner
+): boolean {
+  const result = run(rootDir, [
+    'config',
+    '--local',
+    '--get',
+    'extensions.worktreeConfig',
+  ]);
+  return result.status === 0 && result.stdout.trim() === 'true';
+}
+
+// `rev-parse --git-common-dir` is the shared `.git` directory every worktree
+// (main and linked) points back to — resolved to an absolute path since git
+// may print it relative to `cwd`. Null when `rootDir` isn't a git repo at all
+// (shouldn't happen here, but callers must have a safe "don't know" case).
+function gitCommonDir(rootDir: string, run: GitRunner): string | null {
+  const result = run(rootDir, ['rev-parse', '--git-common-dir']);
+  if (result.status !== 0) return null;
+  const raw = result.stdout.trim();
+  return isAbsolute(raw) ? raw : join(rootDir, raw);
+}
+
+// Whether ANY worktree other than the one we just removed still has its own
+// worktree-scoped config — the main worktree's lives at `<common>/config.worktree`,
+// every linked worktree's at `<common>/worktrees/<id>/config.worktree`. If one
+// exists, git migrated real settings into it (see the module doc comment on
+// SyncWorktree), and unsetting `extensions.worktreeConfig` would make git
+// silently stop reading that file for a worktree that has nothing to do with
+// us. `git worktree remove` deletes our own admin dir immediately, so by the
+// time this runs only OTHER worktrees can appear here.
+function anyOtherWorktreeHasScopedConfig(commonDir: string): boolean {
+  if (existsSync(join(commonDir, 'config.worktree'))) return true;
+  const worktreesDir = join(commonDir, 'worktrees');
+  if (!existsSync(worktreesDir)) return false;
+  return readdirSync(worktreesDir).some((entry) =>
+    existsSync(join(worktreesDir, entry, 'config.worktree'))
+  );
+}
+
 // Trunk, in priority order: the remote's default branch, then a local main,
 // then a local master. Returns null rather than guessing further, so a repo
 // with none of the three gets no syncer instead of a broken one.
@@ -111,12 +163,16 @@ function resolveTrunk(rootDir: string, run: GitRunner): string | null {
  * user's repo under DISPATCH_HOME. Automatic commit-and-push only ever
  * touches this tree, never the user's own checkout, index or HEAD.
  *
- * It holds no state beyond `path` and `trunk`, both derived deterministically
- * from `rootDir` — nothing here needs to survive a crash, since `ensure()`
- * can always rebuild it from git alone.
+ * `path` and `trunk` are derived deterministically from `rootDir` — nothing
+ * there needs to survive a crash, since `ensure()` can always rebuild it
+ * from git alone. The one exception is `extensionMarkerPath`: whether this
+ * instance is the one that flipped the user's shared
+ * `extensions.worktreeConfig` on, which must outlive both process restarts
+ * and `path` being deleted/rebuilt, so `remove()` can still find it.
  */
 export class SyncWorktree {
   readonly path: string;
+  private readonly extensionMarkerPath: string;
   // Set once the sparse-checkout fallback below has logged — an ensure()
   // that later recreates the worktree (self-healing after external cleanup)
   // must not spam the log every time.
@@ -133,6 +189,11 @@ export class SyncWorktree {
       'worktrees',
       rootHash(rootDir),
       'board'
+    );
+    // Sibling of `path`, not inside it — see the class doc comment.
+    this.extensionMarkerPath = join(
+      dirname(this.path),
+      'extensions-worktree-config-owned'
     );
   }
 
@@ -216,6 +277,17 @@ export class SyncWorktree {
     ]);
     if (add.status !== 0) return add;
 
+    // `git sparse-checkout init --cone` writes `extensions.worktreeConfig =
+    // true` into the repo's SHARED `.git/config` as an undisclosed side
+    // effect (confirmed on git 2.55) — captured before we touch anything so
+    // we can tell afterward whether WE flipped it on, as opposed to it
+    // already being on (many `git worktree` users hit this via other paths;
+    // if so, it is not ours to ever unset — see `remove()`).
+    const extensionAlreadyEnabled = worktreeConfigExtensionEnabled(
+      this.rootDir,
+      this.run
+    );
+
     // `sparse-checkout` needs git 2.25+; on anything older the subcommand is
     // simply unrecognized. That's an optimization failing, not a fatal one —
     // fall back to a full (unsparse, just larger) checkout and carry on
@@ -238,8 +310,25 @@ export class SyncWorktree {
       // failed — disable it explicitly so the checkout below always
       // materializes all of trunk. Ignored if it also fails: on git with no
       // sparse-checkout support at all, it was never enabled to begin with.
+      // Note: `disable` does NOT unset `extensions.worktreeConfig` once
+      // `init` has set it (confirmed empirically) — the marker below still
+      // applies in this fallback path.
       this.run(this.path, ['sparse-checkout', 'disable']);
     }
+
+    // Only record ownership on the false -> true transition, and never
+    // overwrite an existing marker: if the extension was already on before
+    // this call, or a marker from an earlier run already exists, this
+    // instance either isn't responsible or that responsibility was already
+    // captured — leave it alone either way.
+    if (
+      !extensionAlreadyEnabled &&
+      !existsSync(this.extensionMarkerPath) &&
+      worktreeConfigExtensionEnabled(this.rootDir, this.run)
+    ) {
+      writeFileSync(this.extensionMarkerPath, '');
+    }
+
     return this.run(this.path, ['checkout']);
   }
 
@@ -272,5 +361,38 @@ export class SyncWorktree {
   remove(): void {
     this.run(this.rootDir, ['worktree', 'remove', '--force', this.path]);
     this.run(this.rootDir, ['worktree', 'prune']);
+    this.disownWorktreeConfigExtensionIfSafe();
+  }
+
+  // Unsets `extensions.worktreeConfig` on the user's shared `.git/config`,
+  // but ONLY when this instance is the one that turned it on (per the marker
+  // `addWorktree` wrote) AND no other worktree in the repo has been left
+  // depending on it. When in doubt — no marker, extension already off, can't
+  // verify the common git dir, or any other worktree has its own
+  // `config.worktree` — this leaves the flag exactly as it found it. See the
+  // module-level comment on `anyOtherWorktreeHasScopedConfig` for why
+  // unsetting blindly is worse than leaving a stray flag behind.
+  private disownWorktreeConfigExtensionIfSafe(): void {
+    if (!existsSync(this.extensionMarkerPath)) return;
+
+    if (!worktreeConfigExtensionEnabled(this.rootDir, this.run)) {
+      // Nothing left to clean up (someone/something already unset it).
+      rmSync(this.extensionMarkerPath, { force: true });
+      return;
+    }
+
+    const commonDir = gitCommonDir(this.rootDir, this.run);
+    // Can't verify no one else depends on it — leave the flag and the
+    // marker in place so a later remove() can retry.
+    if (commonDir === null) return;
+    if (anyOtherWorktreeHasScopedConfig(commonDir)) return;
+
+    this.run(this.rootDir, [
+      'config',
+      '--local',
+      '--unset',
+      'extensions.worktreeConfig',
+    ]);
+    rmSync(this.extensionMarkerPath, { force: true });
   }
 }
