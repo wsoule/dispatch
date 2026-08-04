@@ -154,7 +154,7 @@ export class LinearSync {
     const config = this.safeConfig();
     const linear = config?.linear ?? DEFAULT_LINEAR;
     const state = readLinearState(this.deps.rootDir);
-    const { source } = resolveLinearApiKey();
+    const { source } = resolveLinearApiKey(this.deps.rootDir);
     return {
       enabled: config !== null && linear.enabled,
       connected: this.deps.client !== undefined || source !== null,
@@ -180,7 +180,7 @@ export class LinearSync {
   /** Builds a client for ad-hoc reads (the team/state pickers), or null when no key is available. */
   client(): LinearClient | null {
     if (this.deps.client !== undefined) return this.deps.client;
-    const { apiKey } = resolveLinearApiKey();
+    const { apiKey } = resolveLinearApiKey(this.deps.rootDir);
     if (apiKey === null) return null;
     const make =
       this.deps.createClient ?? ((key: string) => new HttpLinearClient(key));
