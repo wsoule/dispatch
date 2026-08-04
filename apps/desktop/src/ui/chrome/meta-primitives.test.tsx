@@ -6,7 +6,7 @@ import { CountChip } from './CountChip';
 import { PathCrumb } from './path-crumb';
 import { SectionLabel } from './SectionLabel';
 import { StatPair } from './stat-pair';
-import { MetaText } from './text';
+import { HintText, MetaText } from './text';
 
 test('a stat pair shows signed counts', () => {
   render(<StatPair added={591} removed={46} />);
@@ -75,4 +75,16 @@ test('a collapse bar toggles', () => {
   );
   fireEvent.click(screen.getByRole('button', { name: /16 unmodified lines/ }));
   expect(toggled).toBe(true);
+});
+
+// Hint prose is a sentence, so it must not inherit dense-meta's monospace or
+// dense-label's uppercase — the two treatments that already existed.
+test('hint text renders prose without the mono or uppercase treatments', () => {
+  const { container } = render(
+    <HintText>The agent that edits the repo.</HintText>
+  );
+  const span = container.querySelector('span');
+  expect(span?.className).not.toContain('dense-meta');
+  expect(span?.className).not.toContain('dense-label');
+  expect(screen.getByText('The agent that edits the repo.')).toBeDefined();
 });
