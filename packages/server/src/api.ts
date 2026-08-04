@@ -909,6 +909,7 @@ async function addReviewComment(
     startLine?: unknown;
     anchorText?: unknown;
     body?: unknown;
+    suggestion?: unknown;
     pending?: unknown;
   };
   if (typeof body.file !== 'string' || body.file === '') {
@@ -929,6 +930,12 @@ async function addReviewComment(
         : undefined,
     anchorText: typeof body.anchorText === 'string' ? body.anchorText : '',
     body: body.body.trim(),
+    // Not trimmed, unlike `body`: a suggestion is code, so its leading
+    // indentation is part of what gets written back.
+    suggestion:
+      typeof body.suggestion === 'string' && body.suggestion !== ''
+        ? body.suggestion
+        : undefined,
     pending: body.pending !== false,
   });
   ctx.events.broadcast({ type: 'review.changed', runId });
