@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   readViewed,
@@ -7,11 +7,13 @@ import {
   writeViewed,
 } from './reviewViewed';
 
-// Bun's test runner has no DOM. The module guards for a missing `window` (so it degrades rather
-// than throwing in a non-browser context), which means without a stub the persistence tests
-// would silently pass by exercising nothing at all.
+// The module guards for a missing `window` (so it degrades rather than throwing in a
+// non-browser context), which means without a stub the persistence tests would silently
+// pass by exercising nothing at all. The prior `window` is restored in `afterAll` so this
+// swap doesn't leak into other test files sharing this process's happy-dom `window`.
 const store = new Map<string, string>();
 beforeEach(() => store.clear());
+const originalWindow = (globalThis as { window?: unknown }).window;
 (globalThis as { window?: unknown }).window = {
   localStorage: {
     getItem: (k: string) => store.get(k) ?? null,
@@ -19,6 +21,9 @@ beforeEach(() => store.clear());
     removeItem: (k: string) => void store.delete(k),
   },
 };
+afterAll(() => {
+  (globalThis as { window?: unknown }).window = originalWindow;
+});
 
 describe('toggleViewed', () => {
   test('adds then removes, without mutating the input', () => {
