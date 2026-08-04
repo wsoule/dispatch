@@ -181,4 +181,29 @@ describe('draftTrayViewModel', () => {
     expect(vm.badgeCount).toBe(1);
     expect(vm.questionCount).toBe(0);
   });
+
+  test('openable is true for a ready draft and for any draft holding questions, false otherwise', () => {
+    const vm = draftTrayViewModel([
+      draft({ id: 'ready', state: 'ready', proposal: READY_PROPOSAL }),
+      draft({
+        id: 'failed-with-questions',
+        state: 'failed',
+        error: 'timeout',
+        questions: [{ id: 'q1', question: 'Retry?', options: [] }],
+      }),
+      draft({
+        id: 'running-with-questions',
+        state: 'running',
+        questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+      }),
+      draft({ id: 'failed-no-questions', state: 'failed', error: 'boom' }),
+      draft({ id: 'running-no-questions', state: 'running' }),
+    ]);
+    const byId = new Map(vm.items.map((i) => [i.id, i.openable]));
+    expect(byId.get('ready')).toBe(true);
+    expect(byId.get('failed-with-questions')).toBe(true);
+    expect(byId.get('running-with-questions')).toBe(true);
+    expect(byId.get('failed-no-questions')).toBe(false);
+    expect(byId.get('running-no-questions')).toBe(false);
+  });
 });

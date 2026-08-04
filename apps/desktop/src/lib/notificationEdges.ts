@@ -10,6 +10,7 @@ import type {
 } from '@dispatch/client';
 
 import type { InboxTarget } from './inbox';
+import { questionsSignature } from './planQuestions';
 
 /** A notification ready to hand to `notify(title, body)` — see notifications.ts. `target`
  * is where the notification's inbox row (see inbox.ts) should navigate on click. */
@@ -140,17 +141,8 @@ export function emptyQuestionTracking(): QuestionTracking {
   return { askers: new Map(), runQuestionIds: new Set() };
 }
 
-// A stable key for one asker's current question set — id and text of each question, so a
-// new round with recycled ids reads as different from the round before it. JSON-encoded
-// (not string-joined) so free-text question bodies containing the delimiter can't collide
-// two structurally different question sets onto the same signature.
-function signatureOf(questions: readonly PlannerQuestion[]): string {
-  return JSON.stringify(questions.map((q) => [q.id, q.question]));
-}
-
-/** Pure edge-detector for questions waiting on the user — planner questions on drafts and
- * the open plan, plus run agents' questions. Any live, unanswered question set notifies,
- * including one already open the first time this runs. */
+/** Pure edge-detector for questions waiting on the user, across drafts, the open plan,
+ * and run agents. An already-open question set notifies on the first call too. */
 export function diffQuestionNotifications(
   previous: QuestionTracking,
   drafts: readonly DraftRecord[],
@@ -188,7 +180,7 @@ export function diffQuestionNotifications(
   ];
 
   for (const asker of askers) {
-    const signature = signatureOf(asker.questions);
+    const signature = questionsSignature(asker.questions);
     next.askers.set(asker.key, signature);
     const previousSignature = previous.askers.get(asker.key);
     // Notifies whenever the signature differs from what was tracked before, including
