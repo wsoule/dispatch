@@ -2,7 +2,7 @@
 id: t-9e0f00
 title: MergeQueue persists into the real ~/.dispatch when tests omit
   DISPATCH_HOME (12.7k leaked dirs)
-status: todo
+status: backlog
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-03T23:29:07.233Z
-updated: 2026-08-03T23:29:07.233Z
+updated: 2026-08-04T18:07:10.555Z
 external: null
 writes:
   - packages/server/test/merge-queue.test.ts

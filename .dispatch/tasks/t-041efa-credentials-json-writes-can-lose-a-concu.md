@@ -1,7 +1,7 @@
 ---
 id: t-041efa
 title: credentials.json writes can lose a concurrent update and can leak a temp file
-status: todo
+status: backlog
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-04T17:39:17.272Z
-updated: 2026-08-04T17:39:17.272Z
+updated: 2026-08-04T18:07:05.639Z
 external: null
 writes: []
 ---

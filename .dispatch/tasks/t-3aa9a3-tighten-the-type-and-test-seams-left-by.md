@@ -1,7 +1,7 @@
 ---
 id: t-3aa9a3
 title: tighten the type and test seams left by the per-project credential work
-status: todo
+status: backlog
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: low
 assignee: none
 created: 2026-08-04T17:39:35.549Z
-updated: 2026-08-04T17:39:35.549Z
+updated: 2026-08-04T18:07:08.591Z
 external: null
 writes: []
 ---
