@@ -23,10 +23,8 @@ function daemonStatusLabel(data: DispatchProjectData): string {
   return data.client !== null ? 'running' : 'not running';
 }
 
-/** Daemon health, plus the one tracker-config field that stays read-only everywhere:
- *  ported from `SettingsView` (max turns/permission mode/concurrency/budget moved to
- *  `AgentsSection`, auto-commit to `GeneralSection` — carrying them here too would show
- *  two different truths for the same setting). */
+/** Daemon health, plus the one tracker-config field with no editable home
+ *  elsewhere: statuses. */
 export function DaemonSection({ activeProject, data }: DaemonSectionProps) {
   return (
     <>
