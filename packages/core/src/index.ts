@@ -125,6 +125,7 @@ export type {
   LinearWorkflowState,
   TaskMapContext,
 } from './linearMap.js';
+export { normalizeProjectPath } from './projectPath.js';
 export {
   readRegistry,
   registryPath,
