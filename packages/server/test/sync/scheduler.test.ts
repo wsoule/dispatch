@@ -177,4 +177,42 @@ describe('BoardSyncScheduler', () => {
     scheduler.stop();
     rmSync(origin, { recursive: true, force: true });
   });
+
+  it('retains the last result and when it happened, for GET /api/sync to read', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    new TaskStore(a).create({ title: 'Track me' });
+
+    const events = new EventBus();
+    const scheduler = schedulerFor(a, events, 15);
+    expect(scheduler.lastResult()).toBeNull();
+    expect(scheduler.lastSyncedAt()).toBeNull();
+
+    scheduler.notifyTaskChanged();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(scheduler.lastResult()).toMatchObject({
+      state: 'idle',
+      pushed: 1,
+    });
+    const syncedAt = scheduler.lastSyncedAt();
+    expect(syncedAt).not.toBeNull();
+    expect(new Date(syncedAt ?? '').getTime()).not.toBeNaN();
+
+    scheduler.stop();
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('exposes pendingCounts from its own BoardSyncer, read-only', () => {
+    const { origin, a } = twoClones();
+    new TaskStore(a).create({ title: 'Pending' });
+
+    const events = new EventBus();
+    const scheduler = schedulerFor(a, events, 15);
+
+    expect(scheduler.pendingCounts()).toEqual({ outgoing: 1, incoming: 0 });
+
+    scheduler.stop();
+    rmSync(origin, { recursive: true, force: true });
+  });
 });
