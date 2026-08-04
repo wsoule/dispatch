@@ -1,7 +1,8 @@
 import type { RepoPr, RunMeta } from '@dispatch/client';
+import { render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { buildReviewQueue } from './ReviewQueue';
+import { buildReviewQueue, ReviewQueue } from './ReviewQueue';
 
 function run(overrides: Partial<RunMeta> = {}): RunMeta {
   return {
@@ -91,4 +92,35 @@ test('a run with a prUrl not in the repo PR list still gets a row', () => {
   expect(queue).toHaveLength(1);
   expect(queue[0]?.target).toEqual({ kind: 'run', runId: 'r-1' });
   expect(queue[0]?.pr).toBeUndefined();
+});
+
+test('a PR row shows its check rollup and review decision', () => {
+  render(
+    <ReviewQueue
+      items={buildReviewQueue(
+        [],
+        [
+          repoPr({
+            checks: { passed: 2, failed: 1, pending: 0, total: 3 },
+            reviewDecision: 'CHANGES_REQUESTED',
+          }),
+        ]
+      )}
+      selected={null}
+      onSelect={() => {}}
+    />
+  );
+  expect(screen.getByText('2/3 checks')).toBeDefined();
+  expect(screen.getByText('requested changes')).toBeDefined();
+});
+
+test('a row with no checks renders no empty checks pill', () => {
+  render(
+    <ReviewQueue
+      items={buildReviewQueue([], [repoPr()])}
+      selected={null}
+      onSelect={() => {}}
+    />
+  );
+  expect(screen.queryByText(/checks/)).toBeNull();
 });

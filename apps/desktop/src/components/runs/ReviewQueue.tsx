@@ -1,7 +1,9 @@
 import type { RepoPr, RunMeta } from '@dispatch/client';
 import { GitPullRequest, GitPullRequestArrow } from 'lucide-react';
 
+import { reviewTargetKey } from '../../lib/reviewTarget';
 import type { ReviewTarget } from '../../lib/reviewTarget';
+import { PrChecksPill, REVIEW_VERDICT, StatusPill } from './PrStatusPills';
 import { cn } from '@/lib/utils';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
@@ -22,8 +24,8 @@ export interface ReviewQueueItem {
 
 interface ReviewQueueProps {
   items: ReviewQueueItem[];
-  selectedRunId: string | null;
-  onSelect: (runId: string) => void;
+  selected: ReviewTarget | null;
+  onSelect: (target: ReviewTarget) => void;
   /** Compact mode renders as a narrow rail beside an open review. */
   compact?: boolean;
 }
@@ -40,7 +42,7 @@ interface ReviewQueueProps {
  */
 export function ReviewQueue({
   items,
-  selectedRunId,
+  selected,
   onSelect,
   compact = false,
 }: ReviewQueueProps) {
@@ -65,9 +67,12 @@ export function ReviewQueue({
           <div className="mt-1.5 flex flex-col gap-0.5">
             {local.map((item) => (
               <Row
-                key={item.run.id}
+                key={reviewTargetKey(item.target)}
                 item={item}
-                selected={item.run.id === selectedRunId}
+                selected={
+                  selected !== null &&
+                  reviewTargetKey(selected) === reviewTargetKey(item.target)
+                }
                 onSelect={onSelect}
                 compact={compact}
               />
@@ -83,9 +88,12 @@ export function ReviewQueue({
           <div className="mt-1.5 flex flex-col gap-0.5">
             {prs.map((item) => (
               <Row
-                key={item.run.id}
+                key={reviewTargetKey(item.target)}
                 item={item}
-                selected={item.run.id === selectedRunId}
+                selected={
+                  selected !== null &&
+                  reviewTargetKey(selected) === reviewTargetKey(item.target)
+                }
                 onSelect={onSelect}
                 compact={compact}
               />
@@ -105,15 +113,21 @@ function Row({
 }: {
   item: ReviewQueueItem;
   selected: boolean;
-  onSelect: (runId: string) => void;
+  onSelect: (target: ReviewTarget) => void;
   compact: boolean;
 }) {
-  const { run, isPr } = item;
+  const { run, pr, isPr } = item;
   const Icon = isPr ? GitPullRequest : GitPullRequestArrow;
+  const verdict =
+    pr?.reviewDecision === 'APPROVED'
+      ? REVIEW_VERDICT.APPROVED
+      : pr?.reviewDecision === 'CHANGES_REQUESTED'
+        ? REVIEW_VERDICT.CHANGES_REQUESTED
+        : undefined;
   return (
     <button
       type="button"
-      onClick={() => onSelect(run.id)}
+      onClick={() => onSelect(item.target)}
       className={cn(
         'flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors duration-150',
         selected ? 'border-border bg-accent' : 'hover:bg-muted/60'
@@ -125,13 +139,18 @@ function Row({
           isPr ? 'text-state-landing' : 'text-state-review'
         )}
       />
-      <span className="min-w-0 flex-1 truncate text-[13px]">
-        {run.taskTitle}
-      </span>
-      {!compact && run.turns !== undefined && (
+      <span className="min-w-0 flex-1 truncate text-[13px]">{item.title}</span>
+      {!compact && pr !== undefined && <PrChecksPill checks={pr.checks} />}
+      {!compact && verdict !== undefined && (
+        <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
+      )}
+      {!compact && pr?.mergeable === 'CONFLICTING' && (
+        <StatusPill tone="red">Conflicts</StatusPill>
+      )}
+      {!compact && run?.turns !== undefined && (
         <span className="dense-meta shrink-0">{run.turns} turns</span>
       )}
-      {!compact && run.costUsd !== undefined && (
+      {!compact && run?.costUsd !== undefined && (
         <span className="dense-meta shrink-0">${run.costUsd.toFixed(2)}</span>
       )}
     </button>
