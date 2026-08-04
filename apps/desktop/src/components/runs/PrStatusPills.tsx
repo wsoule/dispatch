@@ -59,9 +59,8 @@ export const REVIEW_VERDICT: Record<
   DISMISSED: { label: 'dismissed', tone: 'muted' },
 };
 
-// A check rollup as one pill: red when anything failed, amber while any is
-// still running, green only when every check has passed. Renders nothing for
-// a PR with no checks at all, so a repo without CI shows no empty pill.
+// Checks rollup as one pill: red on any failure, amber while pending, green
+// when all pass. Renders nothing at zero checks, so a repo without CI is bare.
 export function PrChecksPill({ checks }: { checks: PrCheckSummary }) {
   if (checks.total === 0) return null;
   const tone =
