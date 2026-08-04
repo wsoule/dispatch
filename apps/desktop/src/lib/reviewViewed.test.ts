@@ -7,18 +7,10 @@ import {
   writeViewed,
 } from './reviewViewed';
 
-// Bun's test runner has no DOM. The module guards for a missing `window` (so it degrades rather
-// than throwing in a non-browser context), which means without a stub the persistence tests
-// would silently pass by exercising nothing at all.
-const store = new Map<string, string>();
-beforeEach(() => store.clear());
-(globalThis as { window?: unknown }).window = {
-  localStorage: {
-    getItem: (k: string) => store.get(k) ?? null,
-    setItem: (k: string, v: string) => void store.set(k, v),
-    removeItem: (k: string) => void store.delete(k),
-  },
-};
+// test-setup.ts registers happy-dom's globals, so a real `window.localStorage` already exists
+// here; clearing it (rather than replacing `window`) keeps tests isolated without breaking
+// anything else in the process that also depends on `window`.
+beforeEach(() => localStorage.clear());
 
 describe('toggleViewed', () => {
   test('adds then removes, without mutating the input', () => {
@@ -67,12 +59,12 @@ describe('persistence', () => {
   });
 
   test('a corrupt entry degrades to nothing viewed rather than throwing', () => {
-    store.set('dispatch:review-viewed:r-bad', '{oops');
+    localStorage.setItem('dispatch:review-viewed:r-bad', '{oops');
     expect(readViewed('r-bad').size).toBe(0);
   });
 
   test('a non-array entry is ignored', () => {
-    store.set('dispatch:review-viewed:r-obj', '{"a":1}');
+    localStorage.setItem('dispatch:review-viewed:r-obj', '{"a":1}');
     expect(readViewed('r-obj').size).toBe(0);
   });
 });
