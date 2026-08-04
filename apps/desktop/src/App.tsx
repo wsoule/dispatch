@@ -22,7 +22,6 @@ import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
-import { DraftReviewDialog } from './components/tasks/DraftReviewDialog';
 import { TaskDetailDialog } from './components/tasks/TaskDetailDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
@@ -49,6 +48,7 @@ import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
+import { DraftView } from './views/DraftView';
 import { GetStartedView } from './views/GetStartedView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
@@ -72,9 +72,6 @@ function App() {
   // The AI task composer, a dialog rather than a screen — open state lives here (not in
   // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
   const [aiComposerOpen, setAiComposerOpen] = useState(false);
-  // Which draft the tray opened for review, or `null` when closed — an id rather than a
-  // boolean since several drafts can be in flight at once.
-  const [reviewingDraftId, setReviewingDraftId] = useState<string | null>(null);
 
   // The overview rail's open/closed state, kept across launches — it is a
   // layout preference, and re-hiding it every start would make it feel broken.
@@ -377,11 +374,11 @@ function App() {
         ) ?? null)
       : null;
 
-  // Re-derived from the live query every render — stays open across a follow-up turn
-  // (running -> ready) and closes once the draft is dismissed and drops out of the list.
-  const reviewingDraft =
-    reviewingDraftId !== null
-      ? (data.drafts.find((d) => d.id === reviewingDraftId) ?? null)
+  // The draft the draft view is showing, resolved from nav state — `null` when the id
+  // points at a draft that has since been dismissed or evicted.
+  const activeDraft =
+    navState.activeDraftId !== null
+      ? (data.drafts.find((d) => d.id === navState.activeDraftId) ?? null)
       : null;
 
   // Destructured to bare locals rather than referenced as `data.tasks`/`data.readyIds`/
@@ -599,7 +596,9 @@ function App() {
             unreadCount={unreadCount(data.notificationInbox)}
             onToggleInbox={toggleInbox}
             drafts={data.drafts}
-            onOpenDraft={setReviewingDraftId}
+            onOpenDraft={(draftId) =>
+              dispatchNav({ type: 'openDraft', draftId })
+            }
             onDismissDraft={(id) => void data.handleDismissDraft(id)}
             onSetProjectView={selectProjectView}
             onSetGlobalView={setGlobalView}
@@ -779,6 +778,20 @@ function App() {
                       key={planSeed ?? 'plans'}
                     />
                   )}
+                  {navState.projectView === 'draft' &&
+                    (activeDraft !== null && data.config !== null ? (
+                      <DraftView
+                        key={activeDraft.id}
+                        data={data}
+                        onCreate={rawData.handleCreate}
+                        draft={activeDraft}
+                        onDone={() => selectProjectView('board')}
+                      />
+                    ) : (
+                      <div className="text-muted-foreground p-6 text-[13px]">
+                        That draft is no longer available.
+                      </div>
+                    ))}
                 </>
               )}
             </ErrorBoundary>
@@ -869,16 +882,6 @@ function App() {
               openQuickAddTask(createStatus ?? undefined);
             }}
             onClose={() => setAiComposerOpen(false)}
-          />
-        )}
-
-        {reviewingDraft !== null && data.config !== null && (
-          <DraftReviewDialog
-            key={reviewingDraft.id}
-            data={data}
-            onCreate={rawData.handleCreate}
-            draft={reviewingDraft}
-            onClose={() => setReviewingDraftId(null)}
           />
         )}
 
