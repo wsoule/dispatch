@@ -1,0 +1,280 @@
+import type { DispatchConfig, ModelConfig } from '@dispatch/core/browser';
+import { MODEL_ROLES } from '@dispatch/core/browser';
+import { useEffect, useState } from 'react';
+
+import { MODELS } from '../../lib/models';
+import { cn } from '@/lib/utils';
+import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
+import { Input } from '@/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
+
+interface AgentsSectionProps {
+  config: DispatchConfig;
+  onSave: (patch: {
+    epicConcurrency?: number;
+    permissionMode?: string;
+    models?: Partial<ModelConfig>;
+    maxTurns?: number | null;
+    maxBudgetUsd?: number | null;
+  }) => Promise<void>;
+}
+
+// One row per config.models role, mirroring ModelConfig's doc comments in
+// packages/core/src/config.ts so the schema doesn't have to be read.
+const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
+  execute: { label: 'Coding runs', hint: 'The agent that edits the repo.' },
+  plan: { label: 'Planning', hint: 'Multi-turn planning conversations.' },
+  draft: {
+    label: 'Task drafting',
+    hint: 'One-shot natural-language task drafting.',
+  },
+  enrich: {
+    label: 'Enrichment',
+    hint: 'Filling in description / acceptance criteria for a task or inbox item.',
+  },
+  cluster: {
+    label: 'Inbox clustering',
+    hint: 'Grouping inbox captures into suggested epics.',
+  },
+  summarize: {
+    label: 'Summaries',
+    hint: 'Short mechanical text: titles, summaries, commit messages.',
+  },
+};
+
+// Four of the six modes packages/core/src/config.ts accepts, worth a radio each.
+// `plan` and `bypassPermissions` are named legitimately by a config but aren't
+// offered here, so they fall through to the escape-hatch line below instead.
+const PERMISSION_MODES = [
+  ['auto', 'Let the classifier decide (default)'],
+  ['default', 'Always ask me first'],
+  ['acceptEdits', 'Let it edit files, ask before anything else'],
+  ['dontAsk', 'Never ask — let it run'],
+] as const;
+
+const OFFERED_MODES: readonly string[] = PERMISSION_MODES.map(([mode]) => mode);
+
+// Reads a cap field as the string an input shows: absent stays empty rather
+// than rendering the literal word "undefined".
+function capToInput(value: number | undefined): string {
+  return value === undefined ? '' : String(value);
+}
+
+/** How agents run: model per role, dispatch concurrency, permission mode, and
+ *  optional turn/budget caps — ported from `SettingsView`'s model rows and
+ *  `ProjectSettingsSection`'s concurrency/permission-mode controls. */
+export function AgentsSection({ config, onSave }: AgentsSectionProps) {
+  const [concurrency, setConcurrency] = useState('3');
+  const [maxTurns, setMaxTurns] = useState('');
+  const [maxBudgetUsd, setMaxBudgetUsd] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  // Re-seeds when config changes underneath (another window, a hand edit) —
+  // keyed on config values, so a field mid-edit isn't clobbered every render.
+  useEffect(() => {
+    setConcurrency(String(config.orchestrator.epicConcurrency));
+    setMaxTurns(capToInput(config.orchestrator.maxTurns));
+    setMaxBudgetUsd(capToInput(config.orchestrator.maxBudgetUsd));
+  }, [config]);
+
+  async function save(patch: Parameters<typeof onSave>[0]) {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await onSave(patch);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Caps are optional-valued, unlike every other numeric field in this file:
+  // empty clears via null, a finite positive number saves, anything else
+  // snaps the field back so a refused value never sits in the box looking saved.
+  function saveCap(
+    key: 'maxTurns' | 'maxBudgetUsd',
+    raw: string,
+    current: number | undefined,
+    setDraft: (value: string) => void
+  ) {
+    const trimmed = raw.trim();
+    if (trimmed === '') {
+      if (current !== undefined) void save({ [key]: null });
+      return;
+    }
+    const n = Number(trimmed);
+    if (Number.isFinite(n) && n > 0) {
+      if (n !== current) void save({ [key]: n });
+    } else {
+      setDraft(capToInput(current));
+    }
+  }
+
+  return (
+    <Panel>
+      <PanelHeader>How agents run</PanelHeader>
+
+      {MODEL_ROLES.map((role) => {
+        const info = ROLE_INFO[role];
+        return (
+          <PanelRow key={role}>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[13px] font-medium">{info.label}</span>
+              <HintText>{info.hint}</HintText>
+            </div>
+            <Select
+              value={config.models[role]}
+              onValueChange={(id) => void save({ models: { [role]: id } })}
+            >
+              <SelectTrigger
+                size="sm"
+                aria-label={`${info.label} model`}
+                className="w-[168px] shrink-0 text-[12px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MODELS.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </PanelRow>
+        );
+      })}
+
+      <PanelRow className="flex-col items-stretch gap-1.5">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[12px]">
+            How many run at once when you dispatch an epic
+          </span>
+          <Input
+            aria-label="Epic concurrency"
+            value={concurrency}
+            onChange={(e) => setConcurrency(e.target.value)}
+            onBlur={() => {
+              const n = Number(concurrency);
+              if (
+                Number.isInteger(n) &&
+                n >= 1 &&
+                n !== config.orchestrator.epicConcurrency
+              ) {
+                void save({ epicConcurrency: n });
+              } else {
+                setConcurrency(String(config.orchestrator.epicConcurrency));
+              }
+            }}
+            inputMode="numeric"
+            className="w-20 font-mono text-[12.5px]"
+          />
+        </label>
+      </PanelRow>
+
+      <PanelRow className="flex-col items-stretch gap-1.5">
+        <span className="text-[12px]">
+          When an agent wants to do something consequential
+        </span>
+        {PERMISSION_MODES.map(([mode, label]) => (
+          <label key={mode} className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="permission-mode"
+              checked={config.orchestrator.permissionMode === mode}
+              onChange={() => void save({ permissionMode: mode })}
+              className="accent-accent size-3.5"
+            />
+            <span className="text-[13px]">{label}</span>
+          </label>
+        ))}
+        <HintText>
+          Auto lets the SDK&rsquo;s own classifier approve every tool, so a
+          dispatched agent proceeds unattended instead of stalling on the first
+          Bash call.
+        </HintText>
+        {!OFFERED_MODES.includes(config.orchestrator.permissionMode) && (
+          <span className="dense-meta">
+            currently &ldquo;{config.orchestrator.permissionMode}&rdquo;, set in
+            .dispatch/config.yml
+          </span>
+        )}
+      </PanelRow>
+
+      <PanelRow className="flex-col items-stretch gap-1.5">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[12px]">Turn cap</span>
+          <Input
+            aria-label="Turn cap"
+            value={maxTurns}
+            onChange={(e) => setMaxTurns(e.target.value)}
+            onBlur={() =>
+              saveCap(
+                'maxTurns',
+                maxTurns,
+                config.orchestrator.maxTurns,
+                setMaxTurns
+              )
+            }
+            inputMode="numeric"
+            placeholder="No cap"
+            className="w-24 font-mono text-[12.5px]"
+          />
+          <HintText>
+            Ceiling on turns for one run. Leave empty for no cap.
+          </HintText>
+        </label>
+      </PanelRow>
+
+      <PanelRow className="flex-col items-stretch gap-1.5">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[12px]">Budget cap per run</span>
+          <Input
+            aria-label="Budget cap per run"
+            value={maxBudgetUsd}
+            onChange={(e) => setMaxBudgetUsd(e.target.value)}
+            onBlur={() =>
+              saveCap(
+                'maxBudgetUsd',
+                maxBudgetUsd,
+                config.orchestrator.maxBudgetUsd,
+                setMaxBudgetUsd
+              )
+            }
+            inputMode="decimal"
+            placeholder="No cap"
+            className="w-24 font-mono text-[12.5px]"
+          />
+          <HintText>
+            Dollar ceiling on one run&rsquo;s spend. Leave empty for no cap.
+          </HintText>
+        </label>
+      </PanelRow>
+
+      <PanelRow className="h-9">
+        {saving && <span className="dense-meta">Saving…</span>}
+        {saved && !saving && (
+          <span className="dense-meta text-state-review">
+            Saved to .dispatch/config.yml
+          </span>
+        )}
+        {error !== null && (
+          <span className={cn('text-[12px]', 'text-state-failed')}>
+            {error}
+          </span>
+        )}
+      </PanelRow>
+    </Panel>
+  );
+}
