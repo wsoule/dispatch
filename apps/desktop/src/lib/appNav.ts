@@ -62,6 +62,7 @@ export interface NavEntry {
   projectView: ProjectView;
   globalView: GlobalView;
   activeRunId: string | null;
+  activeDraftId: string | null;
 }
 
 export const initialNavState: NavState = {
@@ -80,6 +81,7 @@ export const initialNavState: NavState = {
       projectView: 'overview',
       globalView: 'sessions',
       activeRunId: null,
+      activeDraftId: null,
     },
   ],
   historyIndex: 0,
@@ -170,6 +172,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         projectView: action.view,
         globalView: state.globalView,
         activeRunId,
+        activeDraftId,
       });
     }
     case 'setGlobalView':
@@ -197,17 +200,29 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           projectView: state.projectView,
           globalView: state.globalView,
           activeRunId: action.runId,
+          activeDraftId: state.activeDraftId,
         }
       );
     case 'closeRun':
       return { ...state, activeRunId: null };
     case 'openDraft':
-      return {
-        ...state,
-        section: 'project',
-        projectView: 'draft',
-        activeDraftId: action.draftId,
-      };
+      // Opening a different draft is a destination in its own right, so back
+      // returns to the one you were looking at rather than skipping the view.
+      return pushHistory(
+        {
+          ...state,
+          section: 'project',
+          projectView: 'draft',
+          activeDraftId: action.draftId,
+        },
+        {
+          section: 'project',
+          projectView: 'draft',
+          globalView: state.globalView,
+          activeRunId: state.activeRunId,
+          activeDraftId: action.draftId,
+        }
+      );
     case 'back':
     case 'forward': {
       const delta = action.type === 'back' ? -1 : 1;
@@ -221,6 +236,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         projectView: entry.projectView,
         globalView: entry.globalView,
         activeRunId: entry.activeRunId,
+        activeDraftId: entry.activeDraftId,
         // Moving through history is navigation, not a modal action — anything
         // layered on top closes rather than following you to the new screen.
         peekTaskId: null,

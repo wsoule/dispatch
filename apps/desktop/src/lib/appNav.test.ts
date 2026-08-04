@@ -302,4 +302,39 @@ describe('draft page navigation', () => {
     });
     expect(next.activeDraftId).toBeNull();
   });
+
+  test('after openDraft, navigating away and back returns to the draft view with the same activeDraftId', () => {
+    let state = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-1',
+    });
+    expect(state.projectView).toBe('draft');
+    expect(state.activeDraftId).toBe('d-1');
+
+    state = navReducer(state, { type: 'setProjectView', view: 'board' });
+    expect(state.projectView).toBe('board');
+    expect(state.activeDraftId).toBeNull();
+
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('draft');
+    expect(state.activeDraftId).toBe('d-1');
+  });
+
+  test('navigating back to an entry recorded before any draft was opened leaves activeDraftId as null', () => {
+    let state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'board',
+    });
+    expect(state.activeDraftId).toBeNull();
+
+    state = navReducer(state, {
+      type: 'openDraft',
+      draftId: 'd-1',
+    });
+    expect(state.activeDraftId).toBe('d-1');
+
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('board');
+    expect(state.activeDraftId).toBeNull();
+  });
 });
