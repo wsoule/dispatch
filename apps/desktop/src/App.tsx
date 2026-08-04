@@ -427,6 +427,20 @@ function App() {
         setInboxOpen(false);
         return;
       }
+      if (target.kind === 'draft') {
+        dispatchNav({ type: 'openDraft', draftId: target.draftId });
+        markNotificationInboxRead();
+        setInboxOpen(false);
+        return;
+      }
+      if (target.kind === 'plan') {
+        // Plans render one conversation at a time, so the view itself is the
+        // destination — there is no per-plan id to select once you are there.
+        selectProjectView('plans');
+        markNotificationInboxRead();
+        setInboxOpen(false);
+        return;
+      }
       selectProjectView('runs');
       if (target.kind === 'run') {
         dispatchNav({ type: 'openRun', runId: target.runId });
@@ -438,7 +452,7 @@ function App() {
       markNotificationInboxRead();
       setInboxOpen(false);
     },
-    [selectProjectView, markNotificationInboxRead]
+    [selectProjectView, markNotificationInboxRead, dispatchNav]
   );
 
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
