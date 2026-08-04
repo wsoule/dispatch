@@ -276,6 +276,13 @@ describe('GET /api/sync', () => {
       expect(body.detail).not.toBeNull();
       expect(body.pendingOutgoing).toBe(0);
       expect(body.pendingIncoming).toBe(0);
+      // No merge driver warning for a project that never opted into board
+      // sync — nothing merges through the driver while it's off, so it has
+      // nothing to warn about.
+      expect(
+        (body as SyncStatusBody & { mergeDriverWarning: string | null })
+          .mergeDriverWarning
+      ).toBeNull();
 
       const worktree = SyncWorktree.open(a, run);
       expect(worktree).not.toBeNull();
@@ -285,6 +292,53 @@ describe('GET /api/sync', () => {
       rmSync(origin, { recursive: true, force: true });
       cleanupClone(a);
       cleanupClone(b);
+    }
+  });
+
+  it('suppresses mergeDriverWarning when sync is off, even with no merge driver registered', async () => {
+    // Deliberately no `dispatch init` — the exact combination that used to
+    // show a permanent amber warning for a feature this project never
+    // opted into: sync off AND a driver that would otherwise warn.
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-off-no-driver-'));
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    spawnSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: root,
+    });
+    spawnSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    spawnSync('git', ['commit', '--allow-empty', '-q', '-m', 'initial'], {
+      cwd: root,
+    });
+    TaskStore.init(root);
+    // TaskStore.init() defaults new projects to autoCommit: true — flip it
+    // off so this test actually exercises the `off` branch.
+    const configPath = join(root, '.dispatch', 'config.yml');
+    writeFileSync(
+      configPath,
+      readFileSync(configPath, 'utf8').replace(
+        'autoCommit: true',
+        'autoCommit: false'
+      )
+    );
+
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: root,
+        port: 0,
+        writeDaemonFile: false,
+        webDistDir: null,
+      });
+      useTestAuth(handle);
+
+      const res = await fetch(`http://127.0.0.1:${handle.port}/api/sync`);
+      const body = (await res.json()) as SyncStatusBody & {
+        mergeDriverWarning: string | null;
+      };
+      expect(body.state).toBe('off');
+      expect(body.mergeDriverWarning).toBeNull();
+    } finally {
+      await handle?.stop();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
