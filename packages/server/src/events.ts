@@ -100,7 +100,13 @@ export type ServerEvent =
   // The board syncer attempted a sync (debounced off local task edits).
   // Carries its own result, unlike the *.changed events, so a live feed can
   // render the outcome without a follow-up fetch.
-  | { type: 'board.sync'; result: SyncResult };
+  | { type: 'board.sync'; result: SyncResult }
+  // A warden chat conversation changed: a turn started or settled, a tool call
+  // landed in its transcript, or a queued action was confirmed. Same "go
+  // refetch, no payload beyond the id" contract as `plan.changed` — a turn
+  // appends several entries, and a client rendering the thread wants the whole
+  // record anyway.
+  | { type: 'warden.changed'; conversationId: string };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
