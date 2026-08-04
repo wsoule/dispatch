@@ -1730,6 +1730,49 @@ describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
     expect(log.trim()).toBe('agent: add committed.txt');
   });
 
+  // A run worktree has no `node_modules`, so a hook that typechecks or runs
+  // lint-staged fails there regardless of the content. Unguarded, the veto went
+  // unnoticed and the run was reported `finished` with a dirty index.
+  it('commits past a pre-commit hook that rejects everything', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const hooksDir = join(repo, '.git-hooks');
+    mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(
+      join(hooksDir, 'pre-commit'),
+      '#!/bin/sh\necho "tsc: cannot find module" >&2\nexit 1\n',
+      { mode: 0o755 }
+    );
+    runGitSync(repo, ['config', 'core.hooksPath', hooksDir]);
+
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'real-work.txt'), 'the agent did this\n');
+            },
+            commit: false,
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Hook rejects the safety-net commit' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(
+      runGitSync(meta.worktreePath, ['status', '--porcelain']).trim()
+    ).toBe('');
+    expect(
+      runGitSync(meta.worktreePath, ['log', '-1', '--pretty=%s']).trim()
+    ).toBe(`wip(dispatch): uncommitted changes from run ${meta.id}`);
+  });
+
   // I6: handleFinish's own git work (autoCommitIfDirty) must never let an
   // escaped throw reach the caller — an executor's onFinish is invoked from
   // deep inside its own event plumbing, and an uncaught exception there has
