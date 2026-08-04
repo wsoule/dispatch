@@ -156,4 +156,29 @@ describe('draftTrayViewModel', () => {
     );
     expect(vm.questionCount).toBe(1);
   });
+
+  test('a failed draft holding questions counts toward both badgeCount and questionCount', () => {
+    const vm = draftTrayViewModel([
+      draft({
+        id: 'd-1',
+        state: 'failed',
+        error: 'timeout',
+        questions: [{ id: 'q1', question: 'Retry?', options: [] }],
+      }),
+    ]);
+    expect(vm.badgeCount).toBe(1);
+    expect(vm.questionCount).toBe(1);
+  });
+
+  test('a running draft holding questions counts toward badgeCount but not questionCount', () => {
+    const vm = draftTrayViewModel([
+      draft({
+        id: 'd-1',
+        state: 'running',
+        questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+      }),
+    ]);
+    expect(vm.badgeCount).toBe(1);
+    expect(vm.questionCount).toBe(0);
+  });
 });
