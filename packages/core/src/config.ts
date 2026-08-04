@@ -594,7 +594,11 @@ export function updateConfig(
     const value = patch[key];
     if (value === undefined) continue;
     if (value === null) {
-      doc.deleteIn(['orchestrator', key]);
+      // Clearing an absent cap is a no-op, not an error: the config already
+      // says "no cap". `deleteIn` throws if `orchestrator` isn't a
+      // collection yet, so only delete when the key is actually there —
+      // never create `orchestrator` as a side effect of clearing.
+      if (doc.hasIn(['orchestrator', key])) doc.deleteIn(['orchestrator', key]);
       continue;
     }
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
