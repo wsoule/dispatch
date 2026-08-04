@@ -75,6 +75,14 @@ type PendingScopeRequest = { requestId: string };
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
+// The open-repo-PRs query key, exported so the Review page can refresh it for
+// as long as it is the page on screen (no WS event announces a PR moving).
+export function repoPrsKey(
+  port: number | undefined
+): [string, number | undefined] {
+  return ['dispatch-repo-prs', port];
+}
+
 function readStoredShowArchived(): boolean {
   if (typeof window === 'undefined') return false;
   return window.localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY) === '1';
@@ -630,7 +638,7 @@ export function useDispatchProject(
     () => ['dispatch-merge-queue', port],
     [port]
   );
-  const repoPrsQueryKey = useMemo(() => ['dispatch-repo-prs', port], [port]);
+  const repoPrsQueryKey = useMemo(() => repoPrsKey(port), [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
   const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
@@ -1754,6 +1762,9 @@ export function useDispatchProject(
   // Submitting a review or a comment returns the refreshed PrDetail, which we
   // write straight into the PR query's cache so the conversation/status update
   // without a second round trip.
+  //
+  // The repo-PRs list is invalidated too — the review queue reads this PR's
+  // decision and checks from there, on a poll that would otherwise lag 60s.
   const handlePrReview = useCallback(
     async (
       runId: string,
@@ -1763,8 +1774,9 @@ export function useDispatchProject(
       if (client === null) return;
       const detail = await client.reviewPr(runId, event, body);
       queryClient.setQueryData(runPrQueryKey, detail);
+      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
     },
-    [client, queryClient, runPrQueryKey]
+    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
   );
 
   const handlePrComment = useCallback(
@@ -1772,8 +1784,9 @@ export function useDispatchProject(
       if (client === null) return;
       const detail = await client.commentPr(runId, body);
       queryClient.setQueryData(runPrQueryKey, detail);
+      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
     },
-    [client, queryClient, runPrQueryKey]
+    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
   );
 
   const handleWorkEpic = useCallback(

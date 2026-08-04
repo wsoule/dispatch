@@ -1,11 +1,23 @@
-import type { ApiClient, PrDetail, PrReviewEvent } from '@dispatch/client';
+import type {
+  ApiClient,
+  DiffResult,
+  PrDetail,
+  PrReviewEvent,
+} from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
+
+import { repoPrsKey } from './useDispatchProject';
 
 export interface RepoPrDetailData {
   prDetail: PrDetail | undefined;
   prDetailLoading: boolean;
   prDetailError: string | null;
+  prDiff: DiffResult | undefined;
+  prDiffLoading: boolean;
+  /** Why the diff fetch failed. A PR whose diff never arrived must not read
+   *  as a PR with nothing in it. */
+  prDiffError: string | null;
   handleReview: (event: PrReviewEvent, body?: string) => Promise<void>;
   handleComment: (body: string) => Promise<void>;
 }
@@ -18,17 +30,18 @@ export interface RepoPrDetailData {
  * instead of a run id, since these rows have no run at all.
  *
  * Kept as its own small hook rather than folded into useDispatchProject:
- * `number` comes from PullRequestsView's own `selectedRepoPrNumber` state
- * (view-local — there's no run for nav's run-keyed `activeRunId` to point
- * at), and useDispatchProject is instantiated once up in App.tsx, above
- * where that selection lives. `client` is threaded in from the same
- * `DispatchProjectData` every other PR call already uses; `client.baseUrl`
- * (rather than the dispatchd port useDispatchProject keys its own queries
- * on, which isn't exposed on `DispatchProjectData`) is what scopes this
- * hook's cache per-project.
+ * `number` comes from ReviewView's own `selectedPrNumber` state (view-local —
+ * there's no run for nav's run-keyed `activeRunId` to point at), and
+ * useDispatchProject is instantiated once up in App.tsx, above where that
+ * selection lives. `client` is threaded in from the same
+ * `DispatchProjectData` every other PR call already uses, and `client.baseUrl`
+ * is what scopes this hook's own cache per-project. `port` is only here to
+ * name useDispatchProject's repo-PRs query, which every review action has to
+ * invalidate — the queue rows and this PR's status come from that one fetch.
  */
 export function useRepoPrDetail(
   client: ApiClient | null,
+  port: number | undefined,
   number: number | null
 ): RepoPrDetailData {
   const queryClient = useQueryClient();
@@ -55,16 +68,38 @@ export function useRepoPrDetail(
   const prDetailError =
     prDetailErrorDetail instanceof Error ? prDetailErrorDetail.message : null;
 
+  const {
+    data: prDiff,
+    isLoading: prDiffLoading,
+    error: prDiffErrorDetail,
+  } = useQuery({
+    queryKey: ['dispatch-repo-pr-diff', client?.baseUrl, number],
+    queryFn: () => {
+      if (client === null || number === null) {
+        throw new Error('no repo PR selected');
+      }
+      return client.fetchRepoPrDiff(number);
+    },
+    enabled: client !== null && number !== null,
+    retry: false,
+  });
+  const prDiffError =
+    prDiffErrorDetail instanceof Error ? prDiffErrorDetail.message : null;
+
   // Submitting a review or a comment returns the refreshed PrDetail, which we
   // write straight into this query's cache — same one-round-trip pattern as
   // useDispatchProject's handlePrReview/handlePrComment.
+  //
+  // The repo-PRs list is invalidated too — it holds its own copy of this PR's
+  // decision and checks, and on a 60s poll would contradict what you just did.
   const handleReview = useCallback(
     async (event: PrReviewEvent, body?: string): Promise<void> => {
       if (client === null || number === null) return;
       const detail = await client.reviewRepoPr(number, event, body);
       queryClient.setQueryData(queryKey, detail);
+      void queryClient.invalidateQueries({ queryKey: repoPrsKey(port) });
     },
-    [client, number, queryClient, queryKey]
+    [client, number, port, queryClient, queryKey]
   );
 
   const handleComment = useCallback(
@@ -72,14 +107,18 @@ export function useRepoPrDetail(
       if (client === null || number === null) return;
       const detail = await client.commentRepoPr(number, body);
       queryClient.setQueryData(queryKey, detail);
+      void queryClient.invalidateQueries({ queryKey: repoPrsKey(port) });
     },
-    [client, number, queryClient, queryKey]
+    [client, number, port, queryClient, queryKey]
   );
 
   return {
     prDetail,
     prDetailLoading,
     prDetailError,
+    prDiff,
+    prDiffLoading,
+    prDiffError,
     handleReview,
     handleComment,
   };
