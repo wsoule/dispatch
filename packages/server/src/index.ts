@@ -44,6 +44,10 @@ import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
 import { detectPrCapability, PrManager } from './orchestrator/pr.js';
 import { QuestionRegistry } from './orchestrator/questions.js';
+import {
+  generateRepoDigest,
+  RepoDigestCache,
+} from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
 import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import { VerificationRunner } from './orchestrator/verify.js';
@@ -378,6 +382,14 @@ export async function startServer(
     isSkippedPath
   );
 
+  // The repo map injected into every run prompt. The real generator is wired in
+  // only when this daemon is also running the real executor — `registerExecutors`
+  // is the harness seam (tests and dev drivers supply a fake), and a bare
+  // RepoDigestCache serves whatever is cached without ever calling a model.
+  const digestCache =
+    opts.registerExecutors === undefined
+      ? new RepoDigestCache(rootDir, (dir) => generateRepoDigest(dir))
+      : new RepoDigestCache(rootDir);
   const orchestrator = new Orchestrator({
     rootDir,
     store,
@@ -386,6 +398,7 @@ export async function startServer(
     jj,
     ledgerStore,
     actorContext,
+    digestCache,
   });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);

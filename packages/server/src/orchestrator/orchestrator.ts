@@ -31,6 +31,8 @@ import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import { JjManager } from './jj.js';
+import { collectOrientation } from './orientation.js';
+import type { RepoOrientation } from './orientation.js';
 import {
   diffSnapshotPath,
   runsDir,
@@ -44,6 +46,7 @@ import {
   untrustedInline,
 } from './prompt.js';
 import { RunRegistry } from './registry.js';
+import { RepoDigestCache } from './repoDigest.js';
 import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
@@ -99,6 +102,10 @@ export interface OrchestratorContext {
   // Overrides STOP_ESCALATION_MS, same test-injection reason: a test proving a
   // stubborn run gets escalated cannot wait out the real two-minute window.
   stopEscalationMs?: number;
+  // The repo-map cache injected into run prompts (see promptForTask). Defaults
+  // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
+  // model call at all can pass one built with a stubbed generator.
+  digestCache?: RepoDigestCache;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -167,6 +174,10 @@ export class Orchestrator {
   private readonly jj: JjManager;
   private readonly ledgerStore: LedgerStore;
   private readonly findingStore: FindingStore;
+  // The repo map injected into every run prompt (see promptForTask). Held on
+  // the orchestrator rather than built per dispatch so its single-flight
+  // background refresh really is one refresh, not one per concurrent dispatch.
+  private readonly digestCache: RepoDigestCache;
   private readonly executors = new Map<string, Executor>();
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
@@ -200,6 +211,7 @@ export class Orchestrator {
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
     this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
     this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
+    this.digestCache = ctx.digestCache ?? new RepoDigestCache(ctx.rootDir);
     this.claimsRefreshCooldownMs =
       ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
     this.stopEscalationMs = ctx.stopEscalationMs ?? STOP_ESCALATION_MS;
@@ -2947,6 +2959,46 @@ export class Orchestrator {
       task.meta.id,
       task.meta.parent
     );
-    return buildTaskPrompt(task, parentEpic, ledgerEntries);
+    return buildTaskPrompt(
+      task,
+      parentEpic,
+      ledgerEntries,
+      this.orientationFor(task.meta.id)
+    );
+  }
+
+  // The repo facts injected into this task's prompt (see orientation.ts): the
+  // workspace map, skills index, root scripts, cross-run file hotspots, the
+  // cached repo map, and who else is running right now. Collecting reads a
+  // handful of small files and this project's own transcripts; a failure
+  // anywhere in there costs the section, never the dispatch, because a
+  // throwing promptForTask strands the run in `provisioning`.
+  private orientationFor(taskId: string): RepoOrientation | null {
+    try {
+      return collectOrientation({
+        rootDir: this.ctx.rootDir,
+        // Excluding this task's own runs is load-bearing, not tidiness:
+        // dispatch() calls registry.create() and transitions the run to
+        // `running` BEFORE building the prompt, so without this filter every
+        // agent would open by reading that it is competing with itself over
+        // its own claimed files.
+        concurrentRuns: this.registry
+          .list()
+          .filter(
+            (r) => !TERMINAL_RUN_STATES.has(r.state) && r.taskId !== taskId
+          )
+          .map((r) => ({
+            id: r.id,
+            taskTitle: r.taskTitle,
+            claims: r.claims ?? [],
+          })),
+        digestCache: this.digestCache,
+      });
+    } catch (err) {
+      console.error(
+        `dispatchd: could not collect repo orientation: ${(err as Error).message}`
+      );
+      return null;
+    }
   }
 }
