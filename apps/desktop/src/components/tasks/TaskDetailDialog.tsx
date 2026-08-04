@@ -75,6 +75,7 @@ import {
   summarizeVerification,
   verificationCheckDetail,
 } from '../../lib/verificationSummary';
+import { PlanQuestionsForm } from '../plans/PlanQuestionsForm';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
@@ -757,6 +758,9 @@ interface TaskDetailDialogProps {
   enrichPlan?: PlanRecord;
   /** Drops the draft without applying it (Discard, and the cleanup after Apply). */
   onDismissEnrich?: () => void;
+  /** Answers the enrich planner's clarifying questions on the same plan. Optional, like the
+   * other enrich props, so older call sites keep compiling. */
+  onAnswerEnrich?: (message: string) => Promise<void>;
   /** Re-points this dialog at a different task — e.g. clicking another task in `StackRail`.
    * Omitted (the palette/board's older call sites) hides the rail's title links, rendering
    * them as plain text instead. */
@@ -805,6 +809,7 @@ export function TaskDetailDialog({
   onEnrich,
   enrichPlan,
   onDismissEnrich,
+  onAnswerEnrich,
   onOpenRun,
   onOpenTask,
   linearLinks,
@@ -918,9 +923,14 @@ export function TaskDetailDialog({
   const enrichError = enrichPlanError(enrichPlan);
   // The `running` arm covers reopening this (per-task keyed, so remounted) dialog mid-pass,
   // where `enrichStarted` is back to false but the app-level plan is still going.
+  // Open questions mean the planner is waiting on the user, not still reading.
+  const awaitingEnrichAnswer = (enrichPlan?.questions.length ?? 0) > 0;
   const enriching =
     enrichPlan?.state === 'running' ||
-    (enrichStarted && enrichDraft === null && enrichError === null);
+    (enrichStarted &&
+      !awaitingEnrichAnswer &&
+      enrichDraft === null &&
+      enrichError === null);
 
   async function enrich() {
     if (onEnrich === undefined) return;
@@ -1212,6 +1222,16 @@ export function TaskDetailDialog({
                         </span>
                       )}
                     </div>
+
+                    {enrichPlan !== undefined &&
+                      enrichPlan.questions.length > 0 &&
+                      onAnswerEnrich !== undefined && (
+                        <PlanQuestionsForm
+                          questions={enrichPlan.questions}
+                          disabled={enrichPlan.state === 'running'}
+                          onSend={onAnswerEnrich}
+                        />
+                      )}
 
                     {enrichDraft !== null && (
                       <EnrichReview
