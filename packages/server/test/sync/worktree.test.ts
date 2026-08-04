@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   existsSync,
   mkdirSync,
@@ -289,6 +289,58 @@ describe('SyncWorktree.ensure / remove', () => {
 
     worktree?.ensure();
     expect(worktree?.exists()).toBe(true);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('falls back to a full checkout when sparse-checkout is unavailable, logging once', () => {
+    const repo = initGitRepo();
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'index.ts'), 'unrelated source\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'add src alongside .dispatch']);
+
+    // Stands in for git < 2.25, where `sparse-checkout` is an unknown
+    // subcommand — this is about SyncWorktree's own control flow when the
+    // step fails, not about reproducing git's real old-version behaviour.
+    const stubRun: GitRunner = (cwd, args) => {
+      if (args[0] === 'sparse-checkout') {
+        return {
+          status: 1,
+          stdout: '',
+          stderr: "git: 'sparse-checkout' is not a git command",
+        };
+      }
+      return run(cwd, args);
+    };
+
+    const worktree = SyncWorktree.open(repo, stubRun);
+    expect(worktree).not.toBeNull();
+
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => worktree?.ensure()).not.toThrow();
+
+    expect(existsSync(worktree?.path ?? '')).toBe(true);
+    // Full (unsparse) checkout: everything trunk has is present, not just
+    // .dispatch/ — this worktree is just larger than it needs to be.
+    expect(existsSync(join(worktree?.path ?? '', 'src', 'index.ts'))).toBe(
+      true
+    );
+    expect(
+      errorSpy.mock.calls.some((call) =>
+        String(call[0]).includes('sparse-checkout')
+      )
+    ).toBe(true);
+    expect(errorSpy.mock.calls.length).toBe(1);
+
+    // Force a second addWorktree() by wiping the directory out from under
+    // it — the fallback must keep working, but the warning must not repeat.
+    rmSync(worktree?.path ?? '', { recursive: true, force: true });
+    errorSpy.mockClear();
+    worktree?.ensure();
+    expect(existsSync(worktree?.path ?? '')).toBe(true);
+    expect(errorSpy.mock.calls.length).toBe(0);
+
+    errorSpy.mockRestore();
     rmSync(repo, { recursive: true, force: true });
   });
 
