@@ -8,12 +8,24 @@ import {
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
-/** User-level secrets, one key per integration. Never written to a project's `.dispatch/`. */
-export interface CredentialsFile {
+import { normalizeProjectPath } from './projectPath.js';
+
+/** One project's secrets, one key per integration. */
+export interface ProjectCredentials {
   linear?: { apiKey: string };
 }
 
-export type CredentialName = keyof CredentialsFile;
+/** User-level secrets. Never written to a project's `.dispatch/`. */
+export interface CredentialsFile {
+  /** Machine-wide default, kept as a read-only fallback. Nothing writes it any more. */
+  linear?: { apiKey: string };
+  /** Per-project secrets, keyed by `normalizeProjectPath` of the project root. */
+  projects?: Record<string, ProjectCredentials>;
+}
+
+// The integration name space, e.g. `'linear'` — not `keyof CredentialsFile`,
+// which would also admit `'projects'`.
+export type CredentialName = keyof ProjectCredentials;
 
 // Same `DISPATCH_HOME`-or-homedir rule as registry.ts and daemonfile.ts; an
 // empty string counts as unset.
@@ -72,22 +84,75 @@ export function clearCredential(name: CredentialName): void {
   writeCredentials(file);
 }
 
-/** Where a resolved key came from — `env` wins over the stored file, `null` means none. */
-export type CredentialSource = 'env' | 'file' | null;
+// Stores a secret against one project root. The global `linear` slot is left
+// alone, so an existing machine-wide key keeps working for every other project.
+export function writeProjectCredential(
+  rootDir: string,
+  name: CredentialName,
+  value: { apiKey: string }
+): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const existing = file.projects?.[key] ?? {};
+  writeCredentials({
+    ...file,
+    projects: { ...file.projects, [key]: { ...existing, [name]: value } },
+  });
+}
 
-// The environment takes precedence over the stored file, so a shell or CI export
-// overrides whatever the app saved.
-export function resolveLinearApiKey(): {
+// Removes one secret from one project, dropping the project's entry once its
+// last secret is gone so the file does not accumulate empty objects.
+export function clearProjectCredential(
+  rootDir: string,
+  name: CredentialName
+): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const entry = file.projects?.[key];
+  if (entry === undefined) return;
+
+  const remaining: ProjectCredentials = { ...entry };
+  delete remaining[name];
+
+  const projects = { ...file.projects };
+  if (Object.keys(remaining).length === 0) delete projects[key];
+  else projects[key] = remaining;
+
+  const next: CredentialsFile = { ...file, projects };
+  if (Object.keys(projects).length === 0) delete next.projects;
+  writeCredentials(next);
+}
+
+/** Where a resolved key came from — in precedence order — or `null` when there is none. */
+export type CredentialSource = 'project' | 'env' | 'global' | null;
+
+// A stored or exported value only counts when it has content after trimming, so
+// a blank env var falls through to the next tier instead of masking it.
+function nonEmpty(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+// The project's own key wins, so a stale `LINEAR_API_KEY` in the shell cannot
+// hijack a project that was deliberately connected. The env var is next, and the
+// legacy machine-wide key is the last resort.
+export function resolveLinearApiKey(rootDir: string): {
   apiKey: string | null;
   source: CredentialSource;
 } {
-  const fromEnv = process.env.LINEAR_API_KEY;
-  if (fromEnv !== undefined && fromEnv.trim() !== '') {
-    return { apiKey: fromEnv.trim(), source: 'env' };
-  }
-  const stored = readCredentials().linear?.apiKey;
-  if (typeof stored === 'string' && stored.trim() !== '') {
-    return { apiKey: stored.trim(), source: 'file' };
-  }
+  const file = readCredentials();
+
+  const fromProject = nonEmpty(
+    file.projects?.[normalizeProjectPath(rootDir)]?.linear?.apiKey
+  );
+  if (fromProject !== null) return { apiKey: fromProject, source: 'project' };
+
+  const fromEnv = nonEmpty(process.env.LINEAR_API_KEY);
+  if (fromEnv !== null) return { apiKey: fromEnv, source: 'env' };
+
+  const fromGlobal = nonEmpty(file.linear?.apiKey);
+  if (fromGlobal !== null) return { apiKey: fromGlobal, source: 'global' };
+
   return { apiKey: null, source: null };
 }

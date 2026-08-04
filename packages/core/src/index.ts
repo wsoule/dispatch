@@ -93,15 +93,18 @@ export type {
 } from './config.js';
 export {
   clearCredential,
+  clearProjectCredential,
   credentialsPath,
   readCredentials,
   resolveLinearApiKey,
   writeCredential,
+  writeProjectCredential,
 } from './credentials.js';
 export type {
   CredentialName,
   CredentialSource,
   CredentialsFile,
+  ProjectCredentials,
 } from './credentials.js';
 export {
   DEFAULT_STATUS_MAP,
