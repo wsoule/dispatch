@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -249,6 +255,40 @@ describe('SyncWorktree.ensure / remove', () => {
       .split('\n')
       .filter((line) => line.startsWith('worktree') && line.includes('board'));
     expect(boardEntries.length).toBe(1);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('checks out only .dispatch/, not the rest of trunk (sparse, cone-mode)', () => {
+    const repo = initGitRepo();
+    mkdirSync(join(repo, '.dispatch', 'tasks'), { recursive: true });
+    writeFileSync(join(repo, '.dispatch', 'tasks', 'a.md'), 'task\n');
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'index.ts'), 'unrelated source\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'add .dispatch and src']);
+
+    const worktree = SyncWorktree.open(repo, run);
+    expect(worktree).not.toBeNull();
+    worktree?.ensure();
+
+    const path = worktree?.path ?? '';
+    expect(existsSync(join(path, '.dispatch', 'tasks', 'a.md'))).toBe(true);
+    // `src/`, a full-sized subdirectory of trunk this worktree never reads
+    // or writes, must not be materialized on disk.
+    expect(existsSync(join(path, 'src'))).toBe(false);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('exists() is false before ensure() and true after, without creating anything itself', () => {
+    const repo = initGitRepo();
+    const worktree = SyncWorktree.open(repo, run);
+    expect(worktree).not.toBeNull();
+
+    expect(worktree?.exists()).toBe(false);
+    expect(existsSync(worktree?.path ?? '')).toBe(false);
+
+    worktree?.ensure();
+    expect(worktree?.exists()).toBe(true);
     rmSync(repo, { recursive: true, force: true });
   });
 

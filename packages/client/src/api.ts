@@ -912,10 +912,10 @@ export interface MergeQueueSnapshot {
 }
 
 // Mirrors SyncState in packages/server/src/sync/boardSyncer.ts. No real
-// SyncResult a `syncOnce()` produces ever carries `'disabled'` — GET
-// /api/sync synthesizes that one when no scheduler exists (no trunk
-// resolvable at boot).
-export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled';
+// SyncResult a `syncOnce()` produces ever carries `'disabled'` or `'off'` —
+// GET /api/sync synthesizes `'disabled'` when no scheduler exists (no trunk
+// resolvable at boot) and `'off'` when the project's autoCommit is false.
+export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
 
 // Mirrors SyncResult in packages/server/src/sync/boardSyncer.ts — the
 // `board.sync` WS event's payload.

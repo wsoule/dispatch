@@ -699,11 +699,22 @@ const DISABLED_SYNC_DETAIL =
   'boot, so fixing that (adding an origin, or a main/master branch) needs a ' +
   'daemon restart before syncing can start.';
 
-// GET /api/sync — `disabled` is never a state a real BoardSyncer.syncOnce()
-// result carries (see boardSyncer.ts's SyncState); it's synthesized here
-// because `ctx.boardSyncScheduler` is `null`, which only happens when no
-// trunk was resolvable at boot. Every other state comes straight from the
-// scheduler's retained last result, alongside a live pendingCounts() read.
+const OFF_SYNC_DETAIL =
+  'board sync is off for this project — turn on auto-commit in Settings ' +
+  'to start syncing.';
+
+// GET /api/sync — `disabled` and `off` are never states a real
+// BoardSyncer.syncOnce() result carries (see boardSyncer.ts's SyncState).
+// `disabled` is synthesized because `ctx.boardSyncScheduler` is `null`,
+// which only happens when no trunk was resolvable at boot. `off` is
+// synthesized when a trunk WAS resolvable (the scheduler exists) but the
+// project's own config.yml has autoCommit: false — every existing project
+// defaults to this, so it must short-circuit before touching the scheduler's
+// pendingCounts(), which would otherwise call SyncWorktree.ensure() (a
+// synchronous `git worktree add`, often a multi-second checkout) on every
+// page load of every never-enabled project. Every other state comes
+// straight from the scheduler's retained last result, alongside a live
+// pendingCounts() read.
 function getSyncStatus(ctx: ApiContext): Response {
   if (ctx.boardSyncScheduler === null) {
     const disabled: SyncStatus = {
@@ -717,6 +728,26 @@ function getSyncStatus(ctx: ApiContext): Response {
     };
     return jsonResponse(disabled);
   }
+
+  let autoCommit: boolean;
+  try {
+    autoCommit = loadConfig(ctx.rootDir).autoCommit;
+  } catch {
+    autoCommit = false;
+  }
+  if (!autoCommit) {
+    const off: SyncStatus = {
+      state: 'off',
+      detail: OFF_SYNC_DETAIL,
+      pushed: 0,
+      pulled: 0,
+      pendingOutgoing: 0,
+      pendingIncoming: 0,
+      lastSyncedAt: null,
+    };
+    return jsonResponse(off);
+  }
+
   const last = ctx.boardSyncScheduler.lastResult();
   const pending = ctx.boardSyncScheduler.pendingCounts();
   const status: SyncStatus = {

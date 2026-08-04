@@ -138,6 +138,13 @@ export class SyncWorktree {
     return this.trunk;
   }
 
+  // Read-only: whether the worktree is already present and registered,
+  // without creating or repairing it — lets a caller like
+  // BoardSyncer.pendingCounts() skip a synchronous checkout it doesn't need.
+  exists(): boolean {
+    return this.isRegisteredAndPresent();
+  }
+
   // The commit-ish to check out: the local branch when it exists, else the
   // remote-tracking one — covers the origin/HEAD case where a fresh clone
   // hasn't created a local branch of that name yet.
@@ -178,14 +185,31 @@ export class SyncWorktree {
   // Detached at trunk rather than checked out on its branch: the trunk
   // branch itself is very often already checked out in the user's own main
   // worktree, and git refuses to check out the same branch twice.
+  //
+  // Sparse (cone-mode, restricted to .dispatch/): this worktree only ever
+  // reads and writes .dispatch/tasks, so there's no reason to materialize a
+  // full duplicate of trunk on disk for every project that has this worktree
+  // created — `--no-checkout` skips populating files at `add` time, and the
+  // final bare `checkout` (HEAD is already detached at the right commit, so
+  // this doesn't move it or touch a branch) populates only what the sparse
+  // patterns allow. Cone mode always includes top-level files (e.g.
+  // README.md, .gitattributes) alongside the explicitly-set directory.
   private addWorktree(): { status: number; stderr: string } {
-    return this.run(this.rootDir, [
+    const add = this.run(this.rootDir, [
       'worktree',
       'add',
+      '--no-checkout',
       '--detach',
       this.path,
       this.checkoutRef(),
     ]);
+    if (add.status !== 0) return add;
+
+    const init = this.run(this.path, ['sparse-checkout', 'init', '--cone']);
+    if (init.status !== 0) return init;
+    const set = this.run(this.path, ['sparse-checkout', 'set', '.dispatch']);
+    if (set.status !== 0) return set;
+    return this.run(this.path, ['checkout']);
   }
 
   // Create-or-repair, idempotent: a no-op when the worktree already exists
