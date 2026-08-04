@@ -9,9 +9,9 @@ import { describe, expect, it, test } from 'bun:test';
 
 import {
   describeFetchFailure,
-  describeKeySource,
   formatSyncCounts,
   isLinearConfigured,
+  linearKeySourceNote,
   NO_LINEAR_STATE,
   pushToLinearError,
   resolveLinearLink,
@@ -214,41 +214,23 @@ describe('pushToLinearError', () => {
   });
 });
 
-const baseStatus: LinearStatus = {
-  enabled: false,
-  connected: true,
-  keySource: 'file',
-  teamId: null,
-  direction: 'both',
-  intervalSec: 300,
-  statusMap: {},
-  cursor: null,
-  bootstrappedAt: null,
-  lastSyncAt: null,
-  lastError: null,
-  lastSummary: null,
-  syncing: false,
-};
-
-describe('describeKeySource', () => {
-  it('allows disconnecting a key held in the credentials file', () => {
-    expect(describeKeySource({ ...baseStatus, keySource: 'file' })).toEqual({
-      canDisconnect: true,
-      note: null,
-    });
+describe('linearKeySourceNote', () => {
+  test('says nothing when the project has its own key', () => {
+    expect(linearKeySourceNote('project')).toBeNull();
   });
 
-  it('refuses to promise a disconnect it cannot deliver for an env key', () => {
-    const result = describeKeySource({ ...baseStatus, keySource: 'env' });
-    expect(result.canDisconnect).toBe(false);
-    expect(result.note).toContain('LINEAR_API_KEY');
+  test('names the environment variable when that is what resolved', () => {
+    expect(linearKeySourceNote('env')).toContain('LINEAR_API_KEY');
   });
 
-  it('has nothing to say when no key is configured', () => {
-    expect(describeKeySource({ ...baseStatus, keySource: null })).toEqual({
-      canDisconnect: false,
-      note: null,
-    });
+  test('explains that a shared key can be overridden per project', () => {
+    const note = linearKeySourceNote('global');
+    expect(note).not.toBeNull();
+    expect(note).toContain('this project');
+  });
+
+  test('falls back to the first-connection copy when there is no key', () => {
+    expect(linearKeySourceNote(null)).toContain('Connect a Linear API key');
   });
 });
 

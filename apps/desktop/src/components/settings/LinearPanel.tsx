@@ -10,9 +10,9 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import {
   describeFetchFailure,
-  describeKeySource,
   formatSyncCounts,
   isLinearConfigured,
+  linearKeySourceNote,
   resolveMappedStateId,
   statusMapCompleteness,
 } from '../../lib/linearSettings';
@@ -233,20 +233,17 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
     summary !== null &&
     linearStatus.lastError !== null &&
     summary.errors.includes(linearStatus.lastError);
-  const { canDisconnect, note: keySourceNote } =
-    describeKeySource(linearStatus);
+  // The input stays available while an env or shared key is resolving — that is the only way
+  // to give this project a key of its own. It disappears once the project has one.
+  const keyNote = linearKeySourceNote(linearStatus.keySource);
 
   return (
     <Panel>
       <PanelHeader>Linear</PanelHeader>
 
-      {!linearStatus.connected ? (
+      {keyNote !== null && (
         <PanelRow className="flex-col items-stretch gap-2">
-          <HintText>
-            Connect a Linear API key to pull issues in and push task changes
-            back out. The key is sent once and never shown again — only whether
-            a connection exists.
-          </HintText>
+          <HintText>{keyNote}</HintText>
           <div className="flex items-center gap-2">
             <Input
               type="password"
@@ -270,31 +267,34 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             </span>
           )}
         </PanelRow>
-      ) : (
+      )}
+
+      {linearStatus.connected && (
         <>
-          <PanelRow className="flex-col items-stretch gap-1.5">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="text-state-review size-3.5 flex-shrink-0" />
-              <span className="text-[13px]">
-                Connected{viewer !== null ? ` as ${viewer.name}` : ''}
-              </span>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="ml-auto"
-                disabled={disconnecting || !canDisconnect}
-                onClick={() => void disconnect()}
-              >
-                {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-              </Button>
-            </div>
-            {keySourceNote !== null && <HintText>{keySourceNote}</HintText>}
-            {disconnectError !== null && (
-              <span className="text-state-failed text-[12px]">
-                {disconnectError}
-              </span>
-            )}
-          </PanelRow>
+          {linearStatus.keySource === 'project' && (
+            <PanelRow className="flex-col items-stretch gap-1.5">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="text-state-review size-3.5 flex-shrink-0" />
+                <span className="text-[13px]">
+                  Connected{viewer !== null ? ` as ${viewer.name}` : ''}
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="ml-auto"
+                  disabled={disconnecting}
+                  onClick={() => void disconnect()}
+                >
+                  {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                </Button>
+              </div>
+              {disconnectError !== null && (
+                <span className="text-state-failed text-[12px]">
+                  {disconnectError}
+                </span>
+              )}
+            </PanelRow>
+          )}
 
           <PanelRow>
             <label className="flex items-center gap-2">
