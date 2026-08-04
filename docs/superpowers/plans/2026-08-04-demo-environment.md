@@ -1,12 +1,24 @@
 # Demo Environment Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a live, driveable demo of every Dispatch capability added 2026-08-02 → 2026-08-04, backed by a real storefront repo, seeded board state, a puppeted teammate, and reset/preflight tooling.
+**Goal:** Build a live, driveable demo of every Dispatch capability added
+2026-08-02 → 2026-08-04, backed by a real storefront repo, seeded board state, a
+puppeted teammate, and reset/preflight tooling.
 
-**Architecture:** A private workspace package `packages/demo` holds the generator, the storefront source template, and the teammate puppet. It emits four artifacts into gitignored `.agents/ignore/`: Wyat's storefront clone, his isolated `DISPATCH_HOME`, a teammate clone, and the teammate's `DISPATCH_HOME`. Shared board state (tasks, team.yml, findings, ledger, inboxes) is committed to a public GitHub repo and is what the board syncer moves; run transcripts and actor identity stay in `DISPATCH_HOME`, keyed by `sha256(rootDir)[:12]`.
+**Architecture:** A private workspace package `packages/demo` holds the
+generator, the storefront source template, and the teammate puppet. It emits
+four artifacts into gitignored `.agents/ignore/`: Wyat's storefront clone, his
+isolated `DISPATCH_HOME`, a teammate clone, and the teammate's `DISPATCH_HOME`.
+Shared board state (tasks, team.yml, findings, ledger, inboxes) is committed to
+a public GitHub repo and is what the board syncer moves; run transcripts and
+actor identity stay in `DISPATCH_HOME`, keyed by `sha256(rootDir)[:12]`.
 
-**Tech Stack:** Bun, TypeScript, `node:crypto`, `node:fs`, git CLI via `Bun.spawnSync`, gh CLI for the remote.
+**Tech Stack:** Bun, TypeScript, `node:crypto`, `node:fs`, git CLI via
+`Bun.spawnSync`, gh CLI for the remote.
 
 ## Deviation from the spec
 
@@ -14,40 +26,53 @@ The spec implied the toolkit lives in `.agents/ignore/` alongside its output. It
 does not. `AGENTS.md` forbids source files and tests under `.agents/ignore/`,
 and this toolkit must be re-run as Dispatch evolves, so it needs typecheck,
 lint, and tests. It lives at `packages/demo` (private, never published) and
-*writes into* `.agents/ignore/`. The existing `.agents/ignore/gen-demo.py` is
+_writes into_ `.agents/ignore/`. The existing `.agents/ignore/gen-demo.py` is
 deleted in Task 9.
 
 ## Global Constraints
 
 - Bun only. Never `npm`, `pnpm`, `npx`.
-- Dependencies go in the root `workspaces.catalog`, never a package's own `package.json`.
-- `bunfig.toml` sets `minimumReleaseAge=7d`; a dependency published this week will not install.
+- Dependencies go in the root `workspaces.catalog`, never a package's own
+  `package.json`.
+- `bunfig.toml` sets `minimumReleaseAge=7d`; a dependency published this week
+  will not install.
 - `export AGENT=1` before running tests.
 - Preserve trailing newlines at end of files.
 - Comments: 1-2 lines, function-level, no incident narratives.
-- Every generated artifact lands under `.agents/ignore/`. Nothing generated is ever committed to this repo.
-- Every seeded run must reach a terminal state. `reconcileOnBoot` fails any non-terminal run with no process behind it.
-- An inbox line's `^in-xxxx` marker must be last, after any `@r-...` or `→ t-...`.
-- The Linear API key lives only in `~/.dispatch/credentials.json`. It never enters any repo.
-- Verification after code changes: `bun run format` and `bun run lint` from the root, plus `bun ws demo tsc` and focused tests.
+- Every generated artifact lands under `.agents/ignore/`. Nothing generated is
+  ever committed to this repo.
+- Every seeded run must reach a terminal state. `reconcileOnBoot` fails any
+  non-terminal run with no process behind it.
+- An inbox line's `^in-xxxx` marker must be last, after any `@r-...` or
+  `→ t-...`.
+- The Linear API key lives only in `~/.dispatch/credentials.json`. It never
+  enters any repo.
+- Verification after code changes: `bun run format` and `bun run lint` from the
+  root, plus `bun ws demo tsc` and focused tests.
 
 ---
 
 ### Task 1: Package skeleton and path/identity module
 
-Establishes `packages/demo` and the single source of truth for every path, actor, and derived key. Everything downstream imports from here, so getting the run-key derivation right now prevents a fixture whose runs are invisible.
+Establishes `packages/demo` and the single source of truth for every path,
+actor, and derived key. Everything downstream imports from here, so getting the
+run-key derivation right now prevents a fixture whose runs are invisible.
 
 **Files:**
+
 - Create: `packages/demo/package.json`
 - Create: `packages/demo/tsconfig.json`
 - Create: `packages/demo/bunfig.toml`
 - Create: `packages/demo/src/paths.ts`
 - Test: `packages/demo/test/paths.test.ts`
-- Modify: `tsconfig.oxlint.json` (exclude the storefront template added in Task 2)
+- Modify: `tsconfig.oxlint.json` (exclude the storefront template added in
+  Task 2)
 
 **Interfaces:**
+
 - Consumes: nothing
-- Produces: `DEMO`, `runKey(rootDir: string): string`, `ACTORS: DemoActor[]`, `type DemoActor = { handle: string; email: string; displayName: string }`
+- Produces: `DEMO`, `runKey(rootDir: string): string`, `ACTORS: DemoActor[]`,
+  `type DemoActor = { handle: string; email: string; displayName: string }`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -68,7 +93,12 @@ test('runKey distinguishes the two clones', () => {
 });
 
 test('every demo path is absolute and under .agents/ignore', () => {
-  for (const p of [DEMO.root, DEMO.home, DEMO.teammateRoot, DEMO.teammateHome]) {
+  for (const p of [
+    DEMO.root,
+    DEMO.home,
+    DEMO.teammateRoot,
+    DEMO.teammateHome,
+  ]) {
     expect(p.startsWith('/')).toBe(true);
     expect(p).toContain('/.agents/ignore/');
   }
@@ -83,8 +113,8 @@ test('actors are unique by handle and email', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/demo && bun test test/paths.test.ts`
-Expected: FAIL — cannot resolve `../src/paths.js`
+Run: `cd packages/demo && bun test test/paths.test.ts` Expected: FAIL — cannot
+resolve `../src/paths.js`
 
 - [ ] **Step 3: Write the package files**
 
@@ -137,9 +167,21 @@ export interface DemoActor {
 }
 
 export const ACTORS: DemoActor[] = [
-  { handle: 'wsoule679', email: 'wsoule679@gmail.com', displayName: 'Wyat Soule' },
-  { handle: 'pmirand', email: 'p.miranda@example.com', displayName: 'Priya Miranda' },
-  { handle: 'dokafor', email: 'd.okafor@example.com', displayName: 'Dami Okafor' },
+  {
+    handle: 'wsoule679',
+    email: 'wsoule679@gmail.com',
+    displayName: 'Wyat Soule',
+  },
+  {
+    handle: 'pmirand',
+    email: 'p.miranda@example.com',
+    displayName: 'Priya Miranda',
+  },
+  {
+    handle: 'dokafor',
+    email: 'd.okafor@example.com',
+    displayName: 'Dami Okafor',
+  },
 ];
 
 /** The human who drives the demo; the other actors only ever appear via the puppet. */
@@ -174,8 +216,7 @@ export function actorFile(rootDir: string, home: string): string {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/demo && bun test test/paths.test.ts`
-Expected: PASS, 4 tests
+Run: `cd packages/demo && bun test test/paths.test.ts` Expected: PASS, 4 tests
 
 - [ ] **Step 5: Exclude the storefront template from root typecheck and lint**
 
@@ -185,7 +226,8 @@ In `tsconfig.oxlint.json`, add to `exclude`:
 "packages/demo/storefront-src/**"
 ```
 
-In `.oxlintrc.json`, add a top-level key (the storefront intentionally contains defects and must not be linted with this repo's rules):
+In `.oxlintrc.json`, add a top-level key (the storefront intentionally contains
+defects and must not be linted with this repo's rules):
 
 ```json
 "ignorePatterns": ["packages/demo/storefront-src/**"]
@@ -193,8 +235,8 @@ In `.oxlintrc.json`, add a top-level key (the storefront intentionally contains 
 
 - [ ] **Step 6: Verify the root still passes**
 
-Run from repo root: `bun install && bun run lint && bun ws demo tsc`
-Expected: lint clean, tsc clean
+Run from repo root: `bun install && bun run lint && bun ws demo tsc` Expected:
+lint clean, tsc clean
 
 - [ ] **Step 7: Commit**
 
@@ -207,9 +249,14 @@ git commit -m "feat(demo): add the demo toolkit package and path module"
 
 ### Task 2: Storefront codebase template
 
-The demo project's real source. `bun test`, `bun run tsc`, and `bun run lint` must pass inside a generated clone, because the verify panel and merge gate render real output or nothing. Defect placement follows task status: `done` fixed on main, `in-review` broken on main and fixed on a branch, `todo`/`backlog` broken and untouched.
+The demo project's real source. `bun test`, `bun run tsc`, and `bun run lint`
+must pass inside a generated clone, because the verify panel and merge gate
+render real output or nothing. Defect placement follows task status: `done`
+fixed on main, `in-review` broken on main and fixed on a branch,
+`todo`/`backlog` broken and untouched.
 
 **Files:**
+
 - Create: `packages/demo/storefront-src/package.json`
 - Create: `packages/demo/storefront-src/tsconfig.json`
 - Create: `packages/demo/storefront-src/README.md`
@@ -225,8 +272,12 @@ The demo project's real source. `bun test`, `bun run tsc`, and `bun run lint` mu
 - Create: `packages/demo/storefront-src/test/discount.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing
-- Produces: a directory tree copied verbatim by Task 3. `src/db/client.ts` exports `query(sql: string, params?: unknown[]): Promise<Row[]>` and is imported by `search/index.ts`, `checkout/discount.ts`, and `server/routes.ts` — that fan-in is what makes carto's blast radius non-trivial.
+- Produces: a directory tree copied verbatim by Task 3. `src/db/client.ts`
+  exports `query(sql: string, params?: unknown[]): Promise<Row[]>` and is
+  imported by `search/index.ts`, `checkout/discount.ts`, and `server/routes.ts`
+  — that fan-in is what makes carto's blast radius non-trivial.
 
 - [ ] **Step 1: Write the storefront's own package manifest**
 
@@ -274,7 +325,10 @@ export interface Row {
 const SLOW_QUERY_MS = 200;
 
 // Logs any statement over 200ms with its duration — task t-4e01af, already done.
-export async function query(sql: string, params: unknown[] = []): Promise<Row[]> {
+export async function query(
+  sql: string,
+  params: unknown[] = []
+): Promise<Row[]> {
   const started = performance.now();
   const rows = await execute(sql, params);
   const elapsed = performance.now() - started;
@@ -421,7 +475,9 @@ export const BUILD_SHA = 'demo';
 // Cheap endpoint for the load balancer to poll — task t-71ff03, already done.
 export async function health(): Promise<Response> {
   await query('SELECT 1');
-  return new Response(JSON.stringify({ ok: true, sha: BUILD_SHA }), { status: 200 });
+  return new Response(JSON.stringify({ ok: true, sha: BUILD_SHA }), {
+    status: 200,
+  });
 }
 
 export async function searchRoute(term: string): Promise<Response> {
@@ -430,13 +486,17 @@ export async function searchRoute(term: string): Promise<Response> {
 }
 
 export function checkoutRoute(code: string, subtotal: number): Response {
-  return new Response(JSON.stringify({ total: applyDiscount(code, subtotal) }), { status: 200 });
+  return new Response(
+    JSON.stringify({ total: applyDiscount(code, subtotal) }),
+    { status: 200 }
+  );
 }
 ```
 
 - [ ] **Step 7: Write the storefront's tests**
 
-These must pass against the *defective* main, or the generated clone is red before the demo starts. They assert current behaviour, not desired behaviour.
+These must pass against the _defective_ main, or the generated clone is red
+before the demo starts. They assert current behaviour, not desired behaviour.
 
 ```ts
 // packages/demo/storefront-src/test/search.test.ts
@@ -445,7 +505,11 @@ import { rank } from '../src/search/rank.js';
 import { tokenize } from '../src/search/tokenize.js';
 
 test('tokenize keeps hyphenated SKUs intact', () => {
-  expect(tokenize('AB-1200 blue widget')).toEqual(['ab-1200', 'blue', 'widget']);
+  expect(tokenize('AB-1200 blue widget')).toEqual([
+    'ab-1200',
+    'blue',
+    'widget',
+  ]);
 });
 
 test('rank returns every product sharing a term', () => {
@@ -453,7 +517,11 @@ test('rank returns every product sharing a term', () => {
     { sku: 'AB-1200', title: 'blue widget' },
     { sku: 'CD-3400', title: 'red widget' },
   ];
-  expect(rank('widget', products).map((h) => h.sku).sort()).toEqual(['AB-1200', 'CD-3400']);
+  expect(
+    rank('widget', products)
+      .map((h) => h.sku)
+      .sort()
+  ).toEqual(['AB-1200', 'CD-3400']);
 });
 ```
 
@@ -497,16 +565,23 @@ git commit -m "feat(demo): add the storefront codebase template"
 
 ### Task 3: Repo builder — clone, branches, remote
 
-Copies the template into `.agents/ignore/storefront`, makes the git history the board's story expects, and pushes to GitHub. The `in-review` branches are what give the review surface a real diff.
+Copies the template into `.agents/ignore/storefront`, makes the git history the
+board's story expects, and pushes to GitHub. The `in-review` branches are what
+give the review surface a real diff.
 
 **Files:**
+
 - Create: `packages/demo/src/git.ts`
 - Create: `packages/demo/src/repo.ts`
 - Test: `packages/demo/test/repo.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DEMO` from `src/paths.js`
-- Produces: `git(cwd: string, ...args: string[]): string`, `buildRepo(opts: { root: string; push: boolean }): void`, `BRANCH_FIXES: BranchFix[]` where `type BranchFix = { task: string; branch: string; file: string; contents: string }`
+- Produces: `git(cwd: string, ...args: string[]): string`,
+  `buildRepo(opts: { root: string; push: boolean }): void`,
+  `BRANCH_FIXES: BranchFix[]` where
+  `type BranchFix = { task: string; branch: string; file: string; contents: string }`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -549,8 +624,8 @@ test('the working tree is left on main and clean', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/demo && bun test test/repo.test.ts`
-Expected: FAIL — cannot resolve `../src/git.js`
+Run: `cd packages/demo && bun test test/repo.test.ts` Expected: FAIL — cannot
+resolve `../src/git.js`
 
 - [ ] **Step 3: Write the git helper**
 
@@ -562,8 +637,16 @@ import { spawnSync } from 'node:child_process';
 export function git(cwd: string, ...args: string[]): string {
   const result = spawnSync(
     'git',
-    ['-c', 'user.name=Demo', '-c', 'user.email=demo@example.com', '-c', 'commit.gpgsign=false', ...args],
-    { cwd, encoding: 'utf8' },
+    [
+      '-c',
+      'user.name=Demo',
+      '-c',
+      'user.email=demo@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      ...args,
+    ],
+    { cwd, encoding: 'utf8' }
   );
   if (result.status !== 0) {
     throw new Error(`git ${args.join(' ')} failed in ${cwd}: ${result.stderr}`);
@@ -683,8 +766,7 @@ export function buildRepo(opts: { root: string; push: boolean }): void {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd packages/demo && bun test test/repo.test.ts`
-Expected: PASS, 3 tests
+Run: `cd packages/demo && bun test test/repo.test.ts` Expected: PASS, 3 tests
 
 - [ ] **Step 6: Commit**
 
@@ -697,15 +779,20 @@ git commit -m "feat(demo): build the storefront repo with in-review fix branches
 
 ### Task 4: Board state — config, team, tasks, gitattributes
 
-Writes the committed `.dispatch/` state. Every new config field is set non-default so the Settings tour has something to show, and tasks are spread across all three actors so attribution is visibly plural.
+Writes the committed `.dispatch/` state. Every new config field is set
+non-default so the Settings tour has something to show, and tasks are spread
+across all three actors so attribution is visibly plural.
 
 **Files:**
+
 - Create: `packages/demo/src/board.ts`
 - Test: `packages/demo/test/board.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ACTORS`, `OWNER`, `TEAMMATE` from `src/paths.js`
-- Produces: `writeBoard(root: string): void`, `TASKS: DemoTask[]` where `type DemoTask = { id: string; title: string; status: string; kind: 'epic' | 'task'; parent: string | null; assignee: string; priority: string; labels: string[]; blockedBy: string[]; description: string; criteria: string[]; daysAgo: number }`
+- Produces: `writeBoard(root: string): void`, `TASKS: DemoTask[]` where
+  `type DemoTask = { id: string; title: string; status: string; kind: 'epic' | 'task'; parent: string | null; assignee: string; priority: string; labels: string[]; blockedBy: string[]; description: string; criteria: string[]; daysAgo: number }`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -744,7 +831,14 @@ test('team.yml lists every actor', () => {
 
 test('config sets every new field away from its default', () => {
   const config = readFileSync(join(build(), '.dispatch/config.yml'), 'utf8');
-  for (const key of ['verifySteps', 'fixLoop', 'carto', 'models', 'verify', 'linear']) {
+  for (const key of [
+    'verifySteps',
+    'fixLoop',
+    'carto',
+    'models',
+    'verify',
+    'linear',
+  ]) {
     expect(config).toContain(`${key}:`);
   }
 });
@@ -763,17 +857,33 @@ test('work is spread across all three actors', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/demo && bun test test/board.test.ts`
-Expected: FAIL — cannot resolve `../src/board.js`
+Run: `cd packages/demo && bun test test/board.test.ts` Expected: FAIL — cannot
+resolve `../src/board.js`
 
 - [ ] **Step 3: Write the board generator**
 
-Implement `packages/demo/src/board.ts` exporting `TASKS` and `writeBoard(root)`. It must:
+Implement `packages/demo/src/board.ts` exporting `TASKS` and `writeBoard(root)`.
+It must:
 
-1. Define the 12 tasks from the existing fixture (`e-4a19c2` Checkout rewrite, `e-77b3e1` Search relevance, and the ten tasks beneath them — ids, titles, statuses and descriptions are listed verbatim in `.agents/ignore/gen-demo.py` lines 39-67; read that file and carry them over), adding an `assignee` to each drawn from `ACTORS` so all three appear, and an `## Activity` section on at least three tasks crediting a different actor each.
-2. Write each task to `.dispatch/tasks/<id>-<slug>.md` with frontmatter keys in this exact order: `id`, `title`, `status`, `kind`, `parent`, `milestone`, `blocked-by`, `labels`, `priority`, `assignee`, `created`, `updated`, `external`.
-3. Write `.dispatch/team.yml` as `members:` with `handle`, `email`, `displayName`, `emails: []` per actor.
-4. Write `.dispatch/config.yml` with `statuses`, `autoCommit: true`, `verifySteps` (typecheck/test/lint), `orchestrator` (`epicConcurrency: 3`, `maxTurns: 40`, `verifyTimeoutSec: 600`, `maxBudgetUsd: 5`, `permissionMode: acceptEdits`), `models` (all six roles), `fixLoop` (`cap: 5`, escalation rounds 1 and 4), `carto: { enabled: on }`, `verify: { command, url, notes }`, and `linear` (`enabled: true`, `teamId`, `statusMap`, `intervalSec`, `direction: both`) — **no API key**.
+1. Define the 12 tasks from the existing fixture (`e-4a19c2` Checkout rewrite,
+   `e-77b3e1` Search relevance, and the ten tasks beneath them — ids, titles,
+   statuses and descriptions are listed verbatim in `.agents/ignore/gen-demo.py`
+   lines 39-67; read that file and carry them over), adding an `assignee` to
+   each drawn from `ACTORS` so all three appear, and an `## Activity` section on
+   at least three tasks crediting a different actor each.
+2. Write each task to `.dispatch/tasks/<id>-<slug>.md` with frontmatter keys in
+   this exact order: `id`, `title`, `status`, `kind`, `parent`, `milestone`,
+   `blocked-by`, `labels`, `priority`, `assignee`, `created`, `updated`,
+   `external`.
+3. Write `.dispatch/team.yml` as `members:` with `handle`, `email`,
+   `displayName`, `emails: []` per actor.
+4. Write `.dispatch/config.yml` with `statuses`, `autoCommit: true`,
+   `verifySteps` (typecheck/test/lint), `orchestrator` (`epicConcurrency: 3`,
+   `maxTurns: 40`, `verifyTimeoutSec: 600`, `maxBudgetUsd: 5`,
+   `permissionMode: acceptEdits`), `models` (all six roles), `fixLoop`
+   (`cap: 5`, escalation rounds 1 and 4), `carto: { enabled: on }`,
+   `verify: { command, url, notes }`, and `linear` (`enabled: true`, `teamId`,
+   `statusMap`, `intervalSec`, `direction: both`) — **no API key**.
 5. Write `.gitattributes` containing:
 
 ```
@@ -781,17 +891,17 @@ Implement `packages/demo/src/board.ts` exporting `TASKS` and `writeBoard(root)`.
 .dispatch/team.yml merge=dispatch-team
 ```
 
-Timestamps come from a fixed base date, not `Date.now()`, so regenerating produces a stable board.
+Timestamps come from a fixed base date, not `Date.now()`, so regenerating
+produces a stable board.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/demo && bun test test/board.test.ts`
-Expected: PASS, 5 tests
+Run: `cd packages/demo && bun test test/board.test.ts` Expected: PASS, 5 tests
 
 - [ ] **Step 5: Prove Dispatch's own parser accepts every generated task**
 
-Hand-rolled frontmatter that *looks* right but trips `TaskParseError` produces
-a board that loads empty. Assert against the real parser, not a regex. Add to
+Hand-rolled frontmatter that _looks_ right but trips `TaskParseError` produces a
+board that loads empty. Assert against the real parser, not a regex. Add to
 `packages/demo/test/board.test.ts`:
 
 ```ts
@@ -807,15 +917,15 @@ test('the real parser accepts every generated task file', () => {
 ```
 
 Add `"@dispatch/core": "workspace:*"` to `packages/demo/package.json`
-dependencies. `@dispatch/*` resolves through `dist/`, so run `bun install &&
-bun run build` from the repo root first or the import will not resolve.
+dependencies. `@dispatch/*` resolves through `dist/`, so run
+`bun install && bun run build` from the repo root first or the import will not
+resolve.
 
 If `parseTaskFile` is not the exported name, read
-`packages/core/src/taskfile.ts` for the actual export and use it — do not
-work around a failing import by hand-parsing.
+`packages/core/src/taskfile.ts` for the actual export and use it — do not work
+around a failing import by hand-parsing.
 
-Run: `cd packages/demo && bun test test/board.test.ts`
-Expected: PASS, 6 tests
+Run: `cd packages/demo && bun test test/board.test.ts` Expected: PASS, 6 tests
 
 - [ ] **Step 6: Commit**
 
@@ -828,13 +938,17 @@ git commit -m "feat(demo): seed tasks, team, config and merge drivers"
 
 ### Task 5: Findings, ledger, and per-actor inboxes
 
-The records that make the review, fix-loop, and memory surfaces non-empty. Each format covers its full range, so no verdict or ledger kind renders as an empty state.
+The records that make the review, fix-loop, and memory surfaces non-empty. Each
+format covers its full range, so no verdict or ledger kind renders as an empty
+state.
 
 **Files:**
+
 - Create: `packages/demo/src/records.ts`
 - Test: `packages/demo/test/records.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ACTORS`, `OWNER` from `src/paths.js`; `TASKS` from `src/board.js`
 - Produces: `writeRecords(root: string): void`
 
@@ -867,10 +981,10 @@ function lines(root: string, name: string): Record<string, unknown>[] {
 test('findings cover every severity and every verdict', () => {
   const findings = lines(build(), 'findings.jsonl');
   expect(new Set(findings.map((f) => f.severity))).toEqual(
-    new Set(['critical', 'important', 'minor']),
+    new Set(['critical', 'important', 'minor'])
   );
   expect(new Set(findings.map((f) => f.verdict))).toEqual(
-    new Set(['open', 'addressed', 'parked', 'blocked']),
+    new Set(['open', 'addressed', 'parked', 'blocked'])
   );
 });
 
@@ -885,7 +999,15 @@ test('parked and blocked findings carry a written ruling', () => {
 
 test('every finding carries the fields the reader dereferences', () => {
   for (const f of lines(build(), 'findings.jsonl')) {
-    for (const key of ['id', 'taskId', 'severity', 'verdict', 'title', 'detail', 'createdAt']) {
+    for (const key of [
+      'id',
+      'taskId',
+      'severity',
+      'verdict',
+      'title',
+      'detail',
+      'createdAt',
+    ]) {
       expect(f[key]).toBeDefined();
     }
     expect(typeof f.raisedBy).toBe('string');
@@ -895,14 +1017,17 @@ test('every finding carries the fields the reader dereferences', () => {
 test('the ledger covers all four kinds', () => {
   const ledger = lines(build(), 'ledger.jsonl');
   expect(new Set(ledger.map((l) => l.kind))).toEqual(
-    new Set(['constraint', 'hazard', 'decision', 'handoff']),
+    new Set(['constraint', 'hazard', 'decision', 'handoff'])
   );
 });
 
 test('each actor gets their own inbox with the id marker last', () => {
   const root = build();
   for (const actor of ACTORS) {
-    const inbox = readFileSync(join(root, '.dispatch/inbox', `${actor.handle}.md`), 'utf8');
+    const inbox = readFileSync(
+      join(root, '.dispatch/inbox', `${actor.handle}.md`),
+      'utf8'
+    );
     for (const line of inbox.split('\n').filter((l) => l.includes('^in-'))) {
       expect(line.trimEnd()).toMatch(/\^in-[a-z0-9]+$/);
     }
@@ -912,25 +1037,41 @@ test('each actor gets their own inbox with the id marker last', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/demo && bun test test/records.test.ts`
-Expected: FAIL — cannot resolve `../src/records.js`
+Run: `cd packages/demo && bun test test/records.test.ts` Expected: FAIL — cannot
+resolve `../src/records.js`
 
 - [ ] **Step 3: Write the records generator**
 
 Implement `writeRecords(root)` emitting three things.
 
-`.dispatch/findings.jsonl` — at least six findings against `t-2e91aa` and `t-58cc03`, one line each, matching the `Finding` shape in `packages/core/src/findings.ts` exactly: `id` (`f-` + 6 hex), `taskId`, `runId`, `severity`, `verdict`, `title`, `detail`, `file`, `line`, `ruling`, `round`, `createdAt`, `updatedAt`, `raisedBy`. Cover all three severities and all four verdicts. Give the `parked` and `blocked` ones a ruling in the controller's voice. Set `file` and `line` to real locations in the storefront so they anchor onto the diff. Include one finding with a `files` array to show the many-file case, and one with `recommendation: 'blocks'`.
+`.dispatch/findings.jsonl` — at least six findings against `t-2e91aa` and
+`t-58cc03`, one line each, matching the `Finding` shape in
+`packages/core/src/findings.ts` exactly: `id` (`f-` + 6 hex), `taskId`, `runId`,
+`severity`, `verdict`, `title`, `detail`, `file`, `line`, `ruling`, `round`,
+`createdAt`, `updatedAt`, `raisedBy`. Cover all three severities and all four
+verdicts. Give the `parked` and `blocked` ones a ruling in the controller's
+voice. Set `file` and `line` to real locations in the storefront so they anchor
+onto the diff. Include one finding with a `files` array to show the many-file
+case, and one with `recommendation: 'blocks'`.
 
-`.dispatch/ledger.jsonl` — four entries matching `LedgerEntry` in `packages/core/src/ledger.ts`: `id` (`l-` + 6 hex), `epicId`, `sourceTaskId`, `kind`, `title`, `detail`, `appliesTo`, `createdAt`, `authoredBy`. One `constraint`, one `hazard`, one `decision`, one `handoff`. Scope at least one to an epic and leave one project-wide (`epicId: null`).
+`.dispatch/ledger.jsonl` — four entries matching `LedgerEntry` in
+`packages/core/src/ledger.ts`: `id` (`l-` + 6 hex), `epicId`, `sourceTaskId`,
+`kind`, `title`, `detail`, `appliesTo`, `createdAt`, `authoredBy`. One
+`constraint`, one `hazard`, one `decision`, one `handoff`. Scope at least one to
+an epic and leave one project-wide (`epicId: null`).
 
-`.dispatch/inbox/<handle>.md` — one per actor. Carry over the six items from `gen-demo.py` lines 69-77 into the owner's inbox and give the other two actors two or three items each. The `^in-xxxx` marker is last on every line, after any `@r-...` or `→ t-...`.
+`.dispatch/inbox/<handle>.md` — one per actor. Carry over the six items from
+`gen-demo.py` lines 69-77 into the owner's inbox and give the other two actors
+two or three items each. The `^in-xxxx` marker is last on every line, after any
+`@r-...` or `→ t-...`.
 
-`raisedBy` and `authoredBy` hold a serialized `ActorRef`. Read `packages/core/src/actor.ts` for the exact serialization and use it — do not invent a format.
+`raisedBy` and `authoredBy` hold a serialized `ActorRef`. Read
+`packages/core/src/actor.ts` for the exact serialization and use it — do not
+invent a format.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/demo && bun test test/records.test.ts`
-Expected: PASS, 5 tests
+Run: `cd packages/demo && bun test test/records.test.ts` Expected: PASS, 5 tests
 
 - [ ] **Step 5: Commit**
 
@@ -943,15 +1084,19 @@ git commit -m "feat(demo): seed findings, ledger and per-actor inboxes"
 
 ### Task 6: Run transcripts
 
-Populates run history under each clone's `DISPATCH_HOME`. Every run must be terminal — the single most common way a fixture silently breaks.
+Populates run history under each clone's `DISPATCH_HOME`. Every run must be
+terminal — the single most common way a fixture silently breaks.
 
 **Files:**
+
 - Create: `packages/demo/src/runs.ts`
 - Test: `packages/demo/test/runs.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DEMO`, `runsDir`, `actorFile`, `OWNER` from `src/paths.js`
-- Produces: `writeRuns(rootDir: string, home: string, handle: string): void`, `TERMINAL_STATES: readonly string[]`
+- Produces: `writeRuns(rootDir: string, home: string, handle: string): void`,
+  `TERMINAL_STATES: readonly string[]`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -989,7 +1134,9 @@ test('every transcript opens with a header carrying its meta', () => {
   const { root, home } = build();
   const dir = runsDir(root, home);
   for (const file of readdirSync(dir)) {
-    const first = JSON.parse(readFileSync(join(dir, file), 'utf8').split('\n')[0]!) as {
+    const first = JSON.parse(
+      readFileSync(join(dir, file), 'utf8').split('\n')[0]!
+    ) as {
       type: string;
       meta: { id: string; taskId: string; branch: string };
     };
@@ -1001,7 +1148,9 @@ test('every transcript opens with a header carrying its meta', () => {
 
 test('the actor identity file records the handle', () => {
   const { root, home } = build();
-  const identity = JSON.parse(readFileSync(actorFile(root, home), 'utf8')) as { handle: string };
+  const identity = JSON.parse(readFileSync(actorFile(root, home), 'utf8')) as {
+    handle: string;
+  };
   expect(identity.handle).toBe('wsoule679');
 });
 
@@ -1018,30 +1167,38 @@ test('a stopped run is present and terminal', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/demo && bun test test/runs.test.ts`
-Expected: FAIL — cannot resolve `../src/runs.js`
+Run: `cd packages/demo && bun test test/runs.test.ts` Expected: FAIL — cannot
+resolve `../src/runs.js`
 
 - [ ] **Step 3: Write the run generator**
 
-Port the transcript writer from `.agents/ignore/gen-demo.py` lines 92-143 to TypeScript, keeping its JSONL shape: a `header` line carrying `meta`, one `entry` line per step, and a final `state` line carrying `costUsd`, `turns`, `sessionId`, and optionally `reviewedAt`/`reviewAction`.
+Port the transcript writer from `.agents/ignore/gen-demo.py` lines 92-143 to
+TypeScript, keeping its JSONL shape: a `header` line carrying `meta`, one
+`entry` line per step, and a final `state` line carrying `costUsd`, `turns`,
+`sessionId`, and optionally `reviewedAt`/`reviewAction`.
 
-Read `packages/server/src/orchestrator/` for the exact state names before writing `TERMINAL_STATES`; confirm `stopped` is what a gracefully halted run persists rather than assuming it.
+Read `packages/server/src/orchestrator/` for the exact state names before
+writing `TERMINAL_STATES`; confirm `stopped` is what a gracefully halted run
+persists rather than assuming it.
 
 Beyond the eight existing runs, add one of each new kind, all terminal:
 
-- a **review run** against `t-2e91aa` whose entries reference the findings from Task 5 by id, and whose `file`/`line` match them
-- a **fix loop** across three rounds on `t-58cc03`, the third dispatched fresh at the high tier per the escalation ladder
-- a **verify run** whose entries carry `CommandEvidence` and `MutationEvidence` records shaped per `packages/core/src/evidence.ts`
+- a **review run** against `t-2e91aa` whose entries reference the findings from
+  Task 5 by id, and whose `file`/`line` match them
+- a **fix loop** across three rounds on `t-58cc03`, the third dispatched fresh
+  at the high tier per the escalation ladder
+- a **verify run** whose entries carry `CommandEvidence` and `MutationEvidence`
+  records shaped per `packages/core/src/evidence.ts`
 - a **scope request** that was granted
 - a **plan draft** holding unanswered questions
 - a **stopped run**, so the Stop button has history behind it
 
-Also write the actor identity file at `actorFile(rootDir, home)` as `{"handle":"<handle>"}`.
+Also write the actor identity file at `actorFile(rootDir, home)` as
+`{"handle":"<handle>"}`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/demo && bun test test/runs.test.ts`
-Expected: PASS, 4 tests
+Run: `cd packages/demo && bun test test/runs.test.ts` Expected: PASS, 4 tests
 
 - [ ] **Step 5: Commit**
 
@@ -1054,19 +1211,25 @@ git commit -m "feat(demo): seed run transcripts for every run kind"
 
 ### Task 7: Teammate puppet
 
-The second clone and the commands that drive it. This is what makes the sync chip move and the merge driver fire.
+The second clone and the commands that drive it. This is what makes the sync
+chip move and the merge driver fire.
 
 **Files:**
+
 - Create: `packages/demo/src/teammate.ts`
 - Test: `packages/demo/test/teammate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `git` from `src/git.js`; `DEMO`, `TEAMMATE` from `src/paths.js`
-- Produces: `claim(taskId: string): void`, `addTask(): string`, `conflict(taskId: string): void`, each committing and pushing from `DEMO.teammateRoot`
+- Produces: `claim(taskId: string): void`, `addTask(): string`,
+  `conflict(taskId: string): void`, each committing and pushing from
+  `DEMO.teammateRoot`
 
 - [ ] **Step 1: Write the failing test**
 
-The test drives a local bare remote rather than GitHub, so it never touches the network.
+The test drives a local bare remote rather than GitHub, so it never touches the
+network.
 
 ```ts
 // packages/demo/test/teammate.test.ts
@@ -1099,7 +1262,9 @@ test('claim pushes a change the other clone can pull', () => {
   const { mine, theirs } = twoClones();
   claimIn(theirs, 'task.md', 'pmirand');
   git(mine, 'pull', '-q', '--rebase');
-  expect(readFileSync(join(mine, 'task.md'), 'utf8')).toContain('assignee: pmirand');
+  expect(readFileSync(join(mine, 'task.md'), 'utf8')).toContain(
+    'assignee: pmirand'
+  );
 });
 
 test('conflict edits a different field than the local side', () => {
@@ -1113,23 +1278,29 @@ test('conflict edits a different field than the local side', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/demo && bun test test/teammate.test.ts`
-Expected: FAIL — cannot resolve `../src/teammate.js`
+Run: `cd packages/demo && bun test test/teammate.test.ts` Expected: FAIL —
+cannot resolve `../src/teammate.js`
 
 - [ ] **Step 3: Write the puppet**
 
-Implement `packages/demo/src/teammate.ts` with two layers: pure `*In(cwd, file, ...)` helpers the test drives against any directory, and thin `claim`/`addTask`/`conflict` wrappers that bind them to `DEMO.teammateRoot` and push to `origin`.
+Implement `packages/demo/src/teammate.ts` with two layers: pure
+`*In(cwd, file, ...)` helpers the test drives against any directory, and thin
+`claim`/`addTask`/`conflict` wrappers that bind them to `DEMO.teammateRoot` and
+push to `origin`.
 
-- `claimIn(cwd, file, handle)` — rewrites the task's `assignee:` line, commits, pushes
-- `conflictIn(cwd, file)` — rewrites only the `status:` line and pushes, leaving `assignee:` alone, so the local side can edit `assignee:` and the merge driver resolves field-by-field
+- `claimIn(cwd, file, handle)` — rewrites the task's `assignee:` line, commits,
+  pushes
+- `conflictIn(cwd, file)` — rewrites only the `status:` line and pushes, leaving
+  `assignee:` alone, so the local side can edit `assignee:` and the merge driver
+  resolves field-by-field
 - `addTask()` — writes a new task file into `.dispatch/tasks/`, commits, pushes
 
 Each wrapper prints what it did, so you can see it landed while demoing.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/demo && bun test test/teammate.test.ts`
-Expected: PASS, 2 tests
+Run: `cd packages/demo && bun test test/teammate.test.ts` Expected: PASS, 2
+tests
 
 - [ ] **Step 5: Commit**
 
@@ -1142,23 +1313,33 @@ git commit -m "feat(demo): add the teammate puppet"
 
 ### Task 8: CLI, reset, and preflight
 
-Ties the generators into one command surface. `reset` matters because the demo gets run more than once; `preflight` catches the two failures that are silent by design.
+Ties the generators into one command surface. `reset` matters because the demo
+gets run more than once; `preflight` catches the two failures that are silent by
+design.
 
 **Files:**
+
 - Create: `packages/demo/src/preflight.ts`
 - Create: `packages/demo/src/cli.ts`
 - Test: `packages/demo/test/preflight.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything above
-- Produces: `runPreflight(): Check[]` where `type Check = { name: string; ok: boolean; detail: string }`; a CLI with subcommands `reset`, `preflight`, `teammate <claim|add-task|conflict> [taskId]`
+- Produces: `runPreflight(): Check[]` where
+  `type Check = { name: string; ok: boolean; detail: string }`; a CLI with
+  subcommands `reset`, `preflight`,
+  `teammate <claim|add-task|conflict> [taskId]`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // packages/demo/test/preflight.test.ts
 import { expect, test } from 'bun:test';
-import { checkNoCredentialsStaged, checkRunsTerminal } from '../src/preflight.js';
+import {
+  checkNoCredentialsStaged,
+  checkRunsTerminal,
+} from '../src/preflight.js';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1170,7 +1351,7 @@ test('a non-terminal run is reported, not ignored', () => {
   writeFileSync(
     join(dir, 'r-bad.jsonl'),
     `${JSON.stringify({ type: 'header', meta: { id: 'r-bad', taskId: 't-1' } })}\n` +
-      `${JSON.stringify({ type: 'state', state: 'running' })}\n`,
+      `${JSON.stringify({ type: 'state', state: 'running' })}\n`
   );
   const check = checkRunsTerminal(join(home, '.dispatch/runs'));
   expect(check.ok).toBe(false);
@@ -1178,7 +1359,10 @@ test('a non-terminal run is reported, not ignored', () => {
 });
 
 test('a credentials file staged for commit fails preflight', () => {
-  const check = checkNoCredentialsStaged(['.dispatch/config.yml', 'credentials.json']);
+  const check = checkNoCredentialsStaged([
+    '.dispatch/config.yml',
+    'credentials.json',
+  ]);
   expect(check.ok).toBe(false);
   expect(check.detail).toContain('credentials.json');
 });
@@ -1190,25 +1374,30 @@ test('a clean stage passes', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/demo && bun test test/preflight.test.ts`
-Expected: FAIL — cannot resolve `../src/preflight.js`
+Run: `cd packages/demo && bun test test/preflight.test.ts` Expected: FAIL —
+cannot resolve `../src/preflight.js`
 
 - [ ] **Step 3: Write preflight**
 
-Implement `packages/demo/src/preflight.ts` exporting the two pure checks above plus `runPreflight()`, which additionally asserts:
+Implement `packages/demo/src/preflight.ts` exporting the two pure checks above
+plus `runPreflight()`, which additionally asserts:
 
-- `carto --version` exits 0 (carto degrades silently to the built-in scanner when absent)
+- `carto --version` exits 0 (carto degrades silently to the built-in scanner
+  when absent)
 - `~/.dispatch/credentials.json` exists and parses, and holds a Linear key
 - `DEMO.teammateRoot` has no unpushed commits
 - both clones' `git status --porcelain` is empty
 
-Each check returns `{ name, ok, detail }`; `runPreflight` prints them as a table and exits non-zero if any failed.
+Each check returns `{ name, ok, detail }`; `runPreflight` prints them as a table
+and exits non-zero if any failed.
 
 - [ ] **Step 4: Write the CLI**
 
 `packages/demo/src/cli.ts` dispatches on `process.argv[2]`:
 
-- `reset` — `buildRepo({ root: DEMO.root, push: true })`, `writeBoard`, `writeRecords`, commit and push the board, `writeRuns` for both clones, then clone the remote into `DEMO.teammateRoot` and write the teammate's identity
+- `reset` — `buildRepo({ root: DEMO.root, push: true })`, `writeBoard`,
+  `writeRecords`, commit and push the board, `writeRuns` for both clones, then
+  clone the remote into `DEMO.teammateRoot` and write the teammate's identity
 - `preflight` — `runPreflight()`
 - `teammate claim <taskId>` / `teammate add-task` / `teammate conflict <taskId>`
 
@@ -1216,8 +1405,8 @@ An unknown subcommand prints usage and exits 1 — never a silent no-op.
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd packages/demo && bun test test/preflight.test.ts`
-Expected: PASS, 3 tests
+Run: `cd packages/demo && bun test test/preflight.test.ts` Expected: PASS, 3
+tests
 
 - [ ] **Step 6: Commit**
 
@@ -1233,6 +1422,7 @@ git commit -m "feat(demo): add the demo CLI with reset and preflight"
 Proves the whole thing boots, and leaves you something to follow on the day.
 
 **Files:**
+
 - Create: `docs/superpowers/plans/2026-08-04-demo-runbook.md`
 - Delete: `.agents/ignore/gen-demo.py`
 
@@ -1249,7 +1439,9 @@ export AGENT=1
 bun packages/demo/src/cli.ts reset
 ```
 
-Expected: the command completes, `.agents/ignore/storefront` and `.agents/ignore/teammate/storefront` both exist, and the remote has `main` plus two `dispatch/*` branches.
+Expected: the command completes, `.agents/ignore/storefront` and
+`.agents/ignore/teammate/storefront` both exist, and the remote has `main` plus
+two `dispatch/*` branches.
 
 - [ ] **Step 3: Verify the generated storefront is green**
 
@@ -1257,7 +1449,8 @@ Expected: the command completes, `.agents/ignore/storefront` and `.agents/ignore
 cd .agents/ignore/storefront && bun install && bun test && bun run tsc
 ```
 
-Expected: tests pass, tsc clean. If either fails, the verify panel will be red during the demo — fix before continuing.
+Expected: tests pass, tsc clean. If either fails, the verify panel will be red
+during the demo — fix before continuing.
 
 - [ ] **Step 4: Boot the daemon and confirm no run failed on boot**
 
@@ -1266,7 +1459,9 @@ DISPATCH_HOME=.agents/ignore/storefront-home \
   bun packages/server/src/bin.ts --root "$(pwd)/.agents/ignore/storefront"
 ```
 
-Open the app against it and confirm every seeded run shows its intended state. A run showing `failed` that you seeded as `finished` means `reconcileOnBoot` rejected it — the transcript's final state line is wrong.
+Open the app against it and confirm every seeded run shows its intended state. A
+run showing `failed` that you seeded as `finished` means `reconcileOnBoot`
+rejected it — the transcript's final state line is wrong.
 
 - [ ] **Step 5: Run preflight**
 
@@ -1274,7 +1469,8 @@ Open the app against it and confirm every seeded run shows its intended state. A
 bun packages/demo/src/cli.ts preflight
 ```
 
-Expected: every check green. Carto red means the graph silently falls back and blast radius will look empty.
+Expected: every check green. Carto red means the graph silently falls back and
+blast radius will look empty.
 
 - [ ] **Step 6: Rehearse the teammate**
 
@@ -1287,7 +1483,10 @@ Expected: the sync chip moves and the board updates without a manual merge.
 
 - [ ] **Step 7: Write the runbook**
 
-`docs/superpowers/plans/2026-08-04-demo-runbook.md` carries the eleven-stop demo path from the spec's "Demo path" section, each stop naming the exact screen, the exact click, and the one sentence to say. Add a "if it breaks" line per stop — chiefly: the live run on `t-3f8a21` falls back to its seeded transcript.
+`docs/superpowers/plans/2026-08-04-demo-runbook.md` carries the eleven-stop demo
+path from the spec's "Demo path" section, each stop naming the exact screen, the
+exact click, and the one sentence to say. Add a "if it breaks" line per stop —
+chiefly: the live run on `t-3f8a21` falls back to its seeded transcript.
 
 - [ ] **Step 8: Delete the superseded generator**
 
@@ -1318,7 +1517,8 @@ git commit -m "docs(demo): add the demo runbook and retire gen-demo.py"
 
 Checked against the spec:
 
-- Architecture's four artifacts → Task 1 (`DEMO`), Task 3 (clones), Task 8 (`reset` wires both homes)
+- Architecture's four artifacts → Task 1 (`DEMO`), Task 3 (clones), Task 8
+  (`reset` wires both homes)
 - Storefront codebase and its import fan-in → Task 2
 - Defect-placement-by-status → Task 2 (main) and Task 3 (`BRANCH_FIXES`)
 - Seeded board state, all seven files → Tasks 4 and 5
@@ -1327,7 +1527,8 @@ Checked against the spec:
 - Carto and Linear rails → Task 8 (`runPreflight`)
 - `reset` and `preflight` → Task 8
 - Demo path → Task 9 runbook
-- Testing bar (reset→preflight cold, no failed-on-boot, conflict auto-resolves, storefront green) → Task 9 steps 2-6
+- Testing bar (reset→preflight cold, no failed-on-boot, conflict auto-resolves,
+  storefront green) → Task 9 steps 2-6
 
 Two spec details deliberately deferred into their tasks rather than pinned here,
 because both depend on reading current source and guessing would produce a
