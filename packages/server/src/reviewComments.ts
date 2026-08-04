@@ -43,6 +43,11 @@ export interface ReviewComment {
   anchorText: string;
   author: string;
   body: string;
+  /**
+   * Replacement text for lines `startLine..line`, when the reviewer wrote one
+   * instead of only describing the change. Absent on a plain prose comment.
+   */
+  suggestion?: string;
   resolved: boolean;
   created: string;
   /** Replies, oldest first. A thread is a comment plus these. */
@@ -62,6 +67,8 @@ export interface AddCommentInput {
   startLine?: number;
   anchorText: string;
   body: string;
+  /** Replacement text for the commented lines. Omit for a prose-only comment. */
+  suggestion?: string;
   author?: string;
   /** Defaults to true: a comment written during a review is pending until the review is sent. */
   pending?: boolean;
@@ -110,6 +117,26 @@ export function resolveAnchor(
   return { kind: 'outdated' };
 }
 
+/**
+ * Replaces lines `startLine..line` (1-based, inclusive) with the suggestion's own
+ * lines. Splices rather than assigning per line because a suggestion is free to be
+ * longer or shorter than the range it replaces.
+ *
+ * Callers must confirm the comment's anchor is still `exact` first — splicing by
+ * line number into a file that has moved underneath would edit unrelated code.
+ */
+export function spliceSuggestion(
+  fileLines: string[],
+  comment: Pick<ReviewComment, 'line' | 'startLine'>,
+  suggestion: string
+): string[] {
+  const start = (comment.startLine ?? comment.line) - 1;
+  const count = comment.line - start;
+  const next = [...fileLines];
+  next.splice(start, count, ...suggestion.split('\n'));
+  return next;
+}
+
 export class ReviewCommentStore {
   constructor(
     private readonly rootDir: string,
@@ -153,6 +180,9 @@ export class ReviewCommentStore {
       anchorText: input.anchorText,
       author: input.author ?? this.defaultAuthor,
       body: input.body,
+      ...(input.suggestion !== undefined && input.suggestion !== ''
+        ? { suggestion: input.suggestion }
+        : {}),
       resolved: false,
       pending: input.pending ?? true,
       created: now,
@@ -252,7 +282,9 @@ export function formatCommentsForAgent(comments: ReviewComment[]): string {
 
   const sections: string[] = [
     'Review comments on your changes. Each one names the file, the line it was written ' +
-      'against, and the code at that line. Address every one of them.',
+      'against, and the code at that line. Address every one of them. A fenced ' +
+      '`suggestion` block is the exact replacement text for the lines named above it — ' +
+      'apply it verbatim rather than writing your own version.',
   ];
   for (const [file, list] of byFile) {
     const lines = [`### ${file}`];
@@ -269,6 +301,14 @@ export function formatCommentsForAgent(comments: ReviewComment[]): string {
         lines.push('```');
       }
       lines.push(`${c.author}: ${c.body}`);
+      // The reviewer wrote the replacement rather than describing it, so the
+      // agent has no interpreting to do — say so and hand over the exact text.
+      if (c.suggestion !== undefined && c.suggestion !== '') {
+        lines.push('Apply this exactly:');
+        lines.push('```suggestion');
+        lines.push(c.suggestion);
+        lines.push('```');
+      }
       for (const r of c.replies) lines.push(`${r.author}: ${r.body}`);
     }
     sections.push(lines.join('\n'));

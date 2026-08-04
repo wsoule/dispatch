@@ -831,6 +831,8 @@ export interface ReviewComment {
   anchorText: string;
   author: string;
   body: string;
+  /** Replacement text for `startLine..line`, when the reviewer wrote one. */
+  suggestion?: string;
   resolved: boolean;
   created: string;
   replies: ReviewReply[];
@@ -1395,6 +1397,8 @@ export interface ApiClient {
       startLine?: number;
       anchorText: string;
       body: string;
+      /** Replacement text for the commented lines. Omit for a prose-only comment. */
+      suggestion?: string;
       /** Defaults to true — a comment is staged until the review is submitted. */
       pending?: boolean;
     }
