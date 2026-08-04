@@ -8,9 +8,8 @@ import {
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 
-/** The shape `loadConfig` returns for a project with no config.yml. Confirm the
- *  field list against the "returns defaults when file missing" case in
- *  packages/core/test/config.test.ts before trusting this. */
+/** The shape `loadConfig` returns for a project with no config.yml — verified
+ *  against config.test.ts's "returns defaults when file missing" case. */
 export const testConfig: DispatchConfig = {
   statuses: [
     'backlog',
