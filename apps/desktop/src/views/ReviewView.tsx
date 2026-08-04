@@ -1,15 +1,10 @@
-import type { RepoPr, ReviewComment } from '@dispatch/client';
+import type { ReviewComment } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Check } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
 import { PrReviewPanel } from '../components/runs/PrReviewPanel';
-import {
-  PrChecksPill,
-  REVIEW_VERDICT,
-  StatusPill,
-} from '../components/runs/PrStatusPills';
 import { ReviewCasePanel } from '../components/runs/ReviewCasePanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { buildReviewQueue, ReviewQueue } from '../components/runs/ReviewQueue';
@@ -317,6 +312,9 @@ export function ReviewView({
 
   // The GitHub review layer, for a repo PR off its number-keyed detail and for
   // a dispatch-opened run off the run-keyed one. Both post straight to GitHub.
+  //
+  // It owns the PR's status header too — one source, refreshed by every action
+  // here, rather than a second copy in the page header off the 60s repo poll.
   const prPanel = isPrTarget ? (
     <PrReviewPanel
       detail={repoPr.prDetail}
@@ -355,7 +353,6 @@ export function ReviewView({
           'Review'
         }
         run={run}
-        pr={selectedItem?.pr}
         filesOpen={filesOpen}
         onToggleFiles={() => setFilesOpen((v) => !v)}
         railOpen={railOpen}
@@ -550,7 +547,6 @@ function Header({
   onBack,
   title,
   run,
-  pr,
   filesOpen,
   onToggleFiles,
   railOpen,
@@ -567,8 +563,6 @@ function Header({
     turns?: number;
     costUsd?: number;
   };
-  /** GitHub standing for a row that has a PR, run-backed or not. */
-  pr?: RepoPr;
   filesOpen: boolean;
   onToggleFiles: () => void;
   railOpen: boolean;
@@ -610,7 +604,6 @@ function Header({
             )}
           </>
         )}
-        {pr !== undefined && <PrHeaderStatus pr={pr} />}
         <span className="flex-1" />
         <button
           type="button"
@@ -631,40 +624,6 @@ function Header({
             : `${railLabel} (${railCount})`}
         </button>
       </div>
-    </div>
-  );
-}
-
-/**
- * A PR's live GitHub standing in the review header — draft, checks, decision,
- * conflicts — from the same pills the queue rows use, so the two cannot drift.
- */
-function PrHeaderStatus({ pr }: { pr: RepoPr }) {
-  const verdict =
-    pr.reviewDecision === 'APPROVED'
-      ? REVIEW_VERDICT.APPROVED
-      : pr.reviewDecision === 'CHANGES_REQUESTED'
-        ? REVIEW_VERDICT.CHANGES_REQUESTED
-        : undefined;
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <a
-        href={pr.url}
-        target="_blank"
-        rel="noreferrer"
-        className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 text-[11px]"
-      >
-        #{pr.number}
-        <ExternalLink className="size-3" />
-      </a>
-      {pr.isDraft && <StatusPill>Draft</StatusPill>}
-      <PrChecksPill checks={pr.checks} />
-      {verdict !== undefined && (
-        <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
-      )}
-      {pr.mergeable === 'CONFLICTING' && (
-        <StatusPill tone="red">Conflicts</StatusPill>
-      )}
     </div>
   );
 }
