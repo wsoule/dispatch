@@ -28,10 +28,9 @@ const QUEUE_STATE_LABEL: Partial<Record<MergeQueueEntryState, string>> = {
  * re-enabled button so the person can retry. Disabled (with a reason tooltip) once the run has
  * already been reviewed, mirroring the server's own 409 for that case.
  *
- * Shared by every surface that can enqueue a run's merge — the run detail's action row
- * (RunReviewView, both the plain-diff branch and the PR-open branch) and the PR detail header
- * (PullRequestsView) — so one place owns the run -> queue-state mapping and both surfaces
- * always agree.
+ * Shared by every surface that can enqueue a run's merge — today the run detail's
+ * action row (RunReviewView, both the plain-diff and PR-open branches) — so one
+ * place owns the run -> queue-state mapping and every surface agrees.
  */
 export function QueueMergeControl({
   meta,
