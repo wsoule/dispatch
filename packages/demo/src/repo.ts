@@ -1,6 +1,13 @@
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 import { git } from './git.js';
 import { DEMO } from './paths.js';
@@ -79,12 +86,37 @@ export function rank(query: string, products: Product[]): Hit[] {
   },
 ];
 
+// Resolves symlinks in the longest existing ancestor of `p`, then re-appends
+// whatever suffix doesn't exist yet. Plain `realpathSync` throws ENOENT on a
+// path that hasn't been created, which `root` often hasn't when the guard
+// below runs (buildRepo deletes-then-creates it). Walking up to an existing
+// ancestor lets us resolve symlinks (e.g. macOS /var -> /private/var) without
+// requiring the target itself to exist yet.
+function realpathIfPossible(p: string): string {
+  let current = resolve(p);
+  const missingSuffix: string[] = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break; // hit the filesystem root; nothing left to resolve
+    missingSuffix.unshift(current.slice(parent.length + 1));
+    current = parent;
+  }
+  const real = realpathSync(current);
+  return missingSuffix.length > 0 ? join(real, ...missingSuffix) : real;
+}
+
 // `buildRepo` starts with a recursive delete of `root`. Only allow that when
 // `root` resolves inside .agents/ignore/ or the OS temp dir (where the tests'
-// mkdtempSync paths live) — anything else is refused before rmSync runs.
+// mkdtempSync paths live) — anything else is refused before rmSync runs. Both
+// sides are realpath-resolved so a caller passing an already-realpath'd temp
+// path (or a TMPDIR that itself resolves through a symlink, e.g. macOS's
+// /var -> /private/var) isn't wrongly rejected.
 function assertSafeToDelete(root: string): void {
-  const resolved = resolve(root);
-  const allowedRoots = [resolve(DEMO.ignore), resolve(tmpdir())];
+  const resolved = realpathIfPossible(root);
+  const allowedRoots = [
+    realpathIfPossible(DEMO.ignore),
+    realpathIfPossible(tmpdir()),
+  ];
   const isSafe = allowedRoots.some(
     (allowed) => resolved === allowed || resolved.startsWith(allowed + sep)
   );
@@ -96,8 +128,10 @@ function assertSafeToDelete(root: string): void {
 }
 
 // Skips install artifacts so a `bun install` run inside storefront-src never
-// gets copied into (and then committed into) the generated repo.
-function skipInstallArtifacts(src: string): boolean {
+// gets copied into (and then committed into) the generated repo. Exported so
+// tests can exercise the exact filter buildRepo's cpSync uses, without
+// needing a real node_modules/bun.lock planted in the template.
+export function skipInstallArtifacts(src: string): boolean {
   const base = basename(src);
   return base !== 'node_modules' && base !== 'bun.lock';
 }
