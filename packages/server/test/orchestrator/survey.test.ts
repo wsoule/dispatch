@@ -77,6 +77,7 @@ function controllableExecutor(): Executor {
     start(): ExecutorRun {
       return {
         interrupt: () => Promise.resolve(),
+        requestStop: () => {},
         send: () => {},
         approve: () => {},
       };
@@ -92,6 +93,7 @@ class CapturingExecutor implements Executor {
     events.onFinish({ state: 'finished' });
     return {
       interrupt: () => Promise.resolve(),
+      requestStop: () => {},
       send: () => {},
       approve: () => {},
     };

@@ -18,6 +18,7 @@ import {
   buildCartoMcpServerConfig,
   cartoMcpServers,
   ClaudeExecutor,
+  STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
 import type {
   ExecutorEvents,
@@ -969,6 +970,147 @@ describe('carto MCP entry honors carto.enabled', () => {
       expect(captured?.mcpServers?.carto).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * The graceful-stop path against the one lever a live Agent SDK session gives
+ * us: the `canUseTool` gate (see STOP_DENIAL_MESSAGE). These drive the gate
+ * directly off the `Options` the executor hands to `query()` — the same
+ * `queryFn` seam the wiring tests above use — because the alternative is a real
+ * credentialed Claude session, which CI cannot assume.
+ */
+describe('ClaudeExecutor graceful stop', () => {
+  // A Query stub that never ends on its own, so a test can observe what
+  // `requestStop` does (and does not do) to a session still in flight.
+  function stubQuery(): {
+    query: Query;
+    interrupts: number;
+    closes: number;
+    release: () => void;
+  } {
+    const state = { interrupts: 0, closes: 0 };
+    let release: () => void = () => {};
+    const done = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const query = {
+      async *[Symbol.asyncIterator]() {
+        await done;
+      },
+      interrupt: async () => {
+        state.interrupts += 1;
+      },
+      close: () => {
+        state.closes += 1;
+      },
+    } as unknown as Query;
+    return {
+      query,
+      get interrupts() {
+        return state.interrupts;
+      },
+      get closes() {
+        return state.closes;
+      },
+      release,
+    };
+  }
+
+  function startStopped(events: ExecutorEvents = noopEvents) {
+    let captured: Options | undefined;
+    const stub = stubQuery();
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return stub.query;
+    });
+    const run = executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-stop',
+        projectRoot: '/tmp/dispatch-project-stop',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+      },
+      events
+    );
+    return { run, stub, options: captured! };
+  }
+
+  // The SDK's own call options carry more than this executor reads (an abort
+  // signal, suggestions); `requestId` is the only field `canUseTool` touches.
+  const callOpts = { requestId: 'req-1' } as never;
+
+  // The SDK types a permission result as nullable; this executor's gate always
+  // returns one, so the assertion is where that gets pinned down once instead
+  // of at every read of `.behavior`/`.message` below.
+  async function decided(
+    result: Promise<unknown>
+  ): Promise<{ behavior: string; message?: string }> {
+    const settled = await result;
+    expect(settled).not.toBeNull();
+    return settled as { behavior: string; message?: string };
+  }
+
+  it('denies a tool call made after the stop, including one it would otherwise auto-allow', async () => {
+    const { run, stub, options } = startStopped();
+    try {
+      // `Edit` under acceptEdits is auto-allowed — the strongest case that the
+      // stop check has to sit ahead of.
+      const before = await decided(options.canUseTool!('Edit', {}, callOpts));
+      expect(before.behavior).toBe('allow');
+
+      run.requestStop();
+
+      const after = await decided(options.canUseTool!('Edit', {}, callOpts));
+      expect(after.behavior).toBe('deny');
+      expect(after.message).toBe(STOP_DENIAL_MESSAGE);
+      // The instruction has to tell the model what to do instead, not just say
+      // no — that is what turns a refusal into a clean wind-down.
+      expect(STOP_DENIAL_MESSAGE).toContain('end your turn');
+    } finally {
+      stub.release();
+    }
+  });
+
+  it('resolves an approval the run was parked on, carrying the same instruction', async () => {
+    const requests: { requestId: string; toolName: string }[] = [];
+    const { run, stub, options } = startStopped({
+      ...noopEvents,
+      onApprovalRequest: (request) => requests.push(request),
+    });
+    try {
+      // Not awaited: `Bash` is gated, so this promise stays pending until a
+      // human answers — or, here, until the stop answers for them.
+      const pending = options.canUseTool!('Bash', {}, callOpts);
+      await Promise.resolve();
+      expect(requests).toHaveLength(1);
+
+      run.requestStop();
+
+      const result = await decided(pending);
+      expect(result.behavior).toBe('deny');
+      expect(result.message).toBe(STOP_DENIAL_MESSAGE);
+    } finally {
+      stub.release();
+    }
+  });
+
+  // The distinction from cancel, at the SDK boundary: interrupting is what
+  // kills the agent mid-work, and a graceful stop must never do it — the run
+  // still owes us a closing turn and the `result` message that carries it.
+  it('leaves the session running rather than interrupting it', async () => {
+    const { run, stub } = startStopped();
+    try {
+      run.requestStop();
+      expect(stub.interrupts).toBe(0);
+      expect(stub.closes).toBe(0);
+
+      // Cancel, by contrast, does interrupt.
+      await run.interrupt();
+      expect(stub.interrupts).toBe(1);
+    } finally {
+      stub.release();
     }
   });
 });

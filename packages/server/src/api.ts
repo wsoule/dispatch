@@ -2654,6 +2654,18 @@ export async function handleApi(
         await ctx.orchestrator.cancel(segments[1]);
         return jsonResponse({ ok: true });
       }
+      // POST /api/runs/:id/stop — the graceful counterpart to cancel: the agent
+      // finishes what it is doing and then stops, so its work is committed.
+      // Returns the run's meta (now carrying `stopRequestedAt`) rather than
+      // `{ ok: true }`, since the marker is what the UI renders "Stopping…"
+      // from and the run is deliberately still live at this point.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'stop' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.orchestrator.requestStop(segments[1]));
+      }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
       }
