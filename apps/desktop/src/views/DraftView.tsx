@@ -51,8 +51,8 @@ interface DraftViewProps {
   /** The unwrapped create call — rejects on failure (unlike `data.handleCreate`) so a failed
    * save keeps this page open with the draft intact instead of discarding it. */
   onCreate: (input: CreateInput) => Promise<void>;
-  /** A `ready` draft — the drafts tray only ever opens this page for one, since a
-   * `running`/`failed` draft has no settled proposal to review. */
+  /** The draft being reviewed — may be `running` or `failed`, not just `ready`, since
+   * notifications, history restore, and the tray can all land here mid-turn. */
   draft: DraftRecord;
   onDone: () => void;
 }

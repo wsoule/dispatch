@@ -8,6 +8,9 @@ export type DraftTrayItemState = 'running' | 'ready' | 'failed';
 export interface DraftTrayItem {
   id: string;
   state: DraftTrayItemState;
+  /** Whether the tray row should open DraftView — always true when `ready`, and also true
+   * for a failed draft still holding questions, since that's the only route back in. */
+  openable: boolean;
   /** The proposed task's title once ready, the failure message once failed, or the original
    * prompt while still running — whatever is most useful to read at a glance. */
   label: string;
@@ -68,6 +71,7 @@ export function draftTrayViewModel(
     .map((draft) => ({
       id: draft.id,
       state: draft.state,
+      openable: draft.state === 'ready' || draft.questions.length > 0,
       label: labelFor(draft),
       taskCount: draft.proposal !== null ? draft.proposal.tasks.length : null,
       elapsed: formatElapsed(now - new Date(draft.createdAt).getTime()),
