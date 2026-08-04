@@ -1,4 +1,11 @@
-import { getSection, TaskStore } from '@dispatch/core';
+import {
+  getSection,
+  normalizeProjectPath,
+  readCredentials,
+  TaskStore,
+  writeCredential,
+  writeProjectCredential,
+} from '@dispatch/core';
 import type {
   LinearIssue,
   LinearIssueInput,
@@ -1374,5 +1381,39 @@ describe('LinearSync reporting', () => {
     expect(status.teamId).toBe('team-1');
     expect(status.lastSummary?.created).toBe(1);
     expect(JSON.stringify(status)).not.toContain('lin_api_do_not_leak');
+  });
+});
+
+describe('LinearSync credential scope', () => {
+  it('connect stores the key against this project, not the global slot', () => {
+    const sync = makeSync();
+    sync.connect('lin_api_project_key');
+
+    const file = readCredentials();
+    expect(file.linear).toBeUndefined();
+    expect(file.projects?.[normalizeProjectPath(root)]?.linear?.apiKey).toBe(
+      'lin_api_project_key'
+    );
+  });
+
+  it('disconnect clears only this project and falls back to the global key', () => {
+    writeCredential('linear', { apiKey: 'lin_api_global_key' });
+    const sync = makeSync();
+    sync.connect('lin_api_project_key');
+    expect(sync.status().keySource).toBe('project');
+
+    sync.disconnect();
+
+    expect(
+      readCredentials().projects?.[normalizeProjectPath(root)]
+    ).toBeUndefined();
+    expect(readCredentials().linear?.apiKey).toBe('lin_api_global_key');
+    expect(sync.status().keySource).toBe('global');
+  });
+
+  it('a project key beats LINEAR_API_KEY for the same daemon', () => {
+    process.env.LINEAR_API_KEY = 'lin_api_from_env';
+    writeProjectCredential(root, 'linear', { apiKey: 'lin_api_project_key' });
+    expect(makeSync().status().keySource).toBe('project');
   });
 });

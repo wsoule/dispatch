@@ -1,6 +1,5 @@
 import {
   ASSIGNEES,
-  clearCredential,
   ConfigError,
   getSection,
   KINDS,
@@ -9,7 +8,6 @@ import {
   TaskParseError,
   TaskStore,
   updateConfig,
-  writeCredential,
 } from '@dispatch/core';
 import type {
   ConfigPatch,
@@ -848,15 +846,15 @@ async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
   const apiKey = body.apiKey.trim();
   const result = await new HttpLinearClient(apiKey).viewer();
   if (!result.ok) return linearErrorResponse(result);
-  writeCredential('linear', { apiKey });
+  ctx.linearSync.connect(apiKey);
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse({ connected: true, viewer: result.data });
 }
 
-// POST /api/linear/disconnect — forget the stored key. A LINEAR_API_KEY in the
-// environment still wins afterwards, which `status.keySource` makes visible.
+// POST /api/linear/disconnect — forget this project's key. An environment or
+// machine-wide key still resolves afterwards, which `status.keySource` makes visible.
 function disconnectLinear(ctx: ApiContext): Response {
-  clearCredential('linear');
+  ctx.linearSync.disconnect();
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse(ctx.linearSync.status());
 }
