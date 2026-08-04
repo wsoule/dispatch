@@ -12,8 +12,10 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T00:58:01.189Z
-updated: 2026-07-27T03:33:04.235Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -41,3 +43,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T03:33:04.235Z Done in e4f874b and 03b44e0. Batch bar, per-item failure reporting and the local similarity check all landed (lib/inboxCluster.ts, 10 tests). Two notes. (1) Light stemming turned out to matter more than expected: "worktrees are eating disk" and "prune the worktree" share no term without folding the plural, and that is exactly the cluster the feature exists to catch — found by a failing test, not by inspection. (2) Scope grew on request: a second, model-backed clustering pass was added on Haiku (packages/server/src/inboxClusterer.ts + POST /api/inbox/cluster, 9 tests on the sanitiser). The two coexist deliberately — the local pass is free and instant so it runs on every render but only sees vocabulary; the Haiku pass sees meaning but costs a call, so it is an explicit button. Model output is sanitised before display: invented ids, ids claimed by two groups, and groups of one are dropped. NOT done: only ⌘⏎ is bound. The "t" and "x" single-key shortcuts were left out rather than half-wired — they need to be scoped to this view through useGlobalKeyboard and suppressed while any input has focus, and the rail's legend now lists only what is actually bound rather than promising two keys that do nothing.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

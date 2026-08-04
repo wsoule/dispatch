@@ -12,9 +12,10 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-28T19:37:43.606Z
-updated: 2026-08-03T23:19:33.056Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
 writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -38,3 +39,4 @@ Dropped rows: task_next, line-comment review, merge queue. They pulled the secti
 
 Verification: rendered at 1280 / 820 / 390 via CDP with a true emulated viewport — scrollWidth == clientWidth at all three, no page overflow. Panels go full width below 900px so five board columns still fit; pairs stack below 640px. Each panel names itself rather than sharing a header row (a shared row put "Dispatch" directly above the chat transcript once stacked). bun run format and lint:css clean; bun run lint has the same 223 warnings / 13 errors as main (pre-existing, TS-only — oxlint doesn't read HTML).
 - 2026-07-28T20:05:19.077Z [run r-21e3e6] finished: finished — 1 files, $7.43
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

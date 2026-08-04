@@ -11,8 +11,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:00:11.492Z
-updated: 2026-07-27T23:08:21.794Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -44,3 +46,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T23:08:21.794Z Done in 0d10361. lib/transcriptGutter.ts (22 tests) + TranscriptRow replace MessageBubble and ToolCard in the log. Tags are read/edit/run/think/says/you/sys — tools collapse into three by what they DO rather than surfacing thirty tool names, since "it read four files" is one fact. Two rules worth keeping: an unrecognised tool reads as `run`, not `read`, because an unknown tool is likelier to act than to look and the safer default is the one that draws the eye; and a failed entry's tone outranks its tag, because a failure is the thing you always want to find. The user's own turns deliberately KEEP the bubble treatment rather than becoming a `you` row — they are the one thing worth picking out at a glance and a bubble does that better. NOT DONE: no streaming caret on the in-flight entry (entries arrive whole from the normalizer; a partial-text stream would need the WS to emit token deltas). The pin-to-bottom / release-on-scroll behaviour was NOT re-implemented here — a concurrent session shipped it separately (see commit da393b7, "Runs session chat box should auto scroll to the bottom"), which resolves the overlap this task asked about.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

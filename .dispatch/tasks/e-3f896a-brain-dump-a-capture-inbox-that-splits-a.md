@@ -10,8 +10,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:53:55.134Z
-updated: 2026-07-27T23:11:42.440Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -40,3 +42,4 @@ Acceptance criteria:
 ## Activity
 - 2026-07-27T01:06:46.312Z Scope decision: Notes & triage is being removed. The epic's last acceptance criterion ("the overlap with Notes and triage is resolved explicitly") is hereby resolved — Brain dump replaces it as the single inbox and absorbs its store, its data, and the MCP dispatch_note agent channel. Added t-2814f8 to retire the old surface and migrate .dispatch/notes.json into .dispatch/inbox.md; commented on t-6f1d3a (the item model must carry createdByRunId, linkedTaskId and done state) and t-a0c9c0 (agent-flagged items must be distinguishable; do not build the link to the old triage list). Epic is now 6 tasks.
 - 2026-07-27T01:07:28.767Z Correction to the previous comment: the epic is 5 tasks, not 6 — t-6f1d3a (storage), t-22429b (API/SDK), t-a0c9c0 (view), t-04c990 (batch actions and clustering), t-2814f8 (remove Notes & triage and migrate).
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

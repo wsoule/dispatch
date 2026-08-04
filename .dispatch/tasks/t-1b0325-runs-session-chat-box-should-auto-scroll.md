@@ -10,8 +10,10 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-26T19:16:22.341Z
-updated: 2026-07-27T02:21:56.344Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -31,3 +33,4 @@ Verified: bun run format + lint (62 pre-existing repo-wide errors, identical wit
 Heads-up for other agents: my throwaway static server briefly used port 5199, which is also where run r-eb8624's vite dev server listens. No harm done (it's stopped), but pick an explicit non-default port for scratch servers.
 - 2026-07-26T19:29:03.427Z [run r-b1d725] finished: finished — 4 files, $4.08
 - 2026-07-27T02:21:56.344Z run r-b1d725 merged into main
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

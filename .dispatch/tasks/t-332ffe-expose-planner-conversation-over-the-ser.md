@@ -11,8 +11,10 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-26T19:06:42.662Z
-updated: 2026-07-26T22:01:48.745Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -35,3 +37,4 @@ Acceptance criteria:
 - 2026-07-26T20:40:18.282Z Done — committed 57c2000 on the task branch. Added a multi-turn conversation seam: Planner.converse() (FakePlanner scriptable + ClaudePlanner real SDK), PlanManager.sendMessage() storing the conversation on PlanRecord (state 'ready' + not-confirmed required; reply proposal re-validated), POST /api/plan/:id/message → {message, proposal} (400/404/409 via existing typed-error mapping), client SDK sendPlanMessage + PlanRecord.messages/PlanMessageResult types, and handleSendPlanMessage in useDispatchProject. Turn-based (awaits the planner turn like confirm()), broadcasts plan.changed. Tests: PlanManager.sendMessage unit + POST /api/plan/:id/message HTTP round-trip vs FakePlanner. Verified: full server suite (241 pass) + client (23 pass), tsc clean on server/client/desktop, format + lint (0 errors). NOTE: this task's base branch does not include the sibling backend task t-c8954b (blockedBy), so the conversation backend here is self-contained; integration with t-c8954b's seam may need reconciliation at merge time.
 - 2026-07-26T20:40:34.084Z [run r-3a34e9] finished: finished — 10 files, $6.44
 - 2026-07-26T22:01:48.745Z run r-3a34e9 merged into main
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

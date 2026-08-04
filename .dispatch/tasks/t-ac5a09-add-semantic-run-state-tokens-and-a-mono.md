@@ -10,8 +10,10 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:55:40.785Z
-updated: 2026-07-27T01:19:02.697Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -38,3 +40,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T01:19:02.697Z Done. Added a --state-{working,waiting,failed,review,landing,ready,blocked}-{fg,surface,edge} set to tokens.css, plus --amber-border/--red-border (derived via color-mix from the existing pair — green/blue/gray already shipped a border, those two didn't). Deviation from the acceptance criteria, deliberately: the state tokens are NOT restated in the prefers-color-scheme dark block. Every value forwards to a palette token that the dark block already overrides, so one definition covers both themes and the two can't drift — restating them would have been the bug this task exists to prevent. Also added --text-2xs (9.5px) / --text-meta (10.5px), --label-tracking / --meta-tracking, and --hairline plus four directional variants (inset shadows, so an edge costs no layout). The label and meta treatments landed as .dense-label / .dense-meta classes in global.css rather than Tailwind utilities, because each is size + tracking + family together and never varies independently; Tailwind's own text-xs/text-sm were left alone since 7 call sites rely on their defaults. Colors and shadows are re-exported to Tailwind via @theme inline in tailwind.css. Verified the utilities actually generate by building and grepping the emitted CSS (.shadow-hairline -> var(--hairline), .text-state-waiting -> var(--state-waiting-fg)). format/lint/tsc green, 218 desktop tests pass.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

@@ -4,14 +4,17 @@ title: Real-agent end-to-end validation of the headless loop
 status: done
 kind: task
 parent: e-ec195e
+milestone: null
 blocked-by: []
 labels:
   - testing
 priority: high
 assignee: none
 created: 2026-07-21T02:45:01.049Z
-updated: 2026-07-21T05:09:07.626Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -20,3 +23,4 @@ external: null
 
 ## Activity
 - 2026-07-21T05:09:07.625Z status → done
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

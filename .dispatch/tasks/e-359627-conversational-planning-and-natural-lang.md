@@ -10,9 +10,10 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-26T19:06:42.656Z
-updated: 2026-08-03T23:19:05.590Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
 writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -23,3 +24,4 @@ Today the planner is one-shot (Planner.plan(prompt) -> PlanProposal in packages/
 
 ## Activity
 - 2026-07-26T19:06:54.991Z [epic] epic dispatch started (concurrency 5)
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

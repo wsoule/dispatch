@@ -11,8 +11,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:59:51.943Z
-updated: 2026-07-28T00:09:56.574Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -45,3 +47,4 @@ Acceptance criteria:
 ## Activity
 - 2026-07-27T23:08:02.643Z Partially done in e16e199 — marking done because the verdicts, which are the substance, all work, but the tabs and sidebar do not exist as described. DONE: send-back now genuinely carries the review (note + every unresolved thread, rendered by formatCommentsForAgent) and resumes the agent on the same branch; the panel states how many threads will travel before you press it; merge/discard already existed on RunReviewView and are unchanged. NOT DONE: there is no Conversation tab, no Checks tab, and no verify/summary/timeline sidebar. Three of those describe data the app does not have — the merge queue runs ONE configured verify command as a single phase, so there is no per-check list with names and durations to render, no per-step log to show, and no agent-authored summary field anywhere in RunMeta. The timeline could be assembled from run metadata and would be real; it just was not built. Recommend re-scoping this into (a) a timeline strip from real run events, and (b) a separate server task to instrument verify into named sub-steps, if a Checks tab is genuinely wanted — the UI cannot invent the data.
 - 2026-07-28T00:09:56.574Z Update on the Checks tab, which I said was not buildable: it is now, because the data exists (523a16e). A project can configure `verifySteps: [{name, command}]` in .dispatch/config.yml; the queue runs each in order, records pass/fail plus a duration per step on the entry, stops at the first failure, and names the failing step in the error rather than reporting a generic "verify failed". Landing's strip already renders those real steps while an entry is verifying. What is still NOT built is a dedicated Checks TAB inside Review — the per-step data is there to drive one, but it belongs to a queued entry rather than to the run being reviewed, so the natural home is Landing (where it already shows) rather than the review surface. Worth a small follow-up only if you want the step list visible while reading the diff. The Conversation tab remains deliberately unbuilt: ReviewCommentsPanel indexes every thread beside the diff, so a separate tab for the same list would be a second place to read one thing.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

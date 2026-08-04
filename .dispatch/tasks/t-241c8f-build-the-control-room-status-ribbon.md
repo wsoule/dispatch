@@ -11,8 +11,10 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:56:14.726Z
-updated: 2026-07-27T01:31:28.576Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -40,3 +42,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T01:31:28.576Z Done in d2df8f8, with two deviations from the description. (1) The "oldest N frozen" / "unhandled" secondary lines were dropped: elapsed already appears per-row in the feed directly below, and a second clock in the ribbon duplicated it without adding a decision. (2) Landing does not navigate away — landing runs ARE in the feed, so its cell filters like the other four run states; only ready and blocked navigate to Tasks, since those are tasks with no run and would never appear in the feed. Urgent cells tint only when non-zero (ControlRibbon's `alarmed`), so a calm repo reads calm. Counts come from buildFeed over the unfiltered set and are covered by controlRoom.test.ts.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

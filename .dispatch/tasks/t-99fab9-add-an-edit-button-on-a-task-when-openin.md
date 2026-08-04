@@ -11,9 +11,10 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-03T23:08:17.867Z
-updated: 2026-08-04T16:40:15.328Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
 writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -29,3 +30,4 @@ writes: []
 - 2026-08-04T00:14:27.961Z Committed: build(deps) pinning @pierre/diffs 1.3.1, and feat(core,server) adding UpdatePatch.body + normalizeBody + validation with 7 new tests. Verified core 332/332, server api.test.ts 41/41, decideBodySave 4/4, format clean, lint 0 errors; three guards mutation-tested (1 failure each on revert). Two unrelated pre-existing failures on this host: a server executor test resolving an installed /Applications/Dispatch.app sidecar instead of 'bun', and three desktop webkitFloor tests gated on an unbuilt dist/. Desktop commit is written but deliberately uncommitted — its only type errors are the four @pierre/diffs/edit imports in TaskBodyEditor.tsx, which resolve once bunfig.toml's minimumReleaseAgeExcludes gains @pierre/diffs and bun install runs. TaskDetailDialog.tsx and taskBodyEdit.ts already typecheck clean. — none
 - 2026-08-04T00:14:49.351Z [run r-fd81a8] finished: finished — 10 files, $20.58 — agent:wsoule679/claude
 - 2026-08-04T16:40:15.302Z status → done — human:wsoule679
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679
