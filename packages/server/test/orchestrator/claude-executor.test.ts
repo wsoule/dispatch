@@ -821,7 +821,7 @@ describe('buildCartoMcpServerConfig', () => {
   it('passes only allowlisted environment variables', () => {
     const config = buildCartoMcpServerConfig('/proj', {
       path: '/opt/homebrew/bin/carto',
-      version: '2.1.3',
+      version: '2.1.4',
     }) as McpStdioServerConfig;
     expect(config.type).toBe('stdio');
     // McpStdioServerConfig has no `cwd` field, so carto must be spawned
@@ -838,7 +838,7 @@ describe('buildCartoMcpServerConfig', () => {
   it('never widens the tool tier', () => {
     const config = buildCartoMcpServerConfig('/proj', {
       path: '/opt/homebrew/bin/carto',
-      version: '2.1.3',
+      version: '2.1.4',
     }) as McpStdioServerConfig;
     expect(config.env?.CARTO_MCP_TIER).toBeUndefined();
     expect(JSON.stringify(config)).not.toContain('CARTO_MCP_TIER');
@@ -847,7 +847,7 @@ describe('buildCartoMcpServerConfig', () => {
   it('roots carto at the project, never at a run worktree', () => {
     const config = buildCartoMcpServerConfig('/proj', {
       path: '/opt/homebrew/bin/carto',
-      version: '2.1.3',
+      version: '2.1.4',
     });
     expect(JSON.stringify(config)).toContain('/proj');
   });
@@ -863,7 +863,7 @@ describe('buildCartoMcpServerConfig', () => {
     const maliciousRoot = '/tmp/proj$(touch /tmp/should-not-exist)';
     const config = buildCartoMcpServerConfig(maliciousRoot, {
       path: '/opt/homebrew/bin/carto',
-      version: '2.1.3',
+      version: '2.1.4',
     }) as McpStdioServerConfig;
     const script = config.args?.[1] ?? '';
     // The payload must not appear inside the `-c` script text itself...
@@ -879,10 +879,10 @@ describe('buildCartoMcpServerConfig', () => {
 // prove is the config decision, not whatever carto this machine happens to
 // have. packages/cli's preload sets DISPATCH_CARTO_DISABLED when `bun test`
 // runs from the repo root; it is lifted for the duration of `fn`.
-function withStubCarto<T>(fn: () => T): T {
+function withStubCarto<T>(fn: () => T, version = '2.1.4'): T {
   const binDir = mkdtempSync(join(tmpdir(), 'dispatch-carto-bin-'));
   const stub = join(binDir, 'carto');
-  writeFileSync(stub, '#!/bin/sh\necho "carto-md 2.1.3"\n');
+  writeFileSync(stub, `#!/bin/sh\necho "carto-md ${version}"\n`);
   chmodSync(stub, 0o755);
   const originalPath = process.env.PATH;
   const originalDisabled = process.env.DISPATCH_CARTO_DISABLED;
@@ -939,6 +939,21 @@ describe('carto MCP entry honors carto.enabled', () => {
       writeFileSync(join(root, '.dispatch', 'config.yml'), 'statuses: [a\n');
       const servers = withStubCarto(() => cartoMcpServers(root));
       expect(Object.keys(servers)).toEqual(['carto']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Below 2.1.4, `carto serve` starts but never connects its stdio transport
+  // (carto#9), so the entry would cost every run an MCP server that answers
+  // nothing. Blast radius still works there — that path reads the container
+  // as a library, not over MCP.
+  it('contributes nothing when carto is too old to connect its MCP transport', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-proj-'));
+    try {
+      writeCartoConfig(root, 'on');
+      const servers = withStubCarto(() => cartoMcpServers(root), '2.1.3');
+      expect(Object.keys(servers)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
