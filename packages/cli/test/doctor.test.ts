@@ -2,14 +2,16 @@ import { TaskStore } from '@dispatch/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 
 import { type CliContext, CliError } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
@@ -49,6 +51,34 @@ function runDoctor(root: string) {
     // doctor throws CliError when issues are found; irrelevant here
   }
   return out.join('\n');
+}
+
+// Puts a discoverable `carto` stub on PATH for the duration of `fn`: it
+// answers `--version` with 2.1.4 and `doctor --json` with `health`, so the
+// health-reporting tests prove doctor's own decision rather than whatever
+// carto the machine running them happens to have. test/setup.ts's
+// suite-wide DISPATCH_CARTO_DISABLED is lifted and restored around it.
+function withStubCarto<T>(health: string, fn: () => T): T {
+  const binDir = mkdtempSync(join(tmpdir(), 'dispatch-carto-bin-'));
+  const stub = join(binDir, 'carto');
+  writeFileSync(
+    stub,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo "carto-md 2.1.4"\nelse\n  cat <<'CARTO_JSON'\n${health}\nCARTO_JSON\nfi\n`
+  );
+  chmodSync(stub, 0o755);
+  const originalPath = process.env.PATH;
+  const originalDisabled = process.env.DISPATCH_CARTO_DISABLED;
+  process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`;
+  delete process.env.DISPATCH_CARTO_DISABLED;
+  try {
+    return fn();
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalDisabled !== undefined) {
+      process.env.DISPATCH_CARTO_DISABLED = originalDisabled;
+    }
+    rmSync(binDir, { recursive: true, force: true });
+  }
 }
 
 beforeEach(async () => {
@@ -203,6 +233,45 @@ describe('doctor', () => {
     // exists to expose.
     const root = writeProject({ 'main.go': 'package main\n' });
     const out = runDoctor(root);
+    expect(out).toContain('dependency map');
+  });
+
+  // `carto --version` loads no native module, so an install whose bindings
+  // never built reports a healthy version string while every `carto init`
+  // dies. doctor therefore runs carto's own `doctor --json`, which does load
+  // them.
+  it('reports a carto whose native build is broken, with the fix carto itself suggests', () => {
+    const root = writeProject({ 'src/a.ts': 'export const a = 1;\n' });
+    const out = withStubCarto(
+      `{ "results": [ { "id": "native-tree-sitter", "status": "fail", "label": "Native module: tree-sitter", "detail": "failed: No native build was found", "fix": "Reinstall the package: npm install -g carto-md" } ], "ok": false }`,
+      () => runDoctor(root)
+    );
+    expect(out).toContain('Native module: tree-sitter');
+    expect(out).toContain('No native build was found');
+    expect(out).toContain('Reinstall the package');
+    expect(out).toContain('built-in dependency scanner');
+  });
+
+  it('stays quiet about health when the carto install works', () => {
+    const root = writeProject({ 'src/a.ts': 'export const a = 1;\n' });
+    const out = withStubCarto(
+      `{ "results": [ { "id": "native-tree-sitter", "status": "ok", "label": "Native module: tree-sitter", "detail": "loaded", "fix": null } ], "ok": true }`,
+      () => runDoctor(root)
+    );
+    expect(out).toContain('carto 2.1.4 at ');
+    expect(out).not.toContain('Native module');
+    expect(out).not.toContain('built-in dependency scanner');
+  });
+
+  // A broken carto leaves the dependency map as empty as a missing one, so
+  // on a repo the built-in scanner can't read either, the warning must still
+  // fire — `discovery.ok` alone would suppress it.
+  it('warns about an empty dependency map when carto is broken and there are no TypeScript sources', () => {
+    const root = writeProject({ 'main.go': 'package main\n' });
+    const out = withStubCarto(
+      `{ "results": [ { "id": "native-tree-sitter", "status": "fail", "label": "Native module: tree-sitter", "detail": "failed", "fix": null } ], "ok": false }`,
+      () => runDoctor(root)
+    );
     expect(out).toContain('dependency map');
   });
 

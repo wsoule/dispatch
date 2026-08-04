@@ -19,7 +19,7 @@ Two planes, one app:
 
 ## License
 
-Apache-2.0, like the rest of this repository.
+FSL-1.1-ALv2, like the rest of this repository — see the root `LICENSE`.
 
 ## Dev workflow
 

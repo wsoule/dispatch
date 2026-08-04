@@ -4,12 +4,14 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
-import { delimiter, join } from 'node:path';
+import { homedir } from 'node:os';
+import { delimiter, dirname, join } from 'node:path';
 
 /** The carto binary Dispatch found, and the version it reported. */
 export interface CartoBinary {
@@ -90,7 +92,7 @@ export function discoverCarto(
       detail: `\`carto --version\` exited ${String(probe.status)}`,
     };
   }
-  // The real CLI prints `${pkg.name} ${pkg.version}` ("carto-md 2.1.3"), not
+  // The real CLI prints `${pkg.name} ${pkg.version}` ("carto-md 2.1.4"), not
   // a bare number, so the version is pulled out of the trailing dotted-digit
   // group rather than assumed to be the whole line.
   const rawOutput = (probe.stdout ?? '').trim();
@@ -105,6 +107,99 @@ export function discoverCarto(
     };
   }
   return { ok: true, binary: { path: found, version } };
+}
+
+// carto 2.1.4 is the first release whose `carto serve` connects its stdio
+// transport. Before it, reaching serve through the `carto` bin left
+// server.js's `require.main === module` guard false, so the MCP server
+// started and then answered nothing (carto#9) — an entry worth withholding
+// rather than spawning dead into every run.
+const MIN_MCP_VERSION = [2, 1, 4];
+
+// Compares a dotted-digit version against that floor part by part. Missing
+// parts count as 0, so "2.2" clears it and "2.1" does not, and an
+// unparseable version is treated as too old rather than assumed current.
+export function supportsMcpServe(version: string): boolean {
+  const parts = version.split('.').map((part) => Number.parseInt(part, 10));
+  if (parts.some((part) => Number.isNaN(part))) return false;
+  for (const [index, min] of MIN_MCP_VERSION.entries()) {
+    const part = parts[index] ?? 0;
+    if (part !== min) return part > min;
+  }
+  return true;
+}
+
+/** One failed check from `carto doctor --json`. */
+export interface CartoHealthFailure {
+  id: string;
+  label: string;
+  detail: string;
+  fix: string | null;
+}
+
+export type CartoHealth =
+  | { ok: true }
+  | { ok: false; reason: 'unhealthy'; failures: CartoHealthFailure[] }
+  | { ok: false; reason: 'unreadable'; detail: string };
+
+// A missing container is a policy state — `carto.enabled: detect` never
+// builds one, and `on` builds it on demand — so it says nothing about
+// whether the install itself works.
+const HEALTH_IGNORED_CHECKS = new Set(['index-exists']);
+
+function readString(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+// Runs `carto doctor --json` to actually exercise the binary. Discovery's
+// `--version` probe loads no native module, so a carto whose better-sqlite3
+// or tree-sitter bindings never built reports a healthy version string while
+// every `carto init` dies. Output that isn't the expected JSON — an older 2.x
+// with no `--json`, or a carto that died before printing — is reported as
+// unreadable rather than broken.
+export function checkCartoHealth(
+  projectRoot: string,
+  binary: CartoBinary
+): CartoHealth {
+  const run = spawnSync(binary.path, ['doctor', '--json'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  });
+  if (run.error !== undefined) {
+    return { ok: false, reason: 'unreadable', detail: run.error.message };
+  }
+  // Exit status is not the signal: doctor exits 1 for a missing index alone.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(run.stdout ?? '');
+  } catch {
+    return {
+      ok: false,
+      reason: 'unreadable',
+      detail: '`carto doctor --json` did not produce JSON',
+    };
+  }
+  const results = (parsed as { results?: unknown }).results;
+  if (!Array.isArray(results)) {
+    return {
+      ok: false,
+      reason: 'unreadable',
+      detail: '`carto doctor --json` reported no checks',
+    };
+  }
+  const failures: CartoHealthFailure[] = [];
+  for (const entry of results as Record<string, unknown>[]) {
+    const id = readString(entry.id, 'unknown');
+    if (entry.status !== 'fail' || HEALTH_IGNORED_CHECKS.has(id)) continue;
+    failures.push({
+      id,
+      label: readString(entry.label, id),
+      detail: readString(entry.detail, 'failed'),
+      fix: typeof entry.fix === 'string' ? entry.fix : null,
+    });
+  }
+  if (failures.length > 0) return { ok: false, reason: 'unhealthy', failures };
+  return { ok: true };
 }
 
 /** One `blastRadius()` response. Key names are pinned by the recorded
@@ -232,11 +327,84 @@ function ensureCartoIgnored(projectRoot: string): void {
   }
 }
 
+// Every MCP config `carto init` auto-wires itself into. It has no opt-out
+// flag, and detection is directory-based, so the only containment is to put
+// each file back afterward.
+function mcpWiringTargets(projectRoot: string, home: string): string[] {
+  const claudeDesktop =
+    process.platform === 'darwin'
+      ? join(
+          home,
+          'Library',
+          'Application Support',
+          'Claude',
+          'claude_desktop_config.json'
+        )
+      : process.platform === 'win32'
+        ? join(
+            process.env.APPDATA ?? join(home, 'AppData', 'Roaming'),
+            'Claude',
+            'claude_desktop_config.json'
+          )
+        : join(home, '.config', 'Claude', 'claude_desktop_config.json');
+  return [
+    join(home, '.cursor', 'mcp.json'),
+    join(home, '.kiro', 'settings', 'mcp.json'),
+    join(home, '.codex', 'config.toml'),
+    join(home, '.codeium', 'windsurf', 'mcp_config.json'),
+    claudeDesktop,
+    // Dispatch's own: `dispatch init` writes the dispatch server here.
+    join(projectRoot, '.mcp.json'),
+    join(projectRoot, '.vscode', 'mcp.json'),
+  ];
+}
+
+interface FileSnapshot {
+  path: string;
+  content: string | null;
+  dirExisted: boolean;
+}
+
+function snapshotFiles(paths: readonly string[]): FileSnapshot[] {
+  return paths.map((path) => {
+    let content: string | null = null;
+    try {
+      if (existsSync(path)) content = readFileSync(path, 'utf8');
+    } catch {
+      // Unreadable means unrestorable; treated as absent below.
+    }
+    return { path, content, dirExisted: existsSync(dirname(path)) };
+  });
+}
+
+// Puts each snapshotted file back, deleting the ones that weren't there
+// before along with any directory created to hold them. Best-effort
+// throughout: a config Dispatch can't rewrite must not fail the index.
+function restoreFiles(snapshots: readonly FileSnapshot[]): void {
+  for (const snapshot of snapshots) {
+    try {
+      if (snapshot.content !== null) {
+        if (readFileSync(snapshot.path, 'utf8') !== snapshot.content) {
+          writeFileSync(snapshot.path, snapshot.content);
+        }
+        continue;
+      }
+      if (!existsSync(snapshot.path)) continue;
+      unlinkSync(snapshot.path);
+      if (!snapshot.dirExisted) rmdirSync(dirname(snapshot.path));
+    } catch {
+      // Leaves this one config wired; the container still built.
+    }
+  }
+}
+
 // Runs carto init, containing its side effects on files Dispatch owns:
-// AGENTS.md is snapshotted/restored around the call, then hooks are pinned.
+// AGENTS.md and every MCP config carto auto-wires are snapshotted/restored
+// around the call, then hooks are pinned.
 export function cartoInit(
   projectRoot: string,
-  binary: CartoBinary
+  binary: CartoBinary,
+  home: string = homedir()
 ): CartoRunResult {
   const agents = join(projectRoot, 'AGENTS.md');
   const backup = join(projectRoot, '.carto-agents-backup');
@@ -252,10 +420,12 @@ export function cartoInit(
     }
   }
 
+  const wiring = snapshotFiles(mcpWiringTargets(projectRoot, home));
   const run = spawnSync(binary.path, ['init'], {
     cwd: projectRoot,
     encoding: 'utf8',
   });
+  restoreFiles(wiring);
 
   if (hadAgents) {
     try {
