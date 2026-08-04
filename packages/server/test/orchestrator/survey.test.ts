@@ -1,12 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -60,14 +54,20 @@ function makeOrchestrator(rootDir: string): {
   return { orchestrator, store };
 }
 
-// A `pre-commit` hook that always refuses, installed in the main repo's
-// shared hooks dir — makes the auto-commit safety net a no-op in a worktree.
-function installRejectingPreCommitHook(repoDir: string): void {
-  const hooksDir = join(repoDir, '.git', 'hooks');
-  mkdirSync(hooksDir, { recursive: true });
-  const hookPath = join(hooksDir, 'pre-commit');
-  writeFileSync(hookPath, '#!/bin/sh\nexit 1\n');
-  chmodSync(hookPath, 0o755);
+/**
+ * Makes the auto-commit safety net genuinely fail, so a run reaches its
+ * terminal state with work still sitting in the worktree.
+ *
+ * An empty identity, rather than the rejecting `pre-commit` hook this used to
+ * install: the safety net commits with `--no-verify` (a run worktree has no
+ * node_modules, so a project's own hooks fail there for reasons that have
+ * nothing to do with the content), which means a hook is no longer able to
+ * strand a run's work — the case this file is about. `git commit` still refuses
+ * outright with no author, and leaves the `git add -A` staged behind it.
+ */
+function breakGitIdentity(repoDir: string): void {
+  runGitSync(repoDir, ['config', 'user.email', '']);
+  runGitSync(repoDir, ['config', 'user.name', '']);
 }
 
 // Starts and just sits there — never calls onFinish on its own — so a
@@ -144,7 +144,7 @@ describe('Orchestrator.surveyRun', () => {
 
 describe('Orchestrator agent-death recovery', () => {
   it('marks a failed run with leftover uncommitted work as interrupted-dirty', async () => {
-    installRejectingPreCommitHook(repo);
+    breakGitIdentity(repo);
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
       'fake',
@@ -170,7 +170,10 @@ describe('Orchestrator agent-death recovery', () => {
     );
 
     const run = orchestrator.getRun(meta.id)!;
-    expect(run.meta.error).toBe('connection dropped');
+    // The executor's own diagnosis survives; the commit failure is appended,
+    // not substituted for it.
+    expect(run.meta.error).toContain('connection dropped');
+    expect(run.meta.error).toContain('finish failed');
     expect(run.meta.survey?.cleanTree).toBe(false);
     // autoCommitIfDirty's `git add -A` still ran (only the doomed `commit`
     // failed), so the file shows up staged rather than untracked.
@@ -187,7 +190,7 @@ describe('Orchestrator agent-death recovery', () => {
   });
 
   it("resumes a dirty run into the same worktree with the survey in the agent's prompt", async () => {
-    installRejectingPreCommitHook(repo);
+    breakGitIdentity(repo);
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
       'fake',

@@ -2661,9 +2661,16 @@ export class Orchestrator {
       // and then silently vanishing once the worktree is removed.
       this.autoCommitIfDirty(meta.worktreePath, runId);
     } catch (err) {
+      // Keeps the executor's own report rather than replacing it: when the run
+      // already failed, "connection dropped" is the diagnosis and the commit
+      // problem is a consequence. The cost/turns/sessionId it measured are real
+      // either way, and a survey of the still-dirty worktree follows below.
+      const detail = `finish failed: ${(err as Error).message}`;
       effectiveFinish = {
+        ...finish,
         state: 'failed',
-        error: `finish failed: ${(err as Error).message}`,
+        error:
+          finish.error === undefined ? detail : `${finish.error}; ${detail}`,
       };
     }
 
