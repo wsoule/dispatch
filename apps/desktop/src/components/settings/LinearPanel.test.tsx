@@ -6,13 +6,16 @@ import { dataWith } from './fixtures.test-helper';
 import { LinearPanel } from './LinearPanel';
 
 // An env key can't be disconnected from here, so the row that offers to isn't shown at all —
-// only the note explaining where the key came from, next to a still-open connect input.
-test('an env-sourced key hides Disconnect and says where the key came from', () => {
+// only the note explaining where the key came from, next to a still-open connect input. The
+// rest of the sync settings (team picker etc.) must still render — this project is connected,
+// just not on its own key.
+test('an env-sourced key hides Disconnect, says where the key came from, and keeps sync settings', () => {
   render(
     <LinearPanel data={dataWith({ keySource: 'env', connected: true })} />
   );
   expect(screen.queryByRole('button', { name: /Disconnect/ })).toBeNull();
   expect(screen.getByText(/LINEAR_API_KEY/)).toBeDefined();
+  expect(screen.getByRole('combobox', { name: 'Team' })).toBeDefined();
 });
 
 // The reported symptom: the picker opened with nothing in it and no reason.
