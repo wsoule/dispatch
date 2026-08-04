@@ -26,7 +26,11 @@ type Annotation =
 interface PierreReviewDiffProps {
   patch: string;
   comments: ReviewComment[];
-  onAdd: (input: {
+  /**
+   * Where a new line comment goes. Omit it when there is nowhere to put one
+   * (a GitHub PR) and the gutter's "+" is withheld rather than left dead.
+   */
+  onAdd?: (input: {
     file: string;
     line: number;
     startLine?: number;
@@ -182,7 +186,7 @@ export function PierreReviewDiff({
             startLine={meta.startLine}
             onCancel={() => setComposing(null)}
             onSubmit={(body) => {
-              void onAdd({
+              void onAdd?.({
                 file: meta.file,
                 line: composing?.line ?? 0,
                 startLine: meta.startLine,
@@ -317,7 +321,11 @@ export function PierreReviewDiff({
             )
           }
           renderAnnotation={renderAnnotation}
-          renderGutterUtility={renderGutterUtility}
+          // No `onAdd` means no destination for a comment, so the hover "+"
+          // that starts one is not offered at all.
+          renderGutterUtility={
+            onAdd === undefined ? undefined : renderGutterUtility
+          }
           // `CodeView` attaches its own scroll listener to this exact element and reads its
           // own `scrollTop` to decide which virtualized rows to render — an ancestor owning
           // the `overflow-auto` instead leaves this element's `scrollTop` permanently 0, so

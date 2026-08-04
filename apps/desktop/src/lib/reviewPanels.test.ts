@@ -12,11 +12,26 @@ describe('review panel state', () => {
     expect(readPanelOpen('threads')).toBe(false);
   });
 
+  // The PR rail is the only place a PR can be approved, so a reviewer who has
+  // never touched a panel toggle must still land on it.
+  test('the PR review rail defaults open', () => {
+    expect(readPanelOpen('review')).toBe(true);
+  });
+
+  // The rails are separate keys precisely so a run review's closed thread list
+  // cannot hide a PR's only review affordance.
+  test('closing the thread list leaves the PR rail open', () => {
+    writePanelOpen('threads', false);
+    expect(readPanelOpen('review')).toBe(true);
+  });
+
   test('a written value round-trips', () => {
     writePanelOpen('files', false);
     expect(readPanelOpen('files')).toBe(false);
     writePanelOpen('threads', true);
     expect(readPanelOpen('threads')).toBe(true);
+    writePanelOpen('review', false);
+    expect(readPanelOpen('review')).toBe(false);
   });
 
   test('the panels are stored independently', () => {

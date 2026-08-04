@@ -119,6 +119,10 @@ class StubRunner {
   };
   reviewResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   commentResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  // `gh pr diff`/`gh api …/files` results getPrDiffByUrl reads — distinct
+  // from `apiResult` above (the line-comments call).
+  diffResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  filesResult: CommandResult = { ok: true, stdout: '[]', stderr: '' };
   // `gh pr list --json …` result listRepoPrs parses — one open PR by
   // default, shaped exactly like gh's real output (author as a `{login}`
   // object, camelCase field names).
@@ -130,9 +134,18 @@ class StubRunner {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        headRefOid: '',
         author: { login: 'teammate' },
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
+        isCrossRepository: false,
+        headRepositoryOwner: { login: 'someone' },
+        reviewDecision: null,
+        mergeable: null,
+        statusCheckRollup: [],
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
       },
     ]),
     stderr: '',
@@ -154,6 +167,17 @@ class StubRunner {
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'comment') {
       return this.commentResult;
+    }
+    if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'diff') {
+      return this.diffResult;
+    }
+    // '--paginate' precedes the path, so the endpoint is the last argument.
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      (cmd.at(-1)?.endsWith('/files') ?? false)
+    ) {
+      return this.filesResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === 'api') {
       return this.apiResult;
@@ -677,6 +701,20 @@ describe('PrManager.listRepoPrs', () => {
         author: 'teammate',
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
+        headRefOid: '',
+        isCrossRepository: false,
+        headRepositoryOwner: 'someone',
+        reviewDecision: null,
+        mergeable: null,
+        checks: {
+          passed: 0,
+          failed: 0,
+          pending: 0,
+          total: 0,
+        },
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
       },
     ]);
     const listCall = stub.calls.find(
@@ -687,7 +725,9 @@ describe('PrManager.listRepoPrs', () => {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,author,isDraft,updatedAt',
+      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
+        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
+        'statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -724,5 +764,156 @@ describe('PrManager.listRepoPrs', () => {
     const pr = new PrManager(harness, true, stub.run);
 
     await expect(pr.listRepoPrs()).rejects.toThrow(/invalid JSON/);
+  });
+
+  it('carries GitHub status through so the queue never needs a per-PR view call', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        {
+          number: 9,
+          title: 'Repo PR from someone else',
+          url: 'https://github.com/example/repo/pull/9',
+          headRefName: 'feature/someone-else',
+          headRefOid: 'abc123',
+          author: { login: 'teammate' },
+          isDraft: true,
+          updatedAt: '2026-07-22T00:00:00Z',
+          isCrossRepository: true,
+          headRepositoryOwner: { login: 'contributor' },
+          reviewDecision: 'CHANGES_REQUESTED',
+          mergeable: 'CONFLICTING',
+          statusCheckRollup: [
+            { conclusion: 'SUCCESS' },
+            { conclusion: 'FAILURE' },
+            { status: 'IN_PROGRESS' },
+          ],
+          additions: 12,
+          deletions: 3,
+          changedFiles: 2,
+        },
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const prs = await pr.listRepoPrs();
+
+    expect(prs[0]?.checks).toEqual({
+      passed: 1,
+      failed: 1,
+      pending: 1,
+      total: 3,
+    });
+    expect(prs[0]?.reviewDecision).toBe('CHANGES_REQUESTED');
+    expect(prs[0]?.mergeable).toBe('CONFLICTING');
+    expect(prs[0]?.isCrossRepository).toBe(true);
+    expect(prs[0]?.headRepositoryOwner).toBe('contributor');
+    expect(prs[0]?.headRefOid).toBe('abc123');
+  });
+
+  it('asks gh for the status fields in the same single list call', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.listRepoPrs();
+
+    const listCall = stub.calls.find((c) => c.cmd[2] === 'list');
+    const fields = listCall?.cmd[listCall.cmd.indexOf('--json') + 1] ?? '';
+    expect(fields).toContain('statusCheckRollup');
+    expect(fields).toContain('isCrossRepository');
+    expect(fields).toContain('headRefOid');
+    // One call total — a per-PR `gh pr view` for status is what this avoids.
+    expect(stub.calls.filter((c) => c.cmd[2] === 'view')).toHaveLength(0);
+  });
+});
+
+describe('PrManager.getPrDiffByUrl', () => {
+  const url = 'https://github.com/example/repo/pull/9';
+
+  it('builds a DiffResult from the patch and the files list', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.diffResult = {
+      ok: true,
+      stdout: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n',
+      stderr: '',
+    };
+    stub.filesResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        { filename: 'src/a.ts', status: 'modified' },
+        { filename: 'src/b.ts', status: 'added' },
+        { filename: 'src/c.ts', status: 'removed' },
+        { filename: 'src/d.ts', status: 'renamed' },
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const diff = await pr.getPrDiffByUrl(url);
+
+    expect(diff.patch).toContain('+new');
+    expect(diff.files).toEqual([
+      { path: 'src/a.ts', status: 'M' },
+      { path: 'src/b.ts', status: 'A' },
+      { path: 'src/c.ts', status: 'D' },
+      { path: 'src/d.ts', status: 'R' },
+    ]);
+  });
+
+  it('conflicts when gh pr diff fails rather than returning an empty diff', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.diffResult = { ok: false, stdout: '', stderr: 'no such PR' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.getPrDiffByUrl(url)).rejects.toBeInstanceOf(
+      OrchestratorConflictError
+    );
+  });
+
+  // Regression coverage for the no-base-to-string fix: a malformed files
+  // entry (a filename that isn't a string) must throw rather than silently
+  // stringify to "[object Object]" and render as a fake file path.
+  it('conflicts when a files entry has a non-string filename rather than stringifying it', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.diffResult = {
+      ok: true,
+      stdout: 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-old\n+new\n',
+      stderr: '',
+    };
+    stub.filesResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        { filename: { nested: 'not-a-string' }, status: 'modified' },
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.getPrDiffByUrl(url)).rejects.toBeInstanceOf(
+      OrchestratorConflictError
+    );
+  });
+
+  it('conflicts when the gh api pulls/files call fails', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.diffResult = {
+      ok: true,
+      stdout: 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-old\n+new\n',
+      stderr: '',
+    };
+    stub.filesResult = { ok: false, stdout: '', stderr: 'forbidden' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.getPrDiffByUrl(url)).rejects.toBeInstanceOf(
+      OrchestratorConflictError
+    );
   });
 });
