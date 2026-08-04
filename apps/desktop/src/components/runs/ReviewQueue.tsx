@@ -132,11 +132,18 @@ function Row({
  * The runs a human still has to look at: finished-but-unreviewed work, plus
  * anything with a PR still open. Sorted newest first so the queue reads like an
  * inbox rather than an archaeology dig.
+ *
+ * Execute runs only. A review or verify agent produces its own `RunMeta` that is
+ * finished and never gets `reviewedAt` — nothing reviews a reviewer — so without
+ * this filter every AI review permanently added a second row for work the queue
+ * was already listing, under the same task title. That is the same fold
+ * lib/controlRoom.ts applies to the Control room feed.
  */
 export function buildReviewQueue(runs: RunMeta[]): ReviewQueueItem[] {
   return runs
     .filter(
       (r) =>
+        (r.kind ?? 'execute') === 'execute' &&
         r.archivedAt === undefined &&
         (r.prUrl !== undefined ||
           (r.state === 'finished' && r.reviewedAt === undefined))
