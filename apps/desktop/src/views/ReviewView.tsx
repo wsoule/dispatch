@@ -1,7 +1,15 @@
-import { ArrowLeft, Check } from 'lucide-react';
+import type { RepoPr, ReviewComment } from '@dispatch/client';
+import { useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Check, ExternalLink } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
+import { PrReviewPanel } from '../components/runs/PrReviewPanel';
+import {
+  PrChecksPill,
+  REVIEW_VERDICT,
+  StatusPill,
+} from '../components/runs/PrStatusPills';
 import { ReviewCasePanel } from '../components/runs/ReviewCasePanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { buildReviewQueue, ReviewQueue } from '../components/runs/ReviewQueue';
@@ -9,17 +17,21 @@ import { ReviewThreadIndex } from '../components/runs/ReviewThreadIndex';
 import { ReviewVerdictBar } from '../components/runs/ReviewVerdictBar';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { repoPrsKey } from '../hooks/useDispatchProject';
 import {
   useEpicLedger,
   useProjectLedger,
   useTaskFindings,
 } from '../hooks/useOrchestration';
+import { useRepoPrDetail } from '../hooks/useRepoPrDetail';
 import { deriveFeedState } from '../lib/feedState';
 import { countOpenFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { openFindingsByFile } from '../lib/reviewAttention';
 import { caseWarnings, summarizeCase } from '../lib/reviewCase';
 import { readPanelOpen, writePanelOpen } from '../lib/reviewPanels';
+import type { ReviewTarget } from '../lib/reviewTarget';
+import { reviewTargetKey } from '../lib/reviewTarget';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
 import { cn } from '@/lib/utils';
@@ -32,12 +44,17 @@ interface ReviewViewProps {
   /** Which run is open. Null shows the queue, which is the screen's real home. */
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
-  /** Renders a run whose diff lives on GitHub — Pull requests moved in here. */
-  renderPr: (runId: string) => React.ReactNode;
 }
 
+// How often the open-PR list is re-fetched while this page is on screen.
+const REPO_PRS_POLL_MS = 60_000;
+
+// One shared empty list, so a PR target's comment props keep a stable identity
+// across renders rather than invalidating the memos below on every one.
+const NO_COMMENTS: ReviewComment[] = [];
+
 /**
- * Reviewing one run's work, full-page.
+ * Reviewing one run's work — or one pull request's — full-page.
  *
  * Deliberately built from the same pieces the in-Runs review uses — `PierreReviewDiff` and
  * `ReviewCommentsPanel` — rather than reimplementing them. The difference is the frame, not the
@@ -48,26 +65,90 @@ interface ReviewViewProps {
  * Showing one file at a time is the point of the file list. A forty-file diff rendered as one
  * scroll is unreviewable, and "which have I actually read" is the question a reviewer is really
  * tracking.
+ *
+ * A PR gets that same frame, its diff fetched from GitHub rather than read
+ * out of a worktree. What it does not get is the line-comment composer: those
+ * have no mirror back to GitHub yet, so one here would file them on local disk
+ * under a false promise. A PR is reviewed from the panel in the right rail,
+ * which posts straight to GitHub.
  */
 export function ReviewView({
   data,
   onBack,
   selectedRunId,
   onSelectRun,
-  renderPr,
 }: ReviewViewProps) {
-  const queue = useMemo(() => buildReviewQueue(data.runs), [data.runs]);
-  const run = data.runDetail?.meta;
+  const queryClient = useQueryClient();
+  const queue = useMemo(
+    () => buildReviewQueue(data.runs, data.repoPrs ?? []),
+    [data.runs, data.repoPrs]
+  );
+
+  // A repo PR has no run for nav's `activeRunId` to point at, so its selection
+  // lives here — and wins over the run nav holds, being the later choice.
+  const [selectedPrNumber, setSelectedPrNumber] = useState<number | null>(null);
+  const isPrTarget = selectedPrNumber !== null;
+  const selectedTarget: ReviewTarget | null =
+    selectedPrNumber !== null
+      ? { kind: 'pr', number: selectedPrNumber }
+      : selectedRunId !== null
+        ? { kind: 'run', runId: selectedRunId }
+        : null;
+  const targetKey =
+    selectedTarget === null ? null : reviewTargetKey(selectedTarget);
+
+  // No event announces a PR moving on GitHub, so triage needs a poll. Driven
+  // from here, not the query, so it stops when this page does.
+  useEffect(() => {
+    const id = setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: repoPrsKey(data.port) });
+    }, REPO_PRS_POLL_MS);
+    return () => clearInterval(id);
+  }, [queryClient, data.port]);
+
+  // A PR that has left the open list (merged or closed by someone else) has
+  // nothing left to review. `null` is "not loaded yet", not "none open".
+  useEffect(() => {
+    if (selectedPrNumber === null || data.repoPrs === null) return;
+    if (!data.repoPrs.some((pr) => pr.number === selectedPrNumber)) {
+      setSelectedPrNumber(null);
+    }
+  }, [data.repoPrs, selectedPrNumber]);
+
+  const repoPr = useRepoPrDetail(data.client, selectedPrNumber);
+
+  // A PR has no run behind it, so the run-scoped panels below (the case, its
+  // findings, its decisions) must not inherit whichever run nav still holds.
+  const run = isPrTarget ? undefined : data.runDetail?.meta;
   const runId = run?.id ?? '';
+  const selectedItem = useMemo(
+    () => queue.find((i) => reviewTargetKey(i.target) === targetKey),
+    [queue, targetKey]
+  );
+
+  // A PR's diff comes from GitHub, a run's from its worktree — the frame below
+  // is identical either way, which is the whole point of the unified surface.
+  const diff = isPrTarget ? repoPr.prDiff : data.diff;
+
+  // Local review comments belong to the open *run*; a PR's live on GitHub and
+  // are shown in the PR panel instead, so this target has none of its own.
+  const reviewComments = isPrTarget ? NO_COMMENTS : data.reviewComments;
 
   const paths = useMemo(
-    () => (data.diff?.files ?? []).map((f) => normalizeDiffFilePath(f.path)),
-    [data.diff]
+    () => (diff?.files ?? []).map((f) => normalizeDiffFilePath(f.path)),
+    [diff]
   );
+
+  // Viewed ticks are stored per target. A run keeps its bare run id as the key,
+  // so ticks saved before PRs joined this surface still load.
+  const viewedKey =
+    selectedPrNumber !== null
+      ? reviewTargetKey({ kind: 'pr', number: selectedPrNumber })
+      : runId;
 
   const [selected, setSelected] = useState<string | null>(null);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(() =>
-    readViewed(runId)
+    readViewed(viewedKey)
   );
   const [unviewedOnly, setUnviewedOnly] = useState(false);
   // Which side regions are showing. Persisted, so a reviewer who works with the diff full-width
@@ -84,12 +165,12 @@ export function ReviewView({
     nonce: number;
   } | null>(null);
 
-  // Re-read when the run changes, so opening a different review does not inherit the last
-  // one's ticks.
-  useEffect(() => setViewed(readViewed(runId)), [runId]);
+  // Re-read when the target changes, so opening a different review does not
+  // inherit the last one's ticks.
+  useEffect(() => setViewed(readViewed(viewedKey)), [viewedKey]);
   useEffect(() => {
-    if (runId !== '') writeViewed(runId, viewed);
-  }, [runId, viewed]);
+    if (viewedKey !== '') writeViewed(viewedKey, viewed);
+  }, [viewedKey, viewed]);
   useEffect(() => writePanelOpen('files', filesOpen), [filesOpen]);
   useEffect(() => writePanelOpen('threads', threadsOpen), [threadsOpen]);
 
@@ -102,12 +183,12 @@ export function ReviewView({
 
   const commentsByFile = useMemo(() => {
     const map = new Map<string, number>();
-    for (const c of data.reviewComments) {
+    for (const c of reviewComments) {
       if (c.resolved) continue;
       map.set(c.file, (map.get(c.file) ?? 0) + 1);
     }
     return map;
-  }, [data.reviewComments]);
+  }, [reviewComments]);
 
   // What the agent review found. `useTaskFindings` already returns `data ?? []`, so this is
   // always an array — an empty one means no review has run, never "clean".
@@ -173,6 +254,25 @@ export function ReviewView({
     });
   }, [data.client, run]);
 
+  // A run opens through nav (other surfaces jump to it), a PR through this
+  // view's own state. Each drops the other, so both can never claim the screen.
+  const handleSelectTarget = useCallback(
+    (target: ReviewTarget) => {
+      if (target.kind === 'pr') {
+        setSelectedPrNumber(target.number);
+        return;
+      }
+      setSelectedPrNumber(null);
+      onSelectRun(target.runId);
+    },
+    [onSelectRun]
+  );
+
+  const handleBack = useCallback(() => {
+    setSelectedPrNumber(null);
+    onBack();
+  }, [onBack]);
+
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <DaemonUnavailable
@@ -183,9 +283,9 @@ export function ReviewView({
     );
   }
 
-  // No run open: the queue IS the screen. Everything waiting on a human, in
+  // Nothing open: the queue IS the screen. Everything waiting on a human, in
   // one place, instead of a sentence telling you to go and find it elsewhere.
-  if (selectedRunId === null || run === undefined) {
+  if (selectedTarget === null || (!isPrTarget && run === undefined)) {
     return (
       <div className="flex h-full min-h-0 flex-col gap-3">
         <div className="flex items-baseline gap-2">
@@ -197,14 +297,8 @@ export function ReviewView({
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
           <ReviewQueue
             items={queue}
-            selected={
-              selectedRunId === null
-                ? null
-                : { kind: 'run', runId: selectedRunId }
-            }
-            onSelect={(target) => {
-              if (target.kind === 'run') onSelectRun(target.runId);
-            }}
+            selected={selectedTarget}
+            onSelect={handleSelectTarget}
           />
           {/* The merge queue lives here because approving is what puts things
               in it — as its own destination it split one flow across two
@@ -215,23 +309,47 @@ export function ReviewView({
     );
   }
 
-  // A PR's diff lives on GitHub, so it gets the PR surface rather than the
-  // local file-tree review below.
-  if (run.prUrl !== undefined) {
-    return <>{renderPr(run.id)}</>;
-  }
+  // The GitHub review layer, for a repo PR off its number-keyed detail and for
+  // a dispatch-opened run off the run-keyed one. Both post straight to GitHub.
+  const prPanel = isPrTarget ? (
+    <PrReviewPanel
+      detail={repoPr.prDetail}
+      loading={repoPr.prDetailLoading}
+      error={repoPr.prDetailError}
+      onReview={repoPr.handleReview}
+      onComment={repoPr.handleComment}
+    />
+  ) : run !== undefined && run.prUrl !== undefined ? (
+    <PrReviewPanel
+      detail={data.prDetail}
+      loading={data.prDetailLoading}
+      error={data.prDetailError}
+      onReview={(event, body) => data.handlePrReview(run.id, event, body)}
+      onComment={(body) => data.handlePrComment(run.id, body)}
+    />
+  ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <Header
-        onBack={onBack}
-        title={run.taskTitle}
+        onBack={handleBack}
+        title={
+          selectedItem?.title ??
+          run?.taskTitle ??
+          repoPr.prDetail?.status.title ??
+          'Review'
+        }
         run={run}
+        pr={selectedItem?.pr}
         filesOpen={filesOpen}
         onToggleFiles={() => setFilesOpen((v) => !v)}
         threadsOpen={threadsOpen}
         onToggleThreads={() => setThreadsOpen((v) => !v)}
-        threadCount={data.reviewComments.length}
+        threadCount={
+          isPrTarget
+            ? (repoPr.prDetail?.conversation.length ?? 0)
+            : reviewComments.length
+        }
       />
 
       <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
@@ -240,20 +358,24 @@ export function ReviewView({
             a second scrollbar here would just be redundant. */}
         {filesOpen && (
           <div className="flex min-h-0 w-56 shrink-0 flex-col overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setSelected(null)}
-              className={cn(
-                'mb-1 flex shrink-0 items-center gap-1.5 rounded px-3 py-1 text-left text-[12px]',
-                selected === null ? 'bg-accent/15' : 'hover:bg-muted/60'
-              )}
-            >
-              <StateDot state="review" pulse={false} />
-              The case
-            </button>
+            {/* The case is the agent's account of its own work. A PR has no
+                agent behind it, so there is nothing to open here. */}
+            {!isPrTarget && (
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                className={cn(
+                  'mb-1 flex shrink-0 items-center gap-1.5 rounded px-3 py-1 text-left text-[12px]',
+                  selected === null ? 'bg-accent/15' : 'hover:bg-muted/60'
+                )}
+              >
+                <StateDot state="review" pulse={false} />
+                The case
+              </button>
+            )}
             <div className="min-h-0 flex-1 overflow-hidden">
               <ReviewFileTree
-                files={data.diff?.files ?? []}
+                files={diff?.files ?? []}
                 onSelect={setSelected}
                 viewed={viewed}
                 commentsByFile={commentsByFile}
@@ -271,7 +393,7 @@ export function ReviewView({
             `flex-1` on `CodeView` itself sizes it directly off this container's resolved
             height instead. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {selected === null && (
+          {!isPrTarget && selected === null && (
             <ReviewCasePanel
               evidence={data.runDetail?.evidence ?? []}
               mutations={data.runDetail?.mutations ?? []}
@@ -280,7 +402,14 @@ export function ReviewView({
               onStartAiReview={handleStartAiReview}
             />
           )}
-          {data.diff !== undefined && selected !== null && (
+          {isPrTarget && selected === null && (
+            <p className="text-muted-foreground p-4 text-[12.5px]">
+              {repoPr.prDiffLoading
+                ? 'Fetching the diff from GitHub…'
+                : 'Pick a file to start reviewing.'}
+            </p>
+          )}
+          {diff !== undefined && selected !== null && (
             <>
               <DiffPaneHeader
                 path={selected}
@@ -291,13 +420,15 @@ export function ReviewView({
                 commentCount={commentsByFile.get(selected) ?? 0}
               />
               <PierreReviewDiff
-                patch={data.diff.patch}
+                patch={diff.patch}
                 only={selected}
-                comments={data.reviewComments}
+                comments={reviewComments}
                 findings={findingsByFile.get(selected) ?? []}
                 viewed={viewed}
                 scrollTo={jumpTo}
-                onAdd={data.handleAddReviewComment}
+                // Off for a PR: a line comment written here would be saved to
+                // local disk and never reach GitHub, which is worse than none.
+                onAdd={isPrTarget ? undefined : data.handleAddReviewComment}
                 onResolve={data.handleResolveReviewComment}
                 onReply={data.handleReplyReviewComment}
               />
@@ -306,26 +437,33 @@ export function ReviewView({
         </div>
 
         {threadsOpen && (
-          <div className="min-h-0 w-72 shrink-0 overflow-y-auto">
-            <ReviewThreadIndex
-              comments={data.reviewComments}
-              onResolve={data.handleResolveReviewComment}
-              onReply={data.handleReplyReviewComment}
-              onJumpTo={(c) =>
-                setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
-              }
-            />
+          <div className="flex min-h-0 w-72 shrink-0 flex-col gap-3 overflow-y-auto">
+            {prPanel}
+            {!isPrTarget && (
+              <ReviewThreadIndex
+                comments={reviewComments}
+                onResolve={data.handleResolveReviewComment}
+                onReply={data.handleReplyReviewComment}
+                onJumpTo={(c) =>
+                  setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
+                }
+              />
+            )}
           </div>
         )}
       </div>
 
-      <ReviewVerdictBar
-        layout="bar"
-        comments={data.reviewComments}
-        onSubmit={data.handleSubmitReview}
-        onStartAiReview={handleStartAiReview}
-        extraWarnings={verdictWarnings}
-      />
+      {/* A PR is approved on GitHub, from the panel in the rail — the local
+          merge/discard verdict has no meaning for one. */}
+      {!isPrTarget && (
+        <ReviewVerdictBar
+          layout="bar"
+          comments={reviewComments}
+          onSubmit={data.handleSubmitReview}
+          onStartAiReview={handleStartAiReview}
+          extraWarnings={verdictWarnings}
+        />
+      )}
     </div>
   );
 }
@@ -388,6 +526,7 @@ function Header({
   onBack,
   title,
   run,
+  pr,
   filesOpen,
   onToggleFiles,
   threadsOpen,
@@ -403,6 +542,8 @@ function Header({
     turns?: number;
     costUsd?: number;
   };
+  /** GitHub standing for a row that has a PR, run-backed or not. */
+  pr?: RepoPr;
   filesOpen: boolean;
   onToggleFiles: () => void;
   threadsOpen: boolean;
@@ -422,41 +563,78 @@ function Header({
               one — it used to go back to the Control room, and kept saying so. */}
           All reviews
         </button>
-        {run !== undefined && <StateDot state="review" pulse={false} />}
+        <StateDot state="review" pulse={false} />
         <h1 className="min-w-0 flex-1 truncate text-[15px] font-medium">
           {title}
         </h1>
       </div>
-      {run !== undefined && (
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="dense-meta">{run.branch}</span>
-          {run.model !== undefined && (
-            <span className="dense-meta">{run.model}</span>
-          )}
-          {run.turns !== undefined && (
-            <span className="dense-meta">{run.turns} turns</span>
-          )}
-          {run.costUsd !== undefined && (
-            <span className="dense-meta">${run.costUsd.toFixed(2)}</span>
-          )}
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={onToggleFiles}
-            aria-pressed={filesOpen}
-            className="text-accent-foreground text-[11px]"
-          >
-            {filesOpen ? 'Hide files' : 'Show files'}
-          </button>
-          <button
-            type="button"
-            onClick={onToggleThreads}
-            aria-pressed={threadsOpen}
-            className="text-accent-foreground text-[11px]"
-          >
-            {threadsOpen ? 'Hide threads' : `Threads (${threadCount})`}
-          </button>
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        {run !== undefined && (
+          <>
+            <span className="dense-meta">{run.branch}</span>
+            {run.model !== undefined && (
+              <span className="dense-meta">{run.model}</span>
+            )}
+            {run.turns !== undefined && (
+              <span className="dense-meta">{run.turns} turns</span>
+            )}
+            {run.costUsd !== undefined && (
+              <span className="dense-meta">${run.costUsd.toFixed(2)}</span>
+            )}
+          </>
+        )}
+        {pr !== undefined && <PrHeaderStatus pr={pr} />}
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={onToggleFiles}
+          aria-pressed={filesOpen}
+          className="text-accent-foreground text-[11px]"
+        >
+          {filesOpen ? 'Hide files' : 'Show files'}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleThreads}
+          aria-pressed={threadsOpen}
+          className="text-accent-foreground text-[11px]"
+        >
+          {threadsOpen ? 'Hide threads' : `Threads (${threadCount})`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A PR's live GitHub standing in the review header — draft, checks, decision,
+ * conflicts — from the same pills the queue rows use, so the two cannot drift.
+ */
+function PrHeaderStatus({ pr }: { pr: RepoPr }) {
+  const verdict =
+    pr.reviewDecision === 'APPROVED'
+      ? REVIEW_VERDICT.APPROVED
+      : pr.reviewDecision === 'CHANGES_REQUESTED'
+        ? REVIEW_VERDICT.CHANGES_REQUESTED
+        : undefined;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <a
+        href={pr.url}
+        target="_blank"
+        rel="noreferrer"
+        className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 text-[11px]"
+      >
+        #{pr.number}
+        <ExternalLink className="size-3" />
+      </a>
+      {pr.isDraft && <StatusPill>Draft</StatusPill>}
+      <PrChecksPill checks={pr.checks} />
+      {verdict !== undefined && (
+        <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
+      )}
+      {pr.mergeable === 'CONFLICTING' && (
+        <StatusPill tone="red">Conflicts</StatusPill>
       )}
     </div>
   );

@@ -52,7 +52,6 @@ import { DraftView } from './views/DraftView';
 import { GetStartedView } from './views/GetStartedView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
-import { PullRequestsView } from './views/PullRequestsView';
 import { ReviewView } from './views/ReviewView';
 import { RunsView } from './views/RunsView';
 import { SessionsHubView } from './views/SessionsHubView';
@@ -744,19 +743,6 @@ function App() {
                       onSelectRun={(runId) =>
                         dispatchNav({ type: 'openRun', runId })
                       }
-                      // Pull requests is no longer its own destination — the
-                      // PR surface renders inside Review for a run whose diff
-                      // lives on GitHub.
-                      renderPr={(runId) => (
-                        <PullRequestsView
-                          data={data}
-                          selectedRunId={runId}
-                          onSelectRun={(id) =>
-                            dispatchNav({ type: 'openRun', runId: id })
-                          }
-                          onCloseRun={() => dispatchNav({ type: 'closeRun' })}
-                        />
-                      )}
                     />
                   )}
                   {navState.projectView === 'board' && (
