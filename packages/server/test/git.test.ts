@@ -9,7 +9,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { GitRepo } from '../src/git/commands.js';
+import {
+  GitRepo,
+  INVALID_REF_ERROR,
+  PATH_ESCAPE_ERROR,
+} from '../src/git/commands.js';
 import type { CommandRunner } from '../src/orchestrator/pr.js';
 
 // Fixture setup only (GitRepo itself is exercised via its own async methods
@@ -538,5 +542,41 @@ describe('GitRepo: commit sha resolution', () => {
     const result = await fakeRepo.commit({ message: 'feat: x' });
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('GitRepo: show', () => {
+  it('reads a file at a ref, not the working tree', async () => {
+    writeFileSync(join(root, 'a.txt'), 'hello\n');
+    setupGit(root, ['add', 'a.txt']);
+    setupGit(root, ['commit', '-m', 'add a']);
+    writeFileSync(join(root, 'a.txt'), 'changed\n');
+
+    const result = await repo.show('HEAD', 'a.txt');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.contents).toBe('hello\n');
+  });
+
+  it('fails for a path that is not in the ref', async () => {
+    writeFileSync(join(root, 'a.txt'), 'hello\n');
+    setupGit(root, ['add', 'a.txt']);
+    setupGit(root, ['commit', '-m', 'add a']);
+
+    const result = await repo.show('HEAD', 'missing.txt');
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('refuses a path that escapes the repository root', async () => {
+    const result = await repo.show('HEAD', '../outside.txt');
+
+    expect(result).toEqual({ ok: false, stderr: PATH_ESCAPE_ERROR });
+  });
+
+  it('refuses a ref that looks like a flag', async () => {
+    const result = await repo.show('--upload-pack=x', 'a.txt');
+
+    expect(result).toEqual({ ok: false, stderr: INVALID_REF_ERROR });
   });
 });
