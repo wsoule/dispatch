@@ -1,0 +1,10 @@
+{
+  "name": "@dispatch/demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tsc": "tsc --noEmit",
+    "test": "bun test",
+    "demo": "bun src/cli.ts"
+  }
+}
