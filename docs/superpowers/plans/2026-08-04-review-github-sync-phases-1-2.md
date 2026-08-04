@@ -45,6 +45,15 @@ seam.
   your change adds no _new_ entries.
 - This plan covers Phases 1 and 2 only. Phases 3 (comment mirror) and 4 (agent
   review of a PR) get their own plans.
+- **Refresh cadence (supersedes the spec).** The spec says "one query on a 60s
+  interval". The existing `repoPrs` query
+  (`apps/desktop/src/hooks/useDispatchProject.ts:954`) deliberately uses
+  `staleTime: 60_000` + `refetchOnWindowFocus` with no interval, because no
+  WebSocket event announces a GitHub PR change. Ruling: **poll only while the
+  Review page is mounted.** Add `refetchInterval` scoped to that view — fresh
+  rows exactly while triaging, and no `gh pr list` subprocess every 60s for the
+  whole time the app is open. Do not add an unconditional interval, and do not
+  leave the query with no interval at all.
 
 ## File Structure
 
@@ -1204,7 +1213,7 @@ Expected: no errors.
 - [ ] **Step 3: Build the client so the desktop app resolves it**
 
 ```bash
-cd /path/to/worktree && bun run build
+cd "$(git rev-parse --show-toplevel)" && bun run build
 ```
 
 `@dispatch/*` resolve via `dist/`, so the desktop app will not see the new
@@ -1274,31 +1283,35 @@ ticks and per-file diff.
   unchanged.
 - Produces: nothing downstream — this is the top of the stack for Phases 1–2.
 
-- [ ] **Step 1: Verify the current bail-out with a characterization test**
+- [ ] **Step 1: Note the verification approach — no new unit test here**
 
-Create `apps/desktop/src/views/ReviewView.test.tsx`. Confirm the existing
-behavior first so the change is visible in the diff:
+This task adds **no new unit test**, deliberately. Rendering `ReviewView`
+requires a full `DispatchProjectData` fixture (client, queries, health, runs,
+diff, merge queue), and a test built on that much mocking asserts the fixture
+rather than the behavior. The logic this task depends on is already tested where
+it lives: `buildReviewQueue` in Task 3 and the row rendering in Task 4.
 
-```tsx
-import { expect, test } from 'bun:test';
+Task 7's verification is therefore: the existing desktop suite must stay green
+(Step 6), `tsc` must pass (Step 6), and the change must be confirmed in the
+running app against a real PR (Step 7).
 
-import { countAwaitingReview } from './ReviewView';
+Two invariants this task must not break:
 
-test('countAwaitingReview counts only runs in the review state', () => {
-  const base = { state: 'finished', reviewedAt: undefined } as never;
-  expect(countAwaitingReview([base])).toBe(1);
-});
-```
+- `countAwaitingReview` stays exported from `ReviewView.tsx` — the nav badge
+  imports it.
+- The local-run review path (no `prUrl`) keeps rendering exactly as it does
+  today. Only the PR branch is new.
 
-```bash
-cd apps/desktop && bun test src/views/ReviewView.test.tsx
-```
-
-Expected: PASS. This pins the nav badge export, which Task 7 must not break.
+If Step 6 or Step 7 fails, that is the signal — do not add a mock-heavy test to
+manufacture green.
 
 - [ ] **Step 2: Thread repo PRs into the queue**
 
-In `ReviewView`, take the repo PR list and build the queue from both sources:
+`data.repoPrs` **already exists** on `DispatchProjectData`
+(`apps/desktop/src/hooks/useDispatchProject.ts:195`, typed `RepoPr[] | null`,
+populated by a query gated on `health?.pr === true`). Do not add a new query.
+
+In `ReviewView`, widen the existing `queue` memo to pass it through:
 
 ```tsx
 const queue = useMemo(
@@ -1307,11 +1320,8 @@ const queue = useMemo(
 );
 ```
 
-If `data.repoPrs` does not exist on `DispatchProjectData`, add it in
-`useDispatchProject.ts` as a `useQuery` on `client.fetchRepoPrs()` with
-`refetchInterval: 60_000`, matching the spec's single 60s cadence. Guard it with
-the health endpoint's `pr` capability flag so a project without `gh` never
-polls.
+Leave that query's refresh config alone — see the Refresh Cadence note in Global
+Constraints.
 
 - [ ] **Step 3: Replace the bail-out with a PR branch**
 
@@ -1364,7 +1374,7 @@ Expected: PASS, no type errors.
 - [ ] **Step 7: Verify in the real app**
 
 ```bash
-cd /path/to/worktree && bun run build
+cd "$(git rev-parse --show-toplevel)" && bun run build
 ```
 
 Launch the desktop app against a repo with at least one open PR. Confirm: the PR
@@ -1378,7 +1388,7 @@ claiming this step passed.
 - [ ] **Step 8: Full baseline and commit**
 
 ```bash
-cd /path/to/worktree && bun run format && bun run lint
+cd "$(git rev-parse --show-toplevel)" && bun run format && bun run lint
 ```
 
 Confirm lint reports no _new_ errors beyond the 15 known-red pre-existing ones.
