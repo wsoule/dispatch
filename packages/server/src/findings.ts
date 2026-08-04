@@ -19,6 +19,8 @@ export interface AddFindingInput {
   detail: string;
   file?: string | null;
   line?: number | null;
+  /** Paths this finding covers when one check fired across many files. */
+  files?: string[];
   round?: number;
   recommendation?: FindingRecommendation;
   /** Serialized ActorRef of whoever raised it. */
@@ -182,6 +184,7 @@ export class FindingStore {
       ...(input.recommendation !== undefined
         ? { recommendation: input.recommendation }
         : {}),
+      ...(input.files !== undefined ? { files: input.files } : {}),
     };
     this.append(record);
     return record;
