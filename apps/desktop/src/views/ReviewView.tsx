@@ -197,8 +197,14 @@ export function ReviewView({
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
           <ReviewQueue
             items={queue}
-            selectedRunId={selectedRunId}
-            onSelect={onSelectRun}
+            selected={
+              selectedRunId === null
+                ? null
+                : { kind: 'run', runId: selectedRunId }
+            }
+            onSelect={(target) => {
+              if (target.kind === 'run') onSelectRun(target.runId);
+            }}
           />
           {/* The merge queue lives here because approving is what puts things
               in it — as its own destination it split one flow across two
