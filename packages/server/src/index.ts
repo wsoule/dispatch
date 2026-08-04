@@ -318,15 +318,6 @@ export async function startServer(
     if (event.type === 'task.changed') boardSyncScheduler?.notifyTaskChanged();
   });
 
-  // The reverse-dependency map ReviewRunner scopes reviews with, rebuilt
-  // lazily and invalidated whenever the workspace's own source changes.
-  const depMapCache = new DepMapCache(rootDir);
-  const sourceWatcher = watchSourceDirs(
-    depMapSourceDirs(rootDir),
-    () => depMapCache.invalidate(),
-    isSkippedPath
-  );
-
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
