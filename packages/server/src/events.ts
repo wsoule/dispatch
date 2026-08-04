@@ -1,6 +1,7 @@
 import type { LinearSyncSummary } from './linear/sync.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
+import type { SyncResult } from './sync/boardSyncer.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
 // opened socket; `task.changed` tells every connected client "something
@@ -95,7 +96,11 @@ export type ServerEvent =
   // the survey so a connected client can show it without a follow-up fetch.
   | { type: 'run.survey'; runId: string; survey: RunSurvey }
   // A verify run finished and recorded a structured result for the task.
-  | { type: 'verification.changed'; taskId: string };
+  | { type: 'verification.changed'; taskId: string }
+  // The board syncer attempted a sync (debounced off local task edits).
+  // Carries its own result, unlike the *.changed events, so a live feed can
+  // render the outcome without a follow-up fetch.
+  | { type: 'board.sync'; result: SyncResult };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

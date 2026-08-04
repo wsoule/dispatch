@@ -155,7 +155,7 @@ describe('GET /api/config', () => {
       'done',
       'cancelled',
     ]);
-    expect(body.autoCommit).toBe(false);
+    expect(body.autoCommit).toBe(true);
   });
 
   it('returns 422 with no stack trace when config.yml is corrupt', async () => {

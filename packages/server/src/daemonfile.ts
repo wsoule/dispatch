@@ -29,13 +29,14 @@ export interface DaemonFileInfo {
 // `DISPATCH_HOME` lets tests (and anything else) redirect daemon files away
 // from the real home directory; production use always falls back to it. An
 // empty string is treated the same as unset — kept in sync with this exact
-// scheme's four other copies: packages/cli/src/commands/daemon.ts's
+// scheme's five other copies: packages/cli/src/commands/daemon.ts's
 // `daemonHome()`, packages/mcp/src/daemon.ts's `daemonHome()`,
-// apps/desktop/src-tauri/src/sidecar.rs's `daemon_home`, and packages/server/
-// src/orchestrator/paths.ts's `dispatchHome()` (that last one keys run/
-// worktree state instead of daemon files, but reads the exact same env var
-// with the exact same fallback rule); update all five together if this
-// scheme ever changes.
+// apps/desktop/src-tauri/src/sidecar.rs's `daemon_home`, packages/server/
+// src/orchestrator/paths.ts's `dispatchHome()`, and packages/server/
+// src/sync/worktree.ts's `dispatchHome()` (those last two key run/worktree
+// state instead of daemon files, but read the exact same env var with the
+// exact same fallback rule); update all six together if this scheme ever
+// changes.
 function daemonHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();

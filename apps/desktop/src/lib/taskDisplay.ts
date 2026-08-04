@@ -25,6 +25,17 @@ export function statusTone(status: string): Tone {
   }
 }
 
+/** Renders a raw config status id as a human label — `in-progress` becomes `In Progress`.
+ * The board's flat columns and its swim-lane columns previously formatted the same status two
+ * different ways (one raw lowercase, one CSS-uppercased), so both now route through here. */
+export function statusLabel(status: string): string {
+  return status
+    .split('-')
+    .filter((word) => word !== '')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 /** Only urgent/high get a color treatment; medium/low/none stay silent so the one accent
  * color and the two priority colors don't compete for attention on a dense board. Returns
  * `null` for anything that shouldn't render a pill at all (the 'none' priority — the common
