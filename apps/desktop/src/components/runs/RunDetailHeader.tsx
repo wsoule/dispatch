@@ -3,6 +3,7 @@ import { ExternalLink, Layers2, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
 import { modelLabel } from '../../lib/models';
+import { deriveStopControl } from '../../lib/runState';
 import { RunKindBadge } from './RunKindBadge';
 import { RunStatePill } from './RunStatePill';
 import { Button } from '@/ui/button';
@@ -14,10 +15,11 @@ interface RunDetailHeaderProps {
    * doesn't need its own copy of the run's log entries just to derive a number RunsView
    * already has. */
   cost: number | null;
-  /** Whether this run can still be cancelled — true for `provisioning`/`running`/
-   * `awaiting-approval`, matching the old per-tab header's own `live` check. */
-  live: boolean;
   onCancel: () => Promise<void>;
+  /** Asks the agent to wind down: it finishes what it is doing, then stops, and its
+   * work is committed and reviewable. `onCancel` is the hard form that kills it where
+   * it stands and leaves uncommitted work loose in the worktree. */
+  onStop: () => Promise<void>;
   /** Controls that belong on this row rather than on a row of their own — the
    * Session/Diff switch and the run's own actions. Passed in so the header
    * stays one line instead of the view stacking a toolbar under it. */
@@ -32,32 +34,49 @@ interface RunDetailHeaderProps {
  * once that blocker gets rejected, and Cancel while the run is still live. Replaces the
  * near-duplicate header rows `RunLogView` and `RunReviewView` used to render independently,
  * which disagreed on layout and went out of sync with whichever tab happened to be selected.
+ *
+ * A live run gets both halting controls, because they do genuinely different things: Stop asks
+ * the agent to finish its current operation and wind down (its work is committed and stays
+ * reviewable), Cancel kills the session immediately (uncommitted work is left loose in the
+ * worktree). Cancel stays enabled while a stop is in flight — it is the escape hatch for an
+ * agent taking too long to wind down.
  */
 export function RunDetailHeader({
   meta,
   cost,
-  live,
   onCancel,
+  onStop,
   trailing,
 }: RunDetailHeaderProps) {
-  const [cancelling, setCancelling] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Whether the halting controls show at all, and how Stop reads, both come
+  // from the run's own state and marker rather than local click state or a
+  // caller-supplied flag — see deriveStopControl.
+  const stop = deriveStopControl(meta);
 
-  async function submitCancel() {
-    setCancelling(true);
+  async function submit(action: () => Promise<void>) {
+    setBusy(true);
     setError(null);
     try {
-      await onCancel();
+      await action();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setCancelling(false);
+      setBusy(false);
     }
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3">
+      {/* Wraps rather than clips. The metadata chips on the left and the
+          controls on the right together outgrow a narrow detail pane, and a
+          single non-wrapping row silently cut the rightmost control off the
+          edge — a Cancel button you cannot see or click. With `flex-wrap` plus
+          `ml-auto` on the control cluster, the row stays one line and
+          right-aligned whenever it fits, and drops the controls to a second
+          line instead of hiding them when it doesn't. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <RunStatePill meta={meta} />
         <RunKindBadge kind={meta.kind} />
         {meta.branch !== undefined && (
@@ -129,18 +148,51 @@ export function RunDetailHeader({
             </span>
           </span>
         )}
-        <div className="flex-1" />
-        {trailing}
-        {live && (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={cancelling}
-            onClick={() => void submitCancel()}
+        {/* A terminal run that carries the marker ended because someone asked it
+            to, not because it ran out of work — worth saying, since "Finished"
+            alone would read as a run that completed its task. */}
+        {stop.showStoppedChip && (
+          <span
+            className="border-border text-muted-foreground shrink-0 rounded-full border px-2 py-0.5 text-[11px]"
+            title={`Stop requested at ${meta.stopRequestedAt}`}
           >
-            Cancel
-          </Button>
+            Stopped
+          </span>
         )}
+        {/* One cluster, so the tab switch and the halting controls wrap together
+            rather than splitting across two lines mid-group. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {trailing}
+          {stop.showButtons && (
+            <Button
+              variant="secondary"
+              size="sm"
+              // Already-stopping stays visible rather than disappearing: it is
+              // the status line for a run that is still working, and swapping it
+              // for Cancel alone would look like the stop had been forgotten.
+              disabled={busy || stop.stopDisabled}
+              title={
+                stop.stopDisabled
+                  ? 'Already stopping — the agent is finishing its current operation'
+                  : 'Let the agent finish its current operation, then stop and keep its work'
+              }
+              onClick={() => void submit(onStop)}
+            >
+              {stop.stopLabel}
+            </Button>
+          )}
+          {stop.showButtons && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              title="Stop immediately, without letting the agent finish or commit"
+              onClick={() => void submit(onCancel)}
+            >
+              Cancel
+            </Button>
+          )}
+        </div>
       </div>
       {error !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
