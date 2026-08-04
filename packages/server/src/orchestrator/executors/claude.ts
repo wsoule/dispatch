@@ -11,7 +11,7 @@ import type {
 import type { CartoMode } from '@dispatch/core';
 import { loadConfig } from '@dispatch/core';
 import type { CartoBinary } from '@dispatch/core/carto';
-import { discoverCarto } from '@dispatch/core/carto';
+import { discoverCarto, supportsMcpServe } from '@dispatch/core/carto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
@@ -157,8 +157,9 @@ const CARTO_MCP_ENV_PASSTHROUGH: readonly string[] = [
 // shell never re-parses them — interpolating them (even JSON-escaped) would
 // let a `$(...)` or backtick in either value run as a shell command.
 //
-// Upstream carto serve doesn't connect its MCP transport when required as a
-// library rather than run as __main__: carto#9.
+// Only reached for carto >= 2.1.4: earlier releases' `carto serve` didn't
+// connect its MCP transport when required as a library rather than run as
+// __main__ (carto#9), so cartoMcpServers below withholds the entry entirely.
 export function buildCartoMcpServerConfig(
   projectRoot: string,
   binary: CartoBinary
@@ -176,11 +177,13 @@ export function buildCartoMcpServerConfig(
   };
 }
 
-// Contributes a `carto` entry only when `carto.enabled` allows it and the
-// binary is actually present — `off` means no MCP entry at all, and a spawn
-// failure would cost every run a startup error for no benefit. Runs once per
-// dispatched run (Orchestrator calls start() once), so the config read here
-// is not on a hot path; a malformed config degrades to the default `on`.
+// Contributes a `carto` entry only when `carto.enabled` allows it, the
+// binary is actually present, and that binary is new enough to answer over
+// MCP — `off` means no MCP entry at all, and a spawn failure or a server
+// that never connects would cost every run a startup error for no benefit.
+// Runs once per dispatched run (Orchestrator calls start() once), so the
+// config read here is not on a hot path; a malformed config degrades to the
+// default `on`.
 export function cartoMcpServers(
   projectRoot: string
 ): Record<string, McpServerConfig> {
@@ -193,6 +196,7 @@ export function cartoMcpServers(
   if (mode === 'off') return {};
   const discovery = discoverCarto();
   if (!discovery.ok) return {};
+  if (!supportsMcpServe(discovery.binary.version)) return {};
   return { carto: buildCartoMcpServerConfig(projectRoot, discovery.binary) };
 }
 
