@@ -9,6 +9,7 @@ import {
   OrchestratorNotFoundError,
   TERMINAL_RUN_STATES,
 } from './types.js';
+import type { DiffResult } from './worktree.js';
 
 export interface CommandResult {
   ok: boolean;
@@ -300,6 +301,18 @@ function summarizeChecks(rollup: unknown): PrCheckSummary {
   }
   return summary;
 }
+
+// GitHub's per-file status strings, mapped to the single letters the diff UI
+// already renders (matching `git diff --name-status` output).
+const FILE_STATUS_LETTER: Record<string, string> = {
+  added: 'A',
+  modified: 'M',
+  changed: 'M',
+  unchanged: 'M',
+  removed: 'D',
+  renamed: 'R',
+  copied: 'C',
+};
 
 /**
  * The PR review path (spec §5 Review): pushes a finished run's branch and
@@ -655,6 +668,49 @@ export class PrManager {
     }
     conversation.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return { status, conversation };
+  }
+
+  // GET /api/prs/:number/diff. A PR's diff in the same shape a run's worktree
+  // diff produces, so the review UI renders both through one component.
+  //
+  // Two calls, mirroring worktree.diff(): `gh pr diff` for the raw patch, and
+  // the REST files list for per-file status, which `pr diff` does not report.
+  // Nothing here parses the patch — `DiffResult.patch` is stdout verbatim.
+  async getPrDiffByUrl(url: string): Promise<DiffResult> {
+    const location = parsePrUrl(url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${url}`);
+    }
+    const patch = await this.run(this.ctx.rootDir, ['gh', 'pr', 'diff', url]);
+    if (!patch.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr diff failed: ${commandErrorText(patch)}`
+      );
+    }
+    const listed = await this.run(this.ctx.rootDir, [
+      'gh',
+      'api',
+      '--paginate',
+      `repos/${location.owner}/${location.repo}/pulls/${location.number}/files`,
+    ]);
+    if (!listed.ok) {
+      throw new OrchestratorConflictError(
+        `gh api pulls/files failed: ${commandErrorText(listed)}`
+      );
+    }
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(listed.stdout) as Array<Record<string, unknown>>;
+    } catch {
+      throw new OrchestratorConflictError(
+        'gh api pulls/files returned invalid JSON'
+      );
+    }
+    const files = raw.map((item) => ({
+      path: String(item.filename ?? ''),
+      status: FILE_STATUS_LETTER[String(item.status ?? '')] ?? 'M',
+    }));
+    return { patch: patch.stdout, files };
   }
 
   // POST /api/runs/:id/pr/review. Submits a GitHub review on the run's PR —
