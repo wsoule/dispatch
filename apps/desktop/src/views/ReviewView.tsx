@@ -169,6 +169,7 @@ export function ReviewView({
             files={data.diff?.files ?? []}
             onSelect={setSelected}
             viewed={viewed}
+            commentsByFile={commentsByFile}
             unviewedOnly={unviewedOnly}
             onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
           />
