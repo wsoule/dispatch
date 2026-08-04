@@ -11,7 +11,11 @@ import { join } from 'node:path';
 
 import type { GitRunner } from '../../src/sync/worktree.js';
 import { SyncWorktree } from '../../src/sync/worktree.js';
-import { initGitRepo, runGitSync } from '../orchestrator/helpers.js';
+import {
+  initGitRepo,
+  runGitSync,
+  worktreeSiblingPath,
+} from '../orchestrator/helpers.js';
 
 // Same shape WorktreeManager's internal runGit uses, exposed here since
 // SyncWorktree takes its GitRunner injected rather than shelling out itself.
@@ -27,6 +31,20 @@ const run: GitRunner = (cwd, args) => {
     stderr: result.stderr.toString('utf8'),
   };
 };
+
+// Reads the SHARED (`--local`) config flag `git sparse-checkout init --cone`
+// sets as a side effect — checked directly against real git state rather
+// than any internal SyncWorktree detail, per the brief's "assert on the
+// actual state of .git/config" requirement.
+function extensionEnabled(repo: string): boolean {
+  const result = run(repo, [
+    'config',
+    '--local',
+    '--get',
+    'extensions.worktreeConfig',
+  ]);
+  return result.status === 0 && result.stdout.trim() === 'true';
+}
 
 let fakeHome: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
@@ -355,6 +373,147 @@ describe('SyncWorktree.ensure / remove', () => {
     expect(existsSync(worktree?.path ?? '')).toBe(false);
     const list = runGitSync(repo, ['worktree', 'list', '--porcelain']);
     expect(list.includes('board')).toBe(false);
+    rmSync(repo, { recursive: true, force: true });
+  });
+});
+
+// `git sparse-checkout init --cone` writes `extensions.worktreeConfig = true`
+// into the repo's SHARED `.git/config` as an undisclosed side effect
+// (confirmed empirically on git 2.55) — SyncWorktree tracks whether it was
+// the one that set this and only ever unsets it when that's provably safe.
+describe('SyncWorktree / extensions.worktreeConfig', () => {
+  it('leaves an already-enabled extension flag untouched by ensure() and remove()', () => {
+    const repo = initGitRepo();
+    // Simulates a repo where the extension was already on before dispatch
+    // ever ran — e.g. the user's own `git worktree` usage elsewhere. This is
+    // never ours to unset, no matter what we do with our own worktree.
+    runGitSync(repo, [
+      'config',
+      '--local',
+      'extensions.worktreeConfig',
+      'true',
+    ]);
+
+    const worktree = SyncWorktree.open(repo, run);
+    worktree?.ensure();
+    expect(extensionEnabled(repo)).toBe(true);
+
+    worktree?.remove();
+    expect(extensionEnabled(repo)).toBe(true);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('still checks out only .dispatch when the extension was already on from elsewhere', () => {
+    const repo = initGitRepo();
+    runGitSync(repo, [
+      'config',
+      '--local',
+      'extensions.worktreeConfig',
+      'true',
+    ]);
+    mkdirSync(join(repo, '.dispatch', 'tasks'), { recursive: true });
+    writeFileSync(join(repo, '.dispatch', 'tasks', 'a.md'), 'task\n');
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'index.ts'), 'unrelated source\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'add .dispatch and src']);
+
+    const worktree = SyncWorktree.open(repo, run);
+    worktree?.ensure();
+
+    const path = worktree?.path ?? '';
+    expect(existsSync(join(path, '.dispatch', 'tasks', 'a.md'))).toBe(true);
+    expect(existsSync(join(path, 'src'))).toBe(false);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('sets the extension on ensure() and unsets it on remove() when it owns it', () => {
+    const repo = initGitRepo();
+    expect(extensionEnabled(repo)).toBe(false);
+
+    const worktree = SyncWorktree.open(repo, run);
+    worktree?.ensure();
+    expect(extensionEnabled(repo)).toBe(true);
+
+    worktree?.remove();
+    expect(extensionEnabled(repo)).toBe(false);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('cleans up correctly from a fresh instance, simulating a daemon restart', () => {
+    const repo = initGitRepo();
+    const first = SyncWorktree.open(repo, run);
+    first?.ensure();
+    expect(extensionEnabled(repo)).toBe(true);
+
+    // A brand-new instance — as a restarted daemon would create — has none
+    // of `first`'s in-memory state. It must still find the on-disk marker
+    // `first` wrote and unset the extension correctly.
+    const second = SyncWorktree.open(repo, run);
+    second?.remove();
+    expect(extensionEnabled(repo)).toBe(false);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('leaves the extension on when another worktree has its own worktree-scoped config', () => {
+    const repo = initGitRepo();
+    const worktree = SyncWorktree.open(repo, run);
+    worktree?.ensure();
+    expect(extensionEnabled(repo)).toBe(true);
+
+    // A second, unrelated linked worktree that picked up its own
+    // worktree-scoped config once the extension came on — exactly the case
+    // that makes blindly unsetting the extension worse than leaving it: git
+    // would silently stop reading this file for a worktree unrelated to us.
+    const otherPath = worktreeSiblingPath(repo, 'other');
+    runGitSync(repo, ['worktree', 'add', '--detach', otherPath, 'main']);
+    runGitSync(otherPath, [
+      'config',
+      '--worktree',
+      'core.sparseCheckout',
+      'false',
+    ]);
+
+    worktree?.remove();
+
+    expect(extensionEnabled(repo)).toBe(true);
+    const otherConfig = runGitSync(otherPath, [
+      'config',
+      '--worktree',
+      '--get',
+      'core.sparseCheckout',
+    ]).trim();
+    expect(otherConfig).toBe('false');
+
+    runGitSync(repo, ['worktree', 'remove', '--force', otherPath]);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('retries cleanup on a later remove() once the other worktree is gone', () => {
+    const repo = initGitRepo();
+    const worktree = SyncWorktree.open(repo, run);
+    worktree?.ensure();
+
+    const otherPath = worktreeSiblingPath(repo, 'other');
+    runGitSync(repo, ['worktree', 'add', '--detach', otherPath, 'main']);
+    runGitSync(otherPath, [
+      'config',
+      '--worktree',
+      'core.sparseCheckout',
+      'false',
+    ]);
+
+    worktree?.remove();
+    expect(extensionEnabled(repo)).toBe(true);
+
+    // The other worktree goes away; recreate ours and remove it again — the
+    // marker this instance kept around must let a later remove() finish the
+    // job it deferred the first time.
+    runGitSync(repo, ['worktree', 'remove', '--force', otherPath]);
+    worktree?.ensure();
+    worktree?.remove();
+
+    expect(extensionEnabled(repo)).toBe(false);
     rmSync(repo, { recursive: true, force: true });
   });
 });
