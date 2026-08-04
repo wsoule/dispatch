@@ -175,7 +175,12 @@ export function ReviewView({
           />
         </div>
 
-        <div className="min-h-0">
+        {/* A flex column, not a plain `min-h-0` box: `CodeView` needs a real, unambiguous height
+            rather than a percentage resolved through this grid cell's stretch, which a nested
+            grid-then-percentage chain can (and did, in some engines) collapse to zero. `flex-1`
+            on `CodeView` itself below sizes it directly off this container's own resolved
+            height instead. */}
+        <div className="flex min-h-0 flex-col">
           {data.diff !== undefined && selected !== null && (
             <PierreReviewDiff
               patch={data.diff.patch}
