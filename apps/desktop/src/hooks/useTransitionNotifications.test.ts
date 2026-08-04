@@ -11,6 +11,10 @@ function populatedTracking(root: string | null): TransitionTrackingState {
     root,
     runStates: new Map([['run-1', 'finished']]),
     queueStates: new Map([['run-1', 'merged']]),
+    questions: {
+      askers: new Map([['draft:d-1', 'q1 Scope?']]),
+      runQuestionIds: new Set(['q-abc123']),
+    },
   };
 }
 
@@ -64,5 +68,12 @@ describe('resetTrackingForRoot', () => {
     const first = resetTrackingForRoot(state, '/repo/a');
     const second = resetTrackingForRoot(first, '/repo/a');
     expect(second).toBe(state);
+  });
+
+  test('switching project roots also clears question tracking', () => {
+    const state = populatedTracking('/repo/a');
+    const next = resetTrackingForRoot(state, '/repo/b');
+    expect(next.questions.askers.size).toBe(0);
+    expect(next.questions.runQuestionIds.size).toBe(0);
   });
 });
