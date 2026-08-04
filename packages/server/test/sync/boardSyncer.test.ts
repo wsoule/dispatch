@@ -689,6 +689,57 @@ describe('BoardSyncer degradation', () => {
     cleanupClone(b);
   }, 20_000);
 
+  // Regression for the data-loss bug: beforePull included this cycle's own
+  // staged commit, so after the post-conflict `reset --hard origin/<trunk>`,
+  // materialize()'s D-filter diff saw the syncer's own brand-new task as
+  // "deleted" (relative to trunk, which never had it) and rmSync'd it from
+  // the working tree — with no push, no reflog entry, and no way back.
+  it('a brand-new unpushed task survives a conflict on a different task', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const storeB = new TaskStore(b);
+    const taskU = storeA.create(
+      { title: 'U original' },
+      '2026-08-01T00:00:00.000Z'
+    );
+    await syncerFor(a).syncOnce();
+    await syncerFor(b).syncOnce();
+
+    // Bob pushes an edit to U first.
+    storeB.update(
+      taskU.meta.id,
+      { title: 'U from bob' },
+      '2026-08-02T00:00:00.000Z'
+    );
+    const resultB = await syncerFor(b).syncOnce();
+    expect(resultB.state).toBe('idle');
+
+    // In the same debounce burst, Alice creates a brand-new task T and edits
+    // U (the same field bob just changed) — both get staged into one commit.
+    const taskT = storeA.create(
+      { title: 'Brand new from alice' },
+      '2026-08-03T00:00:00.000Z'
+    );
+    storeA.update(
+      taskU.meta.id,
+      { title: 'U from alice' },
+      '2026-08-03T00:00:00.000Z'
+    );
+    const result = await syncerFor(a).syncOnce();
+
+    expect(result.state).toBe('blocked');
+
+    // T was never pushed anywhere — it must still exist locally.
+    expect(storeA.get(taskT.meta.id)?.meta.title).toBe('Brand new from alice');
+    const fileT = storeA.taskFilePath(taskT.meta.id);
+    expect(fileT).not.toBeNull();
+    expect(existsSync(fileT as string)).toBe(true);
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  }, 20_000);
+
   it('a remote requiring a credential prompt fails fast instead of hanging the daemon', async () => {
     const { origin, a, b } = twoClones();
     const storeA = new TaskStore(a);

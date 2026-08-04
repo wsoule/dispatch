@@ -115,6 +115,16 @@ export class BoardSyncer {
       );
     }
 
+    // Captured before the pull's fetch moves refs/remotes/origin/<trunk> —
+    // on a conflict, the rebase gets reset back to exactly this ref, and
+    // diffing from this point (not beforePull, which already includes this
+    // cycle's own staged commit) covers only what the fetch actually brought
+    // in, so it can never mistake the syncer's own commit for a deletion.
+    const beforeRemoteTrunk = this.run(this.worktree.path, [
+      'rev-parse',
+      `refs/remotes/origin/${trunk}`,
+    ]);
+
     const pull = this.run(this.worktree.path, [
       'pull',
       '--rebase',
@@ -175,16 +185,18 @@ export class BoardSyncer {
         }
 
         // The reset above just replayed every other commit trunk had beyond
-        // `beforePull` into the worktree — including a teammate's edit to an
-        // unrelated task, which has nothing to do with this conflict.
-        // Deliver that now rather than dropping it: materialize()'s own
-        // isOutstanding gate still holds back the conflicting file itself
-        // (this cycle's local edit stays put), but a bystander file must
-        // not silently go stale forever just because a different file
-        // collided.
+        // `beforeRemoteTrunk` into the worktree — including a teammate's
+        // edit to an unrelated task, which has nothing to do with this
+        // conflict. Deliver that now rather than dropping it: materialize()'s
+        // own isOutstanding gate still holds back the conflicting file
+        // itself (this cycle's local edit stays put), but a bystander file
+        // must not silently go stale forever just because a different file
+        // collided. Deliberately NOT beforePull: that range already includes
+        // this cycle's own staged commit, so its diff would misread the
+        // syncer's own reverted commit as trunk having deleted those files.
         const rescued =
-          beforePull.status === 0
-            ? this.materialize(beforePull.stdout.trim())
+          beforeRemoteTrunk.status === 0
+            ? this.materialize(beforeRemoteTrunk.stdout.trim())
             : 0;
 
         return {
