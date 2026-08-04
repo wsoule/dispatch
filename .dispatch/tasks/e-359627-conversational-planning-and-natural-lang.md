@@ -1,7 +1,7 @@
 ---
 id: e-359627
 title: Conversational planning and natural-language task creation
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,8 +10,9 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-26T19:06:42.656Z
-updated: 2026-07-26T19:06:54.991Z
+updated: 2026-08-03T23:19:05.590Z
 external: null
+writes: []
 ---
 
 ## Description

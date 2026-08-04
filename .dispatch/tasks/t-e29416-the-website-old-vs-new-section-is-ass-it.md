@@ -3,7 +3,7 @@ id: t-e29416
 title: the website "Old vs new" section is ass - it need to talk about how
   everything is chat & word focused and this is visual focused, never forget
   what you are doing because it is visually there in a kanban board and stuff
-status: in-review
+status: done
 kind: task
 parent: null
 milestone: null
@@ -12,8 +12,9 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-28T19:37:43.606Z
-updated: 2026-07-28T20:05:19.077Z
+updated: 2026-08-03T23:19:33.056Z
 external: null
+writes: []
 ---
 
 ## Description

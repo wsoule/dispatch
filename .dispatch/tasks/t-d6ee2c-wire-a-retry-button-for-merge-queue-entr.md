@@ -1,7 +1,7 @@
 ---
 id: t-d6ee2c
 title: Wire a Retry button for merge-queue entries blocked on the checkout
-status: todo
+status: done
 kind: task
 parent: null
 milestone: null
@@ -10,8 +10,9 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-26T21:45:53.580Z
-updated: 2026-07-26T21:45:53.580Z
+updated: 2026-08-03T23:19:14.206Z
 external: null
+writes: []
 ---
 
 ## Description
