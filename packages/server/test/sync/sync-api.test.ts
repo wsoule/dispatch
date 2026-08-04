@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -282,6 +283,71 @@ describe('GET /api/sync', () => {
       rmSync(origin, { recursive: true, force: true });
       cleanupClone(a);
       cleanupClone(b);
+    }
+  });
+
+  it('reports mergeDriverWarning null when the merge driver resolves, non-null when it does not', async () => {
+    // twoClones() registers the test harness's own driver (`bun cli.ts
+    // merge-task ...`), which resolves — the positive case.
+    const { origin, a, b } = twoClones();
+    enableAutoCommit(a);
+
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: a,
+        port: 0,
+        writeDaemonFile: false,
+        webDistDir: null,
+      });
+      useTestAuth(handle);
+
+      const res = await fetch(`http://127.0.0.1:${handle.port}/api/sync`);
+      const body = (await res.json()) as SyncStatusBody & {
+        mergeDriverWarning: string | null;
+      };
+      expect(body.mergeDriverWarning).toBeNull();
+    } finally {
+      await handle?.stop();
+      rmSync(origin, { recursive: true, force: true });
+      cleanupClone(a);
+      cleanupClone(b);
+    }
+  });
+
+  it('reports a non-null mergeDriverWarning when no merge driver was ever registered', async () => {
+    // No `dispatch init` / registerMergeDriverGitConfig call at all — the
+    // fresh-repo/never-set-up case, and the state most repos in this test
+    // suite are actually in.
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-no-driver-'));
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    spawnSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: root,
+    });
+    spawnSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    spawnSync('git', ['commit', '--allow-empty', '-q', '-m', 'initial'], {
+      cwd: root,
+    });
+    TaskStore.init(root);
+
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: root,
+        port: 0,
+        writeDaemonFile: false,
+        webDistDir: null,
+      });
+      useTestAuth(handle);
+
+      const res = await fetch(`http://127.0.0.1:${handle.port}/api/sync`);
+      const body = (await res.json()) as SyncStatusBody & {
+        mergeDriverWarning: string | null;
+      };
+      expect(body.mergeDriverWarning).not.toBeNull();
+    } finally {
+      await handle?.stop();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

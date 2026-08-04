@@ -1,4 +1,8 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
+import {
+  ActorContext,
+  isMergeDriverResolvable,
+  TaskStore,
+} from '@dispatch/core';
 import type { GitReader } from '@dispatch/core';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -394,6 +398,20 @@ export async function startServer(
     actorContext,
   });
 
+  // Same one-time-at-boot treatment as prCapability below: whether the task
+  // merge driver git config actually points at something resolvable on this
+  // daemon's PATH. A missing binary never corrupts anything (git treats an
+  // unrunnable driver as a genuine conflict), but it silently downgrades
+  // every concurrent same-task edit from a field-level merge to a plain
+  // line-based one — worth surfacing once at boot (see GET /api/sync) rather
+  // than leaving it undiagnosable.
+  const mergeDriverOk = isMergeDriverResolvable(rootDir);
+  if (!mergeDriverOk) {
+    console.log(
+      `dispatchd: the task merge driver ('dispatch merge-task') is not resolvable on PATH for ${rootDir} — concurrent edits will fall back to line-based merging`
+    );
+  }
+
   // PR capability is detected once, here at boot, and never rechecked per
   // request — a project's gh/remote setup essentially never changes while
   // dispatchd is running, and re-shelling-out to `gh --version` on every
@@ -523,6 +541,7 @@ export async function startServer(
     actorContext,
     tokens,
     boardSyncScheduler,
+    mergeDriverOk,
   };
 
   const server = Bun.serve({

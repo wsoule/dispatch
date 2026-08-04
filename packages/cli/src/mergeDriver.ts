@@ -6,6 +6,7 @@ export {
   checkMergeDriverSetup,
   checkTeamMergeDriverSetup,
   GITATTRIBUTES_LINE,
+  isMergeDriverResolvable,
   mergeGitAttributes,
   registerMergeDriverGitConfig,
   registerTeamMergeDriverGitConfig,
