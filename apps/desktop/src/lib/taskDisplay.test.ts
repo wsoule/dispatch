@@ -4,6 +4,7 @@ import {
   parseTaskSections,
   priorityTone,
   sectionOrDash,
+  statusLabel,
   statusTone,
 } from './taskDisplay';
 
@@ -48,5 +49,24 @@ describe('parseTaskSections / sectionOrDash', () => {
     const sections = parseTaskSections('## Description\n\n\n\n## Activity\n');
     expect(sectionOrDash(sections, 'Description')).toBe('—');
     expect(sectionOrDash(sections, 'Nonexistent')).toBe('—');
+  });
+});
+
+describe('statusLabel', () => {
+  test('title-cases a hyphenated config status', () => {
+    expect(statusLabel('in-progress')).toBe('In Progress');
+    expect(statusLabel('in-review')).toBe('In Review');
+  });
+
+  test('title-cases a single-word status', () => {
+    expect(statusLabel('backlog')).toBe('Backlog');
+  });
+
+  test('leaves a custom multi-hyphen status readable', () => {
+    expect(statusLabel('waiting-on-design')).toBe('Waiting On Design');
+  });
+
+  test('drops empty segments rather than emitting stray spaces', () => {
+    expect(statusLabel('done--')).toBe('Done');
   });
 });
