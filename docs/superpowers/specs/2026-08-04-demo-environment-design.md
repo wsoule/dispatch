@@ -27,12 +27,12 @@ narrative and replaces its mechanics.
 
 Four artifacts:
 
-| Path | Role |
-| --- | --- |
-| `github.com/wsoule/storefront` | public repo: storefront code plus committed `.dispatch/` state |
-| `.agents/ignore/storefront/` | Wyat's clone — the project the daemon runs against |
-| `.agents/ignore/storefront-home/` | isolated `DISPATCH_HOME`: run transcripts, actor identity |
-| `.agents/ignore/teammate/` | second clone plus second `DISPATCH_HOME` — the puppet |
+| Path                              | Role                                                           |
+| --------------------------------- | -------------------------------------------------------------- |
+| `github.com/wsoule/storefront`    | public repo: storefront code plus committed `.dispatch/` state |
+| `.agents/ignore/storefront/`      | Wyat's clone — the project the daemon runs against             |
+| `.agents/ignore/storefront-home/` | isolated `DISPATCH_HOME`: run transcripts, actor identity      |
+| `.agents/ignore/teammate/`        | second clone plus second `DISPATCH_HOME` — the puppet          |
 
 The split follows what Dispatch actually syncs. Shared board state — tasks,
 `team.yml`, `findings.jsonl`, `ledger.jsonl`, per-actor inboxes — is committed
