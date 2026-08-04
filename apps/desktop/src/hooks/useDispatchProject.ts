@@ -16,11 +16,13 @@ import type {
   RunMeta,
   RunQuestion,
   RunState,
+  SyncStatus,
 } from '@dispatch/client';
 import { createApiClient } from '@dispatch/client';
 import type {
   CreateInput,
   DispatchConfig,
+  EscalationStep,
   ModelConfig,
   TaskDoc,
   UpdatePatch,
@@ -284,15 +286,30 @@ export interface DispatchProjectData {
       intervalSec?: number;
       direction?: 'both' | 'pull' | 'push';
     };
+    maxTurns?: number | null;
+    maxBudgetUsd?: number | null;
+    fixLoop?: { cap?: number; escalation?: EscalationStep[] };
+    verify?: { command?: string; url?: string; notes?: string };
   }) => Promise<void>;
+  /** The board syncer's last attempt plus live pending counts — the sync chip's data source.
+   * `null` until the status query has ever resolved. */
+  syncStatus: SyncStatus | null;
   /** `null` until the status query has ever resolved. Carries no API key — only where the
    * daemon found one (`keySource`), never what it is. */
   linearStatus: LinearStatus | null;
   /** This Linear workspace's teams, fetched once connected — the Settings team picker. */
   linearTeams: LinearTeam[];
+  /** Why the team list is empty, when it is empty because the fetch failed rather than because
+   *  the workspace has no teams. Null-ish when the fetch succeeded. */
+  linearTeamsError: unknown;
+  refetchLinearTeams: () => void;
   /** The configured team's workflow states — the status-map editor's per-row `<select>`
    * options. Empty until a team is chosen. */
   linearStates: LinearWorkflowState[];
+  /** Why the state list is empty, when it is empty because the fetch failed rather than because
+   *  the team has no states. Null-ish when the fetch succeeded. */
+  linearStatesError: unknown;
+  refetchLinearStates: () => void;
   /** Issue UUID -> display identifier/URL, for resolving `TaskMeta.external` into a real chip. */
   linearLinks: Record<string, LinearIssueLink>;
   handleConnectLinear: (
@@ -628,6 +645,10 @@ export function useDispatchProject(
     () => ['dispatch-linear-links', port],
     [port]
   );
+  const syncStatusQueryKey = useMemo(
+    () => ['dispatch-sync-status', port],
+    [port]
+  );
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
@@ -653,6 +674,16 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
+  // The sync chip's data source — refetched only on mount and on the
+  // `board.sync` WS event below (see the effect's invalidation), not polled.
+  const { data: syncStatus } = useQuery({
+    queryKey: syncStatusQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchSyncStatus();
+    },
+    enabled: client !== null,
+  });
   // Scoped to the configured team, so switching teams in Settings fetches that team's own
   // states instead of showing the previous team's list while the new one loads.
   const linearStatesQueryKey = useMemo(
@@ -667,13 +698,20 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
-  const { data: linearTeams } = useQuery({
+  const {
+    data: linearTeams,
+    error: linearTeamsError,
+    refetch: refetchTeamsQuery,
+  } = useQuery({
     queryKey: linearTeamsQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchLinearTeams();
     },
     enabled: client !== null && linearStatus?.connected === true,
+    // A rejected key is a settled answer, not a blip — retrying it three times
+    // only delays the error the picker needs to show.
+    retry: false,
   });
   // Reads from disk, not the Linear API, so it stays available for chip rendering even while
   // disconnected — a task linked before a key was removed should still show its identifier.
@@ -686,7 +724,11 @@ export function useDispatchProject(
     enabled: client !== null,
   });
   const linearTeamId = config?.linear.teamId ?? null;
-  const { data: linearStates } = useQuery({
+  const {
+    data: linearStates,
+    error: linearStatesError,
+    refetch: refetchStatesQuery,
+  } = useQuery({
     queryKey: linearStatesQueryKey,
     queryFn: () => {
       if (client === null || linearTeamId === null) {
@@ -699,7 +741,19 @@ export function useDispatchProject(
       linearStatus?.connected === true &&
       linearTeamId !== null &&
       linearTeamId.trim() !== '',
+    // Same reasoning as linearTeams: a rejected fetch is a settled answer, not a blip.
+    retry: false,
   });
+  // TanStack's own `refetch` is stable, so wrapping it in useCallback with it as the only
+  // dependency gives callers (e.g. a Settings Retry button) an identity that never churns.
+  const refetchLinearTeams = useCallback(
+    () => void refetchTeamsQuery(),
+    [refetchTeamsQuery]
+  );
+  const refetchLinearStates = useCallback(
+    () => void refetchStatesQuery(),
+    [refetchStatesQuery]
+  );
   const { data: readyTasks } = useQuery({
     queryKey: readyQueryKey,
     queryFn: () => {
@@ -1130,6 +1184,13 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),
             });
+          } else if (event.type === 'board.sync') {
+            // Refetches rather than reading `event.result` straight into the
+            // cache: the pending counts the chip also shows are computed
+            // live server-side and aren't part of this event's payload.
+            void queryClient.invalidateQueries({
+              queryKey: syncStatusQueryKey,
+            });
           } else if (event.type === 'linear.changed') {
             // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so
             // Settings reflects it immediately rather than waiting on its own poll.
@@ -1229,6 +1290,7 @@ export function useDispatchProject(
     questionsQueryKey,
     linearStatusQueryKey,
     linearLinksQueryKey,
+    syncStatusQueryKey,
     port,
     onRecordInbox,
   ]);
@@ -1997,6 +2059,10 @@ export function useDispatchProject(
         intervalSec?: number;
         direction?: 'both' | 'pull' | 'push';
       };
+      maxTurns?: number | null;
+      maxBudgetUsd?: number | null;
+      fixLoop?: { cap?: number; escalation?: EscalationStep[] };
+      verify?: { command?: string; url?: string; notes?: string };
     }): Promise<void> => {
       if (client === null) return;
       await client.updateConfig(patch);
@@ -2222,9 +2288,14 @@ export function useDispatchProject(
     handleSendBack,
     handleSubmitReview,
     handleUpdateConfig,
+    syncStatus: syncStatus ?? null,
     linearStatus: linearStatus ?? null,
     linearTeams: linearTeams ?? [],
+    linearTeamsError,
+    refetchLinearTeams,
     linearStates: linearStates ?? [],
+    linearStatesError,
+    refetchLinearStates,
     linearLinks: linearLinks ?? {},
     handleConnectLinear,
     handleDisconnectLinear,

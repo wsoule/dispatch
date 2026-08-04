@@ -12,6 +12,6 @@ export { StateMark } from './state-mark';
 export { StatPair } from './stat-pair';
 export { StatTile } from './StatTile';
 export { StepStrip } from './StepStrip';
-export { MetaText } from './text';
+export { HintText, MetaText } from './text';
 export { Toolbar } from './toolbar';
 export { ViewHeader } from './view-header';

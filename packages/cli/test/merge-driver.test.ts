@@ -8,6 +8,7 @@ import {
   checkMergeDriverSetup,
   checkTeamMergeDriverSetup,
   GITATTRIBUTES_LINE,
+  isMergeDriverResolvable,
   mergeGitAttributes,
   registerMergeDriverGitConfig,
   registerTeamMergeDriverGitConfig,
@@ -82,6 +83,52 @@ describe('writeGitAttributes / registerMergeDriverGitConfig / checkMergeDriverSe
       gitattributes: true,
       gitConfig: false,
     });
+  });
+});
+
+// isMergeDriverResolvable goes one step past checkMergeDriverSetup: it
+// actually checks the configured command resolves on PATH, not just that
+// the git config entry exists.
+describe('isMergeDriverResolvable', () => {
+  function initRepo(): string {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-merge-driver-'));
+    spawnSync('git', ['init', '-q'], { cwd: root });
+    return root;
+  }
+
+  it('is false before any driver is registered', () => {
+    const root = initRepo();
+    expect(isMergeDriverResolvable(root)).toBe(false);
+  });
+
+  it('is false when the registered command does not resolve on PATH', () => {
+    const root = initRepo();
+    writeGitAttributes(root);
+    registerMergeDriverGitConfig(root);
+    // registerMergeDriverGitConfig hardcodes a bare `dispatch` — not on this
+    // test process's PATH unless installed globally, which is exactly the
+    // desktop-only-install gap this check exists to catch.
+    spawnSync(
+      'git',
+      [
+        'config',
+        'merge.dispatch-task.driver',
+        'definitely-not-a-real-binary %O %A %B',
+      ],
+      { cwd: root }
+    );
+    expect(isMergeDriverResolvable(root)).toBe(false);
+  });
+
+  it('is true when the registered command resolves on PATH', () => {
+    const root = initRepo();
+    writeGitAttributes(root);
+    spawnSync(
+      'git',
+      ['config', 'merge.dispatch-task.driver', 'git merge-file %A %O %B'],
+      { cwd: root }
+    );
+    expect(isMergeDriverResolvable(root)).toBe(true);
   });
 });
 

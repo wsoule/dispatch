@@ -587,6 +587,25 @@ export function updateConfig(
     }
     doc.setIn(['orchestrator', key], value);
   }
+
+  // Positive *numbers*, not integers: a budget is money and a turn cap is
+  // checked with `<=` upstream, matching the loader's own rule for both.
+  for (const key of ['maxTurns', 'maxBudgetUsd'] as const) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    if (value === null) {
+      // Clearing an absent cap is a no-op, not an error: the config already
+      // says "no cap". `deleteIn` throws if `orchestrator` isn't a
+      // collection yet, so only delete when the key is actually there —
+      // never create `orchestrator` as a side effect of clearing.
+      if (doc.hasIn(['orchestrator', key])) doc.deleteIn(['orchestrator', key]);
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new ConfigError(`invalid ${key}: must be a positive number`);
+    }
+    doc.setIn(['orchestrator', key], value);
+  }
   if (patch.permissionMode !== undefined) {
     // Validated before the write: an unknown mode on disk would make every
     // later loadConfig throw.

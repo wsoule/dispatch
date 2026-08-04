@@ -38,12 +38,18 @@ export function AssigneeAvatar({ assignee, className }: AssigneeAvatarProps) {
     );
   }
 
+  // An agent-owned card is the one Dispatch-specific thing about this app's assignees, so the
+  // agent avatar carries the indigo working tint while a human stays neutral — at a glance the
+  // board says which cards the fleet owns.
   const Icon = assignee === 'agent' ? Bot : User;
   return (
     <span
       title={label}
       className={cn(
-        'inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground',
+        'inline-flex size-4 shrink-0 items-center justify-center rounded-full',
+        assignee === 'agent'
+          ? 'bg-state-working-surface text-state-working'
+          : 'bg-muted text-muted-foreground',
         className
       )}
     >

@@ -2,6 +2,7 @@ import type {
   CommandEvidence,
   CreateInput,
   DispatchConfig,
+  EscalationStep,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -587,7 +588,12 @@ export type ServerEvent =
   // packages/server/src/events.ts.
   | { type: 'run.survey'; runId: string; survey: RunSurvey }
   // A verify run finished and recorded a structured result for the task.
-  | { type: 'verification.changed'; taskId: string };
+  | { type: 'verification.changed'; taskId: string }
+  // The board syncer attempted a sync (debounced off local task edits).
+  // Carries its own result, unlike the *.changed events, so a live feed can
+  // render the outcome without a follow-up fetch. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'board.sync'; result: SyncResult };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -906,6 +912,34 @@ export interface MergeQueueSnapshot {
   history: MergeQueueEntry[];
 }
 
+// Mirrors SyncState in packages/server/src/sync/boardSyncer.ts. No real
+// SyncResult a `syncOnce()` produces ever carries `'disabled'` or `'off'` —
+// GET /api/sync synthesizes `'disabled'` when no scheduler exists (no trunk
+// resolvable at boot) and `'off'` when the project's autoCommit is false.
+export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
+
+// Mirrors SyncResult in packages/server/src/sync/boardSyncer.ts — the
+// `board.sync` WS event's payload.
+export interface SyncResult {
+  pushed: number;
+  /** How many files materialize() wrote or removed in the working tree. */
+  pulled: number;
+  state: SyncState;
+  detail: string | null;
+}
+
+// The body of `GET /api/sync` — mirrors packages/server/src/api.ts's
+// SyncStatus. `pendingOutgoing`/`pendingIncoming` are read live on every
+// request, not frozen at the last sync attempt.
+export interface SyncStatus extends SyncResult {
+  pendingOutgoing: number;
+  pendingIncoming: number;
+  /** When the last sync attempt finished, or `null` before the first one. */
+  lastSyncedAt: string | null;
+  /** Null when `dispatch merge-task` resolves on the daemon's PATH; otherwise why it doesn't. */
+  mergeDriverWarning: string | null;
+}
+
 // Mirrors LinearSyncSummary in packages/server/src/linear/sync.ts: `created`
 // counts new local tasks, `createdIssues` counts new Linear issues.
 export interface LinearSyncSummary {
@@ -1177,6 +1211,8 @@ export interface ApiClient {
   baseUrl: string;
   fetchHealth(): Promise<HealthPayload>;
   fetchConfig(): Promise<DispatchConfig>;
+  /** The board syncer's last attempt plus live pending counts — the sync chip's data source. */
+  fetchSyncStatus(): Promise<SyncStatus>;
   fetchTasks(filter?: TaskFilter): Promise<TaskDoc[]>;
   fetchReadyTasks(): Promise<TaskDoc[]>;
   fetchTask(id: string): Promise<TaskDoc>;
@@ -1387,6 +1423,10 @@ export interface ApiClient {
       intervalSec?: number;
       direction?: 'both' | 'pull' | 'push';
     };
+    maxTurns?: number | null;
+    maxBudgetUsd?: number | null;
+    fixLoop?: { cap?: number; escalation?: EscalationStep[] };
+    verify?: { command?: string; url?: string; notes?: string };
   }): Promise<DispatchConfig>;
   // Linear sync. `connectLinear` posts the key once and never gets it back; every later
   // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.
@@ -1545,6 +1585,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     baseUrl,
     fetchHealth: () => request(target, '/api/health'),
     fetchConfig: () => request(target, '/api/config'),
+    fetchSyncStatus: () => request(target, '/api/sync'),
     fetchTasks: (filter = {}) =>
       request(target, `/api/tasks${taskQueryString(filter)}`),
     fetchReadyTasks: () => request(target, '/api/tasks/ready'),

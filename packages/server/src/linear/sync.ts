@@ -2,6 +2,7 @@ import {
   DEFAULT_LINEAR,
   externalId,
   getSection,
+  isOutstanding,
   issueFromTask,
   loadConfig,
   parseExternal,
@@ -676,7 +677,7 @@ export class LinearSync {
           ? taskIds.includes(doc.meta.id)
           : !pulledTaskIds.has(doc.meta.id) &&
             doc.meta.archivedAt === undefined &&
-            this.isOutstanding(state, doc)
+            isOutstanding(doc.meta.updated, state.pushed[doc.meta.id])
       );
     const unchecked = createOnly
       ? new Set<string>()
@@ -778,14 +779,6 @@ export class LinearSync {
   private mayAutoCreate(state: LinearSyncState, doc: TaskDoc): boolean {
     if (state.bootstrappedAt === null) return false;
     return Date.parse(doc.meta.updated) >= Date.parse(state.bootstrappedAt);
-  }
-
-  // A task is outstanding when its content has moved past the version the push last
-  // accounted for. Never when it moved backwards: a branch switch must not re-send old work.
-  private isOutstanding(state: LinearSyncState, doc: TaskDoc): boolean {
-    const accounted = state.pushed[doc.meta.id];
-    if (accounted === undefined) return true;
-    return Date.parse(doc.meta.updated) > Date.parse(accounted);
   }
 
   // Marks this issue version as reconciled, and keeps its display identifier around
