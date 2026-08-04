@@ -1,7 +1,7 @@
 ---
 id: t-f8358c
 title: "Warden tool registry: status + mutating action tools"
-status: todo
+status: in-progress
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.196Z
-updated: 2026-08-04T18:06:37.196Z
+updated: 2026-08-04T18:07:39.220Z
 external: null
 writes:
   - packages/server/src/orchestrator/wardenTools.ts
@@ -32,3 +32,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-04T18:07:39.220Z dispatched (claude, branch dispatch/t-f8358c-warden-tool-registry-status-mutating-act-38d3e7) — none

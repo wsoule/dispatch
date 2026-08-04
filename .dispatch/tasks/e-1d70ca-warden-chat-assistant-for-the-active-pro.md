@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-04T18:06:37.190Z
-updated: 2026-08-04T18:06:37.190Z
+updated: 2026-08-04T18:07:39.130Z
 external: null
 writes: []
 ---
@@ -22,3 +22,4 @@ A conversational, LLM-backed assistant surfaced as a new tab in the sidebar's gl
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-04T18:07:39.130Z [epic] epic dispatch started (concurrency 5) — human:wsoule679
