@@ -48,6 +48,12 @@ export interface ReviewComment {
   created: string;
   /** Replies, oldest first. A thread is a comment plus these. */
   replies: ReviewReply[];
+  /** GitHub comment ID when synced from GitHub; undefined for local comments. */
+  githubId?: number;
+  /** GitHub comment update timestamp when synced from GitHub. */
+  githubUpdatedAt?: string;
+  /** Source of the comment: 'local' or 'github'. Defaults to 'local'. */
+  origin?: string;
 }
 
 export interface ReviewReply {
