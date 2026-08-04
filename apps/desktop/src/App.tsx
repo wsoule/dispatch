@@ -614,8 +614,6 @@ function App() {
             liveAgentCount={liveRuns.length}
             spendToday={todaySpend}
             badges={{
-              'pull-requests': data.runs.filter((r) => r.prUrl !== undefined)
-                .length,
               board: data.readyIds.size,
               runs: liveRuns.length,
               review: data.runs.filter((r) => deriveFeedState(r) === 'review')
