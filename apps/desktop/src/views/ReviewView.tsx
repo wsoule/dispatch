@@ -288,6 +288,7 @@ export function ReviewView({
                 patch={data.diff.patch}
                 only={selected}
                 comments={data.reviewComments}
+                findings={findingsByFile.get(selected) ?? []}
                 viewed={viewed}
                 scrollTo={jumpTo}
                 onAdd={data.handleAddReviewComment}
