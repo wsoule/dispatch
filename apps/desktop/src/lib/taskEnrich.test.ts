@@ -136,6 +136,16 @@ describe('enrichPlanError', () => {
       'the planner came back with nothing to add'
     );
   });
+
+  // An enrich planner that asks a question has not come back empty — it is
+  // waiting. Reporting it as "nothing to add" is what made the button look dead.
+  it('is not an error while the planner has open questions', () => {
+    const record = planRecord({
+      proposal: null,
+      questions: [{ id: 'q1', question: 'Which surface?', options: [] }],
+    });
+    expect(enrichPlanError(record)).toBeNull();
+  });
 });
 
 describe('enrichPatch', () => {
