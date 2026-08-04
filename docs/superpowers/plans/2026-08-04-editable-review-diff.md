@@ -254,6 +254,9 @@ async function readRunFile(
   const side = url.searchParams.get('side') ?? 'new';
   if (path === null || path === '')
     return errorResponse(400, 'path is required');
+  if (!isWorktreeRelativePath(path)) {
+    return errorResponse(400, PATH_ESCAPE_ERROR);
+  }
   if (side !== 'old' && side !== 'new') {
     return errorResponse(400, `invalid side: ${side} (expected old|new)`);
   }
@@ -292,9 +295,34 @@ if (segments.length === 3 && segments[2] === 'file' && method === 'GET') {
 
 Note: the working-tree branch reads through `existsSync`/`readFileSync` rather
 than `GitRepo`, because an uncommitted edit is exactly what the reviewer needs
-to see and `git show` cannot reach it. `path` is still validated — `join` plus
-the 404 keeps a traversal from resolving, and Task 3 adds `safePath` on the
-write side where it matters.
+to see and `git show` cannot reach it. That bypasses `GitRepo`'s own `safePath`,
+so this route must do its own check — `join(worktreePath, '../../etc/passwd')`
+resolves happily and the file exists, so neither `join` nor the 404 stops a
+traversal. Add the shared guard next to `sha256Hex` and use it here and in Task
+3:
+
+```ts
+/**
+ * Rejects a path that could escape the worktree it is joined onto. Routes that
+ * touch the working tree directly need this because they bypass `GitRepo`,
+ * which does its own `safePath` check on every pathspec it passes to git.
+ */
+export function isWorktreeRelativePath(path: string): boolean {
+  if (path === '' || path.startsWith('-') || path.startsWith('/')) return false;
+  return !path.split('/').includes('..');
+}
+```
+
+Add this test to the `GET` describe block:
+
+```ts
+it('refuses a path that escapes the worktree', async () => {
+  const res = await apiFetch(
+    `/api/runs/${runId}/file?path=../../etc/passwd&side=new`
+  );
+  expect(res.status).toBe(400);
+});
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -566,11 +594,12 @@ async function applyRunEdit(
 }
 ```
 
-The path-escape test expects a 400 before any write. Add this guard immediately
-after the body validation, so a traversal never reaches `writeFileSync`:
+The path-escape test expects a 400 before any write. Reuse Task 2's shared guard
+— do not write a second copy of the check — immediately after the body
+validation, so a traversal never reaches `writeFileSync`:
 
 ```ts
-if (body.file.startsWith('-') || body.file.split('/').includes('..')) {
+if (!isWorktreeRelativePath(body.file)) {
   return errorResponse(400, PATH_ESCAPE_ERROR);
 }
 ```
