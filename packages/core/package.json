@@ -2,7 +2,7 @@
   "name": "@dispatch/core",
   "version": "0.0.1",
   "private": true,
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "exports": {
     ".": {
