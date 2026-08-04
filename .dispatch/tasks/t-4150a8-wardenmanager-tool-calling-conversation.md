@@ -1,7 +1,7 @@
 ---
 id: t-4150a8
 title: "WardenManager: tool-calling conversation session"
-status: todo
+status: in-progress
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.198Z
-updated: 2026-08-04T18:06:37.202Z
+updated: 2026-08-04T18:56:39.331Z
 external: null
 writes:
   - packages/server/src/orchestrator/warden.ts
@@ -33,3 +33,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-04T18:56:39.331Z dispatched (claude, branch dispatch/t-4150a8-wardenmanager-tool-calling-conversation-96f433) — none
