@@ -812,9 +812,24 @@ function App() {
                         draft={activeDraft}
                         onDone={() => selectProjectView('board')}
                       />
+                    ) : data.config === null ? (
+                      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                        <Loader2 className="text-muted-foreground size-5 animate-spin" />
+                        <p className="text-muted-foreground text-[13px]">
+                          Loading project…
+                        </p>
+                      </div>
                     ) : (
-                      <div className="text-muted-foreground p-6 text-[13px]">
-                        That draft is no longer available.
+                      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                        <p className="text-muted-foreground text-[13px]">
+                          That draft is no longer available.
+                        </p>
+                        <Button
+                          size="sm"
+                          onClick={() => selectProjectView('board')}
+                        >
+                          Back to board
+                        </Button>
                       </div>
                     ))}
                 </>
