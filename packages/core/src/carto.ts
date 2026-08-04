@@ -4,12 +4,14 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
-import { delimiter, join } from 'node:path';
+import { homedir } from 'node:os';
+import { delimiter, dirname, join } from 'node:path';
 
 /** The carto binary Dispatch found, and the version it reported. */
 export interface CartoBinary {
@@ -325,11 +327,84 @@ function ensureCartoIgnored(projectRoot: string): void {
   }
 }
 
+// Every MCP config `carto init` auto-wires itself into. It has no opt-out
+// flag, and detection is directory-based, so the only containment is to put
+// each file back afterward.
+function mcpWiringTargets(projectRoot: string, home: string): string[] {
+  const claudeDesktop =
+    process.platform === 'darwin'
+      ? join(
+          home,
+          'Library',
+          'Application Support',
+          'Claude',
+          'claude_desktop_config.json'
+        )
+      : process.platform === 'win32'
+        ? join(
+            process.env.APPDATA ?? join(home, 'AppData', 'Roaming'),
+            'Claude',
+            'claude_desktop_config.json'
+          )
+        : join(home, '.config', 'Claude', 'claude_desktop_config.json');
+  return [
+    join(home, '.cursor', 'mcp.json'),
+    join(home, '.kiro', 'settings', 'mcp.json'),
+    join(home, '.codex', 'config.toml'),
+    join(home, '.codeium', 'windsurf', 'mcp_config.json'),
+    claudeDesktop,
+    // Dispatch's own: `dispatch init` writes the dispatch server here.
+    join(projectRoot, '.mcp.json'),
+    join(projectRoot, '.vscode', 'mcp.json'),
+  ];
+}
+
+interface FileSnapshot {
+  path: string;
+  content: string | null;
+  dirExisted: boolean;
+}
+
+function snapshotFiles(paths: readonly string[]): FileSnapshot[] {
+  return paths.map((path) => {
+    let content: string | null = null;
+    try {
+      if (existsSync(path)) content = readFileSync(path, 'utf8');
+    } catch {
+      // Unreadable means unrestorable; treated as absent below.
+    }
+    return { path, content, dirExisted: existsSync(dirname(path)) };
+  });
+}
+
+// Puts each snapshotted file back, deleting the ones that weren't there
+// before along with any directory created to hold them. Best-effort
+// throughout: a config Dispatch can't rewrite must not fail the index.
+function restoreFiles(snapshots: readonly FileSnapshot[]): void {
+  for (const snapshot of snapshots) {
+    try {
+      if (snapshot.content !== null) {
+        if (readFileSync(snapshot.path, 'utf8') !== snapshot.content) {
+          writeFileSync(snapshot.path, snapshot.content);
+        }
+        continue;
+      }
+      if (!existsSync(snapshot.path)) continue;
+      unlinkSync(snapshot.path);
+      if (!snapshot.dirExisted) rmdirSync(dirname(snapshot.path));
+    } catch {
+      // Leaves this one config wired; the container still built.
+    }
+  }
+}
+
 // Runs carto init, containing its side effects on files Dispatch owns:
-// AGENTS.md is snapshotted/restored around the call, then hooks are pinned.
+// AGENTS.md and every MCP config carto auto-wires are snapshotted/restored
+// around the call, then hooks are pinned.
 export function cartoInit(
   projectRoot: string,
-  binary: CartoBinary
+  binary: CartoBinary,
+  home: string = homedir()
 ): CartoRunResult {
   const agents = join(projectRoot, 'AGENTS.md');
   const backup = join(projectRoot, '.carto-agents-backup');
@@ -345,10 +420,12 @@ export function cartoInit(
     }
   }
 
+  const wiring = snapshotFiles(mcpWiringTargets(projectRoot, home));
   const run = spawnSync(binary.path, ['init'], {
     cwd: projectRoot,
     encoding: 'utf8',
   });
+  restoreFiles(wiring);
 
   if (hadAgents) {
     try {
