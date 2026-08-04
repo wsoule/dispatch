@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-03T23:37:38.604Z
-updated: 2026-08-04T17:12:24.869Z
+updated: 2026-08-04T17:38:18.638Z
 external: null
 writes: []
 archived-at: 2026-08-04T17:12:24.869Z
@@ -43,3 +43,4 @@ Note for whoever merges: run r-fd81a8 claims packages/server/src/api.ts, which t
 - 2026-08-04T15:34:09.161Z [run r-d77386] finished: finished — 0 files, $5.33 — agent:wsoule679/claude
 - 2026-08-04T16:40:15.163Z status → done — human:wsoule679
 - 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679
+- 2026-08-04T17:38:18.638Z run r-aef398 merged into main — human:wsoule679
