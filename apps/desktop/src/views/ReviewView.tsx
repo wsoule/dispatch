@@ -70,7 +70,8 @@ const NO_COMMENTS: ReviewComment[] = [];
  * out of a worktree. What it does not get is the line-comment composer: those
  * have no mirror back to GitHub yet, so one here would file them on local disk
  * under a false promise. A PR is reviewed from the panel in the right rail,
- * which posts straight to GitHub.
+ * which posts straight to GitHub — and which therefore opens by default on a
+ * PR (its own `review` panel key), since it is the only place to approve one.
  */
 export function ReviewView({
   data,
@@ -157,6 +158,10 @@ export function ReviewView({
   const [threadsOpen, setThreadsOpen] = useState(() =>
     readPanelOpen('threads')
   );
+  // The PR rail is its own persisted panel, not the thread list's: a run
+  // review's `threads: false` default would otherwise leave a PR with no
+  // Approve, no Request changes and no Comment anywhere on screen.
+  const [prRailOpen, setPrRailOpen] = useState(() => readPanelOpen('review'));
   // Which thread the diff should scroll to. Carries a nonce so clicking the same thread twice
   // still jumps — a value-equal object would not re-fire the effect.
   const [jumpTo, setJumpTo] = useState<{
@@ -173,6 +178,7 @@ export function ReviewView({
   }, [viewedKey, viewed]);
   useEffect(() => writePanelOpen('files', filesOpen), [filesOpen]);
   useEffect(() => writePanelOpen('threads', threadsOpen), [threadsOpen]);
+  useEffect(() => writePanelOpen('review', prRailOpen), [prRailOpen]);
 
   // `selected === null` is the case panel, which is where a review opens: the agent's own
   // account of what it checked is the thing to read before file 1 of 10. Only correct the
@@ -329,6 +335,15 @@ export function ReviewView({
     />
   ) : null;
 
+  // With a PR to act on the rail is a review surface, not a comment list, so
+  // it gets its own default-open panel state and says so on the toggle.
+  const hasPrPanel = prPanel !== null;
+  const railOpen = hasPrPanel ? prRailOpen : threadsOpen;
+  const toggleRail = () => {
+    if (hasPrPanel) setPrRailOpen((v) => !v);
+    else setThreadsOpen((v) => !v);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <Header
@@ -343,9 +358,10 @@ export function ReviewView({
         pr={selectedItem?.pr}
         filesOpen={filesOpen}
         onToggleFiles={() => setFilesOpen((v) => !v)}
-        threadsOpen={threadsOpen}
-        onToggleThreads={() => setThreadsOpen((v) => !v)}
-        threadCount={
+        railOpen={railOpen}
+        onToggleRail={toggleRail}
+        railLabel={hasPrPanel ? 'Review' : 'Threads'}
+        railCount={
           isPrTarget
             ? (repoPr.prDetail?.conversation.length ?? 0)
             : reviewComments.length
@@ -402,7 +418,15 @@ export function ReviewView({
               onStartAiReview={handleStartAiReview}
             />
           )}
-          {isPrTarget && selected === null && (
+          {/* A failed fetch must not read as "this PR changes nothing" — an
+              empty file tree beside cheerful copy is the worse failure. */}
+          {isPrTarget && selected === null && repoPr.prDiffError !== null && (
+            <p className="text-destructive p-4 text-[12.5px]">
+              Couldn&rsquo;t load this pull request&rsquo;s diff from GitHub:{' '}
+              {repoPr.prDiffError}
+            </p>
+          )}
+          {isPrTarget && selected === null && repoPr.prDiffError === null && (
             <p className="text-muted-foreground p-4 text-[12.5px]">
               {repoPr.prDiffLoading
                 ? 'Fetching the diff from GitHub…'
@@ -436,7 +460,7 @@ export function ReviewView({
           )}
         </div>
 
-        {threadsOpen && (
+        {railOpen && (
           <div className="flex min-h-0 w-72 shrink-0 flex-col gap-3 overflow-y-auto">
             {prPanel}
             {!isPrTarget && (
@@ -529,9 +553,10 @@ function Header({
   pr,
   filesOpen,
   onToggleFiles,
-  threadsOpen,
-  onToggleThreads,
-  threadCount,
+  railOpen,
+  onToggleRail,
+  railLabel,
+  railCount,
 }: {
   onBack: () => void;
   title: string;
@@ -546,9 +571,11 @@ function Header({
   pr?: RepoPr;
   filesOpen: boolean;
   onToggleFiles: () => void;
-  threadsOpen: boolean;
-  onToggleThreads: () => void;
-  threadCount: number;
+  railOpen: boolean;
+  onToggleRail: () => void;
+  /** What the right rail is here: "Review" with a PR in it, else "Threads". */
+  railLabel: string;
+  railCount: number;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -595,11 +622,13 @@ function Header({
         </button>
         <button
           type="button"
-          onClick={onToggleThreads}
-          aria-pressed={threadsOpen}
+          onClick={onToggleRail}
+          aria-pressed={railOpen}
           className="text-accent-foreground text-[11px]"
         >
-          {threadsOpen ? 'Hide threads' : `Threads (${threadCount})`}
+          {railOpen
+            ? `Hide ${railLabel.toLowerCase()}`
+            : `${railLabel} (${railCount})`}
         </button>
       </div>
     </div>
