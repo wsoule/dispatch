@@ -935,6 +935,8 @@ export interface SyncStatus extends SyncResult {
   pendingIncoming: number;
   /** When the last sync attempt finished, or `null` before the first one. */
   lastSyncedAt: string | null;
+  /** Null when `dispatch merge-task` resolves on the daemon's PATH; otherwise why it doesn't. */
+  mergeDriverWarning: string | null;
 }
 
 // Mirrors LinearSyncSummary in packages/server/src/linear/sync.ts: `created`

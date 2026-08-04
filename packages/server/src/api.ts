@@ -143,6 +143,11 @@ export interface ApiContext {
   // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
   // that case, since no real SyncResult ever reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
+  // Detected once at boot (see index.ts's isMergeDriverResolvable call) —
+  // whether `dispatch merge-task` actually resolves on this daemon's PATH.
+  // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
+  // visible somewhere, since git itself never reports it as an error.
+  mergeDriverOk: boolean;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -691,6 +696,14 @@ export interface SyncStatus extends SyncResult {
   pendingIncoming: number;
   /** When the last sync attempt finished, or `null` before the first one. */
   lastSyncedAt: string | null;
+  /**
+   * Null when `dispatch merge-task` resolves on the daemon's PATH; otherwise
+   * why it doesn't. A broken driver never corrupts anything by itself — git
+   * treats it as a genuine conflict — but it silently downgrades every
+   * OTHER concurrent same-task edit from a field-level merge to a plain
+   * line-based one, with no other diagnostic anywhere.
+   */
+  mergeDriverWarning: string | null;
 }
 
 const DISABLED_SYNC_DETAIL =
@@ -702,6 +715,12 @@ const DISABLED_SYNC_DETAIL =
 const OFF_SYNC_DETAIL =
   'board sync is off for this project — turn on auto-commit in Settings ' +
   'to start syncing.';
+
+const MERGE_DRIVER_WARNING =
+  "the 'dispatch' command isn't resolvable on this daemon's PATH, so " +
+  'concurrent edits to the same task will merge line-by-line instead of ' +
+  'field-by-field. Run `dispatch init` (or `dispatch doctor`) from a shell ' +
+  'that can find `dispatch` to fix this.';
 
 // GET /api/sync — `disabled` and `off` are never states a real
 // BoardSyncer.syncOnce() result carries (see boardSyncer.ts's SyncState).
@@ -716,6 +735,12 @@ const OFF_SYNC_DETAIL =
 // straight from the scheduler's retained last result, alongside a live
 // pendingCounts() read.
 function getSyncStatus(ctx: ApiContext): Response {
+  // Read once per request, not cached on ApiContext: unlike the boot-time
+  // detection this value comes from (ctx.mergeDriverOk), this is cheap
+  // enough to include regardless of which branch below responds, so every
+  // state — even `disabled`/`off` — reports the same merge-driver truth.
+  const mergeDriverWarning = ctx.mergeDriverOk ? null : MERGE_DRIVER_WARNING;
+
   if (ctx.boardSyncScheduler === null) {
     const disabled: SyncStatus = {
       state: 'disabled',
@@ -725,6 +750,7 @@ function getSyncStatus(ctx: ApiContext): Response {
       pendingOutgoing: 0,
       pendingIncoming: 0,
       lastSyncedAt: null,
+      mergeDriverWarning,
     };
     return jsonResponse(disabled);
   }
@@ -744,6 +770,7 @@ function getSyncStatus(ctx: ApiContext): Response {
       pendingOutgoing: 0,
       pendingIncoming: 0,
       lastSyncedAt: null,
+      mergeDriverWarning,
     };
     return jsonResponse(off);
   }
@@ -758,6 +785,7 @@ function getSyncStatus(ctx: ApiContext): Response {
     pendingOutgoing: pending.outgoing,
     pendingIncoming: pending.incoming,
     lastSyncedAt: ctx.boardSyncScheduler.lastSyncedAt(),
+    mergeDriverWarning,
   };
   return jsonResponse(status);
 }
