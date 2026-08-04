@@ -1,6 +1,6 @@
 # Dispatch (working title)
 
-Open-source, git-native task tracking and AI-agent orchestration. Tasks are
+Source-available, git-native task tracking and AI-agent orchestration. Tasks are
 markdown files in your repo (`.dispatch/tasks/*.md`) — synced by git, readable
 by humans and agents alike.
 
@@ -138,4 +138,14 @@ the original design.
 
 ## License
 
-Apache-2.0.
+[Functional Source License 1.1, Apache 2.0 Future License](LICENSE)
+(`FSL-1.1-ALv2`) — source-available, not OSI open source.
+
+In practice you may read, build, modify, self-host, and redistribute Dispatch
+for any purpose except shipping a competing product or service. Internal use,
+non-commercial education and research, and professional services you deliver to
+a licensee are all explicitly permitted. **Each release converts to Apache-2.0
+two years after it ships**, and that grant is irrevocable.
+
+Versions up to and including v0.13.1 were published under Apache-2.0 and remain
+Apache-2.0 forever.
