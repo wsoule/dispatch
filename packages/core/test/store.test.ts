@@ -177,6 +177,74 @@ describe('update', () => {
       reread.body.indexOf('## Activity')
     );
   });
+
+  it('replaces the whole body, including adding and dropping sections', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create(
+      { title: 'Ship docs', description: 'old description' },
+      '2026-07-13T18:00:00Z'
+    );
+    // Unlike a section patch, this drops Acceptance Criteria entirely and
+    // introduces a heading the template never had.
+    store.update(doc.meta.id, {
+      body: '## Description\n\nrewritten\n\n## Notes\n\nhand written\n',
+    });
+    const reread = store.get(doc.meta.id)!;
+    expect(reread.body.match(/^## .+$/gm)).toEqual([
+      '## Description',
+      '## Notes',
+    ]);
+    expect(getSection(reread.body, 'Description')).toBe('rewritten');
+    expect(getSection(reread.body, 'Notes')).toBe('hand written');
+    // The frontmatter is untouched by a body rewrite.
+    expect(reread.meta.title).toBe('Ship docs');
+    expect(reread.meta.id).toBe(doc.meta.id);
+  });
+
+  it('normalizes a hand-edited body and re-saving it is a byte-for-byte no-op', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Ship docs' }, '2026-07-13T18:00:00Z');
+    // Ragged edges an editor easily produces: no leading newline, trailing
+    // blank lines. The stored body gets one leading and one trailing newline.
+    store.update(
+      doc.meta.id,
+      { body: '## Description\n\nrewritten\n\n\n' },
+      '2026-07-13T19:00:00Z'
+    );
+    const once = store.get(doc.meta.id)!;
+    expect(once.body).toBe('\n## Description\n\nrewritten\n');
+    const file = store.taskFilePath(doc.meta.id)!;
+    const afterFirst = readFileSync(file, 'utf8');
+    // Feeding the normalized body straight back must not drift it further.
+    store.update(doc.meta.id, { body: once.body }, '2026-07-13T19:00:00Z');
+    expect(readFileSync(file, 'utf8')).toBe(afterFirst);
+  });
+
+  it('applies a section patch on top of a whole-body replacement', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Ship docs' }, '2026-07-13T18:00:00Z');
+    // Both fields target the body; the rewrite is the base the section edit
+    // then lands on, so the result never depends on field order.
+    store.update(doc.meta.id, {
+      body: '## Description\n\nfrom body\n\n## Activity\n',
+      description: 'from section',
+    });
+    const reread = store.get(doc.meta.id)!;
+    expect(getSection(reread.body, 'Description')).toBe('from section');
+  });
+
+  it('round-trips markdown a body rewrite can legitimately contain', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Ship docs' }, '2026-07-13T18:00:00Z');
+    // A thematic break is the interesting one: `---` is also the frontmatter
+    // fence, so it would corrupt the file if the parser were greedy.
+    const body =
+      '## Description\n\nbefore\n\n---\n\nafter\n\n```yaml\nid: not-real\n```\n';
+    store.update(doc.meta.id, { body });
+    const reread = store.get(doc.meta.id)!;
+    expect(reread.body).toBe(`\n${body.trim()}\n`);
+    expect(reread.meta.id).toBe(doc.meta.id);
+  });
 });
 
 describe('amend', () => {

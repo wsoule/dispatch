@@ -214,15 +214,28 @@ function validateStringOrNullField(
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
-// a task's kind is fixed at creation.
+// a task's kind is fixed at creation. `includeBody` is update-only for the
+// mirror-image reason: CreateInput builds its body from the template.
 function validateTaskFields(
   value: Record<string, unknown>,
   config: DispatchConfig,
-  { includeKind }: { includeKind: boolean }
+  { includeKind, includeBody }: { includeKind: boolean; includeBody: boolean }
 ): string | null {
   if (includeKind) {
     const kindError = validateEnumField(value.kind, KINDS, 'kind');
     if (kindError) return kindError;
+  }
+  if (includeBody) {
+    // Same reason as the section fields above: normalizeBody trims the value
+    // before storing it, so a non-string reaches `.trim()` and 500s instead of
+    // being reported as the bad request it is.
+    const bodyError = validateStringField(value.body, 'body');
+    if (bodyError) return bodyError;
+  } else if (value.body !== undefined) {
+    // Rejected rather than ignored: `body` is a real field on PATCH, so a
+    // caller sending it to POST is assuming a symmetry that doesn't exist and
+    // would otherwise get the template back with their text silently dropped.
+    return 'invalid body: a new task builds its body from the template — set it with PATCH instead';
   }
   const statusError = validateEnumField(
     value.status,
@@ -279,7 +292,7 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const fieldsError = validateTaskFields(
     parsed.value as Record<string, unknown>,
     config,
-    { includeKind: true }
+    { includeKind: true, includeBody: false }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
 
@@ -367,7 +380,7 @@ async function updateTask(
   const fieldsError = validateTaskFields(
     parsed.value as Record<string, unknown>,
     config,
-    { includeKind: false }
+    { includeKind: false, includeBody: true }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
 

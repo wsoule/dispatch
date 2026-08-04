@@ -13,6 +13,7 @@ import {
   appendActivity,
   appendAmendment,
   escapeHeadingLines,
+  normalizeBody,
   parseTaskFile,
   serializeTaskFile,
   setSection,
@@ -79,6 +80,11 @@ export interface UpdatePatch {
   // the same way as frontmatter fields but living in the markdown body.
   description?: string;
   acceptanceCriteria?: string;
+  // The whole markdown body — everything after the frontmatter — replaced
+  // wholesale rather than a section at a time. This is what the desktop's
+  // task body editor writes; unlike description/acceptanceCriteria it does
+  // NOT go through setSection, so it can add, reorder, or drop sections.
+  body?: string;
 }
 
 export interface ListFilter {
@@ -220,13 +226,15 @@ export class TaskStore {
     const file = this.taskFilePath(id);
     if (!file) throw new Error(`task not found: ${id}`);
     const doc = parseTaskFile(readFileSync(file, 'utf8'), file);
-    // description/acceptanceCriteria/appendActivity target the markdown body,
-    // not the frontmatter, so they're pulled out before the meta spread below.
+    // body/description/acceptanceCriteria/appendActivity target the markdown
+    // body, not the frontmatter, so they're pulled out before the meta spread
+    // below.
     const {
       appendActivity: activityLine,
       activityActor,
       description,
       acceptanceCriteria,
+      body: wholeBody,
       archivedAt,
       ...patchFields
     } = patch;
@@ -239,7 +247,11 @@ export class TaskStore {
     // separately rather than spread in like the other fields.
     if (archivedAt === null) delete meta.archivedAt;
     else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
-    let body = doc.body;
+    // A whole-body replacement is the new base the section edits below apply
+    // to, so a patch carrying both `body` and `description` lands the rewrite
+    // first and then the section edit on top of it, rather than depending on
+    // which field the caller happened to set.
+    let body = wholeBody === undefined ? doc.body : normalizeBody(wholeBody);
     if (description !== undefined)
       body = setSection(body, 'Description', description);
     if (acceptanceCriteria !== undefined)
