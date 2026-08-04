@@ -1,19 +1,31 @@
-import type { RunMeta } from '@dispatch/client';
+import type { RepoPr, RunMeta } from '@dispatch/client';
 import { GitPullRequest, GitPullRequestArrow } from 'lucide-react';
 
+import { reviewTargetKey } from '../../lib/reviewTarget';
+import type { ReviewTarget } from '../../lib/reviewTarget';
+import { PrChecksPill, REVIEW_VERDICT, StatusPill } from './PrStatusPills';
 import { cn } from '@/lib/utils';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 export interface ReviewQueueItem {
-  run: RunMeta;
+  /** What this row opens — a local run's diff, or a GitHub PR. */
+  target: ReviewTarget;
+  /** What the row shows: the task title for a run, the PR title otherwise. */
+  title: string;
   /** True when this one is waiting on GitHub rather than on a local diff. */
   isPr: boolean;
+  /** Sort key, newest first. */
+  updatedAt: string;
+  /** Present for a run-backed row — turns/cost and the send-back path. */
+  run?: RunMeta;
+  /** Present for any row with GitHub status to render. */
+  pr?: RepoPr;
 }
 
 interface ReviewQueueProps {
   items: ReviewQueueItem[];
-  selectedRunId: string | null;
-  onSelect: (runId: string) => void;
+  selected: ReviewTarget | null;
+  onSelect: (target: ReviewTarget) => void;
   /** Compact mode renders as a narrow rail beside an open review. */
   compact?: boolean;
 }
@@ -30,7 +42,7 @@ interface ReviewQueueProps {
  */
 export function ReviewQueue({
   items,
-  selectedRunId,
+  selected,
   onSelect,
   compact = false,
 }: ReviewQueueProps) {
@@ -55,9 +67,12 @@ export function ReviewQueue({
           <div className="mt-1.5 flex flex-col gap-0.5">
             {local.map((item) => (
               <Row
-                key={item.run.id}
+                key={reviewTargetKey(item.target)}
                 item={item}
-                selected={item.run.id === selectedRunId}
+                selected={
+                  selected !== null &&
+                  reviewTargetKey(selected) === reviewTargetKey(item.target)
+                }
                 onSelect={onSelect}
                 compact={compact}
               />
@@ -73,9 +88,12 @@ export function ReviewQueue({
           <div className="mt-1.5 flex flex-col gap-0.5">
             {prs.map((item) => (
               <Row
-                key={item.run.id}
+                key={reviewTargetKey(item.target)}
                 item={item}
-                selected={item.run.id === selectedRunId}
+                selected={
+                  selected !== null &&
+                  reviewTargetKey(selected) === reviewTargetKey(item.target)
+                }
                 onSelect={onSelect}
                 compact={compact}
               />
@@ -95,15 +113,21 @@ function Row({
 }: {
   item: ReviewQueueItem;
   selected: boolean;
-  onSelect: (runId: string) => void;
+  onSelect: (target: ReviewTarget) => void;
   compact: boolean;
 }) {
-  const { run, isPr } = item;
+  const { run, pr, isPr } = item;
   const Icon = isPr ? GitPullRequest : GitPullRequestArrow;
+  const verdict =
+    pr?.reviewDecision === 'APPROVED'
+      ? REVIEW_VERDICT.APPROVED
+      : pr?.reviewDecision === 'CHANGES_REQUESTED'
+        ? REVIEW_VERDICT.CHANGES_REQUESTED
+        : undefined;
   return (
     <button
       type="button"
-      onClick={() => onSelect(run.id)}
+      onClick={() => onSelect(item.target)}
       className={cn(
         'flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors duration-150',
         selected ? 'border-border bg-accent' : 'hover:bg-muted/60'
@@ -115,13 +139,18 @@ function Row({
           isPr ? 'text-state-landing' : 'text-state-review'
         )}
       />
-      <span className="min-w-0 flex-1 truncate text-[13px]">
-        {run.taskTitle}
-      </span>
-      {!compact && run.turns !== undefined && (
+      <span className="min-w-0 flex-1 truncate text-[13px]">{item.title}</span>
+      {!compact && pr !== undefined && <PrChecksPill checks={pr.checks} />}
+      {!compact && verdict !== undefined && (
+        <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
+      )}
+      {!compact && pr?.mergeable === 'CONFLICTING' && (
+        <StatusPill tone="red">Conflicts</StatusPill>
+      )}
+      {!compact && run?.turns !== undefined && (
         <span className="dense-meta shrink-0">{run.turns} turns</span>
       )}
-      {!compact && run.costUsd !== undefined && (
+      {!compact && run?.costUsd !== undefined && (
         <span className="dense-meta shrink-0">${run.costUsd.toFixed(2)}</span>
       )}
     </button>
@@ -129,25 +158,52 @@ function Row({
 }
 
 /**
- * The runs a human still has to look at: finished-but-unreviewed work, plus
- * anything with a PR still open. Sorted newest first so the queue reads like an
- * inbox rather than an archaeology dig.
+ * Runs awaiting review plus every open repo PR, newest first. A
+ * dispatch-opened PR arrives via both sources; the run-backed row
+ * wins, since only it reaches send-back.
  *
- * Execute runs only. A review or verify agent produces its own `RunMeta` that is
- * finished and never gets `reviewedAt` — nothing reviews a reviewer — so without
- * this filter every AI review permanently added a second row for work the queue
- * was already listing, under the same task title. That is the same fold
- * lib/controlRoom.ts applies to the Control room feed.
+ * Execute runs only: a review or verify agent's own RunMeta is finished
+ * and never gets `reviewedAt`, so it would sit here forever under the
+ * title of the work it reviewed. Absent `kind` still means execute.
  */
-export function buildReviewQueue(runs: RunMeta[]): ReviewQueueItem[] {
-  return runs
-    .filter(
-      (r) =>
-        (r.kind ?? 'execute') === 'execute' &&
-        r.archivedAt === undefined &&
-        (r.prUrl !== undefined ||
-          (r.state === 'finished' && r.reviewedAt === undefined))
-    )
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .map((run) => ({ run, isPr: run.prUrl !== undefined }));
+export function buildReviewQueue(
+  runs: RunMeta[],
+  repoPrs: RepoPr[] = []
+): ReviewQueueItem[] {
+  const prByUrl = new Map(repoPrs.map((pr) => [pr.url, pr]));
+  const items: ReviewQueueItem[] = [];
+  const claimedUrls = new Set<string>();
+
+  for (const run of runs) {
+    if ((run.kind ?? 'execute') !== 'execute') continue;
+    if (run.archivedAt !== undefined) continue;
+    const isPr = run.prUrl !== undefined;
+    if (!isPr && !(run.state === 'finished' && run.reviewedAt === undefined)) {
+      continue;
+    }
+    if (run.prUrl !== undefined) claimedUrls.add(run.prUrl);
+    items.push({
+      target: { kind: 'run', runId: run.id },
+      title: run.taskTitle,
+      isPr,
+      updatedAt: run.updatedAt,
+      run,
+      ...(run.prUrl !== undefined && prByUrl.has(run.prUrl)
+        ? { pr: prByUrl.get(run.prUrl) }
+        : {}),
+    });
+  }
+
+  for (const pr of repoPrs) {
+    if (claimedUrls.has(pr.url)) continue;
+    items.push({
+      target: { kind: 'pr', number: pr.number },
+      title: pr.title,
+      isPr: true,
+      updatedAt: pr.updatedAt,
+      pr,
+    });
+  }
+
+  return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }

@@ -3023,6 +3023,13 @@ export async function handleApi(
       ) {
         return await getRepoPrDetail(ctx, segments[1]);
       }
+      // GET /api/prs/:number/diff — the PR's diff in DiffResult shape, so the
+      // review surface renders a PR through the same component a run uses.
+      if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
+        const pr = await resolveRepoPrByNumber(ctx, segments[1]);
+        if (pr === null) return errorResponse(404, 'pull request not found');
+        return jsonResponse(await ctx.prManager.getPrDiffByUrl(pr.url));
+      }
       if (
         segments.length === 3 &&
         segments[2] === 'review' &&
