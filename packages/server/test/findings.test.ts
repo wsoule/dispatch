@@ -390,3 +390,42 @@ describe('FindingStore attribution', () => {
     expect(new FindingStore(dir).list()[0]?.raisedBy).toBe('');
   });
 });
+
+describe('FindingStore multi-file findings', () => {
+  test('a finding can cover many paths at once', () => {
+    const root_ = root();
+    const store = new FindingStore(root_);
+    const added = store.add({
+      taskId: 't-abc123',
+      runId: null,
+      severity: 'minor',
+      title: '3 files changed outside declared writes',
+      detail: 'Declared writes: src/**.',
+      file: null,
+      files: ['a.ts', 'b.ts', 'c.ts'],
+      raisedBy: 'none',
+    });
+    expect(added.files).toEqual(['a.ts', 'b.ts', 'c.ts']);
+    expect(new FindingStore(root_).get(added.id)?.files).toEqual([
+      'a.ts',
+      'b.ts',
+      'c.ts',
+    ]);
+  });
+
+  // Spread, not set: a finding about one location keeps the shape it had
+  // before a check could cover many.
+  test('a finding about one location carries no files array', () => {
+    const added = new FindingStore(root()).add({
+      taskId: 't-abc123',
+      runId: null,
+      severity: 'critical',
+      title: 'widens the PATCH surface',
+      detail: 'anyone can set status now',
+      file: 'api.ts',
+      line: 88,
+      raisedBy: 'agent:wyat/claude',
+    });
+    expect('files' in added).toBe(false);
+  });
+});

@@ -193,14 +193,50 @@ export function undeclaredWrites(
   );
 }
 
-// Deterministic per-(task, file) titles, shared between filing and the
-// dedup check so a file is never flagged twice for the same task.
-export function undeclaredWriteFindingTitle(file: string): string {
-  return `file changed outside declared writes: ${file}`;
+// One batched title holding no path: the paths live in the finding's `files`,
+// so the title stays stable however many files the batch covers.
+export function undeclaredWriteBatchTitle(count: number): string {
+  return `${count} file${count === 1 ? '' : 's'} changed outside declared writes`;
 }
 
-export function undeclaredWriteLedgerTitle(file: string): string {
-  return `changed ${file} outside its declared writes`;
+export function undeclaredWriteBatchLedgerTitle(count: number): string {
+  return `changed ${count} file${count === 1 ? '' : 's'} outside its declared writes`;
+}
+
+export function undeclaredWriteBatchDetail(
+  writes: string[],
+  files: string[]
+): string {
+  const declared = writes.length === 0 ? 'none' : writes.join(', ');
+  const noun =
+    files.length === 1
+      ? 'this 1 changed file'
+      : `these ${files.length} changed files`;
+  return `Declared writes: ${declared}. None of them cover ${noun}.`;
+}
+
+// Recognizes both spellings this rule has used: the per-file findings it wrote
+// before batching, and the batched ones it writes now.
+export function isUndeclaredWriteFinding(finding: Finding): boolean {
+  return (
+    finding.raisedBy === 'none' &&
+    finding.title.includes('changed outside declared writes')
+  );
+}
+
+// Undeclared files this task has not already been flagged for. Keeps the
+// original "at most once per (task, file), ever" guarantee, just batched.
+export function planUndeclaredWriteBatch(
+  writes: string[],
+  changed: string[],
+  existing: Finding[]
+): string[] {
+  const flagged = new Set<string>();
+  for (const finding of existing.filter(isUndeclaredWriteFinding)) {
+    if (finding.file !== null) flagged.add(finding.file);
+    for (const path of finding.files ?? []) flagged.add(path);
+  }
+  return undeclaredWrites(writes, changed).filter((f) => !flagged.has(f));
 }
 
 // Interleaves each list one item at a time, so a high-fanout file can't
@@ -840,49 +876,38 @@ export class ReviewRunner {
   }
 
   // A changed file no declared `writes` pattern covers is recorded, not
-  // failed — filed at most once per (task, file), ever.
+  // failed — one finding and one hazard per batch, never one per file.
   private recordUndeclaredWrites(
     task: TaskDoc,
     changed: string[],
     round: number
   ): void {
-    const undeclared = undeclaredWrites(task.meta.writes, changed);
-    if (undeclared.length === 0) return;
-    const findings = this.ctx.findingStore.list({ taskId: task.meta.id });
-    const ledger = this.ctx.ledgerStore
-      .list()
-      .filter((e) => e.sourceTaskId === task.meta.id);
-    let added = false;
-    for (const file of undeclared) {
-      const title = undeclaredWriteFindingTitle(file);
-      if (!ledger.some((e) => e.title === undeclaredWriteLedgerTitle(file))) {
-        this.ctx.ledgerStore.add({
-          sourceTaskId: task.meta.id,
-          kind: 'hazard',
-          title: undeclaredWriteLedgerTitle(file),
-          detail:
-            `Declared writes: ${task.meta.writes.length === 0 ? 'none' : task.meta.writes.join(', ')}.` +
-            ` None of them cover ${file}, which the diff changed anyway.`,
-          appliesTo: [task.meta.id],
-          // Mechanically detected by the review harness, not raised by anyone.
-          authoredBy: 'none',
-        });
-      }
-      if (findings.some((f) => f.file === file && f.title === title)) continue;
-      this.ctx.findingStore.add({
-        taskId: task.meta.id,
-        runId: null,
-        severity: 'minor',
-        title,
-        detail: `${file} was modified but no declared write pattern covers it.`,
-        file,
-        round,
-        // Mechanically detected by the review harness, not raised by anyone.
-        raisedBy: 'none',
-      });
-      added = true;
-    }
-    if (added) this.ctx.events.broadcast({ type: 'finding.changed' });
+    const existing = this.ctx.findingStore.list({ taskId: task.meta.id });
+    const batch = planUndeclaredWriteBatch(task.meta.writes, changed, existing);
+    if (batch.length === 0) return;
+    const detail = undeclaredWriteBatchDetail(task.meta.writes, batch);
+    this.ctx.findingStore.add({
+      taskId: task.meta.id,
+      runId: null,
+      severity: 'minor',
+      title: undeclaredWriteBatchTitle(batch.length),
+      detail,
+      file: null,
+      files: batch,
+      round,
+      // Mechanically detected by the review harness, not raised by anyone.
+      raisedBy: 'none',
+    });
+    this.ctx.ledgerStore.add({
+      sourceTaskId: task.meta.id,
+      kind: 'hazard',
+      title: undeclaredWriteBatchLedgerTitle(batch.length),
+      detail: `${detail} ${batch.join(', ')}`,
+      appliesTo: [task.meta.id],
+      // Mechanically detected by the review harness, not raised by anyone.
+      authoredBy: 'none',
+    });
+    this.ctx.events.broadcast({ type: 'finding.changed' });
   }
 
   // The findings file the rubric asked for, falling back to the last assistant
