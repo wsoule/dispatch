@@ -2,6 +2,7 @@ import type { ActorContext } from '@dispatch/core';
 import { loadConfig } from '@dispatch/core';
 
 import type { EventBus } from '../events.js';
+import type { SyncResult } from './boardSyncer.js';
 import { BoardSyncer } from './boardSyncer.js';
 import type { GitRunner, SyncWorktree } from './worktree.js';
 
@@ -33,6 +34,11 @@ export class BoardSyncScheduler {
   // A change arriving while a sync is already running is not lost — it's
   // answered by one more pass once the current one finishes.
   private pendingRerun = false;
+  // The most recent attempt's outcome and when it finished, for `GET
+  // /api/sync` to read without waiting on the next WS `board.sync` broadcast.
+  // `null` until this scheduler has actually run once.
+  private lastSyncResult: SyncResult | null = null;
+  private lastSyncedAtIso: string | null = null;
 
   constructor(private readonly deps: BoardSyncSchedulerDeps) {
     this.syncer = new BoardSyncer(
@@ -92,7 +98,24 @@ export class BoardSyncScheduler {
     // a config edit time to land between notifyTaskChanged() and this call.
     if (!this.autoCommitEnabled()) return;
     const result = await this.syncer.syncOnce();
+    this.lastSyncResult = result;
+    this.lastSyncedAtIso = new Date().toISOString();
     this.deps.events.broadcast({ type: 'board.sync', result });
+  }
+
+  /** The outcome of the most recent sync attempt, or `null` before the first one. */
+  lastResult(): SyncResult | null {
+    return this.lastSyncResult;
+  }
+
+  /** When the most recent sync attempt finished, or `null` before the first one. */
+  lastSyncedAt(): string | null {
+    return this.lastSyncedAtIso;
+  }
+
+  /** Read-only tallies of what the next sync would move — see BoardSyncer.pendingCounts. */
+  pendingCounts(): { outgoing: number; incoming: number } {
+    return this.syncer.pendingCounts();
   }
 
   // Cancels any pending debounce. Does not wait for an in-flight sync — the

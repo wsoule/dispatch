@@ -97,6 +97,8 @@ import {
   formatCommentsForAgent,
   ReviewCommentStore,
 } from './reviewComments.js';
+import type { SyncResult } from './sync/boardSyncer.js';
+import type { BoardSyncScheduler } from './sync/scheduler.js';
 
 // Everything a request handler needs, bundled so `handleApi` stays a pure
 // function of (request, context) instead of reaching for module-level state —
@@ -137,6 +139,10 @@ export interface ApiContext {
   commitMessageGenerator?: CommitMessageGenerator;
   // Who this daemon acts as, resolved once at boot from git config.
   actorContext: ActorContext;
+  // The board syncer's scheduler, or `null` when no trunk was resolvable at
+  // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
+  // that case, since no real SyncResult ever reports it.
+  boardSyncScheduler: BoardSyncScheduler | null;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -674,6 +680,55 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
   } catch (err) {
     return errorResponse(400, (err as Error).message);
   }
+}
+
+// The body of `GET /api/sync` — the board syncer's last attempt plus what the
+// next one would move. `pendingOutgoing`/`pendingIncoming` are computed live
+// (BoardSyncer.pendingCounts()) on every request, not cached from the last
+// attempt, so they stay accurate between debounced syncs.
+export interface SyncStatus extends SyncResult {
+  pendingOutgoing: number;
+  pendingIncoming: number;
+  /** When the last sync attempt finished, or `null` before the first one. */
+  lastSyncedAt: string | null;
+}
+
+const DISABLED_SYNC_DETAIL =
+  'no trunk resolvable for this project — board sync needs an origin ' +
+  'remote or a local main/master branch. SyncWorktree.open() only runs at ' +
+  'boot, so fixing that (adding an origin, or a main/master branch) needs a ' +
+  'daemon restart before syncing can start.';
+
+// GET /api/sync — `disabled` is never a state a real BoardSyncer.syncOnce()
+// result carries (see boardSyncer.ts's SyncState); it's synthesized here
+// because `ctx.boardSyncScheduler` is `null`, which only happens when no
+// trunk was resolvable at boot. Every other state comes straight from the
+// scheduler's retained last result, alongside a live pendingCounts() read.
+function getSyncStatus(ctx: ApiContext): Response {
+  if (ctx.boardSyncScheduler === null) {
+    const disabled: SyncStatus = {
+      state: 'disabled',
+      detail: DISABLED_SYNC_DETAIL,
+      pushed: 0,
+      pulled: 0,
+      pendingOutgoing: 0,
+      pendingIncoming: 0,
+      lastSyncedAt: null,
+    };
+    return jsonResponse(disabled);
+  }
+  const last = ctx.boardSyncScheduler.lastResult();
+  const pending = ctx.boardSyncScheduler.pendingCounts();
+  const status: SyncStatus = {
+    state: last?.state ?? 'idle',
+    detail: last?.detail ?? null,
+    pushed: last?.pushed ?? 0,
+    pulled: last?.pulled ?? 0,
+    pendingOutgoing: pending.outgoing,
+    pendingIncoming: pending.incoming,
+    lastSyncedAt: ctx.boardSyncScheduler.lastSyncedAt(),
+  };
+  return jsonResponse(status);
 }
 
 // Maps a Linear client failure onto a status code: a bad key is the caller's
@@ -2420,6 +2475,10 @@ export async function handleApi(
       method === 'PATCH'
     ) {
       return await patchConfig(req, ctx);
+    }
+
+    if (segments[0] === 'sync' && segments.length === 1 && method === 'GET') {
+      return getSyncStatus(ctx);
     }
 
     if (segments[0] === 'linear' && segments.length === 2) {

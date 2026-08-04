@@ -232,6 +232,50 @@ export class BoardSyncer {
   }
 
   /**
+   * Read-only tallies of what the next `syncOnce()` would move, without
+   * running one: how many local task files are ahead of the sync worktree's
+   * copy (would be staged and pushed) and how many the sync worktree already
+   * holds ahead of the local copy (would be materialized). Drives `GET
+   * /api/sync`'s pending counts between debounced syncs.
+   *
+   * The incoming half only sees content already fetched into the sync
+   * worktree — it does not run `git fetch` itself, so it can't tell a
+   * teammate pushed something new until the next real sync pulls it in. That
+   * keeps this call fast and network-free; it's meant to explain what's
+   * sitting in the worktree right now (e.g. rescued during a conflict, or
+   * left over from a restart), not to poll origin.
+   */
+  pendingCounts(): { outgoing: number; incoming: number } {
+    this.worktree.ensure();
+    const localStore = new TaskStore(this.rootDir);
+    const remoteStore = new TaskStore(this.worktree.path);
+
+    let outgoing = 0;
+    for (const doc of localStore.listSafe().docs) {
+      let remoteUpdated: string | undefined;
+      try {
+        remoteUpdated = remoteStore.get(doc.meta.id)?.meta.updated;
+      } catch {
+        remoteUpdated = undefined;
+      }
+      if (isOutstanding(doc.meta.updated, remoteUpdated)) outgoing++;
+    }
+
+    let incoming = 0;
+    for (const doc of remoteStore.listSafe().docs) {
+      let localUpdated: string | undefined;
+      try {
+        localUpdated = localStore.get(doc.meta.id)?.meta.updated;
+      } catch {
+        localUpdated = undefined;
+      }
+      if (isOutstanding(doc.meta.updated, localUpdated)) incoming++;
+    }
+
+    return { outgoing, incoming };
+  }
+
+  /**
    * Applies exactly what changed in the sync worktree's `.dispatch/tasks`
    * between `before` and the worktree's current HEAD — added/modified paths
    * are copied into the user's working tree (gated per file by the same

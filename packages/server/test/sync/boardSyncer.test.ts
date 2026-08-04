@@ -567,6 +567,10 @@ describe('BoardSyncer degradation', () => {
     cleanupClone(b);
   });
 
+  // Explicit timeout: a real conflict still routes through the merge driver
+  // first (git tries it before falling back to conflict markers), and that
+  // driver spawns a `bun cli.ts merge-task` subprocess — bun's 5000ms default
+  // is occasionally too tight for that spawn, which made this test flaky.
   it('a genuine rebase conflict is blocked, surfaces the conflicting path, leaves the worktree usable, and self-heals on the next sync', async () => {
     const { origin, a, b } = twoClones();
     const storeA = new TaskStore(a);
@@ -632,8 +636,10 @@ describe('BoardSyncer degradation', () => {
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);
     cleanupClone(b);
-  });
+  }, 20_000);
 
+  // Same reason as above: this also drives a real conflicting rebase, so it
+  // pays the merge driver's subprocess cost.
   it('a conflict on one task does not withhold a teammate’s unrelated task from the working tree', async () => {
     const { origin, a, b } = twoClones();
     const storeA = new TaskStore(a);
@@ -681,7 +687,7 @@ describe('BoardSyncer degradation', () => {
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);
     cleanupClone(b);
-  });
+  }, 20_000);
 
   it('a remote requiring a credential prompt fails fast instead of hanging the daemon', async () => {
     const { origin, a, b } = twoClones();
@@ -753,6 +759,8 @@ describe('BoardSyncer degradation', () => {
 });
 
 describe('BoardSyncer with the real merge driver', () => {
+  // Explicit timeout: even a clean 3-way merge spawns the same
+  // `bun cli.ts merge-task` subprocess as the conflict tests above.
   it('two teammates editing different fields on the same task merge cleanly and stay idle', async () => {
     const { origin, a, b } = twoClones();
     const storeA = new TaskStore(a);
@@ -793,6 +801,58 @@ describe('BoardSyncer with the real merge driver', () => {
     const seenByB = storeB.get(doc.meta.id);
     expect(seenByB?.meta.title).toBe('Retitled by alice');
     expect(seenByB?.meta.status).toBe('in-progress');
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  }, 20_000);
+});
+
+describe('BoardSyncer.pendingCounts', () => {
+  it('reports nothing pending right after a clean sync', async () => {
+    const { origin, a, b } = twoClones();
+    new TaskStore(a).create({ title: 'Synced' });
+    await syncerFor(a).syncOnce();
+
+    expect(syncerFor(a).pendingCounts()).toEqual({ outgoing: 0, incoming: 0 });
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('counts an unsynced local edit as pending outgoing', async () => {
+    const { origin, a, b } = twoClones();
+    await syncerFor(a).syncOnce();
+    new TaskStore(a).create({ title: 'Not yet synced' });
+
+    expect(syncerFor(a).pendingCounts()).toEqual({ outgoing: 1, incoming: 0 });
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
+  it('counts content already fetched into the sync worktree but not yet materialized as pending incoming', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    await syncerFor(a).syncOnce();
+
+    const doc = new TaskStore(b).create({ title: 'From bob' });
+    await syncerFor(b).syncOnce();
+
+    // Advances Alice's own private sync worktree straight via git, bypassing
+    // BoardSyncer.syncOnce() (which would also materialize in the same
+    // call) — stands in for the sync worktree already holding content a
+    // restart-time pendingCounts() call must still be able to see.
+    const worktreeA = SyncWorktree.open(a, run);
+    if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    worktreeA.ensure();
+    run(worktreeA.path, ['pull', '--rebase', 'origin', worktreeA.trunkRef()]);
+
+    expect(syncerFor(a).pendingCounts()).toEqual({ outgoing: 0, incoming: 1 });
+    // Confirms it really wasn't materialized yet — pendingCounts is read-only.
+    expect(storeA.get(doc.meta.id)).toBeNull();
 
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);

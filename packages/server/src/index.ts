@@ -522,6 +522,7 @@ export async function startServer(
     gitRepo,
     actorContext,
     tokens,
+    boardSyncScheduler,
   };
 
   const server = Bun.serve({
