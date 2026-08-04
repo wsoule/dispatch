@@ -2,7 +2,30 @@ import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 import { appendActivity } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
+import type { RepoOrientation } from '../../src/orchestrator/orientation.js';
 import { buildTaskPrompt } from '../../src/orchestrator/prompt.js';
+
+// A fully populated orientation, so a test can assert on whichever part it is
+// about without every case rebuilding the shape.
+function fixtureOrientation(
+  overrides: Partial<RepoOrientation> = {}
+): RepoOrientation {
+  return {
+    workspaces: [
+      {
+        dir: 'packages/server',
+        name: '@dispatch/server',
+        description: 'The daemon',
+      },
+    ],
+    skills: [{ name: 'git-commits', description: 'Use when committing.' }],
+    scripts: [{ name: 'lint', command: 'oxlint .' }],
+    hotspots: [{ path: 'packages/server/src/api.ts', runs: 6 }],
+    digest: null,
+    concurrentRuns: [],
+    ...overrides,
+  };
+}
 
 function fixtureLedgerEntry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
   return {
@@ -149,6 +172,81 @@ describe('buildTaskPrompt', () => {
     expect(prompt).toContain(
       '- **decision**: retry POSTs — up to 3 times on 5xx'
     );
+  });
+
+  it('renders no orientation section when none was collected', () => {
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    expect(prompt).not.toContain('## Repo orientation');
+  });
+
+  it('renders the collected orientation facts', () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      [],
+      fixtureOrientation()
+    );
+    expect(prompt).toContain('## Repo orientation');
+    expect(prompt).toContain(
+      '`packages/server` — @dispatch/server: The daemon'
+    );
+    expect(prompt).toContain('`git-commits` — Use when committing.');
+    expect(prompt).toContain('`packages/server/src/api.ts` (6 previous runs)');
+  });
+
+  // The whole point of collecting orientation is to stop instructing agents to
+  // go and re-derive what it already contains.
+  it('drops the go-enumerate-the-skills instruction when orientation supplies the index', () => {
+    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    expect(without).toContain('.agents/skills or');
+
+    const withOrientation = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      [],
+      fixtureOrientation()
+    );
+    expect(withOrientation).not.toContain('.agents/skills or');
+    expect(withOrientation).toContain('The skills index above is complete');
+    // The conventions themselves still bind — only the fetching is dropped.
+    expect(withOrientation).toContain('AGENTS.md');
+  });
+
+  it('drops the opening run_list instruction when concurrency is already reported', () => {
+    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    expect(without).toContain('before assuming you have exclusive access');
+
+    const withOrientation = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      [],
+      fixtureOrientation()
+    );
+    expect(withOrientation).not.toContain(
+      'before assuming you have exclusive access'
+    );
+    expect(withOrientation).toContain(
+      'you do not need to open with `run_list`'
+    );
+    // task_comment is unaffected — nothing collected replaces it.
+    expect(withOrientation).toContain('task_comment');
+  });
+
+  // An orientation that collected nothing must not silently strip the
+  // instructions that were the only thing covering that ground.
+  it('keeps the original instructions when orientation renders to nothing', () => {
+    const empty: RepoOrientation = {
+      workspaces: [],
+      skills: [],
+      scripts: [],
+      hotspots: [],
+      digest: null,
+      concurrentRuns: [],
+    };
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), [], empty);
+    expect(prompt).not.toContain('## Repo orientation');
+    expect(prompt).toContain('.agents/skills or');
+    expect(prompt).toContain('before assuming you have exclusive access');
   });
 
   it('renders no Amendments section for a task without one', () => {
