@@ -283,11 +283,9 @@ export class PlanManager {
         `unknown planner: ${record.plannerName}`
       );
     }
-    this.updateDraftRecord(draftId, {
-      state: 'running',
-      error: null,
-      questions: [],
-    });
+    // Mirrors sendMessage: the questions stay until the turn settles, so a
+    // failed turn leaves the user's answers on screen to re-send.
+    this.updateDraftRecord(draftId, { state: 'running', error: null });
     const sessionId = record.sessionId;
     const model = loadConfig(this.ctx.rootDir).models.draft;
     void this.runDraftTurn(draftId, () =>
@@ -411,9 +409,9 @@ export class PlanManager {
       messages: [...record.messages, { role: 'user', text: message, at: now }],
       // A new turn supersedes any prior failure — clear the stale error so a
       // retry after a failed turn doesn't keep advertising the old message.
+      // `questions` survives the turn so the client's answer form stays mounted
+      // with the user's typed answers; the settling turn replaces them.
       error: undefined,
-      // Superseded by this new message — clear so a stale form doesn't linger.
-      questions: [],
       updatedAt: now,
     };
     this.plans.set(planId, updated);
