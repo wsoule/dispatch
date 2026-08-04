@@ -8,7 +8,6 @@ import { useEffect, useState } from 'react';
 
 import { MODELS } from '../../lib/models';
 import { EscalationEditor } from './EscalationEditor';
-import { cn } from '@/lib/utils';
 import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
 import { Input } from '@/ui/input';
 import {
@@ -71,16 +70,13 @@ function capToInput(value: number | undefined): string {
   return value === undefined ? '' : String(value);
 }
 
-/** How agents run: model per role, concurrency, permission mode, and optional
- *  turn/budget caps — ported from `SettingsView` and `ProjectSettingsSection`. */
+/** How agents run: models, concurrency, permission mode, turn/budget caps.
+ *  Save feedback lives in the shell, not here — this only calls `onSave`. */
 export function AgentsSection({ config, onSave }: AgentsSectionProps) {
   const [concurrency, setConcurrency] = useState('3');
   const [maxTurns, setMaxTurns] = useState('');
   const [maxBudgetUsd, setMaxBudgetUsd] = useState('');
   const [fixLoopCap, setFixLoopCap] = useState('5');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
 
   // Re-seeds when config changes underneath (another window, a hand edit) —
   // keyed on config values, so a field mid-edit isn't clobbered every render.
@@ -90,20 +86,6 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
     setMaxBudgetUsd(capToInput(config.orchestrator.maxBudgetUsd));
     setFixLoopCap(String(config.fixLoop.cap));
   }, [config]);
-
-  async function save(patch: Parameters<typeof onSave>[0]) {
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      await onSave(patch);
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   // Optional-valued, unlike every other numeric field here: empty clears via
   // null, a finite positive number saves, anything else snaps back.
@@ -115,12 +97,12 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
   ) {
     const trimmed = raw.trim();
     if (trimmed === '') {
-      if (current !== undefined) void save({ [key]: null });
+      if (current !== undefined) void onSave({ [key]: null });
       return;
     }
     const n = Number(trimmed);
     if (Number.isFinite(n) && n > 0) {
-      if (n !== current) void save({ [key]: n });
+      if (n !== current) void onSave({ [key]: n });
     } else {
       setDraft(capToInput(current));
     }
@@ -140,7 +122,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
             </div>
             <Select
               value={config.models[role]}
-              onValueChange={(id) => void save({ models: { [role]: id } })}
+              onValueChange={(id) => void onSave({ models: { [role]: id } })}
             >
               <SelectTrigger
                 size="sm"
@@ -177,7 +159,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
                 n >= 1 &&
                 n !== config.orchestrator.epicConcurrency
               ) {
-                void save({ epicConcurrency: n });
+                void onSave({ epicConcurrency: n });
               } else {
                 setConcurrency(String(config.orchestrator.epicConcurrency));
               }
@@ -198,7 +180,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
               type="radio"
               name="permission-mode"
               checked={config.orchestrator.permissionMode === mode}
-              onChange={() => void save({ permissionMode: mode })}
+              onChange={() => void onSave({ permissionMode: mode })}
               className="accent-accent size-3.5"
             />
             <span className="text-[13px]">{label}</span>
@@ -277,7 +259,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
             onBlur={() => {
               const n = Number(fixLoopCap);
               if (Number.isInteger(n) && n >= 1 && n !== config.fixLoop.cap) {
-                void save({ fixLoop: { cap: n } });
+                void onSave({ fixLoop: { cap: n } });
               } else {
                 setFixLoopCap(String(config.fixLoop.cap));
               }
@@ -294,23 +276,9 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
       <div className="p-3">
         <EscalationEditor
           steps={config.fixLoop.escalation}
-          onChange={(escalation) => void save({ fixLoop: { escalation } })}
+          onChange={(escalation) => void onSave({ fixLoop: { escalation } })}
         />
       </div>
-
-      <PanelRow className="h-9">
-        {saving && <span className="dense-meta">Saving…</span>}
-        {saved && !saving && (
-          <span className="dense-meta text-state-review">
-            Saved to .dispatch/config.yml
-          </span>
-        )}
-        {error !== null && (
-          <span className={cn('text-[12px]', 'text-state-failed')}>
-            {error}
-          </span>
-        )}
-      </PanelRow>
     </Panel>
   );
 }

@@ -1,7 +1,6 @@
 import type { DispatchConfig } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
-import { cn } from '@/lib/utils';
 import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
 import { Input } from '@/ui/input';
 
@@ -14,14 +13,11 @@ interface GeneralSectionProps {
   }) => Promise<void>;
 }
 
-/** Before-anything-lands settings: verify command, auto-commit, verify timeout —
- *  ported from `ProjectSettingsSection`, minus concurrency/permission-mode. */
+/** Before-anything-lands settings: verify command, auto-commit, verify timeout.
+ *  Save feedback lives in the shell, not here — this only calls `onSave`. */
 export function GeneralSection({ config, onSave }: GeneralSectionProps) {
   const [verify, setVerify] = useState('');
   const [timeoutSec, setTimeoutSec] = useState('600');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
 
   // Re-seeds when config changes underneath (another window, a hand edit) —
   // keyed on config values, so a field mid-edit isn't clobbered every render.
@@ -29,20 +25,6 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
     setVerify(config.verifyCommand ?? '');
     setTimeoutSec(String(config.orchestrator.verifyTimeoutSec));
   }, [config]);
-
-  async function save(patch: Parameters<typeof onSave>[0]) {
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      await onSave(patch);
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <Panel>
@@ -60,7 +42,7 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
               if (next !== (config.verifyCommand ?? '')) {
                 // Empty clears the key rather than storing an empty command — no verify and a
                 // verify that runs nothing are different things to the merge queue.
-                void save({ verifyCommand: next === '' ? null : next });
+                void onSave({ verifyCommand: next === '' ? null : next });
               }
             }}
             placeholder="bun run verify"
@@ -78,7 +60,7 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
           <input
             type="checkbox"
             checked={config.autoCommit}
-            onChange={(e) => void save({ autoCommit: e.target.checked })}
+            onChange={(e) => void onSave({ autoCommit: e.target.checked })}
             className="accent-accent size-3.5"
           />
           <span className="text-[13px]">
@@ -101,7 +83,7 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
                 n >= 1 &&
                 n !== config.orchestrator.verifyTimeoutSec
               ) {
-                void save({ verifyTimeoutSec: n });
+                void onSave({ verifyTimeoutSec: n });
               } else {
                 // Snap a nonsense value back rather than leaving the field showing something the
                 // config does not actually say.
@@ -116,20 +98,6 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
             a verify that never returns holds up every entry behind it.
           </HintText>
         </label>
-      </PanelRow>
-
-      <PanelRow className="h-9">
-        {saving && <span className="dense-meta">Saving…</span>}
-        {saved && !saving && (
-          <span className="dense-meta text-state-review">
-            Saved to .dispatch/config.yml
-          </span>
-        )}
-        {error !== null && (
-          <span className={cn('text-[12px]', 'text-state-failed')}>
-            {error}
-          </span>
-        )}
       </PanelRow>
     </Panel>
   );
