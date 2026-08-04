@@ -101,7 +101,7 @@ export function DraftTray({
                 {item.state === 'failed' && (
                   <CircleAlert className="text-destructive size-3.5 shrink-0" />
                 )}
-                {item.state === 'ready' ? (
+                {item.openable ? (
                   <button
                     type="button"
                     onClick={() => {
