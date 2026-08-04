@@ -22,6 +22,13 @@ function dispatchHome(): string {
   return home !== undefined && home !== '' ? home : homedir();
 }
 
+// Prefers stderr, falling back to stdout — mirrors boardSyncer.ts's own copy
+// of this exact helper (kept separate to avoid a needless cross-import).
+function errorText(result: { stdout: string; stderr: string }): string {
+  const stderr = result.stderr.trim();
+  return stderr.length > 0 ? stderr : result.stdout.trim();
+}
+
 // syncOnce() is fully synchronous, so a git process that blocks on a
 // credential/passphrase/host-key prompt freezes the daemon's single event
 // loop entirely — HTTP and WebSocket included, not just sync. These env
@@ -110,6 +117,10 @@ function resolveTrunk(rootDir: string, run: GitRunner): string | null {
  */
 export class SyncWorktree {
   readonly path: string;
+  // Set once the sparse-checkout fallback below has logged — an ensure()
+  // that later recreates the worktree (self-healing after external cleanup)
+  // must not spam the log every time.
+  private sparseCheckoutUnavailableLogged = false;
 
   private constructor(
     private readonly rootDir: string,
@@ -205,10 +216,30 @@ export class SyncWorktree {
     ]);
     if (add.status !== 0) return add;
 
+    // `sparse-checkout` needs git 2.25+; on anything older the subcommand is
+    // simply unrecognized. That's an optimization failing, not a fatal one —
+    // fall back to a full (unsparse, just larger) checkout and carry on
+    // rather than bubbling a failure out of ensure() (and, via its retry,
+    // out of syncOnceSync() as an unhandled rejection).
     const init = this.run(this.path, ['sparse-checkout', 'init', '--cone']);
-    if (init.status !== 0) return init;
-    const set = this.run(this.path, ['sparse-checkout', 'set', '.dispatch']);
-    if (set.status !== 0) return set;
+    const sparse =
+      init.status === 0
+        ? this.run(this.path, ['sparse-checkout', 'set', '.dispatch'])
+        : init;
+    if (sparse.status !== 0) {
+      if (!this.sparseCheckoutUnavailableLogged) {
+        this.sparseCheckoutUnavailableLogged = true;
+        console.error(
+          `board sync: git sparse-checkout unavailable for ${this.path} ` +
+            `(${errorText(sparse)}); falling back to a full checkout`
+        );
+      }
+      // `init` may have partially enabled sparse-checkout before `set`
+      // failed — disable it explicitly so the checkout below always
+      // materializes all of trunk. Ignored if it also fails: on git with no
+      // sparse-checkout support at all, it was never enabled to begin with.
+      this.run(this.path, ['sparse-checkout', 'disable']);
+    }
     return this.run(this.path, ['checkout']);
   }
 
