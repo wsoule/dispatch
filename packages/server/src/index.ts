@@ -324,7 +324,6 @@ export async function startServer(
   const unsubscribeBoardSync = events.subscribe((event) => {
     if (event.type === 'task.changed') boardSyncScheduler?.notifyTaskChanged();
   });
-
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
