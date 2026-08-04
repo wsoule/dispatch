@@ -11,7 +11,9 @@ export type InboxTarget =
   | { kind: 'run'; runId: string }
   | { kind: 'queue' }
   | { kind: 'runs-page' }
-  | { kind: 'task'; taskId: string };
+  | { kind: 'task'; taskId: string }
+  | { kind: 'draft'; draftId: string }
+  | { kind: 'plan'; planId: string };
 
 export interface InboxEntry {
   /** `${ts}:${title}`, with a numeric suffix appended when that base collides with another
