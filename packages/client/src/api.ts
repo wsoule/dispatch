@@ -1392,6 +1392,11 @@ export interface ApiClient {
     path: string,
     side: 'old' | 'new'
   ): Promise<{ contents: string; sha: string }>;
+  /** Writes a reviewer's edit into the run's worktree and commits it on the run branch. */
+  applyRunEdit(
+    runId: string,
+    input: { file: string; contents: string; baseSha: string }
+  ): Promise<{ commit: string }>;
 
   // Line-level review comments on a run's diff, and the send-back that carries the unresolved
   // ones to the agent.
@@ -1851,6 +1856,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         target,
         `/api/runs/${encodeURIComponent(runId)}/file?path=${encodeURIComponent(path)}&side=${side}`
       ),
+    applyRunEdit: (runId, input) =>
+      request(target, `/api/runs/${encodeURIComponent(runId)}/edits`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
     fetchReviewComments: (runId) =>
       request(target, `/api/runs/${encodeURIComponent(runId)}/comments`),
     addReviewComment: (runId, input) =>
