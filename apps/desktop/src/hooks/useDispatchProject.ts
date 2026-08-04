@@ -35,6 +35,7 @@ import {
   configChangedQueryKeys,
   dispatchConfigKey,
   linearStatusKey,
+  syncStatusKey,
 } from '../lib/configEvents';
 import type { DecideAvailability } from '../lib/daemonAuth';
 import {
@@ -645,10 +646,7 @@ export function useDispatchProject(
     () => ['dispatch-linear-links', port],
     [port]
   );
-  const syncStatusQueryKey = useMemo(
-    () => ['dispatch-sync-status', port],
-    [port]
-  );
+  const syncStatusQueryKey = useMemo(() => syncStatusKey(port), [port]);
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
