@@ -115,6 +115,9 @@
         "typescript": "catalog:",
       },
     },
+    "packages/demo": {
+      "name": "@dispatch/demo",
+    },
     "packages/mcp": {
       "name": "@dispatch/mcp",
       "version": "0.0.1",
@@ -281,6 +284,8 @@
     "@dispatch/client": ["@dispatch/client@workspace:packages/client"],
 
     "@dispatch/core": ["@dispatch/core@workspace:packages/core"],
+
+    "@dispatch/demo": ["@dispatch/demo@workspace:packages/demo"],
 
     "@dispatch/desktop": ["@dispatch/desktop@workspace:apps/desktop"],
 
