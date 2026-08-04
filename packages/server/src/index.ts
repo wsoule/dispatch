@@ -531,6 +531,9 @@ export async function startServer(
   // Review dispatched as its own run kind. Built at boot because it subscribes
   // to the terminal hook that ingests a review's findings.
   const findingStore = new FindingStore(rootDir);
+  // Shared with the API rather than constructed twice: a review run's comments
+  // and a human's land in the same per-run file.
+  const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
   const reviewRunner = new ReviewRunner({
     rootDir,
     store,
@@ -540,6 +543,7 @@ export async function startServer(
     events,
     orchestrator,
     actorContext,
+    reviewComments,
   });
 
   // Verification as its own dispatched run kind, exercising finished work
@@ -591,7 +595,7 @@ export async function startServer(
     reviewRunner,
     verificationRunner,
     fixLoop,
-    reviewComments: new ReviewCommentStore(rootDir, actorContext.humanRef),
+    reviewComments,
     questions,
     scopeRequests,
     linearSync,
