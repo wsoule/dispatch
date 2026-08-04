@@ -229,6 +229,13 @@ function buildDraftFollowupPrompt(userMessage: string): string {
 // model access, the latter auto-approves in plan mode.
 const PLANNER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
 
+// Shown when two consecutive attempts at the same turn both ended without the
+// SDK's structured output. Says what the user can do, because the conversation
+// itself is still intact and re-sending usually works.
+export const EMPTY_TURN_MESSAGE =
+  'The planner ended its turn without a plan or a question, twice in a row. ' +
+  'Your answers were kept — send them again, or rephrase if it keeps happening.';
+
 /**
  * The real planner backend: a read-only Agent SDK planning *conversation* in
  * the main checkout (no worktree — a plan proposes work, it never touches the
@@ -269,16 +276,32 @@ export class ClaudePlanner implements Planner {
     return this.runTurn(builder(message), sessionId, model);
   }
 
-  // Runs one turn to completion: issues a single `query()` (resuming `resume`
-  // when continuing a conversation), then folds the terminal `result` message
-  // into a PlannerTurn. The session id is captured from the 'system' init
-  // message as a fallback so a turn still reports its session even if the
-  // 'result' omits one.
+  // Runs one turn, retrying once if the first attempt came back with no
+  // structured output. The retry re-issues the same prompt against the same
+  // session, which is what the CLI's own structured-output nudge does inside a
+  // single attempt; two empty attempts in a row is a real failure.
   private async runTurn(
     prompt: string,
     resume: string | undefined,
     model: string | undefined
   ): Promise<PlannerTurn> {
+    const first = await this.attemptTurn(prompt, resume, model);
+    if (first !== null) return first;
+    const second = await this.attemptTurn(prompt, resume, model);
+    if (second !== null) return second;
+    throw new Error(EMPTY_TURN_MESSAGE);
+  }
+
+  // One attempt at a turn: issues a single `query()` (resuming `resume` when
+  // continuing a conversation) and folds the terminal `result` message into a
+  // PlannerTurn. Returns null — rather than throwing — when the result is a
+  // success carrying no structured output, which is the one failure worth
+  // retrying; see runTurn.
+  private async attemptTurn(
+    prompt: string,
+    resume: string | undefined,
+    model: string | undefined
+  ): Promise<PlannerTurn | null> {
     const options: Options = {
       cwd: this.rootDir,
       permissionMode: 'plan',
@@ -322,9 +345,7 @@ export class ClaudePlanner implements Planner {
             }`
           );
         }
-        if (message.structured_output === undefined) {
-          throw new Error('planner produced no structured output');
-        }
+        if (message.structured_output === undefined) return null;
         const output = message.structured_output as PlannerTurnOutput;
         return {
           reply: output.message,
