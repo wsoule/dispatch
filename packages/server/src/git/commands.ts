@@ -189,6 +189,20 @@ export class GitRepo {
     return { ok: true, patch: result.stdout };
   }
 
+  // One file's contents at a ref — the sides of a diff a patch alone doesn't
+  // carry. `--` ends the ref:path spec so nothing after it parses as a flag.
+  async show(
+    ref: string,
+    path: string
+  ): Promise<GitOutcome<{ contents: string }>> {
+    if (!isSafeRef(ref)) return { ok: false, stderr: INVALID_REF_ERROR };
+    const safe = this.safePath(path);
+    if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
+    const result = await this.runGit(['show', `${ref}:${safe}`, '--']);
+    if (!result.ok) return { ok: false, stderr: commandErrorText(result) };
+    return { ok: true, contents: result.stdout };
+  }
+
   async stage(paths: string[]): Promise<GitOutcome> {
     const safe = this.safePaths(paths);
     if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
