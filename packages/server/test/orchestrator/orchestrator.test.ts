@@ -2059,6 +2059,59 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.prompt).toContain('Harden auth');
     expect(executor.lastOpts?.prompt).toContain('resistant to abuse');
   });
+
+  it('hands the agent the repo orientation instead of instructions to go find it', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    writeFileSync(
+      join(repo, 'package.json'),
+      JSON.stringify({ workspaces: ['packages/*'], scripts: { lint: 'x' } })
+    );
+    mkdirSync(join(repo, 'packages', 'core'), { recursive: true });
+    writeFileSync(
+      join(repo, 'packages', 'core', 'package.json'),
+      JSON.stringify({ name: '@example/core', description: 'Shared types' })
+    );
+    const task = store.create({ title: 'Use the orientation' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const prompt = executor.lastOpts?.prompt ?? '';
+    expect(prompt).toContain('## Repo orientation');
+    expect(prompt).toContain('`packages/core` — @example/core: Shared types');
+    expect(prompt).toContain('`bun run lint`');
+    // The instructions the orientation replaces must be gone, not duplicated.
+    expect(prompt).not.toContain('before assuming you have exclusive access');
+  });
+
+  // dispatch() registers the run and marks it `running` BEFORE building its
+  // prompt, so without the taskId filter in orientationFor every agent would
+  // open by reading that it is contending with itself.
+  it('never reports the dispatching run as its own competitor', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    // Something collectable, so the section renders at all — an empty repo
+    // correctly produces no orientation and keeps the original instructions.
+    writeFileSync(
+      join(repo, 'package.json'),
+      JSON.stringify({ scripts: { lint: 'x' } })
+    );
+    const task = store.create({ title: 'Solo run' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const prompt = executor.lastOpts?.prompt ?? '';
+    expect(prompt).not.toContain(meta.id);
+    expect(prompt).toContain('no other runs are in flight');
+  });
 });
 
 // A bare remote to push to — bare because a non-bare repo refuses a push
