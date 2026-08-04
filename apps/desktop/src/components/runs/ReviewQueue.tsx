@@ -1,13 +1,23 @@
-import type { RunMeta } from '@dispatch/client';
+import type { RepoPr, RunMeta } from '@dispatch/client';
 import { GitPullRequest, GitPullRequestArrow } from 'lucide-react';
 
+import type { ReviewTarget } from '../../lib/reviewTarget';
 import { cn } from '@/lib/utils';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 export interface ReviewQueueItem {
-  run: RunMeta;
+  /** What this row opens — a local run's diff, or a GitHub PR. */
+  target: ReviewTarget;
+  /** What the row shows: the task title for a run, the PR title otherwise. */
+  title: string;
   /** True when this one is waiting on GitHub rather than on a local diff. */
   isPr: boolean;
+  /** Sort key, newest first. */
+  updatedAt: string;
+  /** Present for a run-backed row — turns/cost meta and the send-back path. */
+  run?: RunMeta;
+  /** Present for any row with GitHub status to render. */
+  pr?: RepoPr;
 }
 
 interface ReviewQueueProps {
@@ -129,18 +139,46 @@ function Row({
 }
 
 /**
- * The runs a human still has to look at: finished-but-unreviewed work, plus
- * anything with a PR still open. Sorted newest first so the queue reads like an
- * inbox rather than an archaeology dig.
+ * Runs awaiting review plus every open repo PR, newest first. A dispatch-
+ * opened PR arrives via both sources; the run-backed row wins since only it reaches send-back.
  */
-export function buildReviewQueue(runs: RunMeta[]): ReviewQueueItem[] {
-  return runs
-    .filter(
-      (r) =>
-        r.archivedAt === undefined &&
-        (r.prUrl !== undefined ||
-          (r.state === 'finished' && r.reviewedAt === undefined))
-    )
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .map((run) => ({ run, isPr: run.prUrl !== undefined }));
+export function buildReviewQueue(
+  runs: RunMeta[],
+  repoPrs: RepoPr[] = []
+): ReviewQueueItem[] {
+  const prByUrl = new Map(repoPrs.map((pr) => [pr.url, pr]));
+  const items: ReviewQueueItem[] = [];
+  const claimedUrls = new Set<string>();
+
+  for (const run of runs) {
+    if (run.archivedAt !== undefined) continue;
+    const isPr = run.prUrl !== undefined;
+    if (!isPr && !(run.state === 'finished' && run.reviewedAt === undefined)) {
+      continue;
+    }
+    if (run.prUrl !== undefined) claimedUrls.add(run.prUrl);
+    items.push({
+      target: { kind: 'run', runId: run.id },
+      title: run.taskTitle,
+      isPr,
+      updatedAt: run.updatedAt,
+      run,
+      ...(run.prUrl !== undefined && prByUrl.has(run.prUrl)
+        ? { pr: prByUrl.get(run.prUrl) }
+        : {}),
+    });
+  }
+
+  for (const pr of repoPrs) {
+    if (claimedUrls.has(pr.url)) continue;
+    items.push({
+      target: { kind: 'pr', number: pr.number },
+      title: pr.title,
+      isPr: true,
+      updatedAt: pr.updatedAt,
+      pr,
+    });
+  }
+
+  return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
