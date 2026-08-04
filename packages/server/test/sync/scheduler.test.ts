@@ -343,6 +343,64 @@ describe('BoardSyncScheduler periodic pull', () => {
     rmSync(origin, { recursive: true, force: true });
   });
 
+  it('a syncOnce that throws does not crash the process and the timer keeps ticking', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    new TaskStore(a).create({ title: 'Boom' });
+
+    const events = new EventBus();
+    const periodicMs = 20;
+    // debounceMs kept enormous so only the periodic timer drives this test.
+    const scheduler = schedulerFor(a, events, 999_000, periodicMs);
+
+    let callCount = 0;
+    const spy = spyOn(BoardSyncer.prototype, 'syncOnce').mockImplementation(
+      function syncOnceStub() {
+        callCount++;
+        if (callCount === 1) {
+          throw new Error('simulated worktree failure');
+        }
+        return Promise.resolve({
+          pushed: 0,
+          pulled: 0,
+          state: 'idle' as const,
+          detail: null,
+        });
+      }
+    );
+
+    // Registering a listener suppresses Bun/Node's default "crash the
+    // process" behaviour for an unhandled rejection and instead hands it to
+    // us, so a still-broken scheduler fails this test instead of killing the
+    // whole test run.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const originalConsoleError = console.error;
+    const errorCalls: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      errorCalls.push(args);
+    };
+
+    try {
+      // Long enough for the first (throwing) tick plus at least one more.
+      await new Promise((resolve) => setTimeout(resolve, periodicMs * 4 + 40));
+    } finally {
+      console.error = originalConsoleError;
+      process.off('unhandledRejection', onUnhandledRejection);
+      scheduler.stop();
+      spy.mockRestore();
+    }
+
+    expect(unhandled).toEqual([]);
+    expect(callCount).toBeGreaterThanOrEqual(2);
+    expect(errorCalls.length).toBeGreaterThanOrEqual(1);
+
+    rmSync(origin, { recursive: true, force: true });
+  });
+
   it('does not run a second sync concurrently when a periodic tick lands mid-sync', async () => {
     const { origin, a } = twoClones();
     enableAutoCommit(a);
@@ -373,7 +431,47 @@ describe('BoardSyncScheduler periodic pull', () => {
     scheduler.stop();
     spy.mockRestore();
 
-    expect(maxConcurrent).toBeLessThanOrEqual(1);
+    expect(maxConcurrent).toBe(1);
+
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('a slow periodic sync leaves an idle gap instead of running back-to-back', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    new TaskStore(a).create({ title: 'Slow sync' });
+
+    const events = new EventBus();
+    const periodicMs = 50;
+    const syncDurationMs = 120;
+    // debounceMs kept enormous so only the periodic timer drives this test.
+    const scheduler = schedulerFor(a, events, 999_000, periodicMs);
+
+    const starts: number[] = [];
+    const spy = spyOn(BoardSyncer.prototype, 'syncOnce').mockImplementation(
+      async () => {
+        starts.push(Date.now());
+        await new Promise((resolve) => setTimeout(resolve, syncDurationMs));
+        return { pushed: 0, pulled: 0, state: 'idle' as const, detail: null };
+      }
+    );
+
+    // Long enough for several sync cycles at (periodicMs + syncDurationMs)
+    // pace, so a still-buggy scheduler (back-to-back, no idle gap) and a
+    // fixed one (idle until the next tick) produce a clearly different count.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    scheduler.stop();
+    spy.mockRestore();
+
+    expect(starts.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < starts.length; i++) {
+      const gap = starts[i] - starts[i - 1];
+      // A tick landing mid-sync must be dropped, not queued: the next sync
+      // only starts at a later tick, once the previous one is done — so the
+      // gap is always a real idle wait beyond the sync's own duration, never
+      // just the duration itself (back-to-back, zero idle time).
+      expect(gap).toBeGreaterThan(syncDurationMs + periodicMs / 2);
+    }
 
     rmSync(origin, { recursive: true, force: true });
   });
