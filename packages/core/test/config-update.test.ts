@@ -167,4 +167,27 @@ describe('updateConfig', () => {
     updateConfig(dir, { maxBudgetUsd: 0.75 });
     expect(loadConfig(dir).orchestrator.maxBudgetUsd).toBe(0.75);
   });
+
+  // Clearing an already-absent cap is a no-op: the config already says "no
+  // cap", which is exactly the state being requested — it must not throw.
+  test('clearing a cap is a no-op when the file has no orchestrator block', () => {
+    const dir = root('autoCommit: false\n');
+    expect(() => updateConfig(dir, { maxTurns: null })).not.toThrow();
+    expect(loadConfig(dir).orchestrator.maxTurns).toBeUndefined();
+  });
+
+  test('clearing a cap is a no-op when there is no config file at all', () => {
+    const dir = root();
+    expect(() => updateConfig(dir, { maxBudgetUsd: null })).not.toThrow();
+    expect(loadConfig(dir).orchestrator.maxBudgetUsd).toBeUndefined();
+  });
+
+  // A clear must never add structure to the file — assert on raw text, since
+  // a loaded config would look the same whether or not an empty
+  // `orchestrator: {}` was written.
+  test('clearing a cap leaves no stray empty orchestrator block', () => {
+    const dir = root('autoCommit: false\n');
+    updateConfig(dir, { maxTurns: null });
+    expect(read(dir)).not.toContain('orchestrator');
+  });
 });
