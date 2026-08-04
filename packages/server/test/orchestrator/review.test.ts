@@ -645,6 +645,7 @@ class ScriptedReviewer implements Executor {
     );
     return {
       interrupt: async () => {},
+      requestStop: () => {},
       send: () => {},
       approve: () => {},
     };

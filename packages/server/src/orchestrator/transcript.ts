@@ -92,6 +92,13 @@ export interface TranscriptStateLine {
   // See RunMeta.survey — rides along on the state line that marks a run
   // `failed`/`interrupted-dirty`, exactly like the other finish fields above.
   survey?: RunSurvey;
+  // See RunMeta.stopRequestedAt. Rides along on a state line carrying the run's
+  // CURRENT state (a stop request changes no state of its own), exactly like
+  // reviewedAt/archivedAt. It has to survive a restart for the same reason the
+  // restack fields do: the registry is in-memory only, so without this a
+  // dispatchd restart mid-stop would replay the run as if nobody had ever asked
+  // it to stop, and the UI would offer Stop again on a run already winding down.
+  stopRequestedAt?: string;
 }
 
 export type TranscriptLine =
@@ -160,6 +167,7 @@ export class Transcript {
       baseDiscarded?: boolean;
       baseDiscardedReason?: string;
       survey?: RunSurvey;
+      stopRequestedAt?: string;
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
@@ -258,6 +266,7 @@ export function replayTranscript(path: string): RunDetail | null {
         baseDiscardedReason:
           line.baseDiscardedReason ?? meta.baseDiscardedReason,
         survey: line.survey ?? meta.survey,
+        stopRequestedAt: line.stopRequestedAt ?? meta.stopRequestedAt,
       };
     }
   }

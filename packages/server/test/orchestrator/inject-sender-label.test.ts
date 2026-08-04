@@ -55,6 +55,7 @@ function controllableExecutor(sent: string[]): Executor {
     start(_opts: ExecutorStartOptions, _events: ExecutorEvents): ExecutorRun {
       return {
         interrupt: async () => {},
+        requestStop: () => {},
         send: (message: string) => sent.push(message),
         approve: () => {},
       };

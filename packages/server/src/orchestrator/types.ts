@@ -55,6 +55,18 @@ export interface ApprovalDecision {
 
 export interface ExecutorRun {
   interrupt(): Promise<void>;
+  /**
+   * Asks the agent to wind down gracefully: whatever it is doing right now runs
+   * to completion, but it starts no new work and then finishes normally, so the
+   * run still reaches `onFinish` and the orchestrator's usual finish handling
+   * (auto-commit, task -> in-review) applies.
+   *
+   * The opposite end of `interrupt()`, which kills the session where it stands
+   * and leaves the worktree untouched. Required rather than optional so every
+   * executor has to decide what winding down means for it, instead of silently
+   * ignoring a stop the user pressed a button for.
+   */
+  requestStop(): void;
   send(message: string): void;
   approve(requestId: string, decision: ApprovalDecision): void;
 }
@@ -240,6 +252,13 @@ export interface RunMeta {
   // Files this run is touching, seeded from the task's `writes` at dispatch
   // and grown from git status as it actually edits things.
   claims?: string[];
+  // When a human asked this run to stop gracefully (Orchestrator.requestStop).
+  // A marker, not a state: the run keeps whatever state it had and then reaches
+  // its OWN terminal state (`finished`, or `failed` if the agent errored on the
+  // way out) through the normal finish path, so its work is auto-committed and
+  // reviewable exactly like any other finished run. Set once and never cleared
+  // — a stop cannot be taken back, only escalated to a hard cancel.
+  stopRequestedAt?: string;
 }
 
 // A run's kind, defaulted for the transcripts and registry entries written
