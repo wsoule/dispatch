@@ -13,6 +13,9 @@ export interface RepoPrDetailData {
   prDetailError: string | null;
   prDiff: DiffResult | undefined;
   prDiffLoading: boolean;
+  /** Why the diff fetch failed. A PR whose diff never arrived must not read
+   *  as a PR with nothing in it. */
+  prDiffError: string | null;
   handleReview: (event: PrReviewEvent, body?: string) => Promise<void>;
   handleComment: (body: string) => Promise<void>;
 }
@@ -25,10 +28,10 @@ export interface RepoPrDetailData {
  * instead of a run id, since these rows have no run at all.
  *
  * Kept as its own small hook rather than folded into useDispatchProject:
- * `number` comes from PullRequestsView's own `selectedRepoPrNumber` state
- * (view-local — there's no run for nav's run-keyed `activeRunId` to point
- * at), and useDispatchProject is instantiated once up in App.tsx, above
- * where that selection lives. `client` is threaded in from the same
+ * `number` comes from ReviewView's own `selectedPrNumber` state (view-local —
+ * there's no run for nav's run-keyed `activeRunId` to point at), and
+ * useDispatchProject is instantiated once up in App.tsx, above where that
+ * selection lives. `client` is threaded in from the same
  * `DispatchProjectData` every other PR call already uses; `client.baseUrl`
  * (rather than the dispatchd port useDispatchProject keys its own queries
  * on, which isn't exposed on `DispatchProjectData`) is what scopes this
@@ -62,7 +65,11 @@ export function useRepoPrDetail(
   const prDetailError =
     prDetailErrorDetail instanceof Error ? prDetailErrorDetail.message : null;
 
-  const { data: prDiff, isLoading: prDiffLoading } = useQuery({
+  const {
+    data: prDiff,
+    isLoading: prDiffLoading,
+    error: prDiffErrorDetail,
+  } = useQuery({
     queryKey: ['dispatch-repo-pr-diff', client?.baseUrl, number],
     queryFn: () => {
       if (client === null || number === null) {
@@ -73,6 +80,8 @@ export function useRepoPrDetail(
     enabled: client !== null && number !== null,
     retry: false,
   });
+  const prDiffError =
+    prDiffErrorDetail instanceof Error ? prDiffErrorDetail.message : null;
 
   // Submitting a review or a comment returns the refreshed PrDetail, which we
   // write straight into this query's cache — same one-round-trip pattern as
@@ -101,6 +110,7 @@ export function useRepoPrDetail(
     prDetailError,
     prDiff,
     prDiffLoading,
+    prDiffError,
     handleReview,
     handleComment,
   };
