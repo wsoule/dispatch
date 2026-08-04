@@ -144,16 +144,21 @@ export function ReviewView({
           />
         </div>
 
-        <ReviewFileTree
-          files={data.diff?.files ?? []}
-          selected={selected}
-          onSelect={setSelected}
-          viewed={viewed}
-          onToggleViewed={(path) => setViewed((v) => toggleViewed(v, path))}
-          commentsByFile={commentsByFile}
-          unviewedOnly={unviewedOnly}
-          onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
-        />
+        {/* `overflow-hidden`, not `-auto`: the list scrolls itself internally (its header and
+            viewed summary stay pinned above it), so this only needs to bound the grid track —
+            a second scrollbar here would just be redundant. */}
+        <div className="min-h-0 overflow-hidden">
+          <ReviewFileTree
+            files={data.diff?.files ?? []}
+            selected={selected}
+            onSelect={setSelected}
+            viewed={viewed}
+            onToggleViewed={(path) => setViewed((v) => toggleViewed(v, path))}
+            commentsByFile={commentsByFile}
+            unviewedOnly={unviewedOnly}
+            onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
+          />
+        </div>
 
         <div className="min-h-0">
           {data.diff !== undefined && selected !== null && (
