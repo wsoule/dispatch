@@ -1,4 +1,4 @@
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Check } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
@@ -11,6 +11,8 @@ import { deriveFeedState } from '../lib/feedState';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
+import { cn } from '@/lib/utils';
+import { MetaText } from '@/ui/chrome';
 import { StateDot } from '@/ui/chrome/StateDot';
 
 interface ReviewViewProps {
@@ -165,11 +167,8 @@ export function ReviewView({
         <div className="min-h-0 overflow-hidden">
           <ReviewFileTree
             files={data.diff?.files ?? []}
-            selected={selected}
             onSelect={setSelected}
             viewed={viewed}
-            onToggleViewed={(path) => setViewed((v) => toggleViewed(v, path))}
-            commentsByFile={commentsByFile}
             unviewedOnly={unviewedOnly}
             onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
           />
@@ -182,16 +181,26 @@ export function ReviewView({
             height instead. */}
         <div className="flex min-h-0 flex-col">
           {data.diff !== undefined && selected !== null && (
-            <PierreReviewDiff
-              patch={data.diff.patch}
-              only={selected}
-              comments={data.reviewComments}
-              viewed={viewed}
-              scrollTo={jumpTo}
-              onAdd={data.handleAddReviewComment}
-              onResolve={data.handleResolveReviewComment}
-              onReply={data.handleReplyReviewComment}
-            />
+            <>
+              <DiffPaneHeader
+                path={selected}
+                isViewed={viewed.has(selected)}
+                onToggleViewed={() =>
+                  setViewed((v) => toggleViewed(v, selected))
+                }
+                commentCount={commentsByFile.get(selected) ?? 0}
+              />
+              <PierreReviewDiff
+                patch={data.diff.patch}
+                only={selected}
+                comments={data.reviewComments}
+                viewed={viewed}
+                scrollTo={jumpTo}
+                onAdd={data.handleAddReviewComment}
+                onResolve={data.handleResolveReviewComment}
+                onReply={data.handleReplyReviewComment}
+              />
+            </>
           )}
         </div>
 
@@ -208,6 +217,55 @@ export function ReviewView({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Sits above the open file's diff: its path, unresolved-comment count, and viewed toggle — moved
+ * here from a per-row strip beneath the file tree, since `FileTree` has no slot to host them.
+ */
+function DiffPaneHeader({
+  path,
+  isViewed,
+  onToggleViewed,
+  commentCount,
+}: {
+  path: string;
+  isViewed: boolean;
+  onToggleViewed: () => void;
+  commentCount: number;
+}) {
+  return (
+    <div className="border-border flex shrink-0 items-center gap-2 border-b px-1 pb-2">
+      <span
+        dir="rtl"
+        title={path}
+        className={cn(
+          'dense-meta min-w-0 flex-1 truncate text-left',
+          isViewed && 'opacity-50'
+        )}
+      >
+        {path}
+      </span>
+      {commentCount > 0 && (
+        <MetaText className="text-accent-foreground shrink-0">
+          {commentCount}
+        </MetaText>
+      )}
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={isViewed}
+        aria-label={`Mark ${path} viewed`}
+        onClick={onToggleViewed}
+        className={cn(
+          'grid size-3.5 shrink-0 place-items-center rounded-sm',
+          isViewed ? 'bg-state-review text-background' : 'shadow-hairline'
+        )}
+      >
+        {isViewed && <Check className="size-2.5" />}
+      </button>
     </div>
   );
 }

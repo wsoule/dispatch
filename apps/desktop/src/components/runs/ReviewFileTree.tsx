@@ -1,43 +1,27 @@
 import type { DiffFile } from '@dispatch/client';
-import { Check } from 'lucide-react';
+import { FileTree, useFileTree } from '@pierre/trees/react';
 import { useEffect, useMemo } from 'react';
 
-import { normalizeDiffFilePath } from '../../lib/pierreTree';
+import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { viewedSummary } from '../../lib/reviewViewed';
-import { cn } from '@/lib/utils';
-import { MetaText, PanelRow } from '@/ui/chrome';
 
 interface ReviewFileTreeProps {
   files: DiffFile[];
-  selected: string | null;
   onSelect: (path: string) => void;
   viewed: ReadonlySet<string>;
-  onToggleViewed: (path: string) => void;
-  /** Unresolved comment count per file, so the list shows where the discussion is. */
-  commentsByFile: ReadonlyMap<string, number>;
   unviewedOnly: boolean;
   onToggleUnviewedOnly: () => void;
 }
 
 /**
- * The review's changed-files list.
- *
- * An earlier version paired @pierre/trees' `FileTree` with a second, hand-rolled row strip
- * underneath it purely to host a per-file viewed checkbox and comment count — `FileTree` owns
- * its own row rendering and (checked against its published types in
- * `node_modules/@pierre/trees/dist/react/FileTree.d.ts`) exposes no row-renderer or trailing-
- * slot hook a checkbox could ride along in. That put every filename on screen twice. This
- * builds the list from `@/ui/chrome`'s `PanelRow`/`MetaText` instead: one row per file that
- * carries the path, status, comment count and viewed toggle together, so there is nothing left
- * to keep in sync with a second list.
+ * The review's changed-files tree — @pierre/trees' `FileTree`. It has no per-row render slot, so
+ * the viewed toggle and comment count that used to duplicate this list now live in `ReviewView`'s
+ * diff pane header instead.
  */
 export function ReviewFileTree({
   files,
-  selected,
   onSelect,
   viewed,
-  onToggleViewed,
-  commentsByFile,
   unviewedOnly,
   onToggleUnviewedOnly,
 }: ReviewFileTreeProps) {
@@ -53,16 +37,36 @@ export function ReviewFileTree({
     () => shown.map((f) => normalizeDiffFilePath(f.path)),
     [shown]
   );
+  const gitStatus = useMemo(
+    () =>
+      shown.map((f) => ({
+        path: normalizeDiffFilePath(f.path),
+        status: toTreeGitStatus(f.status),
+      })),
+    [shown]
+  );
 
-  // Mirrors the auto-focus the old `@pierre/trees` model gave for free: when the current
-  // selection drops out of the filtered set — e.g. flipping "Unviewed only" hides the file you
-  // were just reading — land on the first file the filter still shows, rather than leaving the
-  // diff pointed at a file no longer in the list.
+  const { model } = useFileTree({ paths, gitStatus, initialExpansion: 'open' });
+
   useEffect(() => {
-    if (paths.length > 0 && (selected === null || !paths.includes(selected))) {
-      onSelect(paths[0]);
+    model.resetPaths(paths);
+    model.setGitStatus(gitStatus);
+    const focused = model.getFocusedPath();
+    if (paths.length > 0 && (focused === null || !paths.includes(focused))) {
+      model.focusPath(paths[0]);
     }
-  }, [paths, selected, onSelect]);
+  }, [model, paths, gitStatus]);
+
+  // `FileTree` has no click callback; diffing the focused path across model notifications
+  // catches selection by click or keyboard, which a click handler alone would miss.
+  useEffect(() => {
+    let last = model.getFocusedPath();
+    return model.subscribe(() => {
+      const focused = model.getFocusedPath();
+      if (focused !== null && focused !== last) onSelect(focused);
+      last = focused;
+    });
+  }, [model, onSelect]);
 
   const allPaths = useMemo(
     () => files.map((f) => normalizeDiffFilePath(f.path)),
@@ -86,63 +90,7 @@ export function ReviewFileTree({
       <p className="dense-meta px-3 pb-1">{viewedSummary(viewed, allPaths)}</p>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {shown.map((f) => {
-          const path = normalizeDiffFilePath(f.path);
-          const isViewed = viewed.has(path);
-          const comments = commentsByFile.get(path) ?? 0;
-          return (
-            <PanelRow
-              key={path}
-              onClick={() => onSelect(path)}
-              className={cn('py-1', path === selected && 'bg-accent/15')}
-            >
-              {/* Truncates from the left so the filename — the part actually read — survives
-                  on a deep path, rather than the leading directories that all look alike. */}
-              <span
-                dir="rtl"
-                title={path}
-                className={cn(
-                  'dense-meta min-w-0 flex-1 truncate text-left',
-                  isViewed && 'opacity-50'
-                )}
-              >
-                {path}
-              </span>
-              <span
-                className={cn(
-                  'dense-meta shrink-0',
-                  f.status === 'A' && 'text-state-review',
-                  f.status === 'D' && 'text-state-failed'
-                )}
-              >
-                {f.status}
-              </span>
-              {comments > 0 && (
-                <MetaText className="text-accent-foreground shrink-0">
-                  {comments}
-                </MetaText>
-              )}
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={isViewed}
-                aria-label={`Mark ${path} viewed`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleViewed(path);
-                }}
-                className={cn(
-                  'grid size-3.5 shrink-0 place-items-center rounded-sm',
-                  isViewed
-                    ? 'bg-state-review text-background'
-                    : 'shadow-hairline'
-                )}
-              >
-                {isViewed && <Check className="size-2.5" />}
-              </button>
-            </PanelRow>
-          );
-        })}
+        <FileTree model={model} className="size-full" />
       </div>
     </div>
   );

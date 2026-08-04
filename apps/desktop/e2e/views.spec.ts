@@ -124,7 +124,13 @@ test.describe('review detail', () => {
     // which is gitignored and machine-local — a known, accepted limitation of
     // this harness. Fail with a legible reason rather than a bare locator
     // timeout if that snapshot is ever missing on the machine running this.
-    const fileRow = page.getByTitle('rate_limit.ts');
+    //
+    // Matched by role/name rather than title: the list is `@pierre/trees`'
+    // `FileTree`, whose rows are `role="treeitem"` with the filename as their
+    // accessible name (see `getFileTreeRowAriaLabel` in
+    // `@pierre/trees/dist/render/FileTreeView.js`) — it sets `title` only on
+    // the git-status icon, not the row itself.
+    const fileRow = page.getByRole('treeitem', { name: 'rate_limit.ts' });
     await expect(
       fileRow,
       "rate_limit.ts is not in the changed-files list — this run's seeded " +
