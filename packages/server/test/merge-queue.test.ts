@@ -531,6 +531,32 @@ describe('MergeQueue local-run happy path', () => {
     expect(run?.meta.reviewAction).toBe('merge');
   });
 
+  // Without the precheck the queue ran straight into `git rebase`, whose
+  // "cannot rebase: Your index contains uncommitted changes" names no worktree
+  // and offers no way forward.
+  it('refuses to rebase a dirty worktree, and says which one and what to do', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const run = harness.orchestrator.getRun(runId)!.meta;
+    // Staged, never committed — exactly the shape a vetoed pre-commit hook
+    // leaves behind.
+    commitFile(run.worktreePath, 'tracked.txt', 'baseline');
+    writeFileSync(join(run.worktreePath, 'tracked.txt'), 'edited\n');
+    runGitSync(run.worktreePath, ['add', 'tracked.txt']);
+
+    const stub = new StubRunner();
+    const queue = makeQueue(harness, stub.run);
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+
+    const [entry] = queue.snapshot().history;
+    expect(entry.state).toBe('failed');
+    expect(entry.reason).toContain('uncommitted changes');
+    expect(entry.reason).toContain(run.worktreePath);
+    // The point of the precheck: git is never given the chance to fail.
+    expect(stub.calls.some((c) => c.cmd[1] === 'rebase')).toBe(false);
+  });
+
   it('runs the configured verify command between rebase and merge', async () => {
     const harness = makeHarness();
     writeVerifyCommand(harness.rootDir, 'echo verifying');

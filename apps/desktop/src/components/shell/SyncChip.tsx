@@ -90,14 +90,23 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
       )}
       {/* A broken merge driver never blocks sync itself — git still resolves a
           genuine conflict correctly without it — so this is a standalone
-          warning line, not folded into `message` above. */}
+          warning line, not folded into `message` above.
+
+          A disclosure rather than one truncated line: the warning is three
+          sentences and the sidebar is ~200px, so truncating showed about four
+          words and hid the remedy. The summary fits the width; the body wraps
+          instead of truncating. */}
       {status.mergeDriverWarning !== null && (
-        <div
-          className="text-state-waiting truncate pl-3"
-          title={status.mergeDriverWarning}
-        >
-          {status.mergeDriverWarning}
-        </div>
+        <details className="pl-3">
+          <summary className="text-state-waiting cursor-pointer list-none marker:content-none">
+            <span className="underline decoration-dotted underline-offset-2">
+              Task merge driver not set up
+            </span>
+          </summary>
+          <p className="text-muted-foreground mt-1 leading-snug text-pretty">
+            {status.mergeDriverWarning}
+          </p>
+        </details>
       )}
       {/* No point offering the kill switch once sync is already off — flipping
           autoCommit doesn't stop anything that isn't running. */}

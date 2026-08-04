@@ -402,6 +402,61 @@ describe('GET /api/sync', () => {
     }
   });
 
+  // The remedy ("run `dispatch init`") happens in a terminal, where this daemon
+  // sees nothing — so a boot-time snapshot made a successful fix look inert.
+  it('clears mergeDriverWarning once the driver is registered, with no restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-late-driver-'));
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    spawnSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: root,
+    });
+    spawnSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    spawnSync('git', ['commit', '--allow-empty', '-q', '-m', 'initial'], {
+      cwd: root,
+    });
+    TaskStore.init(root);
+
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: root,
+        port: 0,
+        writeDaemonFile: false,
+        webDistDir: null,
+      });
+      useTestAuth(handle);
+      const read = async (): Promise<string | null> => {
+        const res = await fetch(`http://127.0.0.1:${handle?.port}/api/sync`);
+        const body = (await res.json()) as SyncStatusBody & {
+          mergeDriverWarning: string | null;
+        };
+        return body.mergeDriverWarning;
+      };
+
+      expect(await read()).not.toBeNull();
+
+      // Stands in for `dispatch init`: point the driver at a command that
+      // really does resolve on PATH, exactly as a successful init would.
+      spawnSync(
+        'git',
+        ['config', 'merge.dispatch-task.name', 'Dispatch task'],
+        {
+          cwd: root,
+        }
+      );
+      spawnSync(
+        'git',
+        ['config', 'merge.dispatch-task.driver', 'git merge-file %A %O %B'],
+        { cwd: root }
+      );
+
+      expect(await read()).toBeNull();
+    } finally {
+      await handle?.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('401s without a token, like every other read route', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dispatch-no-git-'));
     TaskStore.init(root);

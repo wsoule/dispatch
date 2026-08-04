@@ -2260,6 +2260,14 @@ export class Orchestrator {
   // message. A no-op when the worktree is already clean — the common case,
   // since every executor is expected to commit its own work per the prompt's
   // explicit instruction.
+  //
+  // `--no-verify`: a run worktree has no `node_modules`, so a project's
+  // pre-commit hook fails there for reasons unrelated to the content, and a
+  // vetoed safety net strands the agent's work. The merge queue's verify steps
+  // are still the real gate.
+  //
+  // Throws on failure so `finishRun` marks the run `failed` — work that could
+  // not be committed is neither reviewable nor mergeable.
   private autoCommitIfDirty(worktreePath: string, runId: string): void {
     const status = Bun.spawnSync(['git', 'status', '--porcelain'], {
       cwd: worktreePath,
@@ -2268,15 +2276,26 @@ export class Orchestrator {
     });
     if (status.stdout.toString('utf8').trim() === '') return;
     Bun.spawnSync(['git', 'add', '-A'], { cwd: worktreePath });
-    Bun.spawnSync(
+    const commit = Bun.spawnSync(
       [
         'git',
         'commit',
+        '--no-verify',
         '-m',
         `wip(dispatch): uncommitted changes from run ${runId}`,
       ],
-      { cwd: worktreePath }
+      { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' }
     );
+    if (commit.exitCode !== 0) {
+      // git splits its complaints across both streams; prefer stderr, fall
+      // back to stdout so the message is never just an exit code.
+      const stderr = commit.stderr.toString('utf8').trim();
+      const detail =
+        stderr.length > 0 ? stderr : commit.stdout.toString('utf8').trim();
+      throw new Error(
+        `could not commit the changes left in ${worktreePath}: ${detail}`
+      );
+    }
   }
 
   // Moves a run to `state`, updating the registry, appending a transcript
