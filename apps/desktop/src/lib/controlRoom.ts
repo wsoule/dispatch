@@ -1,8 +1,9 @@
-import type { MergeQueueSnapshot, RunMeta } from '@dispatch/client';
+import type { MergeQueueSnapshot, RunKind, RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
 import { deriveFeedState, FEED_STATE_ORDER } from './feedState';
+import { deriveRunDisposition } from './runState';
 
 /**
  * The Control room's read model, derived here rather than in JSX so the grouping, capping and
@@ -101,6 +102,52 @@ function reviewActivity(run: RunMeta): string | null {
   return `${turns} ${turns === 1 ? 'turn' : 'turns'}`;
 }
 
+/** Absent `kind` predates the field and always meant an execute run. */
+function runKindOf(run: RunMeta): RunKind {
+  return run.kind ?? 'execute';
+}
+
+/**
+ * What the review/verify agents working on one execute run add up to.
+ *
+ * They get their own `RunMeta`, but they are not separate work — a review run
+ * exists only to say something about the run it was branched from. As rows of
+ * their own they doubled every reviewed task: once under "Working" (the agent)
+ * and once under "Needs review" (the run it was reviewing).
+ */
+interface AuxStatus {
+  /** The kind of aux agent currently running, if one is. */
+  running: RunKind | null;
+  /** The kind of the most recent aux agent that stopped without finishing. */
+  failed: RunKind | null;
+}
+
+/**
+ * Indexes aux runs against the execute run each is about, keyed on the aux
+ * run's `baseBranch` — exactly the execute run's `branch`. Task id would pair
+ * them too, until a task is dispatched twice and only the branch says which
+ * execute run a given review was about.
+ */
+function auxByExecuteBranch(runs: RunMeta[]): Map<string, AuxStatus> {
+  const byBranch = new Map<string, AuxStatus>();
+  for (const run of runs) {
+    const kind = runKindOf(run);
+    if (kind === 'execute') continue;
+    const status = byBranch.get(run.baseBranch) ?? {
+      running: null,
+      failed: null,
+    };
+    const disposition = deriveRunDisposition(run);
+    if (disposition === 'live') {
+      status.running = kind;
+    } else if (disposition === 'stopped-short' || disposition === 'dead') {
+      status.failed = kind;
+    }
+    byBranch.set(run.baseBranch, status);
+  }
+  return byBranch;
+}
+
 /**
  * Why a row needs a human, in the row itself.
  *
@@ -165,25 +212,54 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     (mergeQueue?.entries ?? []).map((e) => [e.runId, e.state])
   );
 
+  const auxByBranch = auxByExecuteBranch(runs);
+  // An aux run is only folded away when the execute run it is about is actually
+  // in the feed to fold it into. One whose execute run has been reviewed and
+  // closed out (or never existed) still gets a row of its own — silently
+  // dropping a live agent because its subject is gone is how a wedged review
+  // agent becomes invisible.
+  const foldedInto = new Set(
+    runs
+      .filter((r) => runKindOf(r) === 'execute' && auxByBranch.has(r.branch))
+      .map((r) => r.branch)
+  );
+
   // Every run that still has a place in the feed, with its state resolved once.
   const rows: FeedRowModel[] = [];
   for (const run of runs) {
+    if (runKindOf(run) !== 'execute' && foldedInto.has(run.baseBranch))
+      continue;
     const derived = deriveFeedState(run, queueByRunId.get(run.id));
     if (derived === null) continue;
     // A run blocked on a question still reads as 'running' in its own metadata, so without
     // this it would sit in the calm part of the feed looking busy.
     const asked = openQuestions.get(run.id) ?? [];
-    const state =
+    const withQuestions =
       derived === 'working' && asked.length > 0 ? 'waiting' : derived;
+
+    // Only 'review' is reinterpreted by an aux agent: that is the state an
+    // execute run sits in for exactly as long as review and verify agents have
+    // something to say about it. A run that is waiting on approval, failed, or
+    // in the merge queue is being described by something more urgent already.
+    const aux = auxByBranch.get(run.branch);
+    const auxRunning =
+      withQuestions === 'review' ? (aux?.running ?? null) : null;
+    const auxFailed = withQuestions === 'review' ? (aux?.failed ?? null) : null;
+    // While an AI agent is mid-flight the row belongs with the things that are
+    // moving, not with the things asking for a human — its findings are not in
+    // yet, so there is nothing to review.
+    const state: FeedState = auxRunning !== null ? 'working' : withQuestions;
 
     const task = taskById.get(run.taskId);
     const parentId = task?.meta.parent ?? null;
     const activity =
-      state === 'review'
-        ? reviewActivity(run)
-        : state === 'landing'
-          ? (queuePhaseByRunId.get(run.id) ?? null)
-          : null;
+      auxRunning !== null
+        ? `AI ${auxRunning} running`
+        : state === 'review'
+          ? reviewActivity(run)
+          : state === 'landing'
+            ? (queuePhaseByRunId.get(run.id) ?? null)
+            : null;
 
     rows.push({
       runId: run.id,
@@ -194,7 +270,13 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
         parentId === null ? null : (epicTitleById.get(parentId) ?? null),
       since: run.updatedAt,
       activity,
-      attention: attentionFor(state, run, pendingApprovals, openQuestions),
+      // A dead review agent leaves its execute run looking like an ordinary
+      // "needs review" forever, with nothing anywhere saying the findings the
+      // user is waiting on are never coming.
+      attention:
+        auxFailed !== null
+          ? { reason: `The AI ${auxFailed} agent failed`, detail: null }
+          : attentionFor(state, run, pendingApprovals, openQuestions),
       waitingOn:
         state !== 'waiting' ? null : asked.length > 0 ? 'question' : 'approval',
     });
