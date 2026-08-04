@@ -224,10 +224,9 @@ export interface PrDetail {
 export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
 
 // One open PR in the repo, from `gh pr list --json …` — the body of
-// `GET /api/prs` (item B: the PRs page lists every open PR, not just the
-// ones dispatch itself opened). `author` is flattened to its `login` string
-// (mirroring PrConversationItem's own author handling) rather than exposing
-// gh's `{login: string}` object shape.
+// One open PR in the repo, from `gh pr list --json …` — the body of
+// `GET /api/prs`. Carries the same status the review UI shows, so the queue
+// renders every row from one batched call instead of a `gh pr view` per PR.
 export interface RepoPr {
   number: number;
   title: string;
@@ -236,6 +235,18 @@ export interface RepoPr {
   author: string;
   isDraft: boolean;
   updatedAt: string;
+  /** Head commit SHA — the `commit_id` GitHub wants when posting a review comment. */
+  headRefOid: string;
+  /** True when the head branch lives in a fork; gates Phase 4's confirm. */
+  isCrossRepository: boolean;
+  /** Login owning the head repository, named in that confirm. */
+  headRepositoryOwner: string;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
+  checks: PrCheckSummary;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
 }
 
 // Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
@@ -412,7 +423,9 @@ export class PrManager {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,author,isDraft,updatedAt',
+      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
+        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
+        'statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -437,6 +450,15 @@ export class PrManager {
       author: authorLogin(item.author),
       isDraft: item.isDraft === true,
       updatedAt: String(item.updatedAt ?? ''),
+      headRefOid: String(item.headRefOid ?? ''),
+      isCrossRepository: item.isCrossRepository === true,
+      headRepositoryOwner: authorLogin(item.headRepositoryOwner),
+      reviewDecision: (item.reviewDecision as RepoPr['reviewDecision']) ?? null,
+      mergeable: (item.mergeable as RepoPr['mergeable']) ?? null,
+      checks: summarizeChecks(item.statusCheckRollup),
+      additions: Number(item.additions ?? 0),
+      deletions: Number(item.deletions ?? 0),
+      changedFiles: Number(item.changedFiles ?? 0),
     }));
   }
 

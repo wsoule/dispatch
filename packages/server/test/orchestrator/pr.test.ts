@@ -130,9 +130,18 @@ class StubRunner {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        headRefOid: '',
         author: { login: 'teammate' },
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
+        isCrossRepository: false,
+        headRepositoryOwner: { login: 'someone' },
+        reviewDecision: null,
+        mergeable: null,
+        statusCheckRollup: [],
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
       },
     ]),
     stderr: '',
@@ -677,6 +686,20 @@ describe('PrManager.listRepoPrs', () => {
         author: 'teammate',
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
+        headRefOid: '',
+        isCrossRepository: false,
+        headRepositoryOwner: 'someone',
+        reviewDecision: null,
+        mergeable: null,
+        checks: {
+          passed: 0,
+          failed: 0,
+          pending: 0,
+          total: 0,
+        },
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
       },
     ]);
     const listCall = stub.calls.find(
@@ -687,7 +710,9 @@ describe('PrManager.listRepoPrs', () => {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,author,isDraft,updatedAt',
+      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
+        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
+        'statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -724,5 +749,69 @@ describe('PrManager.listRepoPrs', () => {
     const pr = new PrManager(harness, true, stub.run);
 
     await expect(pr.listRepoPrs()).rejects.toThrow(/invalid JSON/);
+  });
+
+  it('carries GitHub status through so the queue never needs a per-PR view call', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        {
+          number: 9,
+          title: 'Repo PR from someone else',
+          url: 'https://github.com/example/repo/pull/9',
+          headRefName: 'feature/someone-else',
+          headRefOid: 'abc123',
+          author: { login: 'teammate' },
+          isDraft: true,
+          updatedAt: '2026-07-22T00:00:00Z',
+          isCrossRepository: true,
+          headRepositoryOwner: { login: 'contributor' },
+          reviewDecision: 'CHANGES_REQUESTED',
+          mergeable: 'CONFLICTING',
+          statusCheckRollup: [
+            { conclusion: 'SUCCESS' },
+            { conclusion: 'FAILURE' },
+            { status: 'IN_PROGRESS' },
+          ],
+          additions: 12,
+          deletions: 3,
+          changedFiles: 2,
+        },
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const prs = await pr.listRepoPrs();
+
+    expect(prs[0]?.checks).toEqual({
+      passed: 1,
+      failed: 1,
+      pending: 1,
+      total: 3,
+    });
+    expect(prs[0]?.reviewDecision).toBe('CHANGES_REQUESTED');
+    expect(prs[0]?.mergeable).toBe('CONFLICTING');
+    expect(prs[0]?.isCrossRepository).toBe(true);
+    expect(prs[0]?.headRepositoryOwner).toBe('contributor');
+    expect(prs[0]?.headRefOid).toBe('abc123');
+  });
+
+  it('asks gh for the status fields in the same single list call', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.listRepoPrs();
+
+    const listCall = stub.calls.find((c) => c.cmd[2] === 'list');
+    const fields = listCall?.cmd[listCall.cmd.indexOf('--json') + 1] ?? '';
+    expect(fields).toContain('statusCheckRollup');
+    expect(fields).toContain('isCrossRepository');
+    expect(fields).toContain('headRefOid');
+    // One call total — a per-PR `gh pr view` for status is what this avoids.
+    expect(stub.calls.filter((c) => c.cmd[2] === 'view')).toHaveLength(0);
   });
 });
