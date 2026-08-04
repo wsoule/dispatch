@@ -16,6 +16,7 @@ import type {
   RunMeta,
   RunQuestion,
   RunState,
+  SyncStatus,
 } from '@dispatch/client';
 import { createApiClient } from '@dispatch/client';
 import type {
@@ -285,6 +286,9 @@ export interface DispatchProjectData {
       direction?: 'both' | 'pull' | 'push';
     };
   }) => Promise<void>;
+  /** The board syncer's last attempt plus live pending counts — the sync chip's data source.
+   * `null` until the status query has ever resolved. */
+  syncStatus: SyncStatus | null;
   /** `null` until the status query has ever resolved. Carries no API key — only where the
    * daemon found one (`keySource`), never what it is. */
   linearStatus: LinearStatus | null;
@@ -628,6 +632,10 @@ export function useDispatchProject(
     () => ['dispatch-linear-links', port],
     [port]
   );
+  const syncStatusQueryKey = useMemo(
+    () => ['dispatch-sync-status', port],
+    [port]
+  );
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
     queryKey: tasksQueryKey,
@@ -650,6 +658,16 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchConfig();
+    },
+    enabled: client !== null,
+  });
+  // The sync chip's data source — refetched only on mount and on the
+  // `board.sync` WS event below (see the effect's invalidation), not polled.
+  const { data: syncStatus } = useQuery({
+    queryKey: syncStatusQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchSyncStatus();
     },
     enabled: client !== null,
   });
@@ -1130,6 +1148,13 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),
             });
+          } else if (event.type === 'board.sync') {
+            // Refetches rather than reading `event.result` straight into the
+            // cache: the pending counts the chip also shows are computed
+            // live server-side and aren't part of this event's payload.
+            void queryClient.invalidateQueries({
+              queryKey: syncStatusQueryKey,
+            });
           } else if (event.type === 'linear.changed') {
             // A sync pass finished — refetch status (lastSyncAt/lastSummary/lastError) so
             // Settings reflects it immediately rather than waiting on its own poll.
@@ -1229,6 +1254,7 @@ export function useDispatchProject(
     questionsQueryKey,
     linearStatusQueryKey,
     linearLinksQueryKey,
+    syncStatusQueryKey,
     port,
     onRecordInbox,
   ]);
@@ -2218,6 +2244,7 @@ export function useDispatchProject(
     handleSendBack,
     handleSubmitReview,
     handleUpdateConfig,
+    syncStatus: syncStatus ?? null,
     linearStatus: linearStatus ?? null,
     linearTeams: linearTeams ?? [],
     linearStates: linearStates ?? [],
