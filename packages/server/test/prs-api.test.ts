@@ -179,6 +179,10 @@ afterEach(async () => {
 
 describe('GET /api/prs', () => {
   it('returns the parsed list of open repo PRs when the project has pr capability', async () => {
+    // Exercises every field listRepoPrs() reads from `gh pr list --json`
+    // (not just the pre-widening subset), so this pins the full wire shape
+    // GET /api/prs actually returns — including real status values, not
+    // just the zero/null defaults a sparser stub would produce.
     handle = await startServer({
       rootDir: root,
       port: 0,
@@ -192,9 +196,22 @@ describe('GET /api/prs', () => {
               title: 'A repo PR',
               url: 'https://github.com/example/repo/pull/3',
               headRefName: 'some-branch',
+              headRefOid: 'deadbeef',
               author: { login: 'someone' },
               isDraft: false,
               updatedAt: '2026-07-22T00:00:00Z',
+              isCrossRepository: true,
+              headRepositoryOwner: { login: 'someone-fork-owner' },
+              reviewDecision: 'APPROVED',
+              mergeable: 'MERGEABLE',
+              statusCheckRollup: [
+                { conclusion: 'SUCCESS' },
+                { conclusion: 'SUCCESS' },
+                { status: 'IN_PROGRESS' },
+              ],
+              additions: 7,
+              deletions: 1,
+              changedFiles: 3,
             },
           ]),
           stderr: '',
@@ -213,9 +230,18 @@ describe('GET /api/prs', () => {
         title: 'A repo PR',
         url: 'https://github.com/example/repo/pull/3',
         headRefName: 'some-branch',
+        headRefOid: 'deadbeef',
         author: 'someone',
         isDraft: false,
         updatedAt: '2026-07-22T00:00:00Z',
+        isCrossRepository: true,
+        headRepositoryOwner: 'someone-fork-owner',
+        reviewDecision: 'APPROVED',
+        mergeable: 'MERGEABLE',
+        checks: { passed: 2, failed: 0, pending: 1, total: 3 },
+        additions: 7,
+        deletions: 1,
+        changedFiles: 3,
       },
     ]);
   });
