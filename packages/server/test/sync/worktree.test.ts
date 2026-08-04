@@ -516,4 +516,39 @@ describe('SyncWorktree / extensions.worktreeConfig', () => {
     expect(extensionEnabled(repo)).toBe(false);
     rmSync(repo, { recursive: true, force: true });
   });
+
+  it('keeps the marker when --unset fails, so a later remove() retries and finishes the job', () => {
+    const repo = initGitRepo();
+    const worktree = SyncWorktree.open(repo, run);
+    worktree?.ensure();
+    expect(extensionEnabled(repo)).toBe(true);
+
+    // Stands in for a duplicate `[extensions]` key or a stale
+    // `config.lock` from a crashed git: `--get` still reports the flag as
+    // on (status 0, "true"), but `--unset` fails (git uses status 5 for
+    // "tried to unset an option which does not exist" as well as other
+    // multi-value/lock failures) and leaves the real config untouched.
+    const failingUnsetRun: GitRunner = (cwd, args) => {
+      if (args[0] === 'config' && args.includes('--unset')) {
+        return { status: 5, stdout: '', stderr: 'fatal: could not unset' };
+      }
+      return run(cwd, args);
+    };
+    const failingWorktree = SyncWorktree.open(repo, failingUnsetRun);
+    failingWorktree?.remove();
+
+    // The unset call failed, so ownership must NOT be forfeited: the flag
+    // stays on and (unobservably here, but per the fix) the marker survives.
+    expect(extensionEnabled(repo)).toBe(true);
+
+    // A later remove() — using a real, non-failing GitRunner — must still
+    // be able to finish the job the failed attempt deferred, proving the
+    // marker was kept rather than deleted despite the failure.
+    const retryWorktree = SyncWorktree.open(repo, run);
+    retryWorktree?.ensure();
+    retryWorktree?.remove();
+    expect(extensionEnabled(repo)).toBe(false);
+
+    rmSync(repo, { recursive: true, force: true });
+  });
 });
