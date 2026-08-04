@@ -1,10 +1,10 @@
-import type { DiffFile } from '@dispatch/client';
+import type { DiffFile, Finding } from '@dispatch/client';
 import type { FileTreeRowDecorationContext } from '@pierre/trees';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { useCallback, useEffect, useMemo } from 'react';
 
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
-import { composeRowDecoration } from '../../lib/reviewAttention';
+import { composeRowDecoration, worstSeverity } from '../../lib/reviewAttention';
 import { viewedSummary } from '../../lib/reviewViewed';
 
 interface ReviewFileTreeProps {
@@ -13,6 +13,8 @@ interface ReviewFileTreeProps {
   viewed: ReadonlySet<string>;
   /** Unresolved comment count per file, so the tree shows where the discussion is. */
   commentsByFile: ReadonlyMap<string, number>;
+  /** Open agent-review findings per file, so the tree shows where the machine's attention went. */
+  findingsByFile: ReadonlyMap<string, Finding[]>;
   unviewedOnly: boolean;
   onToggleUnviewedOnly: () => void;
 }
@@ -28,6 +30,7 @@ export function ReviewFileTree({
   onSelect,
   viewed,
   commentsByFile,
+  findingsByFile,
   unviewedOnly,
   onToggleUnviewedOnly,
 }: ReviewFileTreeProps) {
@@ -60,9 +63,10 @@ export function ReviewFileTree({
       return composeRowDecoration({
         viewed: viewed.has(context.item.path),
         comments: commentsByFile.get(context.item.path) ?? 0,
+        severity: worstSeverity(findingsByFile.get(context.item.path) ?? []),
       });
     },
-    [viewed, commentsByFile]
+    [viewed, commentsByFile, findingsByFile]
   );
 
   const { model } = useFileTree({
