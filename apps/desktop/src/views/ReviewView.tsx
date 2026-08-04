@@ -1,5 +1,5 @@
 import { ArrowLeft } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
 import { ReviewCommentsPanel } from '../components/runs/ReviewCommentsPanel';
@@ -87,6 +87,21 @@ export function ReviewView({
     }
     return map;
   }, [data.reviewComments]);
+
+  // Dispatches a review agent over this run's diff — base/head/runId all come from the run
+  // already open here, never invented or asked of the reviewer. `startReview` resolves once the
+  // run is accepted; its findings land on the task asynchronously (see `FindingStore`), not in
+  // this panel.
+  const handleStartAiReview = useCallback(async () => {
+    if (data.client === null || run === undefined) {
+      throw new Error('The task daemon is not ready yet.');
+    }
+    await data.client.startReview(run.taskId, {
+      base: run.baseBranch,
+      head: run.branch,
+      runId: run.id,
+    });
+  }, [data.client, run]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -184,6 +199,7 @@ export function ReviewView({
             onJumpTo={(c) =>
               setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
             }
+            onStartAiReview={handleStartAiReview}
           />
         </div>
       </div>
