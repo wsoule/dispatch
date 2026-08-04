@@ -823,6 +823,7 @@ describe('EpicEngine fill serialization', () => {
         if (started === 1) evts.onFinish({ state: 'finished' });
         return {
           interrupt: () => Promise.resolve(),
+          requestStop: () => {},
           send: () => {},
           approve: () => {},
         };

@@ -202,6 +202,7 @@ function controllableExecutor(sent: string[]): Executor {
     start(_opts: ExecutorStartOptions, _events: ExecutorEvents): ExecutorRun {
       return {
         interrupt: async () => {},
+        requestStop: () => {},
         send: (message: string) => sent.push(message),
         approve: () => {},
       };
@@ -503,7 +504,12 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
             error: 'Claude usage limit reached before the agent finished',
           });
         }
-        return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+        return {
+          interrupt: async () => {},
+          requestStop: () => {},
+          send: () => {},
+          approve: () => {},
+        };
       },
     });
     const task = store.create({ title: 'Cut off by the limit' });
@@ -578,7 +584,12 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
         if (starts === 1) {
           events.onFinish({ state: 'finished', sessionId: 'sess-1' });
         }
-        return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+        return {
+          interrupt: async () => {},
+          requestStop: () => {},
+          send: () => {},
+          approve: () => {},
+        };
       },
     });
     const task = store.create({ title: 'No duplicate resumes' });
@@ -1976,6 +1987,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
       events.onFinish({ state: 'finished' });
       return {
         interrupt: () => Promise.resolve(),
+        requestStop: () => {},
         send: () => {},
         approve: () => {},
       };

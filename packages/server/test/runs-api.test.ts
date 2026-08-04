@@ -600,6 +600,102 @@ describe('POST /api/runs/:id/cancel', () => {
   });
 });
 
+describe('POST /api/runs/:id/stop', () => {
+  it('404s an unknown run id', async () => {
+    const res = await fetch(`${baseUrl}/api/runs/r-000000/stop`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('409s a run that has already finished', async () => {
+    const task = await createTask('Already done running');
+    const meta = await json(
+      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'fake' }),
+      })
+    );
+    await waitFor(async () => {
+      const run = await json(await fetch(`${baseUrl}/api/runs/${meta.id}`));
+      return run.meta.state === 'finished';
+    });
+
+    const res = await fetch(`${baseUrl}/api/runs/${meta.id}/stop`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(409);
+    expect((await json(res)).error).toMatch(/already finished/);
+  });
+
+  // Its own server because the shared one's script finishes instantly, and a
+  // stop is only meaningful against a run that is still live.
+  describe('against a live run', () => {
+    let stopHandle: ServerHandle;
+    let stopBaseUrl: string;
+    let stopRoot: string;
+
+    beforeEach(async () => {
+      stopRoot = initDispatchGitRepo();
+      TaskStore.init(stopRoot);
+      stopHandle = await startServer({
+        rootDir: stopRoot,
+        port: 0,
+        writeDaemonFile: false,
+        registerExecutors: (orchestrator) => {
+          orchestrator.registerExecutor('fake-gate', gatedFakeScript());
+        },
+      });
+      useTestAuth(stopHandle);
+      stopBaseUrl = `http://127.0.0.1:${stopHandle.port}`;
+    });
+
+    afterEach(async () => {
+      await stopHandle.stop();
+      rmSync(stopRoot, { recursive: true, force: true });
+    });
+
+    it('marks the run stopping and lets it finish on its own', async () => {
+      const task = await json(
+        await fetch(`${stopBaseUrl}/api/tasks`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: 'Stop me' }),
+        })
+      );
+      const meta = await json(
+        await fetch(`${stopBaseUrl}/api/tasks/${task.meta.id}/runs`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ executor: 'fake-gate' }),
+        })
+      );
+      await waitFor(async () => {
+        const run = await json(
+          await fetch(`${stopBaseUrl}/api/runs/${meta.id}`)
+        );
+        return run.meta.state === 'awaiting-approval';
+      });
+
+      const res = await fetch(`${stopBaseUrl}/api/runs/${meta.id}/stop`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(200);
+      // The route answers with the run's meta, not `{ ok: true }`: the marker
+      // is what the UI renders "Stopping…" from, and the run is still live.
+      expect((await json(res)).stopRequestedAt).toBeDefined();
+
+      await waitFor(async () => {
+        const run = await json(
+          await fetch(`${stopBaseUrl}/api/runs/${meta.id}`)
+        );
+        return run.meta.state === 'finished';
+      });
+    });
+  });
+});
+
 describe('WebSocket run.changed / run.log broadcasts', () => {
   it('broadcasts run.changed and at least one run.log entry during a dispatch', async () => {
     const task = await createTask('WS broadcast');
