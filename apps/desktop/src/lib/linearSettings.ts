@@ -98,7 +98,7 @@ export function linearKeySourceNote(
     case 'project':
       return null;
     case 'env':
-      return 'Using LINEAR_API_KEY from your environment. Connect a key here to use a different Linear workspace for this project.';
+      return 'Using LINEAR_API_KEY from your environment. Connect a key here to use a different Linear workspace for this project. Unset the variable and restart Dispatch to stop using it entirely.';
     case 'global':
       return 'Using your shared default key. Connect a key here to use a different Linear workspace for this project.';
     default:

@@ -223,6 +223,12 @@ describe('linearKeySourceNote', () => {
     expect(linearKeySourceNote('env')).toContain('LINEAR_API_KEY');
   });
 
+  // The env note carries two remedies: override per-project (connect here), or stop using the
+  // env key entirely (unset + restart) — pin the second so it can't quietly drop again.
+  test('gives the restart remedy for stopping the environment key entirely', () => {
+    expect(linearKeySourceNote('env')).toContain('restart Dispatch');
+  });
+
   test('explains that a shared key can be overridden per project', () => {
     const note = linearKeySourceNote('global');
     expect(note).not.toBeNull();

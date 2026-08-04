@@ -241,7 +241,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
     <Panel>
       <PanelHeader>Linear</PanelHeader>
 
-      {keyNote !== null && (
+      {linearStatus.keySource !== 'project' && (
         <PanelRow className="flex-col items-stretch gap-2">
           <HintText>{keyNote}</HintText>
           <div className="flex items-center gap-2">
@@ -271,13 +271,13 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
 
       {linearStatus.connected && (
         <>
-          {linearStatus.keySource === 'project' && (
-            <PanelRow className="flex-col items-stretch gap-1.5">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="text-state-review size-3.5 flex-shrink-0" />
-                <span className="text-[13px]">
-                  Connected{viewer !== null ? ` as ${viewer.name}` : ''}
-                </span>
+          <PanelRow className="flex-col items-stretch gap-1.5">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="text-state-review size-3.5 flex-shrink-0" />
+              <span className="text-[13px]">
+                Connected{viewer !== null ? ` as ${viewer.name}` : ''}
+              </span>
+              {linearStatus.keySource === 'project' && (
                 <Button
                   size="sm"
                   variant="secondary"
@@ -287,14 +287,14 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                 >
                   {disconnecting ? 'Disconnecting…' : 'Disconnect'}
                 </Button>
-              </div>
-              {disconnectError !== null && (
-                <span className="text-state-failed text-[12px]">
-                  {disconnectError}
-                </span>
               )}
-            </PanelRow>
-          )}
+            </div>
+            {disconnectError !== null && (
+              <span className="text-state-failed text-[12px]">
+                {disconnectError}
+              </span>
+            )}
+          </PanelRow>
 
           <PanelRow>
             <label className="flex items-center gap-2">
