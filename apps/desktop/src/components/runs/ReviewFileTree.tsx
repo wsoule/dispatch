@@ -1,27 +1,36 @@
-import type { DiffFile } from '@dispatch/client';
+import type { DiffFile, Finding } from '@dispatch/client';
+import type { FileTreeRowDecorationContext } from '@pierre/trees';
 import { FileTree, useFileTree } from '@pierre/trees/react';
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
+import { composeRowDecoration, worstSeverity } from '../../lib/reviewAttention';
 import { viewedSummary } from '../../lib/reviewViewed';
 
 interface ReviewFileTreeProps {
   files: DiffFile[];
   onSelect: (path: string) => void;
   viewed: ReadonlySet<string>;
+  /** Unresolved comment count per file, so the tree shows where the discussion is. */
+  commentsByFile: ReadonlyMap<string, number>;
+  /** Open agent-review findings per file, so the tree shows where the machine's attention went. */
+  findingsByFile: ReadonlyMap<string, Finding[]>;
   unviewedOnly: boolean;
   onToggleUnviewedOnly: () => void;
 }
 
 /**
- * The review's changed-files tree — @pierre/trees' `FileTree`. It has no per-row render slot, so
- * the viewed toggle and comment count that used to duplicate this list now live in `ReviewView`'s
- * diff pane header instead.
+ * The review's changed-files tree — @pierre/trees' `FileTree`. Viewed ticks and comment counts
+ * ride on the rows themselves via `renderRowDecoration`, which takes one text-or-icon value per
+ * row. The viewed *toggle* stays in `ReviewView`'s diff pane header, since a decoration cannot
+ * take a click.
  */
 export function ReviewFileTree({
   files,
   onSelect,
   viewed,
+  commentsByFile,
+  findingsByFile,
   unviewedOnly,
   onToggleUnviewedOnly,
 }: ReviewFileTreeProps) {
@@ -46,7 +55,26 @@ export function ReviewFileTree({
     [shown]
   );
 
-  const { model } = useFileTree({ paths, gitStatus, initialExpansion: 'open' });
+  // An earlier version of this file kept a second, flat copy of the whole list below the tree to
+  // carry these; `renderRowDecoration` is the per-row slot that removed the need for it.
+  const renderRowDecoration = useCallback(
+    (context: FileTreeRowDecorationContext) => {
+      if (context.item.kind !== 'file') return null;
+      return composeRowDecoration({
+        viewed: viewed.has(context.item.path),
+        comments: commentsByFile.get(context.item.path) ?? 0,
+        severity: worstSeverity(findingsByFile.get(context.item.path) ?? []),
+      });
+    },
+    [viewed, commentsByFile, findingsByFile]
+  );
+
+  const { model } = useFileTree({
+    paths,
+    gitStatus,
+    initialExpansion: 'open',
+    renderRowDecoration,
+  });
 
   useEffect(() => {
     model.resetPaths(paths);
