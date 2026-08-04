@@ -39,10 +39,16 @@ seam.
   behavior-focused. No incident narratives.
 - Verification baseline after code changes, from the monorepo root:
   `bun run format` then `bun run lint`.
-- **Known-red baseline:** `bun run lint` currently reports 15 errors and 163
-  warnings that pre-date this work (in `ApprovalCard.tsx`, `doctor.ts`,
-  `legacyWebkitPolyfills.js`, and others). Do not attempt to fix them. Confirm
-  your change adds no _new_ entries.
+- **Lint baseline: `0 errors, 154 warnings`** in this worktree, measured on the
+  branch base and re-measured after `bun run build`. Any lint **error** is
+  therefore yours and must be fixed — do not wave one through. The 154 warnings
+  pre-date this work; leave them alone and confirm your change adds no new ones.
+
+  (An earlier revision of this plan claimed a "known-red baseline" of 15 errors.
+  That figure was measured in the main checkout, which carries another session's
+  uncommitted work, and it never applied here. It is retracted: treating a real
+  error as pre-existing is exactly the failure that claim would have caused.)
+
 - This plan covers Phases 1 and 2 only. Phases 3 (comment mirror) and 4 (agent
   review of a PR) get their own plans.
 - **Refresh cadence (supersedes the spec).** The spec says "one query on a 60s
