@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Dispatch",
-  "version": "0.12.4",
+  "version": "0.13.1",
   "identifier": "dev.dispatch.app",
   "build": {
     "frontendDist": "../dist",
@@ -30,6 +30,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
     "resources": [
       "resources/dispatchd",
       "resources/dispatch-mcp",

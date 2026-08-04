@@ -4,13 +4,13 @@ import { Target, TriangleAlert } from 'lucide-react';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import { StatusIcon } from '../components/tasks/StatusIcon';
-import { StateDot } from '../components/ui/StateDot';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   deriveMilestoneStatus,
   MILESTONE_HEALTH_LABEL,
 } from '../lib/milestoneRisk';
 import { cn } from '@/lib/utils';
+import { StateDot } from '@/ui/chrome/StateDot';
 
 interface MilestonesViewProps {
   data: DispatchProjectData;

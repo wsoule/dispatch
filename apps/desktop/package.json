@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "bun test",
-    "tsc": "tsc -b --noEmit"
+    "tsc": "tsc -b --noEmit",
+    "e2e": "playwright test",
+    "e2e:update": "playwright test --update-snapshots"
   },
   "dependencies": {
     "@dispatch/client": "workspace:*",
@@ -42,13 +44,18 @@
   },
   "devDependencies": {
     "@dispatch/core": "workspace:*",
+    "@happy-dom/global-registrator": "catalog:",
+    "@playwright/test": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@tauri-apps/cli": "catalog:",
+    "@testing-library/dom": "catalog:",
+    "@testing-library/react": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "acorn": "catalog:",
     "tailwindcss": "catalog:",
     "tw-animate-css": "catalog:",
     "typescript": "catalog:",

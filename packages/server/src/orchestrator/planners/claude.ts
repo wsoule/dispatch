@@ -225,6 +225,16 @@ function buildDraftFollowupPrompt(userMessage: string): string {
   ].join('\n\n');
 }
 
+// Both `tools` and `allowedTools` set to the same list: the former restricts
+// model access, the latter auto-approves in plan mode.
+const PLANNER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
+
+// Shown when two consecutive attempts at a turn both end with no structured
+// output; tells the user their answers are kept and to resend.
+export const EMPTY_TURN_MESSAGE =
+  'The planner ended its turn without a plan or a question, twice in a row. ' +
+  'Your answers were kept — send them again, or rephrase if it keeps happening.';
+
 /**
  * The real planner backend: a read-only Agent SDK planning *conversation* in
  * the main checkout (no worktree — a plan proposes work, it never touches the
@@ -265,29 +275,38 @@ export class ClaudePlanner implements Planner {
     return this.runTurn(builder(message), sessionId, model);
   }
 
-  // Runs one turn to completion: issues a single `query()` (resuming `resume`
-  // when continuing a conversation), then folds the terminal `result` message
-  // into a PlannerTurn. The session id is captured from the 'system' init
-  // message as a fallback so a turn still reports its session even if the
-  // 'result' omits one.
+  // Runs one turn, retrying attemptTurn once if the first call returns null.
   private async runTurn(
     prompt: string,
     resume: string | undefined,
     model: string | undefined
   ): Promise<PlannerTurn> {
+    const first = await this.attemptTurn(prompt, resume, model);
+    if (first !== null) return first;
+    const second = await this.attemptTurn(prompt, resume, model);
+    if (second !== null) return second;
+    throw new Error(EMPTY_TURN_MESSAGE);
+  }
+
+  // One attempt at a turn; returns null (not a throw) when the result has no
+  // structured output — see runTurn.
+  private async attemptTurn(
+    prompt: string,
+    resume: string | undefined,
+    model: string | undefined
+  ): Promise<PlannerTurn | null> {
     const options: Options = {
       cwd: this.rootDir,
       permissionMode: 'plan',
       outputFormat: { type: 'json_schema', schema: TURN_JSON_SCHEMA },
-      // Same "query() doesn't auto-load what the CLI does" fix as
-      // ClaudeExecutor's sdkOptions (executors/claude.ts): without
-      // `settingSources: ['project', ...]`, the SDK contract is explicit that
-      // CLAUDE.md/AGENTS.md never load at all. This planner runs against the
-      // real checkout via `cwd` (this.rootDir), so grounding it in the
-      // project's own instruction files the same way a dispatched run is
-      // improves the quality of its proposals, not just its executed work.
+      // `'project'` loads CLAUDE.md/AGENTS.md; `'user'` omitted to isolate from
+      // operator's personal environment.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['user', 'project', 'local'],
+      settingSources: ['project', 'local'],
+      tools: PLANNER_TOOLS,
+      allowedTools: PLANNER_TOOLS,
+      strictMcpConfig: true,
+      skills: [],
       ...(resume !== undefined ? { resume } : {}),
       ...(model !== undefined ? { model } : {}),
     };
@@ -319,9 +338,7 @@ export class ClaudePlanner implements Planner {
             }`
           );
         }
-        if (message.structured_output === undefined) {
-          throw new Error('planner produced no structured output');
-        }
+        if (message.structured_output === undefined) return null;
         const output = message.structured_output as PlannerTurnOutput;
         return {
           reply: output.message,

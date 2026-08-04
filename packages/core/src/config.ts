@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
 import type {
+  CartoConfig,
+  CartoMode,
   ConfigPatch,
   DispatchConfig,
   EscalationStep,
@@ -13,6 +15,8 @@ import type {
   VerifyConfig,
 } from './configTypes.js';
 import {
+  CARTO_MODES,
+  DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
@@ -70,6 +74,7 @@ const DEFAULTS: DispatchConfig = {
   models: { ...DEFAULT_MODELS },
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
+  carto: { ...DEFAULT_CARTO },
 };
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -374,6 +379,30 @@ function parseFixLoopConfig(raw: unknown): FixLoopConfig {
   };
 }
 
+// Validates the optional `carto:` block. `enabled: true`/`false` (real YAML
+// booleans) are normalized to 'on'/'off' alongside the string spellings.
+function parseCarto(raw: unknown): CartoConfig {
+  if (raw === undefined || raw === null) return { ...DEFAULT_CARTO };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: carto must be a mapping'
+    );
+  }
+  const enabled = (raw as Record<string, unknown>).enabled;
+  if (enabled === undefined) return { ...DEFAULT_CARTO };
+  const normalized =
+    enabled === true ? 'on' : enabled === false ? 'off' : enabled;
+  if (
+    typeof normalized !== 'string' ||
+    !CARTO_MODES.includes(normalized as CartoMode)
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: carto.enabled must be one of: ${CARTO_MODES.join(', ')}`
+    );
+  }
+  return { enabled: normalized as CartoMode };
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -387,6 +416,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
         statusMap: { ...DEFAULTS.linear.statusMap },
       },
       fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
+      carto: { ...DEFAULTS.carto },
     };
   }
   let parsed: unknown;
@@ -451,6 +481,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     linear: parseLinearConfig(raw.linear),
     fixLoop: parseFixLoopConfig(raw.fixLoop),
     verify: parseVerifyConfig(raw.verify),
+    carto: parseCarto(raw.carto),
   };
 }
 
@@ -553,6 +584,25 @@ export function updateConfig(
     if (value === undefined) continue;
     if (!Number.isInteger(value) || value < 1) {
       throw new ConfigError(`invalid ${key}: must be a positive integer`);
+    }
+    doc.setIn(['orchestrator', key], value);
+  }
+
+  // Positive *numbers*, not integers: a budget is money and a turn cap is
+  // checked with `<=` upstream, matching the loader's own rule for both.
+  for (const key of ['maxTurns', 'maxBudgetUsd'] as const) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    if (value === null) {
+      // Clearing an absent cap is a no-op, not an error: the config already
+      // says "no cap". `deleteIn` throws if `orchestrator` isn't a
+      // collection yet, so only delete when the key is actually there —
+      // never create `orchestrator` as a side effect of clearing.
+      if (doc.hasIn(['orchestrator', key])) doc.deleteIn(['orchestrator', key]);
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new ConfigError(`invalid ${key}: must be a positive number`);
     }
     doc.setIn(['orchestrator', key], value);
   }

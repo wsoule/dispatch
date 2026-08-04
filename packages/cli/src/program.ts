@@ -1,8 +1,10 @@
 import {
   DISPATCH_DIR,
+  loadConfig,
   TaskStore,
   upsertRegisteredProject,
 } from '@dispatch/core';
+import { cartoInit, discoverCarto } from '@dispatch/core/carto';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -88,6 +90,20 @@ export function makeProgram(ctx: CliContext): Command {
           'Could not register the merge driver git config — ' +
             'is this a git repository, and is git on PATH?'
         );
+      }
+
+      // 'on' means Dispatch may build the container itself; an absent or
+      // unusable binary just degrades later lookups, so this never blocks init.
+      if (loadConfig(ctx.cwd).carto.enabled === 'on') {
+        const discovery = discoverCarto();
+        if (discovery.ok) {
+          const result = cartoInit(ctx.cwd, discovery.binary);
+          ctx.log(
+            result.ok
+              ? `Indexed the repo with carto ${discovery.binary.version}`
+              : `carto index skipped: ${result.detail}`
+          );
+        }
       }
     });
 

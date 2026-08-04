@@ -8,6 +8,8 @@ import { splitPatchFiles } from '../../lib/patchFiles';
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
+import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
+import { toDiffRenderOptions } from '@/lib/diffDisplay';
 import { Skeleton } from '@/ui/skeleton';
 
 // The changed-files tree for a run's diff, git-status decorated (added/modified/deleted/
@@ -121,6 +123,11 @@ export function RunDiffView({
   const handleFileFocus = useCallback((path: string) => {
     fileSectionRefs.current.get(path)?.scrollIntoView({ block: 'start' });
   }, []);
+  const [diffDisplay] = useDiffDisplaySettings();
+  const diffOptions = useMemo(
+    () => toDiffRenderOptions(diffDisplay),
+    [diffDisplay]
+  );
 
   if (diffLoading) {
     return (
@@ -170,7 +177,7 @@ export function RunDiffView({
             </p>
           </div>
         ) : (
-          <PierreWorkerPool>
+          <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
             <div className="flex flex-col">
               {parsed.files.map((file) => {
                 const path = normalizeDiffFilePath(file.name);
@@ -187,7 +194,7 @@ export function RunDiffView({
                   >
                     {/* Per-file boundary so one bad file can't blank the rest. */}
                     <ErrorBoundary label={`the diff for ${path}`}>
-                      <FileDiff fileDiff={file} />
+                      <FileDiff fileDiff={file} options={diffOptions} />
                     </ErrorBoundary>
                   </div>
                 );

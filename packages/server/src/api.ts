@@ -612,6 +612,17 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     }
     patch[key] = body[key];
   }
+  // `null` clears the cap, so these can't join the number-only loop above.
+  // Range checking (positive, finite) is core's job — its ConfigError becomes
+  // the 400 below, so it isn't duplicated here.
+  for (const key of ['maxTurns', 'maxBudgetUsd'] as const) {
+    if (!(key in body)) continue;
+    const value = body[key];
+    if (value !== null && typeof value !== 'number') {
+      return errorResponse(400, `${key} must be a number or null`);
+    }
+    patch[key] = value;
+  }
   if ('permissionMode' in body) {
     if (typeof body.permissionMode !== 'string') {
       return errorResponse(400, 'permissionMode must be a string');
@@ -1942,7 +1953,7 @@ async function updateNote(
     (typeof body.kind !== 'string' ||
       !NOTE_KINDS.includes(body.kind as NoteKind))
   ) {
-    return errorResponse(400, `invalid kind: ${String(body.kind)}`);
+    return errorResponse(400, `invalid kind: ${JSON.stringify(body.kind)}`);
   }
   try {
     const note = ctx.noteStore.update(id, {

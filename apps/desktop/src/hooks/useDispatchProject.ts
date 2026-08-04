@@ -22,6 +22,7 @@ import { createApiClient } from '@dispatch/client';
 import type {
   CreateInput,
   DispatchConfig,
+  EscalationStep,
   ModelConfig,
   TaskDoc,
   UpdatePatch,
@@ -285,6 +286,10 @@ export interface DispatchProjectData {
       intervalSec?: number;
       direction?: 'both' | 'pull' | 'push';
     };
+    maxTurns?: number | null;
+    maxBudgetUsd?: number | null;
+    fixLoop?: { cap?: number; escalation?: EscalationStep[] };
+    verify?: { command?: string; url?: string; notes?: string };
   }) => Promise<void>;
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source.
    * `null` until the status query has ever resolved. */
@@ -294,9 +299,17 @@ export interface DispatchProjectData {
   linearStatus: LinearStatus | null;
   /** This Linear workspace's teams, fetched once connected — the Settings team picker. */
   linearTeams: LinearTeam[];
+  /** Why the team list is empty, when it is empty because the fetch failed rather than because
+   *  the workspace has no teams. Null-ish when the fetch succeeded. */
+  linearTeamsError: unknown;
+  refetchLinearTeams: () => void;
   /** The configured team's workflow states — the status-map editor's per-row `<select>`
    * options. Empty until a team is chosen. */
   linearStates: LinearWorkflowState[];
+  /** Why the state list is empty, when it is empty because the fetch failed rather than because
+   *  the team has no states. Null-ish when the fetch succeeded. */
+  linearStatesError: unknown;
+  refetchLinearStates: () => void;
   /** Issue UUID -> display identifier/URL, for resolving `TaskMeta.external` into a real chip. */
   linearLinks: Record<string, LinearIssueLink>;
   handleConnectLinear: (
@@ -685,13 +698,20 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
-  const { data: linearTeams } = useQuery({
+  const {
+    data: linearTeams,
+    error: linearTeamsError,
+    refetch: refetchTeamsQuery,
+  } = useQuery({
     queryKey: linearTeamsQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchLinearTeams();
     },
     enabled: client !== null && linearStatus?.connected === true,
+    // A rejected key is a settled answer, not a blip — retrying it three times
+    // only delays the error the picker needs to show.
+    retry: false,
   });
   // Reads from disk, not the Linear API, so it stays available for chip rendering even while
   // disconnected — a task linked before a key was removed should still show its identifier.
@@ -704,7 +724,11 @@ export function useDispatchProject(
     enabled: client !== null,
   });
   const linearTeamId = config?.linear.teamId ?? null;
-  const { data: linearStates } = useQuery({
+  const {
+    data: linearStates,
+    error: linearStatesError,
+    refetch: refetchStatesQuery,
+  } = useQuery({
     queryKey: linearStatesQueryKey,
     queryFn: () => {
       if (client === null || linearTeamId === null) {
@@ -717,7 +741,19 @@ export function useDispatchProject(
       linearStatus?.connected === true &&
       linearTeamId !== null &&
       linearTeamId.trim() !== '',
+    // Same reasoning as linearTeams: a rejected fetch is a settled answer, not a blip.
+    retry: false,
   });
+  // TanStack's own `refetch` is stable, so wrapping it in useCallback with it as the only
+  // dependency gives callers (e.g. a Settings Retry button) an identity that never churns.
+  const refetchLinearTeams = useCallback(
+    () => void refetchTeamsQuery(),
+    [refetchTeamsQuery]
+  );
+  const refetchLinearStates = useCallback(
+    () => void refetchStatesQuery(),
+    [refetchStatesQuery]
+  );
   const { data: readyTasks } = useQuery({
     queryKey: readyQueryKey,
     queryFn: () => {
@@ -2023,6 +2059,10 @@ export function useDispatchProject(
         intervalSec?: number;
         direction?: 'both' | 'pull' | 'push';
       };
+      maxTurns?: number | null;
+      maxBudgetUsd?: number | null;
+      fixLoop?: { cap?: number; escalation?: EscalationStep[] };
+      verify?: { command?: string; url?: string; notes?: string };
     }): Promise<void> => {
       if (client === null) return;
       await client.updateConfig(patch);
@@ -2107,8 +2147,9 @@ export function useDispatchProject(
     void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
   }, [client, queryClient, mergeQueueQueryKey]);
 
-  // Notifies on run finished/failed and merge-queue merged/failed transitions —
-  // see useTransitionNotifications's own comment for why it needs the *lists*
+  // Notifies on run finished/failed transitions, merge-queue merged/failed
+  // transitions, and planner/run questions waiting on the user — see
+  // useTransitionNotifications's own comment for why it needs the *lists*
   // (not just this render's counts) to diff against what it last saw. `projectPath`
   // is threaded through so a project switch resets its tracking (see
   // resetTrackingForRoot) instead of diffing the new project against the old one's
@@ -2118,6 +2159,9 @@ export function useDispatchProject(
     projectPath,
     runs ?? [],
     mergeQueue ?? null,
+    drafts ?? [],
+    planRecord,
+    openQuestions,
     onRecordInbox
   );
 
@@ -2247,7 +2291,11 @@ export function useDispatchProject(
     syncStatus: syncStatus ?? null,
     linearStatus: linearStatus ?? null,
     linearTeams: linearTeams ?? [],
+    linearTeamsError,
+    refetchLinearTeams,
     linearStates: linearStates ?? [],
+    linearStatesError,
+    refetchLinearStates,
     linearLinks: linearLinks ?? {},
     handleConnectLinear,
     handleDisconnectLinear,

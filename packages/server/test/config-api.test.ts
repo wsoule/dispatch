@@ -92,3 +92,37 @@ describe('PATCH /api/config — fixLoop', () => {
     expect(file).not.toContain('fixLoop');
   });
 });
+
+describe('PATCH /api/config — orchestrator caps', () => {
+  it('accepts a turn cap and a budget cap', async () => {
+    const res = await patchConfig({ maxTurns: 40, maxBudgetUsd: 12.5 });
+    expect(res.status).toBe(200);
+    const config = await json<{
+      orchestrator: { maxTurns: number; maxBudgetUsd: number };
+    }>(res);
+    expect(config.orchestrator.maxTurns).toBe(40);
+    expect(config.orchestrator.maxBudgetUsd).toBe(12.5);
+  });
+
+  it('accepts null to clear a cap that was never set', async () => {
+    const res = await patchConfig({ maxTurns: null });
+    expect(res.status).toBe(200);
+    const config = await json<{ orchestrator: { maxTurns?: number } }>(res);
+    expect(config.orchestrator.maxTurns).toBeUndefined();
+  });
+
+  it('rejects a non-numeric turn cap with 400', async () => {
+    const res = await patchConfig({ maxTurns: 'lots' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a value core would reject (0) with 400, unvalidated here', async () => {
+    const res = await patchConfig({ maxTurns: 0 });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a negative budget with 400, unvalidated here', async () => {
+    const res = await patchConfig({ maxBudgetUsd: -5 });
+    expect(res.status).toBe(400);
+  });
+});

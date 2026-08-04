@@ -9,6 +9,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
+import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
+import { toDiffRenderOptions } from '@/lib/diffDisplay';
 
 /** What each annotation carries, so `renderAnnotation` knows what to draw. */
 type Annotation =
@@ -81,6 +83,11 @@ export function PierreReviewDiff({
     side?: string;
   } | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
+  const [diffDisplay] = useDiffDisplaySettings();
+  const diffOptions = useMemo(
+    () => toDiffRenderOptions(diffDisplay),
+    [diffDisplay]
+  );
 
   const files = useMemo(() => {
     try {
@@ -247,10 +254,11 @@ export function PierreReviewDiff({
 
   return (
     <ErrorBoundary>
-      <PierreWorkerPool>
+      <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
         <CodeView<Annotation>
           ref={viewRef}
           items={items}
+          options={diffOptions}
           onSelectedLinesChange={(sel) =>
             setSelection(
               sel === null
@@ -264,7 +272,20 @@ export function PierreReviewDiff({
           }
           renderAnnotation={renderAnnotation}
           renderGutterUtility={renderGutterUtility}
-          className="size-full"
+          // `CodeView` attaches its own scroll listener to this exact element and reads its
+          // own `scrollTop` to decide which virtualized rows to render — an ancestor owning
+          // the `overflow-auto` instead leaves this element's `scrollTop` permanently 0, so
+          // the window of rendered rows never advances past the first screenful. This element
+          // must be the actual scroll container.
+          //
+          // `flex-1` rather than `size-full`/`h-full`: the caller (`ReviewView`) makes this
+          // element's parent a flex column, so this sizes directly off that container's own
+          // resolved height. A percentage height here would instead have to resolve through
+          // that flex column's own height, which itself was only ever a stretch-resolved grid
+          // cell — a chain some engines collapse to zero rather than a real pixel value, which
+          // reads as this pane rendering only its (non-virtualized) file header and nothing
+          // else. `flex-1` sizes off the immediate container directly, with no such chain.
+          className="min-h-0 w-full flex-1 overflow-auto"
         />
       </PierreWorkerPool>
     </ErrorBoundary>

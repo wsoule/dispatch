@@ -20,11 +20,14 @@ export interface DraftTrayItem {
 
 export interface DraftTrayViewModel {
   items: DraftTrayItem[];
-  /** Drafts still worth a look — running or ready, not failed (which needs dismissing, not
-   * celebrating). */
+  /** Drafts worth showing: running, ready, or holding unanswered questions — even if failed,
+   * a draft with questions is genuinely waiting on the user. */
   badgeCount: number;
   /** Whether any item is still `running` — gates the tray's elapsed-time ticker. */
   hasRunning: boolean;
+  /** Drafts (not running) holding at least one unanswered question — these need the user's answer,
+   * so the tray badges them with attention color. */
+  questionCount: number;
 }
 
 // running sorts above ready sorts above failed — the tray leads with what is still happening,
@@ -70,8 +73,12 @@ export function draftTrayViewModel(
       elapsed: formatElapsed(now - new Date(draft.createdAt).getTime()),
     }));
   const badgeCount = drafts.filter(
-    (d) => d.state === 'running' || d.state === 'ready'
+    (d) =>
+      d.state === 'running' || d.state === 'ready' || d.questions.length > 0
   ).length;
   const hasRunning = drafts.some((d) => d.state === 'running');
-  return { items, badgeCount, hasRunning };
+  const questionCount = drafts.filter(
+    (d) => d.state !== 'running' && d.questions.length > 0
+  ).length;
+  return { items, badgeCount, hasRunning, questionCount };
 }
