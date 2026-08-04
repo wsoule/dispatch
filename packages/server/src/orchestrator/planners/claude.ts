@@ -225,10 +225,8 @@ function buildDraftFollowupPrompt(userMessage: string): string {
   ].join('\n\n');
 }
 
-// The planner's entire tool surface. `tools` is what actually restricts what
-// the model can reach — `allowedTools` only auto-approves, so both are set:
-// the first keeps Agent/Write/Edit out of the model's context, the second keeps
-// plan mode from stalling on a permission prompt no one is there to answer.
+// Both `tools` and `allowedTools` set to the same list: the former restricts
+// model access, the latter auto-approves in plan mode.
 const PLANNER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
 
 /**
@@ -285,12 +283,8 @@ export class ClaudePlanner implements Planner {
       cwd: this.rootDir,
       permissionMode: 'plan',
       outputFormat: { type: 'json_schema', schema: TURN_JSON_SCHEMA },
-      // Without `settingSources: ['project', ...]` the SDK never loads
-      // CLAUDE.md/AGENTS.md, so the planner would propose work blind to the
-      // project's own instructions. `'user'` is deliberately absent: it also
-      // loads the operator's personal hooks, plugins, and MCP servers into
-      // every planner turn, and with them the Agent tool whose background
-      // subagent interrupted the next turn in the same session.
+      // `'project'` loads CLAUDE.md/AGENTS.md; `'user'` omitted to isolate from
+      // operator's personal environment.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['project', 'local'],
       tools: PLANNER_TOOLS,
