@@ -81,6 +81,10 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem('dispatch:overview-rail', railOpen ? '1' : '0');
   }, [railOpen]);
+  // An open review is the same "compressed copy beside the full version" case the rail already
+  // sits out on Overview — the review page's own header lists the queue it would be repeating.
+  const inFocusedReview =
+    navState.projectView === 'review' && navState.activeRunId !== null;
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -823,7 +827,10 @@ function App() {
             activeProject !== null && (
               <MiniOverview
                 data={data}
-                open={railOpen}
+                // Same rule, applied to an open review: that page devotes the window to one run
+                // and the rail listed the same queue beside it. Derived rather than written back
+                // to `railOpen`, so the person's own choice survives the review and returns.
+                open={railOpen && !inFocusedReview}
                 onToggle={() => setRailOpen((v) => !v)}
                 onOpenRun={(runId) => {
                   dispatchNav({ type: 'openRun', runId });
