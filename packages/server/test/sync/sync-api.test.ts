@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -16,6 +17,7 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { SyncWorktree } from '../../src/sync/worktree.js';
+import { runGitSync } from '../orchestrator/helpers.js';
 import { useTestAuth, wsUrl } from '../testAuth.js';
 import { cleanupClone, run, twoClones } from './helpers.js';
 
@@ -369,6 +371,95 @@ describe('GET /api/sync', () => {
     } finally {
       await handle?.stop();
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('PATCH /api/config — turning autoCommit off', () => {
+  it('removes the sync worktree and its git worktree registration', async () => {
+    const { origin, a, b } = twoClones();
+    enableAutoCommit(a);
+
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: a,
+        port: 0,
+        writeDaemonFile: false,
+        webDistDir: null,
+        boardSyncDebounceMs: 15,
+      });
+      useTestAuth(handle);
+      const baseUrl = `http://127.0.0.1:${handle.port}`;
+      const ws = await openHello(handle);
+
+      // A real sync first, so the worktree actually exists — otherwise this
+      // test would pass even without a working removeWorktree() call.
+      const boardSync = nextMessage(ws, (m) => m.type === 'board.sync');
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Creates the worktree' }),
+      });
+      await boardSync;
+      ws.close();
+
+      const worktree = SyncWorktree.open(a, run);
+      if (worktree === null) throw new Error('expected a resolvable trunk');
+      expect(existsSync(worktree.path)).toBe(true);
+      // Captured before removal (git resolves symlinks like macOS's
+      // /tmp -> /private/tmp in worktree paths, so a raw string compare
+      // against worktree.path itself would miss a real registration).
+      const realWorktreePath = realpathSync(worktree.path);
+
+      const patch = await fetch(`${baseUrl}/api/config`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ autoCommit: false }),
+      });
+      expect(patch.status).toBe(200);
+
+      expect(existsSync(worktree.path)).toBe(false);
+      // Not `list.includes('board')`: twoClones() itself names each clone's
+      // temp directory `dispatch-board-<name>-…`, so the MAIN worktree's own
+      // entry already contains that substring — assert on the sync
+      // worktree's actual (registered, realpath'd) path instead.
+      const list = runGitSync(a, ['worktree', 'list', '--porcelain']);
+      expect(list.includes(realWorktreePath)).toBe(false);
+    } finally {
+      await handle?.stop();
+      rmSync(origin, { recursive: true, force: true });
+      cleanupClone(a);
+      cleanupClone(b);
+    }
+  });
+
+  it('is a harmless no-op when the worktree was never created', async () => {
+    const { origin, a, b } = twoClones();
+    // Never enabled, never synced — the worktree never came into being.
+
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: a,
+        port: 0,
+        writeDaemonFile: false,
+        webDistDir: null,
+      });
+      useTestAuth(handle);
+      const baseUrl = `http://127.0.0.1:${handle.port}`;
+
+      const patch = await fetch(`${baseUrl}/api/config`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ autoCommit: false }),
+      });
+      expect(patch.status).toBe(200);
+    } finally {
+      await handle?.stop();
+      rmSync(origin, { recursive: true, force: true });
+      cleanupClone(a);
+      cleanupClone(b);
     }
   });
 });
