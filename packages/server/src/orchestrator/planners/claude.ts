@@ -225,6 +225,12 @@ function buildDraftFollowupPrompt(userMessage: string): string {
   ].join('\n\n');
 }
 
+// The planner's entire tool surface. `tools` is what actually restricts what
+// the model can reach — `allowedTools` only auto-approves, so both are set:
+// the first keeps Agent/Write/Edit out of the model's context, the second keeps
+// plan mode from stalling on a permission prompt no one is there to answer.
+const PLANNER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
+
 /**
  * The real planner backend: a read-only Agent SDK planning *conversation* in
  * the main checkout (no worktree — a plan proposes work, it never touches the
@@ -279,15 +285,18 @@ export class ClaudePlanner implements Planner {
       cwd: this.rootDir,
       permissionMode: 'plan',
       outputFormat: { type: 'json_schema', schema: TURN_JSON_SCHEMA },
-      // Same "query() doesn't auto-load what the CLI does" fix as
-      // ClaudeExecutor's sdkOptions (executors/claude.ts): without
-      // `settingSources: ['project', ...]`, the SDK contract is explicit that
-      // CLAUDE.md/AGENTS.md never load at all. This planner runs against the
-      // real checkout via `cwd` (this.rootDir), so grounding it in the
-      // project's own instruction files the same way a dispatched run is
-      // improves the quality of its proposals, not just its executed work.
+      // Without `settingSources: ['project', ...]` the SDK never loads
+      // CLAUDE.md/AGENTS.md, so the planner would propose work blind to the
+      // project's own instructions. `'user'` is deliberately absent: it also
+      // loads the operator's personal hooks, plugins, and MCP servers into
+      // every planner turn, and with them the Agent tool whose background
+      // subagent interrupted the next turn in the same session.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['user', 'project', 'local'],
+      settingSources: ['project', 'local'],
+      tools: PLANNER_TOOLS,
+      allowedTools: PLANNER_TOOLS,
+      strictMcpConfig: true,
+      skills: [],
       ...(resume !== undefined ? { resume } : {}),
       ...(model !== undefined ? { model } : {}),
     };

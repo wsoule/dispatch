@@ -59,13 +59,12 @@ describe('ClaudePlanner.start', () => {
     expect(turn.sessionId).toBe('sess-1');
   });
 
-  // CLI parity (matching ClaudeExecutor's sdkOptions in executors/claude.ts):
-  // without `systemPrompt`'s `claude_code` preset and `settingSources`
-  // including `'project'`, the SDK contract states CLAUDE.md/AGENTS.md never
-  // load — the planner would then be planning blind against the checkout its
-  // `cwd` points at instead of grounding proposals in the project's own
-  // instruction files, the same gap ClaudeExecutor's own comment documents.
-  it('passes the claude_code system prompt preset and full settingSources, mirroring ClaudeExecutor', async () => {
+  // The planner session must not inherit the operator's personal Claude Code
+  // environment. A planner turn that could spawn a subagent did: the subagent
+  // finished mid-conversation, injected a task-notification into the resumed
+  // session, and the follow-up turn died with no structured output at all.
+  // `'project'` stays because the SDK only loads CLAUDE.md/AGENTS.md with it.
+  it('runs read-only with no subagents, no user settings, and no MCP servers', async () => {
     const proposal: PlanProposal = { tasks: [] };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async function* fakeMessages(): AsyncGenerator<any> {
@@ -88,7 +87,11 @@ describe('ClaudePlanner.start', () => {
       type: 'preset',
       preset: 'claude_code',
     });
-    expect(captured?.settingSources).toEqual(['user', 'project', 'local']);
+    expect(captured?.settingSources).toEqual(['project', 'local']);
+    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    expect(captured?.strictMcpConfig).toBe(true);
+    expect(captured?.skills).toEqual([]);
   });
 
   it('rejects when the result message is an error subtype', async () => {
