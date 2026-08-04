@@ -358,6 +358,18 @@ export interface RepoPr {
   author: string;
   isDraft: boolean;
   updatedAt: string;
+  /** Head commit SHA — the `commit_id` GitHub wants when posting a review comment. */
+  headRefOid: string;
+  /** True when the head branch lives in a fork; gates Phase 4's confirm. */
+  isCrossRepository: boolean;
+  /** Login owning the head repository, named in that confirm. */
+  headRepositoryOwner: string;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
+  checks: PrCheckSummary;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
 }
 
 // The notes/triage hub — mirrors Note / NoteKind in packages/server/src/notes.ts. A
