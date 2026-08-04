@@ -1,8 +1,13 @@
-import type { DispatchConfig, ModelConfig } from '@dispatch/core/browser';
+import type {
+  DispatchConfig,
+  EscalationStep,
+  ModelConfig,
+} from '@dispatch/core/browser';
 import { MODEL_ROLES } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
 import { MODELS } from '../../lib/models';
+import { EscalationEditor } from './EscalationEditor';
 import { cn } from '@/lib/utils';
 import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
 import { Input } from '@/ui/input';
@@ -22,6 +27,7 @@ interface AgentsSectionProps {
     models?: Partial<ModelConfig>;
     maxTurns?: number | null;
     maxBudgetUsd?: number | null;
+    fixLoop?: { cap?: number; escalation?: EscalationStep[] };
   }) => Promise<void>;
 }
 
@@ -71,6 +77,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
   const [concurrency, setConcurrency] = useState('3');
   const [maxTurns, setMaxTurns] = useState('');
   const [maxBudgetUsd, setMaxBudgetUsd] = useState('');
+  const [fixLoopCap, setFixLoopCap] = useState('5');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -81,6 +88,7 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
     setConcurrency(String(config.orchestrator.epicConcurrency));
     setMaxTurns(capToInput(config.orchestrator.maxTurns));
     setMaxBudgetUsd(capToInput(config.orchestrator.maxBudgetUsd));
+    setFixLoopCap(String(config.fixLoop.cap));
   }, [config]);
 
   async function save(patch: Parameters<typeof onSave>[0]) {
@@ -258,6 +266,37 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
           </HintText>
         </label>
       </PanelRow>
+
+      <PanelRow className="flex-col items-stretch gap-1.5">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[12px]">Fix-loop round cap</span>
+          <Input
+            aria-label="Fix-loop round cap"
+            value={fixLoopCap}
+            onChange={(e) => setFixLoopCap(e.target.value)}
+            onBlur={() => {
+              const n = Number(fixLoopCap);
+              if (Number.isInteger(n) && n >= 1 && n !== config.fixLoop.cap) {
+                void save({ fixLoop: { cap: n } });
+              } else {
+                setFixLoopCap(String(config.fixLoop.cap));
+              }
+            }}
+            inputMode="numeric"
+            className="w-20 font-mono text-[12.5px]"
+          />
+          <HintText>
+            Last round the fix loop may dispatch before demanding a ruling.
+          </HintText>
+        </label>
+      </PanelRow>
+
+      <div className="p-3">
+        <EscalationEditor
+          steps={config.fixLoop.escalation}
+          onChange={(escalation) => void save({ fixLoop: { escalation } })}
+        />
+      </div>
 
       <PanelRow className="h-9">
         {saving && <span className="dense-meta">Saving…</span>}
