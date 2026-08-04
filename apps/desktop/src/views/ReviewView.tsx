@@ -2,14 +2,23 @@ import { ArrowLeft, Check } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
+import { ReviewCasePanel } from '../components/runs/ReviewCasePanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { buildReviewQueue, ReviewQueue } from '../components/runs/ReviewQueue';
 import { ReviewThreadIndex } from '../components/runs/ReviewThreadIndex';
 import { ReviewVerdictBar } from '../components/runs/ReviewVerdictBar';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import {
+  useEpicLedger,
+  useProjectLedger,
+  useTaskFindings,
+} from '../hooks/useOrchestration';
 import { deriveFeedState } from '../lib/feedState';
+import { countOpenFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
+import { openFindingsByFile } from '../lib/reviewAttention';
+import { caseWarnings, summarizeCase } from '../lib/reviewCase';
 import { readPanelOpen, writePanelOpen } from '../lib/reviewPanels';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
@@ -84,11 +93,11 @@ export function ReviewView({
   useEffect(() => writePanelOpen('files', filesOpen), [filesOpen]);
   useEffect(() => writePanelOpen('threads', threadsOpen), [threadsOpen]);
 
-  // Land on the first file, and follow along if the diff changes underneath.
+  // `selected === null` is the case panel, which is where a review opens: the agent's own
+  // account of what it checked is the thing to read before file 1 of 10. Only correct the
+  // selection when its file has left the diff underneath.
   useEffect(() => {
-    if (selected === null || !paths.includes(selected)) {
-      setSelected(paths[0] ?? null);
-    }
+    if (selected !== null && !paths.includes(selected)) setSelected(null);
   }, [paths, selected]);
 
   const commentsByFile = useMemo(() => {
@@ -99,6 +108,55 @@ export function ReviewView({
     }
     return map;
   }, [data.reviewComments]);
+
+  // What the agent review found. `useTaskFindings` already returns `data ?? []`, so this is
+  // always an array — an empty one means no review has run, never "clean".
+  const { findings } = useTaskFindings(data.client, data.port, run?.taskId);
+  const findingsByFile = useMemo(
+    () => openFindingsByFile(findings),
+    [findings]
+  );
+
+  // Decisions and hazards this run's task filed via `record_decision`. Both ledgers are read
+  // because a task's entries land under its epic when it has one (`meta.parent`) and in the
+  // project ledger when it does not.
+  const task = useMemo(
+    () => data.tasks.find((t) => t.meta.id === run?.taskId),
+    [data.tasks, run]
+  );
+  const { entries: epicEntries } = useEpicLedger(
+    data.client,
+    data.port,
+    task?.meta.parent ?? undefined
+  );
+  const { entries: projectEntries } = useProjectLedger(
+    data.client,
+    data.port,
+    run !== undefined
+  );
+  const decisions = useMemo(
+    () =>
+      [...epicEntries, ...projectEntries].filter(
+        (e) => e.sourceTaskId === run?.taskId
+      ),
+    [epicEntries, projectEntries, run]
+  );
+
+  // What approving would wave through: the agent's own flagged problems, plus anything its
+  // reviewer raised that nobody has ruled on.
+  const verdictWarnings = useMemo(() => {
+    const summary = summarizeCase(
+      data.runDetail?.evidence ?? [],
+      data.runDetail?.mutations ?? []
+    );
+    const openFindings = countOpenFindings(findings).open;
+    return [
+      ...caseWarnings(summary),
+      ...(openFindings > 0
+        ? [`${openFindings} open finding${openFindings === 1 ? '' : 's'}`]
+        : []),
+    ];
+  }, [data.runDetail, findings]);
 
   // Dispatches a review agent over this run's diff — base/head/runId all come from the run
   // already open here, never invented or asked of the reviewer. `startReview` resolves once the
@@ -175,15 +233,29 @@ export function ReviewView({
             viewed summary stay pinned above it), so this only needs to bound the track —
             a second scrollbar here would just be redundant. */}
         {filesOpen && (
-          <div className="min-h-0 w-56 shrink-0 overflow-hidden">
-            <ReviewFileTree
-              files={data.diff?.files ?? []}
-              onSelect={setSelected}
-              viewed={viewed}
-              commentsByFile={commentsByFile}
-              unviewedOnly={unviewedOnly}
-              onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
-            />
+          <div className="flex min-h-0 w-56 shrink-0 flex-col overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              className={cn(
+                'mb-1 flex shrink-0 items-center gap-1.5 rounded px-3 py-1 text-left text-[12px]',
+                selected === null ? 'bg-accent/15' : 'hover:bg-muted/60'
+              )}
+            >
+              <StateDot state="review" pulse={false} />
+              The case
+            </button>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <ReviewFileTree
+                files={data.diff?.files ?? []}
+                onSelect={setSelected}
+                viewed={viewed}
+                commentsByFile={commentsByFile}
+                findingsByFile={findingsByFile}
+                unviewedOnly={unviewedOnly}
+                onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
+              />
+            </div>
           </div>
         )}
 
@@ -193,6 +265,15 @@ export function ReviewView({
             `flex-1` on `CodeView` itself sizes it directly off this container's resolved
             height instead. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {selected === null && (
+            <ReviewCasePanel
+              evidence={data.runDetail?.evidence ?? []}
+              mutations={data.runDetail?.mutations ?? []}
+              findings={findings}
+              decisions={decisions}
+              onStartAiReview={handleStartAiReview}
+            />
+          )}
           {data.diff !== undefined && selected !== null && (
             <>
               <DiffPaneHeader
@@ -236,6 +317,7 @@ export function ReviewView({
         comments={data.reviewComments}
         onSubmit={data.handleSubmitReview}
         onStartAiReview={handleStartAiReview}
+        extraWarnings={verdictWarnings}
       />
     </div>
   );
