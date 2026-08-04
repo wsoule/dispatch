@@ -1,11 +1,20 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { git } from '../src/git.js';
 import { DEMO } from '../src/paths.js';
-import { BRANCH_FIXES, buildRepo } from '../src/repo.js';
+import { BRANCH_FIXES, buildRepo, skipInstallArtifacts } from '../src/repo.js';
 
 function build(): string {
   const root = mkdtempSync(join(tmpdir(), 'demo-repo-'));
@@ -34,10 +43,28 @@ test('the working tree is left on main and clean', () => {
   expect(git(root, 'status', '--porcelain').trim()).toBe('');
 });
 
-test('the generated repo never contains a copied node_modules or bun.lock', () => {
-  const root = build();
-  expect(existsSync(join(root, 'node_modules'))).toBe(false);
-  expect(existsSync(join(root, 'bun.lock'))).toBe(false);
+test('skipInstallArtifacts drops a planted node_modules and bun.lock while keeping real files', () => {
+  // Lay out a synthetic source tree with real content plus fake install
+  // artifacts, so this proves the filter itself works rather than passing
+  // vacuously because storefront-src happens not to have node_modules yet.
+  const source = mkdtempSync(join(tmpdir(), 'demo-filter-src-'));
+  mkdirSync(join(source, 'src'), { recursive: true });
+  writeFileSync(join(source, 'src', 'keep.ts'), 'export const keep = true;\n');
+  mkdirSync(join(source, 'node_modules', 'some-dep'), { recursive: true });
+  writeFileSync(
+    join(source, 'node_modules', 'some-dep', 'index.js'),
+    'module.exports = {};\n'
+  );
+  writeFileSync(join(source, 'bun.lock'), '{}\n');
+
+  const dest = mkdtempSync(join(tmpdir(), 'demo-filter-dest-'));
+  cpSync(source, dest, { recursive: true, filter: skipInstallArtifacts });
+
+  expect(readFileSync(join(dest, 'src', 'keep.ts'), 'utf8')).toBe(
+    'export const keep = true;\n'
+  );
+  expect(existsSync(join(dest, 'node_modules'))).toBe(false);
+  expect(existsSync(join(dest, 'bun.lock'))).toBe(false);
 });
 
 test('buildRepo refuses to delete a root outside .agents/ignore and the temp dir', () => {
@@ -48,3 +75,38 @@ test('buildRepo refuses to delete a root outside .agents/ignore and the temp dir
     /refusing to delete/
   );
 });
+
+test('buildRepo accepts a root reached through a symlinked ancestor (mirrors macOS /var -> /private/var)', () => {
+  // Fabricate a symlink hop under the OS temp dir so this test proves the
+  // guard's realpath resolution regardless of whether the host's own
+  // tmpdir() happens to be reached through a symlink.
+  const base = mkdtempSync(join(tmpdir(), 'demo-guard-'));
+  const real = join(base, 'real');
+  mkdirSync(real);
+  const link = join(base, 'link');
+  symlinkSync(real, link);
+  const root = join(link, 'repo');
+
+  // Confirm this actually exercises a symlink hop and isn't a no-op path —
+  // otherwise the non-throw assertion below would prove nothing.
+  expect(realpathSync(link)).not.toBe(link);
+
+  expect(() => buildRepo({ root, push: false })).not.toThrow();
+});
+
+// On macOS, os.tmpdir() returns a /var/folders/... path, but /var is a
+// symlink to /private/var — so the "real" and "as-reported" forms of the OS
+// temp dir differ textually while naming the same directory. Skip on hosts
+// where that isn't true, since there'd be nothing distinct left to prove.
+const tmpdirHasSymlinkHop = realpathSync(tmpdir()) !== resolve(tmpdir());
+
+test.skipIf(!tmpdirHasSymlinkHop)(
+  'buildRepo accepts a temp root already given in realpath form, even when tmpdir() itself is reached through a symlink',
+  () => {
+    const root = mkdtempSync(join(tmpdir(), 'demo-repo-'));
+    const realRoot = realpathSync(root);
+    expect(realRoot).not.toBe(root);
+
+    expect(() => buildRepo({ root: realRoot, push: false })).not.toThrow();
+  }
+);
