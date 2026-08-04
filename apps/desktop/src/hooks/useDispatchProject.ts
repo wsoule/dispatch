@@ -2121,8 +2121,9 @@ export function useDispatchProject(
     void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
   }, [client, queryClient, mergeQueueQueryKey]);
 
-  // Notifies on run finished/failed and merge-queue merged/failed transitions —
-  // see useTransitionNotifications's own comment for why it needs the *lists*
+  // Notifies on run finished/failed transitions, merge-queue merged/failed
+  // transitions, and planner/run questions waiting on the user — see
+  // useTransitionNotifications's own comment for why it needs the *lists*
   // (not just this render's counts) to diff against what it last saw. `projectPath`
   // is threaded through so a project switch resets its tracking (see
   // resetTrackingForRoot) instead of diffing the new project against the old one's
@@ -2132,6 +2133,9 @@ export function useDispatchProject(
     projectPath,
     runs ?? [],
     mergeQueue ?? null,
+    drafts ?? [],
+    planRecord,
+    openQuestions,
     onRecordInbox
   );
 

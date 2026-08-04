@@ -141,4 +141,44 @@ describe('draftTrayViewModel', () => {
     ]).items[0];
     expect(ready?.taskCount).toBe(2);
   });
+
+  test('counts drafts waiting on an answer', () => {
+    const vm = draftTrayViewModel(
+      [
+        draft({
+          id: 'd-1',
+          state: 'ready',
+          questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+        }),
+        draft({ id: 'd-2', state: 'ready' }),
+      ],
+      Date.parse('2026-01-01T00:01:00.000Z')
+    );
+    expect(vm.questionCount).toBe(1);
+  });
+
+  test('a failed draft holding questions counts toward both badgeCount and questionCount', () => {
+    const vm = draftTrayViewModel([
+      draft({
+        id: 'd-1',
+        state: 'failed',
+        error: 'timeout',
+        questions: [{ id: 'q1', question: 'Retry?', options: [] }],
+      }),
+    ]);
+    expect(vm.badgeCount).toBe(1);
+    expect(vm.questionCount).toBe(1);
+  });
+
+  test('a running draft holding questions counts toward badgeCount but not questionCount', () => {
+    const vm = draftTrayViewModel([
+      draft({
+        id: 'd-1',
+        state: 'running',
+        questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+      }),
+    ]);
+    expect(vm.badgeCount).toBe(1);
+    expect(vm.questionCount).toBe(0);
+  });
 });

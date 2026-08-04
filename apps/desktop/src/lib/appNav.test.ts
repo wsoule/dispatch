@@ -270,3 +270,91 @@ describe('history', () => {
     expect(state.activeRunId).toBe('r-1');
   });
 });
+
+describe('draft page navigation', () => {
+  test('openDraft routes to the draft view with that draft selected', () => {
+    const next = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-abc123',
+    });
+    expect(next.section).toBe('project');
+    expect(next.projectView).toBe('draft');
+    expect(next.activeDraftId).toBe('d-abc123');
+  });
+
+  test('leaving the draft view clears the selected draft', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-abc123',
+    });
+    const next = navReducer(opened, { type: 'setProjectView', view: 'board' });
+    expect(next.activeDraftId).toBeNull();
+  });
+
+  test('selecting a project clears a draft left open in the previous one', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-abc123',
+    });
+    const next = navReducer(opened, {
+      type: 'selectProject',
+      projectId: 'other',
+    });
+    expect(next.activeDraftId).toBeNull();
+  });
+
+  test('after openDraft, navigating away and back returns to the draft view with the same activeDraftId', () => {
+    let state = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-1',
+    });
+    expect(state.projectView).toBe('draft');
+    expect(state.activeDraftId).toBe('d-1');
+
+    state = navReducer(state, { type: 'setProjectView', view: 'board' });
+    expect(state.projectView).toBe('board');
+    expect(state.activeDraftId).toBeNull();
+
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('draft');
+    expect(state.activeDraftId).toBe('d-1');
+  });
+
+  test('navigating back to an entry recorded before any draft was opened leaves activeDraftId as null', () => {
+    let state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'board',
+    });
+    expect(state.activeDraftId).toBeNull();
+
+    state = navReducer(state, {
+      type: 'openDraft',
+      draftId: 'd-1',
+    });
+    expect(state.activeDraftId).toBe('d-1');
+
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('board');
+    expect(state.activeDraftId).toBeNull();
+  });
+
+  test('switching between drafts without leaving the draft view pushes history for each', () => {
+    let state = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-1',
+    });
+    expect(state.activeDraftId).toBe('d-1');
+    expect(state.history.length).toBe(2);
+
+    state = navReducer(state, {
+      type: 'openDraft',
+      draftId: 'd-2',
+    });
+    expect(state.activeDraftId).toBe('d-2');
+    expect(state.history.length).toBe(3);
+
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('draft');
+    expect(state.activeDraftId).toBe('d-1');
+  });
+});

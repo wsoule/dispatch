@@ -16,6 +16,8 @@ export type ProjectView =
   | 'review'
   | 'brain-dump'
   | 'plans'
+  /** A single AI task draft's review page — `activeDraftId` says which one. */
+  | 'draft'
   | 'new-task';
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar. */
@@ -35,6 +37,8 @@ export interface NavState {
   peekTaskId: string | null;
   /** Run id shown in the Runs view's right pane, or `null` when nothing is selected. */
   activeRunId: string | null;
+  /** Draft id shown by the draft view, or `null` when none is selected. */
+  activeDraftId: string | null;
   /** Which view to snap `projectView` back to once the AI composer dialog opens — a board
    * column's "+" returns to the board, rather than one fixed view. */
   newTaskReturnView: ProjectView;
@@ -58,6 +62,7 @@ export interface NavEntry {
   projectView: ProjectView;
   globalView: GlobalView;
   activeRunId: string | null;
+  activeDraftId: string | null;
 }
 
 export const initialNavState: NavState = {
@@ -67,6 +72,7 @@ export const initialNavState: NavState = {
   globalView: 'sessions',
   peekTaskId: null,
   activeRunId: null,
+  activeDraftId: null,
   newTaskReturnView: 'board',
   paletteOpen: false,
   history: [
@@ -75,6 +81,7 @@ export const initialNavState: NavState = {
       projectView: 'overview',
       globalView: 'sessions',
       activeRunId: null,
+      activeDraftId: null,
     },
   ],
   historyIndex: 0,
@@ -91,7 +98,8 @@ function pushHistory(state: NavState, next: NavEntry): NavState {
     last.section === next.section &&
     last.projectView === next.projectView &&
     last.globalView === next.globalView &&
-    last.activeRunId === next.activeRunId
+    last.activeRunId === next.activeRunId &&
+    last.activeDraftId === next.activeDraftId
   ) {
     return state;
   }
@@ -107,6 +115,8 @@ export type NavAction =
   | { type: 'closePeek' }
   | { type: 'openRun'; runId: string }
   | { type: 'closeRun' }
+  /** Routes to the draft review page for one draft — the drafts tray's row click. */
+  | { type: 'openDraft'; draftId: string }
   /** Routes to `new-task`, remembering the view to come back to — App.tsx reads reaching this
    * state as "open the AI composer dialog". */
   | { type: 'openNewTask' }
@@ -133,6 +143,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         projectView: 'overview',
         peekTaskId: null,
         activeRunId: null,
+        activeDraftId: null,
       };
     case 'setProjectView': {
       const activeRunId =
@@ -146,17 +157,23 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         action.view === 'review'
           ? state.activeRunId
           : null;
+      // Only the draft view itself renders a selected draft, so any other
+      // destination drops it rather than reopening a stale one on return.
+      const activeDraftId =
+        action.view === 'draft' ? state.activeDraftId : null;
       const next: NavState = {
         ...state,
         section: 'project',
         projectView: action.view,
         activeRunId,
+        activeDraftId,
       };
       return pushHistory(next, {
         section: 'project',
         projectView: action.view,
         globalView: state.globalView,
         activeRunId,
+        activeDraftId,
       });
     }
     case 'setGlobalView':
@@ -184,10 +201,29 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           projectView: state.projectView,
           globalView: state.globalView,
           activeRunId: action.runId,
+          activeDraftId: state.activeDraftId,
         }
       );
     case 'closeRun':
       return { ...state, activeRunId: null };
+    case 'openDraft':
+      // Opening a different draft is a destination in its own right, so back
+      // returns to the one you were looking at rather than skipping the view.
+      return pushHistory(
+        {
+          ...state,
+          section: 'project',
+          projectView: 'draft',
+          activeDraftId: action.draftId,
+        },
+        {
+          section: 'project',
+          projectView: 'draft',
+          globalView: state.globalView,
+          activeRunId: state.activeRunId,
+          activeDraftId: action.draftId,
+        }
+      );
     case 'back':
     case 'forward': {
       const delta = action.type === 'back' ? -1 : 1;
@@ -201,6 +237,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         projectView: entry.projectView,
         globalView: entry.globalView,
         activeRunId: entry.activeRunId,
+        activeDraftId: entry.activeDraftId,
         // Moving through history is navigation, not a modal action — anything
         // layered on top closes rather than following you to the new screen.
         peekTaskId: null,

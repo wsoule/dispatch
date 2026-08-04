@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 
 import { AgentsSection } from '../components/settings/AgentsSection';
 import { DaemonSection } from '../components/settings/DaemonSection';
+import { DiffsSection } from '../components/settings/DiffsSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
@@ -22,13 +23,15 @@ type SaveState =
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
 
-/** Settings for the active project: General / Agents / Integrations / Daemon tabs, all
- *  saving through the shell's one `save` and its one indicator beneath the tab bar. */
+/** Settings for the active project: General / Agents / Integrations / Daemon / Diffs
+ *  tabs. Every tab but Diffs saves through the shell's one `save` and its one
+ *  indicator beneath the tab bar; Diffs is a local display preference with its own
+ *  storage and no save state. */
 export function SettingsView({ activeProject, data }: SettingsViewProps) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
 
-  // The one save path every section's onSave goes through, so one indicator
-  // covers all four tabs instead of each section reporting on its own.
+  // The one save path every config-backed section's onSave goes through, so
+  // one indicator covers those tabs instead of each section reporting on its own.
   const save = useCallback(
     async (patch: Parameters<DispatchProjectData['handleUpdateConfig']>[0]) => {
       setSaveState({ kind: 'saving' });
@@ -74,6 +77,7 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="daemon">Daemon</TabsTrigger>
+          <TabsTrigger value="diffs">Diffs</TabsTrigger>
         </TabsList>
 
         <div className="flex h-5 items-center">
@@ -110,6 +114,10 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
 
         <TabsContent value="daemon">
           <DaemonSection activeProject={activeProject} data={data} />
+        </TabsContent>
+
+        <TabsContent value="diffs">
+          <DiffsSection />
         </TabsContent>
       </Tabs>
     </div>

@@ -4,6 +4,8 @@ import { useMemo } from 'react';
 
 import { PierreWorkerPool } from '../runs/PierreWorkerPool';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
+import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
+import { toDiffRenderOptions } from '@/lib/diffDisplay';
 import { splitPatchFiles } from '@/lib/patchFiles';
 
 interface GitDiffPaneProps {
@@ -26,6 +28,11 @@ export function GitDiffPane({
     if (patch === undefined || patch.trim() === '') return null;
     return splitPatchFiles(patch);
   }, [patch]);
+  const [diffDisplay] = useDiffDisplaySettings();
+  const diffOptions = useMemo(
+    () => toDiffRenderOptions(diffDisplay),
+    [diffDisplay]
+  );
 
   if (loading) {
     return (
@@ -68,11 +75,11 @@ export function GitDiffPane({
   }
 
   return (
-    <PierreWorkerPool>
+    <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
       <div className="flex flex-col">
         {files.map((file) => (
           <ErrorBoundary key={file.name} label={`the diff for ${file.name}`}>
-            <FileDiff fileDiff={file} />
+            <FileDiff fileDiff={file} options={diffOptions} />
           </ErrorBoundary>
         ))}
       </div>
