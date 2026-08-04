@@ -114,6 +114,12 @@ export interface StartServerOptions {
   // Defaults to BoardSyncScheduler's own multi-second default; tests pass
   // something much shorter.
   boardSyncDebounceMs?: number;
+  // How often the board syncer polls even without a local edit. Defaults to
+  // BoardSyncScheduler's own 60s default; tests pass something large enough
+  // to never fire, since TaskStore.init() defaults new projects to
+  // autoCommit: true and every startServer()-based test would otherwise boot
+  // a live interval.
+  boardSyncPeriodicMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -305,6 +311,7 @@ export async function startServer(
           run: defaultGitRunner,
           events,
           debounceMs: opts.boardSyncDebounceMs,
+          periodicMs: opts.boardSyncPeriodicMs,
         });
   if (boardSyncScheduler === null) {
     console.log(
