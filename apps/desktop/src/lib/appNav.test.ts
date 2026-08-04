@@ -270,3 +270,36 @@ describe('history', () => {
     expect(state.activeRunId).toBe('r-1');
   });
 });
+
+describe('draft page navigation', () => {
+  test('openDraft routes to the draft view with that draft selected', () => {
+    const next = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-abc123',
+    });
+    expect(next.section).toBe('project');
+    expect(next.projectView).toBe('draft');
+    expect(next.activeDraftId).toBe('d-abc123');
+  });
+
+  test('leaving the draft view clears the selected draft', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-abc123',
+    });
+    const next = navReducer(opened, { type: 'setProjectView', view: 'board' });
+    expect(next.activeDraftId).toBeNull();
+  });
+
+  test('selecting a project clears a draft left open in the previous one', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-abc123',
+    });
+    const next = navReducer(opened, {
+      type: 'selectProject',
+      projectId: 'other',
+    });
+    expect(next.activeDraftId).toBeNull();
+  });
+});
