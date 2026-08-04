@@ -22,13 +22,13 @@ type SaveState =
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
 
-/** Settings for the active project: General / Agents / Integrations / Daemon tabs, each hosting
- *  a section component from `components/settings`, sharing one save indicator between them. */
+/** Settings for the active project: General / Agents / Integrations / Daemon tabs, all
+ *  saving through the shell's one `save` and its one indicator beneath the tab bar. */
 export function SettingsView({ activeProject, data }: SettingsViewProps) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
 
-  // General/Agents already render their own saving/saved state, so this wrapper
-  // only goes to sections with no feedback of their own (Integrations).
+  // The one save path every section's onSave goes through, so one indicator
+  // covers all four tabs instead of each section reporting on its own.
   const save = useCallback(
     async (patch: Parameters<DispatchProjectData['handleUpdateConfig']>[0]) => {
       setSaveState({ kind: 'saving' });
@@ -57,8 +57,8 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
     );
   }
 
-  // LinearPanel calls `data.handleUpdateConfig` directly, so swap in `save`
-  // here to route those writes through the shared indicator.
+  // IntegrationsSection only takes `data`, and LinearPanel calls
+  // `data.handleUpdateConfig` directly — swap in `save` so it uses the same path.
   const integrationsData: DispatchProjectData = {
     ...data,
     handleUpdateConfig: save,
@@ -94,19 +94,13 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
 
         <TabsContent value="general">
           {data.config !== null && (
-            <GeneralSection
-              config={data.config}
-              onSave={data.handleUpdateConfig}
-            />
+            <GeneralSection config={data.config} onSave={save} />
           )}
         </TabsContent>
 
         <TabsContent value="agents">
           {data.config !== null && (
-            <AgentsSection
-              config={data.config}
-              onSave={data.handleUpdateConfig}
-            />
+            <AgentsSection config={data.config} onSave={save} />
           )}
         </TabsContent>
 

@@ -30,8 +30,8 @@ test('it opens on General and switches to Integrations', () => {
   expect(screen.getByText('Linear')).toBeDefined();
 });
 
-// Saving used to be invisible outside one section, so a models dropdown gave no
-// feedback at all.
+// AgentsSection no longer tracks its own saving/saved state, so this now only
+// passes because the shell's own indicator span rendered the text.
 test('a save reports through the shared indicator', async () => {
   render(<SettingsView activeProject={project} data={data} />);
   selectTab('Agents');
@@ -41,8 +41,17 @@ test('a save reports through the shared indicator', async () => {
   expect(await screen.findByText(/Saved/)).toBeDefined();
 });
 
-// Unlike AgentsSection, LinearPanel has no local "Saved" text of its own, so
-// this only passes if the shell's shared wrapper is actually wired in.
+// GeneralSection has no local indicator either, for the same reason.
+test('a General save reports through the shared indicator', async () => {
+  render(<SettingsView activeProject={project} data={data} />);
+  const input = screen.getByLabelText('Verify command');
+  fireEvent.change(input, { target: { value: 'bun run verify' } });
+  fireEvent.blur(input);
+  expect(await screen.findByText(/Saved/)).toBeDefined();
+});
+
+// LinearPanel never had a local "Saved" text of its own, so this only passes
+// if the shell's shared wrapper is actually wired in.
 test('an Integrations config save reports through the shared indicator too', async () => {
   const connectedData = dataWith({ connected: true });
   render(<SettingsView activeProject={project} data={connectedData} />);
