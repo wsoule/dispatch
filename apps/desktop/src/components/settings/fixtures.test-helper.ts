@@ -37,7 +37,7 @@ export const testProject = { path: '/tmp/demo', name: 'demo' };
  *  Cast once here so no individual test has to spell out 60 unused fields. */
 export function dataWith(
   overrides: Partial<DispatchProjectData> & {
-    keySource?: 'env' | 'file' | null;
+    keySource?: 'project' | 'env' | 'global' | null;
     connected?: boolean;
   } = {}
 ): DispatchProjectData {

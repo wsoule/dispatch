@@ -1,4 +1,5 @@
 import {
+  clearProjectCredential,
   DEFAULT_LINEAR,
   externalId,
   getSection,
@@ -10,6 +11,7 @@ import {
   resolveLinearApiKey,
   taskCreateFromIssue,
   taskPatchFromIssue,
+  writeProjectCredential,
 } from '@dispatch/core';
 import type {
   CredentialSource,
@@ -185,6 +187,18 @@ export class LinearSync {
     const make =
       this.deps.createClient ?? ((key: string) => new HttpLinearClient(key));
     return make(apiKey);
+  }
+
+  /** Stores an API key for this project only — the daemon's own `rootDir` is the credential's
+   *  key. The machine-wide key is never written, staying a read-only fallback. */
+  connect(apiKey: string): void {
+    writeProjectCredential(this.deps.rootDir, 'linear', { apiKey });
+  }
+
+  /** Forgets this project's key. An env or machine-wide key still resolves afterwards, which
+   *  `status().keySource` makes visible. */
+  disconnect(): void {
+    clearProjectCredential(this.deps.rootDir, 'linear');
   }
 
   /** Starts the poll timer when the config enables it. Safe to call repeatedly. */
