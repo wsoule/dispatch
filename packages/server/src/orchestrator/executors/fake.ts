@@ -40,6 +40,9 @@ export interface FakeFinish {
 }
 
 export interface FakeExecutorScript {
+  // Reported through `onSession` before the first step, mirroring a real
+  // executor learning its resume handle from the session's opening message.
+  session?: string;
   steps?: FakeStep[];
   finish: FakeFinish;
 }
@@ -83,6 +86,9 @@ export class FakeExecutor implements Executor {
     // crashing partway through would.
     const playScript = async (): Promise<void> => {
       try {
+        if (this.script.session !== undefined) {
+          events.onSession?.(this.script.session);
+        }
         for (const step of this.script.steps ?? []) {
           if (cancelled) return;
           // Checked between steps, never inside one: the point of a graceful
