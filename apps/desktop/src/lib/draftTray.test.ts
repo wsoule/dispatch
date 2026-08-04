@@ -141,4 +141,19 @@ describe('draftTrayViewModel', () => {
     ]).items[0];
     expect(ready?.taskCount).toBe(2);
   });
+
+  test('counts drafts waiting on an answer', () => {
+    const vm = draftTrayViewModel(
+      [
+        draft({
+          id: 'd-1',
+          state: 'ready',
+          questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+        }),
+        draft({ id: 'd-2', state: 'ready' }),
+      ],
+      Date.parse('2026-01-01T00:01:00.000Z')
+    );
+    expect(vm.questionCount).toBe(1);
+  });
 });

@@ -25,6 +25,9 @@ export interface DraftTrayViewModel {
   badgeCount: number;
   /** Whether any item is still `running` — gates the tray's elapsed-time ticker. */
   hasRunning: boolean;
+  /** Drafts holding at least one unanswered question — these need the user, not just a
+   * look, so the tray badges them differently from "still running". */
+  questionCount: number;
 }
 
 // running sorts above ready sorts above failed — the tray leads with what is still happening,
@@ -73,5 +76,6 @@ export function draftTrayViewModel(
     (d) => d.state === 'running' || d.state === 'ready'
   ).length;
   const hasRunning = drafts.some((d) => d.state === 'running');
-  return { items, badgeCount, hasRunning };
+  const questionCount = drafts.filter((d) => d.questions.length > 0).length;
+  return { items, badgeCount, hasRunning, questionCount };
 }
