@@ -66,7 +66,12 @@ class ScriptedAgent implements Executor {
       }
       events.onFinish({ state: 'finished', sessionId: 'session-1' });
     }, 0);
-    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+    return {
+      interrupt: async () => {},
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+    };
   }
 
   // A fresh finding every review, so the loop keeps having work to do and runs
@@ -105,7 +110,12 @@ class GatedAgent implements Executor {
     const kind = match !== null ? 'review' : 'fix';
     if (kind === this.gate) this.pending = finish;
     else setTimeout(finish, 0);
-    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+    return {
+      interrupt: async () => {},
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+    };
   }
 
   releaseGate(): void {
@@ -127,7 +137,12 @@ class CleanAgent implements Executor {
       else if (this.commitOnFix) commitFixWork(opts.cwd);
       events.onFinish({ state: 'finished', sessionId: 'session-1' });
     }, 0);
-    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+    return {
+      interrupt: async () => {},
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+    };
   }
 }
 
@@ -148,7 +163,12 @@ class UndeclaredWriteAgent implements Executor {
       if (match !== null) writeFileSync(match[1], '{"findings": []}');
       events.onFinish({ state: 'finished', sessionId: 'session-1' });
     }, 0);
-    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+    return {
+      interrupt: async () => {},
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+    };
   }
 }
 

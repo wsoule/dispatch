@@ -96,6 +96,7 @@ describe('Activity attribution', () => {
     orchestrator.registerExecutor('fake', {
       start: (_opts, _events) => ({
         interrupt: async () => {},
+        requestStop: () => {},
         send: () => {},
         approve: () => {},
       }),

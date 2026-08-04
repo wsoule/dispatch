@@ -1,4 +1,5 @@
 import {
+  clearProjectCredential,
   DEFAULT_LINEAR,
   externalId,
   getSection,
@@ -10,6 +11,7 @@ import {
   resolveLinearApiKey,
   taskCreateFromIssue,
   taskPatchFromIssue,
+  writeProjectCredential,
 } from '@dispatch/core';
 import type {
   CredentialSource,
@@ -154,7 +156,7 @@ export class LinearSync {
     const config = this.safeConfig();
     const linear = config?.linear ?? DEFAULT_LINEAR;
     const state = readLinearState(this.deps.rootDir);
-    const { source } = resolveLinearApiKey();
+    const { source } = resolveLinearApiKey(this.deps.rootDir);
     return {
       enabled: config !== null && linear.enabled,
       connected: this.deps.client !== undefined || source !== null,
@@ -180,11 +182,23 @@ export class LinearSync {
   /** Builds a client for ad-hoc reads (the team/state pickers), or null when no key is available. */
   client(): LinearClient | null {
     if (this.deps.client !== undefined) return this.deps.client;
-    const { apiKey } = resolveLinearApiKey();
+    const { apiKey } = resolveLinearApiKey(this.deps.rootDir);
     if (apiKey === null) return null;
     const make =
       this.deps.createClient ?? ((key: string) => new HttpLinearClient(key));
     return make(apiKey);
+  }
+
+  /** Stores an API key for this project only — the daemon's own `rootDir` is the credential's
+   *  key. The machine-wide key is never written, staying a read-only fallback. */
+  connect(apiKey: string): void {
+    writeProjectCredential(this.deps.rootDir, 'linear', { apiKey });
+  }
+
+  /** Forgets this project's key. An env or machine-wide key still resolves afterwards, which
+   *  `status().keySource` makes visible. */
+  disconnect(): void {
+    clearProjectCredential(this.deps.rootDir, 'linear');
   }
 
   /** Starts the poll timer when the config enables it. Safe to call repeatedly. */

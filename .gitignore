@@ -43,3 +43,6 @@ dispatch-fix-changed-files.zip
 apps/desktop/test-results/
 apps/desktop/playwright-report/
 .carto/
+
+# Local business notes — kept out of a public repo deliberately.
+docs/business/

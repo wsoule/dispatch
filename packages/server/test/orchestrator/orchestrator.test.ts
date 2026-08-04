@@ -202,6 +202,7 @@ function controllableExecutor(sent: string[]): Executor {
     start(_opts: ExecutorStartOptions, _events: ExecutorEvents): ExecutorRun {
       return {
         interrupt: async () => {},
+        requestStop: () => {},
         send: (message: string) => sent.push(message),
         approve: () => {},
       };
@@ -503,7 +504,12 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
             error: 'Claude usage limit reached before the agent finished',
           });
         }
-        return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+        return {
+          interrupt: async () => {},
+          requestStop: () => {},
+          send: () => {},
+          approve: () => {},
+        };
       },
     });
     const task = store.create({ title: 'Cut off by the limit' });
@@ -578,7 +584,12 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
         if (starts === 1) {
           events.onFinish({ state: 'finished', sessionId: 'sess-1' });
         }
-        return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+        return {
+          interrupt: async () => {},
+          requestStop: () => {},
+          send: () => {},
+          approve: () => {},
+        };
       },
     });
     const task = store.create({ title: 'No duplicate resumes' });
@@ -1719,6 +1730,49 @@ describe('Orchestrator onFinish safety net (uncommitted changes)', () => {
     expect(log.trim()).toBe('agent: add committed.txt');
   });
 
+  // A run worktree has no `node_modules`, so a hook that typechecks or runs
+  // lint-staged fails there regardless of the content. Unguarded, the veto went
+  // unnoticed and the run was reported `finished` with a dirty index.
+  it('commits past a pre-commit hook that rejects everything', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const hooksDir = join(repo, '.git-hooks');
+    mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(
+      join(hooksDir, 'pre-commit'),
+      '#!/bin/sh\necho "tsc: cannot find module" >&2\nexit 1\n',
+      { mode: 0o755 }
+    );
+    runGitSync(repo, ['config', 'core.hooksPath', hooksDir]);
+
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'real-work.txt'), 'the agent did this\n');
+            },
+            commit: false,
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+    const task = store.create({ title: 'Hook rejects the safety-net commit' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(
+      runGitSync(meta.worktreePath, ['status', '--porcelain']).trim()
+    ).toBe('');
+    expect(
+      runGitSync(meta.worktreePath, ['log', '-1', '--pretty=%s']).trim()
+    ).toBe(`wip(dispatch): uncommitted changes from run ${meta.id}`);
+  });
+
   // I6: handleFinish's own git work (autoCommitIfDirty) must never let an
   // escaped throw reach the caller — an executor's onFinish is invoked from
   // deep inside its own event plumbing, and an uncaught exception there has
@@ -1976,6 +2030,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
       events.onFinish({ state: 'finished' });
       return {
         interrupt: () => Promise.resolve(),
+        requestStop: () => {},
         send: () => {},
         approve: () => {},
       };
@@ -2046,6 +2101,59 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.prompt).toContain('Add login rate limiting');
     expect(executor.lastOpts?.prompt).toContain('Harden auth');
     expect(executor.lastOpts?.prompt).toContain('resistant to abuse');
+  });
+
+  it('hands the agent the repo orientation instead of instructions to go find it', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    writeFileSync(
+      join(repo, 'package.json'),
+      JSON.stringify({ workspaces: ['packages/*'], scripts: { lint: 'x' } })
+    );
+    mkdirSync(join(repo, 'packages', 'core'), { recursive: true });
+    writeFileSync(
+      join(repo, 'packages', 'core', 'package.json'),
+      JSON.stringify({ name: '@example/core', description: 'Shared types' })
+    );
+    const task = store.create({ title: 'Use the orientation' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const prompt = executor.lastOpts?.prompt ?? '';
+    expect(prompt).toContain('## Repo orientation');
+    expect(prompt).toContain('`packages/core` — @example/core: Shared types');
+    expect(prompt).toContain('`bun run lint`');
+    // The instructions the orientation replaces must be gone, not duplicated.
+    expect(prompt).not.toContain('before assuming you have exclusive access');
+  });
+
+  // dispatch() registers the run and marks it `running` BEFORE building its
+  // prompt, so without the taskId filter in orientationFor every agent would
+  // open by reading that it is contending with itself.
+  it('never reports the dispatching run as its own competitor', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    // Something collectable, so the section renders at all — an empty repo
+    // correctly produces no orientation and keeps the original instructions.
+    writeFileSync(
+      join(repo, 'package.json'),
+      JSON.stringify({ scripts: { lint: 'x' } })
+    );
+    const task = store.create({ title: 'Solo run' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    const prompt = executor.lastOpts?.prompt ?? '';
+    expect(prompt).not.toContain(meta.id);
+    expect(prompt).toContain('no other runs are in flight');
   });
 });
 

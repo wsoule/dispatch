@@ -238,6 +238,25 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 // make the user approve a tool call before being shown the question it asks.
 const ASK_USER_TOOL = 'mcp__dispatch__ask_user';
 
+/**
+ * What a tool call is refused with once the user has asked this run to stop.
+ *
+ * A graceful stop has exactly one lever against a live Agent SDK session: the
+ * `canUseTool` gate. Whatever the agent is doing at the moment Stop is pressed
+ * has already been through that gate, so it runs to completion untouched; every
+ * NEXT tool call is refused with this text, which the SDK hands back to the
+ * model as the tool result. The wording is an instruction rather than a bare
+ * refusal for the same reason a human denial's `reason` is passed through: the
+ * model reads it, writes its closing summary, and ends the turn, which produces
+ * an ordinary `result` message and therefore an ordinary `onFinish` — the run
+ * finishes rather than being killed, so the orchestrator still auto-commits its
+ * work. A model that ignores this and keeps calling tools is caught by
+ * Orchestrator.requestStop's escalation timer, not here.
+ */
+export const STOP_DENIAL_MESSAGE =
+  'The user asked this run to stop. Do not start any new tool calls. ' +
+  'Summarize what you completed and what is left unfinished, then end your turn.';
+
 // Builds the one SDKUserMessage shape this executor ever sends: plain text,
 // no images or tool results. Both the initial task prompt and any mid-run
 // `send()` follow-up go through this.
@@ -499,6 +518,8 @@ export class ClaudeExecutor implements Executor {
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     const pendingApprovals = new Map<string, ApprovalResolver>();
     let interrupted = false;
+    // Set by requestStop(); read by canUseTool below. See STOP_DENIAL_MESSAGE.
+    let stopRequested = false;
     // Tools the user said "always, for this run" about. Session-scoped by construction: this
     // Set lives inside start(), so it dies with the run rather than leaking a permission grant
     // into the next one — which is the property that makes approve-for-session safe to offer
@@ -508,6 +529,12 @@ export class ClaudeExecutor implements Executor {
     const canUseTool: CanUseTool = async (toolName, input, callOpts) => {
       if (interrupted) {
         return { behavior: 'deny', message: 'run cancelled' };
+      }
+      // Ahead of every allow branch below, including the `acceptEdits`
+      // auto-allow: after a stop, "the agent may edit files without asking"
+      // must not become "the agent keeps editing files".
+      if (stopRequested) {
+        return { behavior: 'deny', message: STOP_DENIAL_MESSAGE };
       }
       if (
         opts.permissionMode === 'acceptEdits' &&
@@ -669,6 +696,19 @@ export class ClaudeExecutor implements Executor {
           // there is nothing left to interrupt.
         }
         sdkQuery.close();
+      },
+      requestStop(): void {
+        stopRequested = true;
+        // A run parked on an approval request is waiting on a human who has
+        // just answered "stop" instead. Resolving it as a denial carrying the
+        // wind-down instruction both unblocks the session and tells the model
+        // why, in the one channel the SDK gives us. The session is deliberately
+        // NOT interrupted and the input queue is left open — the agent still
+        // owes us a closing turn and its `result` message.
+        for (const resolve of pendingApprovals.values()) {
+          resolve({ allow: false, reason: STOP_DENIAL_MESSAGE });
+        }
+        pendingApprovals.clear();
       },
       send(message: string): void {
         queue.push(message);

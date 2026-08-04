@@ -1,4 +1,10 @@
-import { TaskStore } from '@dispatch/core';
+import {
+  normalizeProjectPath,
+  readCredentials,
+  TaskStore,
+  writeCredential,
+  writeProjectCredential,
+} from '@dispatch/core';
 import type {
   LinearIssue,
   LinearIssueInput,
@@ -236,27 +242,23 @@ describe('POST /api/linear/import', () => {
 
 describe('POST /api/linear/disconnect', () => {
   it('clears the stored key and reports the resulting status', async () => {
+    writeProjectCredential(root, 'linear', { apiKey: 'lin_api_project_key' });
     await fetch(`${baseUrl}/api/linear/disconnect`, { method: 'POST' });
+
+    expect(
+      readCredentials().projects?.[normalizeProjectPath(root)]
+    ).toBeUndefined();
     const status = await json(await fetch(`${baseUrl}/api/linear/status`));
     expect(status.keySource).toBeNull();
   });
 
-  it('reports the env as the key source, and disconnect cannot clear it', async () => {
-    process.env.LINEAR_API_KEY = 'lin_api_from_env';
+  it('leaves a machine-wide key intact and reports it as the fallback', async () => {
+    writeCredential('linear', { apiKey: 'lin_api_global_key' });
+    await fetch(`${baseUrl}/api/linear/disconnect`, { method: 'POST' });
 
-    const before = await json(await fetch(`${baseUrl}/api/linear/status`));
-    expect(before).toMatchObject({ connected: true, keySource: 'env' });
-
-    const res = await fetch(`${baseUrl}/api/linear/disconnect`, {
-      method: 'POST',
-    });
-    expect(res.status).toBe(200);
-
-    // Clearing the stored file cannot unset an environment variable, so the
-    // daemon is still connected — keySource is what makes that legible.
-    expect(await json(res)).toMatchObject({
-      connected: true,
-      keySource: 'env',
-    });
+    expect(readCredentials().linear?.apiKey).toBe('lin_api_global_key');
+    const status = await json(await fetch(`${baseUrl}/api/linear/status`));
+    expect(status.keySource).toBe('global');
+    expect(status.connected).toBe(true);
   });
 });

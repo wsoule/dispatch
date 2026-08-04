@@ -7,6 +7,8 @@ import {
 } from '@dispatch/core';
 import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 
+import { renderOrientationSection } from './orientation.js';
+import type { RepoOrientation } from './orientation.js';
 import type { RunSurvey } from './types.js';
 
 // Re-exported from core (where @dispatch/mcp can reach them too) because
@@ -39,7 +41,10 @@ function renderAmendmentsSection(amendmentsText: string): string {
 export function buildTaskPrompt(
   task: TaskDoc,
   parentEpic: TaskDoc | null,
-  ledgerEntries: LedgerEntry[] = []
+  ledgerEntries: LedgerEntry[] = [],
+  // Optional so this stays callable (and snapshot-stable) without a real
+  // checkout to collect from — see collectOrientation, which is the impure half.
+  orientation: RepoOrientation | null = null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -65,19 +70,39 @@ export function buildTaskPrompt(
   const ledgerSection = renderLedgerSection(ledgerEntries);
   if (ledgerSection !== null) sections.push(ledgerSection);
 
+  // The orientation section answers the questions the two instructions below
+  // would otherwise send the agent off to answer for itself, so when it is
+  // present those instructions are reworded to point AT it instead. Placed
+  // before them so the facts are already in view by the time they are cited.
+  const orientationSection =
+    orientation === null ? null : renderOrientationSection(orientation);
+  if (orientationSection !== null) sections.push(orientationSection);
+
   sections.push(
-    "Follow this repository's own contribution conventions (AGENTS.md / " +
-      'CLAUDE.md at the repo root, and any .agents/skills or .claude/skills ' +
-      'entries relevant to the change) exactly as a human contributor would.'
+    orientationSection === null
+      ? "Follow this repository's own contribution conventions (AGENTS.md / " +
+          'CLAUDE.md at the repo root, and any .agents/skills or ' +
+          '.claude/skills entries relevant to the change) exactly as a human ' +
+          'contributor would.'
+      : "Follow this repository's own contribution conventions (AGENTS.md / " +
+          'CLAUDE.md at the repo root) exactly as a human contributor would. The ' +
+          'skills index above is complete, so go straight to the SKILL.md files ' +
+          'relevant to your change rather than enumerating the directory again.'
   );
 
   sections.push(
-    'The dispatch MCP server is connected in this session, with `run_list` ' +
-      'and `task_comment` available now — other agents may be dispatched ' +
-      'on other tasks in this tracker at the same time, so call `run_list` ' +
-      'before assuming you have exclusive access to the repo, and log ' +
-      "meaningful progress with `task_comment`; this task's Activity log " +
-      'is the shared record other agents and humans will read.'
+    orientationSection === null
+      ? 'The dispatch MCP server is connected in this session, with `run_list` ' +
+          'and `task_comment` available now — other agents may be dispatched ' +
+          'on other tasks in this tracker at the same time, so call `run_list` ' +
+          'before assuming you have exclusive access to the repo, and log ' +
+          "meaningful progress with `task_comment`; this task's Activity log " +
+          'is the shared record other agents and humans will read.'
+      : 'The dispatch MCP server is connected in this session, with ' +
+          '`task_comment` available now — log meaningful progress with it; this ' +
+          "task's Activity log is the shared record other agents and humans will " +
+          'read. Concurrency is already reported above, so you do not need to ' +
+          'open with `run_list`.'
   );
 
   sections.push(

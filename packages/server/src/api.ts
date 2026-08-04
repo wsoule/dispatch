@@ -1,6 +1,5 @@
 import {
   ASSIGNEES,
-  clearCredential,
   ConfigError,
   getSection,
   KINDS,
@@ -9,7 +8,6 @@ import {
   TaskParseError,
   TaskStore,
   updateConfig,
-  writeCredential,
 } from '@dispatch/core';
 import type {
   ConfigPatch,
@@ -143,11 +141,14 @@ export interface ApiContext {
   // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
   // that case, since no real SyncResult ever reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
-  // Detected once at boot (see index.ts's isMergeDriverResolvable call) —
-  // whether `dispatch merge-task` actually resolves on this daemon's PATH.
+  // Whether `dispatch merge-task` actually resolves on this daemon's PATH.
   // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
   // visible somewhere, since git itself never reports it as an error.
-  mergeDriverOk: boolean;
+  //
+  // A function, not a boolean: the fix ("run `dispatch init`") happens in a
+  // terminal, so a value snapshotted at boot keeps telling the user to run a
+  // command they already ran successfully. See index.ts.
+  mergeDriverOk: () => boolean;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -225,15 +226,28 @@ function validateStringOrNullField(
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
-// a task's kind is fixed at creation.
+// a task's kind is fixed at creation. `includeBody` is update-only for the
+// mirror-image reason: CreateInput builds its body from the template.
 function validateTaskFields(
   value: Record<string, unknown>,
   config: DispatchConfig,
-  { includeKind }: { includeKind: boolean }
+  { includeKind, includeBody }: { includeKind: boolean; includeBody: boolean }
 ): string | null {
   if (includeKind) {
     const kindError = validateEnumField(value.kind, KINDS, 'kind');
     if (kindError) return kindError;
+  }
+  if (includeBody) {
+    // Same reason as the section fields above: normalizeBody trims the value
+    // before storing it, so a non-string reaches `.trim()` and 500s instead of
+    // being reported as the bad request it is.
+    const bodyError = validateStringField(value.body, 'body');
+    if (bodyError) return bodyError;
+  } else if (value.body !== undefined) {
+    // Rejected rather than ignored: `body` is a real field on PATCH, so a
+    // caller sending it to POST is assuming a symmetry that doesn't exist and
+    // would otherwise get the template back with their text silently dropped.
+    return 'invalid body: a new task builds its body from the template — set it with PATCH instead';
   }
   const statusError = validateEnumField(
     value.status,
@@ -290,7 +304,7 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const fieldsError = validateTaskFields(
     parsed.value as Record<string, unknown>,
     config,
-    { includeKind: true }
+    { includeKind: true, includeBody: false }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
 
@@ -378,7 +392,7 @@ async function updateTask(
   const fieldsError = validateTaskFields(
     parsed.value as Record<string, unknown>,
     config,
-    { includeKind: false }
+    { includeKind: false, includeBody: true }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
 
@@ -753,11 +767,12 @@ const MERGE_DRIVER_WARNING =
 // straight from the scheduler's retained last result, alongside a live
 // pendingCounts() read.
 function getSyncStatus(ctx: ApiContext): Response {
-  // Read once per request, not cached on ApiContext: unlike the boot-time
-  // detection this value comes from (ctx.mergeDriverOk), this is cheap
-  // enough to include regardless of which branch below responds, so every
-  // state — even `disabled`/`off` — reports the same merge-driver truth.
-  const mergeDriverWarning = ctx.mergeDriverOk ? null : MERGE_DRIVER_WARNING;
+  // Asked on every request rather than read off a boot-time snapshot, so
+  // fixing the setup clears the warning without a daemon restart. Cheap enough
+  // to include regardless of which branch below responds (index.ts's
+  // implementation caches), so every state — even `disabled`/`off` — reports
+  // the same merge-driver truth.
+  const mergeDriverWarning = ctx.mergeDriverOk() ? null : MERGE_DRIVER_WARNING;
 
   if (ctx.boardSyncScheduler === null) {
     const disabled: SyncStatus = {
@@ -831,15 +846,15 @@ async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
   const apiKey = body.apiKey.trim();
   const result = await new HttpLinearClient(apiKey).viewer();
   if (!result.ok) return linearErrorResponse(result);
-  writeCredential('linear', { apiKey });
+  ctx.linearSync.connect(apiKey);
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse({ connected: true, viewer: result.data });
 }
 
-// POST /api/linear/disconnect — forget the stored key. A LINEAR_API_KEY in the
-// environment still wins afterwards, which `status.keySource` makes visible.
+// POST /api/linear/disconnect — forget this project's key. An environment or
+// machine-wide key still resolves afterwards, which `status.keySource` makes visible.
 function disconnectLinear(ctx: ApiContext): Response {
-  clearCredential('linear');
+  ctx.linearSync.disconnect();
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse(ctx.linearSync.status());
 }
@@ -2789,6 +2804,18 @@ export async function handleApi(
       ) {
         await ctx.orchestrator.cancel(segments[1]);
         return jsonResponse({ ok: true });
+      }
+      // POST /api/runs/:id/stop — the graceful counterpart to cancel: the agent
+      // finishes what it is doing and then stops, so its work is committed.
+      // Returns the run's meta (now carrying `stopRequestedAt`) rather than
+      // `{ ok: true }`, since the marker is what the UI renders "Stopping…"
+      // from and the run is deliberately still live at this point.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'stop' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.orchestrator.requestStop(segments[1]));
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));

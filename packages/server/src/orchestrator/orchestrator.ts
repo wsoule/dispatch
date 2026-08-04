@@ -31,6 +31,8 @@ import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import { JjManager } from './jj.js';
+import { collectOrientation } from './orientation.js';
+import type { RepoOrientation } from './orientation.js';
 import {
   diffSnapshotPath,
   runsDir,
@@ -44,6 +46,7 @@ import {
   untrustedInline,
 } from './prompt.js';
 import { RunRegistry } from './registry.js';
+import { RepoDigestCache } from './repoDigest.js';
 import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
@@ -96,6 +99,13 @@ export interface OrchestratorContext {
   // Overrides CLAIMS_REFRESH_COOLDOWN_MS — test-injection seam only, so a
   // cooldown test isn't stuck waiting out the real 5s production window.
   claimsRefreshCooldownMs?: number;
+  // Overrides STOP_ESCALATION_MS, same test-injection reason: a test proving a
+  // stubborn run gets escalated cannot wait out the real two-minute window.
+  stopEscalationMs?: number;
+  // The repo-map cache injected into run prompts (see promptForTask). Defaults
+  // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
+  // model call at all can pass one built with a stubbed generator.
+  digestCache?: RepoDigestCache;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -115,6 +125,14 @@ const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 // Minimum gap between opportunistic claims refreshes for one run — see
 // scheduleClaimsRefresh.
 const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
+
+// How long a gracefully-stopped run gets to wind down before the stop is
+// escalated to a hard cancel — see scheduleStopEscalation. Generous on purpose:
+// the agent may legitimately be mid-tool-call (a long test run, a large edit)
+// when Stop is pressed, and that call is exactly what a graceful stop promises
+// not to abort. It only has to stop starting NEW work, which it learns about at
+// its next tool call.
+const STOP_ESCALATION_MS = 120_000;
 
 // Sort order for the Branches surface: the rows that need a human decision
 // come first, read-only live runs last.
@@ -156,6 +174,10 @@ export class Orchestrator {
   private readonly jj: JjManager;
   private readonly ledgerStore: LedgerStore;
   private readonly findingStore: FindingStore;
+  // The repo map injected into every run prompt (see promptForTask). Held on
+  // the orchestrator rather than built per dispatch so its single-flight
+  // background refresh really is one refresh, not one per concurrent dispatch.
+  private readonly digestCache: RepoDigestCache;
   private readonly executors = new Map<string, Executor>();
   // Phase 5 P1: callbacks fired exactly once per run, right after it reaches
   // a terminal state AND every bit of bookkeeping that goes with that
@@ -176,14 +198,23 @@ export class Orchestrator {
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
   private readonly claimsRefreshCooldownMs: number;
+  // Pending "this stop has taken too long" timers, keyed by run — see
+  // scheduleStopEscalation, and transition() for where they are cleared.
+  private readonly stopEscalations = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  private readonly stopEscalationMs: number;
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
     this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
     this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
+    this.digestCache = ctx.digestCache ?? new RepoDigestCache(ctx.rootDir);
     this.claimsRefreshCooldownMs =
       ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
+    this.stopEscalationMs = ctx.stopEscalationMs ?? STOP_ESCALATION_MS;
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -917,6 +948,141 @@ export class Orchestrator {
     };
     this.transcriptFor(runId).appendEntry(entry);
     this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+  }
+
+  /**
+   * Asks a live run to stop gracefully — the Stop button's server side, and the
+   * counterpart to `cancel()` below.
+   *
+   * `cancel()` kills the session where it stands and marks the run `cancelled`,
+   * deliberately skipping handleFinish's auto-commit, so whatever the agent had
+   * not committed is left loose in the worktree. This instead lets the agent
+   * finish what it is doing and end its own turn, so the run reaches its normal
+   * terminal state through handleFinish and its work is committed and
+   * reviewable like any other finished run.
+   *
+   * That means this method changes no run state of its own. It records
+   * `stopRequestedAt` (a marker, so surfaces can show "Stopping…" and then
+   * "Stopped", and so a daemon restart mid-stop doesn't forget), tells the
+   * executor, and arms the escalation timer that catches an agent which ignores
+   * the request. Idempotent: pressing Stop twice re-signals the executor but
+   * does not restart the clock or write a second marker.
+   *
+   * Deliberately synchronous with no `await` between reading the run's state
+   * and appending its marker, for the same reason handleFinish is: an `await`
+   * there would let a concurrent finish land in between, and the state line
+   * written afterwards would carry the pre-finish state — resurrecting a
+   * terminal run the next time its transcript is replayed.
+   */
+  requestStop(runId: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (TERMINAL_RUN_STATES.has(meta.state)) {
+      throw new OrchestratorConflictError(`run already finished: ${runId}`);
+    }
+    const executorRun = this.registry.getExecutorRun(runId);
+    // Same rule as approve()/sendMessage(): a non-terminal run with no
+    // ExecutorRun is a zombie left by a dead daemon. There is nothing to ask to
+    // wind down, and pretending otherwise would leave it "Stopping…" forever.
+    //
+    // No separate "still provisioning" case, deliberately: every path that
+    // creates a run goes registry.create -> transition('running') ->
+    // startAndRegister in one synchronous block, and reconcileOnBoot force-fails
+    // any non-terminal run it replays — so no caller can ever observe a
+    // provisioning run whose executor simply has not been built yet.
+    if (executorRun === undefined) this.healZombieRun(meta);
+
+    if (meta.stopRequestedAt !== undefined) {
+      executorRun.requestStop();
+      return meta;
+    }
+
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { stopRequestedAt: now, updatedAt: now });
+    // Same shape as setRunArchived: a marker rides along on a state line
+    // carrying the run's CURRENT state, since a stop request moves nothing.
+    this.bestEffort(`recording stop request for run ${runId}`, () => {
+      this.transcriptFor(runId).appendState(meta.state, now, {
+        stopRequestedAt: now,
+      });
+    });
+    // The Session log is where a reader asks "why did it wrap up here?" — a
+    // run that just quietly stops mid-task otherwise looks like it gave up.
+    const entry: NormalizedEntry = {
+      ts: now,
+      kind: 'system',
+      text: 'Stop requested — the agent will finish its current operation and then stop.',
+    };
+    this.bestEffort(`logging stop request for run ${runId}`, () => {
+      this.transcriptFor(runId).appendEntry(entry);
+    });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+
+    executorRun.requestStop();
+
+    // Same rule as cancel(): a task file this can't write costs the Activity
+    // line, never the stop itself.
+    this.bestEffort(`recording stop request activity for run ${runId}`, () => {
+      this.ctx.store.update(
+        meta.taskId,
+        {
+          appendActivity: `${now} [run ${runId}] stop requested`,
+          // Like cancel(), this has exactly one caller: a human pressing Stop.
+          activityActor: this.ctx.actorContext?.humanRef,
+        },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    });
+
+    this.scheduleStopEscalation(runId);
+    return this.registry.get(runId)!;
+  }
+
+  /**
+   * Arms the backstop for a stop the agent never honors.
+   *
+   * A graceful stop asks; it cannot compel. An agent can sit in one very long
+   * tool call, or read the wind-down instruction and keep calling tools anyway,
+   * and a Stop button that leaves a run going indefinitely is not a stop. If
+   * the run is still non-terminal when this fires, it falls back to `cancel()`
+   * — the same hard interrupt the user could have pressed themselves.
+   *
+   * The timer is unref'd so it can never hold the daemon (or a test process)
+   * open on its own, and is cleared by transition() the moment the run goes
+   * terminal, which is the single choke point every terminal state passes
+   * through.
+   */
+  private scheduleStopEscalation(runId: string): void {
+    if (this.stopEscalationMs <= 0) return;
+    const timer = setTimeout(() => {
+      this.stopEscalations.delete(runId);
+      const meta = this.registry.get(runId);
+      if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return;
+      this.noteTaskActivity(
+        meta.taskId,
+        `[run ${runId}] stop not honored within ${Math.round(this.stopEscalationMs / 1000)}s — escalating to cancel`
+      );
+      // Nothing is awaiting this: it runs from a timer callback, so an escaped
+      // rejection would be an unhandled one.
+      void this.cancel(runId).catch((err: unknown) => {
+        console.error(
+          `dispatchd: escalating stop to cancel failed for run ${runId}: ${(err as Error).message}`
+        );
+      });
+    }, this.stopEscalationMs);
+    timer.unref?.();
+    this.stopEscalations.set(runId, timer);
+  }
+
+  // Cancels a pending escalation, because the run it was watching is done —
+  // either it wound down on its own, or something else ended it first.
+  private clearStopEscalation(runId: string): void {
+    const timer = this.stopEscalations.get(runId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.stopEscalations.delete(runId);
   }
 
   // Interrupts a live run's executor and marks it cancelled. The worktree is
@@ -2260,6 +2426,14 @@ export class Orchestrator {
   // message. A no-op when the worktree is already clean — the common case,
   // since every executor is expected to commit its own work per the prompt's
   // explicit instruction.
+  //
+  // `--no-verify`: a run worktree has no `node_modules`, so a project's
+  // pre-commit hook fails there for reasons unrelated to the content, and a
+  // vetoed safety net strands the agent's work. The merge queue's verify steps
+  // are still the real gate.
+  //
+  // Throws on failure so `finishRun` marks the run `failed` — work that could
+  // not be committed is neither reviewable nor mergeable.
   private autoCommitIfDirty(worktreePath: string, runId: string): void {
     const status = Bun.spawnSync(['git', 'status', '--porcelain'], {
       cwd: worktreePath,
@@ -2268,15 +2442,26 @@ export class Orchestrator {
     });
     if (status.stdout.toString('utf8').trim() === '') return;
     Bun.spawnSync(['git', 'add', '-A'], { cwd: worktreePath });
-    Bun.spawnSync(
+    const commit = Bun.spawnSync(
       [
         'git',
         'commit',
+        '--no-verify',
         '-m',
         `wip(dispatch): uncommitted changes from run ${runId}`,
       ],
-      { cwd: worktreePath }
+      { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' }
     );
+    if (commit.exitCode !== 0) {
+      // git splits its complaints across both streams; prefer stderr, fall
+      // back to stdout so the message is never just an exit code.
+      const stderr = commit.stderr.toString('utf8').trim();
+      const detail =
+        stderr.length > 0 ? stderr : commit.stdout.toString('utf8').trim();
+      throw new Error(
+        `could not commit the changes left in ${worktreePath}: ${detail}`
+      );
+    }
   }
 
   // Moves a run to `state`, updating the registry, appending a transcript
@@ -2317,6 +2502,10 @@ export class Orchestrator {
       return;
     }
     const now = new Date().toISOString();
+    // Whatever ended this run — winding down after a stop, its own finish, a
+    // cancel, an escalation — there is nothing left for the stop backstop to
+    // catch. This is the one point every terminal state passes through.
+    if (TERMINAL_RUN_STATES.has(state)) this.clearStopEscalation(runId);
     this.registry.updateMeta(runId, {
       state,
       updatedAt: now,
@@ -2472,9 +2661,16 @@ export class Orchestrator {
       // and then silently vanishing once the worktree is removed.
       this.autoCommitIfDirty(meta.worktreePath, runId);
     } catch (err) {
+      // Keeps the executor's own report rather than replacing it: when the run
+      // already failed, "connection dropped" is the diagnosis and the commit
+      // problem is a consequence. The cost/turns/sessionId it measured are real
+      // either way, and a survey of the still-dirty worktree follows below.
+      const detail = `finish failed: ${(err as Error).message}`;
       effectiveFinish = {
+        ...finish,
         state: 'failed',
-        error: `finish failed: ${(err as Error).message}`,
+        error:
+          finish.error === undefined ? detail : `${finish.error}; ${detail}`,
       };
     }
 
@@ -2789,6 +2985,46 @@ export class Orchestrator {
       task.meta.id,
       task.meta.parent
     );
-    return buildTaskPrompt(task, parentEpic, ledgerEntries);
+    return buildTaskPrompt(
+      task,
+      parentEpic,
+      ledgerEntries,
+      this.orientationFor(task.meta.id)
+    );
+  }
+
+  // The repo facts injected into this task's prompt (see orientation.ts): the
+  // workspace map, skills index, root scripts, cross-run file hotspots, the
+  // cached repo map, and who else is running right now. Collecting reads a
+  // handful of small files and this project's own transcripts; a failure
+  // anywhere in there costs the section, never the dispatch, because a
+  // throwing promptForTask strands the run in `provisioning`.
+  private orientationFor(taskId: string): RepoOrientation | null {
+    try {
+      return collectOrientation({
+        rootDir: this.ctx.rootDir,
+        // Excluding this task's own runs is load-bearing, not tidiness:
+        // dispatch() calls registry.create() and transitions the run to
+        // `running` BEFORE building the prompt, so without this filter every
+        // agent would open by reading that it is competing with itself over
+        // its own claimed files.
+        concurrentRuns: this.registry
+          .list()
+          .filter(
+            (r) => !TERMINAL_RUN_STATES.has(r.state) && r.taskId !== taskId
+          )
+          .map((r) => ({
+            id: r.id,
+            taskTitle: r.taskTitle,
+            claims: r.claims ?? [],
+          })),
+        digestCache: this.digestCache,
+      });
+    } catch (err) {
+      console.error(
+        `dispatchd: could not collect repo orientation: ${(err as Error).message}`
+      );
+      return null;
+    }
   }
 }

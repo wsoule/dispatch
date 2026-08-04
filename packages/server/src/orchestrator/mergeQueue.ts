@@ -964,6 +964,18 @@ export class MergeQueue {
       );
     }
 
+    // Both paths below refuse uncommitted TRACKED changes — `git rebase` bails
+    // outright, and the jj path's resync hard-resets over them — so the check
+    // belongs here rather than only on the jj branch. Untracked files are not
+    // counted (see WorktreeManager.isDirty). Names the worktree because the
+    // user has never had reason to look inside one.
+    if (this.ctx.orchestrator.runWorktreeIsDirty(meta.id)) {
+      throw new Error(
+        `the run's worktree has uncommitted changes, so it cannot be rebased. ` +
+          `Commit or discard them in ${cwd}, then re-enqueue this run.`
+      );
+    }
+
     const liveDescendants = await this.hasLiveDescendants(meta.branch);
     if (!liveDescendants && (await this.jj.isColocated())) {
       // The jj rebase runs in the project root and moves `refs/heads/<branch>`
@@ -977,12 +989,8 @@ export class MergeQueue {
       // refuses too, since `git rebase` will not run over them either.
       // Untracked files are not counted, for the same reason: `git rebase`
       // tolerates them (measured), so failing this entry over one would make
-      // the jj path refuse merges the git path completes.
-      if (this.ctx.orchestrator.runWorktreeIsDirty(meta.id)) {
-        throw new Error(
-          'worktree has uncommitted changes; commit or discard them before merging'
-        );
-      }
+      // the jj path refuse merges the git path completes. The check itself now
+      // lives at the top of this method, since the plain-git path needs it too.
       if (meta.prUrl !== undefined) {
         const fetch = await this.run(cwd, [
           'git',
