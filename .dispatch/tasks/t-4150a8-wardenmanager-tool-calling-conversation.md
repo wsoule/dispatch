@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.198Z
-updated: 2026-08-04T19:01:53.572Z
+updated: 2026-08-04T19:02:30.750Z
 external: null
 writes:
   - packages/server/src/orchestrator/warden.ts
@@ -37,3 +37,4 @@ Acceptance criteria:
 - 2026-08-04T19:01:19.788Z dispatched (claude, branch dispatch/t-4150a8-wardenmanager-tool-calling-conversation-02a09e) — human:wsoule679
 - 2026-08-04T19:01:31.740Z [run r-02a09e] stop requested — human:wsoule679
 - 2026-08-04T19:01:53.572Z [run r-02a09e] cancelled — human:wsoule679
+- 2026-08-04T19:02:30.750Z Design settled after reading plan.ts/planner.ts/planners/{fake,claude}.ts and Task 1's wardenTools.ts. Shape: `orchestrator/wardenBackend.ts` (the seam — WardenBackend.start/sendMessage taking a WardenToolset the manager owns), `orchestrator/warden.ts` (WardenManager: start/sendMessage/confirmAction/get/list, in-memory, running->ready|failed like PlanManager), `orchestrator/wardens/fake.ts` (scripted tool calls + replies), `orchestrator/wardens/claude.ts` (real Agent SDK loop via createSdkMcpServer + tool(), the registry's zod schemas wired in-process, no Read/Bash/Edit at all). The manager owns the toolset callback so a mutating call routes to registry.callMutatingTool (queues a WardenAction, returns "awaiting human confirmation" to the model) and only confirmAction(...,true) ever reaches applyAction. Reusing config.models.plan for the model role rather than adding a `warden` role to core's ModelConfig (avoids a cross-package config/settings change this task doesn't need). — none
