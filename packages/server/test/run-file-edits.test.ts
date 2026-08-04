@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,9 @@ import { sha256Hex } from '../src/api.js';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
+import type { Orchestrator } from '../src/orchestrator/orchestrator.js';
+import type { RunRegistry } from '../src/orchestrator/registry.js';
+import type { RunState } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
@@ -35,10 +38,40 @@ let root: string;
 let handle: ServerHandle;
 let baseUrl: string;
 let runId: string;
+let worktree: string;
+let orchestrator: Orchestrator;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
-function apiFetch(path: string): Promise<Response> {
-  return fetch(`${baseUrl}${path}`);
+function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: { 'content-type': 'application/json', ...init?.headers },
+  });
+}
+
+// Registers a second run directly in the orchestrator's registry, sharing
+// `worktreePath` with the primary run. This is exactly what requestChanges()
+// does when a human asks for follow-up changes on a finished run, so it's
+// the real shape the worktree-busy check has to defend against.
+function registerRunInWorktree(opts: {
+  state: RunState;
+  worktreePath: string;
+}): void {
+  const registry = (orchestrator as unknown as { registry: RunRegistry })
+    .registry;
+  const now = new Date().toISOString();
+  registry.create({
+    id: `busy-${now}`,
+    taskId: 'busy-task',
+    taskTitle: 'busy',
+    executor: 'fake',
+    state: opts.state,
+    branch: 'busy-branch',
+    baseBranch: 'main',
+    worktreePath: opts.worktreePath,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 async function waitFor(
@@ -62,8 +95,9 @@ beforeEach(async () => {
     rootDir: root,
     port: 0,
     writeDaemonFile: false,
-    registerExecutors: (orchestrator) => {
-      orchestrator.registerExecutor(
+    registerExecutors: (o) => {
+      orchestrator = o;
+      o.registerExecutor(
         'fake',
         new FakeExecutor({ finish: { state: 'finished' } })
       );
@@ -88,15 +122,14 @@ beforeEach(async () => {
   // Poll until the fake run reaches its terminal state, capturing the real
   // worktree path it was assigned, then dirty that worktree so `side=new`
   // has an uncommitted edit to read back.
-  let worktreePath = '';
   await waitFor(async () => {
     const detail = await json<{
       meta: { state: string; worktreePath: string };
     }>(await apiFetch(`/api/runs/${runId}`));
-    worktreePath = detail.meta.worktreePath;
+    worktree = detail.meta.worktreePath;
     return detail.meta.state === 'finished';
   });
-  writeFileSync(join(worktreePath, 'a.txt'), 'changed\n');
+  writeFileSync(join(worktree, 'a.txt'), 'changed\n');
 });
 
 afterEach(async () => {
@@ -138,6 +171,121 @@ describe('GET /api/runs/:id/file', () => {
     const res = await apiFetch(
       `/api/runs/${runId}/file?path=../../etc/passwd&side=new`
     );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/runs/:id/edits', () => {
+  it('writes the file and commits it on the run branch', async () => {
+    const before = await apiFetch(
+      `/api/runs/${runId}/file?path=a.txt&side=new`
+    );
+    const { sha } = (await before.json()) as { sha: string };
+
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const { commit } = (await res.json()) as { commit: string };
+    expect(commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('fixed\n');
+  });
+
+  it('marks the commit with the reviewer trailer', async () => {
+    const before = await apiFetch(
+      `/api/runs/${runId}/file?path=a.txt&side=new`
+    );
+    const { sha } = (await before.json()) as { sha: string };
+    await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+
+    const log = Bun.spawnSync(['git', 'log', '-1', '--format=%B'], {
+      cwd: worktree,
+    });
+    const message = log.stdout.toString();
+    expect(message).toContain('review: edit a.txt');
+    expect(message).toContain(`Dispatch-Reviewer-Edit: ${runId}`);
+  });
+
+  it('409s when the file changed under the editor', async () => {
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'x\n',
+        baseSha: 'deadbeef',
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'stale-base',
+    });
+  });
+
+  it('409s on empty contents for a non-empty file', async () => {
+    const before = await apiFetch(
+      `/api/runs/${runId}/file?path=a.txt&side=new`
+    );
+    const { sha } = (await before.json()) as { sha: string };
+
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({ file: 'a.txt', contents: '', baseSha: sha }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'empty-contents',
+    });
+  });
+
+  it('409s while a non-terminal run occupies the worktree', async () => {
+    // Put a second, still-running run in the same worktree — exactly what
+    // requestChanges() does — and the edit must refuse.
+    registerRunInWorktree({ state: 'running', worktreePath: worktree });
+
+    const before = await apiFetch(
+      `/api/runs/${runId}/file?path=a.txt&side=new`
+    );
+    const { sha } = (await before.json()) as { sha: string };
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'worktree-busy',
+    });
+  });
+
+  it('refuses a path that escapes the worktree', async () => {
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: '../escape.txt',
+        contents: 'x\n',
+        baseSha: 'x',
+      }),
+    });
+
     expect(res.status).toBe(400);
   });
 });

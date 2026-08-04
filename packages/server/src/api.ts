@@ -21,7 +21,7 @@ import type {
 } from '@dispatch/core';
 import type { ActorContext, TaskDoc } from '@dispatch/core';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { amendTask } from './api/amendments.js';
@@ -92,6 +92,7 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import {
@@ -942,6 +943,87 @@ async function readRunFile(
   if (!existsSync(onDisk)) return errorResponse(404, `no such file: ${path}`);
   const contents = readFileSync(onDisk, 'utf8');
   return jsonResponse({ contents, sha: sha256Hex(contents) });
+}
+
+/** Trailer marking a commit a human made while reviewing, so an audit export can
+ *  separate reviewer corrections from agent work without parsing the subject. */
+export const REVIEWER_EDIT_TRAILER = 'Dispatch-Reviewer-Edit';
+
+/**
+ * POST /api/runs/:id/edits — write one file into the run's worktree and commit it.
+ *
+ * Every rejection below is a 409 with a machine-readable `error`, because each
+ * one has a different fix and the UI shows a different sentence for each.
+ */
+async function applyRunEdit(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    file?: unknown;
+    contents?: unknown;
+    baseSha?: unknown;
+  };
+  if (typeof body.file !== 'string' || body.file === '') {
+    return errorResponse(400, 'file is required');
+  }
+  if (typeof body.contents !== 'string') {
+    return errorResponse(400, 'contents is required');
+  }
+  if (typeof body.baseSha !== 'string' || body.baseSha === '') {
+    return errorResponse(400, 'baseSha is required');
+  }
+  if (!isWorktreeRelativePath(body.file)) {
+    return errorResponse(400, PATH_ESCAPE_ERROR);
+  }
+
+  const detail = ctx.orchestrator.getRun(runId);
+  if (detail === null) return errorResponse(404, `run not found: ${runId}`);
+  const meta = detail.meta;
+  if (!existsSync(meta.worktreePath))
+    return errorResponse(409, 'worktree-missing');
+
+  // A resumed run shares this exact directory (see orchestrator requestChanges),
+  // so "is anything live here" is a real race, not a hypothetical one.
+  const busy = ctx.orchestrator
+    .list()
+    .some(
+      (r) =>
+        r.worktreePath === meta.worktreePath &&
+        !TERMINAL_RUN_STATES.has(r.state)
+    );
+  if (busy) return errorResponse(409, 'worktree-busy');
+
+  const repo = new GitRepo(meta.worktreePath);
+  const onDisk = join(meta.worktreePath, body.file);
+  const current = existsSync(onDisk) ? readFileSync(onDisk, 'utf8') : '';
+  if (sha256Hex(current) !== body.baseSha)
+    return errorResponse(409, 'stale-base');
+  if (body.contents === '' && current !== '') {
+    return errorResponse(409, 'empty-contents');
+  }
+
+  // Staging first: `git add` rejects a path outside the repo, so a traversal
+  // fails before anything is written.
+  writeFileSync(onDisk, body.contents);
+  const staged = await repo.stage([body.file]);
+  if (!staged.ok) {
+    writeFileSync(onDisk, current);
+    return errorResponse(
+      staged.stderr === PATH_ESCAPE_ERROR ? 400 : 500,
+      staged.stderr
+    );
+  }
+  const committed = await repo.commit({
+    message: `review: edit ${body.file}\n\n${REVIEWER_EDIT_TRAILER}: ${runId}`,
+  });
+  if (!committed.ok) return errorResponse(500, committed.stderr);
+
+  ctx.events.broadcast({ type: 'review.changed', runId });
+  return jsonResponse({ commit: committed.sha });
 }
 
 // GET /api/runs/:id/comments — every review comment on this run's diff.
@@ -2890,6 +2972,13 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'file' && method === 'GET') {
         return await readRunFile(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'edits' &&
+        method === 'POST'
+      ) {
+        return await applyRunEdit(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&
