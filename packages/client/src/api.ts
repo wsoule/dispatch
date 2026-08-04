@@ -970,7 +970,7 @@ export interface LinearIssueLink {
 export interface LinearStatus {
   enabled: boolean;
   connected: boolean;
-  keySource: 'env' | 'file' | null;
+  keySource: 'project' | 'env' | 'global' | null;
   teamId: string | null;
   direction: 'both' | 'pull' | 'push';
   intervalSec: number;

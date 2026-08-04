@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -58,17 +59,25 @@ export function readCredentials(): CredentialsFile {
   }
 }
 
-// Writes with mode 0600 on both the create and the overwrite path — writeFileSync's
-// `mode` is ignored when the file already exists, so the chmod is explicit.
+// Writes to a sibling temp file and renames it onto the live path, so a crash or
+// ENOSPC mid-write cannot truncate a file that now holds every project's keys —
+// the rename is atomic within a filesystem. This does not protect against two
+// processes writing concurrently and one clobbering the other's update. Mode 0600
+// is set on both the create and the overwrite path — writeFileSync's `mode` is
+// ignored when the file already exists, so the chmod is explicit.
 function writeCredentials(file: CredentialsFile): void {
   const path = credentialsPath();
   mkdirSync(resolve(path, '..'), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+  const tmpPath = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmpPath, `${JSON.stringify(file, null, 2)}\n`, {
+    mode: 0o600,
+  });
   try {
-    chmodSync(path, 0o600);
+    chmodSync(tmpPath, 0o600);
   } catch {
     // A filesystem without POSIX modes is not a reason to fail the write.
   }
+  renameSync(tmpPath, path);
 }
 
 export function writeCredential(

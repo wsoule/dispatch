@@ -89,20 +89,21 @@ export function resolveLinearLink(
   return uuid === null ? null : (links[uuid] ?? null);
 }
 
-/** Whether Disconnect can actually take effect, and what to say when it cannot. An env key
- *  outranks the stored file, so clearing the file would leave the daemon still connected. */
-export function describeKeySource(status: LinearStatus): {
-  canDisconnect: boolean;
-  note: string | null;
-} {
-  if (status.keySource === 'file') return { canDisconnect: true, note: null };
-  if (status.keySource === 'env') {
-    return {
-      canDisconnect: false,
-      note: 'This key comes from LINEAR_API_KEY in the daemon’s environment. Unset it and restart Dispatch to disconnect.',
-    };
+/** The paragraph shown above the API key input, explaining which key is in play. Returns null
+ *  when the project has its own key and the input is hidden entirely. */
+export function linearKeySourceNote(
+  keySource: LinearStatus['keySource']
+): string | null {
+  switch (keySource) {
+    case 'project':
+      return null;
+    case 'env':
+      return 'Using LINEAR_API_KEY from your environment. Connect a key here to use a different Linear workspace for this project. Unset the variable and restart Dispatch to stop using it entirely.';
+    case 'global':
+      return 'Using your shared default key. Connect a key here to use a different Linear workspace for this project.';
+    default:
+      return 'Connect a Linear API key to pull issues in and push task changes back out. The key is sent once and never shown again — only whether a connection exists.';
   }
-  return { canDisconnect: false, note: null };
 }
 
 /** Turns a failed teams/states fetch into something worth showing. A 401 means the stored key
