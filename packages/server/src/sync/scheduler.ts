@@ -67,7 +67,7 @@ export class BoardSyncScheduler {
     // disabled project generates no sync traffic despite the timer ticking.
     this.periodic = setInterval(() => {
       if (!this.autoCommitEnabled()) return;
-      void this.trigger();
+      void this.triggerPeriodic();
     }, deps.periodicMs ?? DEFAULT_PERIODIC_MS);
   }
 
@@ -97,20 +97,46 @@ export class BoardSyncScheduler {
     }, delay);
   }
 
-  // Runs one pass, or marks a rerun pending if one is already in flight —
-  // never lets two syncOnce() calls race the same sync worktree.
+  // Runs one pass, or marks a rerun pending if one is already in flight — an
+  // edit arriving mid-sync carries real, not-yet-pushed content and must not
+  // be lost, so it's answered by one more pass once the current one finishes.
   private async trigger(): Promise<void> {
     if (this.inFlight !== null) {
       this.pendingRerun = true;
       return;
     }
-    const run = this.runOnce().finally(() => {
-      this.inFlight = null;
-      if (this.pendingRerun) {
-        this.pendingRerun = false;
-        void this.trigger();
-      }
-    });
+    await this.runGuarded();
+  }
+
+  // Runs one pass, or drops the tick entirely if one is already in flight —
+  // unlike trigger(), a timer tick carries no information to lose, so
+  // queuing a rerun here would only turn a sync that runs longer than the
+  // interval into a continuous, never-idle loop of git network operations.
+  private async triggerPeriodic(): Promise<void> {
+    if (this.inFlight !== null) return;
+    await this.runGuarded();
+  }
+
+  // Shared by both trigger paths: runs runOnce(), and never lets it reject
+  // out to a `void`-called caller — Bun terminates the process on an
+  // unhandled rejection, and runOnce() throws for real reasons (a vanished
+  // worktree dir, a full disk, `git worktree add` failing twice). Logged
+  // once so a daemon that stops syncing says why, then processes whatever
+  // rerun trigger() queued while this pass was running.
+  private async runGuarded(): Promise<void> {
+    const run = this.runOnce()
+      .catch((err) => {
+        console.error(
+          `board sync: sync attempt failed unexpectedly: ${(err as Error).message}`
+        );
+      })
+      .finally(() => {
+        this.inFlight = null;
+        if (this.pendingRerun) {
+          this.pendingRerun = false;
+          void this.trigger();
+        }
+      });
     this.inFlight = run;
     await run;
   }
@@ -159,5 +185,8 @@ export class BoardSyncScheduler {
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = null;
     clearInterval(this.periodic);
+    // Otherwise a sync in flight at shutdown with a rerun queued fires one
+    // more real syncOnce() (a real git push) after being told to stop.
+    this.pendingRerun = false;
   }
 }
