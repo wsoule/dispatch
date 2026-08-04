@@ -17,12 +17,15 @@ const DOT_CLASS: Record<SyncStatus['state'], string> = {
   'local-only': 'bg-state-waiting',
   blocked: 'bg-state-failed',
   disabled: 'bg-state-blocked',
+  off: 'bg-state-ready',
 };
 
 // One line a user can act on per state, per the plan's copy requirement:
-// `idle` says when, `local-only`/`blocked` say why (from `detail`), and
+// `idle` says when, `local-only`/`blocked` say why (from `detail`),
 // `disabled` says what to do about it (a restart — see api.ts's
-// DISABLED_SYNC_DETAIL for why nothing here can recover it on its own).
+// DISABLED_SYNC_DETAIL for why nothing here can recover it on its own), and
+// `off` says how to turn it on (Settings — this is the ordinary, expected
+// state for a project that has never opted in, not a problem to fix).
 function messageFor(status: SyncStatus): string {
   switch (status.state) {
     case 'idle':
@@ -39,6 +42,8 @@ function messageFor(status: SyncStatus): string {
         : `Sync conflict: ${status.detail}`;
     case 'disabled':
       return status.detail ?? 'Board sync is off';
+    case 'off':
+      return 'Board sync is off · enable auto-commit in Settings';
   }
 }
 
@@ -85,7 +90,7 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
       )}
       {/* No point offering the kill switch once sync is already off — flipping
           autoCommit doesn't stop anything that isn't running. */}
-      {status.state !== 'disabled' && (
+      {status.state !== 'disabled' && status.state !== 'off' && (
         <button
           type="button"
           onClick={onDisableAutoCommit}

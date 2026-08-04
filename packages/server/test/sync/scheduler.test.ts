@@ -205,12 +205,37 @@ describe('BoardSyncScheduler', () => {
 
   it('exposes pendingCounts from its own BoardSyncer, read-only', () => {
     const { origin, a } = twoClones();
+    // The sync worktree must already exist for pendingCounts() to report a
+    // real count — it deliberately never calls ensure() itself (see
+    // BoardSyncer.pendingCounts()'s own doc comment), so this test creates
+    // it directly rather than relying on the read to do so as a side effect.
+    const worktree = SyncWorktree.open(a, run);
+    if (worktree === null) throw new Error('expected a resolvable trunk');
+    worktree.ensure();
     new TaskStore(a).create({ title: 'Pending' });
 
     const events = new EventBus();
     const scheduler = schedulerFor(a, events, 15);
 
     expect(scheduler.pendingCounts()).toEqual({ outgoing: 1, incoming: 0 });
+
+    scheduler.stop();
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('reports zeroes without creating the worktree when it does not already exist', () => {
+    const { origin, a } = twoClones();
+    new TaskStore(a).create({ title: 'Never synced' });
+
+    const worktree = SyncWorktree.open(a, run);
+    if (worktree === null) throw new Error('expected a resolvable trunk');
+    expect(existsSync(worktree.path)).toBe(false);
+
+    const events = new EventBus();
+    const scheduler = schedulerFor(a, events, 15);
+
+    expect(scheduler.pendingCounts()).toEqual({ outgoing: 0, incoming: 0 });
+    expect(existsSync(worktree.path)).toBe(false);
 
     scheduler.stop();
     rmSync(origin, { recursive: true, force: true });

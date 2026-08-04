@@ -2,6 +2,7 @@ import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,8 +14,9 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { SyncWorktree } from '../../src/sync/worktree.js';
 import { useTestAuth, wsUrl } from '../testAuth.js';
-import { cleanupClone, twoClones } from './helpers.js';
+import { cleanupClone, run, twoClones } from './helpers.js';
 
 // Mirrors wiring.test.ts's own copy exactly.
 
@@ -239,6 +241,42 @@ describe('GET /api/sync', () => {
 
       expect(body.state).toBe('local-only');
       expect(body.detail).not.toBeNull();
+    } finally {
+      await handle?.stop();
+      rmSync(origin, { recursive: true, force: true });
+      cleanupClone(a);
+      cleanupClone(b);
+    }
+  });
+
+  it('synthesizes `off` for a project with autoCommit: false, and never creates the sync worktree', async () => {
+    // twoClones() defaults to autoCommit: false — the state every existing
+    // project starts in, and the exact case that used to run a full
+    // `git worktree add` off a plain GET.
+    const { origin, a, b } = twoClones();
+
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: a,
+        port: 0,
+        writeDaemonFile: false,
+        webDistDir: null,
+      });
+      useTestAuth(handle);
+
+      const res = await fetch(`http://127.0.0.1:${handle.port}/api/sync`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as SyncStatusBody;
+
+      expect(body.state).toBe('off');
+      expect(body.detail).not.toBeNull();
+      expect(body.pendingOutgoing).toBe(0);
+      expect(body.pendingIncoming).toBe(0);
+
+      const worktree = SyncWorktree.open(a, run);
+      expect(worktree).not.toBeNull();
+      expect(existsSync(worktree?.path ?? '')).toBe(false);
     } finally {
       await handle?.stop();
       rmSync(origin, { recursive: true, force: true });

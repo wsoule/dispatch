@@ -19,7 +19,10 @@ export interface SyncResult {
   detail: string | null;
 }
 
-export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled';
+// 'disabled' and 'off' are never states a real syncOnce() result carries —
+// both are synthesized by GET /api/sync (see api.ts): 'disabled' when no
+// trunk was resolvable at boot, 'off' when the project has autoCommit: false.
+export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
 
 const TASKS_DIR = join('.dispatch', 'tasks');
 
@@ -256,9 +259,15 @@ export class BoardSyncer {
    * keeps this call fast and network-free; it's meant to explain what's
    * sitting in the worktree right now (e.g. rescued during a conflict, or
    * left over from a restart), not to poll origin.
+   *
+   * Never calls worktree.ensure(): this is read by GET /api/sync on every
+   * page load for every project, including ones with autoCommit off — a
+   * worktree that doesn't exist yet reports zero pending rather than
+   * triggering a synchronous `git worktree add` (a multi-second, event-loop-
+   * blocking checkout) just to answer a status query.
    */
   pendingCounts(): { outgoing: number; incoming: number } {
-    this.worktree.ensure();
+    if (!this.worktree.exists()) return { outgoing: 0, incoming: 0 };
     const localStore = new TaskStore(this.rootDir);
     const remoteStore = new TaskStore(this.worktree.path);
 

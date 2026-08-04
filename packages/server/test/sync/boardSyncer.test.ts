@@ -860,6 +860,24 @@ describe('BoardSyncer with the real merge driver', () => {
 });
 
 describe('BoardSyncer.pendingCounts', () => {
+  it('reports zeroes and never creates the sync worktree when it does not already exist', () => {
+    const { origin, a, b } = twoClones();
+    new TaskStore(a).create({ title: 'Never synced' });
+
+    const worktreeA = SyncWorktree.open(a, run);
+    if (worktreeA === null) throw new Error('expected a resolvable trunk');
+    expect(existsSync(worktreeA.path)).toBe(false);
+
+    expect(syncerFor(a).pendingCounts()).toEqual({ outgoing: 0, incoming: 0 });
+    // The point of the gate: a read-only status query must not trigger a
+    // `git worktree add`, which pendingCounts() used to do unconditionally.
+    expect(existsSync(worktreeA.path)).toBe(false);
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
   it('reports nothing pending right after a clean sync', async () => {
     const { origin, a, b } = twoClones();
     new TaskStore(a).create({ title: 'Synced' });
