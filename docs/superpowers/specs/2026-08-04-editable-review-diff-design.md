@@ -131,11 +131,19 @@ just another root; no new git layer is needed.
 5. Broadcast the existing `review.changed` event for this run so open clients
    refetch the diff.
 
-The commit uses the repository's own git identity rather than the agent's, and a
-message of `review: edit <file>`. That is the point of choosing a separate
-commit over an amend: the agent's work and the human's correction stay
-distinguishable in `git log`, in the run's diff, and in anything that later
-exports an audit trail.
+**Attribution comes from the message, not the author.** An earlier draft of this
+spec said the reviewer commit would carry a different git identity than the
+agent's. That is wrong: nothing in `packages/server/src` sets `--author`,
+`GIT_AUTHOR_*`, or a worktree-local `user.name`, so an agent's commits are
+already authored by whoever's git config the daemon runs under — the human.
+`ActorContext.humanRef` exists but attributes _task activity_, never a commit.
+
+So the commit is marked in the two places that actually differ: a
+`review: edit <file>` subject, and a `Dispatch-Reviewer-Edit: <runId>` trailer.
+The trailer is the machine-readable half — `git log --format=%(trailers)` can
+separate human corrections from agent work without parsing prose, which is what
+an audit export needs. This is still the reason to prefer a separate commit over
+an amend; the mechanism is just a trailer rather than an identity.
 
 **Four preconditions, all `409`, each with a distinct `error` string:**
 
@@ -280,8 +288,8 @@ a disabled pencil work, so showing one is noise.
 
 - `GitRepo.show` — existing file, missing file, path escape rejection.
 - `POST /edits` — happy path writes and commits on the run branch; each of the
-  four 409s; path escape; commit is attributed to the repo identity and not to
-  the agent.
+  four 409s; path escape; the commit carries the `Dispatch-Reviewer-Edit`
+  trailer with this run's id.
 - `GET /file` — both sides, a file missing on one side, and that `sha` matches
   the sha256 the edit precondition will later compare against.
 - Suggestion splice — single line, multi-line range, and each `resolveAnchor`
