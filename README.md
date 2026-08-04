@@ -32,11 +32,16 @@ warning when there's neither carto nor TypeScript to work from.
 carto's native dependencies (`better-sqlite3`, `tree-sitter`) don't build on
 every Node version: in our testing only `npm install -g` under Node 22 LTS
 produced a working install; newer Node lines failed to compile the bindings, and
-`bun install -g` did not produce a working native build. Also, carto's MCP
-server (`carto serve`) is wired into dispatched agents' tool config, but
-upstream it currently doesn't connect its transport, so the integration is inert
-until that's fixed — see
-[carto#9](https://github.com/theanshsonkar/carto/issues/9).
+`bun install -g` did not produce a working native build. A half-built install is
+easy to miss, because `carto --version` answers fine without loading a single
+native module — `dispatch doctor` runs carto's own `doctor` to catch it.
+
+carto's MCP server (`carto serve`) is wired into dispatched agents' tool config
+from carto 2.1.4 onward. Earlier releases started the server without connecting
+its transport ([carto#9](https://github.com/theanshsonkar/carto/issues/9)), so
+Dispatch withholds the MCP entry below that version rather than spawning one
+that answers nothing. Blast radius is unaffected either way: that path reads the
+container as a library, not over MCP.
 
     npm install -g carto-md
 

@@ -5,7 +5,7 @@ import {
   parseTaskFile,
 } from '@dispatch/core';
 import type { DispatchConfig, TaskDoc } from '@dispatch/core';
-import { discoverCarto } from '@dispatch/core/carto';
+import { checkCartoHealth, discoverCarto } from '@dispatch/core/carto';
 import type { Command } from 'commander';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -157,6 +157,14 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
       // under --json since that output must be a single parseable blob.
       if (opts.json !== true) {
         const discovery = discoverCarto();
+        // A carto that answers `--version` can still be unusable: that probe
+        // loads none of its native modules, so bindings that never built
+        // surface only when something actually indexes. `carto doctor` does
+        // load them, which is why the version line alone isn't the verdict.
+        const health = discovery.ok
+          ? checkCartoHealth(ctx.cwd, discovery.binary)
+          : null;
+        const broken = health !== null && !health.ok;
         if (config.carto.enabled !== 'off') {
           if (discovery.ok) {
             ctx.log(
@@ -167,10 +175,23 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
               `carto not available (${discovery.detail}) — using the built-in dependency scanner. Install with: npm install -g carto-md (its native deps built only under Node 22 LTS in our testing)`
             );
           }
+          if (health !== null && !health.ok) {
+            if (health.reason === 'unhealthy') {
+              ctx.log(
+                'warning: carto is installed but not working — using the built-in dependency scanner until these are fixed:'
+              );
+              for (const failure of health.failures) {
+                const fix = failure.fix === null ? '' : ` — ${failure.fix}`;
+                ctx.log(`  ${failure.label}: ${failure.detail}${fix}`);
+              }
+            } else {
+              ctx.log(`carto health check unavailable (${health.detail})`);
+            }
+          }
         }
-        // No carto and no TypeScript: the built-in scanner is blind here,
-        // so dependents() can only ever return [].
-        if (!discovery.ok && !hasTypeScriptSources(ctx.cwd)) {
+        // No usable carto and no TypeScript: the built-in scanner is blind
+        // here, so dependents() can only ever return [].
+        if ((!discovery.ok || broken) && !hasTypeScriptSources(ctx.cwd)) {
           ctx.log(
             'warning: no carto container and no TypeScript sources, so the dependency map is empty and review scope covers only changed files'
           );

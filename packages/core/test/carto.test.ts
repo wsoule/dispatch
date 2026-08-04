@@ -15,10 +15,12 @@ import { join } from 'node:path';
 import {
   cartoInit,
   cartoSyncAsync,
+  checkCartoHealth,
   discoverCarto,
   openCartoReader,
   pinHookWorkingDirs,
   redirectCartoOutput,
+  supportsMcpServe,
 } from '../src/carto.js';
 
 // Writes an executable stub named `carto` that prints `version` for --version.
@@ -40,6 +42,24 @@ function writeStubCartoBinary(
   writeFileSync(file, `#!/bin/sh\n${body}\n`);
   chmodSync(file, 0o755);
   return { path: file, version: '2.9.9' };
+}
+
+// Writes an executable `carto` stub whose `doctor --json` prints `payload`
+// and exits `exitCode`, so health-probe tests exercise the JSON contract
+// rather than whatever carto is installed on the machine running them.
+function writeDoctorStub(
+  binDir: string,
+  payload: string,
+  exitCode = 0
+): { path: string; version: string } {
+  mkdirSync(binDir, { recursive: true });
+  const file = join(binDir, 'carto');
+  writeFileSync(
+    file,
+    `#!/bin/sh\ncat <<'CARTO_JSON'\n${payload}\nCARTO_JSON\nexit ${String(exitCode)}\n`
+  );
+  chmodSync(file, 0o755);
+  return { path: file, version: '2.1.4' };
 }
 
 // Installs a `loadAnci()` that always throws `sentinel` at
@@ -172,6 +192,195 @@ describe('openCartoReader', () => {
       }
     } finally {
       uninstall();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// carto 2.1.4 fixed the `carto serve` transport bug (carto#9): reached
+// through the `carto` bin, server.js's `require.main === module` guard was
+// false, so the stdio transport never connected and the MCP entry Dispatch
+// wires into every run was inert.
+describe('supportsMcpServe', () => {
+  it('rejects 2.1.3, whose `carto serve` never connects its transport', () => {
+    expect(supportsMcpServe('2.1.3')).toBe(false);
+  });
+
+  it('accepts 2.1.4, the release that connects it', () => {
+    expect(supportsMcpServe('2.1.4')).toBe(true);
+  });
+
+  it('accepts later releases', () => {
+    expect(supportsMcpServe('2.2.0')).toBe(true);
+    expect(supportsMcpServe('3.0.0')).toBe(true);
+    expect(supportsMcpServe('2.1.10')).toBe(true);
+  });
+
+  // Numeric comparison, not lexicographic: '2.1.9' < '2.1.10' as versions
+  // but sorts after it as text.
+  it('compares parts numerically rather than as text', () => {
+    expect(supportsMcpServe('2.1.30')).toBe(true);
+    expect(supportsMcpServe('10.0.0')).toBe(true);
+  });
+
+  // A version string shorter than the floor still has to place correctly:
+  // '2.2' outranks 2.1.4, '2.1' does not.
+  it('treats missing version parts as zero', () => {
+    expect(supportsMcpServe('2.2')).toBe(true);
+    expect(supportsMcpServe('2.1')).toBe(false);
+    expect(supportsMcpServe('2')).toBe(false);
+  });
+
+  it('rejects a version it cannot parse rather than assuming support', () => {
+    expect(supportsMcpServe('')).toBe(false);
+    expect(supportsMcpServe('unknown')).toBe(false);
+  });
+});
+
+describe('checkCartoHealth', () => {
+  const ALL_OK = `{
+  "results": [
+    { "id": "node-version", "status": "ok", "label": "Node 22.19.0", "detail": "supported", "fix": null },
+    { "id": "native-better-sqlite3", "status": "ok", "label": "Native module: better-sqlite3", "detail": "loaded", "fix": null },
+    { "id": "index-exists", "status": "ok", "label": "Index at .carto/carto.db", "detail": "present", "fix": null }
+  ],
+  "ok": true
+}`;
+
+  it('reports healthy when every check passes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeDoctorStub(join(root, 'bin'), ALL_OK);
+      expect(checkCartoHealth(root, binary).ok).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The failure `dispatch doctor` could not previously see: `carto --version`
+  // never loads a native module, so a carto with unbuilt bindings reported as
+  // healthy while every `carto init` died.
+  it('reports the failing check when a native module is broken', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeDoctorStub(
+        join(root, 'bin'),
+        `{
+  "results": [
+    { "id": "native-tree-sitter", "status": "fail", "label": "Native module: tree-sitter", "detail": "failed: No native build was found", "fix": "Reinstall the package: \`npm install -g carto-md\`." }
+  ],
+  "ok": false
+}`,
+        1
+      );
+      const health = checkCartoHealth(root, binary);
+      expect(health.ok).toBe(false);
+      if (!health.ok && health.reason === 'unhealthy') {
+        expect(health.failures).toHaveLength(1);
+        expect(health.failures[0]?.id).toBe('native-tree-sitter');
+        expect(health.failures[0]?.detail).toContain('No native build');
+        expect(health.failures[0]?.fix).toContain('npm install -g carto-md');
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // A missing container is a normal state under `carto.enabled: detect`, and
+  // one `on` builds on demand — it is not an install defect, so it must not
+  // make a working carto report as broken.
+  it('does not treat a missing index as an unhealthy install', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeDoctorStub(
+        join(root, 'bin'),
+        `{
+  "results": [
+    { "id": "native-better-sqlite3", "status": "ok", "label": "Native module: better-sqlite3", "detail": "loaded", "fix": null },
+    { "id": "index-exists", "status": "fail", "label": "Index at .carto/carto.db", "detail": "missing", "fix": "Run \`carto init\` to create the index." }
+  ],
+  "ok": false
+}`,
+        1
+      );
+      expect(checkCartoHealth(root, binary).ok).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports every failing check, not just the first', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeDoctorStub(
+        join(root, 'bin'),
+        `{
+  "results": [
+    { "id": "native-tree-sitter", "status": "fail", "label": "Native module: tree-sitter", "detail": "failed", "fix": null },
+    { "id": "grammars", "status": "fail", "label": "Tree-sitter grammars", "detail": "2 missing", "fix": null }
+  ],
+  "ok": false
+}`,
+        1
+      );
+      const health = checkCartoHealth(root, binary);
+      expect(health.ok).toBe(false);
+      if (!health.ok && health.reason === 'unhealthy') {
+        expect(health.failures.map((f) => f.id)).toEqual([
+          'native-tree-sitter',
+          'grammars',
+        ]);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // An older 2.x without `doctor --json`, or a carto that dies before it
+  // prints, is unknown — not broken. The caller says so rather than
+  // reporting a working install as defective.
+  it('reports unreadable when the output is not the expected JSON', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const binary = writeDoctorStub(
+        join(root, 'bin'),
+        'Usage: carto <cmd>',
+        1
+      );
+      const health = checkCartoHealth(root, binary);
+      expect(health.ok).toBe(false);
+      if (!health.ok) expect(health.reason).toBe('unreadable');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports unreadable when the binary cannot be spawned', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    try {
+      const health = checkCartoHealth(root, {
+        path: join(root, 'nope', 'carto'),
+        version: '2.1.4',
+      });
+      expect(health.ok).toBe(false);
+      if (!health.ok) expect(health.reason).toBe('unreadable');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // .carto/ only ever exists at the project root, so the probe must run
+  // there — the same cwd pinning cartoSync already does.
+  it('runs the probe at the project root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-carto-'));
+    const spy = spyOn(childProcess, 'spawnSync');
+    try {
+      const binary = writeDoctorStub(join(root, 'bin'), ALL_OK);
+      checkCartoHealth(root, binary);
+      expect(spy.mock.calls[0]?.[1]).toEqual(['doctor', '--json']);
+      expect(spy.mock.calls[0]?.[2]).toMatchObject({ cwd: root });
+    } finally {
+      spy.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });
