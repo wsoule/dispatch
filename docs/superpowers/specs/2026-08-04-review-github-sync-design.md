@@ -109,11 +109,20 @@ Verified against the local toolchain while writing this spec:
   `git diff <mergeBase>` for a raw patch string and `git diff --name-status` for
   the `{path, status}` file list. `DiffResult.patch` is unmodified stdout.
 
-**Not verified:** the live REST payload for PR review comments.
-`wsoule/dispatch` had no open PRs when this was written, so the field mapping in
-Phase 3 comes from the documented API, not from an observed response. The first
-implementation task must probe a real payload and correct the mapping before the
-sync logic is built on it.
+**Now verified (2026-08-04), against `repos/shadcn-ui/ui/pulls/comments`.** This
+was recorded as the spec's biggest risk; probing a public repo closed it and
+corrected one error that would have broken the whole mirror:
+
+- Every assumed field exists: `id`, `node_id`, `path`, `line`, `original_line`,
+  `start_line`, `diff_hunk`, `updated_at`, `user`, `pull_request_review_id`.
+- **`diff_hunk`'s last line carries its diff prefix** — the observed value is
+  `"+      ></circle>"`, not `"      ></circle>"`. Storing it verbatim as
+  `anchorText` would never match a real file line, so `resolveAnchor` would
+  report every synced comment as outdated. The prefix must be stripped.
+- `line: null` with `original_line` set was true of every comment sampled, so
+  the outdated path is the common case, not a corner.
+- Two fields the design had not considered: `side` (`RIGHT`/`LEFT`) and
+  `subject_type` (`line`/`file`). See the mapping below for how each is handled.
 
 ## Phase 1 — Every PR in the review queue
 
@@ -182,18 +191,30 @@ The largest phase, and the one carrying the chosen-deliberately complexity.
 
 ### Field mapping
 
-The useful accident: GitHub's `diff_hunk` **ends with the commented line**,
-which is exactly what `anchorText` stores. `resolveAnchor`
-(`reviewComments.ts:91`) and its exact/moved/outdated logic keep working
-untouched.
+GitHub's `diff_hunk` **ends with the commented line**, which is what
+`anchorText` stores — so `resolveAnchor` (`reviewComments.ts:91`) and its
+exact/moved/outdated logic keep working untouched. The one catch, confirmed by
+probing: that line still carries its diff prefix (`+`, `-`, or a space), and it
+must be stripped, or the stored anchor can never equal a real file line.
 
-| Local        | GitHub REST                             |
-| ------------ | --------------------------------------- |
-| `file`       | `path`                                  |
-| `line`       | `line`, falling back to `original_line` |
-| `startLine`  | `start_line`                            |
-| `anchorText` | last line of `diff_hunk`                |
-| _(outdated)_ | `line === null`                         |
+| Local        | GitHub REST                                           |
+| ------------ | ----------------------------------------------------- |
+| `file`       | `path`                                                |
+| `line`       | `line`, falling back to `original_line`               |
+| `startLine`  | `start_line`                                          |
+| `anchorText` | last line of `diff_hunk`, **first character dropped** |
+| _(outdated)_ | `line === null`                                       |
+
+**`side` and `subject_type`.** A `LEFT`-side comment is anchored to the old side
+of the diff, and the local model only stores new-side line numbers — so a `LEFT`
+comment is pulled as **outdated** rather than given a new-side line it does not
+have. `subject_type: 'file'` comments have no line at all; they are pulled as
+file-level notes with `line: 0` and rendered in the right rail beside the
+PR-level conversation, never anchored into the diff.
+
+Neither is synthesized on push: Dispatch only ever writes `RIGHT`-side,
+`subject_type: 'line'` comments, because that is the only kind its own composer
+can produce.
 
 ### Push
 
