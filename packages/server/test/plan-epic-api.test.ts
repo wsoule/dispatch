@@ -487,7 +487,7 @@ describe('POST /api/tasks/drafts/:id/message', () => {
     return started.id;
   }
 
-  it('202s a follow-up, clears the questions, and settles ready with the proposal', async () => {
+  it('202s a follow-up, keeps the questions in flight, and settles ready with the proposal', async () => {
     const draftId = await startedDraftAwaitingAnswer();
 
     const res = await fetch(`${baseUrl}/api/tasks/drafts/${draftId}/message`, {
@@ -498,7 +498,7 @@ describe('POST /api/tasks/drafts/:id/message', () => {
     expect(res.status).toBe(202);
     const accepted = await json(res);
     expect(accepted.state).toBe('running');
-    expect(accepted.questions).toEqual([]);
+    expect(accepted.questions).toHaveLength(1);
 
     await waitFor(async () => {
       const r = await json(
