@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import type { RunDisposition } from './runState';
 import {
   deriveRunDisposition,
+  deriveStopControl,
   isTerminalRunState,
   runDispositionLabel,
   runSurveyNotice,
@@ -200,5 +201,51 @@ describe('runSurveyNotice', () => {
   test('a clean tree says nothing — the run already notified as failed', () => {
     expect(runSurveyNotice('Ship it', survey())).toBeNull();
     expect(runSurveyNotice('Ship it', survey({ cleanTree: false }))).toBeNull();
+  });
+});
+
+describe('deriveStopControl', () => {
+  test('offers Stop on a live run nobody has stopped yet', () => {
+    const control = deriveStopControl(run({ state: 'running' }));
+    expect(control.showButtons).toBe(true);
+    expect(control.stopLabel).toBe('Stop');
+    expect(control.stopDisabled).toBe(false);
+    expect(control.showStoppedChip).toBe(false);
+  });
+
+  // A run waiting on an approval is live and stoppable — the stop is what
+  // answers the approval it is parked on.
+  test('offers Stop on a run awaiting approval', () => {
+    expect(
+      deriveStopControl(run({ state: 'awaiting-approval' })).showButtons
+    ).toBe(true);
+  });
+
+  test('reads Stopping… once the run carries the marker, and stays disabled', () => {
+    const control = deriveStopControl(
+      run({ state: 'running', stopRequestedAt: '2026-01-01T00:00:00.000Z' })
+    );
+    // Still shown, not hidden: it is the status line for a run still working.
+    expect(control.showButtons).toBe(true);
+    expect(control.stopLabel).toBe('Stopping…');
+    expect(control.stopDisabled).toBe(true);
+    // Not yet — the chip is for a run that has actually come to rest.
+    expect(control.showStoppedChip).toBe(false);
+  });
+
+  test('marks a terminal run that was stopped, and drops the buttons', () => {
+    const control = deriveStopControl(
+      run({ state: 'finished', stopRequestedAt: '2026-01-01T00:00:00.000Z' })
+    );
+    expect(control.showButtons).toBe(false);
+    expect(control.showStoppedChip).toBe(true);
+  });
+
+  // "Finished" on its own means the agent ran out of work; the chip must not
+  // claim a human stopped a run that simply completed.
+  test('leaves a run that finished on its own unmarked', () => {
+    expect(deriveStopControl(run({ state: 'finished' })).showStoppedChip).toBe(
+      false
+    );
   });
 });

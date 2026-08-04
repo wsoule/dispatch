@@ -123,3 +123,37 @@ export function runSurveyNotice(
     body: `${taskTitle} — ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
   };
 }
+
+/** What the halting controls should render for one run — see `deriveStopControl`. */
+export interface StopControl {
+  /** Whether the Stop and Cancel buttons belong on screen at all. */
+  showButtons: boolean;
+  /** Stop's label: it doubles as the status line for a stop already in flight. */
+  stopLabel: 'Stop' | 'Stopping…';
+  /** True once a stop is in flight — Stop has nothing left to ask for. */
+  stopDisabled: boolean;
+  /** Whether a terminal run should be marked as having been deliberately stopped. */
+  showStoppedChip: boolean;
+}
+
+/**
+ * How a run's halting controls should read, derived from the run itself rather
+ * than from whether this session happens to have clicked Stop.
+ *
+ * `stopRequestedAt` is a server-side marker that outlives the click, so a reload,
+ * a daemon restart, or switching runs and back all still show a stop in flight.
+ * The three cases it distinguishes: live and never stopped (offer Stop), live and
+ * stopping (say so, and keep Cancel available as the escape hatch for an agent
+ * taking too long), and terminal after a stop (say it was stopped, because a bare
+ * "Finished" would read as a run that completed its task).
+ */
+export function deriveStopControl(meta: RunMeta): StopControl {
+  const live = !isTerminalRunState(meta.state);
+  const stopRequested = meta.stopRequestedAt !== undefined;
+  return {
+    showButtons: live,
+    stopLabel: stopRequested ? 'Stopping…' : 'Stop',
+    stopDisabled: stopRequested,
+    showStoppedChip: !live && stopRequested,
+  };
+}

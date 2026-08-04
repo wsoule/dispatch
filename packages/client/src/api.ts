@@ -151,6 +151,12 @@ export interface RunMeta {
   // Files this run is touching — seeded from its task's declared writes and
   // grown from its worktree's own git status as it edits things.
   claims?: string[];
+  // Set when a human asked this run to stop gracefully (`stopRun`). A marker,
+  // not a state: the run stays live while the agent finishes what it is doing,
+  // then reaches its own terminal state normally. So a run with this set and a
+  // non-terminal `state` is stopping; one with this set and a terminal `state`
+  // was stopped, as opposed to having run to its own conclusion.
+  stopRequestedAt?: string;
 }
 
 // Mirrors BranchEntryStatus in packages/server/src/orchestrator/types.ts.
@@ -1257,6 +1263,13 @@ export interface ApiClient {
     opts?: { resume?: boolean }
   ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
+  /**
+   * Asks a live run to stop gracefully: the agent finishes its current
+   * operation, then ends, so its work is committed and reviewable. Unlike
+   * `cancelRun` the run is still live when this resolves — the returned meta
+   * carries `stopRequestedAt`, and the run reaches its terminal state later.
+   */
+  stopRun(runId: string): Promise<RunMeta>;
   // Agent-death recovery: dispatches a fresh run into a terminal run's same
   // worktree, with its survey (if any) rendered into the new prompt.
   resumeRun(runId: string): Promise<RunMeta>;
@@ -1642,6 +1655,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     cancelRun: async (runId) => {
       await request(target, `/api/runs/${runId}/cancel`, { method: 'POST' });
     },
+    stopRun: (runId) =>
+      request(target, `/api/runs/${runId}/stop`, { method: 'POST' }),
     resumeRun: (runId) =>
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     fetchRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),

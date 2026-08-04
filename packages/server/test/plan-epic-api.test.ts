@@ -965,6 +965,7 @@ describe('POST /api/runs/:id/inject', () => {
       start(_opts, _events) {
         return {
           interrupt: async () => {},
+          requestStop: () => {},
           send: (message: string) => sent.push(message),
           approve: () => {},
         } satisfies ExecutorRun;
@@ -1030,6 +1031,7 @@ describe('POST /api/runs/:id/inject', () => {
       start(_opts, _events) {
         return {
           interrupt: async () => {},
+          requestStop: () => {},
           send: (message: string) => sent.push(message),
           approve: () => {},
         } satisfies ExecutorRun;
@@ -1157,6 +1159,7 @@ describe('POST /api/runs/:id/message-user', () => {
       start(_opts, _events) {
         return {
           interrupt: async () => {},
+          requestStop: () => {},
           send: () => {},
           approve: () => {},
         } satisfies ExecutorRun;
