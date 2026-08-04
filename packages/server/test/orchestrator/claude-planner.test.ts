@@ -59,11 +59,7 @@ describe('ClaudePlanner.start', () => {
     expect(turn.sessionId).toBe('sess-1');
   });
 
-  // The planner session must not inherit the operator's personal Claude Code
-  // environment. A planner turn that could spawn a subagent did: the subagent
-  // finished mid-conversation, injected a task-notification into the resumed
-  // session, and the follow-up turn died with no structured output at all.
-  // `'project'` stays because the SDK only loads CLAUDE.md/AGENTS.md with it.
+  // Planner must run isolated: no operator environment, no subagents, read-only.
   it('runs read-only with no subagents, no user settings, and no MCP servers', async () => {
     const proposal: PlanProposal = { tasks: [] };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
