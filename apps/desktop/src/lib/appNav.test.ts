@@ -337,4 +337,24 @@ describe('draft page navigation', () => {
     expect(state.projectView).toBe('board');
     expect(state.activeDraftId).toBeNull();
   });
+
+  test('switching between drafts without leaving the draft view pushes history for each', () => {
+    let state = navReducer(initialNavState, {
+      type: 'openDraft',
+      draftId: 'd-1',
+    });
+    expect(state.activeDraftId).toBe('d-1');
+    expect(state.history.length).toBe(2);
+
+    state = navReducer(state, {
+      type: 'openDraft',
+      draftId: 'd-2',
+    });
+    expect(state.activeDraftId).toBe('d-2');
+    expect(state.history.length).toBe(3);
+
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('draft');
+    expect(state.activeDraftId).toBe('d-1');
+  });
 });
