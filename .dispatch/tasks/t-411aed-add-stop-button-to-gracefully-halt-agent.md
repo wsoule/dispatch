@@ -1,7 +1,7 @@
 ---
 id: t-411aed
 title: Add stop button to gracefully halt agent execution
-status: in-review
+status: done
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-03T23:37:38.604Z
-updated: 2026-08-04T15:34:09.161Z
+updated: 2026-08-04T16:40:15.193Z
 external: null
 writes: []
 ---
@@ -40,3 +40,4 @@ Self-review caught and fixed two things beyond the original scope: (1) a `provis
 Note for whoever merges: run r-fd81a8 claims packages/server/src/api.ts, which this also touches (one new route block next to /cancel) — expect a trivial conflict there at most. Also, `DISPATCH_MCP_BIN` leaks into the environment from an installed Dispatch.app and breaks a pre-existing MCP-wiring assertion in claude-executor.test.ts; run the server suite with it unset. Unrelated to this change. — none
 - 2026-08-04T00:44:11.535Z [run r-aef398] finished: finished — 34 files, $24.79 — agent:wsoule679/claude
 - 2026-08-04T15:34:09.161Z [run r-d77386] finished: finished — 0 files, $5.33 — agent:wsoule679/claude
+- 2026-08-04T16:40:15.163Z status → done — human:wsoule679
