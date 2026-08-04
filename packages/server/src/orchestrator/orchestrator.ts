@@ -2616,8 +2616,40 @@ export class Orchestrator {
         // this run just did rather than letting the cooldown delay it.
         this.forceClaimsRefresh(runId);
       },
+      onSession: (sessionId) => this.recordSession(runId, sessionId),
       onFinish: (finish) => this.handleFinish(runId, finish),
     };
+  }
+
+  // Persists a run's resume handle as soon as the executor reports it, so a
+  // run force-failed by reconcileOnBoot still satisfies sendMessage's
+  // `resume: true` gate instead of coming back dead. Rides on a state line at
+  // the run's CURRENT state, exactly like reviewedAt/mergeCommit already do,
+  // so replayTranscript folds it in with no new line type. Skipped once
+  // terminal: the finish line carries the session, and a late stray event
+  // must not append a non-terminal state line after it.
+  private recordSession(runId: string, sessionId: string): void {
+    if (sessionId === '') return;
+    const meta = this.registry.get(runId);
+    if (meta === undefined || meta.sessionId === sessionId) return;
+    if (TERMINAL_RUN_STATES.has(meta.state)) return;
+    this.registry.updateMeta(runId, {
+      sessionId,
+      updatedAt: new Date().toISOString(),
+    });
+    // Best-effort, like handleFinish's own transcript writes: an unwritable
+    // transcript must not take down a live run mid-stream.
+    try {
+      this.transcriptFor(runId).appendState(
+        meta.state,
+        new Date().toISOString(),
+        { sessionId }
+      );
+    } catch (err) {
+      console.error(
+        `dispatchd: recording session for run ${runId} failed: ${(err as Error).message}`
+      );
+    }
   }
 
   // Applies a run's terminal state: transitions it, computes the changed
