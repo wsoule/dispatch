@@ -2,10 +2,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, resolve } from 'node:path';
 
+import { normalizeProjectPath } from './projectPath.js';
+
 // A project the CLI (and, per Task 8, the desktop app's Rust side) knows
 // about — enough to show it in a project switcher and re-open it without the
 // user retyping a path. One entry per distinct project root; `path` is
-// always the normalized absolute path (see `normalizeRegistryPath` below).
+// always the normalized absolute path (see `normalizeProjectPath`).
 export interface RegisteredProject {
   path: string;
   name: string;
@@ -36,18 +38,6 @@ export function registryPath(): string {
   return resolve(registryHome(), '.dispatch', 'projects.json');
 }
 
-// Normalizes a project path before it's stored or compared: resolve to an
-// absolute path, then strip any trailing separator. This mirrors
-// `normalize_root` in apps/desktop/src-tauri/src/sidecar.rs (used there for
-// daemon-file hashing) so the same directory always produces the same
-// registry key regardless of which side — TS or Rust — wrote it, and
-// regardless of a trailing slash on the input.
-function normalizeRegistryPath(path: string): string {
-  const resolved = resolve(path);
-  if (resolved === '/') return resolved;
-  return resolved.endsWith('/') ? resolved.slice(0, -1) : resolved;
-}
-
 // Reads the registry, treating a missing or corrupt file as an empty list
 // rather than throwing — a brand-new machine (no registry yet) and a
 // registry damaged by e.g. a crash mid-write should both behave like "no
@@ -75,7 +65,7 @@ function writeRegistry(projects: RegisteredProject[]): void {
 // while re-registering an existing project only bumps `lastOpenedAt` —
 // `addedAt` is when it was first seen, not when it was last opened.
 export function upsertRegisteredProject(path: string): RegisteredProject {
-  const normalized = normalizeRegistryPath(path);
+  const normalized = normalizeProjectPath(path);
   const now = new Date().toISOString();
   const projects = readRegistry();
   const existing = projects.find((p) => p.path === normalized);
