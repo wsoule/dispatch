@@ -87,6 +87,7 @@ function worktreeConfigExtensionEnabled(
   const result = run(rootDir, [
     'config',
     '--local',
+    '--type=bool',
     '--get',
     'extensions.worktreeConfig',
   ]);
@@ -387,12 +388,17 @@ export class SyncWorktree {
     if (commonDir === null) return;
     if (anyOtherWorktreeHasScopedConfig(commonDir)) return;
 
-    this.run(this.rootDir, [
+    const unset = this.run(this.rootDir, [
       'config',
       '--local',
       '--unset',
       'extensions.worktreeConfig',
     ]);
-    rmSync(this.extensionMarkerPath, { force: true });
+    // Only forfeit ownership if the unset actually took (status 0). A
+    // duplicate `[extensions]` key or a stale `config.lock` can make
+    // `--unset` fail (status 5) while leaving the flag set — keep the
+    // marker in that case so a later remove() retries instead of leaking
+    // the flag forever.
+    if (unset.status === 0) rmSync(this.extensionMarkerPath, { force: true });
   }
 }
