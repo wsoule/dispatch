@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { reviewCommentsPath } from './orchestrator/paths.js';
+import type { ReviewTarget } from './reviewTarget.js';
 
 /**
  * Line-level review comments on a run's diff.
@@ -117,12 +118,12 @@ export class ReviewCommentStore {
     private readonly defaultAuthor: string
   ) {}
 
-  private file(runId: string): string {
-    return reviewCommentsPath(this.rootDir, runId);
+  private file(target: ReviewTarget): string {
+    return reviewCommentsPath(this.rootDir, target);
   }
 
-  list(runId: string): ReviewComment[] {
-    const path = this.file(runId);
+  list(target: ReviewTarget): ReviewComment[] {
+    const path = this.file(target);
     if (!existsSync(path)) return [];
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
@@ -134,14 +135,14 @@ export class ReviewCommentStore {
     }
   }
 
-  private write(runId: string, comments: ReviewComment[]): void {
-    const path = this.file(runId);
+  private write(target: ReviewTarget, comments: ReviewComment[]): void {
+    const path = this.file(target);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify(comments, null, 2)}\n`);
   }
 
   add(
-    runId: string,
+    target: ReviewTarget,
     input: AddCommentInput,
     now = new Date().toISOString()
   ): ReviewComment {
@@ -158,74 +159,75 @@ export class ReviewCommentStore {
       created: now,
       replies: [],
     };
-    const all = this.list(runId);
+    const all = this.list(target);
     all.push(comment);
-    this.write(runId, all);
+    this.write(target, all);
     return comment;
   }
 
   reply(
-    runId: string,
+    target: ReviewTarget,
     commentId: string,
     body: string,
     author = this.defaultAuthor,
     now = new Date().toISOString()
   ): ReviewComment {
-    const all = this.list(runId);
+    const all = this.list(target);
     const comment = all.find((c) => c.id === commentId);
     if (comment === undefined) {
       throw new Error(`review comment not found: ${commentId}`);
     }
     comment.replies.push({ id: newId('rr'), author, body, created: now });
-    this.write(runId, all);
+    this.write(target, all);
     return comment;
   }
 
   setResolved(
-    runId: string,
+    target: ReviewTarget,
     commentId: string,
     resolved: boolean
   ): ReviewComment {
-    const all = this.list(runId);
+    const all = this.list(target);
     const comment = all.find((c) => c.id === commentId);
     if (comment === undefined) {
       throw new Error(`review comment not found: ${commentId}`);
     }
     comment.resolved = resolved;
-    this.write(runId, all);
+    this.write(target, all);
     return comment;
   }
 
-  remove(runId: string, commentId: string): void {
+  remove(target: ReviewTarget, commentId: string): void {
     this.write(
-      runId,
-      this.list(runId).filter((c) => c.id !== commentId)
+      target,
+      this.list(target).filter((c) => c.id !== commentId)
     );
   }
 
   /**
-   * Publishes every pending comment on a run, returning how many were released.
+   * Publishes every pending comment on a target, returning how many were
+   * released.
    *
    * Called when a review is submitted. Deliberately separate from acting on the verdict, and
    * done first: the comments become real, and only then does the caller resume or enqueue. If
    * the verdict action fails, the reviewer's writing still survives — the reverse order would
    * lose it.
    */
-  publishPending(runId: string): number {
-    const all = this.list(runId);
+  publishPending(target: ReviewTarget): number {
+    const all = this.list(target);
     let count = 0;
     for (const c of all) {
       if (!c.pending) continue;
       c.pending = false;
       count += 1;
     }
-    if (count > 0) this.write(runId, all);
+    if (count > 0) this.write(target, all);
     return count;
   }
 
   /** How many comments are staged but unsent — the number the review bar counts down. */
-  pendingCount(runId: string): number {
-    return this.list(runId).filter((c) => c.pending).length;
+  pendingCount(target: ReviewTarget): number {
+    return this.list(target).filter((c) => c.pending).length;
   }
 }
 
