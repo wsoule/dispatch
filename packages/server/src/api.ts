@@ -681,6 +681,13 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     ctx.events.broadcast({ type: 'config.changed' });
     // A changed interval or enabled flag only takes effect once the poll timer is rebuilt.
     ctx.linearSync.start();
+    // Turning auto-commit off is the natural point to tear the board's
+    // private sync worktree back down — otherwise it (and its `git
+    // worktree list` entry in the user's repo) outlives the feature it was
+    // created for. Unconditional on `patch.autoCommit === false` rather than
+    // gated on an actual true→false transition: SyncWorktree.remove() is
+    // already a safe no-op when there's nothing to remove.
+    if (patch.autoCommit === false) ctx.boardSyncScheduler?.removeWorktree();
     return jsonResponse(config);
   } catch (err) {
     return errorResponse(400, (err as Error).message);

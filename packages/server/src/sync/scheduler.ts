@@ -118,6 +118,18 @@ export class BoardSyncScheduler {
     return this.syncer.pendingCounts();
   }
 
+  /**
+   * Removes the sync worktree and deregisters it from `git worktree list` in
+   * the user's repo — the cleanup half of enabling autoCommit, which
+   * otherwise leaves a permanent full checkout under DISPATCH_HOME and a
+   * permanent entry in the user's own worktree list even after the feature
+   * is turned back off. A no-op if the worktree was never created (see
+   * SyncWorktree.remove's own doc comment).
+   */
+  removeWorktree(): void {
+    this.deps.worktree.remove();
+  }
+
   // Cancels any pending debounce. Does not wait for an in-flight sync — the
   // syncer's own worktree discipline (never left mid-rebase) makes that safe
   // to abandon on shutdown.
