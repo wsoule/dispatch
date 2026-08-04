@@ -407,13 +407,27 @@ export function ReviewView({
             height instead. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {!isPrTarget && selected === null && (
-            <ReviewCasePanel
-              evidence={data.runDetail?.evidence ?? []}
-              mutations={data.runDetail?.mutations ?? []}
-              findings={findings}
-              decisions={decisions}
-              onStartAiReview={handleStartAiReview}
-            />
+            <>
+              {/* An empty file tree beside the case reads as "this run
+                  changed nothing" when the diff simply failed to load. */}
+              {data.diffError !== null && (
+                <p className="text-destructive p-4 text-[12.5px]">
+                  Couldn&rsquo;t load this run&rsquo;s diff: {data.diffError}
+                </p>
+              )}
+              {data.diffError === null && data.diffLoading && (
+                <p className="text-muted-foreground p-4 text-[12.5px]">
+                  Loading the diff…
+                </p>
+              )}
+              <ReviewCasePanel
+                evidence={data.runDetail?.evidence ?? []}
+                mutations={data.runDetail?.mutations ?? []}
+                findings={findings}
+                decisions={decisions}
+                onStartAiReview={handleStartAiReview}
+              />
+            </>
           )}
           {/* A failed fetch must not read as "this PR changes nothing" — an
               empty file tree beside cheerful copy is the worse failure. */}
