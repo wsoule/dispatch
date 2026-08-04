@@ -155,7 +155,7 @@ export function ReviewView({
           onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
         />
 
-        <div className="min-h-0 overflow-auto">
+        <div className="min-h-0">
           {data.diff !== undefined && selected !== null && (
             <PierreReviewDiff
               patch={data.diff.patch}

@@ -272,7 +272,12 @@ export function PierreReviewDiff({
           }
           renderAnnotation={renderAnnotation}
           renderGutterUtility={renderGutterUtility}
-          className="size-full"
+          // `CodeView` attaches its own scroll listener to this exact element and reads its
+          // own `scrollTop` to decide which virtualized rows to render — an ancestor owning
+          // the `overflow-auto` instead leaves this element's `scrollTop` permanently 0, so
+          // the window of rendered rows never advances past the first screenful. This element
+          // must be the actual scroll container.
+          className="size-full overflow-auto"
         />
       </PierreWorkerPool>
     </ErrorBoundary>
