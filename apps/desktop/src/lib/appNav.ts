@@ -98,7 +98,8 @@ function pushHistory(state: NavState, next: NavEntry): NavState {
     last.section === next.section &&
     last.projectView === next.projectView &&
     last.globalView === next.globalView &&
-    last.activeRunId === next.activeRunId
+    last.activeRunId === next.activeRunId &&
+    last.activeDraftId === next.activeDraftId
   ) {
     return state;
   }
