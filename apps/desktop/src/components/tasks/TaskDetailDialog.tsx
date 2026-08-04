@@ -26,6 +26,7 @@ import {
   FlaskConical,
   Layers,
   Link2,
+  Pencil,
   Plus,
   ShieldAlert,
   Sparkles,
@@ -64,6 +65,7 @@ import { pushToLinearError, resolveLinearLink } from '../../lib/linearSettings';
 import { mergeLadderLabel, mergeLadderState } from '../../lib/mergeLadder';
 import { modelLabel, MODELS, readDefaultModel } from '../../lib/models';
 import { isTerminalRunState } from '../../lib/runState';
+import { decideBodySave } from '../../lib/taskBodyEdit';
 import { parseTaskSections } from '../../lib/taskDisplay';
 import {
   enrichDraftFromPlan,
@@ -76,6 +78,7 @@ import {
   verificationCheckDetail,
 } from '../../lib/verificationSummary';
 import { PlanQuestionsForm } from '../plans/PlanQuestionsForm';
+import { Markdown } from '../runs/Markdown';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
@@ -89,6 +92,7 @@ import {
 } from './PropertyControls';
 import { StackRail } from './StackRail';
 import { StatusIcon } from './StatusIcon';
+import { TaskBodyEditor } from './TaskBodyEditor';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
@@ -144,35 +148,28 @@ function MainSection({
   );
 }
 
-// An inline-editable body section (Description, Acceptance Criteria): renders
-// as borderless prose until focused, auto-grows to its content, and commits on
-// blur only when the text actually changed — so reading the task costs nothing
-// and editing is one click into the text. `value` is the section's current
-// persisted text; the local draft resets whenever it (or the task) changes.
-function EditableBodySection({
+// A read-only body section (Description, Acceptance Criteria, Amendments)
+// rendered as real markdown — headings, lists, tables and code fences, the same
+// treatment run transcripts get. These sections used to be always-on textareas
+// showing raw text; with the whole body editable behind the header's Edit
+// button, a second inline writer for the same text would just be a way for the
+// two to disagree.
+function BodySection({
   title,
   value,
   placeholder,
-  onSave,
 }: {
   title: string;
   value: string;
   placeholder: string;
-  onSave: (next: string) => void;
 }) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
   return (
     <MainSection title={title}>
-      <Textarea
-        className="text-foreground/90 hover:bg-muted/30 focus-visible:bg-muted/40 -mx-2 min-h-[2.25rem] resize-none rounded-md border-transparent bg-transparent px-2 py-1.5 text-[13.5px] leading-relaxed shadow-none transition-colors duration-150 focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
-        value={draft}
-        placeholder={placeholder}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          if (draft !== value) onSave(draft);
-        }}
-      />
+      {value === '' ? (
+        <p className="text-muted-foreground text-[13px]">{placeholder}</p>
+      ) : (
+        <Markdown content={value} className="text-[13.5px] leading-relaxed" />
+      )}
     </MainSection>
   );
 }
@@ -784,14 +781,15 @@ interface TaskDetailDialogProps {
 
 /**
  * Task detail as a wide, two-column shadcn `Dialog`, built to Linear's issue-detail anatomy: a
- * roomy main column (the title as the one loud element, then inline-editable Description /
+ * roomy main column (the title as the one loud element, then the markdown-rendered Description /
  * Acceptance Criteria, Sessions, and Activity) beside a narrow right-hand *properties rail*
  * where status, priority, assignee, epic, blockers, and labels are all editable as compact
- * icon+value rows instead of boxed form fields. Every field on the task is editable in place:
- * frontmatter fields go through `onUpdate`/`onMoveStatus`, and the free-text body sections go
- * through `onUpdate`'s `description`/`acceptanceCriteria` (whole-section replacements — see
- * core's setSection). Linear opens issues as a modal (not a side panel), so this stays a
- * centered `Dialog` and owns its own focus trap and Escape handling via Radix.
+ * icon+value rows instead of boxed form fields. Frontmatter fields are editable in place via
+ * `onUpdate`/`onMoveStatus`. The markdown body is not: the header's Edit button opens the whole
+ * body in `TaskBodyEditor` and saves it back through `onUpdate`'s `body` field in one
+ * replacement, so the sections below read as rendered prose rather than raw text. Linear opens
+ * issues as a modal (not a side panel), so this stays a centered `Dialog` and owns its own focus
+ * trap and Escape handling via Radix.
  */
 export function TaskDetailDialog({
   doc,
@@ -838,6 +836,15 @@ export function TaskDetailDialog({
   // `doc.meta.kind === 'epic'`; not lifted to App-level nav state since nothing outside this
   // dialog needs to know the graph is open.
   const [showGraph, setShowGraph] = useState(false);
+  // The markdown body editor. `bodySnapshot` is both the "is it open" flag and
+  // the body the session started from — decideBodySave compares it against the
+  // task's current body to catch a write that landed while the editor was open
+  // (an agent appending to Activity is the common one). `bodyDraft` is the
+  // editor's live text, pushed up by its onChange.
+  const [bodySnapshot, setBodySnapshot] = useState<string | null>(null);
+  const [bodyDraft, setBodyDraft] = useState('');
+  const [savingBody, setSavingBody] = useState(false);
+  const editingBody = bodySnapshot !== null;
 
   // If the link never arrives, drop back to the button rather than claiming "Pushed" forever.
   useEffect(() => {
@@ -987,13 +994,28 @@ export function TaskDetailDialog({
     setError(null);
   }, [doc.meta.id, doc.meta.title]);
 
+  // Navigating to another task inside the same dialog (following a blocked-by
+  // link) would otherwise leave the editor holding the previous task's body.
+  // decideBodySave refuses that save as stale, so nothing can be clobbered, but
+  // showing one task's text under another's header is confusing — end the
+  // session instead. Keyed on the id alone: renaming the task also produces a
+  // new `doc`, and that must not throw away a body draft.
+  useEffect(() => {
+    setBodySnapshot(null);
+  }, [doc.meta.id]);
+
+  // Returns whether the patch landed. Every fire-and-forget caller ignores it
+  // (the error surfaces in the banner either way); the body editor reads it so
+  // a rejected save keeps the editor — and the draft — open.
   const runUpdate = useCallback(
-    async (patch: UpdatePatch) => {
+    async (patch: UpdatePatch): Promise<boolean> => {
       try {
         setError(null);
         await onUpdate(doc.meta.id, patch);
+        return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
+        return false;
       }
     },
     [doc.meta.id, onUpdate]
@@ -1032,6 +1054,41 @@ export function TaskDetailDialog({
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [saveTitleIfChanged]);
+
+  function startBodyEdit() {
+    setError(null);
+    setBodySnapshot(doc.body);
+    setBodyDraft(doc.body);
+  }
+
+  // Clears the error too: the message the editor most often leaves behind is
+  // the stale-draft conflict, which stops meaning anything once the session
+  // it referred to is gone.
+  function cancelBodyEdit() {
+    setError(null);
+    setBodySnapshot(null);
+  }
+
+  async function saveBodyEdit() {
+    if (bodySnapshot === null) return;
+    const decision = decideBodySave(bodySnapshot, doc.body, bodyDraft);
+    if (decision.kind === 'unchanged') {
+      setBodySnapshot(null);
+      return;
+    }
+    if (decision.kind === 'stale') {
+      // Keep the editor open: the draft is the only copy of the human's work,
+      // and discarding it to show a conflict would be the worse outcome.
+      setError(
+        'This task changed while you were editing. Copy anything you want to keep, then cancel and reopen the editor to start from the current body.'
+      );
+      return;
+    }
+    setSavingBody(true);
+    const saved = await runUpdate({ body: decision.body });
+    setSavingBody(false);
+    if (saved) setBodySnapshot(null);
+  }
 
   function submitActivity() {
     if (activityDraft.trim() !== '') {
@@ -1079,6 +1136,16 @@ export function TaskDetailDialog({
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             (event.currentTarget as HTMLElement).focus();
+          }}
+          // Closing the dialog unmounts the body editor, and its draft is the
+          // only copy of whatever the human has typed. While it's open, the
+          // two accidental ways to close — Escape and a click on the overlay —
+          // are refused; Cancel is the deliberate way out.
+          onEscapeKeyDown={(event) => {
+            if (editingBody) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (editingBody) event.preventDefault();
           }}
         >
           <ErrorBoundary label="this dialog">
@@ -1158,6 +1225,20 @@ export function TaskDetailDialog({
                     )}
                   </>
                 )}
+              {/* Pushed to the far end of the breadcrumb row so the one action
+              that changes what the body *is* sits apart from the properties
+              that are all edited in place. `mr-6` clears DialogContent's own
+              absolutely-positioned close button, which overlaps this row. */}
+              {!editingBody && (
+                <button
+                  type="button"
+                  onClick={startBodyEdit}
+                  className="text-muted-foreground hover:text-foreground mr-6 ml-auto inline-flex items-center gap-1 text-[11px]"
+                >
+                  <Pencil className="size-3" />
+                  Edit
+                </button>
+              )}
               <DialogTitle className="sr-only">
                 {doc.meta.title || 'Task detail'}
               </DialogTitle>
@@ -1343,28 +1424,59 @@ export function TaskDetailDialog({
                   }}
                 />
 
-                <EditableBodySection
-                  title="Description"
-                  value={description}
-                  placeholder="Add a description…"
-                  onSave={(next) => void runUpdate({ description: next })}
-                />
-
-                <EditableBodySection
-                  title="Acceptance Criteria"
-                  value={acceptance}
-                  placeholder="Add acceptance criteria…"
-                  onSave={(next) =>
-                    void runUpdate({ acceptanceCriteria: next })
-                  }
-                />
-
-                {amendments !== '' && (
-                  <MainSection title="Amendments">
-                    <p className="text-muted-foreground text-[13px] whitespace-pre-wrap">
-                      {amendments}
-                    </p>
+                {/* Compared against null inline rather than through
+                `editingBody` so `bodySnapshot` narrows to a string here. */}
+                {bodySnapshot !== null ? (
+                  <MainSection title="Body">
+                    <TaskBodyEditor
+                      taskId={doc.meta.id}
+                      initialBody={bodySnapshot}
+                      onDraftChange={setBodyDraft}
+                    />
+                    <div className="mt-1 flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        disabled={savingBody}
+                        onClick={() => void saveBodyEdit()}
+                      >
+                        {savingBody ? 'Saving…' : 'Save'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={savingBody}
+                        onClick={cancelBodyEdit}
+                      >
+                        Cancel
+                      </Button>
+                      <span className="text-muted-foreground/70 text-[11px]">
+                        Markdown — the whole task body, Activity included.
+                      </span>
+                    </div>
                   </MainSection>
+                ) : (
+                  <>
+                    <BodySection
+                      title="Description"
+                      value={description}
+                      placeholder="No description yet."
+                    />
+
+                    <BodySection
+                      title="Acceptance Criteria"
+                      value={acceptance}
+                      placeholder="No acceptance criteria yet."
+                    />
+
+                    {amendments !== '' && (
+                      <MainSection title="Amendments">
+                        <Markdown
+                          content={amendments}
+                          className="text-muted-foreground text-[13px]"
+                        />
+                      </MainSection>
+                    )}
+                  </>
                 )}
 
                 <MainSection
@@ -1405,44 +1517,50 @@ export function TaskDetailDialog({
                   error={verificationError}
                 />
 
-                <MainSection title="Activity">
-                  {activityEntries.length === 0 ? (
-                    <p className="text-muted-foreground text-[13px]">
-                      No activity yet.
-                    </p>
-                  ) : (
-                    <ul className="flex flex-col gap-2">
-                      {activityEntries.map((entry, i) => (
-                        <li
-                          key={i}
-                          className="text-muted-foreground text-[13px] whitespace-pre-wrap"
-                        >
-                          {entry}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {/* Linear-style comment composer: one bordered, rounded box that focuses as a
+                {/* Hidden while the body editor is open: Activity lives in the
+                body being edited, so showing the feed (and a composer that
+                appends to it) alongside the editor would be two writers racing
+                for the same text. */}
+                {!editingBody && (
+                  <MainSection title="Activity">
+                    {activityEntries.length === 0 ? (
+                      <p className="text-muted-foreground text-[13px]">
+                        No activity yet.
+                      </p>
+                    ) : (
+                      <ul className="flex flex-col gap-2">
+                        {activityEntries.map((entry, i) => (
+                          <li
+                            key={i}
+                            className="text-muted-foreground text-[13px] whitespace-pre-wrap"
+                          >
+                            {entry}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {/* Linear-style comment composer: one bordered, rounded box that focuses as a
                   unit, with the send affordance tucked inside on the right. */}
-                  <div className="border-border focus-within:border-ring/60 mt-1 flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors duration-150">
-                    <Input
-                      className="h-7 flex-1 border-transparent bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
-                      placeholder="Leave a note…"
-                      value={activityDraft}
-                      onChange={(e) => setActivityDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') submitActivity();
-                      }}
-                    />
-                    <Button
-                      size="sm"
-                      disabled={activityDraft.trim() === ''}
-                      onClick={submitActivity}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                </MainSection>
+                    <div className="border-border focus-within:border-ring/60 mt-1 flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors duration-150">
+                      <Input
+                        className="h-7 flex-1 border-transparent bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
+                        placeholder="Leave a note…"
+                        value={activityDraft}
+                        onChange={(e) => setActivityDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') submitActivity();
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={activityDraft.trim() === ''}
+                        onClick={submitActivity}
+                      >
+                        Add
+                      </Button>
+                    </div>
+                  </MainSection>
+                )}
               </div>
 
               {/* Properties rail: the signature Linear element — every property editable in place
