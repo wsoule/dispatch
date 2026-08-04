@@ -788,10 +788,7 @@ function getSyncStatus(ctx: ApiContext): Response {
       pendingOutgoing: 0,
       pendingIncoming: 0,
       lastSyncedAt: null,
-      // A project that never opted in never runs the merge driver either —
-      // nothing merges through it while sync is off, so the warning has
-      // nothing to warn about here.
-      mergeDriverWarning: null,
+      mergeDriverWarning,
     };
     return jsonResponse(off);
   }

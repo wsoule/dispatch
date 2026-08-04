@@ -276,13 +276,6 @@ describe('GET /api/sync', () => {
       expect(body.detail).not.toBeNull();
       expect(body.pendingOutgoing).toBe(0);
       expect(body.pendingIncoming).toBe(0);
-      // No merge driver warning for a project that never opted into board
-      // sync — nothing merges through the driver while it's off, so it has
-      // nothing to warn about.
-      expect(
-        (body as SyncStatusBody & { mergeDriverWarning: string | null })
-          .mergeDriverWarning
-      ).toBeNull();
 
       const worktree = SyncWorktree.open(a, run);
       expect(worktree).not.toBeNull();
@@ -295,10 +288,12 @@ describe('GET /api/sync', () => {
     }
   });
 
-  it('suppresses mergeDriverWarning when sync is off, even with no merge driver registered', async () => {
-    // Deliberately no `dispatch init` — the exact combination that used to
-    // show a permanent amber warning for a feature this project never
-    // opted into: sync off AND a driver that would otherwise warn.
+  it('reports mergeDriverWarning even when sync is off, since a broken driver still affects manual merges', async () => {
+    // Deliberately no `dispatch init` — sync off does not mean the merge
+    // driver: `.gitattributes` routes `.dispatch/tasks/*.md` through it on
+    // any manual `git merge`/`pull`/`rebase` regardless of board sync, so a
+    // user with autoCommit off is exactly the population doing their own
+    // git and silently losing field-aware merges if the driver can't run.
     const root = mkdtempSync(join(tmpdir(), 'dispatch-off-no-driver-'));
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
     spawnSync('git', ['config', 'user.email', 'test@example.com'], {
@@ -335,7 +330,7 @@ describe('GET /api/sync', () => {
         mergeDriverWarning: string | null;
       };
       expect(body.state).toBe('off');
-      expect(body.mergeDriverWarning).toBeNull();
+      expect(body.mergeDriverWarning).not.toBeNull();
     } finally {
       await handle?.stop();
       rmSync(root, { recursive: true, force: true });
