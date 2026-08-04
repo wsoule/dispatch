@@ -15,13 +15,26 @@ test('the default permission mode has a selected radio', () => {
   expect(screen.queryByText(/set in/)).toBeNull();
 });
 
-test('picking a different permission mode saves it', async () => {
+// getByLabelText resolves straight to the <input>, so clicking that result
+// never exercises the browser's label-to-control forwarding. These click the
+// visible label TEXT instead, which only works if it's still inside a
+// wrapping <label> — the exact thing the previous task's port lost.
+test('clicking the "never ask" label text selects that radio', async () => {
   const saved: unknown[] = [];
   render(
     <AgentsSection config={config} onSave={async (p) => void saved.push(p)} />
   );
-  fireEvent.click(screen.getByLabelText('Never ask — let it run'));
+  fireEvent.click(screen.getByText('Never ask — let it run'));
   expect(saved).toEqual([{ permissionMode: 'dontAsk' }]);
+});
+
+test('clicking the "always ask" label text selects that radio', async () => {
+  const saved: unknown[] = [];
+  render(
+    <AgentsSection config={config} onSave={async (p) => void saved.push(p)} />
+  );
+  fireEvent.click(screen.getByText('Always ask me first'));
+  expect(saved).toEqual([{ permissionMode: 'default' }]);
 });
 
 // A config naming one of the two modes with no radio (plan, bypassPermissions)

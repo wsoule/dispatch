@@ -48,9 +48,8 @@ const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
   },
 };
 
-// Four of the six modes packages/core/src/config.ts accepts, worth a radio each.
-// `plan` and `bypassPermissions` are named legitimately by a config but aren't
-// offered here, so they fall through to the escape-hatch line below instead.
+// Four of the six modes config.ts accepts; `plan` and `bypassPermissions`
+// fall through to the escape-hatch line below instead of a radio.
 const PERMISSION_MODES = [
   ['auto', 'Let the classifier decide (default)'],
   ['default', 'Always ask me first'],
@@ -66,9 +65,8 @@ function capToInput(value: number | undefined): string {
   return value === undefined ? '' : String(value);
 }
 
-/** How agents run: model per role, dispatch concurrency, permission mode, and
- *  optional turn/budget caps — ported from `SettingsView`'s model rows and
- *  `ProjectSettingsSection`'s concurrency/permission-mode controls. */
+/** How agents run: model per role, concurrency, permission mode, and optional
+ *  turn/budget caps — ported from `SettingsView` and `ProjectSettingsSection`. */
 export function AgentsSection({ config, onSave }: AgentsSectionProps) {
   const [concurrency, setConcurrency] = useState('3');
   const [maxTurns, setMaxTurns] = useState('');
@@ -99,9 +97,8 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
     }
   }
 
-  // Caps are optional-valued, unlike every other numeric field in this file:
-  // empty clears via null, a finite positive number saves, anything else
-  // snaps the field back so a refused value never sits in the box looking saved.
+  // Optional-valued, unlike every other numeric field here: empty clears via
+  // null, a finite positive number saves, anything else snaps back.
   function saveCap(
     key: 'maxTurns' | 'maxBudgetUsd',
     raw: string,
