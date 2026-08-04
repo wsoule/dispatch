@@ -14,6 +14,13 @@ export interface BoardSyncSchedulerDeps {
   events: EventBus;
   /** Debounce for the sync triggered by a local task-file change. */
   debounceMs?: number;
+  /**
+   * How often to run a sync even when nothing changed locally — recovers a
+   * `local-only` state after a network outage, and gives a teammate who only
+   * reads the board a way to see everyone else's edits. Defaults to
+   * DEFAULT_PERIODIC_MS; tests pass something much shorter.
+   */
+  periodicMs?: number;
 }
 
 // Mirrors LinearSync's DEFAULT_PUSH_DEBOUNCE_MS shape/purpose: long enough to
@@ -21,15 +28,22 @@ export interface BoardSyncSchedulerDeps {
 // enough that a solo edit still reaches the board quickly.
 const DEFAULT_DEBOUNCE_MS = 3_000;
 
+// Long enough that a healthy project barely notices the traffic; short
+// enough that a silent reader or a post-outage `local-only` state recovers
+// within a minute without anyone touching a task file.
+const DEFAULT_PERIODIC_MS = 60_000;
+
 /**
  * Debounces on-disk task-file changes into a single BoardSyncer.syncOnce()
  * call per burst, gated on `.dispatch/config.yml`'s `autoCommit` — the only
- * consumer of that setting. Emits `board.sync` with the SyncResult for every
- * attempt, so a UI can render a live feed without polling.
+ * consumer of that setting. Also runs the same sync on a periodic timer
+ * regardless of local edits. Emits `board.sync` with the SyncResult for
+ * every attempt, so a UI can render a live feed without polling.
  */
 export class BoardSyncScheduler {
   private readonly syncer: BoardSyncer;
   private debounce: ReturnType<typeof setTimeout> | null = null;
+  private readonly periodic: ReturnType<typeof setInterval>;
   private inFlight: Promise<void> | null = null;
   // A change arriving while a sync is already running is not lost — it's
   // answered by one more pass once the current one finishes.
@@ -47,6 +61,14 @@ export class BoardSyncScheduler {
       deps.actor,
       deps.run
     );
+    // Runs unconditionally so a config edit re-enabling autoCommit takes
+    // effect on the next tick without a restart — the gate is checked fresh
+    // on every fire, same as notifyTaskChanged's own runOnce() check, so a
+    // disabled project generates no sync traffic despite the timer ticking.
+    this.periodic = setInterval(() => {
+      if (!this.autoCommitEnabled()) return;
+      void this.trigger();
+    }, deps.periodicMs ?? DEFAULT_PERIODIC_MS);
   }
 
   // Config is read fresh on every check — from a file a person edits by
@@ -130,11 +152,12 @@ export class BoardSyncScheduler {
     this.deps.worktree.remove();
   }
 
-  // Cancels any pending debounce. Does not wait for an in-flight sync — the
-  // syncer's own worktree discipline (never left mid-rebase) makes that safe
-  // to abandon on shutdown.
+  // Cancels any pending debounce and the periodic timer. Does not wait for
+  // an in-flight sync — the syncer's own worktree discipline (never left
+  // mid-rebase) makes that safe to abandon on shutdown.
   stop(): void {
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = null;
+    clearInterval(this.periodic);
   }
 }

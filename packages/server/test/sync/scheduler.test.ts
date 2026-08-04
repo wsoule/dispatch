@@ -1,5 +1,5 @@
 import { ActorContext, TaskStore } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   chmodSync,
   existsSync,
@@ -14,6 +14,7 @@ import { join } from 'node:path';
 
 import type { ServerEvent } from '../../src/events.js';
 import { EventBus } from '../../src/events.js';
+import { BoardSyncer } from '../../src/sync/boardSyncer.js';
 import { BoardSyncScheduler } from '../../src/sync/scheduler.js';
 import { SyncWorktree } from '../../src/sync/worktree.js';
 import { gitReaderFor, run, twoClones } from './helpers.js';
@@ -46,7 +47,8 @@ function enableAutoCommit(dir: string): void {
 function schedulerFor(
   dir: string,
   events: EventBus,
-  debounceMs: number
+  debounceMs: number,
+  periodicMs?: number
 ): BoardSyncScheduler {
   const worktree = SyncWorktree.open(dir, run);
   if (worktree === null) throw new Error('expected a resolvable trunk');
@@ -58,6 +60,7 @@ function schedulerFor(
     run,
     events,
     debounceMs,
+    periodicMs,
   });
 }
 
@@ -238,6 +241,140 @@ describe('BoardSyncScheduler', () => {
     expect(existsSync(worktree.path)).toBe(false);
 
     scheduler.stop();
+    rmSync(origin, { recursive: true, force: true });
+  });
+});
+
+describe('BoardSyncScheduler periodic pull', () => {
+  it('runs a sync on the periodic timer even with no local edit', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    // No TaskStore.create() at all — nothing changed locally. A silent
+    // reader must still see a sync attempt.
+
+    const events = new EventBus();
+    const seen = collectBoardSyncEvents(events);
+    // debounceMs kept enormous so only the periodic timer can produce a sync.
+    const scheduler = schedulerFor(a, events, 999_000, 20);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    expect(seen[0]).toMatchObject({
+      type: 'board.sync',
+      result: { state: 'idle', pushed: 0 },
+    });
+
+    scheduler.stop();
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('autoCommit: false produces no periodic sync traffic', async () => {
+    const { origin, a } = twoClones();
+    // twoClones() already seeds autoCommit: false — left as-is.
+    new TaskStore(a).create({ title: 'Should not periodic-sync' });
+
+    const events = new EventBus();
+    const seen = collectBoardSyncEvents(events);
+    const scheduler = schedulerFor(a, events, 999_000, 20);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(seen.length).toBe(0);
+    const worktree = SyncWorktree.open(a, run);
+    expect(worktree).not.toBeNull();
+    expect(existsSync(worktree?.path ?? '')).toBe(false);
+
+    scheduler.stop();
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('a failing periodic sync does not fire the timer faster than its interval', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    installRejectingHook(origin);
+    new TaskStore(a).create({ title: 'Will fail to push, repeatedly' });
+
+    const events = new EventBus();
+    const timestamps: number[] = [];
+    events.subscribe((event) => {
+      if (event.type === 'board.sync') timestamps.push(Date.now());
+    });
+    const periodicMs = 30;
+    const scheduler = schedulerFor(a, events, 999_000, periodicMs);
+
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    scheduler.stop();
+
+    // At least two attempts in this window prove the timer is actually
+    // retrying (recovering from the outage), not just proving absence.
+    expect(timestamps.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < timestamps.length; i++) {
+      // A small tolerance below periodicMs for scheduler/GC jitter — proves
+      // failures never shorten the interval into a retry storm.
+      expect(timestamps[i] - timestamps[i - 1]).toBeGreaterThanOrEqual(
+        periodicMs - 10
+      );
+    }
+
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('stops the periodic timer on shutdown', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    new TaskStore(a).create({ title: 'Stop me' });
+
+    const events = new EventBus();
+    const seen = collectBoardSyncEvents(events);
+    const scheduler = schedulerFor(a, events, 999_000, 20);
+
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+
+    scheduler.stop();
+    const countAtStop = seen.length;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // No further syncs land after stop() — the periodic interval was
+    // actually cleared, not just the debounce.
+    expect(seen.length).toBe(countAtStop);
+
+    rmSync(origin, { recursive: true, force: true });
+  });
+
+  it('does not run a second sync concurrently when a periodic tick lands mid-sync', async () => {
+    const { origin, a } = twoClones();
+    enableAutoCommit(a);
+    new TaskStore(a).create({ title: 'Overlap check' });
+
+    const events = new EventBus();
+    // debounceMs and periodicMs both short and close together, so several
+    // periodic ticks land while the debounce-triggered sync below is still
+    // "running" (per the stub) — proving the timer reuses the same
+    // inFlight/pendingRerun guard rather than a second concurrency
+    // mechanism of its own.
+    const scheduler = schedulerFor(a, events, 10, 10);
+
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const spy = spyOn(BoardSyncer.prototype, 'syncOnce').mockImplementation(
+      async () => {
+        concurrent++;
+        maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        concurrent--;
+        return { pushed: 0, pulled: 0, state: 'idle', detail: null };
+      }
+    );
+
+    scheduler.notifyTaskChanged();
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    scheduler.stop();
+    spy.mockRestore();
+
+    expect(maxConcurrent).toBeLessThanOrEqual(1);
+
     rmSync(origin, { recursive: true, force: true });
   });
 });
