@@ -102,7 +102,7 @@ export function PriorityIcon({ priority, className }: PriorityIconProps) {
   return (
     <svg
       viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-      className={cn('size-3.5 shrink-0', className)}
+      className={cn('size-4 shrink-0', className)}
       role="img"
       aria-label={PRIORITY_LABEL[priority]}
     >

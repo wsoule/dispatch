@@ -1,45 +1,44 @@
 :root {
-  /* Surfaces — cool, near-neutral grays (Linear-style), not warm/cream. Light mode is a
-     clean white workspace; dark mode (below) is the signature. */
-  --surface-page: #fbfbfc;
+  /* Surfaces — neutral grays, no hue. Light mode is a clean white workspace; dark mode
+     (below) is the signature. */
+  --surface-page: #fafafa;
   --surface-card: #ffffff;
-  --surface-raised: #f6f7f9;
-  --surface-muted: #f1f2f4;
+  --surface-raised: #f4f4f5;
+  --surface-muted: #efeff0;
 
-  /* Text — cool grays with a faint blue cast. */
-  --text-primary: #1a1b1e;
-  --text-secondary: #494f59;
-  --text-muted: #71757d;
-  --text-ghost: #a0a4ab;
+  /* Text — neutral grays. */
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #7b7b85;
+  --text-ghost: #a1a1aa;
 
   /* Borders — hairline, low-contrast. */
-  --border-default: #e8e9ec;
-  --border-strong: #d7d9dd;
-  --border-selected: #5e6ad2;
+  --border-default: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --border-selected: #18181b;
 
-  /* Brand — Linear's signature indigo. This IS a hue (unlike a neutral management tool):
-     it fills primary actions and the wordmark, tints selection/ready states, and paints the
-     focus ring. `--accent-contrast` is the label color on a solid `--accent` fill. `-muted`
-     and `-subtle` are indigo-tinted low-alpha fills for active nav and ready cards. */
-  --accent: #5e6ad2;
-  --accent-hover: #6b76dd;
-  --accent-contrast: #ffffff;
-  --accent-muted: #eceef8;
-  --accent-subtle: #f5f6fd;
-  --accent-border: #c3c8ec;
+  /* Not a hue. diffs.com spends colour only on meaning (addition, deletion,
+     conflict), so the chrome's "accent" is pure contrast: near-black on light,
+     near-white on dark. Primary buttons are inverted fills; active nav is a
+     raised chip. `--accent-contrast` is the label colour on a solid fill. */
+  --accent: #18181b;
+  --accent-hover: #3f3f46;
+  --accent-contrast: #fafafa;
+  --accent-muted: #efeff0;
+  --accent-subtle: #f7f7f8;
+  --accent-border: #d4d4d8;
 
   /* Per-project categorical palette — deterministically assigned (see src/lib/projectColor.ts)
-     so every session/card/row for a project always shows the same color. Cool, slightly
-     desaturated hues that read as small dots on both surfaces without competing with the
-     indigo chrome. */
-  --project-color-1: #4f7cac; /* slate blue */
-  --project-color-2: #3f9178; /* teal */
-  --project-color-3: #a06bb0; /* plum */
-  --project-color-4: #b5843a; /* ochre */
-  --project-color-5: #5c6bc0; /* indigo */
-  --project-color-6: #7a9a4a; /* olive */
-  --project-color-7: #c05f7a; /* rose */
-  --project-color-8: #4a9aa8; /* cyan */
+     so every session/card/row for a project always shows the same color. Identity is a hue
+     again, not initials and position; the 8 colours just need to stay distinguishable. */
+  --project-color-1: #4f7cac;
+  --project-color-2: #3f9178;
+  --project-color-3: #a06bb0;
+  --project-color-4: #b5843a;
+  --project-color-5: #5c6bc0;
+  --project-color-6: #7a9a4a;
+  --project-color-7: #c05f7a;
+  --project-color-8: #4a9aa8;
 
   /* Semantic */
   --green: #3f9c6d;
@@ -61,21 +60,23 @@
   --amber-bg: #fbf3e6;
   --amber-border: color-mix(in srgb, var(--amber) 34%, var(--amber-bg));
 
+  /* Violet exists solely so the working run state keeps a distinct hue now that
+     --accent is neutral again; it is not a brand accent and nothing else uses it. */
+  --violet: #5e6ad2;
+  --violet-bg: #eef0fc;
+  --violet-border: color-mix(in srgb, var(--violet) 34%, var(--violet-bg));
+
   --gray: #71757d;
   --gray-bg: #f1f2f4;
   --gray-border: #d7d9dd;
 
-  /* Run state — the one semantic role for "what does this run want from a human", so eight
-     screens can't each invent their own idea of what "waiting on you" looks like. Names match
-     the `RunDisposition` vocabulary in lib/runState.ts, which is the derivation these paint.
-     Every value forwards to a palette token above; nothing here introduces a hue. Because they
-     are references and not literals, the dark theme's palette override below flows through
-     automatically — deliberately NOT restated in the dark block, so the two can never drift.
-
-     `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its hairline. */
-  --state-working-fg: var(--accent);
-  --state-working-surface: var(--accent-muted);
-  --state-working-edge: var(--accent-border);
+  /* Run state — "what does this run want from a human", named after lib/runState.ts's
+     `RunDisposition`. `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its
+     hairline. References to the palette above, never literals, so the dark block flows through
+     for free and must not restate them. */
+  --state-working-fg: var(--violet);
+  --state-working-surface: var(--violet-bg);
+  --state-working-edge: var(--violet-border);
 
   --state-waiting-fg: var(--amber);
   --state-waiting-surface: var(--amber-bg);
@@ -101,7 +102,7 @@
   --state-ready-edge: var(--border-strong);
 
   --state-blocked-fg: var(--text-ghost);
-  --state-blocked-surface: var(--gray-bg);
+  --state-blocked-surface: var(--surface-muted);
   --state-blocked-edge: var(--border-default);
 
   /* Modal backdrop — a translucent scrim, tuned per-theme. */
@@ -117,9 +118,9 @@
   /* Sizing tokens are rem, deliberately matching the old hardcoded px values at the browser
      default 16px root. global.css sets the root font-size with a clamp() tied to viewport
      width, so type and spacing scale together as the window grows. */
-  --text-2xs: 0.5938rem; /* 9.5px — the tracked section label, and nothing else */
+  --text-2xs: 0.5938rem; /* 9.5px */
   --text-xs: 0.625rem; /* 10px */
-  --text-meta: 0.6563rem; /* 10.5px — mono row metadata: ids, elapsed, counts */
+  --text-meta: 0.6563rem; /* 10.5px */
   --text-sm: 0.6875rem; /* 11px */
   --text-base: 0.8125rem; /* 13px */
   --text-md: 0.9375rem; /* 15px */
@@ -131,11 +132,9 @@
   --label-tracking: 0.11em;
   --meta-tracking: 0.02em;
 
-  /* Hairlines as inset shadows rather than borders: an inset shadow doesn't participate in
-     layout, so a row can carry an edge without shifting by a pixel or double-drawing against
-     its neighbour — which is what lets dense rows sit flush. `--hairline` outlines a whole
-     box; the directional four draw a single side (a pane divider, a sticky header's underline).
-     Use in `box-shadow`, and compose with a comma for two sides. */
+  /* Hairlines as inset shadows, not borders: an inset shadow is outside layout, so a row can
+     carry an edge without shifting a pixel. `--hairline` outlines the whole box; the
+     directional four draw one side each. Use in `box-shadow`; comma-compose for two sides. */
   --hairline: inset 0 0 0 1px var(--border-default);
   --hairline-strong: inset 0 0 0 1px var(--border-strong);
   --hairline-top: inset 0 1px 0 var(--border-default);
@@ -151,33 +150,34 @@
   --space-5: 1.25rem; /* 20px */
   --space-6: 1.5rem; /* 24px */
   --space-8: 2rem; /* 32px */
+  --space-10: 2.5rem; /* 40px */
 }
 
 /* Follows the OS light/dark setting automatically. Dark mode is the signature look: deep,
-   slightly cool near-black surfaces with the indigo accent — Linear's home turf. Only color
-   tokens are overridden; the sizing tokens above are shared. */
+   near-black neutral surfaces. Only color tokens are overridden; the sizing tokens above
+   are shared. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface-page: #0e0f11;
-    --surface-card: #17181c;
-    --surface-raised: #1e1f24;
-    --surface-muted: #141519;
+    --surface-page: #0d0d0e;
+    --surface-card: #151517;
+    --surface-raised: #1c1c1f;
+    --surface-muted: #111112;
 
-    --text-primary: #f7f8f8;
-    --text-secondary: #b3b7be;
-    --text-muted: #858991;
-    --text-ghost: #5b5f66;
+    --text-primary: #fafafa;
+    --text-secondary: #b4b4bb;
+    --text-muted: #86868f;
+    --text-ghost: #5c5c66;
 
-    --border-default: #23252a;
-    --border-strong: #2f3138;
-    --border-selected: #5e6ad2;
+    --border-default: #26262a;
+    --border-strong: #34343a;
+    --border-selected: #fafafa;
 
-    --accent: #5e6ad2;
-    --accent-hover: #7078e0;
-    --accent-contrast: #ffffff;
-    --accent-muted: #21243a;
-    --accent-subtle: #171826;
-    --accent-border: #363b63;
+    --accent: #fafafa;
+    --accent-hover: #e4e4e7;
+    --accent-contrast: #18181b;
+    --accent-muted: #232326;
+    --accent-subtle: #1a1a1d;
+    --accent-border: #3f3f46;
 
     --project-color-1: #7ca3d4;
     --project-color-2: #5fbb9c;
@@ -201,6 +201,9 @@
 
     --amber: #d3a052;
     --amber-bg: #2a2113;
+
+    --violet: #8b96e0;
+    --violet-bg: #1d1f38;
 
     --gray: #9296a0;
     --gray-bg: #1c1d21;

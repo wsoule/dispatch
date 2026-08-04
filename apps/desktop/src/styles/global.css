@@ -42,15 +42,10 @@ button {
   cursor: pointer;
 }
 
-/* One global focus ring for every button/interactive row in the app (I7 in the phase-8 fix
-   report) — deliberately a single rule here rather than each component styling its own
-   `:focus`/`:focus-visible` state, so keyboard focus always looks the same regardless of
-   which component you're tabbing through: the Board's cards, the Tasks/Runs lists, the
-   command palette's rows, the sidebar's nav items, every plain `<button>`. `:focus-visible`
-   (not `:focus`) so a mouse click doesn't show the ring — only keyboard/programmatic focus
-   (which is exactly how the Board's j/k roving focus moves real DOM focus) does. */
+/* One global focus ring for every interactive element, `:focus-visible` only so a mouse click
+   doesn't trigger it. Contrast-based, not brand-colored — there's no hue left to spend on it. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--text-primary);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -77,26 +72,28 @@ button {
   margin: 0;
 }
 
-/* The two type treatments every dense list surface in the app repeats. Each bundles a whole
-   treatment rather than one property, because these never vary independently: a section label
-   is always small + tracked + uppercase, and row metadata is always small + mono + tabular.
-   Kept as classes rather than Tailwind utilities so a component says what a thing *is*
-   (`dense-label`) instead of restating three properties at every call site. */
-.dense-label {
-  font-size: var(--text-2xs);
-  letter-spacing: var(--label-tracking);
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
+/* The two type treatments every dense list surface repeats, bundled as one class each so a
+   component says what a thing *is* rather than restating three properties per call site.
+   In `@layer components` so a Tailwind colour utility on the same element always wins: these
+   carry a default `color`, and unlayered they would outrank `@layer utilities` at any
+   specificity, silently swallowing `className="text-foreground"`. */
+@layer components {
+  .dense-label {
+    font-size: var(--text-2xs);
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
 
-.dense-meta {
-  font-family: var(--font-mono);
-  font-size: var(--text-meta);
-  letter-spacing: var(--meta-tracking);
-  /* Elapsed times and diff counts sit in columns and are read down the page, so digits must
-     not change width as they tick. */
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
+  .dense-meta {
+    font-family: var(--font-mono);
+    font-size: var(--text-meta);
+    letter-spacing: var(--meta-tracking);
+    /* Elapsed times and diff counts are read down a column, so digits must not change width
+       as they tick. */
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
 }
 
 /* A slim always-drawn scrollbar for panes that scroll inside a small box. Deliberately no

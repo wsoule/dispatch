@@ -20,10 +20,10 @@ import { Fragment, useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
-import { CountChip } from '../ui/CountChip';
 import { DraftTray } from './DraftTray';
 import { SyncChip } from './SyncChip';
 import { cn } from '@/lib/utils';
+import { CountChip } from '@/ui/chrome/CountChip';
 import {
   DropdownMenu,
   DropdownMenuContent,

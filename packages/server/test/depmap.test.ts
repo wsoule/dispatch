@@ -1,13 +1,30 @@
+import type {
+  CartoBlastRadius,
+  CartoReader,
+  CartoRunResult,
+} from '@dispatch/core/carto';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
+import type { DepMap } from '../src/depmap.js';
 import {
   buildDepMap,
+  createCartoDepMap,
+  createSourceChangeHandler,
   DepMapCache,
   depMapSourceDirs,
   isSkippedPath,
+  normalizeBlastRadius,
 } from '../src/depmap.js';
 
 let root: string;
@@ -185,6 +202,10 @@ describe('isSkippedPath', () => {
     expect(isSkippedPath('server/node_modules/foo/index.js')).toBe(true);
     expect(isSkippedPath('.dispatch/runs/r-1.jsonl')).toBe(true);
     expect(isSkippedPath('.git/HEAD')).toBe(true);
+    // carto's own output: without this, a sync's writes re-arm the watcher
+    // that triggered it, which loops on any repo watched at its root.
+    expect(isSkippedPath('.carto/carto.db')).toBe(true);
+    expect(isSkippedPath('.carto/CONTEXT.md')).toBe(true);
   });
 
   it('does not flag an ordinary source path', () => {
@@ -214,5 +235,454 @@ describe('buildDepMap against this repository', () => {
     // Known gap: this test spawns the built CLI rather than importing it, so
     // no static edge reaches it — it is correctly NOT found here.
     expect(dependents).not.toContain('packages/cli/test/mcp-stdio-e2e.test.ts');
+  });
+});
+
+// A reader that answers from a canned map, standing in for a real container.
+function fakeReader(
+  map: Record<string, { count: number; hops: number; files: unknown[] }>
+): CartoReader {
+  return {
+    blastRadius: (file: string) =>
+      map[file] ?? { count: 0, hops: 0, files: [] },
+  };
+}
+
+// A DepMap whose dependents() is a fixed, caller-ordered list, standing in
+// for the scanner so a merge test controls both inputs precisely.
+function fakeDepMap(dependents: string[]): DepMap {
+  return {
+    dependents: () => dependents,
+    mirrors: () => [],
+  };
+}
+
+describe('createCartoDepMap', () => {
+  it('answers dependents from carto alone when the scanner has nothing to add', () => {
+    const depMap = createCartoDepMap(
+      root,
+      fakeReader({
+        'src/a.ts': {
+          count: 2,
+          hops: 2,
+          files: [
+            { path: 'src/c.ts', hops: 2 },
+            { path: 'src/b.ts', hops: 1 },
+          ],
+        },
+      }),
+      fakeDepMap([])
+    );
+    // Direct importer first — depth beats the alphabet, matching buildDepMap.
+    expect(depMap.dependents('src/a.ts')).toEqual(['src/b.ts', 'src/c.ts']);
+  });
+
+  it('unions carto and the scanner, deduplicated', () => {
+    const carto = fakeReader({
+      'src/a.ts': {
+        count: 3,
+        hops: 0,
+        files: [
+          { file: 'src/carto-only-1.ts', hop_distance: 1 },
+          { file: 'src/shared.ts', hop_distance: 1 },
+          { file: 'src/carto-only-2.ts', hop_distance: 2 },
+        ],
+      },
+    });
+    const fallback = fakeDepMap(['src/shared.ts', 'src/scanner-only.ts']);
+    const depMap = createCartoDepMap(root, carto, fallback);
+    const result = depMap.dependents('src/a.ts');
+    expect(new Set(result)).toEqual(
+      new Set([
+        'src/carto-only-1.ts',
+        'src/shared.ts',
+        'src/carto-only-2.ts',
+        'src/scanner-only.ts',
+      ])
+    );
+    expect(result.length).toBe(4);
+  });
+
+  it('round-robin merges so each list keeps its own first entry near the front', () => {
+    const carto = fakeReader({
+      'src/a.ts': {
+        count: 5,
+        hops: 0,
+        files: ['c1', 'c2', 'c3', 'c4', 'c5'].map((file, i) => ({
+          file,
+          hop_distance: i,
+        })),
+      },
+    });
+    const fallback = fakeDepMap(['s1', 's2', 's3']);
+    const depMap = createCartoDepMap(root, carto, fallback);
+    const result = depMap.dependents('src/a.ts');
+    // A naive concatenation would put every scanner-only entry after all 5
+    // carto entries — this asserts positions, not just membership.
+    expect(result[0]).toBe('c1');
+    expect(result[1]).toBe('s1');
+    expect(result.indexOf('c1')).toBeLessThan(2);
+    expect(result.indexOf('s1')).toBeLessThan(2);
+  });
+
+  it('keeps a duplicate exactly once, at its earliest position in the merge', () => {
+    const carto = fakeReader({
+      'src/a.ts': {
+        count: 2,
+        hops: 0,
+        files: [
+          { file: 'src/x.ts', hop_distance: 0 },
+          { file: 'src/dup.ts', hop_distance: 1 },
+        ],
+      },
+    });
+    const fallback = fakeDepMap(['src/dup.ts', 'src/y.ts']);
+    const depMap = createCartoDepMap(root, carto, fallback);
+    const result = depMap.dependents('src/a.ts');
+    expect(result.filter((f) => f === 'src/dup.ts').length).toBe(1);
+    // Round-robin visits carto's src/x.ts, then fallback's src/dup.ts, before
+    // carto ever reaches its own (later) src/dup.ts entry.
+    expect(result).toEqual(['src/x.ts', 'src/dup.ts', 'src/y.ts']);
+  });
+
+  it('falls back to the scanner when carto throws', () => {
+    writeFixtureWorkspace();
+    const fallback = buildDepMap(root);
+    const throwing: CartoReader = {
+      blastRadius: () => {
+        throw new Error('container corrupt');
+      },
+    };
+    const depMap = createCartoDepMap(root, throwing, fallback);
+    expect(depMap.dependents('packages/a/src/index.ts')).toEqual(
+      fallback.dependents('packages/a/src/index.ts')
+    );
+  });
+
+  it('caches the failure instead of retrying per file, and reports it once', () => {
+    let calls = 0;
+    const throwing: CartoReader = {
+      blastRadius: () => {
+        calls += 1;
+        throw new Error('container corrupt');
+      },
+    };
+    const degradations: string[] = [];
+    const depMap = createCartoDepMap(root, throwing, buildDepMap(root), (d) =>
+      degradations.push(d.detail)
+    );
+    depMap.dependents('src/a.ts');
+    depMap.dependents('src/b.ts');
+    depMap.dependents('src/c.ts');
+    expect(calls).toBe(1);
+    expect(degradations.length).toBe(1);
+  });
+
+  it('always serves mirrors from the scanner, never from carto', () => {
+    writeFixtureWorkspace();
+    const fallback = buildDepMap(root);
+    const depMap = createCartoDepMap(root, fakeReader({}), fallback);
+    expect(depMap.mirrors('packages/a/src/index.ts')).toEqual(
+      fallback.mirrors('packages/a/src/index.ts')
+    );
+  });
+
+  it('normalizes the recorded real carto response', () => {
+    const raw = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, 'fixtures/carto-blast-radius.json'),
+        'utf8'
+      )
+    ) as CartoBlastRadius;
+    const files = normalizeBlastRadius(raw);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.every((f) => typeof f === 'string')).toBe(true);
+    // Ordering must be non-decreasing in hop distance, like buildDepMap's.
+    expect(files).toEqual([...new Set(files)]);
+  });
+
+  it('sorts the fixture by hop distance then name, independent of normalizeBlastRadius itself', () => {
+    const raw = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, 'fixtures/carto-blast-radius.json'),
+        'utf8'
+      )
+    ) as CartoBlastRadius;
+    // Expected order computed straight off the fixture's own `file` /
+    // `hop_distance` keys, not by re-running the function under test.
+    const expected = (raw.files as { file: string; hop_distance: number }[])
+      .slice()
+      .sort((a, b) =>
+        a.hop_distance !== b.hop_distance
+          ? a.hop_distance - b.hop_distance
+          : a.file < b.file
+            ? -1
+            : a.file > b.file
+              ? 1
+              : 0
+      )
+      .map((e) => e.file);
+    expect(normalizeBlastRadius(raw)).toEqual(expected);
+  });
+
+  it('dedupes a path reachable by two routes, keeping the closer hop', () => {
+    const raw = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, 'fixtures/carto-blast-radius.json'),
+        'utf8'
+      )
+    ) as CartoBlastRadius;
+    // The fixture already lists this path once at hop 5; add a second route
+    // to it at hop 1, as carto would if two different files imported it.
+    const duplicated: CartoBlastRadius = {
+      ...raw,
+      files: [
+        ...raw.files,
+        { file: 'apps/desktop/src/main.tsx', hop_distance: 1 },
+      ],
+    };
+    const files = normalizeBlastRadius(duplicated);
+    // No new path was added, so the unique count is unchanged.
+    expect(files.length).toBe(raw.files.length);
+    expect(files.filter((f) => f === 'apps/desktop/src/main.tsx').length).toBe(
+      1
+    );
+    // Sorted at hop 1's position (alphabetically first there), not hop 5's.
+    expect(files[0]).toBe('apps/desktop/src/main.tsx');
+  });
+});
+
+describe('DepMapCache backend selection', () => {
+  it('uses the scanner when carto is off', () => {
+    writeFixtureWorkspace();
+    const cache = new DepMapCache(root, { mode: 'off' });
+    expect(cache.get().dependents('packages/a/src/index.ts')).toEqual(
+      buildDepMap(root).dependents('packages/a/src/index.ts')
+    );
+  });
+
+  it('reports one degradation, not one per call', () => {
+    writeFixtureWorkspace();
+    const seen: string[] = [];
+    // No .carto/ in the fixture root, so carto selection always misses.
+    const cache = new DepMapCache(root, {
+      mode: 'detect',
+      onDegrade: (d) => seen.push(d.detail),
+    });
+    cache.get().dependents('packages/a/src/index.ts');
+    cache.get().dependents('packages/b/src/index.ts');
+    expect(seen.length).toBeLessThanOrEqual(1);
+  });
+
+  it('does not build a container when the mode is detect', () => {
+    writeFixtureWorkspace();
+    const cache = new DepMapCache(root, { mode: 'detect' });
+    cache.get();
+    expect(existsSync(join(root, '.carto'))).toBe(false);
+  });
+
+  it('attempts carto init at most once across invalidations', () => {
+    writeFixtureWorkspace();
+    // A stub binary that reports a supported version but always fails to
+    // produce a container, logging one line per `init` invocation. Unlike
+    // this machine's real carto-md (which leaves a half-written .carto/ that
+    // itself blocks a second attempt via openCartoReader's "load-failed"
+    // path), this stub leaves nothing behind, so `openCartoReader` keeps
+    // reporting 'no-container' on every call — the initAttempted guard is
+    // the ONLY thing standing between this and a respawn per invalidation.
+    const binDir = join(root, 'fake-carto-bin');
+    mkdirSync(binDir, { recursive: true });
+    const stub = join(binDir, 'carto');
+    const initLog = join(root, 'init-calls.log');
+    writeFileSync(
+      stub,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo "2.9.9"\nelif [ "$1" = "init" ]; then\n  echo x >> "${initLog}"\n  exit 1\nelse\n  exit 1\nfi\n`
+    );
+    chmodSync(stub, 0o755);
+    const originalPath = process.env.PATH;
+    const originalDisabled = process.env.DISPATCH_CARTO_DISABLED;
+    process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`;
+    // packages/cli's preload sets this when `bun test` runs from the repo
+    // root; the stub above is exactly what this test wants discovered.
+    delete process.env.DISPATCH_CARTO_DISABLED;
+    try {
+      const seen: string[] = [];
+      const cache = new DepMapCache(root, {
+        mode: 'on',
+        onDegrade: (d) => seen.push(d.detail),
+      });
+      cache.get();
+      cache.invalidate();
+      cache.get();
+      cache.invalidate();
+      cache.get();
+      expect(seen.length).toBeLessThanOrEqual(1);
+      const initCalls = existsSync(initLog)
+        ? readFileSync(initLog, 'utf8')
+            .split('\n')
+            .filter((l) => l !== '').length
+        : 0;
+      expect(initCalls).toBe(1);
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalDisabled !== undefined) {
+        process.env.DISPATCH_CARTO_DISABLED = originalDisabled;
+      }
+    }
+  });
+});
+
+describe('createSourceChangeHandler', () => {
+  // A CartoDiscovery for a binary that is never actually spawned: the
+  // handler's sync is injected in every test below.
+  const foundBinary = {
+    ok: true as const,
+    binary: { path: '/nonexistent/carto', version: '2.9.9' },
+  };
+
+  function countingCache(counter: { invalidations: number }): DepMapCache {
+    const cache = new DepMapCache(root, { mode: 'off' });
+    const original = cache.invalidate.bind(cache);
+    cache.invalidate = () => {
+      counter.invalidations += 1;
+      original();
+    };
+    return cache;
+  }
+
+  it('invalidates the cache without syncing when there is no container', () => {
+    const counter = { invalidations: 0 };
+    let syncs = 0;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => foundBinary,
+      sync: () => {
+        syncs += 1;
+        return Promise.resolve({ ok: true, detail: 'synced' });
+      },
+    });
+    handler();
+    expect(counter.invalidations).toBe(1);
+    expect(syncs).toBe(0);
+  });
+
+  it('never syncs or discovers when the mode is off', () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let discoveries = 0;
+    let syncs = 0;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'off',
+      cache: countingCache(counter),
+      discover: () => {
+        discoveries += 1;
+        return foundBinary;
+      },
+      sync: () => {
+        syncs += 1;
+        return Promise.resolve({ ok: true, detail: 'synced' });
+      },
+    });
+    handler();
+    expect(counter.invalidations).toBe(1);
+    expect(discoveries).toBe(0);
+    expect(syncs).toBe(0);
+  });
+
+  it('runs one sync at a time and discovers carto only once', async () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let discoveries = 0;
+    let syncs = 0;
+    let release: (() => void) | null = null;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => {
+        discoveries += 1;
+        return foundBinary;
+      },
+      sync: () => {
+        syncs += 1;
+        return new Promise<CartoRunResult>((resolve) => {
+          release = () => {
+            resolve({ ok: true, detail: 'synced' });
+          };
+        });
+      },
+    });
+    handler();
+    handler();
+    handler();
+    // Every change invalidates, but the two bursts landing while the first
+    // sync is still running must not queue further spawns.
+    expect(counter.invalidations).toBe(3);
+    expect(syncs).toBe(1);
+    (release as unknown as () => void)();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    // Finishing invalidates again, so the next review reads the fresh
+    // container, and releases the single-flight guard.
+    expect(counter.invalidations).toBe(4);
+    handler();
+    expect(syncs).toBe(2);
+    expect(discoveries).toBe(1);
+  });
+
+  it('keeps invalidating after carto turns out to be unavailable', () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let syncs = 0;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => ({ ok: false, reason: 'not-found', detail: 'absent' }),
+      sync: () => {
+        syncs += 1;
+        return Promise.resolve({ ok: true, detail: 'synced' });
+      },
+    });
+    handler();
+    handler();
+    expect(counter.invalidations).toBe(2);
+    expect(syncs).toBe(0);
+  });
+
+  it('releases the single-flight guard when sync rejects', async () => {
+    mkdirSync(join(root, '.carto'), { recursive: true });
+    const counter = { invalidations: 0 };
+    let syncs = 0;
+    let reject: ((err: Error) => void) | null = null;
+    const handler = createSourceChangeHandler({
+      rootDir: root,
+      mode: 'on',
+      cache: countingCache(counter),
+      discover: () => foundBinary,
+      sync: () => {
+        syncs += 1;
+        return new Promise<CartoRunResult>((_resolve, rej) => {
+          reject = rej;
+        });
+      },
+    });
+    handler();
+    expect(syncs).toBe(1);
+    (reject as unknown as (err: Error) => void)(
+      new Error('carto sync blew up')
+    );
+    // Flush the rejected promise's .catch/.finally reactions before asserting.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    // If inFlight were never reset on rejection, this second change would be
+    // dropped and syncs would stay at 1 for the rest of the daemon's life.
+    handler();
+    expect(syncs).toBe(2);
   });
 });

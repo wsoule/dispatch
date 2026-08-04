@@ -722,7 +722,7 @@ describe('PlanManager questions-only turns', () => {
     );
     const started = await startAndSettle(manager, 'build a widget feature');
     manager.sendMessage(started.id, 'looks good, keep going');
-    await waitFor(() => manager.get(started.id).questions.length > 0);
+    await waitFor(() => manager.get(started.id).state !== 'running');
 
     const record = manager.get(started.id);
     expect(record.state).toBe('ready');
@@ -730,7 +730,9 @@ describe('PlanManager questions-only turns', () => {
     expect(record.questions).toHaveLength(1);
   });
 
-  it('clears the prior turn’s questions once a follow-up message is sent', async () => {
+  // Questions stay put while the answering turn is in flight — the desktop form
+  // holds the user's typed answers and unmounts if they are cleared.
+  it('keeps the prior turn’s questions while the answering turn is in flight', async () => {
     const manager = makeManager(
       new FakePlanner({
         ok: true,
@@ -748,7 +750,36 @@ describe('PlanManager questions-only turns', () => {
     expect(started.questions).toHaveLength(1);
 
     const sent = manager.sendMessage(started.id, 'desktop only');
-    expect(sent.questions).toEqual([]);
+    expect(sent.state).toBe('running');
+    expect(sent.questions).toHaveLength(1);
+
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    expect(manager.get(started.id).questions).toEqual([]);
+  });
+
+  // The other half of the same contract: a turn that fails leaves the questions
+  // in place, so the user's answers are still on screen to re-send.
+  it('keeps the questions when the answering turn fails', async () => {
+    const manager = makeManager(
+      new FakePlanner({
+        ok: true,
+        turns: [
+          {
+            reply: 'a question first',
+            proposal: null,
+            questions: [{ id: 'q1', question: 'Scope?', options: [] }],
+          },
+        ],
+      })
+    );
+    const started = await startAndSettle(manager, 'build something vague');
+
+    manager.sendMessage(started.id, 'desktop only');
+    await waitFor(() => manager.get(started.id).state !== 'running');
+
+    const record = manager.get(started.id);
+    expect(record.state).toBe('failed');
+    expect(record.questions).toHaveLength(1);
   });
 });
 

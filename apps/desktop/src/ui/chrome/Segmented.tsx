@@ -2,9 +2,9 @@ import { cn } from '@/lib/utils';
 
 export interface SegmentedOption<T extends string> {
   value: T;
-  /** Shown when there is no icon, and used as the accessible name either way. */
+  /** Always shown, and used as the accessible name. */
   label: string;
-  /** An icon renders instead of the label, with the label kept for a11y. */
+  /** Shown beside the label; the label collapses to sr-only under `sm`. */
   icon?: React.ReactNode;
 }
 
@@ -26,8 +26,8 @@ interface SegmentedProps<T extends string> {
  * A switch is the kind of thing where drift is invisible per-screen and obvious
  * once you move between them.
  *
- * Icon options keep their label as the accessible name rather than dropping it,
- * so an icon-only group is still navigable by anyone not looking at it.
+ * Icon options show their label too, collapsing to sr-only under `sm` so a
+ * toolbar cannot clip while the accessible name stays intact at every width.
  */
 export function Segmented<T extends string>({
   value,
@@ -52,18 +52,24 @@ export function Segmented<T extends string>({
             key={option.value}
             type="button"
             title={option.label}
-            aria-label={option.icon === undefined ? undefined : option.label}
             aria-pressed={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              'rounded-[5px] transition-colors duration-150',
-              option.icon === undefined ? 'px-2 py-0.5 text-[11.5px]' : 'p-1',
+              'flex items-center gap-1.5 rounded-[5px] px-2 py-0.5 transition-colors duration-150',
               active
                 ? 'bg-accent text-accent-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             )}
           >
-            {option.icon ?? option.label}
+            {option.icon}
+            <span
+              className={cn(
+                'whitespace-nowrap',
+                option.icon !== undefined && 'max-sm:sr-only'
+              )}
+            >
+              {option.label}
+            </span>
           </button>
         );
       })}

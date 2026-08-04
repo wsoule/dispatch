@@ -2,6 +2,7 @@ import type {
   CommandEvidence,
   CreateInput,
   DispatchConfig,
+  EscalationStep,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -1422,6 +1423,10 @@ export interface ApiClient {
       intervalSec?: number;
       direction?: 'both' | 'pull' | 'push';
     };
+    maxTurns?: number | null;
+    maxBudgetUsd?: number | null;
+    fixLoop?: { cap?: number; escalation?: EscalationStep[] };
+    verify?: { command?: string; url?: string; notes?: string };
   }): Promise<DispatchConfig>;
   // Linear sync. `connectLinear` posts the key once and never gets it back; every later
   // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.
