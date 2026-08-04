@@ -108,9 +108,7 @@ describe('ClaudePlanner.start', () => {
     await expect(planner.start('build the thing')).rejects.toThrow(/boom/);
   });
 
-  // A turn can end without ever calling the SDK's StructuredOutput tool. The
-  // CLI's own enforce-nudge recovers this most of the time, so one retry is
-  // worth far more than an immediate failure that discards the conversation.
+  // First attempt returns no structured output; second attempt succeeds.
   it('retries once when a successful result carries no structured_output', async () => {
     let calls = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
