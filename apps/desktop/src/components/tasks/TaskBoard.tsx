@@ -21,6 +21,8 @@ import {
   groupTasksByEpicLane,
   groupTasksByStatus,
 } from '../../lib/boardGrouping';
+import { colorForEpic } from '../../lib/projectColor';
+import { statusLabel } from '../../lib/taskDisplay';
 import { EpicCardTile } from './EpicCardTile';
 import { StatusIcon } from './StatusIcon';
 import { TaskCardTile } from './TaskCardTile';
@@ -248,8 +250,20 @@ export function TaskBoard({
             lanes.map((lane) => (
               <section key={lane.epicId ?? '__none__'}>
                 <div className="mb-2 flex items-center gap-2 px-0.5">
-                  <Layers className="text-primary size-3.5 shrink-0" />
-                  <span className="truncate text-[13px] font-medium">
+                  {/* A swatch in the epic's own color rather than the generic Layers glyph
+                      every lane used to share — with one icon repeated down the page, nothing
+                      told the lanes apart. The "no epic" lane has no id to hash, so it keeps
+                      the neutral glyph. */}
+                  {lane.epicId !== null ? (
+                    <span
+                      aria-hidden
+                      className="size-3 shrink-0 rounded-[4px]"
+                      style={{ background: colorForEpic(lane.epicId) }}
+                    />
+                  ) : (
+                    <Layers className="text-muted-foreground size-3.5 shrink-0" />
+                  )}
+                  <span className="truncate text-[13px] font-semibold">
                     {lane.title}
                   </span>
                   <span className="dense-meta">{lane.total}</span>
@@ -266,7 +280,9 @@ export function TaskBoard({
                     >
                       <div className="flex items-center gap-1.5 px-0.5">
                         <StatusIcon status={status} />
-                        <span className="dense-label truncate">{status}</span>
+                        <span className="text-foreground/80 truncate text-[11px] font-medium">
+                          {statusLabel(status)}
+                        </span>
                         <span className="dense-meta">{laneTasks.length}</span>
                       </div>
                       {/* Droppable per lane+status so dragging within a lane still changes
@@ -321,8 +337,8 @@ export function TaskBoard({
             >
               <div className="group/header flex items-center gap-1.5 px-0.5">
                 <StatusIcon status={status} />
-                <span className="text-muted-foreground truncate text-[11px] font-medium">
-                  {status}
+                <span className="text-foreground/80 truncate text-[11px] font-medium">
+                  {statusLabel(status)}
                 </span>
                 <span className="text-muted-foreground/60 font-mono text-[11px]">
                   {columnTasks.length}

@@ -4,17 +4,23 @@ import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from '@dnd-kit/core';
-import { ArrowRight, ChevronRight, Loader2, ShieldAlert } from 'lucide-react';
+import { ArrowRight, ChevronRight, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { resolveCardKeyAction } from '../../lib/keyboard';
+import { colorForEpic } from '../../lib/projectColor';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
 import {
   AssigneeControl,
   PriorityControl,
   StatusControl,
 } from './PropertyControls';
+import {
+  runStateColorClass,
+  RunStateIcon,
+  runStateLabel,
+} from './RunStateIcon';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 
@@ -70,16 +76,6 @@ interface TaskCardTileProps {
 // Only shows the first few label pills before collapsing the rest into a "+N" — Linear's own
 // row/card treatment never lets an unbounded label list crowd out the title.
 const MAX_VISIBLE_LABELS = 2;
-
-const RUN_STATE_LABEL: Record<RunState, string> = {
-  provisioning: 'Provisioning',
-  running: 'Running',
-  'awaiting-approval': 'Awaiting approval',
-  finished: 'Finished',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  'interrupted-dirty': 'Interrupted',
-};
 
 /**
  * A single Board card, redesigned to Linear's exact anatomy: a meta row (id, epic breadcrumb,
@@ -184,6 +180,16 @@ export function TaskCardTile({
           {epicTitle !== undefined && (
             <>
               <ChevronRight className="text-muted-foreground/40 size-3 shrink-0" />
+              {/* Dot in the epic's own color, matching its swim-lane swatch — makes a card's
+                  epic scannable in the flat board and list, where there's no lane heading to
+                  group by. */}
+              {doc.meta.parent !== undefined && (
+                <span
+                  aria-hidden
+                  className="size-1.5 shrink-0 rounded-full"
+                  style={{ background: colorForEpic(doc.meta.parent) }}
+                />
+              )}
               <span className="text-muted-foreground/80 min-w-0 truncate">
                 {epicTitle}
               </span>
@@ -225,8 +231,8 @@ export function TaskCardTile({
           onChange={(p) => onEditTask({ priority: p })}
         />
         {blocked && (
-          <span className="text-destructive inline-flex items-center gap-0.5 text-[11px]">
-            <ShieldAlert className="size-3" />
+          <span className="text-destructive inline-flex items-center gap-1 text-[11px]">
+            <RunStateIcon state="blocked" className="size-3.5" />
             Blocked
           </span>
         )}
@@ -246,11 +252,14 @@ export function TaskCardTile({
         )}
         {liveRunState !== undefined && (
           <span
-            className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-[11px]"
-            title={RUN_STATE_LABEL[liveRunState]}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-1 text-[11px] font-medium',
+              runStateColorClass(liveRunState)
+            )}
+            title={runStateLabel(liveRunState)}
           >
-            <span className="bg-primary size-1.5 animate-pulse rounded-full motion-reduce:animate-none" />
-            {RUN_STATE_LABEL[liveRunState]}
+            <RunStateIcon state={liveRunState} className="size-3.5" />
+            {runStateLabel(liveRunState)}
           </span>
         )}
       </div>
