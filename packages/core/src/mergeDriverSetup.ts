@@ -107,6 +107,31 @@ export function checkMergeDriverSetup(cwd: string): {
   };
 }
 
+// Whether the task-file merge driver, once invoked, would actually find
+// something to run. checkMergeDriverSetup only confirms the git config
+// ENTRY exists (`merge.dispatch-task.driver` is set to something) — it says
+// nothing about whether the command that entry names actually resolves.
+// registerMergeDriverGitConfig hardcodes that command as a bare `dispatch`,
+// resolved off PATH at merge time by whatever shell git spawns; on a
+// desktop-only install with no separately-installed CLI, that resolution
+// fails. Git treats a driver it can't run as a genuine merge conflict (not
+// silent data loss — the conflict still surfaces normally), but every OTHER
+// concurrent edit that a field-aware merge would have reconciled cleanly
+// instead falls back to a plain line-based git merge, with no diagnostic
+// anywhere. Bun.which mirrors the same PATH lookup a spawned `git` process
+// would perform, using this process's own (i.e. the daemon's) PATH.
+export function isMergeDriverResolvable(cwd: string): boolean {
+  const configured = spawnSync(
+    'git',
+    ['config', '--local', '--get', 'merge.dispatch-task.driver'],
+    { cwd, encoding: 'utf8' }
+  );
+  if (configured.status !== 0) return false;
+  const command = configured.stdout.trim().split(/\s+/)[0];
+  if (command === undefined || command === '') return false;
+  return Bun.which(command) !== null;
+}
+
 // Same as checkMergeDriverSetup, for the team roster's driver.
 export function checkTeamMergeDriverSetup(cwd: string): {
   gitattributes: boolean;

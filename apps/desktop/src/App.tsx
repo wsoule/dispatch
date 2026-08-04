@@ -620,6 +620,10 @@ function App() {
             onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
             switchProjects={switchProjects ?? []}
             onSelectProject={selectSwitchProject}
+            syncStatus={data.syncStatus}
+            onDisableAutoCommit={() =>
+              void data.handleUpdateConfig({ autoCommit: false })
+            }
             noProjectYet={noProjectYet}
             onAddProject={() => {
               setSwitcherOpen(false);

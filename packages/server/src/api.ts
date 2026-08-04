@@ -97,6 +97,8 @@ import {
   formatCommentsForAgent,
   ReviewCommentStore,
 } from './reviewComments.js';
+import type { SyncResult } from './sync/boardSyncer.js';
+import type { BoardSyncScheduler } from './sync/scheduler.js';
 
 // Everything a request handler needs, bundled so `handleApi` stays a pure
 // function of (request, context) instead of reaching for module-level state —
@@ -137,6 +139,15 @@ export interface ApiContext {
   commitMessageGenerator?: CommitMessageGenerator;
   // Who this daemon acts as, resolved once at boot from git config.
   actorContext: ActorContext;
+  // The board syncer's scheduler, or `null` when no trunk was resolvable at
+  // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
+  // that case, since no real SyncResult ever reports it.
+  boardSyncScheduler: BoardSyncScheduler | null;
+  // Detected once at boot (see index.ts's isMergeDriverResolvable call) —
+  // whether `dispatch merge-task` actually resolves on this daemon's PATH.
+  // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
+  // visible somewhere, since git itself never reports it as an error.
+  mergeDriverOk: boolean;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -681,10 +692,120 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     ctx.events.broadcast({ type: 'config.changed' });
     // A changed interval or enabled flag only takes effect once the poll timer is rebuilt.
     ctx.linearSync.start();
+    // Turning auto-commit off is the natural point to tear the board's
+    // private sync worktree back down — otherwise it (and its `git
+    // worktree list` entry in the user's repo) outlives the feature it was
+    // created for. Unconditional on `patch.autoCommit === false` rather than
+    // gated on an actual true→false transition: SyncWorktree.remove() is
+    // already a safe no-op when there's nothing to remove.
+    if (patch.autoCommit === false) ctx.boardSyncScheduler?.removeWorktree();
     return jsonResponse(config);
   } catch (err) {
     return errorResponse(400, (err as Error).message);
   }
+}
+
+// The body of `GET /api/sync` — the board syncer's last attempt plus what the
+// next one would move. `pendingOutgoing`/`pendingIncoming` are computed live
+// (BoardSyncer.pendingCounts()) on every request, not cached from the last
+// attempt, so they stay accurate between debounced syncs.
+export interface SyncStatus extends SyncResult {
+  pendingOutgoing: number;
+  pendingIncoming: number;
+  /** When the last sync attempt finished, or `null` before the first one. */
+  lastSyncedAt: string | null;
+  /**
+   * Null when `dispatch merge-task` resolves on the daemon's PATH; otherwise
+   * why it doesn't. A broken driver never corrupts anything by itself — git
+   * treats it as a genuine conflict — but it silently downgrades every
+   * OTHER concurrent same-task edit from a field-level merge to a plain
+   * line-based one, with no other diagnostic anywhere.
+   */
+  mergeDriverWarning: string | null;
+}
+
+const DISABLED_SYNC_DETAIL =
+  'no trunk resolvable for this project — board sync needs an origin ' +
+  'remote or a local main/master branch. SyncWorktree.open() only runs at ' +
+  'boot, so fixing that (adding an origin, or a main/master branch) needs a ' +
+  'daemon restart before syncing can start.';
+
+const OFF_SYNC_DETAIL =
+  'board sync is off for this project — turn on auto-commit in Settings ' +
+  'to start syncing.';
+
+const MERGE_DRIVER_WARNING =
+  "the 'dispatch' command isn't resolvable on this daemon's PATH, so " +
+  'concurrent edits to the same task will merge line-by-line instead of ' +
+  'field-by-field. Run `dispatch init` (or `dispatch doctor`) from a shell ' +
+  'that can find `dispatch` to fix this.';
+
+// GET /api/sync — `disabled` and `off` are never states a real
+// BoardSyncer.syncOnce() result carries (see boardSyncer.ts's SyncState).
+// `disabled` is synthesized because `ctx.boardSyncScheduler` is `null`,
+// which only happens when no trunk was resolvable at boot. `off` is
+// synthesized when a trunk WAS resolvable (the scheduler exists) but the
+// project's own config.yml has autoCommit: false — every existing project
+// defaults to this, so it must short-circuit before touching the scheduler's
+// pendingCounts(), which would otherwise call SyncWorktree.ensure() (a
+// synchronous `git worktree add`, often a multi-second checkout) on every
+// page load of every never-enabled project. Every other state comes
+// straight from the scheduler's retained last result, alongside a live
+// pendingCounts() read.
+function getSyncStatus(ctx: ApiContext): Response {
+  // Read once per request, not cached on ApiContext: unlike the boot-time
+  // detection this value comes from (ctx.mergeDriverOk), this is cheap
+  // enough to include regardless of which branch below responds, so every
+  // state — even `disabled`/`off` — reports the same merge-driver truth.
+  const mergeDriverWarning = ctx.mergeDriverOk ? null : MERGE_DRIVER_WARNING;
+
+  if (ctx.boardSyncScheduler === null) {
+    const disabled: SyncStatus = {
+      state: 'disabled',
+      detail: DISABLED_SYNC_DETAIL,
+      pushed: 0,
+      pulled: 0,
+      pendingOutgoing: 0,
+      pendingIncoming: 0,
+      lastSyncedAt: null,
+      mergeDriverWarning,
+    };
+    return jsonResponse(disabled);
+  }
+
+  let autoCommit: boolean;
+  try {
+    autoCommit = loadConfig(ctx.rootDir).autoCommit;
+  } catch {
+    autoCommit = false;
+  }
+  if (!autoCommit) {
+    const off: SyncStatus = {
+      state: 'off',
+      detail: OFF_SYNC_DETAIL,
+      pushed: 0,
+      pulled: 0,
+      pendingOutgoing: 0,
+      pendingIncoming: 0,
+      lastSyncedAt: null,
+      mergeDriverWarning,
+    };
+    return jsonResponse(off);
+  }
+
+  const last = ctx.boardSyncScheduler.lastResult();
+  const pending = ctx.boardSyncScheduler.pendingCounts();
+  const status: SyncStatus = {
+    state: last?.state ?? 'idle',
+    detail: last?.detail ?? null,
+    pushed: last?.pushed ?? 0,
+    pulled: last?.pulled ?? 0,
+    pendingOutgoing: pending.outgoing,
+    pendingIncoming: pending.incoming,
+    lastSyncedAt: ctx.boardSyncScheduler.lastSyncedAt(),
+    mergeDriverWarning,
+  };
+  return jsonResponse(status);
 }
 
 // Maps a Linear client failure onto a status code: a bad key is the caller's
@@ -2431,6 +2552,10 @@ export async function handleApi(
       method === 'PATCH'
     ) {
       return await patchConfig(req, ctx);
+    }
+
+    if (segments[0] === 'sync' && segments.length === 1 && method === 'GET') {
+      return getSyncStatus(ctx);
     }
 
     if (segments[0] === 'linear' && segments.length === 2) {
