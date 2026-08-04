@@ -706,10 +706,27 @@ export class PrManager {
         'gh api pulls/files returned invalid JSON'
       );
     }
-    const files = raw.map((item) => ({
-      path: String(item.filename ?? ''),
-      status: FILE_STATUS_LETTER[String(item.status ?? '')] ?? 'M',
-    }));
+    // Guard each element's shape rather than stringifying whatever arrived:
+    // `String(obj)` on a non-string filename silently yields the literal
+    // text "[object Object]" as a file path, which would render as a
+    // real-looking but garbage row in the diff UI. A malformed entry throws
+    // instead, matching this function's existing fail-loudly posture.
+    const files = raw.map((item) => {
+      const filename = item.filename;
+      if (typeof filename !== 'string') {
+        throw new OrchestratorConflictError(
+          'gh api pulls/files returned a file entry with no string filename'
+        );
+      }
+      const status = item.status;
+      return {
+        path: filename,
+        status:
+          typeof status === 'string'
+            ? (FILE_STATUS_LETTER[status] ?? 'M')
+            : 'M',
+      };
+    });
     return { patch: patch.stdout, files };
   }
 
