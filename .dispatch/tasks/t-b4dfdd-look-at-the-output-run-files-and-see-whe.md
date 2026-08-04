@@ -3,7 +3,7 @@ id: t-b4dfdd
 title: look at the output run files and see where the agent is repeating a lot
   of actions, this needs to be consolidated into something somehow- like the
   agents shouldn’t aways be doing the same thing if they dont have to
-status: in-review
+status: done
 kind: task
 parent: null
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-28T20:01:00.686Z
-updated: 2026-08-04T14:56:11.131Z
+updated: 2026-08-04T16:40:15.475Z
 external: null
 writes: []
 ---
@@ -29,3 +29,4 @@ writes: []
 - 2026-08-04T00:29:20.505Z Shipped in 4 commits (b93e2bf, 0296bdd, 1e9b715, 82112a7). Consolidated the repeated orientation ritual into a single `## Repo orientation` section rendered into every run prompt, fed by three collectors: deterministic facts (workspace map, skills index from SKILL.md frontmatter, root scripts, live concurrent runs + claims), a commit-keyed LLM repo map cached under runsDir and refreshed in the background, and cross-run file hotspots mined from this project's own transcripts. Where the section covers ground an instruction used to, that instruction now points at it instead of repeating the errand, so the fetching stops rather than doubling. Verified end-to-end against the real repo: the section renders the full 8-package workspace map and 8-skill index, and the miner independently rediscovers packages/server/src/api.ts — the file planners/claude.ts already hardcodes as this repo's canonical shared ground. Also filed t-9e0f00 for the merge-queue DISPATCH_HOME leak (12,763 dirs vs 25 transcripts). — none
 - 2026-08-04T00:29:39.263Z [run r-9d3751] finished: finished — 14 files, $15.69 — agent:wsoule679/claude
 - 2026-08-04T14:56:11.131Z [run r-1192ed] finished: finished — 0 files, $3.58 — agent:wsoule679/claude
+- 2026-08-04T16:40:15.446Z status → done — human:wsoule679
