@@ -1,7 +1,11 @@
 import type {
+  DraftRecord,
   MergeQueueEntry,
   MergeQueueEntryState,
+  PlannerQuestion,
+  PlanRecord,
   RunMeta,
+  RunQuestion,
   RunState,
 } from '@dispatch/client';
 
@@ -119,6 +123,95 @@ export function diffQueueNotifications(
           target: { kind: 'queue' },
         });
       }
+    }
+  }
+
+  return { notifications, next };
+}
+
+/** Per-asker signature of the last-seen planner questions (planner ids repeat across
+ * turns, so the text is in the key), plus every run-question id already seen. */
+export interface QuestionTracking {
+  askers: Map<string, string>;
+  runQuestionIds: Set<string>;
+}
+
+export function emptyQuestionTracking(): QuestionTracking {
+  return { askers: new Map(), runQuestionIds: new Set() };
+}
+
+// A stable key for one asker's current question set — id and text of each question, so a
+// new round with recycled ids reads as different from the round before it.
+function signatureOf(questions: readonly PlannerQuestion[]): string {
+  return questions.map((q) => `${q.id}|${q.question}`).join('||');
+}
+
+/** Pure edge-detector for questions waiting on the user — planner questions on drafts and
+ * the open plan, plus run agents' questions. First sighting never notifies. */
+export function diffQuestionNotifications(
+  previous: QuestionTracking,
+  drafts: readonly DraftRecord[],
+  planRecord: PlanRecord | undefined,
+  openQuestions: ReadonlyMap<string, RunQuestion[]>
+): { notifications: PendingNotification[]; next: QuestionTracking } {
+  const next = emptyQuestionTracking();
+  const notifications: PendingNotification[] = [];
+
+  const askers: {
+    key: string;
+    questions: readonly PlannerQuestion[];
+    title: string;
+    body: string;
+    target: InboxTarget;
+  }[] = [
+    ...drafts.map((d) => ({
+      key: `draft:${d.id}`,
+      questions: d.questions,
+      title: 'The planner needs your answer',
+      body: d.prompt,
+      target: { kind: 'draft' as const, draftId: d.id },
+    })),
+    ...(planRecord === undefined
+      ? []
+      : [
+          {
+            key: `plan:${planRecord.id}`,
+            questions: planRecord.questions,
+            title: 'The planner needs your answer',
+            body: planRecord.prompt,
+            target: { kind: 'plan' as const, planId: planRecord.id },
+          },
+        ]),
+  ];
+
+  for (const asker of askers) {
+    const signature = signatureOf(asker.questions);
+    next.askers.set(asker.key, signature);
+    const previousSignature = previous.askers.get(asker.key);
+    if (
+      previousSignature !== undefined &&
+      previousSignature !== signature &&
+      asker.questions.length > 0
+    ) {
+      notifications.push({
+        title: asker.title,
+        body: asker.body,
+        target: asker.target,
+      });
+    }
+  }
+
+  for (const [runId, questions] of openQuestions) {
+    for (const question of questions) {
+      next.runQuestionIds.add(question.id);
+      if (previous.runQuestionIds.has(question.id)) continue;
+      // A run question id is unique and only appears once open, so its first
+      // sighting is the edge; the project-switch reset is the guard.
+      notifications.push({
+        title: 'An agent needs your answer',
+        body: question.question,
+        target: { kind: 'run', runId },
+      });
     }
   }
 
