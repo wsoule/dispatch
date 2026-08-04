@@ -214,6 +214,43 @@ describe('ClaudePlanner.sendMessage', () => {
     expect(turn.proposal).toEqual(refined);
     expect(turn.sessionId).toBe('sess-2');
   });
+
+  // A retry that dropped `resume` would start a fresh session and silently
+  // discard the whole conversation — the exact bug class this branch fixes.
+  it('resumes the same session on both attempts when the first carries no structured_output', async () => {
+    const resumes: unknown[] = [];
+    let calls = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fakeQueryFn = (args: any) => {
+      calls += 1;
+      resumes.push(args.options.resume);
+      const attempt = calls;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async function* fakeMessages(): AsyncGenerator<any> {
+        if (attempt === 1) {
+          yield { type: 'result', subtype: 'success', session_id: 'sess-1' };
+          return;
+        }
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-2',
+          structured_output: {
+            message: 'second time lucky',
+            proposal: PROPOSAL,
+          },
+        };
+      }
+      return fakeMessages() as unknown as Query;
+    };
+    const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
+
+    const turn = await planner.sendMessage('sess-1', 'answer the question');
+
+    expect(calls).toBe(2);
+    expect(resumes).toEqual(['sess-1', 'sess-1']);
+    expect(turn.reply).toBe('second time lucky');
+  });
 });
 
 // The bug this branch of coverage guards against: a packaged desktop app has
