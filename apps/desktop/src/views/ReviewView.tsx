@@ -2,13 +2,24 @@ import { ArrowLeft, Check } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
-import { ReviewCommentsPanel } from '../components/runs/ReviewCommentsPanel';
+import { ReviewCasePanel } from '../components/runs/ReviewCasePanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { buildReviewQueue, ReviewQueue } from '../components/runs/ReviewQueue';
+import { ReviewThreadIndex } from '../components/runs/ReviewThreadIndex';
+import { ReviewVerdictBar } from '../components/runs/ReviewVerdictBar';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import {
+  useEpicLedger,
+  useProjectLedger,
+  useTaskFindings,
+} from '../hooks/useOrchestration';
 import { deriveFeedState } from '../lib/feedState';
+import { countOpenFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
+import { openFindingsByFile } from '../lib/reviewAttention';
+import { caseWarnings, summarizeCase } from '../lib/reviewCase';
+import { readPanelOpen, writePanelOpen } from '../lib/reviewPanels';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
 import { cn } from '@/lib/utils';
@@ -59,6 +70,12 @@ export function ReviewView({
     readViewed(runId)
   );
   const [unviewedOnly, setUnviewedOnly] = useState(false);
+  // Which side regions are showing. Persisted, so a reviewer who works with the diff full-width
+  // is not asked to collapse the same two panels on every review.
+  const [filesOpen, setFilesOpen] = useState(() => readPanelOpen('files'));
+  const [threadsOpen, setThreadsOpen] = useState(() =>
+    readPanelOpen('threads')
+  );
   // Which thread the diff should scroll to. Carries a nonce so clicking the same thread twice
   // still jumps — a value-equal object would not re-fire the effect.
   const [jumpTo, setJumpTo] = useState<{
@@ -73,12 +90,14 @@ export function ReviewView({
   useEffect(() => {
     if (runId !== '') writeViewed(runId, viewed);
   }, [runId, viewed]);
+  useEffect(() => writePanelOpen('files', filesOpen), [filesOpen]);
+  useEffect(() => writePanelOpen('threads', threadsOpen), [threadsOpen]);
 
-  // Land on the first file, and follow along if the diff changes underneath.
+  // `selected === null` is the case panel, which is where a review opens: the agent's own
+  // account of what it checked is the thing to read before file 1 of 10. Only correct the
+  // selection when its file has left the diff underneath.
   useEffect(() => {
-    if (selected === null || !paths.includes(selected)) {
-      setSelected(paths[0] ?? null);
-    }
+    if (selected !== null && !paths.includes(selected)) setSelected(null);
   }, [paths, selected]);
 
   const commentsByFile = useMemo(() => {
@@ -89,6 +108,55 @@ export function ReviewView({
     }
     return map;
   }, [data.reviewComments]);
+
+  // What the agent review found. `useTaskFindings` already returns `data ?? []`, so this is
+  // always an array — an empty one means no review has run, never "clean".
+  const { findings } = useTaskFindings(data.client, data.port, run?.taskId);
+  const findingsByFile = useMemo(
+    () => openFindingsByFile(findings),
+    [findings]
+  );
+
+  // Decisions and hazards this run's task filed via `record_decision`. Both ledgers are read
+  // because a task's entries land under its epic when it has one (`meta.parent`) and in the
+  // project ledger when it does not.
+  const task = useMemo(
+    () => data.tasks.find((t) => t.meta.id === run?.taskId),
+    [data.tasks, run]
+  );
+  const { entries: epicEntries } = useEpicLedger(
+    data.client,
+    data.port,
+    task?.meta.parent ?? undefined
+  );
+  const { entries: projectEntries } = useProjectLedger(
+    data.client,
+    data.port,
+    run !== undefined
+  );
+  const decisions = useMemo(
+    () =>
+      [...epicEntries, ...projectEntries].filter(
+        (e) => e.sourceTaskId === run?.taskId
+      ),
+    [epicEntries, projectEntries, run]
+  );
+
+  // What approving would wave through: the agent's own flagged problems, plus anything its
+  // reviewer raised that nobody has ruled on.
+  const verdictWarnings = useMemo(() => {
+    const summary = summarizeCase(
+      data.runDetail?.evidence ?? [],
+      data.runDetail?.mutations ?? []
+    );
+    const openFindings = countOpenFindings(findings).open;
+    return [
+      ...caseWarnings(summary),
+      ...(openFindings > 0
+        ? [`${openFindings} open finding${openFindings === 1 ? '' : 's'}`]
+        : []),
+    ];
+  }, [data.runDetail, findings]);
 
   // Dispatches a review agent over this run's diff — base/head/runId all come from the run
   // already open here, never invented or asked of the reviewer. `startReview` resolves once the
@@ -149,37 +217,63 @@ export function ReviewView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <Header onBack={onBack} title={run.taskTitle} run={run} />
+      <Header
+        onBack={onBack}
+        title={run.taskTitle}
+        run={run}
+        filesOpen={filesOpen}
+        onToggleFiles={() => setFilesOpen((v) => !v)}
+        threadsOpen={threadsOpen}
+        onToggleThreads={() => setThreadsOpen((v) => !v)}
+        threadCount={data.reviewComments.length}
+      />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[190px_200px_minmax(0,1fr)_290px] gap-4 overflow-hidden">
-        <div className="min-h-0 overflow-y-auto">
-          <ReviewQueue
-            items={queue}
-            selectedRunId={selectedRunId}
-            onSelect={onSelectRun}
-            compact
-          />
-        </div>
-
+      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
         {/* `overflow-hidden`, not `-auto`: the list scrolls itself internally (its header and
-            viewed summary stay pinned above it), so this only needs to bound the grid track —
+            viewed summary stay pinned above it), so this only needs to bound the track —
             a second scrollbar here would just be redundant. */}
-        <div className="min-h-0 overflow-hidden">
-          <ReviewFileTree
-            files={data.diff?.files ?? []}
-            onSelect={setSelected}
-            viewed={viewed}
-            unviewedOnly={unviewedOnly}
-            onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
-          />
-        </div>
+        {filesOpen && (
+          <div className="flex min-h-0 w-56 shrink-0 flex-col overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              className={cn(
+                'mb-1 flex shrink-0 items-center gap-1.5 rounded px-3 py-1 text-left text-[12px]',
+                selected === null ? 'bg-accent/15' : 'hover:bg-muted/60'
+              )}
+            >
+              <StateDot state="review" pulse={false} />
+              The case
+            </button>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <ReviewFileTree
+                files={data.diff?.files ?? []}
+                onSelect={setSelected}
+                viewed={viewed}
+                commentsByFile={commentsByFile}
+                findingsByFile={findingsByFile}
+                unviewedOnly={unviewedOnly}
+                onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
+              />
+            </div>
+          </div>
+        )}
 
         {/* A flex column, not a plain `min-h-0` box: `CodeView` needs a real, unambiguous height
-            rather than a percentage resolved through this grid cell's stretch, which a nested
-            grid-then-percentage chain can (and did, in some engines) collapse to zero. `flex-1`
-            on `CodeView` itself below sizes it directly off this container's own resolved
+            rather than a percentage resolved through an ancestor's stretch, which a nested
+            container-then-percentage chain can (and did, in some engines) collapse to zero.
+            `flex-1` on `CodeView` itself sizes it directly off this container's resolved
             height instead. */}
-        <div className="flex min-h-0 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {selected === null && (
+            <ReviewCasePanel
+              evidence={data.runDetail?.evidence ?? []}
+              mutations={data.runDetail?.mutations ?? []}
+              findings={findings}
+              decisions={decisions}
+              onStartAiReview={handleStartAiReview}
+            />
+          )}
           {data.diff !== undefined && selected !== null && (
             <>
               <DiffPaneHeader
@@ -194,6 +288,7 @@ export function ReviewView({
                 patch={data.diff.patch}
                 only={selected}
                 comments={data.reviewComments}
+                findings={findingsByFile.get(selected) ?? []}
                 viewed={viewed}
                 scrollTo={jumpTo}
                 onAdd={data.handleAddReviewComment}
@@ -204,19 +299,27 @@ export function ReviewView({
           )}
         </div>
 
-        <div className="min-h-0 overflow-y-auto">
-          <ReviewCommentsPanel
-            comments={data.reviewComments}
-            onResolve={data.handleResolveReviewComment}
-            onReply={data.handleReplyReviewComment}
-            onSubmit={data.handleSubmitReview}
-            onJumpTo={(c) =>
-              setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
-            }
-            onStartAiReview={handleStartAiReview}
-          />
-        </div>
+        {threadsOpen && (
+          <div className="min-h-0 w-72 shrink-0 overflow-y-auto">
+            <ReviewThreadIndex
+              comments={data.reviewComments}
+              onResolve={data.handleResolveReviewComment}
+              onReply={data.handleReplyReviewComment}
+              onJumpTo={(c) =>
+                setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
+              }
+            />
+          </div>
+        )}
       </div>
+
+      <ReviewVerdictBar
+        layout="bar"
+        comments={data.reviewComments}
+        onSubmit={data.handleSubmitReview}
+        onStartAiReview={handleStartAiReview}
+        extraWarnings={verdictWarnings}
+      />
     </div>
   );
 }
@@ -270,40 +373,83 @@ function DiffPaneHeader({
   );
 }
 
+/**
+ * Two rows, not three, and the title at a size that does not wrap: this sits above a diff that
+ * wants every pixel of height, so the back link shares a row with the title and the run's
+ * identity shares one with the panel toggles.
+ */
 function Header({
   onBack,
   title,
   run,
+  filesOpen,
+  onToggleFiles,
+  threadsOpen,
+  onToggleThreads,
+  threadCount,
 }: {
   onBack: () => void;
   title: string;
-  run?: { id: string; branch: string; turns?: number; costUsd?: number };
+  run?: {
+    id: string;
+    branch: string;
+    model?: string;
+    turns?: number;
+    costUsd?: number;
+  };
+  filesOpen: boolean;
+  onToggleFiles: () => void;
+  threadsOpen: boolean;
+  onToggleThreads: () => void;
+  threadCount: number;
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={onBack}
-        className="text-muted-foreground hover:text-foreground flex w-fit items-center gap-1.5 text-[11.5px]"
-      >
-        <ArrowLeft className="size-3" />
-        {/* Closing a review returns to the review queue now that Review has
-            one — it used to go back to the Control room, and kept saying so. */}
-        All reviews
-      </button>
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1.5 text-[11.5px]"
+        >
+          <ArrowLeft className="size-3" />
+          {/* Closing a review returns to the review queue now that Review has
+              one — it used to go back to the Control room, and kept saying so. */}
+          All reviews
+        </button>
         {run !== undefined && <StateDot state="review" pulse={false} />}
-        <h1 className="view-topbar-title">{title}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-[15px] font-medium">
+          {title}
+        </h1>
       </div>
       {run !== undefined && (
         <div className="flex flex-wrap items-center gap-3">
           <span className="dense-meta">{run.branch}</span>
+          {run.model !== undefined && (
+            <span className="dense-meta">{run.model}</span>
+          )}
           {run.turns !== undefined && (
             <span className="dense-meta">{run.turns} turns</span>
           )}
           {run.costUsd !== undefined && (
             <span className="dense-meta">${run.costUsd.toFixed(2)}</span>
           )}
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={onToggleFiles}
+            aria-pressed={filesOpen}
+            className="text-accent-foreground text-[11px]"
+          >
+            {filesOpen ? 'Hide files' : 'Show files'}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleThreads}
+            aria-pressed={threadsOpen}
+            className="text-accent-foreground text-[11px]"
+          >
+            {threadsOpen ? 'Hide threads' : `Threads (${threadCount})`}
+          </button>
         </div>
       )}
     </div>
