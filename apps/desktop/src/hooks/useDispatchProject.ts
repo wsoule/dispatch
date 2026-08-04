@@ -75,6 +75,14 @@ type PendingScopeRequest = { requestId: string };
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
+// The open-repo-PRs query key, exported so the Review page can refresh it for
+// as long as it is the page on screen (no WS event announces a PR moving).
+export function repoPrsKey(
+  port: number | undefined
+): [string, number | undefined] {
+  return ['dispatch-repo-prs', port];
+}
+
 function readStoredShowArchived(): boolean {
   if (typeof window === 'undefined') return false;
   return window.localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY) === '1';
@@ -627,7 +635,7 @@ export function useDispatchProject(
     () => ['dispatch-merge-queue', port],
     [port]
   );
-  const repoPrsQueryKey = useMemo(() => ['dispatch-repo-prs', port], [port]);
+  const repoPrsQueryKey = useMemo(() => repoPrsKey(port), [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
   const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
