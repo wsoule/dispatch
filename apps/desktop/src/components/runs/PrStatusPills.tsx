@@ -61,21 +61,25 @@ export const REVIEW_VERDICT: Record<
 
 // Checks rollup as one pill: red on any failure, amber while pending, green
 // when all pass. Renders nothing at zero checks, so a repo without CI is bare.
-export function PrChecksPill({ checks }: { checks: PrCheckSummary }) {
-  if (checks.total === 0) return null;
-  const tone =
-    checks.failed > 0 ? 'red' : checks.pending > 0 ? 'amber' : 'green';
+export function PrChecksPill({ checks }: { checks?: PrCheckSummary }) {
+  // Optional, and read through `?.`: a daemon older than the widened RepoPr
+  // sends no rollup, and throwing here would drop the whole page's render.
+  const total = checks?.total ?? 0;
+  const failed = checks?.failed ?? 0;
+  const pending = checks?.pending ?? 0;
+  if (total === 0) return null;
+  const tone = failed > 0 ? 'red' : pending > 0 ? 'amber' : 'green';
   const icon =
-    checks.failed > 0 ? (
+    failed > 0 ? (
       <X className="size-3" />
-    ) : checks.pending > 0 ? (
+    ) : pending > 0 ? (
       <Clock className="size-3" />
     ) : (
       <Check className="size-3" />
     );
   return (
     <StatusPill tone={tone} icon={icon}>
-      {checks.passed}/{checks.total} checks
+      {checks?.passed ?? 0}/{total} checks
     </StatusPill>
   );
 }

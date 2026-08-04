@@ -114,6 +114,22 @@ test('a PR row shows its check rollup and review decision', () => {
   expect(screen.getByText('requested changes')).toBeDefined();
 });
 
+test('a row from a daemon older than the widened RepoPr still renders', () => {
+  // The desktop attaches to any healthy dispatchd with no version handshake,
+  // so a pre-widening `gh pr list` shape has to degrade, not throw.
+  const legacy: Partial<RepoPr> = { ...repoPr() };
+  delete legacy.checks;
+  render(
+    <ReviewQueue
+      items={buildReviewQueue([], [legacy as RepoPr])}
+      selected={null}
+      onSelect={() => {}}
+    />
+  );
+  expect(screen.getByText('Someone else PR')).toBeDefined();
+  expect(screen.queryByText(/checks/)).toBeNull();
+});
+
 test('a row with no checks renders no empty checks pill', () => {
   render(
     <ReviewQueue
