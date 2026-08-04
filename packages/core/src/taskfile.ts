@@ -177,6 +177,19 @@ function unescapeHeadingLines(content: string): string {
 }
 
 /**
+ * Shapes a hand-edited whole body into the layout every generated task file
+ * already has: one blank line between the closing frontmatter fence and the
+ * first section, and exactly one trailing newline. `serializeTaskFile` writes
+ * the body straight after `---\n`, so without the leading newline an edited
+ * file would open with `---\n## Description`. Idempotent, so re-saving an
+ * unchanged body rewrites the file byte for byte.
+ */
+export function normalizeBody(body: string): string {
+  const trimmed = body.trim();
+  return trimmed === '' ? '\n' : `\n${trimmed}\n`;
+}
+
+/**
  * Reads the text under a `## <heading>` section, trimmed. The read counterpart
  * of `setSection`; `''` when the heading is absent or has nothing under it.
  */

@@ -234,6 +234,70 @@ describe('task CRUD round-trip', () => {
     });
     expect(badRes.status).toBe(400);
   });
+
+  it('replaces the whole markdown body via PATCH', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Doc task' }),
+      })
+    );
+
+    const patchRes = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: '## Description\n\nhand written\n\n## Notes\n\nfreeform\n',
+      }),
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = await json(patchRes);
+    expect(patched.body).toBe(
+      '\n## Description\n\nhand written\n\n## Notes\n\nfreeform\n'
+    );
+    // Frontmatter survives a body rewrite and the doc still parses on re-read.
+    const reread = await json(
+      await fetch(`${baseUrl}/api/tasks/${created.meta.id}`)
+    );
+    expect(reread.meta.title).toBe('Doc task');
+    expect(reread.body).toBe(patched.body);
+  });
+
+  it('rejects a non-string body instead of stringifying it into the task file', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Doc task', description: 'keep me' }),
+      })
+    );
+
+    const badRes = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 42 }),
+    });
+    expect(badRes.status).toBe(400);
+    expect((await json(badRes)).error).toContain('body');
+    // The rejected request must not have touched the stored body — without the
+    // guard this is a 500 from normalizeBody's `.trim()`, not a clean refusal.
+    const reread = await json(
+      await fetch(`${baseUrl}/api/tasks/${created.meta.id}`)
+    );
+    expect(reread.body).toContain('keep me');
+  });
+
+  // `body` is update-only: create builds its body from the template, so the
+  // field must not be silently accepted (and ignored) on POST.
+  it('rejects body on create', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Doc task', body: '## Nope\n' }),
+    });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('filter + ready queries', () => {
