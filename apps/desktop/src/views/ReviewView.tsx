@@ -15,7 +15,7 @@ import {
   useTaskFindings,
 } from '../hooks/useOrchestration';
 import { deriveFeedState } from '../lib/feedState';
-import { countOpenFindings } from '../lib/findings';
+import { findingWarnings, partitionFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { openFindingsByFile } from '../lib/reviewAttention';
 import { caseWarnings, summarizeCase } from '../lib/reviewCase';
@@ -149,12 +149,9 @@ export function ReviewView({
       data.runDetail?.evidence ?? [],
       data.runDetail?.mutations ?? []
     );
-    const openFindings = countOpenFindings(findings).open;
     return [
       ...caseWarnings(summary),
-      ...(openFindings > 0
-        ? [`${openFindings} open finding${openFindings === 1 ? '' : 's'}`]
-        : []),
+      ...findingWarnings(partitionFindings(findings)),
     ];
   }, [data.runDetail, findings]);
 

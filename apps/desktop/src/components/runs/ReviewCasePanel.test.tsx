@@ -1,6 +1,6 @@
 import type { Finding } from '@dispatch/client';
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core/browser';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { ReviewCasePanel } from './ReviewCasePanel';
@@ -89,6 +89,86 @@ test('an adjudicated finding does not count as open', () => {
     <ReviewCasePanel {...empty} findings={[finding({ verdict: 'parked' })]} />
   );
   expect(screen.getByText(/no agent review has run/i)).toBeDefined();
+});
+
+const check = (over: Partial<Finding> = {}): Finding =>
+  finding({ raisedBy: 'none', severity: 'minor', ...over });
+
+const legacyChecks = ['a.ts', 'b.ts', 'c.ts'].map((path, i) =>
+  check({
+    id: `f-c${i}`,
+    title: `file changed outside declared writes: ${path}`,
+    file: path,
+  })
+);
+
+test('a rule that fired across many files renders as one collapsed row', () => {
+  render(<ReviewCasePanel {...empty} findings={legacyChecks} />);
+  expect(
+    screen.getByText('file changed outside declared writes')
+  ).toBeDefined();
+  expect(screen.getByText('3 files')).toBeDefined();
+  expect(screen.queryByText('a.ts')).toBeNull();
+});
+
+test('expanding a rule lists the paths it covers', () => {
+  render(<ReviewCasePanel {...empty} findings={legacyChecks} />);
+  fireEvent.click(screen.getByRole('button', { name: /outside declared/i }));
+  expect(screen.getByText('a.ts')).toBeDefined();
+  expect(screen.getByText('c.ts')).toBeDefined();
+});
+
+// A rule firing is not a review having run. Saying otherwise is the one way
+// this panel could mislead a reviewer into approving.
+test('checks alone still read as "no review has run"', () => {
+  render(<ReviewCasePanel {...empty} findings={legacyChecks} />);
+  expect(screen.getByText(/no agent review has run/i)).toBeDefined();
+});
+
+test('a check never counts toward the agent review section', () => {
+  render(
+    <ReviewCasePanel
+      {...empty}
+      findings={[
+        finding({ id: 'f-1', severity: 'important' }),
+        ...legacyChecks,
+      ]}
+    />
+  );
+  const heading = screen.getByText('Agent review').closest('div');
+  expect(heading?.textContent).toBe('Agent review1');
+});
+
+// Once per group, not once per row — the severity was repeated down every
+// row before, which is what made a long list read as undifferentiated.
+test('a severity is named once for the group, not on every row', () => {
+  render(
+    <ReviewCasePanel
+      {...empty}
+      findings={[
+        finding({ id: 'f-1', severity: 'critical' }),
+        finding({ id: 'f-2', severity: 'critical', title: 'another one' }),
+        finding({ id: 'f-3', severity: 'minor', title: 'a nit' }),
+      ]}
+    />
+  );
+  expect(screen.getAllByText('critical')).toHaveLength(1);
+  expect(screen.getAllByText('minor')).toHaveLength(1);
+  expect(screen.getByText('another one')).toBeDefined();
+});
+
+test('a long detail clamps until asked for the rest', () => {
+  const wall = 'x'.repeat(400);
+  render(<ReviewCasePanel {...empty} findings={[finding({ detail: wall })]} />);
+  fireEvent.click(screen.getByRole('button', { name: 'more' }));
+  expect(screen.getByRole('button', { name: 'less' })).toBeDefined();
+});
+
+test('a short detail gets no toggle', () => {
+  render(
+    <ReviewCasePanel {...empty} findings={[finding({ detail: 'brief' })]} />
+  );
+  expect(screen.queryByRole('button', { name: 'more' })).toBeNull();
 });
 
 test('the review button appears only when starting one is possible', () => {

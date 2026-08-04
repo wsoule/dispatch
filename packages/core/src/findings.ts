@@ -16,6 +16,9 @@ export interface Finding {
   detail: string;
   file: string | null;
   line: number | null;
+  /** Other paths this finding covers, when one check fires across many files
+   *  at once. Absent on findings about a single location. */
+  files?: string[];
   /** Set when parked or blocked — why, in the controller's words. */
   ruling: string | null;
   // What the reviewer recommended, distinct from `ruling`, which is what the

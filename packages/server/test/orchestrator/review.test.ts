@@ -18,10 +18,13 @@ import {
   capDependencyList,
   mergeRoundRobin,
   parseReviewOutput,
+  planUndeclaredWriteBatch,
   reviewModelForRisk,
   ReviewRunner,
   scanDestructiveWrites,
   sharedSurfaceWrites,
+  undeclaredWriteBatchDetail,
+  undeclaredWriteBatchTitle,
   undeclaredWrites,
 } from '../../src/orchestrator/review.js';
 import type {
@@ -492,6 +495,115 @@ describe('undeclaredWrites', () => {
 
   it('flags nothing when every changed file is covered', () => {
     expect(undeclaredWrites(['src/**'], ['src/a.ts'])).toEqual([]);
+  });
+});
+
+describe('planUndeclaredWriteBatch', () => {
+  const check = (over: Partial<Finding>): Finding => ({
+    id: 'f-1',
+    taskId: 't-1',
+    runId: null,
+    severity: 'minor',
+    verdict: 'open',
+    title: '2 files changed outside declared writes',
+    detail: 'Declared writes: src/**.',
+    file: null,
+    line: null,
+    ruling: null,
+    round: 0,
+    createdAt: '2026-08-04T00:00:00.000Z',
+    updatedAt: '2026-08-04T00:00:00.000Z',
+    raisedBy: 'none',
+    ...over,
+  });
+
+  it('reports every undeclared file when nothing has been flagged yet', () => {
+    expect(
+      planUndeclaredWriteBatch(['src/**'], ['src/a.ts', 'docs/b.md'], [])
+    ).toEqual(['docs/b.md']);
+  });
+
+  it('reports nothing when a batched finding already covers the files', () => {
+    expect(
+      planUndeclaredWriteBatch(
+        ['src/**'],
+        ['docs/b.md', 'docs/c.md'],
+        [check({ files: ['docs/b.md', 'docs/c.md'] })]
+      )
+    ).toEqual([]);
+  });
+
+  it('reports only the files a later round newly touched', () => {
+    expect(
+      planUndeclaredWriteBatch(
+        ['src/**'],
+        ['docs/b.md', 'docs/c.md', 'docs/d.md'],
+        [check({ files: ['docs/b.md', 'docs/c.md'] })]
+      )
+    ).toEqual(['docs/d.md']);
+  });
+
+  // The per-file records this rule wrote before batching are still on disk.
+  it('honours the per-file findings the rule used to write', () => {
+    expect(
+      planUndeclaredWriteBatch(
+        ['src/**'],
+        ['docs/b.md', 'docs/c.md'],
+        [
+          check({
+            title: 'file changed outside declared writes: docs/b.md',
+            file: 'docs/b.md',
+          }),
+        ]
+      )
+    ).toEqual(['docs/c.md']);
+  });
+
+  // A file an agent happened to comment on has not been reported by this rule.
+  it('does not treat an agent finding on a file as already flagged', () => {
+    expect(
+      planUndeclaredWriteBatch(
+        ['src/**'],
+        ['docs/b.md'],
+        [
+          check({
+            title: 'stale copy in the docs',
+            file: 'docs/b.md',
+            raisedBy: 'agent:wyat/claude',
+          }),
+        ]
+      )
+    ).toEqual(['docs/b.md']);
+  });
+});
+
+describe('undeclaredWriteBatchTitle', () => {
+  it('carries no path, so it is stable however many files it covers', () => {
+    expect(undeclaredWriteBatchTitle(139)).toBe(
+      '139 files changed outside declared writes'
+    );
+    expect(undeclaredWriteBatchTitle(1)).toBe(
+      '1 file changed outside declared writes'
+    );
+  });
+
+  // The desktop keys checks by the title text before the first ': '.
+  it('holds no colon separator', () => {
+    expect(undeclaredWriteBatchTitle(3)).not.toContain(': ');
+  });
+});
+
+describe('undeclaredWriteBatchDetail', () => {
+  it('names the declared globs that failed to cover the diff', () => {
+    expect(undeclaredWriteBatchDetail(['src/**'], ['a.ts', 'b.ts'])).toBe(
+      'Declared writes: src/**. None of them cover these 2 changed files.'
+    );
+  });
+
+  it('says so outright when a task declared no writes at all', () => {
+    expect(undeclaredWriteBatchDetail([], ['a.ts'])).toBe(
+      'Declared writes: none. None of them cover this 1 changed file.'
+    );
   });
 });
 
@@ -1072,7 +1184,7 @@ describe('ReviewRunner', () => {
     expect(reviewer.lastPrompt).toContain('- low-consumer-b.ts');
   });
 
-  it('records a hazard ledger entry and a minor finding for a changed file outside declared writes', async () => {
+  it('records one hazard ledger entry and one batched finding for changed files outside declared writes', async () => {
     const reviewer = new ScriptedReviewer('{"findings": []}');
     const { runner, findingStore, ledgerStore, store } = setupReview(reviewer);
     const task = store.create({
@@ -1091,8 +1203,12 @@ describe('ReviewRunner', () => {
       openFindings: [],
     });
 
+    // One finding covering every undeclared path, not one finding per path.
     const findings = findingStore.list({ taskId: task.meta.id });
-    const undeclared = findings.find((f) => f.file === 'src.ts');
+    expect(findings).toHaveLength(1);
+    const undeclared = findings[0];
+    expect(undeclared?.files).toEqual(['src.ts']);
+    expect(undeclared?.file).toBeNull();
     expect(undeclared?.severity).toBe('minor');
     expect(undeclared?.title).toContain('outside declared writes');
     // Mechanically detected by the harness itself, not raised by anyone.
