@@ -116,7 +116,7 @@ export function ReviewView({
     }
   }, [data.repoPrs, selectedPrNumber]);
 
-  const repoPr = useRepoPrDetail(data.client, selectedPrNumber);
+  const repoPr = useRepoPrDetail(data.client, data.port, selectedPrNumber);
 
   // A PR has no run behind it, so the run-scoped panels below (the case, its
   // findings, its decisions) must not inherit whichever run nav still holds.
