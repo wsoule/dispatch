@@ -11,8 +11,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:00:39.768Z
-updated: 2026-07-28T01:17:51.524Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -43,3 +45,4 @@ Acceptance criteria:
 - 2026-07-27T23:10:56.802Z Marking done on the parts that exist, with the rest stated plainly rather than left as a silent gap. DONE: the steer composer already existed in RunLogView (sends mid-run, switches to "Request changes" once the run is terminal, appears in the transcript as the user's turn) — I checked before building a second one. ApprovalCard is on the waiting state tokens and already renders with the real toolName and toolInput, recovered from the log the way this task's earlier note described. NOT DONE, and worth its own task if wanted: (1) the card still sits below the transcript rather than inline at the turn where the question was asked; (2) it offers approve/deny, not the three-way approve-once / approve-for-this-session / deny-with-a-reason — approve-for-this-session in particular needs session-scoped permission state the orchestrator does not have today, and deny-with-a-reason needs the deny path to carry text, which the current onApprove(requestId, allow) signature cannot; (3) no frozen-duration readout. The three-way choice is the substantive piece and it is a server change, not a UI one.
 - 2026-07-28T00:09:44.399Z Update: the three-way approval now exists, superseding the "NOT DONE" note above (523a16e). ExecutorRun.approve takes an ApprovalDecision rather than a boolean, so all three choices are real. Approve-for-this-run is session-scoped BY CONSTRUCTION — the grant is a Set inside the executor run's own closure, so it dies with the run and cannot leak into the next one, which is what makes it safe to offer at all. Deny opens a reason box before firing (the button says "tell it why", so denying silently would have made that a lie) and the reason is passed straight through as the SDK's denial message, so the agent is told what was wrong instead of guessing and retrying. 6 tests cover allow, deny, the reason travelling, double-answers and unknown request ids. Still NOT done: the card sits below the transcript rather than inline at the turn where the question was asked, and there is no frozen-duration readout. Both are placement, not capability.
 - 2026-07-28T01:17:51.523Z Closed out fully in 6a83c82. The card now renders inline in the transcript — last inside the scroller rather than pinned below it — so the turns that led to the request are visible while you decide, which was the whole argument for putting it there. It also shows how long the run has been frozen; without that a stuck run is visually identical to a busy one. Combined with the three-way decision from 523a16e, every acceptance criterion on this task is now met.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

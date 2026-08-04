@@ -18,6 +18,7 @@ import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
 import type { FindingStore } from '../findings.js';
 import type { LedgerStore } from '../ledger.js';
+import type { ReviewCommentStore } from '../reviewComments.js';
 import type { Orchestrator } from './orchestrator.js';
 import { reviewDir, reviewOutputPath, reviewPackagePath } from './paths.js';
 import { untrustedBlock, untrustedFenced, untrustedInline } from './prompt.js';
@@ -743,11 +744,21 @@ export interface ReviewRunnerContext {
   events: EventBus;
   orchestrator: Orchestrator;
   actorContext: ActorContext;
+  reviewComments: ReviewCommentStore;
 }
 
 interface PendingReview {
   taskId: string;
   round: number;
+  /**
+   * The run being reviewed — where the reviewer's comments land. Distinct from
+   * the review run's own id, which is what `ingest` is handed. Absent for a
+   * review dispatched against a branch rather than a run, which has no diff
+   * surface to comment on.
+   */
+  reviewedRunId?: string;
+  /** The revision the review was of — what a comment's anchor is read from. */
+  head: string;
 }
 
 // Review as its own dispatched unit of work, producing `Finding` records rather
@@ -797,6 +808,8 @@ export class ReviewRunner {
         this.pending.set(runId, {
           taskId: opts.taskId,
           round: opts.round,
+          reviewedRunId: opts.runId,
+          head: opts.head,
         });
         const reviewed =
           opts.runId !== undefined
@@ -933,6 +946,70 @@ export class ReviewRunner {
       });
     }
     this.ctx.events.broadcast({ type: 'finding.changed' });
+    this.postComments(pending, parsed.findings, raisedBy);
     this.ctx.orchestrator.cleanupAuxRun(meta.id);
+  }
+
+  /**
+   * Leaves the reviewer's located findings on the diff as review comments.
+   *
+   * A finding in the findings panel and a comment on the line it is about are
+   * not the same thing to read: the panel is a list you go and check, the
+   * comment is there when you are looking at the code. The agent already
+   * reports `file` and `line`, so the anchoring a human reviewer does by
+   * clicking a line is already in the data — it was simply never written down.
+   *
+   * Not pending: a pending comment means "a review the author has not sent
+   * yet", and a finished review run has sent its review.
+   */
+  private postComments(
+    pending: PendingReview,
+    findings: ParsedReviewFinding[],
+    author: string
+  ): void {
+    const runId = pending.reviewedRunId;
+    if (runId === undefined) return;
+
+    let posted = 0;
+    for (const finding of findings) {
+      // An unlocated finding is real but has nowhere to hang; it stays in the
+      // findings panel rather than being anchored to a guessed line.
+      const { file, line } = finding;
+      if (file === null || line === null) continue;
+      this.ctx.reviewComments.add(runId, {
+        file,
+        line,
+        anchorText: readLineAt(this.ctx.rootDir, pending.head, file, line),
+        body: `**${finding.severity}: ${finding.title}**\n\n${finding.detail}`,
+        author,
+        pending: false,
+      });
+      posted += 1;
+    }
+    if (posted > 0)
+      this.ctx.events.broadcast({ type: 'review.changed', runId });
+  }
+}
+
+/**
+ * The text of one line at the revision that was reviewed, for a comment's
+ * anchor.
+ *
+ * Read from `head` rather than from the run's worktree because that is what the
+ * reviewer actually read: the worktree can move on (or be removed entirely on
+ * cleanup) while the revision the review was of cannot. Empty when the file or
+ * line cannot be read, which ReviewCommentStore treats as "cannot verify this
+ * moved" — the same thing the HTTP add route stores when a client omits it.
+ */
+function readLineAt(
+  root: string,
+  head: string,
+  file: string,
+  line: number
+): string {
+  try {
+    return git(root, ['show', `${head}:${file}`]).split('\n')[line - 1] ?? '';
+  } catch {
+    return '';
   }
 }

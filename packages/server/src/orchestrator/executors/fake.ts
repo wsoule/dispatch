@@ -65,6 +65,11 @@ export class FakeExecutor implements Executor {
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     let cancelled = false;
+    // A graceful stop, as a scripted executor can express one: the step already
+    // in flight runs to completion (including its commit), no further step
+    // starts, and the script's own `finish` is still reported — so the run ends
+    // through the orchestrator's normal finish path rather than as a cancel.
+    let stopRequested = false;
     const pendingApprovals = new Map<
       string,
       (decision: ApprovalDecision) => void
@@ -80,6 +85,9 @@ export class FakeExecutor implements Executor {
       try {
         for (const step of this.script.steps ?? []) {
           if (cancelled) return;
+          // Checked between steps, never inside one: the point of a graceful
+          // stop is that the operation already underway is left alone.
+          if (stopRequested) break;
 
           if (step.entry !== undefined) events.onEntry(step.entry);
 
@@ -107,6 +115,11 @@ export class FakeExecutor implements Executor {
               pendingApprovals.set(approval.requestId, resolve);
             });
             if (cancelled) return;
+            // Before the denial branch below: `requestStop` resolves a waiting
+            // approval as denied to unblock this script, and that synthetic
+            // denial must wind the run down, not report it as a run the user
+            // refused a tool in.
+            if (stopRequested) break;
             if (!decision.allow) {
               events.onFinish({
                 state: 'failed',
@@ -144,6 +157,16 @@ export class FakeExecutor implements Executor {
         }
         pendingApprovals.clear();
         return Promise.resolve();
+      },
+      requestStop(): void {
+        stopRequested = true;
+        // A script parked on an approval gate would otherwise wait forever for
+        // a human who has already said "stop" — resolving it is what lets the
+        // loop reach its stop check and finish.
+        for (const resolve of pendingApprovals.values()) {
+          resolve({ allow: false, reason: 'run stopped' });
+        }
+        pendingApprovals.clear();
       },
       // Mid-run user messages aren't part of an O1 script — the seam exists
       // so the interface matches the real executor; FakeExecutor has

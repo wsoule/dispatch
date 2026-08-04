@@ -22,6 +22,21 @@ function run(over: Partial<RunMeta> = {}): RunMeta {
   } as RunMeta;
 }
 
+/**
+ * A review/verify agent's run, shaped the way the orchestrator really creates
+ * one: branched off the execute run it inspects, so its `baseBranch` is that
+ * run's `branch`. That link is what pairs the two.
+ */
+function auxRun(
+  over: Partial<RunMeta> & { kind: 'review' | 'verify' }
+): RunMeta {
+  return run({
+    branch: `dispatch/${over.kind}-t-1-${over.id ?? 'aux'}`,
+    baseBranch: 'dispatch/t-1',
+    ...over,
+  });
+}
+
 function task(
   id: string,
   title: string,
@@ -377,6 +392,80 @@ describe('row content', () => {
       input({ runs: [run({ taskId: 't-1' })], tasks: [task('t-1', 'Solo')] })
     );
     expect(model.groups[0]?.rows[0]?.epicTitle).toBeNull();
+  });
+});
+
+describe('auxiliary runs fold into the execute run they are about', () => {
+  test('a live review agent produces one working row, not a second row', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          auxRun({ id: 'r-rev', kind: 'review', state: 'running' }),
+          run({ id: 'r-exec', taskId: 't-1', state: 'finished' }),
+        ],
+        tasks: [task('t-1', 'Do the thing')],
+      })
+    );
+    expect(model.total).toBe(1);
+    const rows = model.groups.flatMap((g) => g.rows);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.runId).toBe('r-exec');
+    expect(rows[0]?.state).toBe('working');
+    expect(rows[0]?.activity).toBe('AI review running');
+    // The ribbon must agree with the feed, or the counts contradict the rows.
+    expect(model.counts.working).toBe(1);
+    expect(model.counts.review).toBe(0);
+  });
+
+  test('a live verify agent reads as verifying, not reviewing', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          auxRun({ id: 'r-ver', kind: 'verify', state: 'running' }),
+          run({ id: 'r-exec', taskId: 't-1', state: 'finished' }),
+        ],
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.activity).toBe('AI verify running');
+  });
+
+  test('a finished review agent hands the run back to the human', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          auxRun({ id: 'r-rev', kind: 'review', state: 'finished' }),
+          run({ id: 'r-exec', taskId: 't-1', state: 'finished', turns: 12 }),
+        ],
+      })
+    );
+    const rows = model.groups.flatMap((g) => g.rows);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.state).toBe('review');
+    expect(rows[0]?.activity).toBe('12 turns');
+  });
+
+  test('a review agent that died says so rather than failing silently', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          auxRun({ id: 'r-rev', kind: 'review', state: 'failed' }),
+          run({ id: 'r-exec', taskId: 't-1', state: 'finished' }),
+        ],
+      })
+    );
+    const rows = model.groups.flatMap((g) => g.rows);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.state).toBe('review');
+    expect(rows[0]?.attention?.reason).toBe('The AI review agent failed');
+  });
+
+  test('an aux run whose execute run is gone still gets a row of its own', () => {
+    const model = buildFeed(
+      input({
+        runs: [auxRun({ id: 'r-rev', kind: 'review', state: 'running' })],
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.runId).toBe('r-rev');
   });
 });
 

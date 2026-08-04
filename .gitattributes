@@ -1,0 +1,2 @@
+.dispatch/tasks/*.md merge=dispatch-task
+.dispatch/team.yml merge=dispatch-team

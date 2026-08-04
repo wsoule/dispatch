@@ -39,6 +39,7 @@ import {
   OrchestratorClientError,
   runKind,
 } from '../../src/orchestrator/types.js';
+import { ReviewCommentStore } from '../../src/reviewComments.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
 let fakeHome: string;
@@ -645,6 +646,7 @@ class ScriptedReviewer implements Executor {
     );
     return {
       interrupt: async () => {},
+      requestStop: () => {},
       send: () => {},
       approve: () => {},
     };
@@ -669,6 +671,7 @@ function setupReview(
   findingStore: FindingStore;
   ledgerStore: LedgerStore;
   store: TaskStore;
+  reviewComments: ReviewCommentStore;
 } {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
@@ -683,6 +686,7 @@ function setupReview(
   orchestrator.registerExecutor('claude', reviewer);
   const findingStore = new FindingStore(repo);
   const ledgerStore = new LedgerStore(repo);
+  const reviewComments = new ReviewCommentStore(repo, 'human:test');
   const runner = new ReviewRunner({
     rootDir: repo,
     store,
@@ -692,8 +696,16 @@ function setupReview(
     events,
     orchestrator,
     actorContext: ActorContext.resolve(repo, testGitReader),
+    reviewComments,
   });
-  return { orchestrator, runner, findingStore, ledgerStore, store };
+  return {
+    orchestrator,
+    runner,
+    findingStore,
+    ledgerStore,
+    store,
+    reviewComments,
+  };
 }
 
 function commitRange(): { base: string; head: string } {
@@ -802,6 +814,96 @@ describe('ReviewRunner', () => {
     expect(reviewer.lastPrompt).toContain(
       'A mutation record with `testsFailed: 0` is a red flag'
     );
+  });
+
+  // The findings panel is a list you have to go and check; a comment is there
+  // when you are already looking at the code. The agent reports file and line,
+  // so the anchoring was in the data all along — it was just never written down.
+  it("leaves the reviewer's located findings as comments on the reviewed run's diff", async () => {
+    const reviewer = new ScriptedReviewer(
+      JSON.stringify({
+        findings: [
+          {
+            severity: 'critical',
+            title: 'answer is not 42',
+            detail: 'the whole point of the file',
+            file: 'src.ts',
+            line: 1,
+            recommendation: 'blocks',
+          },
+          // No file/line: real, but nowhere to hang it.
+          { severity: 'minor', title: 'stray import', detail: 'unused' },
+        ],
+      })
+    );
+    const { orchestrator, runner, store, reviewComments } =
+      setupReview(reviewer);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'harden sync', writes: ['src.ts'] });
+    const implRun = await orchestrator.dispatch(task.meta.id, 'fake');
+    const { base, head } = commitRange();
+
+    const reviewMeta = await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+      runId: implRun.id,
+    });
+    await waitFor(
+      () => orchestrator.getRun(reviewMeta.id)?.meta.state === 'finished'
+    );
+    await waitFor(() => reviewComments.list(implRun.id).length === 1);
+
+    const [comment] = reviewComments.list(implRun.id);
+    expect(comment.file).toBe('src.ts');
+    expect(comment.line).toBe(1);
+    expect(comment.author).toBe('agent:test/claude');
+    expect(comment.body).toContain('answer is not 42');
+    expect(comment.body).toContain('the whole point of the file');
+    // Not a draft: a finished review run has already sent its review.
+    expect(comment.pending).toBe(false);
+    // Anchored to what the line actually said, so a later edit shows as
+    // outdated rather than silently pointing at unrelated code.
+    expect(comment.anchorText).toBe('export const answer = 42;');
+  });
+
+  it('posts no comments for a review that was not dispatched against a run', async () => {
+    const reviewer = new ScriptedReviewer(
+      JSON.stringify({
+        findings: [
+          {
+            severity: 'minor',
+            title: 'located, but nowhere to put it',
+            detail: 'no reviewed run means no diff surface',
+            file: 'src.ts',
+            line: 1,
+          },
+        ],
+      })
+    );
+    const { orchestrator, runner, store, findingStore } = setupReview(reviewer);
+    const task = store.create({ title: 'harden sync', writes: ['src.ts'] });
+    const { base, head } = commitRange();
+
+    const meta = await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+    });
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    // The finding still lands; only the anchoring is skipped.
+    expect(findingStore.list({ taskId: task.meta.id })).toHaveLength(1);
   });
 
   it('fails the review run when the structured output is malformed', async () => {

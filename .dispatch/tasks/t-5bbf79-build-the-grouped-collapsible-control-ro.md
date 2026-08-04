@@ -11,8 +11,10 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:56:43.875Z
-updated: 2026-07-27T01:31:43.152Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -42,3 +44,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

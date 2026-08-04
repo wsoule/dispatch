@@ -1,46 +1,70 @@
-# Spec: Team collaboration — actors, board sync, presence, and claims
+# Spec: Team collaboration — actors, board sync, presence, claims, and real-time
 
-**Date:** 2026-08-02 **Status:** approved; ready for implementation plan
+**Date:** 2026-08-02 · **Rewritten:** 2026-08-04 · **Status:** §§1-4.12
+approved, §§4.1-4.7 shipped; §§3.5-3.6, 4.13-4.15 new and unapproved
 
-Every §4 file reference was re-verified against `main` @`0b6ce89` — the merge
-that landed the orchestration layer — and the blocking dependency is resolved:
-§4.11's audit export needs the `risk` / `writes` / `model` / `findings` /
-`ledger` model, which is now on `main`.
+## Revision note (2026-08-04)
 
-Two claims changed under re-verification and the sections were rewritten rather
-than patched: §4.9.1 (the merged tree already ships the right conflict
-primitives — reuse them, do not invent a parallel set) and §4.8's `Claim` shape
-(carry the run's _observed_ footprint, not the task's declared `writes`).
+The original spec put real-time sync out of scope and rejected moving the board
+out of the working tree, on the grounds that doing so would be "the biggest
+departure from _the files just are the tracker_." Both positions are revised
+here, and the reason is a design that was not considered at the time: **Relay
+for Obsidian**, which keeps a vault as ordinary markdown on disk while a CRDT
+underneath handles concurrent edits. Markdown-on-disk and real-time co-editing
+are not opposed. That collapses the tradeoff the original rejection rested on.
 
-Reference point: [Mesh](https://entire.vc/mesh/) — "task management for human +
-AI teams," MCP-native, event-driven, Go + Postgres + NATS, self-hosted. Mesh
-answers the team problem with a shared server. This spec answers it with git,
-and says why.
+What changed:
+
+- **§3.2** is no longer absolute. The invariant generalizes to "the board has
+  exactly one authority," and _which_ authority depends on the sync mode.
+- **§3.5-3.6** are new: two sync modes over one identical file layout.
+- **§4.13-4.15** are new: the `BoardSync` boundary, the relay mode's three-layer
+  CRDT, and external-write reconciliation — which is the real engineering risk.
+- **§9** loses "real-time sync"; it is now mode B rather than a non-goal.
+
+What did not change: the actor model, roster, attribution, timeline invariant,
+board syncer, merge driver, per-actor inbox, presence, claims, cross-machine
+agents, and audit export all stand as approved. Sections that have since shipped
+are compressed to what they are, where they live, and their status — the code is
+the detail now. Sections not yet built keep their full treatment.
+
+Implementation status at the time of this rewrite (v0.15.0):
+
+| Section    | Component                      | Status    |
+| ---------- | ------------------------------ | --------- |
+| §4.1-4.3   | Actors, roster, attribution    | shipped   |
+| §4.4       | `timeline.ts`                  | shipped   |
+| §4.5       | Board syncer                   | shipped   |
+| §4.6       | Task merge driver              | shipped   |
+| §4.7       | Per-actor inbox                | shipped   |
+| §4.9.1     | `conflicts.ts`                 | shipped   |
+| §4.8       | Presence                       | not built |
+| §4.10-4.12 | Cross-machine, audit, surfaces | not built |
+| §4.13-4.15 | BoardSync, relay mode          | not built |
+
+Reference point: [Mesh](https://entire.vc/mesh/) answers the team problem with a
+shared server. [Relay](https://relay.md) answers real-time markdown editing with
+a CRDT and a hosted relay. This spec answers the team problem with git by
+default, and adopts Relay's architecture for the real-time tier.
 
 ## 1. Problem
 
 Dispatch is a single-operator tool. Put three developers on one repo and seven
 distinct things break:
 
-| #   | Failure                                   | Where                                                      |
-| --- | ----------------------------------------- | ---------------------------------------------------------- |
-| 1   | Task edits never reach teammates          | `autoCommit` is declared and validated but read by nothing |
-| 2   | A task cannot name _which_ human or agent | `packages/core/src/types.ts:10`                            |
-| 3   | Every review comment is authored by "You" | `packages/server/src/reviewComments.ts:150`                |
-| 4   | Two people dispatch agents on one task    | no claim signal exists                                     |
-| 5   | Activity-log appends conflict on merge    | no `.gitattributes`, no merge driver                       |
-| 6   | Inbox writes conflict destructively       | `packages/server/src/inbox.ts:221` (whole-file rewrite)    |
-| 7   | Alice's agent cannot see Bob's            | `run_list`/`agent_message` are loopback-scoped             |
+| #   | Failure                                   | Status                         |
+| --- | ----------------------------------------- | ------------------------------ |
+| 1   | Task edits never reach teammates          | fixed — board syncer (§4.5)    |
+| 2   | A task cannot name _which_ human or agent | fixed — actor model (§4.1)     |
+| 3   | Every review comment is authored by "You" | fixed — attribution (§4.3)     |
+| 4   | Two people dispatch agents on one task    | open — needs claims (§4.9)     |
+| 5   | Activity-log appends conflict on merge    | fixed — merge driver (§4.6)    |
+| 6   | Inbox writes conflict destructively       | fixed — per-actor inbox (§4.7) |
+| 7   | Alice's agent cannot see Bob's            | open — needs presence (§4.8)   |
 
-Failure 1 deserves emphasis: `autoCommit` is defaulted in
-`packages/core/src/config.ts:68`, validated at `config.ts:431`, and editable
-from the Settings screen via `packages/server/src/api.ts:541` — and no code path
-reads it. (`autoCommitIfDirty` in the orchestrator is unrelated; that is
-run-scoped worktree cleanup.) A task edit today writes a markdown file and
-stops. The durable half of team sync is not stale; it never leaves the machine.
-
-Failures 1-3 and 5-6 are durable-state problems, independent of any coordination
-protocol. Only 4 and 7 need one.
+Failures 1-3 and 5-6 were durable-state problems, independent of any
+coordination protocol; they are done. Only 4 and 7 need coordination, and they
+are what remains of the original scope.
 
 ### 1.1 The structural tension
 
@@ -50,29 +74,49 @@ agents grep and edit them with plain file tools). But the working tree is
 branch-scoped. So the board forks every time anyone cuts a branch, and every
 orchestrator run branch carries its own snapshot of the entire task set.
 
-This has already drawn blood. Commit `53190d6` fixed a case where "checking out
-a branch holding an older revision of a task file made every one of those tasks
-outstanding and sent the older content straight to `updateIssue`" — a bulk
+This has already drawn blood. Commit `53190d6` fixed a case where checking out a
+branch holding an older revision of a task file made every one of those tasks
+outstanding and sent the older content straight to `updateIssue` — a bulk
 overwrite of a linked Linear backlog with older content. The fix was monotonic
-per-task accounting: a task is outstanding only when its `updated` is strictly
-past the version last accounted for.
+per-task accounting, promoted here to a system-wide invariant (§3.2).
 
-That fix is really _a rule about which timeline is authoritative_, discovered
-under pressure and applied to exactly one consumer. With three people pushing
-branches it stops being an edge case, so this spec promotes it to a system-wide
-invariant (§3.2).
+**The tension has two resolutions, not one.** The original spec found the first:
+keep the files in the tree and make trunk authoritative, reconciling with a
+merge driver. The second is to keep the files in the tree and make a CRDT
+authoritative, reconciling by construction. Both preserve the founding thesis.
+They differ in what reconciles, what durability rests on, and whether a server
+is required. §3.5 makes that a choice rather than a fork in the road.
+
+### 1.2 The cost of living in the code repo
+
+Trunk-authoritative sync solves correctness but leaves four costs, all inherent
+to board data riding a code repo:
+
+1. **History pollution.** Task churn appears in `git log`, diffs, blame, and
+   PRs.
+2. **Branch scoping.** What the board shows depends on the checked-out branch;
+   the syncer exists to work around this.
+3. **Publication.** Cloning the code clones the backlog — a real constraint for
+   open-core packaging and for client work.
+4. **Conflicts.** A custom merge driver is needed only because the data rides
+   branches.
+
+The original spec accepted all four in exchange for the board being visible in
+PRs, forks, CI, and the host's web UI. That is a real benefit and the trade is
+defensible — but it is a trade, and §3.5 stops forcing every project to take the
+same side of it.
 
 ## 2. Scope
 
 **In scope.** Named human and agent actors; attribution on every mutation;
-automatic board sync anchored to trunk; merge hygiene for multi-writer task
-files; presence, claims, and duplicate-dispatch prevention over git refs;
-cross-machine `run_list` and `agent_message`; a Team surface in the desktop app,
-CLI, and MCP; exportable audit.
+automatic board sync; merge hygiene for multi-writer task files; presence,
+claims, and duplicate-dispatch prevention over git refs; cross-machine
+`run_list` and `agent_message`; a Team surface in the desktop app, CLI, and MCP;
+exportable audit; **and a second sync mode providing sub-second collaborative
+editing over a relay, with markdown files preserved on disk.**
 
-**Out of scope** — see §9 for the full list, but notably: a coordination server,
-RBAC, SSO, real-time (sub-second) sync, and cross-repo fleet views. §4.8 and
-§4.11 keep the seams for those clean without building them.
+**Out of scope** — see §9, but notably: RBAC, SSO, cross-repo fleet views, and
+distributed scheduling.
 
 **Team shape targeted:** 2-8 humans on one repo, each running their own Dispatch
 and their own agents.
@@ -81,254 +125,155 @@ and their own agents.
 
 ### 3.1 Actors: humans and agents are both first-class
 
-Rejected: humans-only with agents attributed to their operator (smallest change,
-but agent addresses are what make cross-machine messaging and
-assign-to-a-specific-agent expressible); and one seat per install (simplest
-protocol, but loses per-agent addressing).
+Unchanged and shipped. See §4.1.
 
-Git flattens this anyway — every commit an agent makes is authored by its
-operator — so agent identity is a Dispatch-level concept that git attribution
-does not carry. That is acceptable: the durable record of _which_ agent acted
-lives in the task Activity log, `findings.jsonl`, and the run record, all of
-which are committed.
+### 3.2 The board has exactly one authority (the timeline invariant)
 
-### 3.2 The board is trunk (the timeline invariant)
+> **Invariant.** The board has exactly one authoritative source at a time. A
+> task revision reached by any other route is a _snapshot_: readable, never
+> authoritative, never a sync input.
+>
+> In **git mode** the authority is `.dispatch/` on trunk. In **relay mode** it
+> is the CRDT document.
 
-> **Invariant.** The board is the state of `.dispatch/` on trunk. A task
-> revision reached by any other route — feature branch, worktree, run branch —
-> is a _snapshot_: readable, never authoritative, never a sync input.
+The original wording named trunk directly. Generalizing it costs nothing —
+`isOutstanding` (§4.4) is already expressed as "strictly past the last accounted
+version," which is a statement about timelines, not about git.
 
-Rejected: committing task edits on whatever branch you are standing on (the
-`53190d6` failure becomes routine rather than exceptional, and every teammate's
-view depends on their checkout); and a canonical board in `refs/dispatch/state`
-outside the working tree (cleanest separation, but the biggest departure from
-"the files just _are_ the tracker," and the board stops being visible in PRs,
-forks, CI, and the host's web UI).
+Rejected, and still rejected: committing task edits on whatever branch you are
+standing on (the `53190d6` failure becomes routine, and every teammate's view
+depends on their checkout).
 
-### 3.3 Coordination rides git refs, not a server
+Rejected in the original, **revised here**: a canonical board outside the
+working tree. The stated objection was that it is "the biggest departure from
+_the files just are the tracker_." Relay mode makes that objection moot — the
+files stay in the working tree, readable and greppable and writable by agents
+with plain file tools. What leaves the code repo is not the files; it is the
+_commits_.
 
-Presence and claims live in `refs/dispatch/*` — outside `refs/heads`, one ref
-per writer.
+### 3.3 Coordination rides git refs, not a server (git mode)
 
-The founding spec (§2) rejected git refs for _task storage_ on three grounds:
-forks, hosting, and CI do not carry them; they are opaque; they need an API to
-read. None of those reach presence data. Presence does not need to survive a
-fork, does not need to reach CI, and agents never grep it — they call
-`run_list`. The original reasoning argues _for_ this narrow use, and this spec
-records that so it does not read as a reversal.
+Unchanged for git mode. Presence and claims live in `refs/dispatch/*`, one ref
+per writer, behind the `PresenceSource` boundary (§4.8). In relay mode the relay
+implements that same boundary — which is what §4.8 was designed for.
 
-Rejected: a coordination server (real-time and genuinely more capable, but every
-team must run, secure, and upgrade something — and that is the point where
-Dispatch competes with Mesh on Mesh's own architecture); and riding
-GitHub/Linear alone (cheapest, and a pushed branch is a high-quality claim
-signal, but it only arrives minutes into a run, missing the first-seconds window
-where the duplicate dispatch race actually happens, and it does nothing for
-agent-to-agent).
+### 3.4 Sync is automatic, and safe because of where it runs
 
-Branch-based signals are still used, as corroboration (§4.9), not as the
-primary.
+Unchanged and shipped. The syncer operates in a private worktree pinned to
+trunk, never in the user's working tree, so it structurally cannot sweep up
+uncommitted work.
 
-### 3.4 Sync is fully automatic, and safe because of where it runs
+### 3.5 Two sync modes, one file layout
 
-Board edits commit and push without ceremony. The safety property is not
-restraint; it is isolation: the syncer operates in a private worktree pinned to
-trunk, never in the user's working tree (§4.5). It structurally cannot sweep up
-uncommitted work, because it is not operating in the tree that holds it.
+**A project picks one mode. Teams do not mix modes.**
+
+|                 | **Mode A — git** (default, no server) | **Mode B — relay** (hosted or self-hosted) |
+| --------------- | ------------------------------------- | ------------------------------------------ |
+| Authority       | `.dispatch/` on trunk                 | CRDT document                              |
+| Reconciliation  | `mergeTask.ts` + board syncer         | CRDT merge, conflict-free                  |
+| Latency         | sync tick (seconds to minutes)        | sub-second                                 |
+| Repo presence   | `.dispatch/tasks/` tracked on trunk   | `.dispatch/tasks/` **gitignored**          |
+| Git's role      | the durable record                    | export and audit (§4.11)                   |
+| Board in PRs/CI | yes                                   | no                                         |
+| Server required | no                                    | yes                                        |
+| Costs of §1.2   | all four accepted                     | 2 and 4 removed; 1 and 3 largely           |
+
+**Exactly what mode B gitignores: `.dispatch/tasks/` and nothing else.**
+`config.yml` and `team.yml` stay committed in both modes — they are project
+configuration and the roster, they barely churn, and the roster must be readable
+from a fresh clone to bootstrap identity before any sync exists. `inbox/` stays
+committed too: it is per-actor by §4.7, so it cannot conflict, and gitignoring
+it would strand a user's own notes on one machine.
+
+So §1.2's costs 2 (branch scoping) and 4 (conflicts) are removed outright, and 1
+(pollution) and 3 (publication) are removed for the backlog itself — which is
+the part that churns and the part that reveals plans — while low-frequency
+per-actor inbox notes remain in the repo. Stating this precisely rather than
+claiming all four, because the difference is what a reader would otherwise
+discover as a surprise.
+
+What is identical in both modes: the on-disk layout, `TaskStore`, the MCP tools,
+the CLI, and every agent. **Nothing above the `BoardSync` boundary (§4.13)
+learns which mode it is in.** Switching modes is a configuration change plus a
+`.gitignore` edit, not a data migration.
+
+**Mixing modes within one project is prohibited**, and this is load-bearing
+rather than conservative: two authorities for one board is the `53190d6` failure
+class at steady state instead of as an edge case. `doctor` reports a project
+whose configured mode disagrees with its `.gitignore` or with the roster's
+recorded mode.
+
+**On coupling storage to packaging.** Mode B requires a relay, and a relay is a
+service. That makes mode B the natural paid tier and mode A the free,
+self-sufficient one. This spec records the coupling as deliberate: mode A must
+remain fully capable on its own — a team that never pays gets correctness,
+attribution, sync, and claims, and loses only latency and repo cleanliness.
+Degrading mode A to sell mode B would invalidate this design.
+
+### 3.6 Markdown stays authoritative-shaped
+
+In relay mode the CRDT is the authority, but the file on disk is not a cache to
+be regenerated at will. It is continuously reconciled, and it must remain
+readable and editable by any tool that does not know the CRDT exists — which is
+every agent Dispatch dispatches.
+
+Concretely: an agent that opens `t-abc123.md`, edits the description with
+`Edit`, and writes it back must have that edit converge into the CRDT the same
+way a teammate's keystroke does. This is the requirement that makes §4.15 the
+hardest part of mode B, and it is non-negotiable — the founding thesis is
+exactly this property.
 
 ## 4. Components
 
-### 4.1 Actor model — `packages/core/src/actor.ts` (new)
+### 4.1-4.3 Actors, roster, attribution — **shipped**
 
-Pure data shapes with no `node:*` imports, exported through
-`packages/core/src/browser.ts` so the desktop webview can import them — the same
-constraint `ledger.ts` and `findings.ts` already carry.
+`packages/core/src/actor.ts` (`ActorRef`, `parseActorRef`, `formatActorRef`),
+`packages/core/src/team.ts` with `.dispatch/team.yml`, and attribution on task
+Activity lines, `findings.jsonl`, `ledger.jsonl`, review comments, and run
+records. Identity is anchored to git email; handles are the stable key; the
+roster self-registers with no invite flow. Wire format is backward compatible —
+`none`, `human`, and `agent` remain valid.
 
-```ts
-export type ActorKind = 'human' | 'agent';
+### 4.4 Monotonic accounting — **shipped**
 
-export interface ActorRef {
-  kind: ActorKind;
-  /** Stable handle within the project. `null` means "any actor of this kind". */
-  handle: string | null;
-  /** For agents: the handle of the human who owns the agent. `null` otherwise. */
-  operator: string | null;
-}
+`packages/core/src/timeline.ts` exports
+`isOutstanding(candidate, lastAccountedUpdated)`, consumed by the Linear sync
+and the board syncer. This is §3.2's invariant made executable, and it
+generalizes unchanged to mode B: the CRDT's version vector replaces `updated` as
+the accounting key, and callers do not change.
 
-/** `null` encodes the unassigned case (serialized `none`). */
-export function parseActorRef(raw: string): ActorRef | null;
-export function formatActorRef(ref: ActorRef | null): string;
-```
+### 4.5 Board syncer — **shipped** (mode A only)
 
-Wire format in task frontmatter, chosen so existing files need no migration:
+`packages/server/src/sync/`. A private worktree at
+`~/.dispatch/worktrees/<hash>/board` pinned to trunk; mirror on watcher events
+gated by `isOutstanding`; commit staging only `.dispatch/` paths;
+`pull --rebase`; push; materialize incoming changes back into the working tree.
+Periodic pull alongside the edit-triggered path. Gated by `autoCommit`.
 
-| Serialized          | Meaning                                         |
-| ------------------- | ----------------------------------------------- |
-| `none`              | unassigned                                      |
-| `human`             | a human, unspecified — **legacy, still valid**  |
-| `agent`             | an agent, unspecified — **legacy, still valid** |
-| `human:wyat`        | a specific person                               |
-| `agent:wyat/claude` | a specific agent, owned by `wyat`               |
+In mode B this component is inert — the relay is the sync. It remains in the
+tree because a project can move from B back to A.
 
-`packages/core/src/types.ts` widens `Assignee` from the closed union to
-`string`, validated through `parseActorRef`. `ASSIGNEES` stays exported as the
-legacy triple so existing pickers keep working while the UI migrates.
+### 4.6 Task-file merge driver — **shipped** (mode A only)
 
-`store.ts`'s `CreateInput`/`UpdatePatch` take the serialized string; parsing
-happens at the edges (API, CLI, MCP) so the store stays a file-shaped module.
+`packages/core/src/mergeTask.ts`, registered by `dispatch init`, repaired by
+`dispatch doctor`. Union-merges `## Activity`, three-way merges frontmatter per
+field, falls back to text merge for prose sections.
 
-### 4.2 Roster — `.dispatch/team.yml`, `packages/core/src/team.ts` (new)
+In mode B it is dead code for task files, because task files are gitignored and
+git never merges them. It stays registered — `mergeTeam.ts` still needs the same
+machinery for `team.yml`, which is committed in both modes.
 
-Committed, so the roster syncs through the same channel as everything else.
+### 4.7 Per-actor inbox — **shipped**
 
-```yaml
-members:
-  - handle: wyat
-    email: wsoule679@gmail.com
-    displayName: Wyat Soule
-    emails: [] # prior addresses, so a changed git email keeps its handle
-```
+`.dispatch/inbox/<handle>.md`, one file per actor. Partitioning by actor removed
+the whole-file-rewrite conflict class outright.
 
-**Self-registering, not administered.** On daemon start Dispatch reads
-`git config user.email` and `user.name`, derives a handle from the email
-local-part (deduped with a numeric suffix on collision), and appends itself if
-absent. There is no invite flow, no account, and no admin step — a teammate's
-first commit of a task change carries their roster entry with it.
+### 4.8 Presence — the `PresenceSource` boundary — **not built**
 
-Email anchors identity because it is what git commits already carry, so Dispatch
-attribution and `git blame` agree. Handles are the stable key; emails may change
-and are recorded in `emails[]` when they do.
-
-Agent actors are **not** rostered in v1. An agent's handle is derived as
-`agent:<operator>/<executor-id>`, which is stable without registration. Named,
-longer-lived agents (`agent:reviewer`) are a `team.yml` extension deferred until
-something needs them (§9).
-
-### 4.3 Attribution
-
-Every mutation records the acting actor:
-
-- **Task Activity** lines gain a trailing ` — <actor>`. Appended through
-  `taskfile.ts`'s existing `appendActivity`, so the format stays one line per
-  entry and the merge driver (§4.6) can union them.
-- **`findings.jsonl`** — `Finding` gains `raisedBy: string`
-  (`packages/core/src/findings.ts`).
-- **`ledger.jsonl`** — `LedgerEntry` gains `authoredBy: string`
-  (`packages/core/src/ledger.ts`).
-- **Review comments** — `packages/server/src/reviewComments.ts` replaces the
-  `author = 'You'` defaults at lines 150 and 167 with the resolved local actor.
-- **Runs** — the run record gains `dispatchedBy` (the human who pressed go) and
-  `ranAs` (the agent actor), set in
-  `packages/server/src/orchestrator/orchestrator.ts` at dispatch.
-
-Both JSONL files are read with a default for the new field, so records written
-before this change stay parseable and render as an unknown actor.
-
-### 4.4 Monotonic accounting, extracted — `packages/core/src/timeline.ts` (new)
-
-`53190d6`'s per-task rule currently lives inside the Linear sync module. Extract
-it:
-
-```ts
-/** True when `candidate.updated` is strictly past the last accounted version,
- *  so content that moved backwards (a branch snapshot) is a no-op. */
-export function isOutstanding(
-  candidate: TaskMeta,
-  lastAccountedUpdated: string | undefined
-): boolean;
-```
-
-Both `packages/server/src/linear/sync.ts` and the new git syncer (§4.5) consume
-it. This is the invariant of §3.2 made executable, and it is the reason a
-teammate checking out a feature branch cannot push a stale board.
-
-### 4.5 Board syncer — `packages/server/src/sync/` (new)
-
-**The sync worktree.** A private worktree pinned to trunk, created under
-`~/.dispatch/worktrees/<hash of rootDir>/board` — outside the user's repo, keyed
-the same way daemon and Linear state files already are
-(`packages/server/src/linear/state.ts:44`).
-
-The loop, driven by the existing `.dispatch/` watcher
-(`packages/server/src/watcher.ts`):
-
-1. A `.dispatch/` path changes in the user's working tree.
-2. The syncer mirrors that file into the sync worktree, gated by `isOutstanding`
-   (§4.4) so a branch checkout that reverts task content is ignored rather than
-   propagated.
-3. Commit in the sync worktree, staging **only** paths under `.dispatch/` — the
-   same narrow-staging discipline `orchestrator.ts:1389` already applies.
-4. `pull --rebase`, then push.
-5. Incoming teammate changes are materialized from the sync worktree back into
-   the user's working tree. `.dispatch/` is already excluded from the
-   orchestrator's dirty gate (`orchestrator.ts:1310`), so this does not
-   destabilize a run.
-
-The user's index and `HEAD` are never touched. You can be on any branch,
-mid-rebase, with a dirty tree, and the syncer is unaffected — and, critically,
-cannot include your unrelated uncommitted work in a commit.
-
-Commit messages are generated through the existing
-`packages/server/src/git/commitMessage.ts` and marked so they are trivially
-filterable: `chore(board): <summary>`.
-
-`autoCommit` finally acquires a consumer: it gates this loop, defaulting to
-`true` for new projects and remaining `false` for existing ones so nothing
-starts pushing without an explicit opt-in.
-
-**Guardrails.** Push failure degrades to local-only commits plus a UI badge, not
-a retry storm (§6). Every syncer action emits an event on the existing bus
-(`packages/server/src/events.ts`) so the shell can render a live feed. A kill
-switch in Settings sets `autoCommit: false`.
-
-### 4.6 Task-file merge driver — `packages/core/src/mergeTask.ts` (new)
-
-Registered by `dispatch init` and repaired by `dispatch doctor`:
-
-```
-# .gitattributes
-.dispatch/tasks/*.md merge=dispatch-task
-```
-
-```
-# .git/config
-[merge "dispatch-task"]
-  name = Dispatch task file merge
-  driver = dispatch merge-task %O %A %B %L %P
-```
-
-Behavior: union-merge the `## Activity` section (append-only by construction,
-deduped by line); three-way merge frontmatter field by field; conflict only when
-both sides changed the same field to different values. `## Description` and
-`## Acceptance Criteria` fall back to standard three-way text merge.
-
-Absent the driver you get ordinary git conflicts — degraded, not broken, which
-matches the founding spec's "per-task file conflicts only; rare,
-human-resolvable" claim. `doctor` reports when the driver is missing.
-
-**`ledger.jsonl` and `findings.jsonl` need no driver.** They are already
-`appendFileSync` (`server/src/ledger.ts:89`, `server/src/findings.ts:104`) —
-append-only and union-mergeable. The spec states this explicitly so the property
-is understood as load-bearing rather than incidental.
-
-### 4.7 Per-actor inbox — `packages/server/src/inbox.ts`
-
-`.dispatch/inbox.md` becomes `.dispatch/inbox/<handle>.md`. Brain-dump capture
-is personal by nature, so partitioning by actor removes the whole-file-rewrite
-conflict class (`inbox.ts:221`) outright rather than merging around it.
-`InboxStore` gains an actor parameter for writes and reads across all files for
-clustering (`inboxClusterer.ts`) and display.
-
-Migration: an existing `.dispatch/inbox.md` moves to the local actor's file on
-first start, mirroring the `notes.json` → `inbox.md` migration already at
-`packages/server/src/index.ts:303`.
-
-### 4.8 Presence — the `PresenceSource` boundary
-
-**This interface is a genuine boundary, not decoration.** It is the seam a
-hosted or self-hosted coordination server implements later without touching a
-caller, and it is deliberately expressed in terms of _what the app needs to
-know_ rather than _how git refs work_ — no ref names, no fetch semantics, no git
-types cross it.
+Unchanged from the original spec, and its importance increases: this is the seam
+mode B's relay implements. The interface stays expressed in terms of what the
+app needs to know — no ref names, no fetch semantics, no git types, and now no
+CRDT types either.
 
 ```ts
 // packages/core/src/presence.ts — pure shapes, browser-safe
@@ -344,16 +289,13 @@ export interface Claim {
   taskId: string;
   claimedAt: string; // earliest-wins resolution key (§4.9)
   runId: string | null; // null for a manual human claim
-  /** The run's *observed* footprint, straight from `Orchestrator.liveClaims()`
-   *  — not the task's declared `writes`, which the footprint outgrows. Refreshed
-   *  on every heartbeat because it grows mid-run. Empty = touched nothing yet. */
-  claims: string[];
+  /** The task's declared `writes`, carried so remote actors can run
+   *  `tasksConflict` without fetching the task file. Empty = undeclared. */
+  writes: string[];
 }
 
 export interface PresenceSource {
-  /** Everyone the source currently knows about, including self. */
   list(): Promise<PresenceRecord[]>;
-  /** Replace this actor's own record. */
   publish(record: PresenceRecord): Promise<void>;
   claim(
     taskId: string,
@@ -363,267 +305,286 @@ export interface PresenceSource {
   release(taskId: string): Promise<void>;
   send(to: string, text: string): Promise<void>;
   receive(since: string): Promise<AgentMessage[]>;
-  /** Degradation state for the UI: healthy, refs-rejected, offline, disabled. */
   health(): PresenceHealth;
 }
 ```
 
-**Git implementation** — `packages/server/src/presence/gitRefs.ts`:
+**Git implementation** (mode A) — `refs/dispatch/presence/<handle>` holds the
+record as a JSON blob, one writer per ref so force-push is unconditionally safe.
+Heartbeat every 20s; a record older than 90s marks the actor offline and
+releases its claims. Refs live outside `refs/heads`, so a jj-backed clone does
+not track them as bookmarks.
 
-`refs/dispatch/presence/<handle>` holds the record as a JSON blob. Exactly one
-writer per ref, so force-push is unconditionally safe and there is no merge to
-get wrong. Heartbeat every 20s while the app is open; fetch
-`+refs/dispatch/presence/*:refs/dispatch/presence/*` on the same tick, which
-transfers almost nothing. A record older than 90s marks the actor offline and
-its claims released.
+**Relay implementation** (mode B) — the relay pushes presence on the same
+connection that carries document updates. Heartbeat and staleness thresholds
+drop to seconds. `health()` reports relay connectivity instead of ref
+acceptance.
 
-Presence refs live outside `refs/heads`, so a jj-backed clone does not track
-them as bookmarks.
+### 4.9 Claims — **not built**
 
-Pruning: an actor's ref is deleted on clean shutdown, and `doctor` removes refs
-whose heartbeat is older than 30 days.
+Unchanged. Acquired automatically on dispatch, released on run finish or
+discard; earliest `claimedAt` wins; soft-block with an override the UI renders
+as a decision; branch corroboration as a durable secondary signal.
 
-### 4.9 Claims
+#### 4.9.1 Write-set overlap across machines — **primitives shipped**
 
-Acquired automatically on dispatch, released on run finish or discard. Humans
-can claim manually for hand-work.
+`packages/core/src/conflicts.ts` provides `tasksConflict`,
+`claimConflictsWithWrites`, and `schedulableBatch`. The team layer changes the
+input set, not the rule: the local scheduler feeds `liveClaims()` from one
+registry, the team check feeds it from one registry plus every live remote
+presence record.
 
-**Earliest timestamp wins, not last write.** The fetch → push gap leaves a
-couple of seconds where two actors can both claim. After publishing, the claimer
-re-fetches; if another live actor holds an earlier `claimedAt`, it yields.
-Deterministic tiebreak on handle. This converges without a lock server and costs
-one extra fetch.
+The asymmetry is easy to get backwards: an undeclared _candidate_ against a
+non-empty remote claim **does** conflict, because the remote side has concrete
+evidence of a file being touched. Only an empty _claim_ is silent.
 
-**Soft block with override at dispatch time.** Not a hard block — presence is
-lossy (offline, stale, crashed app) and a hard block would strand people. Not a
-passive warning either — those get scrolled past. The dispatch path returns a
-conflict the UI renders as a decision: _"Bob's agent has been on this for 4m —
-dispatch anyway?"_
+Liveness mitigations, all required: stale presence claims are ignored; the soft
+override always applies; the conflict names which actor, run, and path collided.
 
-**Branch corroboration.** `orchestrator.ts:1417` already enumerates every
-`dispatch/*` branch ref in git. A remote branch for a task is a durable claim
-even when presence is stale, so the claim check consults both: presence is fast
-and advisory, branches are slow and durable. When presence is unavailable
-entirely (§6), branch corroboration is the sole signal and the UI says so.
+### 4.10 Cross-machine agents — **not built**
 
-#### 4.9.1 Write-set overlap across machines
+Unchanged. Outboxes, not inboxes: each sender writes
+`refs/dispatch/outbox/<sender>`; recipients scan all outboxes on the fetch tick.
+Single-writer preserved. In mode B the relay carries messages directly and the
+outbox refs are unused.
 
-**Superseded on 2026-08-02 by what landed in `0b6ce89`.** An earlier draft of
-this section proposed a bespoke cross-machine rule. The merged tree already has
-the right primitives, and this section now describes reusing them rather than
-inventing a parallel set.
+### 4.11 Audit export — **not built**
 
-`packages/core/src/conflicts.ts` exposes three functions, and the distinction
-between the first two is the whole design:
+Unchanged, and its role grows in mode B: when the board is gitignored, this
+export _is_ the durable record that leaves the machine.
+`GET /api/audit/export?since=&until=` streams NDJSON over task Activity,
+`findings.jsonl`, `ledger.jsonl`, and run records, normalized to `AuditEvent`
+carrying `risk`, `writes`, `model`, and `costUsd`.
 
-- `tasksConflict(a, b)` — symmetric; an empty set means _unknown_, so it
-  conflicts with everything. Correct for **scheduling**, where the cost of
-  guessing wrong is one serialized batch.
-- `claimConflictsWithWrites(claim, writes)` — an empty **claim** means "has not
-  touched anything yet," so it blocks nothing. Correct for **claims**, where a
-  universal block would strand people.
-- `schedulableBatch(ready, limit)` — greedy non-conflicting batching.
+Mode B adds a scheduled variant: a periodic export committed to a configured git
+destination, so a relay-mode project still has an offline, greppable,
+tamper-evident history. The destination is deliberately _not_ the code repo —
+that would reintroduce §1.2's costs through the back door.
 
-`Orchestrator.liveClaims()` returns `{ runId, taskId, claims }[]`, where
-`claims` is the run's _observed_ footprint. `epic.ts` already notes that a live
-run's footprint "can have grown past its task's declared writes" — so claims are
-empirical, not declared, and that is what makes them trustworthy enough to block
-on.
+### 4.12 Surfaces — **not built**
 
-**The team layer changes the input set, not the rule.** The local scheduler
-feeds `liveClaims()` from one registry; the team check feeds it from one
-registry plus every live remote presence record. Same function, same polarity,
-wider input. Presence records therefore carry `claims` (§4.8), refreshed each
-heartbeat because the footprint grows mid-run.
+Unchanged: a Team page, a widened `AssigneeAvatar`, roster-aware assignee
+pickers, a sync chip, teammates' runs in `runs/`, and the claim-conflict dialog.
+CLI gains `whoami`, `team`, `claim|release`, `runs --all`, `sync --status`,
+`audit export`, `merge-task`. MCP widens `run_list`, extends `agent_message`,
+adds `team_list`.
 
-The asymmetry is worth stating because it is easy to get backwards: an
-undeclared _candidate_ against a non-empty remote claim **does** conflict —
-`claimConflictsWithWrites(['a.ts'], [])` is `true` — because the remote side has
-concrete evidence of a file being touched. Only an empty _claim_ is silent.
+Mode B adds to the sync chip: connection state, and per-actor editing indicators
+on a task open in the detail view.
 
-**The liveness hazard grows across machines and needs an answer here.**
-`epic.ts` already warns: "an undeclared task waits on ANY live claim until that
-run goes terminal — nothing reaps one, so a parked run waits on a human."
-Locally that stalls your own queue and you can see why. Across machines, a
-teammate's parked run would silently block your undeclared dispatches with no
-visible cause. Three mitigations, all required:
+### 4.13 The `BoardSync` boundary — **new**
 
-1. A claim from a presence record past the staleness threshold (§4.8) is
-   ignored, so a crashed or closed app cannot block indefinitely.
-2. The soft-block override of §4.9 always applies — a remote claim is advice.
-3. The conflict surfaces _which_ actor, _which_ run, and _which_ path collided,
-   so a stall is never mysterious.
-
-A consequence worth naming: `writes` stops being a scheduling hint and becomes
-the team's collision-avoidance substrate, which raises the value of the planner
-declaring it accurately and of `doctor` reporting tasks that never do.
-
-### 4.10 Cross-machine agents
-
-**Messaging uses outboxes, not inboxes.** A shared mailbox ref would be
-multi-writer and would conflict. Instead each sender writes
-`refs/dispatch/outbox/<sender>` containing messages addressed to anyone;
-recipients scan all outboxes on the fetch tick. Single-writer is preserved,
-delivery lands within a heartbeat (~20s), and messages carry an id so recipients
-can track what they have consumed. Senders expire messages after 30 minutes.
-
-`run_list` (`packages/mcp/src/tools.ts`) merges local runs with remote runs
-drawn from presence, each tagged with its actor and whether it is local.
-`agent_message` accepts an actor ref or a run id: local targets keep the
-existing mid-run injection path, remote targets go through the outbox. A message
-to an actor with no live run bounces with a pointer to the task's Activity,
-matching the behavior already specified for finished local runs.
-
-### 4.11 Audit export — `packages/server/src/audit.ts` (new)
-
-The attribution added in §4.3 is designed as a **retained, exportable record**,
-not as UI state. Deliberate, and cheap now: retrofitting an audit trail after
-the fact means reconstructing history that was never written down.
-
-`GET /api/audit/export?since=&until=` streams NDJSON over the union of task
-Activity, `findings.jsonl`, `ledger.jsonl`, and run records, normalized to one
-shape:
+The durable-state twin of `PresenceSource`, and the seam the two modes sit
+behind. Same discipline: no git types, no CRDT types cross it.
 
 ```ts
-export interface AuditEvent {
-  at: string;
-  actor: string; // serialized ActorRef
-  kind: 'task' | 'run' | 'finding' | 'ledger' | 'merge' | 'sync';
-  taskId: string | null;
-  runId: string | null;
-  summary: string;
-  /** Governance-relevant fields carried through verbatim where present. */
-  risk: TaskRisk | null;
-  writes: string[];
-  model: string | null;
-  costUsd: number | null;
+// packages/core/src/boardSync.ts — pure shapes, browser-safe
+export interface BoardSync {
+  /** Begin syncing; resolves once the local board is consistent with the
+   *  authority, or reports degraded and serves what is on disk. */
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  /** The local writer touched these paths. Implementations decide whether
+   *  that means "commit and push" or "fold into the CRDT". */
+  localChanged(paths: string[]): void;
+  /** Fired when the authority changes the working tree, so the cache can
+   *  rebuild and the UI can update — the same event both modes already need. */
+  onRemoteChange(cb: (paths: string[]) => void): () => void;
+  health(): BoardSyncHealth;
 }
 ```
 
-`risk`, `writes`, `model`, and cost are carried through because together with
-`findings.jsonl` they already describe _what an agent was permitted to touch,
-what it actually touched, what it cost, and what was found_ — the material a
-governance surface is built from. Exposing them through one normalized stream
-now costs a mapping function; deriving them later costs a migration.
+`GitBoardSync` wraps the shipped syncer; its `localChanged` is the watcher path
+that exists today. `RelayBoardSync` (§4.14) implements the same three methods
+over a document connection.
 
-`dispatch audit export` mirrors the endpoint for scripting.
+The daemon constructs one at boot from project config and hands it to nothing —
+it is a background component, and every existing caller keeps reading and
+writing through `TaskStore` exactly as now. That is the property that makes mode
+B a configuration change rather than a rewrite.
 
-### 4.12 Surfaces
+### 4.14 Relay mode — the three-layer CRDT — **new**
 
-**Desktop** (`apps/desktop/src/components/`):
+A task file is not one document. It decomposes into three regions with different
+merge semantics, and treating them uniformly is the mistake to avoid:
 
-- **New `team/` directory and a Team page** in the shell nav: roster with online
-  state, each actor's live runs and claims, recent activity.
-- `tasks/AssigneeAvatar.tsx` widens from its two-way
-  `assignee === 'agent' ? Bot : User` branch (line 41) into initials, a
-  deterministic color from the handle hash, a bot badge overlay for agents, and
-  a presence dot.
-- `tasks/PropertyControls.tsx` assignee picker lists roster actors grouped by
-  kind, retaining the legacy unspecified options.
-- A sync chip in `shell/`: last synced, pending outgoing, incoming, errors, kill
-  switch.
-- `runs/` gains teammates' runs, read-only, actor-tagged.
-- The dispatch dialog renders the claim conflict from §4.9.
+| Region                                     | Shape             | CRDT               | Why                                                            |
+| ------------------------------------------ | ----------------- | ------------------ | -------------------------------------------------------------- |
+| Frontmatter (`status`, `priority`, …)      | map of scalars    | LWW per field      | Character-level merge on YAML produces invalid YAML            |
+| `## Description`, `## Acceptance Criteria` | prose             | text CRDT          | The Obsidian case; concurrent prose editing                    |
+| `## Activity`                              | append-only lines | grow-only sequence | Already append-only by construction; the easiest CRDT there is |
 
-**CLI** (`packages/cli/src`): `dispatch whoami`, `dispatch team`,
-`dispatch claim|release <id>`, `dispatch runs --all`, `dispatch sync --status`,
-`dispatch audit export`, and `dispatch merge-task` (the merge driver entry point
-from §4.6).
+The Activity layer is worth calling out: it retires original failure #5
+outright, because a grow-only sequence cannot conflict. The merge driver's union
+rule (§4.6) is the same semantics expressed in git; the CRDT expresses it
+natively.
 
-**MCP** (`packages/mcp/src/tools.ts`): `run_list` widened to team-wide and
-actor-tagged; `agent_message` accepts actor refs; `team_list` is new;
-`task_save` accepts actor-ref assignees. `workflow://onboarding`
-(`packages/mcp/src/onboarding.ts`) gains the claim protocol so a connecting
-agent learns to check before touching a task.
+`writes`, `blockedBy`, and `labels` are arrays in frontmatter and want set
+semantics (add-wins), not LWW — otherwise two people adding different labels
+lose one. This is the one place where "frontmatter is LWW" is too coarse.
+
+**Document granularity: one CRDT document per task file**, not one per board.
+Per-board would make every keystroke a write against a document the size of the
+backlog, and would couple unrelated tasks' histories. Per-task keeps documents
+small, makes deletion trivial, and lets the relay shard naturally. The cost is
+that board-level operations (reordering, bulk status change) span documents and
+are not atomic — acceptable, because they are not atomic today either.
+
+### 4.15 External-write reconciliation — **new, and the real risk**
+
+This is the section that decides whether mode B is buildable.
+
+Relay's writers are humans typing at human speed into one editor. Dispatch's
+writers are:
+
+1. **Humans in the desktop app** — the easy case, and the one Relay solves.
+2. **Agents**, rewriting whole files programmatically with `Edit`/`Write`,
+   frequently, with no knowledge of the CRDT.
+3. **git**, swapping files wholesale on checkout.
+
+Writer 3 is eliminated by construction: **in mode B `.dispatch/tasks/` is
+gitignored, so git never writes task files.** This is the main reason the mode
+split is coherent rather than arbitrary — the `53190d6` hazard, which would be
+far worse with a second replica arguing about it, simply cannot occur.
+
+Writer 2 is the actual work. The rule:
+
+> Every external write to a task file is diffed against the CRDT's current
+> materialization and applied as operations on the appropriate layer — never as
+> a whole-document replacement.
+
+Mechanically: the watcher sees a changed file, the syncer reads it, parses it
+into the three regions, and diffs each against what the CRDT currently holds.
+Frontmatter differences become field sets. Activity differences become appends
+(and an agent that _removed_ Activity lines is rejected, not replicated —
+Activity is append-only by contract). Prose differences become text operations
+computed by a standard diff.
+
+**The failure mode to design against is the echo loop**: the CRDT materializes a
+file, the watcher sees the write, and it is diffed back in. The materializer
+must mark its own writes and the watcher must ignore them — by content hash
+rather than by timestamp, because an agent can legitimately write the same
+content the materializer just did.
+
+**A concurrent whole-file rewrite by an agent will lose prose edits made in the
+same window.** Diffing a wholesale rewrite against a document a human is
+simultaneously typing into produces a large replacement operation, and text
+CRDTs resolve that by keeping both — which for a rewritten description is noise,
+not a merge. Mitigation, in order of preference: (a) route agent writes through
+`TaskStore` so they arrive as structured field updates rather than file rewrites
+— most agent writes already go through the MCP `task_save` tool, not raw `Edit`;
+(b) soft-lock a task's prose while a human is actively editing it, surfaced
+through presence; (c) accept it and make it visible in Activity.
+
+Option (a) is the one to build. It also narrows the problem considerably: raw
+file edits by agents become the exception rather than the norm, and the
+exception degrades to (c).
 
 ## 5. Data flow
+
+**Mode A (git):**
 
 ```
 user edits task in desktop
   → daemon writes .dispatch/tasks/t-xxx.md      (working tree, any branch)
-  → watcher fires
-  → syncer: isOutstanding? → mirror into sync worktree (trunk)
+  → watcher fires → BoardSync.localChanged()
+  → GitBoardSync: isOutstanding? → mirror into sync worktree (trunk)
   → commit (.dispatch/ paths only) → pull --rebase → push
-  → teammate's syncer fetches → materializes into their working tree
-  → their watcher fires → cache rebuild → WS event → their UI updates
+  → teammate's syncer fetches → materializes → their watcher → cache → WS event
+```
 
-user dispatches an agent
-  → presence.claim(taskId, runId) → fetch → check → publish → re-fetch → confirm
-  → conflict? → UI decision (proceed / cancel)
-  → orchestrator dispatch, run records dispatchedBy + ranAs
-  → heartbeat publishes the live run every 20s
-  → teammate's run_list shows it
+**Mode B (relay):**
+
+```
+user types in the desktop task detail
+  → CRDT op applied locally, rendered immediately
+  → relay broadcasts → teammate's replica applies → their UI updates (<1s)
+  → materializer writes .dispatch/tasks/t-xxx.md (marked, hash-tracked)
+
+agent edits the same file with plain tools
+  → watcher fires → BoardSync.localChanged()
+  → RelayBoardSync: parse three regions, diff each against the CRDT
+  → apply as operations → relay broadcasts → converges
 ```
 
 ## 6. Failure modes
 
-| Failure                                        | Behavior                                                                                                                                 |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Push rejected (protected trunk, no permission) | Local-only mode: keep committing to the sync worktree, badge in the shell, `doctor` explains                                             |
-| Host rejects `refs/dispatch/*`                 | `PresenceSource.health()` reports `refs-rejected`; claims fall back to branch corroboration only, and the UI says the signal is degraded |
-| Offline                                        | Presence goes stale; the dispatch guard reports _its own age_ rather than implying the task is free                                      |
-| Rebase conflict in the sync worktree           | Stop, surface, never force. The board keeps serving from the last good state                                                             |
-| Task-file merge conflict without the driver    | Ordinary git conflict, human-resolvable; `doctor` reports the missing driver                                                             |
-| Clock skew between machines                    | Staleness measured in local elapsed time; claim comparison carries a tolerance window                                                    |
-| Teammate changes git email                     | Handle is stable; the old address moves into `team.yml`'s `emails[]`                                                                     |
-| Two actors derive the same handle              | Numeric suffix on registration; `team.yml` is the arbiter and syncs like any board change                                                |
-| Sync worktree missing or corrupt               | Recreated from trunk on next start; it holds no state that is not in git                                                                 |
+| Failure                                        | Behavior                                                                                                                                                                                                                    |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Push rejected (mode A)                         | Local-only mode: keep committing to the sync worktree, badge, `doctor` explains                                                                                                                                             |
+| Host rejects `refs/dispatch/*`                 | `PresenceSource.health()` reports `refs-rejected`; claims fall back to branches                                                                                                                                             |
+| Offline (mode A)                               | Presence goes stale; the dispatch guard reports its own age                                                                                                                                                                 |
+| **Relay unreachable (mode B)**                 | Edits continue locally against the CRDT and converge on reconnect; the sync chip reads `offline`. This is a CRDT's native behavior and needs no special handling — but the UI must not imply teammates are seeing the edits |
+| **Relay permanently lost (mode B)**            | The on-disk markdown is intact and complete. `dispatch sync --mode git` re-tracks `.dispatch/tasks/` and falls back to mode A. **No data is stranded in a service** — this is a requirement, not a consequence              |
+| **Echo loop (mode B)**                         | Materializer marks its writes by content hash; watcher ignores matching writes                                                                                                                                              |
+| **Agent whole-file rewrite during human edit** | Degrades per §4.15; surfaced in Activity                                                                                                                                                                                    |
+| Rebase conflict in the sync worktree           | Stop, surface, never force                                                                                                                                                                                                  |
+| Task-file merge conflict without the driver    | Ordinary git conflict; `doctor` reports the missing driver                                                                                                                                                                  |
+| Clock skew between machines                    | Staleness measured in local elapsed time; claims carry a tolerance window                                                                                                                                                   |
+| Mode disagreement within a team                | `doctor` detects config/`.gitignore`/roster mismatch and refuses to sync                                                                                                                                                    |
 
 ## 7. Testing
 
-**The two-clone harness is the important part.** A bare remote plus two clones
-in a temp dir, each with its own actor identity and daemon, makes nearly all of
-this testable in `bun test` with no mocks:
+**The two-clone harness** remains the important part for mode A: a bare remote
+plus two clones in a temp dir, each with its own actor and daemon — board
+convergence, the `53190d6` regression, claim races, presence staleness,
+write-set overlap, outbox delivery, push-rejection degradation.
 
-- board sync converges after concurrent edits on both clones
-- a branch checkout holding older task content does not push backwards (the
-  `53190d6` regression, now covered at the syncer level)
-- claim race: both clones claim within the fetch window; earliest `claimedAt`
-  wins on both sides
-- presence goes stale after the threshold and releases claims
-- write-set overlap (§4.9.1): clone A claims a task writing `core/src/types.ts`;
-  clone B dispatching a _different_ task writing the same path is warned — and,
-  in the paired case, is **not** warned when the remote claim is empty
-- outbox message delivered from clone A to clone B
-- push rejection degrades to local-only without losing commits
+**Mode B needs a two-replica harness**, structurally similar: two `BoardSync`
+instances against an in-process relay, no network.
 
-**Unit tests:** merge driver against crafted three-way inputs (Activity union,
-per-field frontmatter merge, genuine conflict); `parseActorRef`/`formatActorRef`
-round-trip including every legacy value; `isOutstanding` monotonicity; heartbeat
-and staleness with an injected clock.
+- concurrent prose edits to one description converge identically on both
+  replicas
+- concurrent frontmatter edits to _different_ fields both survive; to the _same_
+  field, LWW resolves and both replicas agree on the winner
+- concurrent `labels` additions both survive (the add-wins case §4.14 calls out)
+- Activity appends from both replicas union, in a stable order
+- an external whole-file write on replica A converges to replica B
+- the echo loop does not occur: a materialized write produces no operations
+- an external write that _deletes_ Activity lines is rejected, not replicated
+- relay disconnect, divergent edits on both sides, reconnect → convergence
+- mode B → mode A fallback yields a complete, valid task set on disk
 
-**Coverage caveat to record:** root `bun run test` excludes `apps/desktop`, so
-the Team page and the widened `AssigneeAvatar` ship without automated coverage
-under the default script unless that changes.
+**Coverage caveat, still true:** root `bun run test` covers `packages/*`, so
+desktop-side surfaces need their own run.
 
 ## 8. Build order
 
-Each step is independently useful and independently shippable:
+Mode A first; mode B is strictly additive and must not block it.
 
-1. Actor model + roster + attribution (§4.1-4.3) — a board that names people
-2. Merge hygiene + per-actor inbox (§4.6-4.7) — multi-writer safety, before
-   anything starts writing concurrently
-3. Timeline extraction + board syncer (§4.4-4.5) — the board actually syncs
-4. Presence + claims (§4.8-4.9) — duplicate dispatch stops
+1. ~~Actor model + roster + attribution~~ — **shipped**
+2. ~~Merge hygiene + per-actor inbox~~ — **shipped**
+3. ~~Timeline extraction + board syncer~~ — **shipped**
+4. **Presence + claims (§4.8-4.9)** — duplicate dispatch stops. Next.
 5. Cross-machine `run_list` / `agent_message` (§4.10)
 6. Audit export (§4.11) and surfaces (§4.12)
+7. **`BoardSync` extraction (§4.13)** — wrap the shipped syncer behind the
+   interface with no behavior change. Independently valuable: it is the seam,
+   and extracting it while there is exactly one implementation is far cheaper
+   than retrofitting it around two.
+8. **Relay mode (§4.14-4.15)** — the three-layer CRDT, the materializer, the
+   external-write differ, and the relay itself.
 
-Order matters between 2 and 3: turning on automatic sync before merge hygiene
-exists would generate exactly the conflicts the driver is there to prevent.
+Step 7 is the commitment point worth naming: it is cheap, reversible, and buys
+the option on step 8 without taking it.
+
+**Scoping honesty for step 8.** Relay solves one CRDT layer with human-speed
+writers. This is three layers with programmatic writers and a reconciliation
+requirement no vault editor has. It is a quarter of work, not a sprint, and
+§4.15 is where it will be spent.
 
 ## 9. Out of scope
 
-- **Coordination server.** `PresenceSource` (§4.8) is the seam; no
-  implementation here.
-- **Named standing agents** (`agent:reviewer`) — derived operator-scoped handles
-  cover v1 addressing.
 - **RBAC, SSO, directory-backed identity.** Identity is git identity.
-- **Real-time (sub-second) sync.** ~20s is the design target.
 - **Cross-repo or cross-project fleet views.** One repo, one board.
 - **Distributed scheduling.** §4.9.1 surfaces cross-machine write-set overlap as
-  advice at dispatch time. It does not schedule across machines — no remote
-  queue, no cross-machine `schedulableBatch`. Each machine schedules its own
-  runs; the team layer only reports what someone else already started.
-- **Conflict resolution UI.** Conflicts surface; git resolves them.
-- **Web UI (`packages/web`) parity.** Frozen as a browser fallback per the
-  roadmap's standing decisions; team surfaces land in `apps/desktop`.
+  advice at dispatch time; it does not schedule across machines.
+- **Conflict resolution UI (mode A).** Conflicts surface; git resolves them.
+- **Sub-second presence in mode A.** ~20s remains the git-mode target; mode B is
+  the answer for teams that need faster.
+- **Real-time editing of anything but task files.** Notes, inbox, findings, and
+  ledger stay file-and-git in both modes; only `.dispatch/tasks/` gets a CRDT.
+- **Named standing agents** (`agent:reviewer`) — derived operator-scoped handles
+  cover v1 addressing.
+- **Web UI (`packages/web`) parity.** Frozen as a browser fallback; team
+  surfaces land in `apps/desktop`.

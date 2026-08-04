@@ -215,6 +215,7 @@ class ScriptedVerifier implements Executor {
     }, 0);
     return {
       interrupt: async () => {},
+      requestStop: () => {},
       send: () => {},
       approve: () => {},
     };

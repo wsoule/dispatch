@@ -11,8 +11,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-26T19:06:42.665Z
-updated: 2026-07-27T02:32:55.920Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -37,3 +39,4 @@ Acceptance criteria:
 - 2026-07-26T22:36:51.068Z Done in 811446d. PlansView now renders the plan transcript as a thread (user/planner bubbles, per-turn pending spinner, inline failure row) with a follow-up composer on data.handleSendPlanMessage; the review list updates in place as later turns refine the proposal. Draft/taskKeys reconciliation extracted to apps/desktop/src/lib/planThread.ts (13 unit tests): unchanged server proposal -> same draft by identity so the 2s poll can't clobber edits; changed proposal -> adopted with a fresh key revision. Two bugs found by driving a scripted dispatchd end-to-end: (1) after a failed follow-up the record keeps the prior proposal but confirm 409s unless state==='ready', so Confirm is now gated on the record (same check covers already-confirmed plans reopened from history); (2) the opening turn showed "Planning…" twice (thread row + skeleton) — skeleton is shape-only now. Also: PlanTaskRow emits ProposalAction instead of a Partial<PlannedTask> patch, and handleSendPlanMessage seeds the 202 record into the plan query so the user's turn shows on send. format/lint/tsc/tests green (173 desktop tests).
 - 2026-07-26T22:37:05.931Z [run r-4b0606] finished: finished — 4 files, $4.83
 - 2026-07-27T02:32:55.920Z run r-9954a6 merged into main
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

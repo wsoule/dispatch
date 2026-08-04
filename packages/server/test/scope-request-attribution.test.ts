@@ -45,6 +45,7 @@ const controllable: Executor = {
   start() {
     return {
       interrupt: async () => {},
+      requestStop: () => {},
       send: () => {},
       approve: () => {},
     } satisfies ExecutorRun;

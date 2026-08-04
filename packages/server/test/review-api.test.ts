@@ -36,7 +36,12 @@ class ScriptedReviewer implements Executor {
       }
       events.onFinish({ state: 'finished' });
     }, 0);
-    return { interrupt: async () => {}, send: () => {}, approve: () => {} };
+    return {
+      interrupt: async () => {},
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+    };
   }
 }
 

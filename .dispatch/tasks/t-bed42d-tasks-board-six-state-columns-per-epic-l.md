@@ -11,8 +11,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T01:01:12.357Z
-updated: 2026-07-27T03:33:52.465Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -42,3 +44,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T03:33:52.465Z Done in 03b44e0, resolving the design conflict I flagged twice — the user confirmed they want the lanes. One substantive deviation, and it is the whole point of the flag: the columns are NOT the mockup's six hardcoded states. They stay the project's own `.dispatch/config.yml` statuses, in configured order. Hardcoding six would have (a) silently reduced any project with a custom tracker to someone else's vocabulary and (b) broken the existing drag-and-drop, which moves a card between status columns. So the lanes give the epics-against-statuses grid the mockup was after while keeping DnD and configurable statuses intact. Consequently the two deliberate merges (needs-you = waiting+failed, in-review = review+landing) do not apply — there are no fixed state columns to merge. Added groupTasksByEpicLane to lib/boardGrouping.ts (12 tests) and a third `lanes` mode to the Tasks toggle, persisted alongside board/list. Lane totals count rendered cards rather than bucket size: a task whose status is not configured is dropped from the board, and counting the bucket would print a header claiming more cards than are visible — caught by my own test. Empty columns keep a min-height so lanes stay aligned. NOT done: per-epic progress/pulse/dispatch in the lane header (the list view has those; the lane header carries title and count only).
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

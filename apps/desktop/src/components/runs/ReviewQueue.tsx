@@ -161,6 +161,10 @@ function Row({
  * Runs awaiting review plus every open repo PR, newest first. A
  * dispatch-opened PR arrives via both sources; the run-backed row
  * wins, since only it reaches send-back.
+ *
+ * Execute runs only: a review or verify agent's own RunMeta is finished
+ * and never gets `reviewedAt`, so it would sit here forever under the
+ * title of the work it reviewed. Absent `kind` still means execute.
  */
 export function buildReviewQueue(
   runs: RunMeta[],
@@ -171,6 +175,7 @@ export function buildReviewQueue(
   const claimedUrls = new Set<string>();
 
   for (const run of runs) {
+    if ((run.kind ?? 'execute') !== 'execute') continue;
     if (run.archivedAt !== undefined) continue;
     const isPr = run.prUrl !== undefined;
     if (!isPr && !(run.state === 'finished' && run.reviewedAt === undefined)) {

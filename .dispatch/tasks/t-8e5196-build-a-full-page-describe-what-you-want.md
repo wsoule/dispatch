@@ -1,7 +1,7 @@
 ---
 id: t-8e5196
 title: Build a full-page, describe-what-you-want task creator
-status: todo
+status: done
 kind: task
 parent: e-359627
 milestone: null
@@ -11,8 +11,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-26T19:06:42.667Z
-updated: 2026-07-27T01:27:00.223Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -42,3 +44,4 @@ Two notes for the epic: (1) this branch merges t-d6c287 (unmerged dependency) so
 - 2026-07-26T21:50:45.753Z [run r-75a646] finished: finished — 15 files, $3.01
 - 2026-07-27T00:24:19.962Z run r-75a646 merged into main
 - 2026-07-27T01:27:00.223Z run r-47cdd2 discarded
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

@@ -10,8 +10,10 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:54:26.719Z
-updated: 2026-07-27T23:12:25.081Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -39,3 +41,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T23:12:25.081Z Closing with the substance delivered but NOT as a full-page surface, which was this epic's framing. What shipped: line-level comments persist per run with real anchoring (exact / moved / outdated), threads support replies and resolve, and send-back carries every unresolved thread into the message the agent resumes on — the gap this epic named ("you can read an agent's diff but you cannot annotate it") is closed. What did not: no new full-page Review screen, no three tabs, no inline-under-the-line threads, no per-file viewed tracking. Two reasons, both recorded on the child tasks. @pierre/diffs owns the diff's line markup and exposes no per-line hook, so inline means forking a third-party renderer (t-8a2ec3). And a second full-page review surface would duplicate RunReviewView, which already reviews a run and whose own doc comment says it exists to avoid exactly that stacking (t-021643, cancelled). Two things remain genuinely wanted and are not blocked by any of the above: per-file viewed tracking, and a timeline strip built from real run events. The Checks tab is not buildable as described — the queue runs one configured verify command as a single phase, so there is no per-check list to render without instrumenting verify server-side first.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

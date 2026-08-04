@@ -10,8 +10,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:58:17.738Z
-updated: 2026-07-27T01:39:41.130Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -40,3 +42,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T01:39:41.130Z Closed as mostly-already-done. This task assumed the queue was not exposed; it is. packages/client already ships fetchMergeQueue(), MergeQueueSnapshot {entries, history}, all eight MergeQueueEntryState values, reason/enqueuedAt/finishedAt, removeFromMergeQueue and recheckMergeQueue, and the server already broadcasts merge-queue.changed. The only gap was a hook wrapper, so handleRecheckMergeQueue was added to useDispatchProject (queue-wide, mirroring the server endpoint — the block is a property of the shared checkout, not of one entry). Two acceptance criteria are NOT met and cannot be as written: (1) there is no per-verify-step state to expose — the queue runs one configured verify command as a single phase, so the real pipeline is rebase/verify/merge, not install/typecheck/tests/merge; (2) a failed entry cannot report which phase failed, because processEntry wraps all three in one try and stores only the thrown message. Both are reflected in lib/mergeQueueView.ts: phaseSteps() returns the three real phases, and returns null for 'failed' rather than guessing. If per-step verify detail is genuinely wanted, that is a server change (instrumenting the verify command's sub-commands) and deserves its own task.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

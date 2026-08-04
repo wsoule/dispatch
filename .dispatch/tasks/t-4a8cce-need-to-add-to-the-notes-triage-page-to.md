@@ -11,8 +11,10 @@ labels: []
 priority: none
 assignee: none
 created: 2026-07-26T19:13:24.371Z
-updated: 2026-07-26T22:14:21.641Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -37,3 +39,4 @@ Not verified: the desktop UI was not driven end-to-end (Tauri app, no component-
 - 2026-07-26T20:27:38.800Z requested changes (run r-098ba2): continue
 - 2026-07-26T20:28:00.115Z [run r-098ba2] finished: finished — 8 files, $1.50
 - 2026-07-26T22:14:21.641Z run r-098ba2 merged into main
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

@@ -11,8 +11,10 @@ labels: []
 priority: low
 assignee: none
 created: 2026-07-27T01:02:30.099Z
-updated: 2026-07-27T23:09:09.637Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -42,3 +44,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T23:09:09.637Z Done in e16e199. Settings is now writable: core gained updateConfig (16 tests) + PATCH /api/config, and ProjectSettingsSection edits verify command, auto-commit, epic concurrency and permission posture, all persisting to .dispatch/config.yml. The writer uses YAML's document API rather than re-serialising a parsed object, because the file is hand-written and checked in — comments and key order survive an edit, which a naive round-trip would silently destroy. Clearing the verify command deletes the key rather than writing an empty string, since no-verify and a verify-that-runs-nothing are different to the merge queue. permissionMode is validated BEFORE the write: updateConfig re-reads through loadConfig to return its result, and loadConfig throws on an unknown mode, so validating only there would leave a file the daemon then refuses to load. Deviations: `statuses` is deliberately NOT editable (structural — every task on disk carries one, and editing the list from a form would orphan tasks whose status stopped existing); repository path and base branch are not editable (the window is scoped to the project it launched in, and re-pointing it is the project switcher's job, not a text field); no hold-the-queue-on-failure toggle (the queue already stops on a failed verify, so the setting would describe behaviour that is not optional); appearance follows the OS and has no in-app toggle, which is a deliberate existing choice in tailwind.css. The mockup's "Local to this machine" subtitle was NOT kept — it is false: these settings live in the repo and are shared with anyone who clones it, which is the point.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

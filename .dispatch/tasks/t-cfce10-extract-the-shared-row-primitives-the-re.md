@@ -11,8 +11,10 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:55:56.192Z
-updated: 2026-07-27T01:19:21.690Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -39,3 +41,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-07-27T01:19:21.690Z Done. Landed lib/feedState.ts (the FeedState vocabulary + deriveFeedState/deriveTaskFeedState + FEED_STATE_ORDER/LABEL + isUrgent/isInFlight, 24 tests) and five primitives in components/ui/: StateDot, SectionLabel, CountChip, ProgressTrack, StepStrip. Two findings worth carrying forward. (1) lib/runState.ts already had RunDisposition — a derived "whose turn is it" that separates how a process ended from what a human owes it. deriveFeedState builds ON it rather than beside it; a parallel bucketing would have been two sources of truth. FeedState is still needed because a run in the merge queue is about CI not the agent (state the run's own metadata lacks), and because ready/blocked tasks have no run at all. (2) The queue outranks the run's own disposition — an approved, queued run must stop reading as "needs review" — and blocked-environment maps to urgent, not landing, since nothing advances until a human clears the dirty checkout. Both are covered by tests. ProgressTrack takes `number | null` and renders indeterminate for null rather than accepting a fabricated fraction; StepStrip renders only phases it was actually told about. Migrated RunStatePill off raw Tailwind palette classes (bg-blue-500/bg-amber-500/bg-emerald-500) onto StateDot + tokens — note it deliberately keeps `cancelled` neutral where deriveFeedState calls it failed, because the pill reports where a process ended while the feed asks what a human owes. Heads up: RunStatePill had been changed by a concurrent session to take RunMeta and render a disposition badge; I edited the current version, not the one I first read. format/lint/tsc green, 218 desktop tests pass.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

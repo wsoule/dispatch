@@ -12,8 +12,10 @@ labels: []
 priority: high
 assignee: none
 created: 2026-07-27T00:59:36.050Z
-updated: 2026-07-28T00:09:32.009Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -43,3 +45,4 @@ Acceptance criteria:
 ## Activity
 - 2026-07-27T23:07:40.932Z Done in e16e199, but NOT inline — and that is the significant deviation, so read this before assuming otherwise. The diff is rendered by @pierre/diffs' FileDiff, which owns its own line markup and exposes no per-line hook. Inline threads would mean forking the third-party renderer or overlaying absolutely-positioned boxes on top of it, and an overlay that drifts out of alignment on any re-render is worse than no inline at all. So the threads live in a panel beside the diff (ReviewCommentsPanel + ReviewThread): comment on a line, reply, resolve, send it all back — the same capability, one pane over rather than one line down. Consequences to be honest about: (1) the gutter affordance does not exist; you pick a file and type a line number. (2) The panel cannot read the line's text out of the renderer, so it stores an empty anchorText — resolveAnchor treats that as never-followable, which means such comments never falsely claim to have moved. (3) Expandable unchanged regions and the per-file Viewed checkbox were not built; those belong to a diff renderer we do not control. The stored data carries a real line anchor throughout, so if a fork or an upstream hook opens up later, nothing about persistence has to change.
 - 2026-07-28T00:09:32.009Z Update: inline threads now DO exist, superseding the "not inline" note above (cd0239f). The blocker was real but the conclusion was wrong — rather than fork @pierre/diffs or overlay it, the review surface parses the patch itself (lib/unifiedDiff.ts, 14 tests) and draws its own rows, so a thread renders under the exact line. Threads sit BETWEEN rows rather than on top, so opening one pushes the diff down and alignment survives by construction. The gutter affordance is back: hover any line, click the ✎. Only new-side lines are commentable — a deleted line is not there for the agent to change, so a note anchored to it would point at nothing. Expandable unchanged regions are also done (foldContext keeps three lines either side, declines to fold when the fold would hide fewer lines than it occupies, and keeps the hidden rows so expanding needs no reparse). Per-file viewed tracking landed with the full-page Review (t-021643). RunDiffView is still used where there are no comment handlers, and by Pull requests.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679

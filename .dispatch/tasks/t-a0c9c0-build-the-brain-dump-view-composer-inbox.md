@@ -12,8 +12,10 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-07-27T00:57:45.076Z
-updated: 2026-07-27T03:32:44.900Z
+updated: 2026-08-04T17:12:24.869Z
 external: null
+writes: []
+archived-at: 2026-08-04T17:12:24.869Z
 ---
 
 ## Description
@@ -44,3 +46,4 @@ Acceptance criteria:
 ## Activity
 - 2026-07-27T01:06:35.708Z Scope change: Notes & triage is being removed and Brain dump is the single inbox, which means this view is the only place agent-flagged items surface. Two adjustments to the description above. (1) Inbox rows must distinguish items an agent flagged mid-run (via the MCP dispatch_note tool) from ones the user typed, and show which run flagged them — otherwise the agent channel is invisible. (2) Do NOT build the "Older — the triage list from before" link the mockup shows in the right rail; the page it points at is being deleted. The "Plan it" action should repoint the existing note-to-task AI draft flow in useDispatchProject.ts (notePlanId / notePlanRecord / handleConfirmNotePlan) rather than building a new one — and keep that plan slot separate from the Plans view's own, which is why it exists. Removal and migration are t-2814f8, which lands after this.
 - 2026-07-27T03:32:44.900Z Done in e4f874b. One deviation: rows show no "age" column. The markdown format deliberately carries no timestamp (it would be noise in a file meant to be hand-typed), so there is no age to render — file order is the ordering instead. Agent-flagged items carry a bot glyph with the run id in its tooltip, per the earlier scope note. The composer's line-count hint uses a local mirror of the split rule (lib/inboxCapture.ts) documented as preview-only — the server owns the authoritative split, so a drift there is a cosmetic off-by-one rather than a correctness bug. ⌘⏎ commits; plain Enter stays a newline, since dumping several thoughts at once is the point. "Plan it" repoints the existing note-plan slot via PlansView's new initialPrompt prop, keyed so a second hand-off with different text remounts rather than being swallowed by existing composer state.
+- 2026-08-04T17:12:24.869Z archived — merged and shipped — human:wsoule679
