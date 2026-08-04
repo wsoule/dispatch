@@ -788,16 +788,34 @@ Timestamps come from a fixed base date, not `Date.now()`, so regenerating produc
 Run: `cd packages/demo && bun test test/board.test.ts`
 Expected: PASS, 5 tests
 
-- [ ] **Step 5: Verify a real daemon parses it**
+- [ ] **Step 5: Prove Dispatch's own parser accepts every generated task**
 
-Run from repo root:
+Hand-rolled frontmatter that *looks* right but trips `TaskParseError` produces
+a board that loads empty. Assert against the real parser, not a regex. Add to
+`packages/demo/test/board.test.ts`:
 
-```bash
-bun packages/cli/src/bin.ts --help >/dev/null 2>&1 || true
-DISPATCH_HOME=/tmp/demo-parse-check bun packages/demo/src/cli.ts board --root /tmp/demo-parse-check-root
+```ts
+import { parseTaskFile } from '@dispatch/core';
+
+test('the real parser accepts every generated task file', () => {
+  const root = build();
+  const dir = join(root, '.dispatch/tasks');
+  for (const file of readdirSync(dir)) {
+    expect(() => parseTaskFile(join(dir, file))).not.toThrow();
+  }
+});
 ```
 
-Then confirm no task file fails to parse by listing them through the CLI. If `packages/demo/src/cli.ts` does not exist yet, defer this step to Task 9's end-to-end run and note it here as deferred.
+Add `"@dispatch/core": "workspace:*"` to `packages/demo/package.json`
+dependencies. `@dispatch/*` resolves through `dist/`, so run `bun install &&
+bun run build` from the repo root first or the import will not resolve.
+
+If `parseTaskFile` is not the exported name, read
+`packages/core/src/taskfile.ts` for the actual export and use it — do not
+work around a failing import by hand-parsing.
+
+Run: `cd packages/demo && bun test test/board.test.ts`
+Expected: PASS, 6 tests
 
 - [ ] **Step 6: Commit**
 
@@ -1053,7 +1071,7 @@ The test drives a local bare remote rather than GitHub, so it never touches the 
 ```ts
 // packages/demo/test/teammate.test.ts
 import { expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { git } from '../src/git.js';
@@ -1147,7 +1165,6 @@ import { join } from 'node:path';
 
 test('a non-terminal run is reported, not ignored', () => {
   const home = mkdtempSync(join(tmpdir(), 'demo-pf-'));
-  const root = mkdtempSync(join(tmpdir(), 'demo-pf-root-'));
   const dir = join(home, '.dispatch/runs', 'deadbeefcafe');
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -1158,7 +1175,6 @@ test('a non-terminal run is reported, not ignored', () => {
   const check = checkRunsTerminal(join(home, '.dispatch/runs'));
   expect(check.ok).toBe(false);
   expect(check.detail).toContain('r-bad');
-  expect(root).toBeTruthy();
 });
 
 test('a credentials file staged for commit fails preflight', () => {
