@@ -7,9 +7,8 @@ import {
   writeViewed,
 } from './reviewViewed';
 
-// test-setup.ts registers happy-dom's globals, so a real `window.localStorage` already exists
-// here; clearing it (rather than replacing `window`) keeps tests isolated without breaking
-// anything else in the process that also depends on `window`.
+// happy-dom (test-setup.ts) already supplies a real localStorage; clearing it per test
+// keeps this file isolated from itself and from other files in the same run.
 beforeEach(() => localStorage.clear());
 
 describe('toggleViewed', () => {
