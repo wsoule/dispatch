@@ -141,13 +141,16 @@ export function emptyQuestionTracking(): QuestionTracking {
 }
 
 // A stable key for one asker's current question set — id and text of each question, so a
-// new round with recycled ids reads as different from the round before it.
+// new round with recycled ids reads as different from the round before it. JSON-encoded
+// (not string-joined) so free-text question bodies containing the delimiter can't collide
+// two structurally different question sets onto the same signature.
 function signatureOf(questions: readonly PlannerQuestion[]): string {
-  return questions.map((q) => `${q.id}|${q.question}`).join('||');
+  return JSON.stringify(questions.map((q) => [q.id, q.question]));
 }
 
 /** Pure edge-detector for questions waiting on the user — planner questions on drafts and
- * the open plan, plus run agents' questions. First sighting never notifies. */
+ * the open plan, plus run agents' questions. Any live, unanswered question set notifies,
+ * including one already open the first time this runs. */
 export function diffQuestionNotifications(
   previous: QuestionTracking,
   drafts: readonly DraftRecord[],
@@ -188,11 +191,9 @@ export function diffQuestionNotifications(
     const signature = signatureOf(asker.questions);
     next.askers.set(asker.key, signature);
     const previousSignature = previous.askers.get(asker.key);
-    if (
-      previousSignature !== undefined &&
-      previousSignature !== signature &&
-      asker.questions.length > 0
-    ) {
+    // Notifies whenever the signature differs from what was tracked before, including
+    // "nothing tracked yet" — an already-open question notifies on the first call too.
+    if (asker.questions.length > 0 && previousSignature !== signature) {
       notifications.push({
         title: asker.title,
         body: asker.body,
@@ -205,8 +206,7 @@ export function diffQuestionNotifications(
     for (const question of questions) {
       next.runQuestionIds.add(question.id);
       if (previous.runQuestionIds.has(question.id)) continue;
-      // A run question id is unique and only appears once open, so its first
-      // sighting is the edge; the project-switch reset is the guard.
+      // Notifies on every id not already tracked, including the first call.
       notifications.push({
         title: 'An agent needs your answer',
         body: question.question,

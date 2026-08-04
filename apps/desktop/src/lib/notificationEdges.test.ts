@@ -276,15 +276,28 @@ const Q1_AGAIN: PlannerQuestion = {
 };
 
 describe('diffQuestionNotifications', () => {
-  test('a first sighting never notifies', () => {
+  // An unanswered question is a live obligation the moment tracking can see it, not
+  // stale news to sit out — so a draft already holding a question on the very first
+  // call still notifies (unlike diffRunNotifications/diffQueueNotifications' states).
+  test('a first sighting of a live question notifies', () => {
     const { notifications, next } = diffQuestionNotifications(
       emptyQuestionTracking(),
       [draft('d-1', [Q1])],
       undefined,
       new Map()
     );
-    expect(notifications).toHaveLength(0);
+    expect(notifications).toHaveLength(1);
     expect(next.askers.has('draft:d-1')).toBe(true);
+  });
+
+  test('a first sighting with no questions does not notify', () => {
+    const { notifications } = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(0);
   });
 
   test('notifies when a tracked draft gains questions', () => {
@@ -339,6 +352,26 @@ describe('diffQuestionNotifications', () => {
     const { notifications } = diffQuestionNotifications(
       first.next,
       [draft('d-1', [Q1_AGAIN])],
+      undefined,
+      new Map()
+    );
+    expect(notifications).toHaveLength(1);
+  });
+
+  // A `|`-joined signature lets a question body containing "|" collide two
+  // structurally different sets onto the same string — this pins the JSON encoding.
+  test('question sets that would collide under a delimiter-joined signature still notify', () => {
+    const collideA: PlannerQuestion = { id: 'x', question: 'a|b', options: [] };
+    const collideB: PlannerQuestion = { id: 'x|a', question: 'b', options: [] };
+    const first = diffQuestionNotifications(
+      emptyQuestionTracking(),
+      [draft('d-1', [collideA])],
+      undefined,
+      new Map()
+    );
+    const { notifications } = diffQuestionNotifications(
+      first.next,
+      [draft('d-1', [collideB])],
       undefined,
       new Map()
     );
