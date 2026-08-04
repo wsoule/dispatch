@@ -27,7 +27,10 @@ export function DraftTray({
 }: DraftTrayProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const { items, badgeCount, hasRunning } = draftTrayViewModel(drafts, now);
+  const { items, badgeCount, hasRunning, questionCount } = draftTrayViewModel(
+    drafts,
+    now
+  );
 
   // Ticks the elapsed readout once a second, but only while the popover is open and something
   // is still running.
@@ -45,7 +48,9 @@ export function DraftTray({
           title="AI task drafts"
           aria-label={
             collapsed
-              ? `AI task drafts${badgeCount > 0 ? ` (${badgeCount})` : ''}`
+              ? `AI task drafts${badgeCount > 0 ? ` (${badgeCount})` : ''}${
+                  questionCount > 0 ? ', waiting on your answer' : ''
+                }`
               : undefined
           }
           className={cn(
@@ -58,7 +63,14 @@ export function DraftTray({
             <>
               <span className="flex-1">Drafts</span>
               {badgeCount > 0 && (
-                <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
+                <span
+                  className={cn(
+                    'flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium',
+                    questionCount > 0
+                      ? 'bg-state-waiting-surface text-state-waiting border-state-waiting-edge border'
+                      : 'bg-secondary text-secondary-foreground'
+                  )}
+                >
                   {badgeCount}
                 </span>
               )}

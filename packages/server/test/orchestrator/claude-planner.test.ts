@@ -3,7 +3,10 @@ import { describe, expect, it } from 'bun:test';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
 import type { PlanProposal } from '../../src/orchestrator/planner.js';
-import { ClaudePlanner } from '../../src/orchestrator/planners/claude.js';
+import {
+  ClaudePlanner,
+  EMPTY_TURN_MESSAGE,
+} from '../../src/orchestrator/planners/claude.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
 // native CLI binary — mirrors claude-executor.test.ts's own fixture for the
@@ -59,13 +62,8 @@ describe('ClaudePlanner.start', () => {
     expect(turn.sessionId).toBe('sess-1');
   });
 
-  // CLI parity (matching ClaudeExecutor's sdkOptions in executors/claude.ts):
-  // without `systemPrompt`'s `claude_code` preset and `settingSources`
-  // including `'project'`, the SDK contract states CLAUDE.md/AGENTS.md never
-  // load — the planner would then be planning blind against the checkout its
-  // `cwd` points at instead of grounding proposals in the project's own
-  // instruction files, the same gap ClaudeExecutor's own comment documents.
-  it('passes the claude_code system prompt preset and full settingSources, mirroring ClaudeExecutor', async () => {
+  // Planner must run isolated: no operator environment, no subagents, read-only.
+  it('runs read-only with no subagents, no user settings, and no MCP servers', async () => {
     const proposal: PlanProposal = { tasks: [] };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async function* fakeMessages(): AsyncGenerator<any> {
@@ -88,7 +86,11 @@ describe('ClaudePlanner.start', () => {
       type: 'preset',
       preset: 'claude_code',
     });
-    expect(captured?.settingSources).toEqual(['user', 'project', 'local']);
+    expect(captured?.settingSources).toEqual(['project', 'local']);
+    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    expect(captured?.strictMcpConfig).toBe(true);
+    expect(captured?.skills).toEqual([]);
   });
 
   it('rejects when the result message is an error subtype', async () => {
@@ -106,17 +108,56 @@ describe('ClaudePlanner.start', () => {
     await expect(planner.start('build the thing')).rejects.toThrow(/boom/);
   });
 
-  it('rejects when a successful result carries no structured_output', async () => {
+  // First attempt returns no structured output; second attempt succeeds.
+  it('retries once when a successful result carries no structured_output', async () => {
+    let calls = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fakeQueryFn = () => {
+      calls += 1;
+      const attempt = calls;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async function* fakeMessages(): AsyncGenerator<any> {
+        if (attempt === 1) {
+          yield { type: 'result', subtype: 'success', session_id: 'sess-1' };
+          return;
+        }
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          structured_output: {
+            message: 'second time lucky',
+            proposal: PROPOSAL,
+          },
+        };
+      }
+      return fakeMessages() as unknown as Query;
+    };
+    const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
+
+    const turn = await planner.start('build the thing');
+
+    expect(calls).toBe(2);
+    expect(turn.reply).toBe('second time lucky');
+    expect(turn.proposal).toEqual(PROPOSAL);
+  });
+
+  it('rejects with actionable text when both attempts carry no structured_output', async () => {
+    let calls = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async function* fakeMessages(): AsyncGenerator<any> {
       yield { type: 'result', subtype: 'success' };
     }
-    const fakeQueryFn = () => fakeMessages() as unknown as Query;
+    const fakeQueryFn = () => {
+      calls += 1;
+      return fakeMessages() as unknown as Query;
+    };
     const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
     await expect(planner.start('build the thing')).rejects.toThrow(
-      /no structured output/
+      EMPTY_TURN_MESSAGE
     );
+    expect(calls).toBe(2);
   });
 
   it('rejects when the stream ends with no result message at all', async () => {

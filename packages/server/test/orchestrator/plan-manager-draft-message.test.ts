@@ -75,7 +75,7 @@ function questionThenAnswerPlanner(): FakePlanner {
 }
 
 describe('PlanManager.sendDraftMessage', () => {
-  it('sends a follow-up, clears the prior questions immediately, and settles ready', async () => {
+  it('sends a follow-up, keeps the prior questions in flight, and settles ready', async () => {
     const manager = makeManager(questionThenAnswerPlanner());
     const started = manager.startDraft('draft something vague');
     await waitFor(() => manager.getDraft(started.id).state !== 'running');
@@ -83,7 +83,7 @@ describe('PlanManager.sendDraftMessage', () => {
 
     const sent = manager.sendDraftMessage(started.id, 'desktop only');
     expect(sent.state).toBe('running');
-    expect(sent.questions).toEqual([]);
+    expect(sent.questions).toHaveLength(1);
 
     await waitFor(() => manager.getDraft(started.id).state !== 'running');
     const record = manager.getDraft(started.id);

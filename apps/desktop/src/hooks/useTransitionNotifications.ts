@@ -1,16 +1,22 @@
 import type {
+  DraftRecord,
   MergeQueueEntryState,
   MergeQueueSnapshot,
+  PlanRecord,
   RunMeta,
+  RunQuestion,
   RunState,
 } from '@dispatch/client';
 import { useEffect, useRef } from 'react';
 
 import type { InboxEntryDraft } from '../lib/inbox';
 import {
+  diffQuestionNotifications,
   diffQueueNotifications,
   diffRunNotifications,
+  emptyQuestionTracking,
 } from '../lib/notificationEdges';
+import type { QuestionTracking } from '../lib/notificationEdges';
 import { notify } from '../lib/notifications';
 
 /** The previous-snapshot maps this hook diffs against, plus the project root they were
@@ -19,12 +25,18 @@ export interface TransitionTrackingState {
   root: string | null;
   runStates: Map<string, RunState>;
   queueStates: Map<string, MergeQueueEntryState>;
+  questions: QuestionTracking;
 }
 
 // The empty tracking state for a given root — used both as the ref's initial value and
 // as what a root change resets onto.
 function emptyTracking(root: string | null): TransitionTrackingState {
-  return { root, runStates: new Map(), queueStates: new Map() };
+  return {
+    root,
+    runStates: new Map(),
+    queueStates: new Map(),
+    questions: emptyQuestionTracking(),
+  };
 }
 
 /**
@@ -56,11 +68,11 @@ export function resetTrackingForRoot(
 }
 
 /**
- * Fires a native notification the instant a run lands on finished/failed, or a
- * merge-queue entry lands on merged/failed, while this window is open — see
- * notificationEdges.ts for the pure diff logic and why a run/entry's first sighting
- * never notifies (it's what keeps app launch from replaying every already-terminal
- * run/entry as a fresh notification).
+ * Fires a native notification the instant a run lands on finished/failed, a
+ * merge-queue entry lands on merged/failed, or a planner or run agent asks the user a
+ * question, while this window is open — see notificationEdges.ts for the pure diff
+ * logic and why a run/entry's first sighting never notifies (it's what keeps app
+ * launch from replaying every already-terminal run/entry as a fresh notification).
  *
  * `projectRoot` is the active project's path from `useDispatchProject` — it exists
  * solely so this hook can detect a project switch and reset its tracking via
@@ -79,6 +91,9 @@ export function useTransitionNotifications(
   projectRoot: string | null,
   runs: readonly RunMeta[],
   mergeQueue: MergeQueueSnapshot | null,
+  drafts: readonly DraftRecord[],
+  planRecord: PlanRecord | undefined,
+  openQuestions: ReadonlyMap<string, RunQuestion[]>,
   onRecord: (adds: InboxEntryDraft[]) => void
 ): void {
   const tracking = useRef<TransitionTrackingState>(emptyTracking(projectRoot));
@@ -120,4 +135,19 @@ export function useTransitionNotifications(
     }
     for (const n of notifications) void notify(n.title, n.body);
   }, [mergeQueue, onRecord]);
+
+  useEffect(() => {
+    const { notifications, next } = diffQuestionNotifications(
+      tracking.current.questions,
+      drafts,
+      planRecord,
+      openQuestions
+    );
+    tracking.current = { ...tracking.current, questions: next };
+    if (notifications.length > 0) {
+      const ts = new Date().toISOString();
+      onRecord(notifications.map((n) => ({ ...n, ts })));
+    }
+    for (const n of notifications) void notify(n.title, n.body);
+  }, [drafts, planRecord, openQuestions, onRecord]);
 }

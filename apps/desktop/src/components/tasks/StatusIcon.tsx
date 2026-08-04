@@ -8,7 +8,9 @@ import { cn } from '@/lib/utils';
 const VIEWBOX = 14;
 const CENTER = VIEWBOX / 2;
 const RADIUS = 5.25;
-const STROKE_WIDTH = 1.4;
+// Thicker than the 1.4 these glyphs shipped with: at 16px a 1.4 stroke reads as a smudge
+// rather than a deliberate icon, which is what made the board feel washed out.
+const STROKE_WIDTH = 1.7;
 
 type StatusShape = 'dashed' | 'empty' | 'pie' | 'check' | 'x';
 
@@ -38,7 +40,7 @@ interface StatusVisual {
 const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
   backlog: {
     shape: 'dashed',
-    colorClass: 'text-muted-foreground/50',
+    colorClass: 'text-muted-foreground/70',
     tone: 'gray',
   },
   todo: { shape: 'empty', colorClass: 'text-muted-foreground', tone: 'gray' },
@@ -54,7 +56,10 @@ const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
     colorClass: 'text-primary',
     tone: 'accent',
   },
-  done: { shape: 'check', colorClass: 'text-primary', tone: 'accent' },
+  // Green rather than the indigo this shipped with: done and in-review were both indigo, so
+  // the two columns that matter most were indistinguishable at a glance. Green completes an
+  // amber -> indigo -> green progression across the board.
+  done: { shape: 'check', colorClass: 'text-state-review', tone: 'green' },
   cancelled: {
     shape: 'x',
     colorClass: 'text-muted-foreground',
@@ -134,7 +139,7 @@ export function StatusIcon({ status, className }: StatusIconProps) {
   return (
     <svg
       viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-      className={cn('size-3.5 shrink-0', visual.colorClass, className)}
+      className={cn('size-4 shrink-0', visual.colorClass, className)}
       role="img"
       aria-label={`Status: ${status}`}
     >
@@ -183,7 +188,7 @@ export function StatusIcon({ status, className }: StatusIconProps) {
             d="M4.1 7.2 L6.1 9.2 L9.9 4.9"
             fill="none"
             stroke="var(--color-background)"
-            strokeWidth={1.4}
+            strokeWidth={1.6}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
