@@ -1,12 +1,15 @@
+import { ApiError } from '@dispatch/client';
 import type {
   LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
   LinearWorkflowState,
 } from '@dispatch/client';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 
 import {
+  describeFetchFailure,
+  describeKeySource,
   formatSyncCounts,
   isLinearConfigured,
   NO_LINEAR_STATE,
@@ -208,5 +211,73 @@ describe('pushToLinearError', () => {
 
   test('null when an existing issue was updated', () => {
     expect(pushToLinearError(summary({ pushed: 1 }))).toBeNull();
+  });
+});
+
+const baseStatus: LinearStatus = {
+  enabled: false,
+  connected: true,
+  keySource: 'file',
+  teamId: null,
+  direction: 'both',
+  intervalSec: 300,
+  statusMap: {},
+  cursor: null,
+  bootstrappedAt: null,
+  lastSyncAt: null,
+  lastError: null,
+  lastSummary: null,
+  syncing: false,
+};
+
+describe('describeKeySource', () => {
+  it('allows disconnecting a key held in the credentials file', () => {
+    expect(describeKeySource({ ...baseStatus, keySource: 'file' })).toEqual({
+      canDisconnect: true,
+      note: null,
+    });
+  });
+
+  it('refuses to promise a disconnect it cannot deliver for an env key', () => {
+    const result = describeKeySource({ ...baseStatus, keySource: 'env' });
+    expect(result.canDisconnect).toBe(false);
+    expect(result.note).toContain('LINEAR_API_KEY');
+  });
+
+  it('has nothing to say when no key is configured', () => {
+    expect(describeKeySource({ ...baseStatus, keySource: null })).toEqual({
+      canDisconnect: false,
+      note: null,
+    });
+  });
+});
+
+describe('describeFetchFailure', () => {
+  // The real client throws ApiError('<server prose>', <status>) — the message never contains
+  // the status digits, so these must be built the way the client actually builds them.
+  it('reads a 401 as a rejected key rather than a missing one', () => {
+    expect(
+      describeFetchFailure(new ApiError('Authentication required', 401))
+    ).toContain('rejected');
+  });
+
+  it('reads a 409 as no key configured', () => {
+    expect(
+      describeFetchFailure(new ApiError('no Linear API key configured', 409))
+    ).toContain('No Linear API key');
+  });
+
+  it('passes an unrecognised failure through rather than inventing a cause', () => {
+    expect(describeFetchFailure(new Error('socket hang up'))).toContain(
+      'socket hang up'
+    );
+  });
+
+  // A 502 from Linear itself is neither of the two named cases and must not be
+  // mislabelled as one.
+  it('passes an unnamed status through with its message', () => {
+    expect(describeFetchFailure(new ApiError('upstream boom', 502))).toContain(
+      'upstream boom'
+    );
   });
 });
