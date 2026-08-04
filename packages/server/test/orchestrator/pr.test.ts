@@ -875,4 +875,45 @@ describe('PrManager.getPrDiffByUrl', () => {
       OrchestratorConflictError
     );
   });
+
+  // Regression coverage for the no-base-to-string fix: a malformed files
+  // entry (a filename that isn't a string) must throw rather than silently
+  // stringify to "[object Object]" and render as a fake file path.
+  it('conflicts when a files entry has a non-string filename rather than stringifying it', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.diffResult = {
+      ok: true,
+      stdout: 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-old\n+new\n',
+      stderr: '',
+    };
+    stub.filesResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        { filename: { nested: 'not-a-string' }, status: 'modified' },
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.getPrDiffByUrl(url)).rejects.toBeInstanceOf(
+      OrchestratorConflictError
+    );
+  });
+
+  it('conflicts when the gh api pulls/files call fails', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.diffResult = {
+      ok: true,
+      stdout: 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-old\n+new\n',
+      stderr: '',
+    };
+    stub.filesResult = { ok: false, stdout: '', stderr: 'forbidden' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.getPrDiffByUrl(url)).rejects.toBeInstanceOf(
+      OrchestratorConflictError
+    );
+  });
 });
