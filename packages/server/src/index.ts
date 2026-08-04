@@ -264,6 +264,22 @@ function makeGitReader(rootDir: string): GitReader {
 }
 
 /**
+ * A live `isMergeDriverResolvable` for `ApiContext.mergeDriverOk`.
+ *
+ * The setup this reports on is fixed out of band — the user runs `dispatch
+ * init` in a terminal, as the warning tells them to — so nothing this daemon
+ * observes marks the moment it starts being true. Captured at boot, a
+ * successful `dispatch init` looked like it did nothing until a restart.
+ *
+ * Uncached: `GET /api/sync` is not polled (mount, `board.sync`, window focus),
+ * so this is one `git config` per user-visible refresh — including the focus
+ * refetch on switching back from that terminal.
+ */
+function makeMergeDriverCheck(rootDir: string): () => boolean {
+  return () => isMergeDriverResolvable(rootDir);
+}
+
+/**
  * Boots the dispatchd HTTP + WebSocket server for one dispatch project
  * (`rootDir`): a Bun.serve instance backed by an in-memory task cache that is
  * rebuilt from `@dispatch/core`'s TaskStore on boot, after every API
@@ -456,10 +472,11 @@ export async function startServer(
   // daemon's PATH. A missing binary never corrupts anything (git treats an
   // unrunnable driver as a genuine conflict), but it silently downgrades
   // every concurrent same-task edit from a field-level merge to a plain
-  // line-based one — worth surfacing once at boot (see GET /api/sync) rather
-  // than leaving it undiagnosable.
-  const mergeDriverOk = isMergeDriverResolvable(rootDir);
-  if (!mergeDriverOk) {
+  // line-based one — worth surfacing (see GET /api/sync) rather than leaving
+  // it undiagnosable. Logged once here at boot; the API re-checks on a TTL so
+  // the warning clears itself once the user fixes it.
+  const mergeDriverOk = makeMergeDriverCheck(rootDir);
+  if (!mergeDriverOk()) {
     console.log(
       `dispatchd: the task merge driver ('dispatch merge-task') is not resolvable on PATH for ${rootDir} — concurrent edits will fall back to line-based merging`
     );
@@ -526,6 +543,9 @@ export async function startServer(
   // Review dispatched as its own run kind. Built at boot because it subscribes
   // to the terminal hook that ingests a review's findings.
   const findingStore = new FindingStore(rootDir);
+  // Shared with the API rather than constructed twice: a review run's comments
+  // and a human's land in the same per-run file.
+  const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
   const reviewRunner = new ReviewRunner({
     rootDir,
     store,
@@ -535,6 +555,7 @@ export async function startServer(
     events,
     orchestrator,
     actorContext,
+    reviewComments,
   });
 
   // Verification as its own dispatched run kind, exercising finished work
@@ -586,7 +607,7 @@ export async function startServer(
     reviewRunner,
     verificationRunner,
     fixLoop,
-    reviewComments: new ReviewCommentStore(rootDir, actorContext.humanRef),
+    reviewComments,
     questions,
     scopeRequests,
     linearSync,

@@ -143,11 +143,14 @@ export interface ApiContext {
   // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
   // that case, since no real SyncResult ever reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
-  // Detected once at boot (see index.ts's isMergeDriverResolvable call) —
-  // whether `dispatch merge-task` actually resolves on this daemon's PATH.
+  // Whether `dispatch merge-task` actually resolves on this daemon's PATH.
   // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
   // visible somewhere, since git itself never reports it as an error.
-  mergeDriverOk: boolean;
+  //
+  // A function, not a boolean: the fix ("run `dispatch init`") happens in a
+  // terminal, so a value snapshotted at boot keeps telling the user to run a
+  // command they already ran successfully. See index.ts.
+  mergeDriverOk: () => boolean;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -766,11 +769,12 @@ const MERGE_DRIVER_WARNING =
 // straight from the scheduler's retained last result, alongside a live
 // pendingCounts() read.
 function getSyncStatus(ctx: ApiContext): Response {
-  // Read once per request, not cached on ApiContext: unlike the boot-time
-  // detection this value comes from (ctx.mergeDriverOk), this is cheap
-  // enough to include regardless of which branch below responds, so every
-  // state — even `disabled`/`off` — reports the same merge-driver truth.
-  const mergeDriverWarning = ctx.mergeDriverOk ? null : MERGE_DRIVER_WARNING;
+  // Asked on every request rather than read off a boot-time snapshot, so
+  // fixing the setup clears the warning without a daemon restart. Cheap enough
+  // to include regardless of which branch below responds (index.ts's
+  // implementation caches), so every state — even `disabled`/`off` — reports
+  // the same merge-driver truth.
+  const mergeDriverWarning = ctx.mergeDriverOk() ? null : MERGE_DRIVER_WARNING;
 
   if (ctx.boardSyncScheduler === null) {
     const disabled: SyncStatus = {
