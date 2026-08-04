@@ -459,6 +459,19 @@ edit and is left alone rather than clobbered."
 
 ### Task 5: Wire it to the watcher, gate it on `autoCommit`
 
+> **Amended 2026-08-03 after the final review — a periodic pull is required.**
+> As specified, the only sync trigger is a local `task.changed` event, which is
+> spec §4.5 read literally. The consequence the final review surfaced: a
+> teammate who reads the board all day and edits nothing **never sees anyone
+> else's changes**, and a `local-only` state after a network outage never
+> recovers until that user's next local edit. Add a timer (60s) that pulls and
+> materializes even when nothing changed locally, alongside the edit-triggered
+> sync. It must respect the same `autoCommit` gate, must not stack with an
+> in-flight sync (reuse the existing `inFlight`/`pendingRerun` guard), and must
+> not re-arm on failure any faster than its normal interval — the no-retry-storm
+> property still holds. This is tracked as follow-up work after the final fix
+> wave, not as part of Task 5's original commits.
+
 **Files:**
 
 - Modify: `packages/server/src/index.ts`
