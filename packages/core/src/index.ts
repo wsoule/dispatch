@@ -74,6 +74,7 @@ export {
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
+  DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
@@ -89,6 +90,7 @@ export type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  RepoDigestConfig,
   VerifyConfig,
   VerifyStep,
 } from './config.js';
