@@ -82,7 +82,8 @@ export function toolEntryPreview(entry: NormalizedEntry): string {
   try {
     inputText = JSON.stringify(entry.toolInput);
   } catch {
-    inputText = String(entry.toolInput);
+    // Only a cyclic input lands here, and it has no useful text form.
+    inputText = '…';
   }
   const truncated =
     inputText.length > TOOL_INPUT_PREVIEW_MAX

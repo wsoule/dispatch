@@ -174,7 +174,8 @@ export function toolView(entry: NormalizedEntry): ToolView {
         try {
           json = JSON.stringify(input, null, 2);
         } catch {
-          json = String(input);
+          // Only a cyclic input lands here, and it has no useful text form.
+          json = '(input could not be displayed)';
         }
       }
       return {
