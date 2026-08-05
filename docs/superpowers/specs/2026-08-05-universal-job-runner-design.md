@@ -22,8 +22,11 @@ git repo":
   a clean seam — `FakeExecutor` proves it.
 - **Workspace** assumes a git worktree cut from the user's repo
   (`orchestrator/worktree.ts`); `ExecutorStartOptions.cwd` is always one.
-- **Verification** means build/test/lint (`orchestrator/verify.ts`,
-  `fixLoop.ts`).
+- **Verification** means shell commands from config (`verifySteps` /
+  `verifyCommand`), run by the merge queue's gate (`mergeQueue.ts`) — plus a
+  separate agent-driven pass that exercises the running app
+  (`orchestrator/verify.ts`), and a fix loop (`fixLoop.ts`) that re-dispatches
+  from review findings.
 - **Delivery** means a squash-merge or a PR (`RunMeta.reviewAction`,
   `mergeQueue.ts`, `pr.ts`).
 - **Trigger** means a human pressing dispatch. Nothing starts a job on a
@@ -125,19 +128,24 @@ deliver: checkpoint
 
 - **Executor** — the existing interface
   (`Executor`/`ExecutorRun`/`ExecutorEvents` in `orchestrator/types.ts`)
-  survives nearly unchanged; it was designed as this seam. Work needed: an
-  executor registry keyed by the `executor` field, `ExecutorStartOptions.cwd`
-  generalized to a workspace handle (nullable for `workspace: none`), and a
-  `CommandExecutor` that runs a process and streams its output as
-  `NormalizedEntry` rows — proving the contract holds for non-agent backends.
+  survives nearly unchanged; it was designed as this seam, and the orchestrator
+  already holds a name→executor registry (`registerExecutor`). Work needed:
+  dispatch defaulting from the task's `executor` field,
+  `ExecutorStartOptions.cwd` generalized to a workspace handle (nullable for
+  `workspace: none`), and a `CommandExecutor` that runs a process and streams
+  its output as `NormalizedEntry` rows — proving the contract holds for
+  non-agent backends.
 - **WorkspaceProvider** — `prepare(job) → { path? }`, `checkpoint()`,
   `cleanup()`. Implementations: `worktree` (current `WorktreeManager`), `dir`,
-  `none`. `RunMeta`'s worktree-specific fields (`branch`, `worktreePath`,
-  `survey`) become provider-owned.
-- **Verifier** — `verify(run) → findings`. Implementations: command runner
-  (current verify/fix loop), checklist, agent-judge, browser check. The fix loop
-  itself is generic once findings are; it re-dispatches regardless of which
-  verifier produced them.
+  `none`. Scope note: only the dispatch-time lifecycle goes behind the
+  interface; the merge/branch/restack machinery keeps direct `WorktreeManager`
+  access as part of the code profile's delivery path.
+- **Verifier** — `verify(run) → findings`. Dispatch has two verifier kinds today
+  and keeps both: the merge queue's command gate (config `verifySteps`, the
+  extraction target) and the agent pass that exercises the running app
+  (`VerificationRunner`). New kinds — checklist, agent-judge, browser check —
+  join as gate implementations. The fix loop itself is generic once findings
+  are; it re-dispatches regardless of which verifier produced them.
 - **Deliverer** — `deliver(run) → outcome`. Implementations: merge/PR (current
   review pipeline), checkpoint (squash-merge into the hidden repo's main,
   surfaced as a named restore point), files, artifact, notification.
