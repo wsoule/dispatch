@@ -81,6 +81,10 @@ export function mapGitHubComment(
  * Merges what is stored locally with what a pull just returned into the
  * mirror's next state. Matches purely by `githubId` — body text and line
  * number can both legitimately change, so neither is an identity.
+ *
+ * Assumes `pending` and `githubId` are never both set on one local record:
+ * the push path clears `pending` in the same step it assigns `githubId`.
+ * A record that broke that invariant would be treated as published.
  */
 export function mergeComments(
   local: ReviewComment[],
@@ -107,14 +111,36 @@ export function mergeComments(
       continue;
     }
     matched.add(l.githubId);
-    // Last-writer-wins by comparing GitHub's reported update time against
-    // what we last stored for it. `resolved` always stays local — GitHub
-    // tracks resolution on the thread, not the comment (Task 5's job).
+    // Last-writer-wins, but only on the fields GitHub actually owns: body,
+    // its own update time, and where the comment now anchors. Written
+    // field-by-field rather than by spread, so a future ReviewComment
+    // field can't silently inherit the wrong side. id, replies and
+    // resolved always stay local — GitHub has no concept of our local id,
+    // never sees our reply threads, and tracks resolution on the thread
+    // rather than the comment (Task 5's job).
     const remoteIsNewer =
       r.githubUpdatedAt !== undefined &&
       l.githubUpdatedAt !== undefined &&
       r.githubUpdatedAt > l.githubUpdatedAt;
-    merged.push({ ...(remoteIsNewer ? r : l), resolved: l.resolved });
+    const winner = remoteIsNewer ? r : l;
+    merged.push({
+      id: l.id,
+      file: l.file,
+      line: winner.line,
+      ...(winner.startLine !== undefined
+        ? { startLine: winner.startLine }
+        : {}),
+      pending: l.pending,
+      anchorText: winner.anchorText,
+      author: l.author,
+      body: winner.body,
+      resolved: l.resolved,
+      created: l.created,
+      replies: l.replies,
+      githubId: l.githubId,
+      githubUpdatedAt: winner.githubUpdatedAt,
+      origin: l.origin,
+    });
   }
 
   for (const r of remote) {
