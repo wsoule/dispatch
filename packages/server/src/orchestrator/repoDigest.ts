@@ -35,6 +35,10 @@ export function repoDigestPath(rootDir: string): string {
 // not a target.
 const MAX_DIGEST_CHARS = 6000;
 
+// Deliberately far shorter than the success cooldown. Retrying a transient
+// failure quickly is the intent; this only stops it happening every dispatch.
+const FAILED_ATTEMPT_BACKOFF_MS = 5 * 60 * 1000;
+
 const DIGEST_PROMPT =
   'Write a concise orientation map of this repository for an engineer who is ' +
   'about to make a change in it and has never seen it before. Cover: what ' +
@@ -196,6 +200,10 @@ export class RepoDigestCache {
   // dispatched together would otherwise each start their own generation.
   private refreshing = false;
 
+  // In memory, not on disk: a daemon restart usually means the operator just
+  // fixed what was broken and should get an immediate retry.
+  private lastAttemptAt: number | null = null;
+
   constructor(
     private readonly rootDir: string,
     private readonly generate?: DigestGenerator,
@@ -221,12 +229,25 @@ export class RepoDigestCache {
     return cached;
   }
 
-  // Fire-and-forget. Every failure path logs and clears the flag so a transient
-  // one (no CLI on PATH, a model error) is retried on the next dispatch rather
-  // than wedging the cache shut for the life of the daemon.
+  /** Clears the failure backoff so a test can reach past it without sleeping. */
+  forgetLastAttemptForTest(): void {
+    this.lastAttemptAt = null;
+  }
+
+  // Fire-and-forget. A failure logs and clears the flag so a transient one (no
+  // CLI on PATH, a model error) is retried rather than wedging the cache shut
+  // for the life of the daemon — but only once the backoff has passed, since a
+  // failed generation writes nothing for the cooldown to read.
   private refresh(commit: string): void {
     const generate = this.generate;
     if (generate === undefined || this.refreshing) return;
+    if (
+      this.lastAttemptAt !== null &&
+      Date.now() - this.lastAttemptAt < FAILED_ATTEMPT_BACKOFF_MS
+    ) {
+      return;
+    }
+    this.lastAttemptAt = Date.now();
     this.refreshing = true;
     void generate(this.rootDir)
       .then((result) => {
@@ -238,6 +259,13 @@ export class RepoDigestCache {
           markdown: trimmed.slice(0, MAX_DIGEST_CHARS),
           ...(result.costUsd !== null ? { costUsd: result.costUsd } : {}),
         });
+        console.log(
+          `dispatchd: regenerated repo digest for ${commit.slice(0, 7)} (${
+            result.costUsd !== null
+              ? `$${result.costUsd.toFixed(4)}`
+              : 'cost unreported'
+          })`
+        );
       })
       .catch((err: unknown) => {
         console.error(
