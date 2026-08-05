@@ -29,6 +29,7 @@ export {
 } from './actor.js';
 export type { ActorKind, ActorRef } from './actor.js';
 export { slugify } from './slug.js';
+export { describeValue } from './describe.js';
 export { isOutstanding } from './timeline.js';
 export {
   untrustedBlock,

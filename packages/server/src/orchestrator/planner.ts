@@ -1,4 +1,4 @@
-import { PRIORITIES, TASK_RISKS } from '@dispatch/core';
+import { describeValue, PRIORITIES, TASK_RISKS } from '@dispatch/core';
 import type { Priority, TaskRisk } from '@dispatch/core';
 
 import { OrchestratorClientError } from './types.js';
@@ -204,7 +204,7 @@ function validatePlannedTask(
       !(TASK_RISKS as readonly string[]).includes(t.risk))
   ) {
     throw new OrchestratorClientError(
-      `invalid risk: ${String(t.risk)} (expected ${TASK_RISKS.join('|')})`
+      `invalid risk: ${describeValue(t.risk)} (expected ${TASK_RISKS.join('|')})`
     );
   }
   return {

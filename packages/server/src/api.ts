@@ -1,6 +1,7 @@
 import {
   ASSIGNEES,
   ConfigError,
+  describeValue,
   getSection,
   KINDS,
   loadConfig,
@@ -166,7 +167,7 @@ function validateEnumField(
 ): string | null {
   if (value === undefined) return null;
   if (typeof value !== 'string' || !allowed.includes(value)) {
-    return `invalid ${label}: ${String(value)} (expected ${allowed.join('|')})`;
+    return `invalid ${label}: ${describeValue(value)} (expected ${allowed.join('|')})`;
   }
   return null;
 }
@@ -331,7 +332,7 @@ async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   ) {
     return errorResponse(
       400,
-      `invalid planner: ${String(body.planner)} (expected ${knownPlannerNames.join('|')})`
+      `invalid planner: ${describeValue(body.planner)} (expected ${knownPlannerNames.join('|')})`
     );
   }
   const plannerName =
@@ -469,7 +470,7 @@ async function createRun(
   ) {
     return errorResponse(
       400,
-      `invalid executor: ${String(executorField)} (expected ${knownExecutorNames.join('|')})`
+      `invalid executor: ${describeValue(executorField)} (expected ${knownExecutorNames.join('|')})`
     );
   }
 
@@ -1803,7 +1804,7 @@ async function startPlan(req: Request, ctx: ApiContext): Promise<Response> {
   ) {
     return errorResponse(
       400,
-      `invalid planner: ${String(body.planner)} (expected ${knownPlannerNames.join('|')})`
+      `invalid planner: ${describeValue(body.planner)} (expected ${knownPlannerNames.join('|')})`
     );
   }
   const plannerName =
