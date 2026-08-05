@@ -211,6 +211,17 @@ export class ReviewCommentStore {
   }
 
   /**
+   * Replaces a target's entire comment set in one write.
+   *
+   * The GitHub pull path (PrManager.syncPrComments) always has a full merged
+   * array to persist, not one record to touch — every other method here
+   * mutates a single comment, so none of them fit that shape.
+   */
+  replaceAll(target: ReviewTarget, comments: ReviewComment[]): void {
+    this.write(target, comments);
+  }
+
+  /**
    * Publishes every pending comment on a target, returning how many were
    * released.
    *

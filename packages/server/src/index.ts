@@ -487,8 +487,21 @@ export async function startServer(
   // dispatchd is running, and re-shelling-out to `gh --version` on every
   // health check or review action would be wasted work.
   const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
+  // Built ahead of both PrManager (syncPrComments/pushPrReview read and
+  // write a PR target's comments) and ReviewRunner below, which shares this
+  // same instance — a review run's comments and a human's land in the same
+  // per-target file rather than two stores fighting over one file.
+  const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
   const prManager = new PrManager(
-    { rootDir, store, cache, events, orchestrator, actorContext },
+    {
+      rootDir,
+      store,
+      cache,
+      events,
+      orchestrator,
+      actorContext,
+      reviewComments,
+    },
     prCapability,
     opts.prCommandRunner
   );
@@ -543,9 +556,7 @@ export async function startServer(
   // Review dispatched as its own run kind. Built at boot because it subscribes
   // to the terminal hook that ingests a review's findings.
   const findingStore = new FindingStore(rootDir);
-  // Shared with the API rather than constructed twice: a review run's comments
-  // and a human's land in the same per-run file.
-  const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
+  // reviewComments is built above, alongside PrManager, which needs it too.
   const reviewRunner = new ReviewRunner({
     rootDir,
     store,

@@ -1,10 +1,17 @@
 import type { ActorContext, TaskStore } from '@dispatch/core';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { mapGitHubComment, mergeComments } from '../githubComments.js';
+import type { ReviewComment, ReviewCommentStore } from '../reviewComments.js';
+import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
 import {
+  OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
   TERMINAL_RUN_STATES,
@@ -39,6 +46,18 @@ export type CommandRunner = (
   cmd: string[],
   opts?: { timeoutMs?: number; onOutput?: (chunk: string) => void }
 ) => Promise<CommandResult>;
+
+// Guards a PR number before it is ever used to build a ReviewTarget or a
+// REST path. Task 1's review flagged that reviewTargetSlug does not
+// validate its `pr` branch's number — {kind:'pr', number:1.5} would happily
+// produce `pr-1.5.review.json` — and this is where a PR target is actually
+// constructed from a route parameter, so the check belongs here rather than
+// trusting the caller.
+function requirePrNumber(number: number): void {
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new OrchestratorClientError(`invalid PR number: ${number}`);
+  }
+}
 
 // Picks whichever of a failed command's stderr/stdout actually has content,
 // preferring stderr — used instead of `stderr.trim() || stdout.trim()` so
@@ -171,6 +190,11 @@ export interface PrManagerContext {
   // field — openPr() below falls back to an unattributed Activity line when
   // it's absent.
   actorContext?: ActorContext;
+  // The comment mirror's local half — syncPrComments/pushPrReview read and
+  // write a PR target's comments here. Shared with ReviewRunner rather than
+  // constructed twice: a review run's comments and a human's land in the
+  // same per-target file.
+  reviewComments: ReviewCommentStore;
 }
 
 // A CI check rollup summarized to counts the UI can render as a compact
@@ -795,6 +819,158 @@ export class PrManager {
       );
     }
     return this.getPrDetailByUrl(url);
+  }
+
+  // Resolves a bare PR number — the form syncPrComments/pushPrReview take,
+  // straight from a route param — to the RepoPr entry both need: the url
+  // (for owner/repo) and headRefOid (the review's commit_id). Mirrors
+  // api.ts's own resolveRepoPrByNumber; duplicated rather than shared
+  // because these two methods, unlike every other PrManager entry point,
+  // are given a number instead of a url and have to do this resolution
+  // themselves.
+  private async resolvePrForComments(number: number): Promise<RepoPr> {
+    requirePrNumber(number);
+    const prs = await this.listRepoPrs();
+    const pr = prs.find((p) => p.number === number);
+    if (pr === undefined) {
+      throw new OrchestratorNotFoundError(`PR not found: #${number}`);
+    }
+    return pr;
+  }
+
+  // GET-ish pull half of the comment mirror: fetches every review comment
+  // GitHub has for the PR, maps each with mapGitHubComment, merges with
+  // whatever mergeComments's six rules say to keep from disk, persists the
+  // result, and returns it. Hits the exact same REST endpoint
+  // getPrDetailByUrl already reads for its read-only conversation view —
+  // this is the write-back half that also updates the local mirror.
+  async syncPrComments(number: number): Promise<ReviewComment[]> {
+    const pr = await this.resolvePrForComments(number);
+    const location = parsePrUrl(pr.url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
+    }
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'api',
+      `repos/${location.owner}/${location.repo}/pulls/${location.number}/comments`,
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh api pulls/comments failed: ${commandErrorText(result)}`
+      );
+    }
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+    } catch {
+      throw new OrchestratorConflictError(
+        'gh api pulls/comments returned invalid JSON'
+      );
+    }
+    const remote = raw
+      .map((item) => mapGitHubComment(item))
+      .filter((c): c is ReviewComment => c !== null);
+    const target: ReviewTarget = { kind: 'pr', number };
+    const merged = mergeComments(this.ctx.reviewComments.list(target), remote);
+    this.ctx.reviewComments.replaceAll(target, merged);
+    return merged;
+  }
+
+  // POST /api/prs/:number/review (Task 6). Submits every pending comment on
+  // a PR target as one GitHub review — the push half of the mirror. Every
+  // pending comment rides one `comments[]` array on a single request;
+  // looping per comment would make GitHub render N separate reviews
+  // instead of one.
+  async pushPrReview(
+    number: number,
+    verdict: PrReviewEvent,
+    body: string
+  ): Promise<{ pushed: number }> {
+    const pr = await this.resolvePrForComments(number);
+    const location = parsePrUrl(pr.url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
+    }
+    const target: ReviewTarget = { kind: 'pr', number };
+    const all = this.ctx.reviewComments.list(target);
+    const pending = all.filter((c) => c.pending);
+
+    const event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' =
+      verdict === 'approve'
+        ? 'APPROVE'
+        : verdict === 'request-changes'
+          ? 'REQUEST_CHANGES'
+          : 'COMMENT';
+    // commit_id belongs to the review as a whole, not to each comment — the
+    // batch endpoint takes one top-level sha, sourced from the PR's head.
+    // Dispatch's composer only ever writes side:'RIGHT' line comments, so
+    // that is the only side synthesized here.
+    const payload = {
+      commit_id: pr.headRefOid,
+      event,
+      body,
+      comments: pending.map((c) => ({
+        path: c.file,
+        line: c.line,
+        side: 'RIGHT' as const,
+        body: c.body,
+      })),
+    };
+
+    // gh's -F/-f field flags can express a scalar array but not an array of
+    // objects (each comment needs path/line/side/body together — see
+    // cli/cli#3937), and CommandRunner's argv-only signature has no stdin
+    // to carry `--input -`. A scratch file keeps the whole call on the
+    // injected seam: this.run still receives a plain argv, only the
+    // payload's bytes move through disk instead of a pipe.
+    const scratchDir = mkdtempSync(join(tmpdir(), 'dispatch-pr-review-'));
+    const payloadPath = join(scratchDir, 'review.json');
+    try {
+      writeFileSync(payloadPath, JSON.stringify(payload));
+      const result = await this.run(this.ctx.rootDir, [
+        'gh',
+        'api',
+        '-X',
+        'POST',
+        `repos/${location.owner}/${location.repo}/pulls/${location.number}/reviews`,
+        '--input',
+        payloadPath,
+      ]);
+      if (!result.ok) {
+        // Nothing above touched the store: every pending comment, including
+        // this whole batch, survives exactly as the reviewer left it — a
+        // failed push must never lose their writing.
+        throw new OrchestratorConflictError(
+          `gh api pulls/reviews failed: ${commandErrorText(result)}`
+        );
+      }
+    } finally {
+      rmSync(scratchDir, { recursive: true, force: true });
+    }
+
+    if (pending.length > 0) {
+      // The batch just posted now exists on GitHub with real ids. Drop the
+      // local drafts that stood in for them rather than flip `pending` on
+      // them directly — mapGitHubComment always sets githubId and pending
+      // together, so letting the re-pull's insert path (mergeComments'
+      // remote-only rule) create their replacement is what keeps the two
+      // fields from ever landing separately, which is the invariant
+      // mergeComments itself cannot enforce.
+      //
+      // Re-read the store rather than reuse `all`: the gh call above just
+      // awaited a real network round trip, wide open for a concurrent
+      // add() to land a fresh pending comment. Filtering by this batch's
+      // own ids (not a blanket !pending) keeps that comment instead of
+      // discarding it under a stale snapshot.
+      const pushedIds = new Set(pending.map((c) => c.id));
+      const remaining = this.ctx.reviewComments
+        .list(target)
+        .filter((c) => !pushedIds.has(c.id));
+      this.ctx.reviewComments.replaceAll(target, remaining);
+      await this.syncPrComments(number);
+    }
+    return { pushed: pending.length };
   }
 }
 

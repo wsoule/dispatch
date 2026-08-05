@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,10 +15,13 @@ import {
   PrManager,
 } from '../../src/orchestrator/pr.js';
 import {
+  OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
 import { WorktreeManager } from '../../src/orchestrator/worktree.js';
+import { ReviewCommentStore } from '../../src/reviewComments.js';
+import type { ReviewTarget } from '../../src/reviewTarget.js';
 import { initGitRepo } from './helpers.js';
 
 let fakeHome: string;
@@ -59,6 +62,11 @@ function sleep(ms: number): Promise<void> {
 // prove that.
 class StubRunner {
   readonly calls: { cwd: string; cmd: string[] }[] = [];
+  // pushPrReview writes its body to a scratch file and cleans it up (via
+  // `finally`) before returning, so a test reading the file only after the
+  // call resolves would always find it gone. Captured here instead, at the
+  // moment the stubbed POST is "received" — while the file still exists.
+  readonly postedReviewPayloads: Record<string, unknown>[] = [];
   pushResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   createResult: CommandResult = {
     ok: true,
@@ -119,6 +127,14 @@ class StubRunner {
   };
   reviewResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   commentResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  // `gh api -X POST repos/O/R/pulls/N/reviews` result pushPrReview reads —
+  // distinct from `reviewResult` above, which is `gh pr review` (a
+  // different command entirely: cmd[1] is 'pr', not 'api').
+  pushReviewResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({ id: 999, state: 'COMMENTED' }),
+    stderr: '',
+  };
   // `gh pr diff`/`gh api …/files` results getPrDiffByUrl reads — distinct
   // from `apiResult` above (the line-comments call).
   diffResult: CommandResult = { ok: true, stdout: '', stderr: '' };
@@ -178,6 +194,39 @@ class StubRunner {
       (cmd.at(-1)?.endsWith('/files') ?? false)
     ) {
       return this.filesResult;
+    }
+    // Matched on the actual path argument (not a fixed index): pushPrReview
+    // puts `--input <path>` after the endpoint, so the endpoint is not the
+    // last argument the way it is for the '/files' call above. Placed
+    // before the generic 'gh api' branch below, or the POST here would be
+    // swallowed by the GET-shaped `apiResult` payload.
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      cmd.includes('POST') &&
+      cmd.some((arg) => /\/pulls\/\d+\/reviews$/.test(arg))
+    ) {
+      const inputIdx = cmd.indexOf('--input');
+      const payloadPath = inputIdx >= 0 ? cmd[inputIdx + 1] : undefined;
+      if (payloadPath !== undefined) {
+        this.postedReviewPayloads.push(
+          JSON.parse(readFileSync(payloadPath, 'utf8')) as Record<
+            string,
+            unknown
+          >
+        );
+      }
+      return this.pushReviewResult;
+    }
+    // Also placed ahead of the generic branch, though it currently answers
+    // identically to it — syncPrComments hits the exact same REST endpoint
+    // getPrDetailByUrl's line-comment read already does.
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      cmd.some((arg) => /\/pulls\/\d+\/comments$/.test(arg))
+    ) {
+      return this.apiResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === 'api') {
       return this.apiResult;
@@ -262,6 +311,7 @@ interface Harness {
   store: TaskStore;
   cache: TaskCache;
   events: EventBus;
+  reviewComments: ReviewCommentStore;
 }
 
 function makeHarness(): Harness {
@@ -279,7 +329,8 @@ function makeHarness(): Harness {
     'fake',
     new FakeExecutor({ finish: { state: 'finished', costUsd: 0, turns: 1 } })
   );
-  return { rootDir: repo, orchestrator, store, cache, events };
+  const reviewComments = new ReviewCommentStore(repo, 'human:test');
+  return { rootDir: repo, orchestrator, store, cache, events, reviewComments };
 }
 
 async function dispatchAndFinish(harness: Harness): Promise<{
@@ -915,5 +966,298 @@ describe('PrManager.getPrDiffByUrl', () => {
     await expect(pr.getPrDiffByUrl(url)).rejects.toBeInstanceOf(
       OrchestratorConflictError
     );
+  });
+});
+
+// A ReviewTarget for PR #9 — matches StubRunner's default listResult entry
+// (number 9, url .../pull/9), so most tests below resolve without needing
+// to override the list stub just to pick a number.
+const prTarget: ReviewTarget = { kind: 'pr', number: 9 };
+
+// The default single-PR listResult shape, with headRefOid overridden — the
+// sha pushPrReview must carry as the review's commit_id.
+function listResultWithHeadRefOid(sha: string): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify([
+      {
+        number: 9,
+        title: 'Repo PR from someone else',
+        url: 'https://github.com/example/repo/pull/9',
+        headRefName: 'feature/someone-else',
+        headRefOid: sha,
+        author: { login: 'teammate' },
+        isDraft: true,
+        updatedAt: '2026-07-22T00:00:00Z',
+        isCrossRepository: false,
+        headRepositoryOwner: { login: 'someone' },
+        reviewDecision: null,
+        mergeable: null,
+        statusCheckRollup: [],
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
+      },
+    ]),
+    stderr: '',
+  };
+}
+
+// A raw GitHub REST review-comment payload item, shaped per the plan's
+// verified payload facts — reused across the pull/merge tests below.
+function rawGitHubComment(
+  over: Partial<Record<string, unknown>> = {}
+): Record<string, unknown> {
+  return {
+    id: 555,
+    path: 'src/a.ts',
+    line: 3,
+    diff_hunk: '@@ -1,2 +1,3 @@\n context\n+const x = 1;',
+    body: 'why one?',
+    user: { login: 'teammate' },
+    created_at: '2026-08-01T00:00:00Z',
+    updated_at: '2026-08-01T00:00:00Z',
+    side: 'RIGHT',
+    subject_type: 'line',
+    ...over,
+  };
+}
+
+describe('PrManager.syncPrComments', () => {
+  it('pulls, maps, and persists a stubbed pulls/N/comments payload', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([rawGitHubComment()]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncPrComments(9);
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toMatchObject({
+      file: 'src/a.ts',
+      line: 3,
+      anchorText: 'const x = 1;',
+      githubId: 555,
+      origin: 'github',
+      pending: false,
+    });
+    // Persisted, not just returned.
+    expect(harness.reviewComments.list(prTarget)).toEqual(comments);
+  });
+
+  it('merges with what is on disk, leaving a local pending draft untouched', async () => {
+    const harness = makeHarness();
+    const draft = harness.reviewComments.add(prTarget, {
+      file: 'src/b.ts',
+      line: 1,
+      anchorText: 'const y = 2;',
+      body: 'my own note',
+      pending: true,
+    });
+    const stub = new StubRunner();
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([rawGitHubComment()]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncPrComments(9);
+
+    expect(comments).toContainEqual(draft);
+    expect(comments.some((c) => c.githubId === 555)).toBe(true);
+  });
+
+  it('404s a PR number the repo does not currently have open', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    await expect(pr.syncPrComments(404)).rejects.toThrow(
+      OrchestratorNotFoundError
+    );
+  });
+
+  it('rejects a non-integer PR number before shelling out at all', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    await expect(pr.syncPrComments(1.5)).rejects.toThrow(
+      OrchestratorClientError
+    );
+    expect(stub.calls).toHaveLength(0);
+  });
+});
+
+describe('PrManager.pushPrReview', () => {
+  // Seeds one pending comment on PR #9's target, returning it so a test can
+  // assert on the exact record round-tripped through the store.
+  function seedPending(
+    harness: Harness,
+    over: { file?: string; line?: number; body?: string } = {}
+  ) {
+    return harness.reviewComments.add(prTarget, {
+      file: over.file ?? 'src/a.ts',
+      line: over.line ?? 3,
+      anchorText: 'const x = 1;',
+      body: over.body ?? 'why one?',
+      pending: true,
+    });
+  }
+
+  // The JSON body pushPrReview wrote to its (since-cleaned-up) scratch
+  // file, captured by the stub at call time — see postedReviewPayloads.
+  function readPostedPayload(stub: StubRunner): Record<string, unknown> {
+    const payload = stub.postedReviewPayloads.at(-1);
+    if (payload === undefined) {
+      throw new Error('no review payload was posted');
+    }
+    return payload;
+  }
+
+  it('sends one POST carrying every pending comment, not N separate calls', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    seedPending(harness);
+    seedPending(harness, { file: 'src/b.ts', line: 5, body: 'and this?' });
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.pushPrReview(9, 'approve', 'LGTM');
+
+    expect(result.pushed).toBe(2);
+    const postCalls = stub.calls.filter((c) =>
+      c.cmd.some((arg) => /\/pulls\/9\/reviews$/.test(arg))
+    );
+    expect(postCalls).toHaveLength(1);
+  });
+
+  it('carries path, line, side RIGHT, and the commit_id from headRefOid', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    seedPending(harness);
+    seedPending(harness, { file: 'src/b.ts', line: 5, body: 'and this?' });
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.pushPrReview(9, 'approve', 'LGTM');
+
+    const payload = readPostedPayload(stub);
+    expect(payload.commit_id).toBe('sha-abc123');
+    expect(payload.comments).toEqual([
+      { path: 'src/a.ts', line: 3, side: 'RIGHT', body: 'why one?' },
+      { path: 'src/b.ts', line: 5, side: 'RIGHT', body: 'and this?' },
+    ]);
+  });
+
+  it.each([
+    ['approve', 'APPROVE'],
+    ['request-changes', 'REQUEST_CHANGES'],
+    ['comment', 'COMMENT'],
+  ] as const)('maps verdict %s to event %s', async (verdict, event) => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    seedPending(harness);
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.pushPrReview(9, verdict, 'body text');
+
+    expect(readPostedPayload(stub).event).toBe(event);
+  });
+
+  it('re-pulls after a successful push so the published comment gets its githubId backfilled', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    seedPending(harness);
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([rawGitHubComment({ id: 777 })]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.pushPrReview(9, 'approve', 'LGTM');
+
+    const stored = harness.reviewComments.list(prTarget);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.pending).toBe(false);
+    expect(stored[0]?.githubId).toBe(777);
+  });
+
+  it('leaves comments pending on a failed push (the reviewer must not lose the writing)', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    stub.pushReviewResult = { ok: false, stdout: '', stderr: 'gh boom' };
+    const draft = seedPending(harness);
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.pushPrReview(9, 'approve', 'LGTM')).rejects.toThrow(
+      OrchestratorConflictError
+    );
+
+    const stored = harness.reviewComments.list(prTarget);
+    expect(stored).toEqual([draft]);
+    expect(stored[0]?.pending).toBe(true);
+  });
+
+  // Regression: the post-push cleanup used to reuse the pre-await `all`
+  // snapshot to decide what survives, so a comment added while the gh call
+  // was in flight (a real window — this.run awaits a network round trip)
+  // would be silently discarded when that stale snapshot was written back.
+  it('keeps a comment added while the push network call is in flight', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    seedPending(harness);
+    // Simulates the concurrent add(): landed on the store from "inside"
+    // the stubbed gh call, the same async gap a real network round trip
+    // would open.
+    const wrappedRun = async (
+      cwd: string,
+      cmd: string[]
+    ): Promise<CommandResult> => {
+      const result = await stub.run(cwd, cmd);
+      if (cmd.some((arg) => /\/pulls\/9\/reviews$/.test(arg))) {
+        harness.reviewComments.add(prTarget, {
+          file: 'src/c.ts',
+          line: 9,
+          anchorText: 'const z = 3;',
+          body: 'landed mid-flight',
+          pending: true,
+        });
+      }
+      return result;
+    };
+    const pr = new PrManager(harness, true, wrappedRun);
+
+    await pr.pushPrReview(9, 'approve', 'LGTM');
+
+    const stored = harness.reviewComments.list(prTarget);
+    expect(stored.some((c) => c.body === 'landed mid-flight')).toBe(true);
+  });
+
+  it('still submits (with no comments) and skips the backfill pull when nothing is pending', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.pushPrReview(9, 'approve', 'LGTM');
+
+    expect(result.pushed).toBe(0);
+    const postCalls = stub.calls.filter((c) =>
+      c.cmd.some((arg) => /\/pulls\/9\/reviews$/.test(arg))
+    );
+    expect(postCalls).toHaveLength(1);
+    const getCalls = stub.calls.filter((c) =>
+      c.cmd.some((arg) => /\/pulls\/9\/comments$/.test(arg))
+    );
+    expect(getCalls).toHaveLength(0);
   });
 });
