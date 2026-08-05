@@ -9,5 +9,8 @@
   },
   "dependencies": {
     "@dispatch/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@dispatch/server": "workspace:*"
   }
 }
