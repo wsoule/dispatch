@@ -30,8 +30,8 @@ export function listProjects(): Promise<ProjectSummary[]> {
   // Project enumeration is backed by Tauri IPC; in the browser dev
   // harness there's no backend, so degrade to an empty list rather than
   // throwing (the switcher dropdown simply shows only the active project).
-  if (!isTauri()) return Promise.resolve([]);
-  return invoke('list_projects');
+  if (!isTauri()) return Promise.resolve<ProjectSummary[]>([]);
+  return invoke<ProjectSummary[]>('list_projects');
 }
 
 export function listSessions(): Promise<Session[]> {
@@ -170,8 +170,8 @@ export interface RegisteredProject {
  * Browser-dev fallback: no backend, so an empty list (the switcher just shows the active
  * project), matching `listProjects`'s own degrade-to-empty behavior. */
 export function listRegisteredProjects(): Promise<RegisteredProject[]> {
-  if (!isTauri()) return Promise.resolve([]);
-  return invoke('list_registered_projects');
+  if (!isTauri()) return Promise.resolve<RegisteredProject[]>([]);
+  return invoke<RegisteredProject[]>('list_registered_projects');
 }
 
 /** Registers `path` (must be an existing directory) and resolves to the normalized absolute
