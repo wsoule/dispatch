@@ -184,6 +184,33 @@ describe('GET /api/runs/:id/file', () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it('does not disclose a file reached through a leaf symlink', async () => {
+    // A worktree file committed as a symlink — `evil.txt -> /outside/secret.txt`
+    // — reads as an ordinary relative path but fs.readFileSync (used for
+    // side=new) follows it straight to the external target.
+    const outside = mkdtempSync(
+      join(tmpdir(), 'dispatch-run-file-edits-read-leaf-outside-')
+    );
+    const externalTarget = join(outside, 'secret.txt');
+    writeFileSync(externalTarget, 'original-secret\n');
+    symlinkSync(externalTarget, join(worktree, 'evil.txt'));
+
+    try {
+      const res = await apiFetch(
+        `/api/runs/${runId}/file?path=evil.txt&side=new`
+      );
+      // The status check alone is the point (reject outright, see
+      // resolveWorktreeFilePath) but the disclosure check is what actually
+      // matters: whatever the status, the external file's contents must
+      // never appear in the response.
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(text).not.toContain('original-secret');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('POST /api/runs/:id/edits', () => {
@@ -362,6 +389,40 @@ describe('POST /api/runs/:id/edits', () => {
       // The assertion that actually matters: writeFileSync must never have
       // been called on the external target at all, not merely reverted back
       // to matching content after the fact.
+      expect(statSync(externalTarget).mtimeMs).toBe(mtimeBefore);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a write through a leaf symlink that escapes the worktree', async () => {
+    // Unlike a symlinked directory, this is a worktree file that is itself a
+    // symlink — `evil.txt -> /outside/secret.txt`. git treats a symlink as
+    // an ordinary blob and never follows it, but fs.writeFileSync does, so
+    // this is a distinct escape from the directory case above.
+    const outside = mkdtempSync(
+      join(tmpdir(), 'dispatch-run-file-edits-leaf-outside-')
+    );
+    const externalTarget = join(outside, 'secret.txt');
+    const externalContents = 'original-secret\n';
+    writeFileSync(externalTarget, externalContents);
+    symlinkSync(externalTarget, join(worktree, 'evil.txt'));
+
+    const mtimeBefore = statSync(externalTarget).mtimeMs;
+
+    try {
+      const res = await apiFetch(`/api/runs/${runId}/edits`, {
+        method: 'POST',
+        body: JSON.stringify({
+          file: 'evil.txt',
+          contents: 'PWNED\n',
+          baseSha: sha256Hex(externalContents),
+        }),
+      });
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+      expect(readFileSync(externalTarget, 'utf8')).toBe(externalContents);
       expect(statSync(externalTarget).mtimeMs).toBe(mtimeBefore);
     } finally {
       rmSync(outside, { recursive: true, force: true });

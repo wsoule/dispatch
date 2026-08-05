@@ -1,4 +1,4 @@
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 import type { CommandResult, CommandRunner } from '../orchestrator/pr.js';
@@ -82,6 +82,35 @@ export function resolveWorktreePath(
   const resolved = resolveRealParent(resolve(realRoot, rawPath));
   const rel = relative(realRoot, resolved);
   if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
+  return resolved;
+}
+
+/**
+ * Like resolveWorktreePath, but additionally rejects a leaf that is itself a
+ * symlink, instead of leaving it unresolved. `GitRepo` deliberately leaves
+ * the leaf alone (git treats a symlink as an ordinary blob, and `git add`
+ * never follows it), but `fs.readFileSync`/`fs.writeFileSync` do follow it —
+ * so a worktree file committed as `evil.txt -> /outside/secret.txt` would
+ * pass resolveWorktreePath and then read or write straight through to the
+ * external target. Only routes that touch the filesystem directly (not
+ * through GitRepo) need this stricter form.
+ *
+ * A symlink leaf is rejected outright rather than resolved-and-re-checked:
+ * that avoids a TOCTOU window between validating the target and actually
+ * reading/writing it, at the cost of also refusing the rarer legitimate case
+ * of a symlink that points back inside the worktree.
+ */
+export function resolveWorktreeFilePath(
+  root: string,
+  rawPath: string
+): string | null {
+  const resolved = resolveWorktreePath(root, rawPath);
+  if (resolved === null) return null;
+  try {
+    if (lstatSync(resolved).isSymbolicLink()) return null;
+  } catch {
+    // Nothing on disk yet (a new file) — there's no symlink to reject.
+  }
   return resolved;
 }
 

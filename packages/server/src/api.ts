@@ -61,7 +61,7 @@ import {
   INVALID_REMOTE_ERROR,
   INVALID_STASH_INDEX_ERROR,
   PATH_ESCAPE_ERROR,
-  resolveWorktreePath,
+  resolveWorktreeFilePath,
 } from './git/commands.js';
 import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
@@ -917,10 +917,12 @@ async function readRunFile(
   if (!existsSync(meta.worktreePath)) {
     return errorResponse(409, 'worktree-missing');
   }
-  // Resolves every parent symlink before deciding, so a worktree containing a
-  // symlinked directory that points outside itself can't be used to read a
-  // file the caller has no business seeing (see resolveWorktreePath).
-  const onDisk = resolveWorktreePath(meta.worktreePath, path);
+  // Resolves every parent symlink, and rejects the leaf if it is itself a
+  // symlink, so neither a symlinked directory nor a symlinked file inside the
+  // worktree can be used to read a file the caller has no business seeing
+  // (fs.readFileSync below follows a symlink leaf even though git never
+  // does — see resolveWorktreeFilePath).
+  const onDisk = resolveWorktreeFilePath(meta.worktreePath, path);
   if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
   const repo = new GitRepo(meta.worktreePath);
   if (side === 'old') {
@@ -974,12 +976,13 @@ async function applyRunEdit(
   if (!existsSync(meta.worktreePath))
     return errorResponse(409, 'worktree-missing');
 
-  // Resolves every parent symlink before deciding, so a worktree containing a
-  // symlinked directory that points outside itself can't redirect this write
-  // — a plain string check on `body.file` alone can't see that redirect. This
-  // has to happen before anything below touches disk, and it needs the run's
-  // real worktree root, so it can't run any earlier than this.
-  const onDisk = resolveWorktreePath(meta.worktreePath, body.file);
+  // Resolves every parent symlink and rejects a symlink leaf, so neither a
+  // symlinked directory nor a symlinked file inside the worktree can
+  // redirect this write — fs.writeFileSync follows a symlink leaf even
+  // though git never does (see resolveWorktreeFilePath). This has to happen
+  // before anything below touches disk, and it needs the run's real
+  // worktree root, so it can't run any earlier than this.
+  const onDisk = resolveWorktreeFilePath(meta.worktreePath, body.file);
   if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
 
   // A resumed run shares this exact directory (see orchestrator requestChanges),
