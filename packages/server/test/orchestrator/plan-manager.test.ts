@@ -269,7 +269,7 @@ describe('PlanManager.confirm', () => {
     expect(task?.meta.parent).toBeNull();
   });
 
-  it('404s confirming an unknown plan id', async () => {
+  it('404s confirming an unknown plan id', () => {
     const manager = makeManager(
       new FakePlanner({ ok: true, proposal: SAMPLE_PROPOSAL })
     );

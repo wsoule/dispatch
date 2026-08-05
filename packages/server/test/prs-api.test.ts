@@ -7,16 +7,9 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
+import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
-
-// Item B: GET /api/prs — every open PR in the repo (not just ones dispatch
-// itself opened). Same escape hatch as every other *-api.test.ts file:
-// `Response.json()` types as `Promise<unknown>` under this repo's strict,
-// DOM-less tsconfig.
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 function initDispatchGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-prs-api-'));
@@ -47,9 +40,13 @@ interface StubResults {
 }
 
 function stubRunner(results: StubResults) {
-  return async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
+  return (_cwd: string, cmd: string[]): Promise<CommandResult> => {
     if (cmd[0] === 'gh' && cmd[1] === '--version') {
-      return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
+      return Promise.resolve({
+        ok: true,
+        stdout: 'gh version 2.0.0',
+        stderr: '',
+      });
     }
     if (
       cmd[0] === 'git' &&
@@ -57,17 +54,17 @@ function stubRunner(results: StubResults) {
       cmd[2] === 'get-url' &&
       cmd[3] === 'origin'
     ) {
-      return {
+      return Promise.resolve({
         ok: true,
         stdout: 'https://github.com/example/repo.git',
         stderr: '',
-      };
+      });
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'list') {
-      return results.listResult;
+      return Promise.resolve(results.listResult);
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
-      return (
+      return Promise.resolve(
         results.viewResult ?? {
           ok: false,
           stdout: '',
@@ -76,7 +73,7 @@ function stubRunner(results: StubResults) {
       );
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'review') {
-      return (
+      return Promise.resolve(
         results.reviewResult ?? {
           ok: false,
           stdout: '',
@@ -85,7 +82,7 @@ function stubRunner(results: StubResults) {
       );
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'comment') {
-      return (
+      return Promise.resolve(
         results.commentResult ?? {
           ok: false,
           stdout: '',
@@ -94,7 +91,7 @@ function stubRunner(results: StubResults) {
       );
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'diff') {
-      return (
+      return Promise.resolve(
         results.diffResult ?? {
           ok: false,
           stdout: '',
@@ -108,12 +105,20 @@ function stubRunner(results: StubResults) {
       cmd[1] === 'api' &&
       (cmd.at(-1)?.endsWith('/files') ?? false)
     ) {
-      return results.filesResult ?? { ok: true, stdout: '[]', stderr: '' };
+      return Promise.resolve(
+        results.filesResult ?? { ok: true, stdout: '[]', stderr: '' }
+      );
     }
     if (cmd[0] === 'gh' && cmd[1] === 'api') {
-      return results.apiResult ?? { ok: true, stdout: '[]', stderr: '' };
+      return Promise.resolve(
+        results.apiResult ?? { ok: true, stdout: '[]', stderr: '' }
+      );
     }
-    return { ok: false, stdout: '', stderr: 'unhandled stub command' };
+    return Promise.resolve({
+      ok: false,
+      stdout: '',
+      stderr: 'unhandled stub command',
+    });
   };
 }
 

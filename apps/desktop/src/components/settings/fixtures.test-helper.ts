@@ -72,13 +72,14 @@ export function dataWith(
     refetchLinearStates: () => {},
     linearLinks: {},
     handleUpdateConfig: async () => {},
-    handleConnectLinear: async () => ({
-      connected: true,
-      viewer: { name: 'x' },
-    }),
-    handleDisconnectLinear: async () => {},
-    handleSyncLinear: async () => ({}),
-    handleImportLinear: async () => ({}),
+    handleConnectLinear: () =>
+      Promise.resolve({
+        connected: true,
+        viewer: { name: 'x' },
+      }),
+    handleDisconnectLinear: () => {},
+    handleSyncLinear: () => Promise.resolve({}),
+    handleImportLinear: () => Promise.resolve({}),
     ...rest,
   } as unknown as DispatchProjectData;
 }

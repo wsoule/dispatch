@@ -86,19 +86,27 @@ class StubRunner {
   pushResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   ghMergeResult: CommandResult = { ok: true, stdout: '', stderr: '' };
 
-  run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
+  run = (cwd: string, cmd: string[]): Promise<CommandResult> => {
     this.calls.push({ cwd, cmd });
-    if (cmd[0] === 'git' && cmd[1] === 'fetch') return this.fetchResult;
+    if (cmd[0] === 'git' && cmd[1] === 'fetch')
+      return Promise.resolve(this.fetchResult);
     if (cmd[0] === 'git' && cmd[1] === 'rebase' && cmd[2] === '--abort') {
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     }
-    if (cmd[0] === 'git' && cmd[1] === 'rebase') return this.rebaseResult;
-    if (cmd[0] === 'bash' && cmd[1] === '-lc') return this.verifyResult;
-    if (cmd[0] === 'git' && cmd[1] === 'push') return this.pushResult;
+    if (cmd[0] === 'git' && cmd[1] === 'rebase')
+      return Promise.resolve(this.rebaseResult);
+    if (cmd[0] === 'bash' && cmd[1] === '-lc')
+      return Promise.resolve(this.verifyResult);
+    if (cmd[0] === 'git' && cmd[1] === 'push')
+      return Promise.resolve(this.pushResult);
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'merge') {
-      return this.ghMergeResult;
+      return Promise.resolve(this.ghMergeResult);
     }
-    return { ok: false, stdout: '', stderr: 'unhandled stub command' };
+    return Promise.resolve({
+      ok: false,
+      stdout: '',
+      stderr: 'unhandled stub command',
+    });
   };
 }
 
@@ -458,7 +466,7 @@ describe('MergeQueue.enqueue', () => {
     expect(seen.some((e) => e.type === 'merge-queue.changed')).toBe(true);
   });
 
-  it('404s an unknown run id', async () => {
+  it('404s an unknown run id', () => {
     const harness = makeHarness();
     const stub = new StubRunner();
     const queue = makeQueue(harness, stub.run);

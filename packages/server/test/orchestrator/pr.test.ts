@@ -213,19 +213,27 @@ describe('detectPrCapability', () => {
   });
 
   it('is false when gh is not on PATH', async () => {
-    const run = async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
+    const run = (_cwd: string, cmd: string[]): Promise<CommandResult> => {
       if (cmd[0] === 'gh')
-        return { ok: false, stdout: '', stderr: 'not found' };
-      return { ok: true, stdout: 'origin-url', stderr: '' };
+        return Promise.resolve({ ok: false, stdout: '', stderr: 'not found' });
+      return Promise.resolve({ ok: true, stdout: 'origin-url', stderr: '' });
     };
     expect(await detectPrCapability(repo, run)).toBe(false);
   });
 
   it('is false when there is no configured origin remote', async () => {
-    const run = async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
+    const run = (_cwd: string, cmd: string[]): Promise<CommandResult> => {
       if (cmd[0] === 'gh')
-        return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
-      return { ok: false, stdout: '', stderr: 'no such remote' };
+        return Promise.resolve({
+          ok: true,
+          stdout: 'gh version 2.0.0',
+          stderr: '',
+        });
+      return Promise.resolve({
+        ok: false,
+        stdout: '',
+        stderr: 'no such remote',
+      });
     };
     expect(await detectPrCapability(repo, run)).toBe(false);
   });
