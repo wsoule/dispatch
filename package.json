@@ -10,7 +10,6 @@
     "catalog": {
       "@anthropic-ai/claude-agent-sdk": "0.3.207",
       "@dnd-kit/core": "6.3.1",
-      "@dnd-kit/sortable": "10.0.0",
       "@dnd-kit/utilities": "3.2.2",
       "@fontsource/ibm-plex-mono": "5.2.7",
       "@fontsource/inter": "5.2.8",
@@ -45,7 +44,6 @@
       "oxfmt": "0.27.0",
       "oxlint": "1.42.0",
       "oxlint-tsgolint": "0.11.3",
-      "postcss-html": "1.7.0",
       "radix-ui": "1.6.4",
       "react": "19.2.7",
       "react-dom": "19.2.7",
@@ -91,7 +89,6 @@
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
-    "postcss-html": "catalog:",
     "stylelint": "catalog:",
     "stylelint-config-standard": "catalog:",
     "typescript": "catalog:"
