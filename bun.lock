@@ -117,6 +117,9 @@
     },
     "packages/demo": {
       "name": "@dispatch/demo",
+      "dependencies": {
+        "@dispatch/core": "workspace:*",
+      },
     },
     "packages/mcp": {
       "name": "@dispatch/mcp",
