@@ -8,9 +8,13 @@ import {
   readRepoDigest,
   RepoDigestCache,
   repoDigestPath,
+  shouldRegenerate,
   writeRepoDigest,
 } from '../../src/orchestrator/repoDigest.js';
-import type { DigestResult } from '../../src/orchestrator/repoDigest.js';
+import type {
+  DigestResult,
+  RepoDigest,
+} from '../../src/orchestrator/repoDigest.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
 // See the same note in hotspots.test.ts — without this redirect every write
@@ -46,13 +50,6 @@ function generated(
   costUsd: number | null = null
 ): Promise<DigestResult> {
   return Promise.resolve({ markdown, costUsd });
-}
-
-function makeCommit(message: string): string {
-  writeFileSync(join(rootDir, `${message}.txt`), `${message}\n`);
-  runGitSync(rootDir, ['add', '-A']);
-  runGitSync(rootDir, ['commit', '-m', message]);
-  return runGitSync(rootDir, ['rev-parse', 'HEAD']).trim();
 }
 
 describe('readRepoDigest', () => {
@@ -143,6 +140,51 @@ describe('headCommit', () => {
   });
 });
 
+describe('shouldRegenerate', () => {
+  const cfg = { enabled: true, cooldownHours: 6 };
+  const now = new Date('2026-08-04T12:00:00.000Z');
+  const digest = (over: Partial<RepoDigest> = {}): RepoDigest => ({
+    commit: 'aaa',
+    generatedAt: '2026-08-04T11:00:00.000Z',
+    markdown: '# map',
+    ...over,
+  });
+
+  it('never generates when the feature is switched off', () => {
+    expect(shouldRegenerate(null, 'bbb', now, { ...cfg, enabled: false })).toBe(
+      false
+    );
+  });
+
+  // The cooldown must not gate the first generation: a project with no digest
+  // is exactly the case the feature exists for.
+  it('generates immediately when nothing is cached, whatever the cooldown', () => {
+    expect(
+      shouldRegenerate(null, 'bbb', now, { ...cfg, cooldownHours: 999 })
+    ).toBe(true);
+  });
+
+  it('does not generate while the cached digest matches HEAD', () => {
+    expect(shouldRegenerate(digest(), 'aaa', now, cfg)).toBe(false);
+  });
+
+  // The whole point: every merge-queue merge moves HEAD, and without this each
+  // one bought another full-repo read.
+  it('does not generate for a stale digest still inside the cooldown', () => {
+    expect(shouldRegenerate(digest(), 'bbb', now, cfg)).toBe(false);
+  });
+
+  it('generates for a stale digest once the cooldown has passed', () => {
+    const old = digest({ generatedAt: '2026-08-04T05:00:00.000Z' });
+    expect(shouldRegenerate(old, 'bbb', now, cfg)).toBe(true);
+  });
+
+  it('treats an unparseable timestamp as infinitely old', () => {
+    const broken = digest({ generatedAt: 'not a date' });
+    expect(shouldRegenerate(broken, 'bbb', now, cfg)).toBe(true);
+  });
+});
+
 describe('RepoDigestCache', () => {
   it('serves nothing and generates in the background on a cold cache', async () => {
     let calls = 0;
@@ -177,19 +219,18 @@ describe('RepoDigestCache', () => {
     expect(calls).toBe(1);
   });
 
-  // The staleness guard: without the `cached.commit !== head` comparison the
-  // cache would serve a map of a repo that has since moved, forever.
+  // The staleness guard: without it the cache would serve a map of a repo that
+  // has since moved, forever. Seeded rather than generated so the record is
+  // older than the cooldown — this test is about staleness, not throttling.
   it('regenerates after HEAD moves, and serves the stale map meanwhile', async () => {
-    let markdown = '# map at first commit';
-    const cache = new RepoDigestCache(rootDir, () => generated(markdown));
-    cache.current();
-    await settle();
-    const firstCommit = headCommit(rootDir);
-    expect(firstCommit).not.toBeNull();
-    expect(readRepoDigest(rootDir)?.commit).toBe(firstCommit as string);
-
-    const secondCommit = makeCommit('second');
-    markdown = '# map at second commit';
+    writeRepoDigest(rootDir, {
+      commit: 'a-commit-that-is-long-gone',
+      generatedAt: '2026-08-01T00:00:00.000Z',
+      markdown: '# map at first commit',
+    });
+    const cache = new RepoDigestCache(rootDir, () =>
+      generated('# map at second commit')
+    );
 
     // Still serves the old map on the dispatch that discovers the staleness —
     // an out-of-date map labelled with its commit beats no map at all.
@@ -197,7 +238,46 @@ describe('RepoDigestCache', () => {
     await settle();
 
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map at second commit');
-    expect(readRepoDigest(rootDir)?.commit).toBe(secondCommit);
+    const head = headCommit(rootDir);
+    expect(head).not.toBeNull();
+    expect(readRepoDigest(rootDir)?.commit).toBe(head as string);
+  });
+
+  it('does not regenerate a stale digest inside the cooldown', async () => {
+    writeRepoDigest(rootDir, {
+      commit: 'an-old-commit',
+      generatedAt: new Date().toISOString(),
+      markdown: '# stale but recent',
+    });
+    let calls = 0;
+    const cache = new RepoDigestCache(
+      rootDir,
+      () => {
+        calls += 1;
+        return generated('# fresh');
+      },
+      () => ({ enabled: true, cooldownHours: 6 })
+    );
+
+    expect(cache.current()?.markdown).toBe('# stale but recent');
+    await settle();
+    expect(calls).toBe(0);
+  });
+
+  it('never calls the generator when the feature is switched off', async () => {
+    let calls = 0;
+    const cache = new RepoDigestCache(
+      rootDir,
+      () => {
+        calls += 1;
+        return generated('# map');
+      },
+      () => ({ enabled: false, cooldownHours: 6 })
+    );
+
+    expect(cache.current()).toBeNull();
+    await settle();
+    expect(calls).toBe(0);
   });
 
   it('persists what the generation cost', async () => {

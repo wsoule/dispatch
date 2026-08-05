@@ -1,5 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { DEFAULT_REPO_DIGEST } from '@dispatch/core';
+import type { RepoDigestConfig } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -147,6 +149,30 @@ export async function generateRepoDigest(
   }
 }
 
+/** Whether a dispatch should pay for a fresh digest.
+ *
+ * Time, not HEAD equality, is the gate: a digest is an orientation map rather
+ * than an index, so one written a few commits ago is nearly as useful as one
+ * written now — and every merge-queue merge moves HEAD, so keying on equality
+ * alone bought a full-repo read per merge. */
+export function shouldRegenerate(
+  cached: RepoDigest | null,
+  head: string,
+  now: Date,
+  config: RepoDigestConfig
+): boolean {
+  if (!config.enabled) return false;
+  // No digest at all is the case the feature exists for, so the cooldown must
+  // not gate it.
+  if (cached === null) return true;
+  if (cached.commit === head) return false;
+  const writtenAt = Date.parse(cached.generatedAt);
+  // A corrupt timestamp counts as infinitely old, so it regenerates rather
+  // than wedging the cache shut.
+  if (Number.isNaN(writtenAt)) return true;
+  return now.getTime() - writtenAt >= config.cooldownHours * 60 * 60 * 1000;
+}
+
 /**
  * Serves the cached repo digest to prompt construction and keeps it current in
  * the background.
@@ -172,7 +198,12 @@ export class RepoDigestCache {
 
   constructor(
     private readonly rootDir: string,
-    private readonly generate?: DigestGenerator
+    private readonly generate?: DigestGenerator,
+    // Read per call rather than frozen at construction, so a config edit
+    // applies without a daemon restart — same as Orchestrator.orchestratorCaps.
+    private readonly readConfig: () => RepoDigestConfig = () => ({
+      ...DEFAULT_REPO_DIGEST,
+    })
   ) {}
 
   current(): RepoDigest | null {
@@ -181,7 +212,10 @@ export class RepoDigestCache {
     const head = headCommit(this.rootDir);
     // A null head means we can't tell fresh from stale, so we serve what we
     // have and don't burn a model call guessing.
-    if (head !== null && (cached === null || cached.commit !== head)) {
+    if (
+      head !== null &&
+      shouldRegenerate(cached, head, new Date(), this.readConfig())
+    ) {
       this.refresh(head);
     }
     return cached;
