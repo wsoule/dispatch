@@ -92,12 +92,15 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  type RunMeta,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import {
   formatCommentsForAgent,
+  resolveAnchor,
   ReviewCommentStore,
+  spliceSuggestion,
 } from './reviewComments.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
@@ -943,6 +946,47 @@ async function readRunFile(
 export const REVIEWER_EDIT_TRAILER = 'Dispatch-Reviewer-Edit';
 
 /**
+ * Writes `contents` to `onDisk`, stages `file`, and commits with `subject` plus
+ * the reviewer-edit trailer. Reverts the write if staging fails, so a rejected
+ * stage never leaves an uncommitted change sitting in the worktree.
+ *
+ * Shared by applyRunEdit and applySuggestion: both are a human's edit landing
+ * as a commit on the run branch, and differ only in how the new contents were
+ * produced (typed directly vs. spliced from a comment's suggestion).
+ */
+async function writeAndCommit(
+  ctx: ApiContext,
+  meta: RunMeta,
+  onDisk: string,
+  file: string,
+  contents: string,
+  previous: string,
+  subject: string,
+  runId: string
+): Promise<Response> {
+  const repo = new GitRepo(meta.worktreePath);
+  // The path was already proven to resolve inside the worktree by the caller,
+  // so this write can't land outside it; `stage`'s own escape check below is
+  // just defense in depth (and still catches a pathspec git itself refuses).
+  writeFileSync(onDisk, contents);
+  const staged = await repo.stage([file]);
+  if (!staged.ok) {
+    writeFileSync(onDisk, previous);
+    return errorResponse(
+      staged.stderr === PATH_ESCAPE_ERROR ? 400 : 500,
+      staged.stderr
+    );
+  }
+  const committed = await repo.commit({
+    message: `${subject}\n\n${REVIEWER_EDIT_TRAILER}: ${runId}`,
+  });
+  if (!committed.ok) return errorResponse(500, committed.stderr);
+
+  ctx.events.broadcast({ type: 'review.changed', runId });
+  return jsonResponse({ commit: committed.sha });
+}
+
+/**
  * POST /api/runs/:id/edits — write one file into the run's worktree and commit it.
  *
  * Every rejection below is a 409 with a machine-readable `error`, because each
@@ -996,7 +1040,6 @@ async function applyRunEdit(
     );
   if (busy) return errorResponse(409, 'worktree-busy');
 
-  const repo = new GitRepo(meta.worktreePath);
   const current = existsSync(onDisk) ? readFileSync(onDisk, 'utf8') : '';
   if (sha256Hex(current) !== body.baseSha)
     return errorResponse(409, 'stale-base');
@@ -1004,25 +1047,86 @@ async function applyRunEdit(
     return errorResponse(409, 'empty-contents');
   }
 
-  // The path was already proven to resolve inside the worktree above, so this
-  // write can't land outside it; `stage`'s own escape check below is just
-  // defense in depth (and still catches a pathspec git itself refuses).
-  writeFileSync(onDisk, body.contents);
-  const staged = await repo.stage([body.file]);
-  if (!staged.ok) {
-    writeFileSync(onDisk, current);
-    return errorResponse(
-      staged.stderr === PATH_ESCAPE_ERROR ? 400 : 500,
-      staged.stderr
-    );
-  }
-  const committed = await repo.commit({
-    message: `review: edit ${body.file}\n\n${REVIEWER_EDIT_TRAILER}: ${runId}`,
-  });
-  if (!committed.ok) return errorResponse(500, committed.stderr);
+  return await writeAndCommit(
+    ctx,
+    meta,
+    onDisk,
+    body.file,
+    body.contents,
+    current,
+    `review: edit ${body.file}`,
+    runId
+  );
+}
 
-  ctx.events.broadcast({ type: 'review.changed', runId });
-  return jsonResponse({ commit: committed.sha });
+/**
+ * POST /api/runs/:id/comments/:commentId/apply — commit a comment's suggestion
+ * verbatim onto the run branch.
+ *
+ * Proceeds only when `resolveAnchor` still says the comment's line is exactly
+ * where it was recorded — a moved or outdated anchor means the recorded line
+ * range no longer names the code the reviewer meant, so splicing by line
+ * number would silently edit the wrong lines. Does not resolve the thread:
+ * applying a fix and deciding the conversation is over are different actions.
+ */
+async function applySuggestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  commentId: string
+): Promise<Response> {
+  const detail = ctx.orchestrator.getRun(runId);
+  if (detail === null) return errorResponse(404, `run not found: ${runId}`);
+  const meta = detail.meta;
+  if (!existsSync(meta.worktreePath))
+    return errorResponse(409, 'worktree-missing');
+
+  const comment = ctx.reviewComments
+    .list(runId)
+    .find((c) => c.id === commentId);
+  if (comment === undefined) {
+    return errorResponse(404, `review comment not found: ${commentId}`);
+  }
+  // Absent or empty is a caller error, not a state conflict — there is
+  // nothing recorded to apply, regardless of what the file on disk says.
+  if (comment.suggestion === undefined || comment.suggestion === '') {
+    return errorResponse(400, 'comment has no suggestion');
+  }
+
+  const onDisk = resolveWorktreeFilePath(meta.worktreePath, comment.file);
+  if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
+
+  // Same race as applyRunEdit: a resumed run can share this worktree, and a
+  // suggestion must not be a side door around that guard.
+  const busy = ctx.orchestrator
+    .list()
+    .some(
+      (r) =>
+        r.worktreePath === meta.worktreePath &&
+        !TERMINAL_RUN_STATES.has(r.state)
+    );
+  if (busy) return errorResponse(409, 'worktree-busy');
+
+  const current = existsSync(onDisk) ? readFileSync(onDisk, 'utf8') : '';
+  const fileLines = current.split('\n');
+  const anchor = resolveAnchor(comment, fileLines);
+  if (anchor.kind !== 'exact') {
+    return errorResponse(409, 'anchor-drifted');
+  }
+
+  const nextLines = spliceSuggestion(fileLines, comment, comment.suggestion);
+  const contents = nextLines.join('\n');
+
+  return await writeAndCommit(
+    ctx,
+    meta,
+    onDisk,
+    comment.file,
+    contents,
+    current,
+    `review: apply suggestion on ${comment.file}`,
+    runId
+  );
 }
 
 // GET /api/runs/:id/comments — every review comment on this run's diff.
@@ -3037,6 +3141,14 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await replyReviewComment(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'comments' &&
+        segments[4] === 'apply' &&
+        method === 'POST'
+      ) {
+        return await applySuggestion(req, ctx, segments[1], segments[3]);
       }
       if (
         segments.length === 3 &&

@@ -1397,6 +1397,11 @@ export interface ApiClient {
     runId: string,
     input: { file: string; contents: string; baseSha: string }
   ): Promise<{ commit: string }>;
+  /** Commits a comment's suggestion. Fails if the comment's anchor line has drifted. */
+  applySuggestion(
+    runId: string,
+    commentId: string
+  ): Promise<{ commit: string }>;
 
   // Line-level review comments on a run's diff, and the send-back that carries the unresolved
   // ones to the agent.
@@ -1861,6 +1866,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         body: JSON.stringify(input),
       }),
+    applySuggestion: (runId, commentId) =>
+      request(
+        target,
+        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}/apply`,
+        { method: 'POST' }
+      ),
     fetchReviewComments: (runId) =>
       request(target, `/api/runs/${encodeURIComponent(runId)}/comments`),
     addReviewComment: (runId, input) =>

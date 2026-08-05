@@ -18,6 +18,7 @@ import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import type { Orchestrator } from '../src/orchestrator/orchestrator.js';
 import type { RunRegistry } from '../src/orchestrator/registry.js';
 import type { RunState } from '../src/orchestrator/types.js';
+import type { ReviewComment } from '../src/reviewComments.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
@@ -83,6 +84,22 @@ function registerRunInWorktree(opts: {
     createdAt: now,
     updatedAt: now,
   });
+}
+
+// Leaves a review comment via the real HTTP route and hands back the parsed
+// comment — every apply test needs a real commentId to act on, and `pending:
+// false` keeps the comment out of the way of anything that filters on it.
+async function addComment(input: {
+  file: string;
+  line: number;
+  anchorText: string;
+  suggestion?: string;
+}): Promise<ReviewComment> {
+  const res = await apiFetch(`/api/runs/${runId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ ...input, body: 'note', pending: false }),
+  });
+  return json<ReviewComment>(res);
 }
 
 async function waitFor(
@@ -427,5 +444,145 @@ describe('POST /api/runs/:id/edits', () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe('POST /api/runs/:id/comments/:id/apply', () => {
+  it('commits the suggestion when the anchor is exact', async () => {
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+      suggestion: 'fixed',
+    });
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(200);
+    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('fixed\n');
+  });
+
+  it('marks the commit with the reviewer trailer and a suggestion-specific subject', async () => {
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+      suggestion: 'fixed',
+    });
+
+    await apiFetch(`/api/runs/${runId}/comments/${comment.id}/apply`, {
+      method: 'POST',
+    });
+
+    const log = Bun.spawnSync(['git', 'log', '-1', '--format=%B'], {
+      cwd: worktree,
+    });
+    const message = log.stdout.toString();
+    expect(message).toContain('review: apply suggestion on a.txt');
+    expect(message).toContain(`Dispatch-Reviewer-Edit: ${runId}`);
+  });
+
+  it('does not resolve the comment thread', async () => {
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+      suggestion: 'fixed',
+    });
+
+    await apiFetch(`/api/runs/${runId}/comments/${comment.id}/apply`, {
+      method: 'POST',
+    });
+
+    const comments = await json<ReviewComment[]>(
+      await apiFetch(`/api/runs/${runId}/comments`)
+    );
+    expect(comments.find((c) => c.id === comment.id)?.resolved).toBe(false);
+  });
+
+  it('409s when the anchor has drifted', async () => {
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'something else',
+      suggestion: 'fixed',
+    });
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'anchor-drifted',
+    });
+  });
+
+  it('400s for a comment with no suggestion', async () => {
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+    });
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(400);
+  });
+
+  it('404s for a comment that does not exist', async () => {
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/does-not-exist/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(404);
+  });
+
+  it('409s while a non-terminal run occupies the worktree', async () => {
+    registerRunInWorktree({ state: 'running', worktreePath: worktree });
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+      suggestion: 'fixed',
+    });
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'worktree-busy',
+    });
+  });
+
+  it('409s when the worktree directory is gone', async () => {
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+      suggestion: 'fixed',
+    });
+    rmSync(worktree, { recursive: true, force: true });
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'worktree-missing',
+    });
   });
 });
