@@ -1,6 +1,13 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,11 +49,15 @@ let worktree: string;
 let orchestrator: Orchestrator;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
+// Merges via `Headers` rather than an object spread: `init.headers` is a
+// `HeadersInit`, which can be an array or a `Headers` instance — spreading
+// either into a plain object silently drops the entries instead of merging.
 function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
-  });
+  const headers = new Headers(init?.headers);
+  if (!headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
+  return fetch(`${baseUrl}${path}`, { ...init, headers });
 }
 
 // Registers a second run directly in the orchestrator's registry, sharing
@@ -287,5 +298,73 @@ describe('POST /api/runs/:id/edits', () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  it('404s for a run that does not exist', async () => {
+    const res = await apiFetch(`/api/runs/does-not-exist/edits`, {
+      method: 'POST',
+      body: JSON.stringify({ file: 'a.txt', contents: 'x\n', baseSha: 'x' }),
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('409s when the worktree directory is gone', async () => {
+    rmSync(worktree, { recursive: true, force: true });
+
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({ file: 'a.txt', contents: 'x\n', baseSha: 'x' }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'worktree-missing',
+    });
+  });
+
+  it('refuses a write through a symlinked directory that escapes the worktree', async () => {
+    // A worktree can contain a committed symlinked directory pointing
+    // anywhere on disk; `linkdir/target.txt` reads as an ordinary relative
+    // path but the real destination is outside the worktree entirely.
+    const outside = mkdtempSync(
+      join(tmpdir(), 'dispatch-run-file-edits-outside-')
+    );
+    const externalTarget = join(outside, 'target.txt');
+    const externalContents = 'do-not-touch\n';
+    writeFileSync(externalTarget, externalContents);
+    symlinkSync(outside, join(worktree, 'linkdir'));
+
+    // A failed `stage()` reverts the file to its previous contents, so
+    // content alone can look identical whether or not a write ever
+    // physically reached this path — the on-disk mtime is what actually
+    // shows whether anything touched it, since a write-then-revert still
+    // performs two real writes.
+    const mtimeBefore = statSync(externalTarget).mtimeMs;
+
+    try {
+      // baseSha matches the real (external) file's contents so the
+      // stale-base precondition can't be what stops this write — only the
+      // symlink-aware path check standing between the request and
+      // writeFileSync can.
+      const res = await apiFetch(`/api/runs/${runId}/edits`, {
+        method: 'POST',
+        body: JSON.stringify({
+          file: 'linkdir/target.txt',
+          contents: 'evil\n',
+          baseSha: sha256Hex(externalContents),
+        }),
+      });
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+      expect(readFileSync(externalTarget, 'utf8')).toBe(externalContents);
+      // The assertion that actually matters: writeFileSync must never have
+      // been called on the external target at all, not merely reverted back
+      // to matching content after the fact.
+      expect(statSync(externalTarget).mtimeMs).toBe(mtimeBefore);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

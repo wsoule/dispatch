@@ -22,7 +22,6 @@ import type {
 import type { ActorContext, TaskDoc } from '@dispatch/core';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 import { amendTask } from './api/amendments.js';
 import {
@@ -62,6 +61,7 @@ import {
   INVALID_REMOTE_ERROR,
   INVALID_STASH_INDEX_ERROR,
   PATH_ESCAPE_ERROR,
+  resolveWorktreePath,
 } from './git/commands.js';
 import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
@@ -893,16 +893,6 @@ export function sha256Hex(text: string): string {
 }
 
 /**
- * Rejects a path that could escape the worktree it is joined onto. Routes that
- * touch the working tree directly need this because they bypass `GitRepo`,
- * which does its own `safePath` check on every pathspec it passes to git.
- */
-export function isWorktreeRelativePath(path: string): boolean {
-  if (path === '' || path.startsWith('-') || path.startsWith('/')) return false;
-  return !path.split('/').includes('..');
-}
-
-/**
  * GET /api/runs/:id/file — one side of a file in the run's worktree.
  *
  * Backs the diff renderer's `loadDiffFiles`: a patch alone only carries its own
@@ -918,9 +908,6 @@ async function readRunFile(
   const side = url.searchParams.get('side') ?? 'new';
   if (path === null || path === '')
     return errorResponse(400, 'path is required');
-  if (!isWorktreeRelativePath(path)) {
-    return errorResponse(400, PATH_ESCAPE_ERROR);
-  }
   if (side !== 'old' && side !== 'new') {
     return errorResponse(400, `invalid side: ${side} (expected old|new)`);
   }
@@ -930,6 +917,11 @@ async function readRunFile(
   if (!existsSync(meta.worktreePath)) {
     return errorResponse(409, 'worktree-missing');
   }
+  // Resolves every parent symlink before deciding, so a worktree containing a
+  // symlinked directory that points outside itself can't be used to read a
+  // file the caller has no business seeing (see resolveWorktreePath).
+  const onDisk = resolveWorktreePath(meta.worktreePath, path);
+  if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
   const repo = new GitRepo(meta.worktreePath);
   if (side === 'old') {
     const shown = await repo.show(meta.baseBranch, path);
@@ -939,7 +931,6 @@ async function readRunFile(
       sha: sha256Hex(shown.contents),
     });
   }
-  const onDisk = join(meta.worktreePath, path);
   if (!existsSync(onDisk)) return errorResponse(404, `no such file: ${path}`);
   const contents = readFileSync(onDisk, 'utf8');
   return jsonResponse({ contents, sha: sha256Hex(contents) });
@@ -976,15 +967,20 @@ async function applyRunEdit(
   if (typeof body.baseSha !== 'string' || body.baseSha === '') {
     return errorResponse(400, 'baseSha is required');
   }
-  if (!isWorktreeRelativePath(body.file)) {
-    return errorResponse(400, PATH_ESCAPE_ERROR);
-  }
 
   const detail = ctx.orchestrator.getRun(runId);
   if (detail === null) return errorResponse(404, `run not found: ${runId}`);
   const meta = detail.meta;
   if (!existsSync(meta.worktreePath))
     return errorResponse(409, 'worktree-missing');
+
+  // Resolves every parent symlink before deciding, so a worktree containing a
+  // symlinked directory that points outside itself can't redirect this write
+  // — a plain string check on `body.file` alone can't see that redirect. This
+  // has to happen before anything below touches disk, and it needs the run's
+  // real worktree root, so it can't run any earlier than this.
+  const onDisk = resolveWorktreePath(meta.worktreePath, body.file);
+  if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
 
   // A resumed run shares this exact directory (see orchestrator requestChanges),
   // so "is anything live here" is a real race, not a hypothetical one.
@@ -998,7 +994,6 @@ async function applyRunEdit(
   if (busy) return errorResponse(409, 'worktree-busy');
 
   const repo = new GitRepo(meta.worktreePath);
-  const onDisk = join(meta.worktreePath, body.file);
   const current = existsSync(onDisk) ? readFileSync(onDisk, 'utf8') : '';
   if (sha256Hex(current) !== body.baseSha)
     return errorResponse(409, 'stale-base');
@@ -1006,8 +1001,9 @@ async function applyRunEdit(
     return errorResponse(409, 'empty-contents');
   }
 
-  // Staging first: `git add` rejects a path outside the repo, so a traversal
-  // fails before anything is written.
+  // The path was already proven to resolve inside the worktree above, so this
+  // write can't land outside it; `stage`'s own escape check below is just
+  // defense in depth (and still catches a pathspec git itself refuses).
   writeFileSync(onDisk, body.contents);
   const staged = await repo.stage([body.file]);
   if (!staged.ok) {

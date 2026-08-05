@@ -43,6 +43,48 @@ export const COMMIT_SHA_UNRESOLVED_PREFIX =
 // A plain remote name only — never a URL or transport spec (see fetch() below).
 const REMOTE_NAME_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._-]*$/;
 
+// Falls back to the plain path when there's nothing on disk to resolve
+// (e.g. a deleted parent, or the repo root itself).
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+// Resolves symlinks in every segment but the last, so a symlinked directory
+// can't smuggle a path outside the root while the leaf itself (a symlink
+// file, or a path that doesn't exist yet) is left alone. Shared by
+// GitRepo.safePath and resolveWorktreePath below — one boundary check, not
+// two independently-maintained copies.
+function resolveRealParent(path: string): string {
+  return join(realOrSelf(dirname(path)), basename(path));
+}
+
+/**
+ * Resolves `rawPath` against `root`, following symlinks in every parent
+ * directory the same way GitRepo's pathspec guard does, and returns the real
+ * absolute path — or null if it escapes `root`.
+ *
+ * Routes that touch the worktree with fs.readFileSync/writeFileSync directly
+ * (bypassing GitRepo, which runs this same check on every pathspec before
+ * calling git) need this instead of a plain string check: a worktree can
+ * contain a committed symlinked directory pointing outside itself, and a
+ * pure `.split('/').includes('..')` test never sees that redirect.
+ */
+export function resolveWorktreePath(
+  root: string,
+  rawPath: string
+): string | null {
+  if (rawPath === '' || rawPath.startsWith('-')) return null;
+  const realRoot = realOrSelf(resolve(root));
+  const resolved = resolveRealParent(resolve(realRoot, rawPath));
+  const rel = relative(realRoot, resolved);
+  if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
+  return resolved;
+}
+
 // Prefers stderr, falling back to stdout — git prints some failures
 // (e.g. "nothing to commit") to stdout instead.
 function commandErrorText(result: CommandResult): string {
@@ -70,47 +112,30 @@ export class GitRepo {
     return this.run(this.cwd, ['git', '--literal-pathspecs', ...args]);
   }
 
-  // Falls back to the plain path when there's nothing on disk to resolve
-  // (e.g. a deleted parent, or the repo root itself).
-  private realOrSelf(path: string): string {
-    try {
-      return realpathSync(path);
-    } catch {
-      return path;
-    }
-  }
-
   private realRootCache: string | undefined;
 
   // Memoized: `this.cwd` never changes, so a batch of paths shouldn't repeat
   // the same realpath syscall once per entry.
   private realRoot(): string {
-    this.realRootCache ??= this.realOrSelf(resolve(this.cwd));
+    this.realRootCache ??= realOrSelf(resolve(this.cwd));
     return this.realRootCache;
   }
 
-  // Resolves symlinks in every segment but the last, so a symlinked
-  // directory can't escape the repo while `git add`ing a symlink file works.
-  private resolveParent(path: string): string {
-    return join(this.realOrSelf(dirname(path)), basename(path));
-  }
-
   // Refuses a path outside the repo root or starting with '-'; returns the
-  // original relative string so git resolves it the same way.
+  // original relative string so git resolves it the same way. Delegates its
+  // boundary check to resolveWorktreePath's underlying logic so there is one
+  // definition of "escapes the root," shared with direct-fs routes in api.ts.
   private safePath(rawPath: string): string | null {
-    if (rawPath === '' || rawPath.startsWith('-')) return null;
-    const root = this.realRoot();
-    const resolved = this.resolveParent(resolve(root, rawPath));
-    const rel = relative(root, resolved);
-    if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
-    return rawPath;
+    return resolveWorktreePath(this.realRoot(), rawPath) === null
+      ? null
+      : rawPath;
   }
 
   // True when a pathspec resolves to the repo root itself. safePath only rules
   // out escapes *above* the root, so the root is otherwise an accepted target.
   private isRepoRoot(rawPath: string): boolean {
     const root = this.realRoot();
-    return relative(root, this.resolveParent(resolve(root, rawPath))) === '';
+    return relative(root, resolveRealParent(resolve(root, rawPath))) === '';
   }
 
   private safePaths(paths: string[]): string[] | null {
