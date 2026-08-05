@@ -264,6 +264,34 @@ describe('RepoDigestCache', () => {
     expect(calls).toBe(0);
   });
 
+  // `current()` is on the dispatch path and must never throw. loadConfig throws
+  // on a malformed config.yml, so the reader is guarded here rather than
+  // trusting every caller to hand in a safe one.
+  it('falls back to defaults when the config cannot be read', async () => {
+    writeRepoDigest(rootDir, {
+      commit: 'an-old-commit',
+      generatedAt: new Date().toISOString(),
+      markdown: '# cached',
+    });
+    let calls = 0;
+    const cache = new RepoDigestCache(
+      rootDir,
+      () => {
+        calls += 1;
+        return generated('# fresh');
+      },
+      () => {
+        throw new Error('invalid .dispatch/config.yml');
+      }
+    );
+
+    expect(() => cache.current()).not.toThrow();
+    expect(cache.current()?.markdown).toBe('# cached');
+    await settle();
+    // Defaults are enabled with a six-hour cooldown, and this record is new.
+    expect(calls).toBe(0);
+  });
+
   it('never calls the generator when the feature is switched off', async () => {
     let calls = 0;
     const cache = new RepoDigestCache(

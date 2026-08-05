@@ -402,9 +402,15 @@ export async function startServer(
   // only when this daemon is also running the real executor — `registerExecutors`
   // is the harness seam (tests and dev drivers supply a fake), and a bare
   // RepoDigestCache serves whatever is cached without ever calling a model.
+  // Read per call so a config edit applies without restarting the daemon.
+  const readDigestConfig = () => loadConfig(rootDir).repoDigest;
   const digestCache =
     opts.registerExecutors === undefined
-      ? new RepoDigestCache(rootDir, (dir) => generateRepoDigest(dir))
+      ? new RepoDigestCache(
+          rootDir,
+          (dir) => generateRepoDigest(dir),
+          readDigestConfig
+        )
       : new RepoDigestCache(rootDir);
   const orchestrator = new Orchestrator({
     rootDir,

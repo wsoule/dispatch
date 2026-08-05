@@ -222,11 +222,22 @@ export class RepoDigestCache {
     // have and don't burn a model call guessing.
     if (
       head !== null &&
-      shouldRegenerate(cached, head, new Date(), this.readConfig())
+      shouldRegenerate(cached, head, new Date(), this.config())
     ) {
       this.refresh(head);
     }
     return cached;
+  }
+
+  // loadConfig throws on a malformed config.yml, and this sits on the dispatch
+  // path, so a bad edit falls back to the throttled defaults rather than
+  // breaking `current()`'s promise never to throw.
+  private config(): RepoDigestConfig {
+    try {
+      return this.readConfig();
+    } catch {
+      return { ...DEFAULT_REPO_DIGEST };
+    }
   }
 
   /** Clears the failure backoff so a test can reach past it without sleeping. */
