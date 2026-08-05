@@ -17,6 +17,8 @@ export interface RepoDigest {
   commit: string;
   generatedAt: string;
   markdown: string;
+  /** What the generating call cost, when the SDK reported it. */
+  costUsd?: number;
 }
 
 // Where the cache lives — beside the transcripts, since it is per-project state
@@ -64,6 +66,11 @@ export function readRepoDigest(rootDir: string): RepoDigest | null {
       commit: record.commit,
       generatedAt: record.generatedAt,
       markdown: record.markdown,
+      // Omitted rather than defaulted: a record written before costs were
+      // tracked has no cost, which is not the same as a cost of zero.
+      ...(typeof record.costUsd === 'number' && Number.isFinite(record.costUsd)
+        ? { costUsd: record.costUsd }
+        : {}),
     };
   } catch {
     return null;
@@ -94,9 +101,16 @@ export function headCommit(rootDir: string): string | null {
   }
 }
 
-/** Generates the digest markdown for a checkout. Injectable so tests never
- * reach the real model. */
-export type DigestGenerator = (rootDir: string) => Promise<string>;
+/** What one generation produced: the map, and what it cost when the SDK said. */
+export interface DigestResult {
+  markdown: string;
+  /** null when the result message carried no cost. */
+  costUsd: number | null;
+}
+
+/** Generates the digest for a checkout. Injectable so tests never reach the
+ * real model. */
+export type DigestGenerator = (rootDir: string) => Promise<DigestResult>;
 
 // The real generator: one read-only Agent SDK turn against the main checkout,
 // configured exactly like ClaudePlanner's (plan permissions so no tool
@@ -105,7 +119,7 @@ export type DigestGenerator = (rootDir: string) => Promise<string>;
 export async function generateRepoDigest(
   rootDir: string,
   queryFn: typeof query = query
-): Promise<string> {
+): Promise<DigestResult> {
   const options: Options = {
     cwd: rootDir,
     permissionMode: 'plan',
@@ -119,7 +133,13 @@ export async function generateRepoDigest(
       if (message.subtype !== 'success') {
         throw new Error(`repo digest failed: ${message.subtype}`);
       }
-      return message.result;
+      return {
+        markdown: message.result,
+        costUsd:
+          typeof message.total_cost_usd === 'number'
+            ? message.total_cost_usd
+            : null,
+      };
     }
     throw new Error('repo digest produced no result message');
   } catch (err) {
@@ -175,13 +195,14 @@ export class RepoDigestCache {
     if (generate === undefined || this.refreshing) return;
     this.refreshing = true;
     void generate(this.rootDir)
-      .then((markdown) => {
-        const trimmed = markdown.trim();
+      .then((result) => {
+        const trimmed = result.markdown.trim();
         if (trimmed === '') return;
         writeRepoDigest(this.rootDir, {
           commit,
           generatedAt: new Date().toISOString(),
           markdown: trimmed.slice(0, MAX_DIGEST_CHARS),
+          ...(result.costUsd !== null ? { costUsd: result.costUsd } : {}),
         });
       })
       .catch((err: unknown) => {

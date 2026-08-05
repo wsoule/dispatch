@@ -10,6 +10,7 @@ import {
   repoDigestPath,
   writeRepoDigest,
 } from '../../src/orchestrator/repoDigest.js';
+import type { DigestResult } from '../../src/orchestrator/repoDigest.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
 // See the same note in hotspots.test.ts — without this redirect every write
@@ -38,6 +39,15 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// Every fake generator returns the DigestResult shape; most tests do not care
+// about cost, so the noise stays here.
+function generated(
+  markdown: string,
+  costUsd: number | null = null
+): Promise<DigestResult> {
+  return Promise.resolve({ markdown, costUsd });
+}
+
 function makeCommit(message: string): string {
   writeFileSync(join(rootDir, `${message}.txt`), `${message}\n`);
   runGitSync(rootDir, ['add', '-A']);
@@ -61,6 +71,35 @@ describe('readRepoDigest', () => {
       generatedAt: '2026-08-03T00:00:00.000Z',
       markdown: '# map',
     });
+  });
+
+  it('round-trips a cost when one was recorded', () => {
+    writeRepoDigest(rootDir, {
+      commit: 'abc1234',
+      generatedAt: '2026-08-03T00:00:00.000Z',
+      markdown: '# map',
+      costUsd: 0.0412,
+    });
+    expect(readRepoDigest(rootDir)?.costUsd).toBe(0.0412);
+  });
+
+  // The record is built field by field, so a cost that is not a number is
+  // dropped rather than served as one.
+  it('drops a non-numeric cost rather than rejecting the record', () => {
+    const path = repoDigestPath(rootDir);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        commit: 'abc1234',
+        generatedAt: '2026-08-03T00:00:00.000Z',
+        markdown: '# map',
+        costUsd: 'free',
+      })
+    );
+    const read = readRepoDigest(rootDir);
+    expect(read?.markdown).toBe('# map');
+    expect(read?.costUsd).toBeUndefined();
   });
 
   it('treats a corrupt cache file as nothing cached rather than throwing', () => {
@@ -109,7 +148,7 @@ describe('RepoDigestCache', () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return Promise.resolve('# generated map');
+      return generated('# generated map');
     });
 
     // The first dispatch pays nothing and gets nothing — it must not block.
@@ -127,7 +166,7 @@ describe('RepoDigestCache', () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return Promise.resolve('# map');
+      return generated('# map');
     });
     cache.current();
     await settle();
@@ -141,10 +180,8 @@ describe('RepoDigestCache', () => {
   // The staleness guard: without the `cached.commit !== head` comparison the
   // cache would serve a map of a repo that has since moved, forever.
   it('regenerates after HEAD moves, and serves the stale map meanwhile', async () => {
-    let generated = '# map at first commit';
-    const cache = new RepoDigestCache(rootDir, () =>
-      Promise.resolve(generated)
-    );
+    let markdown = '# map at first commit';
+    const cache = new RepoDigestCache(rootDir, () => generated(markdown));
     cache.current();
     await settle();
     const firstCommit = headCommit(rootDir);
@@ -152,7 +189,7 @@ describe('RepoDigestCache', () => {
     expect(readRepoDigest(rootDir)?.commit).toBe(firstCommit as string);
 
     const secondCommit = makeCommit('second');
-    generated = '# map at second commit';
+    markdown = '# map at second commit';
 
     // Still serves the old map on the dispatch that discovers the staleness —
     // an out-of-date map labelled with its commit beats no map at all.
@@ -163,12 +200,30 @@ describe('RepoDigestCache', () => {
     expect(readRepoDigest(rootDir)?.commit).toBe(secondCommit);
   });
 
+  it('persists what the generation cost', async () => {
+    const cache = new RepoDigestCache(rootDir, () =>
+      generated('# map', 0.0412)
+    );
+    cache.current();
+    await settle();
+    expect(readRepoDigest(rootDir)?.costUsd).toBe(0.0412);
+  });
+
+  it('omits the cost when the SDK did not report one', async () => {
+    const cache = new RepoDigestCache(rootDir, () => generated('# map'));
+    cache.current();
+    await settle();
+    const written = readRepoDigest(rootDir);
+    expect(written?.markdown).toBe('# map');
+    expect(written?.costUsd).toBeUndefined();
+  });
+
   it('runs one generation at a time no matter how many dispatches race', async () => {
     let calls = 0;
-    let release: (markdown: string) => void = () => {};
+    let release: (result: DigestResult) => void = () => {};
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return new Promise<string>((resolve) => {
+      return new Promise<DigestResult>((resolve) => {
         release = resolve;
       });
     });
@@ -178,7 +233,7 @@ describe('RepoDigestCache', () => {
     cache.current();
     expect(calls).toBe(1);
 
-    release('# map');
+    release({ markdown: '# map', costUsd: null });
     await settle();
     expect(calls).toBe(1);
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map');
@@ -190,7 +245,7 @@ describe('RepoDigestCache', () => {
       calls += 1;
       return calls === 1
         ? Promise.reject(new Error('no CLI on PATH'))
-        : Promise.resolve('# map');
+        : generated('# map');
     });
 
     cache.current();
@@ -208,7 +263,7 @@ describe('RepoDigestCache', () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return Promise.resolve(calls === 1 ? '   \n  ' : '# map');
+      return generated(calls === 1 ? '   \n  ' : '# map');
     });
 
     cache.current();
@@ -226,7 +281,7 @@ describe('RepoDigestCache', () => {
     try {
       const cache = new RepoDigestCache(plain, () => {
         calls += 1;
-        return Promise.resolve('# map');
+        return generated('# map');
       });
       expect(cache.current()).toBeNull();
       await settle();
