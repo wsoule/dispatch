@@ -168,6 +168,23 @@ by them.
 Phases A–C make the product better for the current developer audience while
 building the substrate, so D is an additive layer, not a rewrite.
 
+## Cross-cutting workstream: the UI overhaul
+
+No single phase above is a UI overhaul, but the concept renaming — projects /
+jobs / runs / checkpoints replacing tasks / branches / worktrees / PRs — cannot
+be reached by bolting panels onto the current board. The navigation model, the
+vocabulary in every label, and what the home screen even is all change, and the
+decision that developers keep everything they have today implies either a
+dual-mode UI (developer vs. simple) or one redesigned UI with developer detail
+as progressive disclosure. That choice is bigger than any Phase D feature and is
+deliberately not made here.
+
+The overhaul is therefore its own workstream with its own design spec — mode
+strategy, information architecture, the concept-mapping table, and per-page
+impact on `apps/desktop` — which Phase D features land _into_ rather than each
+improvising its placement. Its design is not blocked by the backend seams and
+can start alongside Phase B.
+
 ## Hard problems flagged early
 
 - **Webhook ingress.** The first component that cannot be purely local-first.
