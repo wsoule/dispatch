@@ -70,8 +70,58 @@ export function mapGitHubComment(
     pending: false,
     created,
     replies: [],
-    githubId: raw.id as number,
-    githubUpdatedAt: raw.updated_at as string,
+    githubId: typeof raw.id === 'number' ? raw.id : undefined,
+    githubUpdatedAt:
+      typeof raw.updated_at === 'string' ? raw.updated_at : undefined,
     origin: 'github',
   };
+}
+
+/**
+ * Merges what is stored locally with what a pull just returned into the
+ * mirror's next state. Matches purely by `githubId` — body text and line
+ * number can both legitimately change, so neither is an identity.
+ */
+export function mergeComments(
+  local: ReviewComment[],
+  remote: ReviewComment[]
+): ReviewComment[] {
+  const remoteById = new Map<number, ReviewComment>();
+  for (const r of remote) {
+    if (r.githubId !== undefined) remoteById.set(r.githubId, r);
+  }
+
+  const matched = new Set<number>();
+  const merged: ReviewComment[] = [];
+
+  for (const l of local) {
+    if (l.githubId === undefined) {
+      // No GitHub identity yet, so a pull cannot know about it: still
+      // pending (not sent) or published but not pushed. Pass through.
+      merged.push(l);
+      continue;
+    }
+    const r = remoteById.get(l.githubId);
+    if (r === undefined) {
+      // Had an id, but the pull no longer returns it: deleted upstream.
+      continue;
+    }
+    matched.add(l.githubId);
+    // Last-writer-wins by comparing GitHub's reported update time against
+    // what we last stored for it. `resolved` always stays local — GitHub
+    // tracks resolution on the thread, not the comment (Task 5's job).
+    const remoteIsNewer =
+      r.githubUpdatedAt !== undefined &&
+      l.githubUpdatedAt !== undefined &&
+      r.githubUpdatedAt > l.githubUpdatedAt;
+    merged.push({ ...(remoteIsNewer ? r : l), resolved: l.resolved });
+  }
+
+  for (const r of remote) {
+    if (r.githubId !== undefined && !matched.has(r.githubId)) {
+      merged.push(r);
+    }
+  }
+
+  return merged;
 }
