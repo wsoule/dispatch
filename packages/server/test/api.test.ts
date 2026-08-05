@@ -6,15 +6,8 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { json } from './json.js';
 import { useTestAuth, wsUrl } from './testAuth.js';
-
-// `Response.json()` types as `Promise<unknown>` under this repo's strict,
-// DOM-less tsconfig; these tests assert on arbitrary response shapes (health,
-// error bodies, task docs), so a thin `any` escape hatch here is simpler than
-// hand-rolling a response type per endpoint.
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 // Lists the on-disk task files under a store's root — used to assert that a
 // rejected (400) request never reaches `TaskStore.create`/`update` and so

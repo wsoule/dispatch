@@ -24,9 +24,9 @@ describe('singleFlight', () => {
 
   it('starts a fresh call once the previous one has resolved', async () => {
     let calls = 0;
-    const guarded = singleFlight(async () => {
+    const guarded = singleFlight(() => {
       calls++;
-      return calls;
+      return Promise.resolve(calls);
     });
 
     expect(await guarded()).toBe(1);
@@ -35,10 +35,13 @@ describe('singleFlight', () => {
 
   it('starts a fresh call once the previous one has rejected', async () => {
     let calls = 0;
-    const guarded = singleFlight(async () => {
+    const guarded = singleFlight(() => {
       calls++;
-      if (calls === 1) throw new Error('boom');
-      return calls;
+      // Rejects rather than throws: singleFlight clears its in-flight slot off
+      // the returned promise, so a synchronous throw would be a different code
+      // path from the one under test.
+      if (calls === 1) return Promise.reject(new Error('boom'));
+      return Promise.resolve(calls);
     });
 
     await expect(guarded()).rejects.toThrow('boom');

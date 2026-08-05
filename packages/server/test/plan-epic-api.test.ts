@@ -15,12 +15,9 @@ import type {
 import { FakePlanner } from '../src/orchestrator/planners/fake.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
 import type { Executor, ExecutorRun } from '../src/orchestrator/types.js';
+import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth, wsUrl } from './testAuth.js';
-
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function waitFor(
   check: () => Promise<boolean>,
@@ -79,7 +76,7 @@ let handle: ServerHandle;
 let baseUrl: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
-beforeEach(async () => {
+beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
   process.env.DISPATCH_HOME = fakeHome;
   root = initDispatchGitRepo();
@@ -186,12 +183,17 @@ describe('POST /api/plan and GET /api/plan/:id', () => {
 });
 
 describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
-  async function draftedTask(): Promise<{
+  // The single proposed task the fake planner produces, as it comes back off
+  // the draft record. Named so the read below can assert the shape the
+  // assertions rely on rather than returning the raw `any` body.
+  interface DraftedTask {
     title: string;
     description: string;
     acceptanceCriteria: string[];
     priority: string;
-  }> {
+  }
+
+  async function draftedTask(): Promise<DraftedTask> {
     const started = await json(
       await fetch(`${baseUrl}/api/tasks/draft`, {
         method: 'POST',
@@ -208,7 +210,7 @@ describe('POST /api/tasks/draft and GET/DELETE /api/tasks/drafts', () => {
     const record = await json(
       await fetch(`${baseUrl}/api/tasks/drafts/${started.id}`)
     );
-    return record.proposal.tasks[0];
+    return record.proposal.tasks[0] as DraftedTask;
   }
 
   it('202s immediately with state running, then GET settles ready with the proposal', async () => {
@@ -484,7 +486,7 @@ describe('POST /api/tasks/drafts/:id/message', () => {
       );
       return r.state !== 'running';
     });
-    return started.id;
+    return started.id as string;
   }
 
   it('202s a follow-up, keeps the questions in flight, and settles ready with the proposal', async () => {
@@ -590,7 +592,7 @@ describe('POST /api/plan/:id/confirm', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ prompt: 'build a widget' }),
     });
-    return (await json(res)).planId;
+    return (await json(res)).planId as string;
   }
 
   it('writes the epic + tasks and returns their ids', async () => {
@@ -712,7 +714,7 @@ describe('POST /api/plan/:id/message', () => {
       const r = await json(await fetch(`${baseUrl}/api/plan/${planId}`));
       return r.state === 'ready';
     });
-    return planId;
+    return planId as string;
   }
 
   it('202s a follow-up and refines the working proposal + grows the transcript', async () => {
@@ -1225,14 +1227,12 @@ describe('GET /api/health pr capability', () => {
   });
 
   it('reports pr: true when the injected command runner reports both capabilities', async () => {
-    const stubRunner = async (
-      _cwd: string,
-      cmd: string[]
-    ): Promise<CommandResult> => ({
-      ok: true,
-      stdout: cmd[0] === 'gh' ? 'gh version 2.0.0' : 'origin-url',
-      stderr: '',
-    });
+    const stubRunner = (_cwd: string, cmd: string[]): Promise<CommandResult> =>
+      Promise.resolve({
+        ok: true,
+        stdout: cmd[0] === 'gh' ? 'gh version 2.0.0' : 'origin-url',
+        stderr: '',
+      });
     handle = await startServer({
       rootDir: root,
       port: 0,

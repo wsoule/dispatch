@@ -1073,10 +1073,18 @@ describe('ClaudeExecutor graceful stop', () => {
       release = resolve;
     });
     const query = {
-      async *[Symbol.asyncIterator]() {
-        await done;
-      },
-      interrupt: async () => {
+      // A stream that produces nothing: the first `next()` parks on `done` and
+      // then reports the stream ended, so the run under test stays in flight
+      // until `release()` is called. Written as an explicit iterator rather
+      // than a generator because a generator that never yields is exactly what
+      // this needs to express and cannot.
+      [Symbol.asyncIterator]: () => ({
+        next: async (): Promise<IteratorResult<never>> => {
+          await done;
+          return { done: true, value: undefined };
+        },
+      }),
+      interrupt: () => {
         state.interrupts += 1;
       },
       close: () => {

@@ -5,7 +5,7 @@ import { expect, test } from 'bun:test';
 import { CONTINUE_PROMPT } from '../../lib/runState';
 import { RunLogView } from './RunLogView';
 
-const noop = async () => {};
+const noop = () => Promise.resolve();
 
 // Only the fields RunLogView's composer actually reads; the rest of RunMeta is
 // irrelevant to which buttons the terminal branch renders.
@@ -76,25 +76,27 @@ test('hides Continue on a run that finished normally', () => {
 
 // The point of one-click Continue: no typing required for a run that was
 // interrupted rather than wrong.
-test('Continue resumes with the canned prompt when nothing was typed', async () => {
+test('Continue resumes with the canned prompt when nothing was typed', () => {
   const sent: string[] = [];
-  renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), async (text) => {
+  renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), (text) => {
     sent.push(text);
+    return Promise.resolve();
   });
 
-  await act(async () => {
+  act(() => {
     fireEvent.click(screen.getByRole('button', { name: /continue/i }));
   });
   expect(sent).toEqual([CONTINUE_PROMPT]);
 });
 
-test('Continue sends the draft instead when the human typed one', async () => {
+test('Continue sends the draft instead when the human typed one', () => {
   const sent: string[] = [];
-  renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), async (text) => {
+  renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), (text) => {
     sent.push(text);
+    return Promise.resolve();
   });
 
-  await act(async () => {
+  act(() => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'finish the failing test' },
     });
