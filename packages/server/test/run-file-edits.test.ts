@@ -493,9 +493,11 @@ describe('POST /api/runs/:id/comments/:id/apply', () => {
       suggestion: 'fixed',
     });
 
-    await apiFetch(`/api/runs/${runId}/comments/${comment.id}/apply`, {
-      method: 'POST',
-    });
+    const applyRes = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+    expect(applyRes.status).toBe(200);
 
     const comments = await json<ReviewComment[]>(
       await apiFetch(`/api/runs/${runId}/comments`)
@@ -503,7 +505,7 @@ describe('POST /api/runs/:id/comments/:id/apply', () => {
     expect(comments.find((c) => c.id === comment.id)?.resolved).toBe(false);
   });
 
-  it('409s when the anchor has drifted', async () => {
+  it('409s when the anchor has drifted (outdated: anchorText is gone entirely)', async () => {
     const comment = await addComment({
       file: 'a.txt',
       line: 1,
@@ -520,6 +522,36 @@ describe('POST /api/runs/:id/comments/:id/apply', () => {
     expect((await res.json()) as { error: string }).toMatchObject({
       error: 'anchor-drifted',
     });
+  });
+
+  it('409s when the anchor has drifted (moved: anchorText now sits at a different, unambiguous line)', async () => {
+    // Distinct from the "outdated" case above: `resolveAnchor` returns `moved`
+    // rather than `outdated` when the recorded text is gone from its recorded
+    // line but appears exactly once somewhere else in the file. Both states
+    // must be rejected, but only `outdated` was exercised before this test —
+    // a guard that let `moved` through would have passed every prior test.
+    writeFileSync(join(worktree, 'a.txt'), 'alpha\nbeta\ngamma\n');
+    // Recorded at line 1 ("alpha" there now), but "gamma" — line 3, and only
+    // line 3 — is what the comment actually said.
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'gamma',
+      suggestion: 'delta',
+    });
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'anchor-drifted',
+    });
+    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe(
+      'alpha\nbeta\ngamma\n'
+    );
   });
 
   it('400s for a comment with no suggestion', async () => {
@@ -584,5 +616,46 @@ describe('POST /api/runs/:id/comments/:id/apply', () => {
     expect((await res.json()) as { error: string }).toMatchObject({
       error: 'worktree-missing',
     });
+  });
+
+  it('refuses to apply a suggestion through a leaf symlink that escapes the worktree', async () => {
+    // Same escape class as the two /edits symlink tests above: a worktree
+    // file that is itself a symlink to something outside the worktree.
+    // fs.writeFileSync follows a symlink leaf even though git never does, so
+    // applySuggestion has to go through resolveWorktreeFilePath exactly like
+    // applyRunEdit does, not just re-use it for `applyRunEdit`'s own body.
+    const outside = mkdtempSync(
+      join(tmpdir(), 'dispatch-run-file-edits-apply-leaf-outside-')
+    );
+    const externalTarget = join(outside, 'secret.txt');
+    const externalContents = 'original-secret\n';
+    writeFileSync(externalTarget, externalContents);
+    symlinkSync(externalTarget, join(worktree, 'evil.txt'));
+
+    // Content alone can't prove nothing happened — a failed stage reverts the
+    // write, leaving matching content even though writeFileSync ran twice.
+    // mtime is the only signal that writeFileSync was never called at all.
+    const mtimeBefore = statSync(externalTarget).mtimeMs;
+
+    try {
+      const comment = await addComment({
+        file: 'evil.txt',
+        line: 1,
+        anchorText: 'original-secret',
+        suggestion: 'PWNED',
+      });
+
+      const res = await apiFetch(
+        `/api/runs/${runId}/comments/${comment.id}/apply`,
+        { method: 'POST' }
+      );
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).toBeLessThan(500);
+      expect(readFileSync(externalTarget, 'utf8')).toBe(externalContents);
+      expect(statSync(externalTarget).mtimeMs).toBe(mtimeBefore);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
