@@ -323,10 +323,14 @@ function writeTeam(root: string): void {
   writeFileSync(join(root, '.dispatch', 'team.yml'), `${lines.join('\n')}\n`);
 }
 
-// Every field the Settings tour can show is set away from its shipped
-// default (see packages/core/src/config.ts and configTypes.ts), so opening
-// Settings against the demo project always has something non-trivial to
-// display. Holds no secret — the Linear API key lives outside the repo, in
+// Every field the Settings tour can show is populated with a real, concrete
+// value (see packages/core/src/config.ts and configTypes.ts for the shapes),
+// so opening Settings against the demo project always has something
+// non-trivial to display. Where the demo narrative scripts a specific value
+// (e.g. the fix-loop's round-4 escalation, carto forced on), that literal
+// value is used even where it happens to match the shipped default — this
+// file is not trying to differ from defaults for its own sake. Holds no
+// secret — the Linear API key lives outside the repo, in
 // ~/.dispatch/credentials.json.
 function writeConfig(root: string): void {
   const config = `statuses: [backlog, todo, in-progress, in-review, done, cancelled]
@@ -341,9 +345,9 @@ verifySteps:
     command: bun run lint
 
 orchestrator:
-  epicConcurrency: 4
+  epicConcurrency: 3
   maxTurns: 40
-  verifyTimeoutSec: 900
+  verifyTimeoutSec: 600
   maxBudgetUsd: 5
   permissionMode: acceptEdits
 
@@ -356,17 +360,17 @@ models:
   summarize: claude-sonnet-5
 
 fixLoop:
-  cap: 4
+  cap: 5
   escalation:
     - round: 1
       strategy: resume
       modelTier: standard
-    - round: 3
+    - round: 4
       strategy: fresh
       modelTier: high
 
 carto:
-  enabled: detect
+  enabled: on
 
 verify:
   command: bun run src/server/routes.ts
@@ -384,7 +388,7 @@ linear:
     done: Shipped
     cancelled: Canceled
   intervalSec: 120
-  direction: pull
+  direction: both
 `;
   writeFileSync(join(root, '.dispatch', 'config.yml'), config);
 }
