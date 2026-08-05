@@ -319,7 +319,29 @@ describe('RepoDigestCache', () => {
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map');
   });
 
-  it('retries on the next dispatch after a generation failure', async () => {
+  // A failed generation writes nothing, so `generatedAt` stays old and the
+  // cooldown alone would let the next dispatch try again — a failed spawn per
+  // dispatch, forever.
+  it('does not retry a failed generation while inside the backoff', async () => {
+    let calls = 0;
+    const cache = new RepoDigestCache(rootDir, () => {
+      calls += 1;
+      return Promise.reject(new Error('no CLI on PATH'));
+    });
+
+    cache.current();
+    await settle();
+    expect(calls).toBe(1);
+    expect(readRepoDigest(rootDir)).toBeNull();
+
+    cache.current();
+    await settle();
+    expect(calls).toBe(1);
+  });
+
+  // Retrying a transient failure quickly is deliberate; the backoff only stops
+  // it happening on every dispatch.
+  it('retries a failed generation once the backoff has passed', async () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
@@ -331,7 +353,9 @@ describe('RepoDigestCache', () => {
     cache.current();
     await settle();
     expect(calls).toBe(1);
-    expect(readRepoDigest(rootDir)).toBeNull();
+
+    // Reach past the backoff without sleeping through it.
+    cache.forgetLastAttemptForTest();
 
     cache.current();
     await settle();
@@ -339,7 +363,7 @@ describe('RepoDigestCache', () => {
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map');
   });
 
-  it('does not cache an empty generation, so a blank answer is retried', async () => {
+  it('does not cache an empty generation, and retries it after the backoff', async () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
@@ -350,6 +374,7 @@ describe('RepoDigestCache', () => {
     await settle();
     expect(readRepoDigest(rootDir)).toBeNull();
 
+    cache.forgetLastAttemptForTest();
     cache.current();
     await settle();
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map');
