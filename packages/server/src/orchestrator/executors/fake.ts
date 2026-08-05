@@ -12,7 +12,7 @@ import type {
 // script until the orchestrator calls `approve()`. A step can combine an
 // entry with a write/approval — the fields are independent, all optional,
 // applied in entry -> write -> approval order.
-export interface FakeStep {
+interface FakeStep {
   entry?: NormalizedEntry;
   write?: (cwd: string) => void;
   commitMessage?: string;
@@ -31,7 +31,7 @@ export interface FakeStep {
   delayMs?: number;
 }
 
-export interface FakeFinish {
+interface FakeFinish {
   state: 'finished' | 'failed';
   costUsd?: number;
   turns?: number;

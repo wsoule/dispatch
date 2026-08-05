@@ -28,7 +28,7 @@ import { Badge } from '@/ui/badge';
 // optional prop rather than several loose ones so a card rendered outside the board (there
 // isn't one today, but the type shouldn't assume there never will be) can simply omit it and
 // render as a plain, non-draggable card.
-export interface CardDragProps {
+interface CardDragProps {
   setNodeRef: (node: HTMLElement | null) => void;
   style: React.CSSProperties | undefined;
   attributes: DraggableAttributes;

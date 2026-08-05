@@ -3,9 +3,9 @@
 
 import type { DraftRecord } from '@dispatch/client';
 
-export type DraftTrayItemState = 'running' | 'ready' | 'failed';
+type DraftTrayItemState = 'running' | 'ready' | 'failed';
 
-export interface DraftTrayItem {
+interface DraftTrayItem {
   id: string;
   state: DraftTrayItemState;
   /** Whether the tray row should open DraftView — always true when `ready`, and also true

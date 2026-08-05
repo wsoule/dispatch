@@ -10,7 +10,7 @@ import {
 
 import { cn } from '@/lib/utils';
 
-export type ToastTone = 'error' | 'success' | 'info';
+type ToastTone = 'error' | 'success' | 'info';
 
 export interface ToastInput {
   title: string;

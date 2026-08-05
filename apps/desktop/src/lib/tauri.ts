@@ -66,10 +66,6 @@ export function revealInFinder(path: string): Promise<void> {
   return invoke('reveal_in_finder', { path });
 }
 
-export function openUrl(url: string): Promise<void> {
-  return invoke('open_url', { url });
-}
-
 /** Writes the session's transcript as Markdown to the user's Downloads folder and resolves
  * to the absolute path it was saved at, for a "Reveal in Finder" follow-up action. */
 export function exportTranscript(sessionId: string): Promise<string> {

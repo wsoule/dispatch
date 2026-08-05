@@ -199,7 +199,7 @@ export function undeclaredWriteBatchTitle(count: number): string {
   return `${count} file${count === 1 ? '' : 's'} changed outside declared writes`;
 }
 
-export function undeclaredWriteBatchLedgerTitle(count: number): string {
+function undeclaredWriteBatchLedgerTitle(count: number): string {
   return `changed ${count} file${count === 1 ? '' : 's'} outside its declared writes`;
 }
 
@@ -217,7 +217,7 @@ export function undeclaredWriteBatchDetail(
 
 // Recognizes both spellings this rule has used: the per-file findings it wrote
 // before batching, and the batched ones it writes now.
-export function isUndeclaredWriteFinding(finding: Finding): boolean {
+function isUndeclaredWriteFinding(finding: Finding): boolean {
   return (
     finding.raisedBy === 'none' &&
     finding.title.includes('changed outside declared writes')
@@ -297,11 +297,7 @@ function git(cwd: string, args: string[]): string {
 
 // The files base..head actually touched, repo-relative — the ground truth
 // write-set validation and dependency scope are both measured against.
-export function changedFiles(
-  root: string,
-  base: string,
-  head: string
-): string[] {
+function changedFiles(root: string, base: string, head: string): string[] {
   return git(root, ['diff', '--name-only', `${base}..${head}`])
     .split('\n')
     .map((line) => line.trim())

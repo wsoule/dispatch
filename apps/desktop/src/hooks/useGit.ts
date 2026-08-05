@@ -13,33 +13,33 @@ import { useCallback } from 'react';
 // in one call via TanStack's array-prefix matching.
 const GIT_QUERY_ROOT = 'dispatch-git';
 
-export function gitStatusKey(port: number | undefined) {
+function gitStatusKey(port: number | undefined) {
   return [GIT_QUERY_ROOT, 'status', port] as const;
 }
-export function gitBranchesKey(port: number | undefined) {
+function gitBranchesKey(port: number | undefined) {
   return [GIT_QUERY_ROOT, 'branches', port] as const;
 }
-export function gitLogKey(port: number | undefined, ref: string | null) {
+function gitLogKey(port: number | undefined, ref: string | null) {
   return [GIT_QUERY_ROOT, 'log', port, ref] as const;
 }
-export function gitStashesKey(port: number | undefined) {
+function gitStashesKey(port: number | undefined) {
   return [GIT_QUERY_ROOT, 'stashes', port] as const;
 }
-export function gitDiffKey(
+function gitDiffKey(
   port: number | undefined,
   staged: boolean,
   path: string | null
 ) {
   return [GIT_QUERY_ROOT, 'diff', port, staged, path] as const;
 }
-export function gitCommitDiffKey(port: number | undefined, sha: string | null) {
+function gitCommitDiffKey(port: number | undefined, sha: string | null) {
   return [GIT_QUERY_ROOT, 'commit-diff', port, sha] as const;
 }
 /** The prefix every Git page query key shares — pass this to `invalidateQueries` to refresh
  * all of them at once on a `git.changed` event. */
 export const gitQueryRootKey = [GIT_QUERY_ROOT] as const;
 
-export interface GitWorkingDiffTarget {
+interface GitWorkingDiffTarget {
   staged: boolean;
   path?: string;
 }
@@ -57,7 +57,7 @@ export interface UseGitOptions {
   commitSha: string | null;
 }
 
-export interface GitActions {
+interface GitActions {
   stage: (paths: string[]) => Promise<GitOutcome>;
   unstage: (paths: string[]) => Promise<GitOutcome>;
   discard: (paths: string[]) => Promise<GitOutcome>;

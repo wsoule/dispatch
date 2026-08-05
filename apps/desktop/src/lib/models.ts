@@ -37,7 +37,7 @@ export const MODELS: ModelOption[] = [
   },
 ];
 
-export const DEFAULT_MODEL = MODELS[0].id;
+const DEFAULT_MODEL = MODELS[0].id;
 
 const STORAGE_KEY = 'dispatch:default-model';
 
@@ -63,11 +63,6 @@ export function resolveExecuteModel(
   config: { models?: { execute?: string } } | null | undefined
 ): string {
   return readStoredOverride() ?? config?.models?.execute ?? DEFAULT_MODEL;
-}
-
-export function writeDefaultModel(id: string): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(STORAGE_KEY, id);
 }
 
 // A short human label for a model id (for run headers/session), falling back to the raw id so

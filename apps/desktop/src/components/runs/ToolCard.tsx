@@ -1,7 +1,5 @@
 import type { NormalizedEntry } from '@dispatch/client';
 import {
-  ChevronDown,
-  ChevronRight,
   FilePen,
   FilePlus,
   FileText,
@@ -12,7 +10,6 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
 
 // Reads a string field off a tool entry's `toolInput` (typed `unknown` — it's whatever the
 // executor forwarded from the SDK), returning undefined for anything that isn't a present
@@ -24,13 +21,6 @@ function field(input: unknown, key: string): string | undefined {
     if (typeof value === 'number') return String(value);
   }
   return undefined;
-}
-
-// The trailing path segment, so a long absolute file path can show its basename prominently
-// with the rest as muted context.
-function basename(path: string): string {
-  const parts = path.split('/');
-  return parts[parts.length - 1] || path;
 }
 
 // A red/green block diff for an Edit's old->new strings. Not a real line-level LCS diff — the
@@ -185,54 +175,4 @@ export function toolView(entry: NormalizedEntry): ToolView {
       };
     }
   }
-}
-
-/**
- * One tool call in the run transcript, rendered by tool type instead of as raw JSON: an
- * icon + verb + target line (file, command, or pattern), with an expandable body for the tools
- * whose detail is worth showing inline (an Edit's diff, a Write's contents). This is what makes
- * the Session tab read like Claude Code's own tool output rather than a JSON dump.
- */
-export function ToolCard({ entry }: { entry: NormalizedEntry }) {
-  const view = toolView(entry);
-  const [open, setOpen] = useState(view.defaultOpen ?? false);
-  const hasBody = view.body !== undefined;
-
-  return (
-    <div className="border-border/60 bg-card/40 flex max-w-[90%] flex-col gap-1.5 self-start rounded-md border px-2.5 py-1.5">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="text-muted-foreground shrink-0">{view.icon}</span>
-        <span className="text-foreground shrink-0 text-[12px] font-medium">
-          {view.verb}
-        </span>
-        {view.target !== undefined && (
-          <span
-            className="text-muted-foreground min-w-0 truncate font-mono text-[11.5px]"
-            title={view.target}
-          >
-            {view.verb === 'Run' ||
-            view.verb === 'Search' ||
-            view.verb === 'Find'
-              ? view.target
-              : basename(view.target)}
-          </span>
-        )}
-        {hasBody && (
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            aria-label={open ? 'Collapse detail' : 'Expand detail'}
-            className="text-muted-foreground hover:text-foreground ml-auto shrink-0"
-          >
-            {open ? (
-              <ChevronDown className="size-3.5" />
-            ) : (
-              <ChevronRight className="size-3.5" />
-            )}
-          </button>
-        )}
-      </div>
-      {hasBody && open && view.body}
-    </div>
-  );
 }

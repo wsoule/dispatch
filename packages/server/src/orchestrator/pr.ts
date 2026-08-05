@@ -175,7 +175,7 @@ export interface PrManagerContext {
 
 // A CI check rollup summarized to counts the UI can render as a compact
 // pass/fail/pending line, instead of the raw per-check array GitHub returns.
-export interface PrCheckSummary {
+interface PrCheckSummary {
   passed: number;
   failed: number;
   pending: number;
@@ -185,7 +185,7 @@ export interface PrCheckSummary {
 // The reviewable state of a run's GitHub PR, from `gh pr view --json …`.
 // Every field is what the review UI needs to show status at a glance without
 // the person leaving the app for GitHub.
-export interface PrStatus {
+interface PrStatus {
   number: number;
   url: string;
   title: string;
@@ -203,7 +203,7 @@ export interface PrStatus {
 // One item in a PR's conversation — a submitted review (with its verdict), a
 // PR-level comment, or a code-line comment (carrying its file + line). Unified
 // into one shape so the UI renders them as a single time-ordered thread.
-export interface PrConversationItem {
+interface PrConversationItem {
   kind: 'review' | 'comment' | 'line-comment';
   author: string;
   body: string;
@@ -254,7 +254,7 @@ export interface RepoPr {
 // return) can address the right repo/PR. Returns null for anything that isn't
 // a recognizable PR URL, so a caller degrades to "no line comments" rather
 // than throwing on a malformed stored URL.
-export function parsePrUrl(
+function parsePrUrl(
   url: string
 ): { owner: string; repo: string; number: number } | null {
   const match = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);

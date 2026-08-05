@@ -17,15 +17,6 @@ export interface PlannedTask {
   risk?: TaskRisk;
 }
 
-// The single-task shape a reviewer edits before saving — a `PlannedTask`
-// minus `blockedByIndices`, directly mappable to core's `CreateInput`.
-export interface TaskDraft {
-  title: string;
-  description: string;
-  acceptanceCriteria: string[];
-  priority: Priority;
-}
-
 // The shape a Planner produces and a client confirms. `epic` is optional —
 // a plan can propose a flat set of tasks with no wrapping epic. Nothing
 // here carries a `status` field on purpose: every task this proposal
