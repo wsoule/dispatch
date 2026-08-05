@@ -155,6 +155,60 @@ test('rule 3b: a remote body no newer than githubUpdatedAt does not clobber', ()
   expect(merged[0]?.body).toBe('kept as-is');
 });
 
+test('a remote-win keeps locally-written replies', () => {
+  // mapGitHubComment always hands back replies: [] (this codebase never
+  // pulls GitHub's reply threads into ReviewComment.replies), so a naive
+  // remote-wins-the-whole-record merge would silently wipe out replies a
+  // reviewer wrote locally against this comment.
+  const local = comment({
+    id: 'rc-local',
+    githubId: 20,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+    replies: [
+      {
+        id: 'rr-1',
+        author: 'me',
+        body: 'a reply',
+        created: '2026-08-01T00:00:00Z',
+      },
+    ],
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 20,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.body).toBe('edited on github');
+  expect(merged[0]?.replies).toEqual(local.replies);
+});
+
+test('a remote-win keeps the local id stable', () => {
+  // mapGitHubComment assigns a fresh random id to every remote record, so
+  // taking the remote record wholesale on a win would swap the id callers
+  // already hold (ReviewCommentStore keys reply/setResolved/remove off it).
+  const local = comment({
+    id: 'rc-stable',
+    githubId: 21,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+  });
+  const remote = comment({
+    id: 'rc-freshly-random',
+    githubId: 21,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.id).toBe('rc-stable');
+});
+
 test('rule 4: a comment with a githubId absent from the pull was deleted upstream', () => {
   const local = comment({
     id: 'rc-local',
