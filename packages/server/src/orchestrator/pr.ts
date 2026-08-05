@@ -6,7 +6,11 @@ import { join } from 'node:path';
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import { mapGitHubComment, mergeComments } from '../githubComments.js';
-import type { ReviewComment, ReviewCommentStore } from '../reviewComments.js';
+import type {
+  ReviewComment,
+  ReviewCommentStore,
+  ReviewReply,
+} from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
@@ -838,21 +842,31 @@ export class PrManager {
     return pr;
   }
 
-  // GET-ish pull half of the comment mirror: fetches every review comment
-  // GitHub has for the PR, maps each with mapGitHubComment, merges with
-  // whatever mergeComments's six rules say to keep from disk, persists the
-  // result, and returns it. Hits the exact same REST endpoint
-  // getPrDetailByUrl already reads for its read-only conversation view —
-  // this is the write-back half that also updates the local mirror.
-  async syncPrComments(number: number): Promise<ReviewComment[]> {
-    const pr = await this.resolvePrForComments(number);
-    const location = parsePrUrl(pr.url);
-    if (location === null) {
-      throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
-    }
+  // Fetches every review comment GitHub has for a PR and maps each with
+  // mapGitHubComment, WITHOUT touching the local store — the read-only half
+  // both syncPrComments and pushPrReview build on, so pushPrReview can pull
+  // before it writes anything locally (see that method for why that order
+  // matters).
+  //
+  // `--paginate --slurp`: the REST endpoint pages at 30 comments, and
+  // unpaginated it silently truncates at page 1. mergeComments treats any
+  // local record whose githubId is absent from a pull as deleted upstream,
+  // so a truncated pull on a >30-comment PR would read as GitHub having
+  // deleted comments 31+ and erase their local-only replies/resolved state
+  // on every sync. `--paginate` alone concatenates each page as a separate
+  // top-level JSON value (not valid as one JSON.parse target); `--slurp`
+  // wraps them into one outer array of pages instead. `.flat()` then
+  // collapses that one level of page-arrays into a flat item list — and is
+  // a no-op on an already-flat array, so it equally handles a real
+  // multi-page response and this file's flat single-array test fixtures.
+  private async pullRemoteComments(
+    location: NonNullable<ReturnType<typeof parsePrUrl>>
+  ): Promise<ReviewComment[]> {
     const result = await this.run(this.ctx.rootDir, [
       'gh',
       'api',
+      '--paginate',
+      '--slurp',
       `repos/${location.owner}/${location.repo}/pulls/${location.number}/comments`,
     ]);
     if (!result.ok) {
@@ -860,17 +874,32 @@ export class PrManager {
         `gh api pulls/comments failed: ${commandErrorText(result)}`
       );
     }
-    let raw: Array<Record<string, unknown>>;
+    let raw: unknown[];
     try {
-      raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+      raw = (JSON.parse(result.stdout) as unknown[]).flat();
     } catch {
       throw new OrchestratorConflictError(
         'gh api pulls/comments returned invalid JSON'
       );
     }
-    const remote = raw
-      .map((item) => mapGitHubComment(item))
+    return raw
+      .map((item) => mapGitHubComment(item as Record<string, unknown>))
       .filter((c): c is ReviewComment => c !== null);
+  }
+
+  // GET-ish pull half of the comment mirror: pulls every review comment
+  // GitHub has for the PR, merges with whatever mergeComments's six rules
+  // say to keep from disk, persists the result, and returns it. Hits the
+  // exact same REST endpoint getPrDetailByUrl already reads for its
+  // read-only conversation view — this is the write-back half that also
+  // updates the local mirror.
+  async syncPrComments(number: number): Promise<ReviewComment[]> {
+    const pr = await this.resolvePrForComments(number);
+    const location = parsePrUrl(pr.url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
+    }
+    const remote = await this.pullRemoteComments(location);
     const target: ReviewTarget = { kind: 'pr', number };
     const merged = mergeComments(this.ctx.reviewComments.list(target), remote);
     this.ctx.reviewComments.replaceAll(target, merged);
@@ -949,27 +978,54 @@ export class PrManager {
       rmSync(scratchDir, { recursive: true, force: true });
     }
 
-    if (pending.length > 0) {
-      // The batch just posted now exists on GitHub with real ids. Drop the
-      // local drafts that stood in for them rather than flip `pending` on
-      // them directly — mapGitHubComment always sets githubId and pending
-      // together, so letting the re-pull's insert path (mergeComments'
-      // remote-only rule) create their replacement is what keeps the two
-      // fields from ever landing separately, which is the invariant
-      // mergeComments itself cannot enforce.
-      //
-      // Re-read the store rather than reuse `all`: the gh call above just
-      // awaited a real network round trip, wide open for a concurrent
-      // add() to land a fresh pending comment. Filtering by this batch's
-      // own ids (not a blanket !pending) keeps that comment instead of
-      // discarding it under a stale snapshot.
-      const pushedIds = new Set(pending.map((c) => c.id));
-      const remaining = this.ctx.reviewComments
-        .list(target)
-        .filter((c) => !pushedIds.has(c.id));
-      this.ctx.reviewComments.replaceAll(target, remaining);
-      await this.syncPrComments(number);
+    if (pending.length === 0) {
+      return { pushed: 0 };
     }
+
+    // The batch just posted now exists on GitHub with real ids. Reviewer
+    // replies and resolution written locally against these drafts exist
+    // nowhere else — GitHub never saw them — so they have to be carried
+    // forward onto whatever record replaces the draft. Matched by
+    // (file, body) rather than the draft's local id, since the draft's id
+    // does not survive the swap below.
+    const localExtras = new Map<
+      string,
+      { replies: ReviewReply[]; resolved: boolean }
+    >();
+    for (const c of pending) {
+      localExtras.set(`${c.file} ${c.body}`, {
+        replies: c.replies,
+        resolved: c.resolved,
+      });
+    }
+    const pushedIds = new Set(pending.map((c) => c.id));
+
+    // Pull BEFORE writing anything locally. If this fails, the original
+    // drafts are still on disk exactly as the reviewer left them (stale —
+    // GitHub already has the review — but recoverable on the next sync)
+    // rather than deleted with nothing to replace them, which reordering
+    // "delete, write, then pull" would risk on a pull failure.
+    const remote = await this.pullRemoteComments(location);
+    // Re-read rather than reuse `all`/`pending`: this.run above awaited two
+    // network round trips (the POST and this pull), wide open for a
+    // concurrent add() to land a fresh pending comment. Filtering by this
+    // batch's own ids (not a blanket !pending) keeps that comment instead
+    // of discarding it under a stale snapshot.
+    const remaining = this.ctx.reviewComments
+      .list(target)
+      .filter((c) => !pushedIds.has(c.id));
+    // mapGitHubComment always sets githubId and pending together — so
+    // letting mergeComments' remote-only rule create the replacement here
+    // (rather than flipping `pending` on the draft directly) is what keeps
+    // those two fields from ever landing as two separate writes, which is
+    // the invariant mergeComments itself cannot enforce.
+    const merged = mergeComments(remaining, remote).map((c) => {
+      if (c.githubId === undefined) return c;
+      const extra = localExtras.get(`${c.file} ${c.body}`);
+      if (extra === undefined) return c;
+      return { ...c, replies: extra.replies, resolved: extra.resolved };
+    });
+    this.ctx.reviewComments.replaceAll(target, merged);
     return { pushed: pending.length };
   }
 }

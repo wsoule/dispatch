@@ -20,6 +20,7 @@ import {
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
 import { WorktreeManager } from '../../src/orchestrator/worktree.js';
+import type { ReviewComment } from '../../src/reviewComments.js';
 import { ReviewCommentStore } from '../../src/reviewComments.js';
 import type { ReviewTarget } from '../../src/reviewTarget.js';
 import { initGitRepo } from './helpers.js';
@@ -1072,6 +1073,56 @@ describe('PrManager.syncPrComments', () => {
     expect(comments.some((c) => c.githubId === 555)).toBe(true);
   });
 
+  // Regression: the GET call originally had no --paginate, and GitHub pages
+  // review comments at 30. mergeComments treats a local githubId absent
+  // from the pull as an upstream delete, so a truncated pull on a
+  // >30-comment PR would erase comments 31+ (and their local-only replies/
+  // resolved state) on every sync. Shaped exactly as `gh api --paginate
+  // --slurp` returns multi-page output: one outer array wrapping each
+  // page's own array.
+  it('sends --paginate --slurp and reconstructs every page, so nothing past 30 comments is dropped', async () => {
+    const harness = makeHarness();
+    const existing: ReviewComment[] = Array.from({ length: 35 }, (_, i) => ({
+      id: `rc-existing-${i}`,
+      file: `src/file-${i}.ts`,
+      line: 1,
+      anchorText: 'x',
+      pending: false,
+      author: 'teammate',
+      body: `comment ${i}`,
+      resolved: false,
+      created: '2026-08-01T00:00:00Z',
+      replies: [],
+      githubId: i + 1,
+      githubUpdatedAt: '2026-08-01T00:00:00Z',
+      origin: 'github',
+    }));
+    harness.reviewComments.replaceAll(prTarget, existing);
+
+    const toRaw = (c: ReviewComment) =>
+      rawGitHubComment({ id: c.githubId, path: c.file, body: c.body });
+    const page1 = existing.slice(0, 30).map(toRaw);
+    const page2 = existing.slice(30).map(toRaw);
+    const stub = new StubRunner();
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([page1, page2]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncPrComments(9);
+
+    expect(comments).toHaveLength(35);
+    expect(comments.every((c) => c.githubId !== undefined)).toBe(true);
+
+    const getCall = stub.calls.find((c) =>
+      c.cmd.some((arg) => /\/pulls\/9\/comments$/.test(arg))
+    )?.cmd;
+    expect(getCall).toContain('--paginate');
+    expect(getCall).toContain('--slurp');
+  });
+
   it('404s a PR number the repo does not currently have open', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
@@ -1187,6 +1238,63 @@ describe('PrManager.pushPrReview', () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]?.pending).toBe(false);
     expect(stored[0]?.githubId).toBe(777);
+  });
+
+  // Regression: pushPrReview used to delete the draft, write that, THEN
+  // re-pull — so a re-pull failure left the draft deleted with nothing to
+  // replace it, even though the review had already posted successfully.
+  // Pulling before writing anything means a failed pull here leaves the
+  // original draft exactly as it was.
+  it('leaves the original draft intact if the re-pull fails after a successful push', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const draft = seedPending(harness);
+    // The POST succeeds (pushReviewResult defaults to ok:true), but the
+    // follow-up GET pull fails.
+    stub.apiResult = { ok: false, stdout: '', stderr: 'rate limited' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.pushPrReview(9, 'approve', 'LGTM')).rejects.toThrow(
+      OrchestratorConflictError
+    );
+
+    expect(harness.reviewComments.list(prTarget)).toEqual([draft]);
+  });
+
+  // Regression: the draft was deleted and recreated wholesale from
+  // mapGitHubComment's output, which always seeds replies:[] and
+  // resolved:false — silently destroying reviewer-authored replies/
+  // resolution that exist nowhere but the local store.
+  it("carries a pushed draft's replies and resolved state onto its GitHub-sourced replacement", async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const draft = seedPending(harness);
+    harness.reviewComments.reply(
+      prTarget,
+      draft.id,
+      'a reply while still a draft',
+      'human:test'
+    );
+    harness.reviewComments.setResolved(prTarget, draft.id, true);
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        rawGitHubComment({ id: 777, path: draft.file, body: draft.body }),
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.pushPrReview(9, 'approve', 'LGTM');
+
+    const stored = harness.reviewComments.list(prTarget);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.githubId).toBe(777);
+    expect(stored[0]?.resolved).toBe(true);
+    expect(stored[0]?.replies).toHaveLength(1);
+    expect(stored[0]?.replies[0]?.body).toBe('a reply while still a draft');
   });
 
   it('leaves comments pending on a failed push (the reviewer must not lose the writing)', async () => {
