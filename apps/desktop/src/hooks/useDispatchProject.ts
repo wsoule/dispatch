@@ -196,10 +196,10 @@ export interface DispatchProjectData {
   // history) — `null` until the query has ever resolved, so callers can show
   // an empty/loading state without treating "no entries yet" as an error.
   mergeQueue: MergeQueueSnapshot | null;
-  // Item B: every open PR in the repo, not just the ones dispatch itself
-  // opened — gated on `health.pr === true` (see the query's own comment),
-  // so `null` covers both "hasn't loaded yet" and "this project has no pr
-  // capability" alike; PullRequestsView treats both as "nothing to show".
+  // Every open PR in the repo, not just the ones dispatch itself opened —
+  // gated on `health.pr === true` (see the query's own comment), so `null`
+  // covers both "hasn't loaded yet" and "this project has no pr capability"
+  // alike; the review queue treats both as "no PRs to show".
   repoPrs: RepoPr[] | null;
 
   runDetail: RunDetail | undefined;
