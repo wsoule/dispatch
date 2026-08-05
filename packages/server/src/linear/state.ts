@@ -42,7 +42,7 @@ function stateHome(): string {
 }
 
 /** `~/.dispatch/linear/<hash of rootDir>.json`, keyed the same way daemon files are. */
-export function linearStatePath(rootDir: string): string {
+function linearStatePath(rootDir: string): string {
   const key = createHash('sha256').update(rootDir).digest('hex').slice(0, 12);
   return join(stateHome(), '.dispatch', 'linear', `${key}.json`);
 }

@@ -37,7 +37,7 @@ export interface EpicSession {
   completedAt?: string;
 }
 
-export interface EpicProgressChild {
+interface EpicProgressChild {
   id: string;
   title: string;
   status: string;

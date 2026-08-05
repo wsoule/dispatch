@@ -19,7 +19,6 @@ import {
   useTaskFindings,
 } from '../hooks/useOrchestration';
 import { useRepoPrDetail } from '../hooks/useRepoPrDetail';
-import { deriveFeedState } from '../lib/feedState';
 import { findingWarnings, partitionFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { openFindingsByFile } from '../lib/reviewAttention';
@@ -637,11 +636,4 @@ function Header({
       </div>
     </div>
   );
-}
-
-/** Kept exported for the nav badge — how many runs are waiting on a review right now. */
-export function countAwaitingReview(
-  runs: Parameters<typeof deriveFeedState>[0][]
-): number {
-  return runs.filter((r) => deriveFeedState(r) === 'review').length;
 }

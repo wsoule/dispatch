@@ -7,7 +7,7 @@ import type {
 
 // One scripted assistant turn — `proposal` may be `null` for a questions-only
 // turn; `reply` defaults to a canned stand-in when omitted.
-export interface FakePlannerTurn {
+interface FakePlannerTurn {
   reply?: string;
   proposal: PlanProposal | null;
   questions?: PlannerQuestion[];

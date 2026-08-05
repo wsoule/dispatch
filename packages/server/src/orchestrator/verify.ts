@@ -12,7 +12,7 @@ import { OrchestratorNotFoundError, runKind } from './types.js';
 
 // One check the verify agent ran against the running app: what it expected
 // versus what it actually observed.
-export interface VerificationCheck {
+interface VerificationCheck {
   check: string;
   expected: string;
   actual: string;

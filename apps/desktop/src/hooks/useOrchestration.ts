@@ -13,10 +13,7 @@ const ORCHESTRATION_QUERY_ROOT = 'dispatch-orchestration';
 
 // Every key below namespaces by `port`: findings/fix-loops/ledger live in
 // per-worktree `.dispatch/*.jsonl` files sharing task ids across worktrees.
-export function taskFindingsKey(
-  port: number | undefined,
-  taskId: string | undefined
-) {
+function taskFindingsKey(port: number | undefined, taskId: string | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'findings', port, taskId] as const;
 }
 export function fixLoopKey(
@@ -31,15 +28,12 @@ export function taskVerificationKey(
 ) {
   return [ORCHESTRATION_QUERY_ROOT, 'verification', port, taskId] as const;
 }
-export function epicLedgerKey(
-  port: number | undefined,
-  epicId: string | undefined
-) {
+function epicLedgerKey(port: number | undefined, epicId: string | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'ledger', port, epicId] as const;
 }
 /** The project-wide bucket (`epicId: null`), kept under the same 'ledger' root
  *  so `ledger.changed` invalidates it alongside every epic's. */
-export function projectLedgerKey(port: number | undefined) {
+function projectLedgerKey(port: number | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'ledger', port, null] as const;
 }
 export function findingsQueryRootKey(port: number | undefined) {

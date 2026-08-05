@@ -22,7 +22,7 @@ export interface SyncResult {
 // 'disabled' and 'off' are never states a real syncOnce() result carries —
 // both are synthesized by GET /api/sync (see api.ts): 'disabled' when no
 // trunk was resolvable at boot, 'off' when the project has autoCommit: false.
-export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
+type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
 
 const TASKS_DIR = join('.dispatch', 'tasks');
 

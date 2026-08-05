@@ -1,7 +1,7 @@
 import type { ApiClient, RunScopeRequest } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
 
-export function scopeRequestKey(
+function scopeRequestKey(
   port: number | undefined,
   runId: string | undefined,
   requestId: string | undefined

@@ -129,12 +129,7 @@ export function isInteractiveControlTagName(tagName: string): boolean {
   );
 }
 
-export type GitPanelId =
-  | 'status'
-  | 'files'
-  | 'branches'
-  | 'commits'
-  | 'stashes';
+type GitPanelId = 'status' | 'files' | 'branches' | 'commits' | 'stashes';
 
 const GIT_PANEL_BY_DIGIT: Record<string, GitPanelId> = {
   '1': 'status',

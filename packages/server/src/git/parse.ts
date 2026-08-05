@@ -1,7 +1,7 @@
 // Pure parsers for git plumbing output — no spawning, testable via fixtures.
 // `*_FORMAT` pins the field order commands.ts and these parsers share.
 
-export interface FileChange {
+interface FileChange {
   path: string;
   /** Git's single-letter status code for this side (M/A/D/R/C/T/U). */
   status: string;
@@ -161,7 +161,7 @@ export interface GitBranch {
   behind: number;
 }
 
-export const DISPATCH_BRANCH_PREFIX = 'dispatch/';
+const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 
 export const BRANCH_FORMAT =
   '%(refname)\x1f%(objectname)\x1f%(objectname:short)\x1f%(subject)\x1f%(committerdate:iso-strict)\x1f%(upstream:short)\x1f%(upstream:track)\x1f%(HEAD)';

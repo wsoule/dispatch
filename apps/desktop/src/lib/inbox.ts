@@ -36,7 +36,7 @@ export interface InboxState {
   entries: InboxEntry[];
 }
 
-export const EMPTY_INBOX: InboxState = { entries: [] };
+const EMPTY_INBOX: InboxState = { entries: [] };
 
 const MAX_ENTRIES = 100;
 

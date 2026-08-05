@@ -5,19 +5,14 @@ import type {
   LinearWorkflowState,
 } from '@dispatch/core';
 
-export const LINEAR_API_URL = 'https://api.linear.app/graphql';
+const LINEAR_API_URL = 'https://api.linear.app/graphql';
 
 // Ceiling on a single page walk. At Linear's 250-per-page maximum this is 10,000
 // issues; hitting it is reported rather than silently dropping the rest.
 const MAX_PAGES = 40;
 
 /** Why a call failed, so callers can back off on `rate-limit` instead of retrying blindly. */
-export type LinearErrorKind =
-  | 'auth'
-  | 'rate-limit'
-  | 'network'
-  | 'graphql'
-  | 'http';
+type LinearErrorKind = 'auth' | 'rate-limit' | 'network' | 'graphql' | 'http';
 
 export interface LinearFailure {
   ok: false;
