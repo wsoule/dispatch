@@ -279,7 +279,7 @@ function summarizeChecks(rollup: unknown): PrCheckSummary {
   for (const raw of rollup) {
     if (raw === null || typeof raw !== 'object') continue;
     const check = raw as { conclusion?: unknown; state?: unknown };
-    const verdict = String(check.conclusion ?? check.state ?? '').toUpperCase();
+    const verdict = ghString(check.conclusion ?? check.state).toUpperCase();
     summary.total += 1;
     if (
       verdict === 'SUCCESS' ||
@@ -456,13 +456,13 @@ export class PrManager {
     }
     return raw.map((item) => ({
       number: Number(item.number ?? 0),
-      title: String(item.title ?? ''),
-      url: String(item.url ?? ''),
-      headRefName: String(item.headRefName ?? ''),
+      title: ghString(item.title),
+      url: ghString(item.url),
+      headRefName: ghString(item.headRefName),
       author: authorLogin(item.author),
       isDraft: item.isDraft === true,
-      updatedAt: String(item.updatedAt ?? ''),
-      headRefOid: String(item.headRefOid ?? ''),
+      updatedAt: ghString(item.updatedAt),
+      headRefOid: ghString(item.headRefOid),
       isCrossRepository: item.isCrossRepository === true,
       headRepositoryOwner: authorLogin(item.headRepositoryOwner),
       reviewDecision: (item.reviewDecision as RepoPr['reviewDecision']) ?? null,
@@ -591,8 +591,8 @@ export class PrManager {
 
     const status: PrStatus = {
       number: Number(raw.number ?? 0),
-      url: String(raw.url ?? url),
-      title: String(raw.title ?? fallbackTitle),
+      url: ghString(raw.url, url),
+      title: ghString(raw.title, fallbackTitle),
       state: (raw.state as PrStatus['state']) ?? 'OPEN',
       isDraft: raw.isDraft === true,
       reviewDecision:
@@ -610,14 +610,14 @@ export class PrManager {
     // "PENDING"/empty review row for a self-review-in-progress otherwise.
     if (Array.isArray(raw.reviews)) {
       for (const r of raw.reviews as Array<Record<string, unknown>>) {
-        const state = String(r.state ?? '').toUpperCase();
-        const body = String(r.body ?? '');
+        const state = ghString(r.state).toUpperCase();
+        const body = ghString(r.body);
         if (state === 'PENDING' || (state === '' && body === '')) continue;
         conversation.push({
           kind: 'review',
           author: authorLogin(r.author),
           body,
-          createdAt: String(r.submittedAt ?? r.createdAt ?? ''),
+          createdAt: ghString(r.submittedAt ?? r.createdAt),
           state: state as PrConversationItem['state'],
         });
       }
@@ -628,8 +628,8 @@ export class PrManager {
         conversation.push({
           kind: 'comment',
           author: authorLogin(c.author),
-          body: String(c.body ?? ''),
-          createdAt: String(c.createdAt ?? ''),
+          body: ghString(c.body),
+          createdAt: ghString(c.createdAt),
         });
       }
     }
@@ -652,9 +652,9 @@ export class PrManager {
             conversation.push({
               kind: 'line-comment',
               author: authorLogin(c.user),
-              body: String(c.body ?? ''),
-              createdAt: String(c.created_at ?? ''),
-              path: c.path !== undefined ? String(c.path) : undefined,
+              body: ghString(c.body),
+              createdAt: ghString(c.created_at),
+              path: c.path !== undefined ? ghString(c.path) : undefined,
               line:
                 c.line !== undefined && c.line !== null
                   ? Number(c.line)
@@ -796,6 +796,18 @@ export class PrManager {
     }
     return this.getPrDetailByUrl(url);
   }
+}
+
+// Reads a string field off gh's `--json` output, which parses as `unknown`.
+// Objects and arrays fall back rather than stringifying to "[object Object]",
+// so a shape change in gh's payload surfaces as an empty field instead of
+// garbage text stored on a PR record.
+function ghString(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return fallback;
 }
 
 // Pulls a `login` off gh's author/user object shape (either `{login}` from the
