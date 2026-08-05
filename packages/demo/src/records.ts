@@ -25,7 +25,9 @@ const REVIEWER = formatActorRef({
 // verdicts, one many-file finding, one that blocks. `file`/`line` point at
 // the fix branches' own content (BRANCH_FIXES in repo.ts), since that is the
 // code a reviewer actually sees in the diff, not the unfixed main version.
-const FINDINGS: Finding[] = [
+// Exported so runs.ts's review-run transcript can reference these by id
+// instead of hardcoding a second copy that could silently drift from these.
+export const FINDINGS: Finding[] = [
   {
     id: 'f-a1b2c3',
     taskId: 't-2e91aa',

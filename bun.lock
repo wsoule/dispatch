@@ -120,6 +120,9 @@
       "dependencies": {
         "@dispatch/core": "workspace:*",
       },
+      "devDependencies": {
+        "@dispatch/server": "workspace:*",
+      },
     },
     "packages/mcp": {
       "name": "@dispatch/mcp",
