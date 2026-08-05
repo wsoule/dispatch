@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 
-import { mapGitHubComment } from '../src/githubComments.js';
+import { mapGitHubComment, mergeComments } from '../src/githubComments.js';
+import type { ReviewComment } from '../src/reviewComments.js';
 
 const base = {
   id: 101,
@@ -50,8 +51,141 @@ test('a file-level comment gets line 0 rather than a fake line', () => {
     original_line: null,
   });
   expect(c?.line).toBe(0);
+  // Same rule as the LEFT-side case above: a file comment has no diff line
+  // to anchor to, so it must come back empty rather than a guessed value.
+  expect(c?.anchorText).toBe('');
 });
 
 test('a payload with no path is dropped rather than stored half-formed', () => {
   expect(mapGitHubComment({ ...base, path: undefined })).toBeNull();
+});
+
+// Builds a minimal, valid ReviewComment for mergeComments tests, with
+// overrides for the fields each rule actually turns on.
+function comment(overrides: Partial<ReviewComment> = {}): ReviewComment {
+  return {
+    id: 'rc-000',
+    file: 'src/a.ts',
+    line: 5,
+    anchorText: 'const x = 1;',
+    author: 'someone',
+    body: 'a comment',
+    resolved: false,
+    pending: false,
+    created: '2026-08-01T00:00:00Z',
+    replies: [],
+    ...overrides,
+  };
+}
+
+test('rule 1: a comment on both sides is matched by githubId, not by text', () => {
+  const local = comment({
+    id: 'rc-local',
+    line: 5,
+    githubId: 42,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'old wording entirely',
+    resolved: true,
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    line: 99,
+    githubId: 42,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'completely different wording',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  // Matching on line or body would see no overlap (different line, no
+  // shared text) and produce a drop-plus-insert instead of one update.
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.githubId).toBe(42);
+  expect(merged[0]?.body).toBe('completely different wording');
+  // Resolution is local-only; a newer remote body must not reset it.
+  expect(merged[0]?.resolved).toBe(true);
+});
+
+test('rule 2: a local pending comment is never touched by a pull', () => {
+  const pendingLocal = comment({
+    id: 'rc-pending',
+    pending: true,
+    body: 'still drafting',
+  });
+  const merged = mergeComments([pendingLocal], []);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]).toEqual(pendingLocal);
+});
+
+test('rule 3: a newer remote body wins over the stored one', () => {
+  const local = comment({
+    id: 'rc-local',
+    githubId: 7,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 7,
+    githubUpdatedAt: '2026-08-03T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.body).toBe('edited on github');
+  expect(merged[0]?.githubUpdatedAt).toBe('2026-08-03T00:00:00Z');
+});
+
+test('rule 3b: a remote body no newer than githubUpdatedAt does not clobber', () => {
+  const local = comment({
+    id: 'rc-local',
+    githubId: 8,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'kept as-is',
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 8,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'stale payload text',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.body).toBe('kept as-is');
+});
+
+test('rule 4: a comment with a githubId absent from the pull was deleted upstream', () => {
+  const local = comment({
+    id: 'rc-local',
+    githubId: 11,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'will vanish',
+  });
+  const merged = mergeComments([local], []);
+  expect(merged).toHaveLength(0);
+});
+
+test('rule 5: a published local comment with no githubId survives, to be pushed', () => {
+  const published = comment({
+    id: 'rc-published',
+    pending: false,
+    body: 'ready to push',
+  });
+  const merged = mergeComments([published], []);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]).toEqual(published);
+});
+
+test('rule 6: a remote-only comment is inserted', () => {
+  const remote = comment({
+    id: 'rc-gh',
+    githubId: 55,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    origin: 'github',
+  });
+  const merged = mergeComments([], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.githubId).toBe(55);
+  expect(merged[0]?.origin).toBe('github');
 });
