@@ -201,6 +201,7 @@ export function RunReviewView({
             <PierreReviewDiff
               client={client}
               runId={meta.id}
+              meta={meta}
               patch={diff.patch}
               comments={reviewComments ?? []}
               onAdd={onAddComment}

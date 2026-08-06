@@ -455,6 +455,9 @@ export function ReviewView({
                 // `undefined` for a PR target: there is no run worktree to load a PR's file
                 // contents from, so the diff renders without hunk expansion, same as before.
                 runId={run?.id}
+                // Same PR-target exception as `runId` — `meta` undefined hides edit mode
+                // outright, matching there being no worktree to write an edit into.
+                meta={run}
                 patch={diff.patch}
                 only={selected}
                 comments={reviewComments}

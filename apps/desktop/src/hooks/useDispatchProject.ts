@@ -1115,6 +1115,10 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
           } else if (event.type === 'review.changed') {
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
+            // The server broadcasts this same event for a reviewer's inline edit and an
+            // applied suggestion — both commit straight onto the run branch, so the diff
+            // itself (not just its comment thread) is now stale too.
+            void queryClient.invalidateQueries({ queryKey: runDiffQueryKey });
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
           } else if (event.type === 'git.changed') {
@@ -1293,6 +1297,7 @@ export function useDispatchProject(
     draftsQueryKey,
     inboxQueryKey,
     reviewQueryKey,
+    runDiffQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     branchesQueryKey,
