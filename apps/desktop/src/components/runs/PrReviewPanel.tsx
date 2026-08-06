@@ -132,6 +132,12 @@ interface PrReviewPanelProps {
   error: string | null;
   onReview: (event: PrReviewEvent, body?: string) => Promise<void>;
   onComment: (body: string) => Promise<void>;
+  /**
+   * Line notes staged for this PR but not yet on GitHub. With any queued,
+   * Comment submits them as a COMMENT review — a bare conversation comment
+   * would leave them staged, which is what "Comment" nowhere else means.
+   */
+  stagedNotes?: number;
 }
 
 /**
@@ -148,6 +154,7 @@ export function PrReviewPanel({
   error,
   onReview,
   onComment,
+  stagedNotes = 0,
 }: PrReviewPanelProps) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -218,7 +225,13 @@ export function PrReviewPanel({
                   variant="ghost"
                   size="sm"
                   disabled={busy || needsBody}
-                  onClick={() => void act(() => onComment(draft.trim()))}
+                  onClick={() =>
+                    void act(() =>
+                      stagedNotes > 0
+                        ? onReview('comment', draft.trim())
+                        : onComment(draft.trim())
+                    )
+                  }
                 >
                   <MessageSquare className="size-3.5" />
                   Comment
