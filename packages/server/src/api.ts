@@ -898,8 +898,15 @@ type ParsedBody<T> = { ok: true; value: T } | { ok: false; response: Response };
 // only way to tell later whether the comment still points at the code it
 // was about. Without it a comment silently drifts onto unrelated lines as
 // the agent (or a fresh push to the PR) moves things around.
+//
+// `allowPublished` is false on the PR route only. A PR comment reaches
+// GitHub through pushPrReview, which pushes what is `pending` — so a record
+// created with `pending: false` could never be pushed, and its Reply and
+// Resolve would 409 forever. The run route has no such push step and keeps
+// accepting it.
 async function parseAddCommentInput(
-  req: Request
+  req: Request,
+  allowPublished = true
 ): Promise<ParsedBody<AddCommentInput>> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed;
@@ -922,6 +929,15 @@ async function parseAddCommentInput(
   }
   if (typeof body.body !== 'string' || body.body.trim() === '') {
     return { ok: false, response: errorResponse(400, 'body is required') };
+  }
+  if (!allowPublished && body.pending === false) {
+    return {
+      ok: false,
+      response: errorResponse(
+        400,
+        'pending must be true: a PR comment reaches GitHub only through a review submit'
+      ),
+    };
   }
   return {
     ok: true,
@@ -1681,7 +1697,7 @@ async function addPrComment(
   ctx: ApiContext,
   numberParam: string
 ): Promise<Response> {
-  const parsed = await parseAddCommentInput(req);
+  const parsed = await parseAddCommentInput(req, false);
   if (!parsed.ok) return parsed.response;
   const pr = await resolveRepoPrByNumber(ctx, numberParam);
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
