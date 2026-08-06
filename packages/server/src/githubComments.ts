@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import type { ReviewComment } from './reviewComments.js';
+import type { ReviewComment, ReviewReply } from './reviewComments.js';
 
 function newId(prefix: string): string {
   return `${prefix}-${randomBytes(3).toString('hex')}`;
@@ -162,4 +162,95 @@ export function mergeComments(
   }
 
   return merged;
+}
+
+/**
+ * Splits a pulls/N/comments payload into roots and replies. A root's
+ * `in_reply_to_id` is `null`, not absent — matches mapGitHubComment's own
+ * explicit `!== undefined && !== null` guard.
+ */
+export function partitionGitHubComments(raw: Record<string, unknown>[]): {
+  roots: Record<string, unknown>[];
+  replies: Record<string, unknown>[];
+} {
+  const roots: Record<string, unknown>[] = [];
+  const replies: Record<string, unknown>[] = [];
+  for (const item of raw) {
+    if (item.in_reply_to_id !== undefined && item.in_reply_to_id !== null) {
+      replies.push(item);
+    } else {
+      roots.push(item);
+    }
+  }
+  return { roots, replies };
+}
+
+/**
+ * Attaches pulled replies to the comment whose `githubId` matches their
+ * `in_reply_to_id`. Call AFTER mergeComments — it always keeps local
+ * `replies` as-is. A reply with no matching parent is dropped, not promoted.
+ */
+export function attachGitHubReplies(
+  comments: ReviewComment[],
+  replyPayloads: Record<string, unknown>[]
+): ReviewComment[] {
+  const byParent = new Map<number, ReviewReply[]>();
+  for (const raw of replyPayloads) {
+    const parentId = raw.in_reply_to_id;
+    if (typeof parentId !== 'number') continue;
+    const user = raw.user as Record<string, unknown> | undefined;
+    const reply: ReviewReply = {
+      id: newId('rr'),
+      author: typeof user?.login === 'string' ? user.login : 'someone',
+      body: typeof raw.body === 'string' ? raw.body : '',
+      created: typeof raw.created_at === 'string' ? raw.created_at : '',
+      githubId: typeof raw.id === 'number' ? raw.id : undefined,
+    };
+    const bucket = byParent.get(parentId);
+    if (bucket === undefined) byParent.set(parentId, [reply]);
+    else bucket.push(reply);
+  }
+
+  return comments.map((c) => {
+    if (c.githubId === undefined) return c;
+    const incoming = byParent.get(c.githubId);
+    if (incoming === undefined) return c;
+    return { ...c, replies: mergeReplies(c.replies, incoming) };
+  });
+}
+
+/**
+ * Reconciles local replies with a pull, matching by githubId (same rule as
+ * mergeComments) so a Dispatch-posted reply updates in place. A local reply
+ * with no githubId always survives; the result is sorted oldest-first.
+ */
+function mergeReplies(
+  local: ReviewReply[],
+  incoming: ReviewReply[]
+): ReviewReply[] {
+  const byGithubId = new Map<number, ReviewReply>();
+  for (const r of incoming) {
+    if (r.githubId !== undefined) byGithubId.set(r.githubId, r);
+  }
+  const matched = new Set<number>();
+  const merged: ReviewReply[] = [];
+  for (const l of local) {
+    if (l.githubId === undefined) {
+      merged.push(l);
+      continue;
+    }
+    const r = byGithubId.get(l.githubId);
+    if (r === undefined) {
+      merged.push(l);
+      continue;
+    }
+    matched.add(l.githubId);
+    merged.push({ ...r, id: l.id });
+  }
+  for (const r of incoming) {
+    if (r.githubId !== undefined && !matched.has(r.githubId)) {
+      merged.push(r);
+    }
+  }
+  return merged.sort((a, b) => a.created.localeCompare(b.created));
 }

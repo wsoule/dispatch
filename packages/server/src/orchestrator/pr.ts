@@ -5,7 +5,12 @@ import { join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
-import { mapGitHubComment, mergeComments } from '../githubComments.js';
+import {
+  attachGitHubReplies,
+  mapGitHubComment,
+  mergeComments,
+  partitionGitHubComments,
+} from '../githubComments.js';
 import type {
   ReviewComment,
   ReviewCommentStore,
@@ -844,11 +849,9 @@ export class PrManager {
     return pr;
   }
 
-  // Fetches every review comment GitHub has for a PR and maps each with
-  // mapGitHubComment, WITHOUT touching the local store — the read-only half
-  // both syncPrComments and pushPrReview build on, so pushPrReview can pull
-  // before it writes anything locally (see that method for why that order
-  // matters).
+  // Fetches every review comment GitHub has for a PR as raw REST payloads,
+  // WITHOUT mapping or touching the local store — the shared read at the
+  // bottom of both pullRemoteComments and syncPrComments.
   //
   // `--paginate`: the REST endpoint pages at 30 comments, and unpaginated it
   // silently truncates at page 1 — which mergeComments would read as GitHub
@@ -856,9 +859,9 @@ export class PrManager {
   // state on every sync. gh merges the pages of an array response into one
   // array (the same way getPrDiffByUrl's `/files` call relies on), so the
   // output stays a single JSON.parse target.
-  private async pullRemoteComments(
+  private async fetchRawComments(
     location: NonNullable<ReturnType<typeof parsePrUrl>>
-  ): Promise<ReviewComment[]> {
+  ): Promise<Record<string, unknown>[]> {
     const result = await this.run(this.ctx.rootDir, [
       'gh',
       'api',
@@ -870,38 +873,56 @@ export class PrManager {
         `gh api pulls/comments failed: ${commandErrorText(result)}`
       );
     }
-    let raw: unknown[];
     try {
       // `.flat()` is a no-op on the flat array gh returns; it is kept so a
       // page-wrapped array (what `--slurp` would produce) also parses.
-      raw = (JSON.parse(result.stdout) as unknown[]).flat();
+      return (JSON.parse(result.stdout) as unknown[]).flat() as Record<
+        string,
+        unknown
+      >[];
     } catch {
       throw new OrchestratorConflictError(
         'gh api pulls/comments returned invalid JSON'
       );
     }
+  }
+
+  // Fetches and maps every review comment with mapGitHubComment, WITHOUT
+  // touching the local store — the read-only half pushPrReview builds on
+  // so it can pull before writing. syncPrComments handles replies itself.
+  private async pullRemoteComments(
+    location: NonNullable<ReturnType<typeof parsePrUrl>>
+  ): Promise<ReviewComment[]> {
+    const raw = await this.fetchRawComments(location);
     return raw
-      .map((item) => mapGitHubComment(item as Record<string, unknown>))
+      .map((item) => mapGitHubComment(item))
       .filter((c): c is ReviewComment => c !== null);
   }
 
   // GET-ish pull half of the comment mirror: pulls every review comment
   // GitHub has for the PR, merges with whatever mergeComments's six rules
-  // say to keep from disk, persists the result, and returns it. Hits the
-  // exact same REST endpoint getPrDetailByUrl already reads for its
-  // read-only conversation view — this is the write-back half that also
-  // updates the local mirror.
+  // say to keep from disk, attaches any pulled replies to their parents,
+  // persists the result, and returns it. Hits the exact same REST endpoint
+  // getPrDetailByUrl already reads for its read-only conversation view —
+  // this is the write-back half that also updates the local mirror.
   async syncPrComments(number: number): Promise<ReviewComment[]> {
     const pr = await this.resolvePrForComments(number);
     const location = parsePrUrl(pr.url);
     if (location === null) {
       throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
     }
-    const remote = await this.pullRemoteComments(location);
+    const raw = await this.fetchRawComments(location);
+    const { roots, replies } = partitionGitHubComments(raw);
+    const remote = roots
+      .map((item) => mapGitHubComment(item))
+      .filter((c): c is ReviewComment => c !== null);
     const target: ReviewTarget = { kind: 'pr', number };
     const merged = mergeComments(this.ctx.reviewComments.list(target), remote);
-    this.ctx.reviewComments.replaceAll(target, merged);
-    return merged;
+    // Attach AFTER the merge: mergeComments always keeps the local side's
+    // `replies` array, so attaching to `remote` first would be discarded.
+    const withReplies = attachGitHubReplies(merged, replies);
+    this.ctx.reviewComments.replaceAll(target, withReplies);
+    return withReplies;
   }
 
   // POST /api/prs/:number/review-submit (Task 6) — not .../review, which
