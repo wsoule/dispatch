@@ -91,7 +91,9 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
+import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import {
   formatCommentsForAgent,
@@ -892,13 +894,37 @@ async function linearStates(
 // there and still travels back to the agent. Anything written before the PR
 // was opened moves across on the first call, since the run's own file stops
 // being read the moment this starts answering `pr`.
+// A run's metadata, from the in-memory registry first (boot hydrates every
+// run on disk into it); getRun's transcript replay is the fallback, and
+// reads the whole file.
+function runMetaFor(ctx: ApiContext, runId: string): RunMeta | undefined {
+  return (
+    ctx.orchestrator.list().find((r) => r.id === runId) ??
+    ctx.orchestrator.getRun(runId)?.meta
+  );
+}
+
+// Sends the review back to the agent wherever the agent is. A run is
+// reviewed AFTER it finishes, so the normal case is terminal — and only
+// `{ resume: true }` re-dispatches one; without it sendMessage refuses with
+// "run is not live". A still-live run keeps the mid-run message path.
+function sendReviewToAgent(
+  ctx: ApiContext,
+  runId: string,
+  message: string
+): RunMeta {
+  const meta = runMetaFor(ctx, runId);
+  const resume = meta !== undefined && TERMINAL_RUN_STATES.has(meta.state);
+  return ctx.orchestrator.sendMessage(
+    runId,
+    message,
+    resume ? { resume: true } : {}
+  );
+}
+
 function commentTargetForRun(ctx: ApiContext, runId: string): ReviewTarget {
   const runTarget: ReviewTarget = { kind: 'run', runId };
-  // The in-memory registry first (boot hydrates every run on disk into it);
-  // getRun's transcript replay is the fallback, and reads the whole file.
-  const meta =
-    ctx.orchestrator.list().find((r) => r.id === runId) ??
-    ctx.orchestrator.getRun(runId)?.meta;
+  const meta = runMetaFor(ctx, runId);
   const location = meta?.prUrl === undefined ? null : parsePrUrl(meta.prUrl);
   if (location === null) return runTarget;
   const prTarget: ReviewTarget = { kind: 'pr', number: location.number };
@@ -1209,7 +1235,7 @@ async function submitReview(
     const threads = formatCommentsForAgent(ctx.reviewComments.list(target));
     const message = [summary, threads].filter((p) => p !== '').join('\n\n');
     try {
-      const meta = ctx.orchestrator.sendMessage(runId, message);
+      const meta = sendReviewToAgent(ctx, runId, message);
       return jsonResponse({ verdict, published, run: meta });
     } catch (err) {
       // The comments are already published — say so, so the caller knows the review landed even
@@ -1294,7 +1320,7 @@ async function sendBackRun(
   }
   const message = [note, threads].filter((part) => part !== '').join('\n\n');
   try {
-    const meta = ctx.orchestrator.sendMessage(runId, message);
+    const meta = sendReviewToAgent(ctx, runId, message);
     return jsonResponse(meta);
   } catch (err) {
     return errorResponse(409, (err as Error).message);
