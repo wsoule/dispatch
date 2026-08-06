@@ -1670,19 +1670,25 @@ async function listPrComments(
 // /api/runs/:id/comments: a purely local draft, same as the run-keyed
 // route. It stays `pending` on disk until POST
 // /api/prs/:number/review-submit publishes it as part of one GitHub
-// review — nothing here talks to `gh`.
+// review — nothing here talks to `gh` beyond resolving `number` itself.
+// Body validation runs first and PR resolution second, same order as
+// commentRepoPr: with no `gh` call of its own otherwise, skipping
+// resolveRepoPrByNumber would make this the only PR-comment route that
+// both 201s a draft against a PR that doesn't exist AND never surfaces
+// the project's `pr`-capability 409.
 async function addPrComment(
   req: Request,
   ctx: ApiContext,
   numberParam: string
 ): Promise<Response> {
-  const number = requirePrNumberParam(numberParam);
-  if (number === null) {
-    return errorResponse(400, `invalid PR number: ${numberParam}`);
-  }
   const parsed = await parseAddCommentInput(req);
   if (!parsed.ok) return parsed.response;
-  const comment = ctx.reviewComments.add({ kind: 'pr', number }, parsed.value);
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const comment = ctx.reviewComments.add(
+    { kind: 'pr', number: pr.number },
+    parsed.value
+  );
   return jsonResponse(comment, 201);
 }
 
@@ -1761,10 +1767,10 @@ async function replyPrComment(
  * mirrors POST /api/runs/:id/review-submit, which sits next to the
  * unrelated POST /api/runs/:id/review for exactly the same reason.
  *
- * GitHub 422s a `comment` verdict with both an empty body and an empty
- * comment batch — there is nothing to submit. Checked here, before the
- * call, so that case is one clear 400 instead of a raw `gh api` error
- * string reaching the caller.
+ * GitHub requires a body for `comment`, same as `request-changes` — a
+ * `comments[]`-only batch does not satisfy it, and an empty body with
+ * nothing pending at all would otherwise 422 from `gh` itself. Both are
+ * checked here as one clear 400 instead, before the call.
  */
 async function submitPrReview(
   req: Request,
@@ -1794,6 +1800,12 @@ async function submitPrReview(
     return errorResponse(400, 'a request-changes review requires a body');
   }
   if (verdict === 'comment' && text === '') {
+    // GitHub requires a body for a `comment` review the same as it does
+    // for `request-changes` — a `comments[]`-only batch is not enough on
+    // its own. Checked with the more specific "nothing at all" message
+    // first: zero pending comments plus no body really is nothing to
+    // submit, versus a body-less submit that does have comments queued,
+    // which just needs a body added.
     const pending = ctx.reviewComments.pendingCount({ kind: 'pr', number });
     if (pending === 0) {
       return errorResponse(
@@ -1801,6 +1813,7 @@ async function submitPrReview(
         'nothing to submit — leave a note or a comment first'
       );
     }
+    return errorResponse(400, 'a comment review requires a body');
   }
   const result = await ctx.prManager.pushPrReview(number, verdict, text);
   return jsonResponse(result);

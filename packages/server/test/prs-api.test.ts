@@ -779,6 +779,55 @@ describe('GET /api/prs/:number/comments', () => {
     expect(body[0].githubThreadId).toBe('PRRT_thread1');
   });
 
+  // Route-level guard for the "don't lose the reviewer's writing"
+  // invariant: mergeComments' own rule 2 (a local pending comment with no
+  // githubId is never touched by a pull) is pinned in
+  // githubComments.test.ts, but this is the first thing to make it
+  // reachable through the actual GET route — add, then GET, then confirm
+  // the draft is still exactly what was written.
+  it('keeps a local pending draft through a GET sync', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({
+        listResult: listResultWithCommentPr(),
+        commentsListResult: commentsListResultFor(),
+        reviewThreadsResult: reviewThreadsResultFor(0),
+      }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/a.ts',
+          line: 3,
+          anchorText: 'const x = 1;',
+          body: 'still mine',
+        }),
+      }
+    );
+    expect(addRes.status).toBe(201);
+    const draft = (await json(addRes)) as { id: string };
+
+    const res = await fetch(`${baseUrl}/api/prs/${COMMENT_PR.number}/comments`);
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as Array<{
+      id: string;
+      body: string;
+      pending: boolean;
+    }>;
+    expect(body).toHaveLength(1);
+    expect(body[0].id).toBe(draft.id);
+    expect(body[0].body).toBe('still mine');
+    expect(body[0].pending).toBe(true);
+  });
+
   it('404s a PR number that is not among the repo’s open PRs', async () => {
     handle = await startServer({
       rootDir: root,
@@ -821,11 +870,12 @@ describe('GET /api/prs/:number/comments', () => {
 });
 
 describe('POST /api/prs/:number/comments', () => {
-  it('adds a pending local draft — no gh call, unlike GET', async () => {
+  it('adds a pending local draft against a real, resolved PR', async () => {
     handle = await startServer({
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
     });
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -859,6 +909,7 @@ describe('POST /api/prs/:number/comments', () => {
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
     });
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -874,16 +925,20 @@ describe('POST /api/prs/:number/comments', () => {
     expect(res.status).toBe(400);
   });
 
-  it('400s a malformed PR number', async () => {
+  // Review finding: this was the only PR-comment route that skipped
+  // resolveRepoPrByNumber, so it 201ed a draft against a PR number that
+  // was never checked against the repo's actual open PRs.
+  it('404s a PR number that is not among the repo’s open PRs', async () => {
     handle = await startServer({
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
     });
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
-    const res = await fetch(`${baseUrl}/api/prs/not-a-number/comments`, {
+    const res = await fetch(`${baseUrl}/api/prs/999/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -893,7 +948,32 @@ describe('POST /api/prs/:number/comments', () => {
         body: 'why two?',
       }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
+  });
+
+  it('409s when the project lacks the pr capability', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/b.ts',
+          line: 5,
+          anchorText: '',
+          body: 'why two?',
+        }),
+      }
+    );
+    expect(res.status).toBe(409);
   });
 });
 
@@ -936,6 +1016,7 @@ describe('PATCH /api/prs/:number/comments/:commentId', () => {
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
     });
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -1167,6 +1248,61 @@ describe('POST /api/prs/:number/review-submit', () => {
     expect(postedReviewPayloads[0].comments).toHaveLength(1);
   });
 
+  // Route-level guard for pushPrReview's "a failed push must never lose
+  // the reviewer's writing" invariant — unit-tested already
+  // (pr.test.ts:1344, :1394), but not previously exercised through HTTP.
+  it('409s a failed push, leaving the pending batch intact', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({
+        listResult: listResultWithCommentPr(),
+        pushReviewResult: { ok: false, stdout: '', stderr: 'boom' },
+        commentsListResult: commentsListResultFor(),
+        reviewThreadsResult: reviewThreadsResultFor(0),
+      }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/a.ts',
+          line: 3,
+          anchorText: 'const x = 1;',
+          body: 'why one?',
+        }),
+      }
+    );
+    expect(addRes.status).toBe(201);
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'approve', body: '' }),
+      }
+    );
+    expect(res.status).toBe(409);
+
+    const listRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`
+    );
+    const comments = (await json(listRes)) as Array<{
+      body: string;
+      pending: boolean;
+    }>;
+    expect(comments).toHaveLength(1);
+    expect(comments[0].body).toBe('why one?');
+    expect(comments[0].pending).toBe(true);
+  });
+
   it('400s an invalid verdict', async () => {
     handle = await startServer({
       rootDir: root,
@@ -1230,6 +1366,48 @@ describe('POST /api/prs/:number/review-submit', () => {
     expect(res.status).toBe(400);
     const body = (await json(res)) as { error: string };
     expect(body.error).toMatch(/nothing to submit/);
+  });
+
+  // Review finding: a `comment` verdict with an empty body used to sail
+  // through once anything was pending, reaching `gh` and surfacing its raw
+  // 422 string. The body requirement is unconditional now, same as
+  // request-changes — a pending batch does not substitute for it.
+  it('400s a comment verdict with no body even with a pending comment', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/a.ts',
+          line: 3,
+          anchorText: 'const x = 1;',
+          body: 'why one?',
+        }),
+      }
+    );
+    expect(addRes.status).toBe(201);
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'comment', body: '' }),
+      }
+    );
+    expect(res.status).toBe(400);
+    const body = (await json(res)) as { error: string };
+    expect(body.error).toMatch(/comment review requires a body/);
   });
 
   it('404s a PR number that is not among the repo’s open PRs', async () => {
