@@ -44,10 +44,6 @@ function reset(): void {
   git(DEMO.root, 'commit', '-qm', 'demo: seed board and records');
   git(DEMO.root, 'push', '-q', 'origin', 'main');
 
-  console.log('demo: writing run history for both clones');
-  writeRuns(DEMO.root, DEMO.home, OWNER.handle);
-  writeRuns(DEMO.teammateRoot, DEMO.teammateHome, TEAMMATE.handle);
-
   console.log(`demo: cloning ${DEMO.remote} into ${DEMO.teammateRoot}`);
   rmSync(DEMO.teammateRoot, { recursive: true, force: true });
   mkdirSync(dirname(DEMO.teammateRoot), { recursive: true });
@@ -58,6 +54,16 @@ function reset(): void {
     DEMO.remote,
     DEMO.teammateRoot
   );
+
+  // Both clones must already exist on disk before this runs: writeRuns()
+  // seeds each run's diff snapshot straight from git (see runs.ts's
+  // writeReviewDiffs / repo.ts's computeFixDiff), which needs a real
+  // checkout with the BRANCH_FIXES branches already committed — not just a
+  // string to hash, which is all the rest of writeRuns() ever needed from
+  // `rootDir`.
+  console.log('demo: writing run history for both clones');
+  writeRuns(DEMO.root, DEMO.home, OWNER.handle);
+  writeRuns(DEMO.teammateRoot, DEMO.teammateHome, TEAMMATE.handle);
 
   console.log('demo: reset complete');
 }

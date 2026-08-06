@@ -153,7 +153,11 @@ export const TASKS: DemoTask[] = [
     status: 'todo',
     kind: 'task',
     parent: 'e-77b3e1',
-    assignee: 'pmirand',
+    // wsoule679, not pmirand — this is the demo's `teammate claim` target
+    // (Task 9 runbook), which requires the task starting out assigned to the
+    // owner so the claim is a real, visible change ("assignee changes under
+    // Wyat", per the design spec's Teammate puppet section).
+    assignee: 'wsoule679',
     priority: 'medium',
     labels: [],
     blockedBy: [],
