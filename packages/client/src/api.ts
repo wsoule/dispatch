@@ -828,6 +828,15 @@ export interface ReviewReply {
   created: string;
 }
 
+/**
+ * What a review is looking at: a local run's diff, or a GitHub pull request.
+ * Mirrors packages/server/src/reviewTarget.ts and
+ * apps/desktop/src/lib/reviewTarget.ts, which the UI keys on.
+ */
+export type ReviewTarget =
+  | { kind: 'run'; runId: string }
+  | { kind: 'pr'; number: number };
+
 /** How a submitted review lands: approve queues the merge, request-changes resumes the agent
  * with the review attached, comment publishes the notes and changes nothing. */
 export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
@@ -1101,6 +1110,16 @@ function jsonBody(value: unknown): RequestInit {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(value),
   };
+}
+
+// The base path a ReviewTarget's comment routes hang off — /api/runs/:id
+// or /api/prs/:number, matching the server's own run- vs PR-keyed split.
+// Shared by every fetch/add/resolve/reply call below so a target's routing
+// lives in exactly one place.
+function reviewTargetPath(reviewTarget: ReviewTarget): string {
+  return reviewTarget.kind === 'run'
+    ? `/api/runs/${encodeURIComponent(reviewTarget.runId)}`
+    : `/api/prs/${reviewTarget.number}`;
 }
 
 // Pure helper (no fetch involved) so the query-string shape is unit
@@ -1398,11 +1417,12 @@ export interface ApiClient {
     error: string | null;
   }>;
 
-  // Line-level review comments on a run's diff, and the send-back that carries the unresolved
-  // ones to the agent.
-  fetchReviewComments(runId: string): Promise<ReviewComment[]>;
+  // Line-level review comments, keyed by ReviewTarget so the same four calls
+  // work against a run's diff or a GitHub PR — see reviewTargetPath, which
+  // picks the /api/runs/:id/… or /api/prs/:number/… URL per target.kind.
+  fetchReviewComments(target: ReviewTarget): Promise<ReviewComment[]>;
   addReviewComment(
-    runId: string,
+    target: ReviewTarget,
     input: {
       file: string;
       line: number;
@@ -1413,22 +1433,34 @@ export interface ApiClient {
       pending?: boolean;
     }
   ): Promise<ReviewComment>;
-  /** Publishes the pending comments and acts on the verdict. Returns how many were published. */
+  resolveReviewComment(
+    target: ReviewTarget,
+    commentId: string,
+    resolved: boolean
+  ): Promise<ReviewComment>;
+  replyReviewComment(
+    target: ReviewTarget,
+    commentId: string,
+    body: string
+  ): Promise<ReviewComment>;
+  /** Publishes a run's pending comments and acts on the verdict. Returns
+   * how many were published. Run-keyed only — a PR target's equivalent is
+   * pushPrReview below, which submits straight to GitHub instead of
+   * resuming an agent or enqueuing a merge. */
   submitReview(
     runId: string,
     verdict: ReviewVerdict,
     body: string
   ): Promise<{ verdict: ReviewVerdict; published: number; error?: string }>;
-  resolveReviewComment(
-    runId: string,
-    commentId: string,
-    resolved: boolean
-  ): Promise<ReviewComment>;
-  replyReviewComment(
-    runId: string,
-    commentId: string,
+  /** Submits a PR target's pending comments as one GitHub review. Hits
+   * .../review-submit, not reviewRepoPr's .../review — that path already
+   * exists as a one-shot `gh pr review` verdict, so reusing it here would
+   * fire both for one submit action. */
+  pushPrReview(
+    number: number,
+    verdict: ReviewVerdict,
     body: string
-  ): Promise<ReviewComment>;
+  ): Promise<{ pushed: number }>;
   /** Resumes the agent on the same branch with the note and every unresolved thread attached. */
   sendBackRun(runId: string, note: string): Promise<RunMeta>;
   /** Hides a run from the default Runs list, or brings it back. Nothing is deleted. */
@@ -1850,23 +1882,23 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     clusterInbox: () =>
       request(target, '/api/inbox/cluster', { method: 'POST' }),
-    fetchReviewComments: (runId) =>
-      request(target, `/api/runs/${encodeURIComponent(runId)}/comments`),
-    addReviewComment: (runId, input) =>
-      request(target, `/api/runs/${encodeURIComponent(runId)}/comments`, {
+    fetchReviewComments: (reviewTarget) =>
+      request(target, `${reviewTargetPath(reviewTarget)}/comments`),
+    addReviewComment: (reviewTarget, input) =>
+      request(target, `${reviewTargetPath(reviewTarget)}/comments`, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
-    resolveReviewComment: (runId, commentId, resolved) =>
+    resolveReviewComment: (reviewTarget, commentId, resolved) =>
       request(
         target,
-        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}`,
+        `${reviewTargetPath(reviewTarget)}/comments/${encodeURIComponent(commentId)}`,
         { method: 'PATCH', body: JSON.stringify({ resolved }) }
       ),
-    replyReviewComment: (runId, commentId, body) =>
+    replyReviewComment: (reviewTarget, commentId, body) =>
       request(
         target,
-        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}/reply`,
+        `${reviewTargetPath(reviewTarget)}/comments/${encodeURIComponent(commentId)}/reply`,
         { method: 'POST', body: JSON.stringify({ body }) }
       ),
     updateConfig: (patch) =>
@@ -1898,6 +1930,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, '/api/linear/import', { method: 'POST' }),
     submitReview: (runId, verdict, body) =>
       request(target, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {
+        method: 'POST',
+        body: JSON.stringify({ verdict, body }),
+      }),
+    pushPrReview: (number, verdict, body) =>
+      request(target, `/api/prs/${number}/review-submit`, {
         method: 'POST',
         body: JSON.stringify({ verdict, body }),
       }),

@@ -78,6 +78,7 @@ export type {
   RepoPr,
   ReviewComment,
   ReviewReply,
+  ReviewTarget,
   ReviewVerdict,
   RunClaim,
   RunDetail,

@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -44,9 +44,30 @@ interface StubResults {
   apiResult?: CommandResult;
   diffResult?: CommandResult;
   filesResult?: CommandResult;
+  // `gh api --paginate --slurp .../pulls/N/comments` (GET) — the comment
+  // mirror's pull half, read by PrManager.syncPrComments.
+  commentsListResult?: CommandResult;
+  // `gh api -X POST .../pulls/N/reviews` — the batch push,
+  // PrManager.pushPrReview. Captured payloads land in `postedReviewPayloads`
+  // below, read from the scratch file pushPrReview writes and cleans up.
+  pushReviewResult?: CommandResult;
+  // `gh api -X POST .../pulls/N/comments` (POST, with in_reply_to) — the
+  // reply endpoint, PrManager.replyToComment.
+  replyResult?: CommandResult;
+  // `gh api graphql` — both the reviewThreads query (syncReviewThreads) and
+  // the resolve/unresolveReviewThread mutation (resolveComment), routed on
+  // whether the query text starts with `mutation`, same as pr.test.ts.
+  reviewThreadsResult?: CommandResult;
+  resolveThreadResult?: CommandResult;
 }
 
-function stubRunner(results: StubResults) {
+// Captures the JSON body pushPrReview writes to its scratch file, read at
+// call time (the file is deleted before the call returns) — same "capture
+// now, assert later" reasoning as pr.test.ts's own StubRunner.
+function stubRunner(
+  results: StubResults,
+  postedReviewPayloads: Record<string, unknown>[] = []
+) {
   return async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
     if (cmd[0] === 'gh' && cmd[1] === '--version') {
       return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
@@ -110,6 +131,78 @@ function stubRunner(results: StubResults) {
     ) {
       return results.filesResult ?? { ok: true, stdout: '[]', stderr: '' };
     }
+    // pushPrReview's POST — matched on argv content (its `--input <path>`
+    // trails the endpoint, so the endpoint is not the last arg) and placed
+    // ahead of the generic GET-shaped branches below, or it would be
+    // swallowed by them. Mirrors pr.test.ts's StubRunner exactly.
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      cmd.includes('POST') &&
+      cmd.some((arg) => /\/pulls\/\d+\/reviews$/.test(arg))
+    ) {
+      const inputIdx = cmd.indexOf('--input');
+      const payloadPath = inputIdx >= 0 ? cmd[inputIdx + 1] : undefined;
+      if (payloadPath !== undefined) {
+        postedReviewPayloads.push(
+          JSON.parse(readFileSync(payloadPath, 'utf8')) as Record<
+            string,
+            unknown
+          >
+        );
+      }
+      return (
+        results.pushReviewResult ?? {
+          ok: false,
+          stdout: '',
+          stderr: 'no pushReviewResult stubbed',
+        }
+      );
+    }
+    // replyToComment's POST — also argv-matched, ahead of the generic
+    // '/pulls/N/comments$' GET branch below, which would otherwise answer
+    // it with the GET-shaped comments list instead of one created comment.
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      cmd.includes('POST') &&
+      cmd.some((arg) => /\/pulls\/\d+\/comments$/.test(arg))
+    ) {
+      return (
+        results.replyResult ?? {
+          ok: false,
+          stdout: '',
+          stderr: 'no replyResult stubbed',
+        }
+      );
+    }
+    // syncReviewThreads' query and resolveComment's mutation both hit `gh
+    // api graphql`; distinguished by whether the query text starts with
+    // the `mutation` keyword, same as pr.test.ts's StubRunner.
+    if (cmd[0] === 'gh' && cmd[1] === 'api' && cmd[2] === 'graphql') {
+      const queryArg = cmd.find((arg) => arg.startsWith('query='));
+      const query = queryArg?.slice('query='.length).trimStart() ?? '';
+      return query.startsWith('mutation')
+        ? (results.resolveThreadResult ?? {
+            ok: false,
+            stdout: '',
+            stderr: 'no resolveThreadResult stubbed',
+          })
+        : (results.reviewThreadsResult ?? {
+            ok: false,
+            stdout: '',
+            stderr: 'no reviewThreadsResult stubbed',
+          });
+    }
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      cmd.some((arg) => /\/pulls\/\d+\/comments$/.test(arg))
+    ) {
+      return (
+        results.commentsListResult ?? { ok: true, stdout: '[]', stderr: '' }
+      );
+    }
     if (cmd[0] === 'gh' && cmd[1] === 'api') {
       return results.apiResult ?? { ok: true, stdout: '[]', stderr: '' };
     }
@@ -155,6 +248,93 @@ function viewResultForRepoPr(overrides: Record<string, unknown> = {}) {
     stderr: '',
   };
 }
+
+// A second fixed repo PR, distinct from REPO_PR, for the
+// /api/prs/:number/comments* describe blocks below — carries `headRefOid`,
+// which those tests need (it becomes `commit_id` on a pushed review) and
+// REPO_PR's own fixture omits.
+const COMMENT_PR = {
+  number: 42,
+  title: 'Line comments live here',
+  url: 'https://github.com/example/repo/pull/42',
+  headRefName: 'feature/comment-mirror',
+  headRefOid: 'deadbeef42',
+  author: { login: 'someone' },
+  isDraft: false,
+  updatedAt: '2026-07-22T00:00:00Z',
+};
+
+function listResultWithCommentPr(): CommandResult {
+  return { ok: true, stdout: JSON.stringify([COMMENT_PR]), stderr: '' };
+}
+
+// One GitHub REST review comment on COMMENT_PR, shaped per the spec's
+// verified payload facts (docs/superpowers/specs/2026-08-04-review-github-
+// sync-design.md) — `diff_hunk`'s last line keeps its `+` prefix, which
+// mapGitHubComment strips into `anchorText`.
+function rawGitHubComment(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 501,
+    node_id: 'PRRC_1',
+    path: 'src/a.ts',
+    line: 3,
+    original_line: 3,
+    start_line: null,
+    diff_hunk: '@@ -1,3 +1,4 @@\n context\n+const x = 1;',
+    body: 'why one?',
+    user: { login: 'teammate' },
+    created_at: '2026-08-01T00:00:00Z',
+    updated_at: '2026-08-01T00:00:00Z',
+    side: 'RIGHT',
+    subject_type: 'line',
+    ...overrides,
+  };
+}
+
+function commentsListResultFor(
+  ...comments: Record<string, unknown>[]
+): CommandResult {
+  return { ok: true, stdout: JSON.stringify(comments), stderr: '' };
+}
+
+// The reviewThreads GraphQL response syncReviewThreads reads — one thread
+// whose only comment has `databaseId` 501, matching rawGitHubComment()'s
+// default id, so the merged comment comes back tagged with a thread id.
+function reviewThreadsResultFor(databaseId: number): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                {
+                  id: 'PRRT_thread1',
+                  comments: { nodes: [{ databaseId }] },
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+    stderr: '',
+  };
+}
+
+const RESOLVE_THREAD_RESULT: CommandResult = {
+  ok: true,
+  stdout: JSON.stringify({
+    data: {
+      resolveReviewThread: { thread: { id: 'PRRT_thread1' } },
+      unresolveReviewThread: { thread: { id: 'PRRT_thread1' } },
+    },
+  }),
+  stderr: '',
+};
 
 let fakeHome: string;
 let root: string;
@@ -556,6 +736,537 @@ describe('GET /api/prs/:number/diff', () => {
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
     const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/diff`);
+    expect(res.status).toBe(409);
+  });
+});
+
+// The comment mirror's HTTP surface (Task 6): the PR-keyed twin of the
+// /api/runs/:id/comments verbs, plus the review-submit batch push. Every
+// route resolves `number` through PrManager itself (never a caller-supplied
+// URL) before any `gh` call — see requirePrNumberParam and each PrManager
+// method's own resolvePrForComments.
+describe('GET /api/prs/:number/comments', () => {
+  it('pulls GitHub comments, merges them, and tags each with its thread id', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({
+        listResult: listResultWithCommentPr(),
+        commentsListResult: commentsListResultFor(rawGitHubComment()),
+        reviewThreadsResult: reviewThreadsResultFor(501),
+      }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/${COMMENT_PR.number}/comments`);
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as Array<{
+      file: string;
+      body: string;
+      anchorText: string;
+      githubId: number;
+      githubThreadId: string;
+    }>;
+    expect(body).toHaveLength(1);
+    expect(body[0].file).toBe('src/a.ts');
+    expect(body[0].body).toBe('why one?');
+    // The diff_hunk's last line keeps its `+` prefix — this is the one
+    // spec-verified trap the whole mapping rests on.
+    expect(body[0].anchorText).toBe('const x = 1;');
+    expect(body[0].githubId).toBe(501);
+    expect(body[0].githubThreadId).toBe('PRRT_thread1');
+  });
+
+  it('404s a PR number that is not among the repo’s open PRs', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/999/comments`);
+    expect(res.status).toBe(404);
+  });
+
+  it('400s a malformed PR number, without shelling out at all', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/not-a-number/comments`);
+    expect(res.status).toBe(400);
+  });
+
+  it('409s when the project lacks the pr capability', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/${COMMENT_PR.number}/comments`);
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /api/prs/:number/comments', () => {
+  it('adds a pending local draft — no gh call, unlike GET', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/b.ts',
+          line: 5,
+          anchorText: 'const y = 2;',
+          body: 'why two?',
+        }),
+      }
+    );
+    expect(res.status).toBe(201);
+    const body = (await json(res)) as {
+      file: string;
+      body: string;
+      pending: boolean;
+    };
+    expect(body.file).toBe('src/b.ts');
+    expect(body.body).toBe('why two?');
+    expect(body.pending).toBe(true);
+  });
+
+  it('400s a missing body', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ file: 'src/b.ts', line: 5, body: '' }),
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('400s a malformed PR number', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/not-a-number/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        file: 'src/b.ts',
+        line: 5,
+        anchorText: '',
+        body: 'why two?',
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('PATCH /api/prs/:number/comments/:commentId', () => {
+  it('resolves via GraphQL once GET has synced the thread id', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({
+        listResult: listResultWithCommentPr(),
+        commentsListResult: commentsListResultFor(rawGitHubComment()),
+        reviewThreadsResult: reviewThreadsResultFor(501),
+        resolveThreadResult: RESOLVE_THREAD_RESULT,
+      }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const listRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`
+    );
+    const [synced] = (await json(listRes)) as Array<{ id: string }>;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments/${synced.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ resolved: true }),
+      }
+    );
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as { resolved: boolean };
+    expect(body.resolved).toBe(true);
+  });
+
+  it('409s a comment GET never tagged with a thread id', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/a.ts',
+          line: 3,
+          anchorText: '',
+          body: 'draft',
+        }),
+      }
+    );
+    const draft = (await json(addRes)) as { id: string };
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments/${draft.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ resolved: true }),
+      }
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it('404s an unknown comment id', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments/nope`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ resolved: true }),
+      }
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('400s a non-boolean resolved value', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments/whatever`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ resolved: 'yes' }),
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/prs/:number/comments/:commentId/reply', () => {
+  it('posts to GitHub via in_reply_to and appends the reply locally', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({
+        listResult: listResultWithCommentPr(),
+        commentsListResult: commentsListResultFor(rawGitHubComment()),
+        reviewThreadsResult: reviewThreadsResultFor(501),
+        replyResult: {
+          ok: true,
+          stdout: JSON.stringify({
+            id: 901,
+            body: 'thanks for the catch',
+            user: { login: 'teammate' },
+            created_at: '2026-08-05T00:00:00Z',
+          }),
+          stderr: '',
+        },
+      }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const listRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`
+    );
+    const [synced] = (await json(listRes)) as Array<{ id: string }>;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments/${synced.id}/reply`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'thanks for the catch' }),
+      }
+    );
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as { replies: Array<{ body: string }> };
+    expect(body.replies).toHaveLength(1);
+    expect(body.replies[0].body).toBe('thanks for the catch');
+  });
+
+  it('409s a comment that was never pushed to GitHub', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/a.ts',
+          line: 3,
+          anchorText: '',
+          body: 'draft',
+        }),
+      }
+    );
+    const draft = (await json(addRes)) as { id: string };
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments/${draft.id}/reply`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'ok' }),
+      }
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it('400s an empty reply body', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments/whatever/reply`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: '' }),
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+// The batch push (Task 6's named trap): deliberately NOT at
+// /api/prs/:number/review, which stays reviewRepoPr's one-shot `gh pr
+// review` verdict (tested above) — reusing that path here would fire both
+// on one submit. See submitPrReview's own doc comment for the full
+// reasoning.
+describe('POST /api/prs/:number/review-submit', () => {
+  it('pushes every pending comment as one GitHub review', async () => {
+    const postedReviewPayloads: Record<string, unknown>[] = [];
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner(
+        {
+          listResult: listResultWithCommentPr(),
+          pushReviewResult: { ok: true, stdout: '{}', stderr: '' },
+          commentsListResult: commentsListResultFor(),
+        },
+        postedReviewPayloads
+      ),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/a.ts',
+          line: 3,
+          anchorText: 'const x = 1;',
+          body: 'why one?',
+        }),
+      }
+    );
+    expect(addRes.status).toBe(201);
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'approve', body: 'lgtm' }),
+      }
+    );
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as { pushed: number };
+    expect(body.pushed).toBe(1);
+    expect(postedReviewPayloads).toHaveLength(1);
+    expect(postedReviewPayloads[0]).toMatchObject({
+      commit_id: COMMENT_PR.headRefOid,
+      event: 'APPROVE',
+      body: 'lgtm',
+    });
+    expect(postedReviewPayloads[0].comments).toHaveLength(1);
+  });
+
+  it('400s an invalid verdict', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'bogus', body: '' }),
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('400s a request-changes review with no body', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'request-changes', body: '' }),
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  // The trap named in the task brief: GitHub 422s a `comment` review with
+  // both an empty body and an empty comments array. This must never reach
+  // `gh` at all — it is a clean 400 instead of that raw error string.
+  it('400s a comment verdict with no body and nothing pending', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'comment', body: '' }),
+      }
+    );
+    expect(res.status).toBe(400);
+    const body = (await json(res)) as { error: string };
+    expect(body.error).toMatch(/nothing to submit/);
+  });
+
+  it('404s a PR number that is not among the repo’s open PRs', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/999/review-submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ verdict: 'approve', body: '' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('409s when the project lacks the pr capability', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'approve', body: '' }),
+      }
+    );
     expect(res.status).toBe(409);
   });
 });
