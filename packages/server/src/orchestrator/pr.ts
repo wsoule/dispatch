@@ -287,7 +287,7 @@ export interface RepoPr {
 // return) can address the right repo/PR. Returns null for anything that isn't
 // a recognizable PR URL, so a caller degrades to "no line comments" rather
 // than throwing on a malformed stored URL.
-function parsePrUrl(
+export function parsePrUrl(
   url: string
 ): { owner: string; repo: string; number: number } | null {
   const match = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
