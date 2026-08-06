@@ -115,6 +115,68 @@ describe('ReviewThread — the Apply affordance', () => {
   });
 });
 
+describe('ReviewThread — seeding Apply state from a failed `Apply now`', () => {
+  // `Apply now` in the composer can fail its apply step after the comment was already saved
+  // (see `submitAndApplyNow` in suggestionRange.ts). `PierreReviewDiff` reports that failure
+  // here so the newly rendered thread shows the exact same message/disable state the reviewer
+  // would have gotten by clicking this same Apply button themselves — the composer is already
+  // gone by the time the failure is known, so this thread is the only place left to show it.
+  it('shows the same disabled+message state a live anchor-drifted failure would', () => {
+    render(
+      <ReviewThread
+        comment={comment({ suggestion: 'const b = 2;' })}
+        anchor="exact"
+        onResolve={() => {}}
+        onReply={() => {}}
+        onApply={() => Promise.resolve()}
+        initialApplyError={{
+          message: 'The code here has changed…',
+          disable: true,
+        }}
+      />
+    );
+    expect(screen.getByText('The code here has changed…')).toBeDefined();
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Apply' }).disabled
+    ).toBe(true);
+  });
+
+  it('leaves the button clickable when the seeded failure was not anchor-drifted', () => {
+    render(
+      <ReviewThread
+        comment={comment({ suggestion: 'const b = 2;' })}
+        anchor="exact"
+        onResolve={() => {}}
+        onReply={() => {}}
+        onApply={() => Promise.resolve()}
+        initialApplyError={{
+          message: 'An agent is working in this worktree…',
+          disable: false,
+        }}
+      />
+    );
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Apply' }).disabled
+    ).toBe(false);
+  });
+
+  it('starts idle (no seeded failure) when nothing was reported', () => {
+    render(
+      <ReviewThread
+        comment={comment({ suggestion: 'const b = 2;' })}
+        anchor="exact"
+        onResolve={() => {}}
+        onReply={() => {}}
+        onApply={() => Promise.resolve()}
+      />
+    );
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Apply' }).disabled
+    ).toBe(false);
+    expect(screen.queryByText(/agent is working/)).toBeNull();
+  });
+});
+
 describe('ReviewThread — the existing thread behaviour', () => {
   it('still shows the resolve toggle and calls onResolve', () => {
     let resolved: boolean | undefined;
@@ -158,8 +220,9 @@ describe('ReviewThread — the existing thread behaviour', () => {
 function renderComposer(
   props: Partial<Parameters<typeof ReviewComposer>[0]> = {}
 ) {
-  const onSubmit = props.onSubmit ?? (() => {});
+  const onSubmit = props.onSubmit ?? (() => Promise.resolve(comment()));
   const onCancel = props.onCancel ?? (() => {});
+  const onSaved = props.onSaved ?? (() => {});
   return render(
     <EditProvider createEditor={createReviewEditor}>
       <ReviewComposer
@@ -168,6 +231,7 @@ function renderComposer(
         fileContents={null}
         onSubmit={onSubmit}
         onCancel={onCancel}
+        onSaved={onSaved}
         {...props}
       />
     </EditProvider>
@@ -192,6 +256,7 @@ describe('ReviewComposer — the suggestion editor', () => {
       fileContents: 'a\nb\nc\n',
       onSubmit: (body, suggestion) => {
         submitted = { body, suggestion };
+        return Promise.resolve(comment());
       },
     });
     fireEvent.change(
@@ -212,6 +277,7 @@ describe('ReviewComposer — the suggestion editor', () => {
     renderComposer({
       onSubmit: () => {
         calls += 1;
+        return Promise.resolve(comment());
       },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
@@ -237,5 +303,85 @@ describe('ReviewComposer — the suggestion editor', () => {
   it('shows the range in its header when a startLine is given', () => {
     renderComposer({ startLine: 4, line: 7 });
     expect(screen.getByText('Comment on lines 4–7')).toBeDefined();
+  });
+
+  it('calls onSaved once the save resolves, closing the composer', async () => {
+    let saved = false;
+    renderComposer({
+      onSubmit: () => Promise.resolve(comment()),
+      onSaved: () => {
+        saved = true;
+      },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        'What should change? This goes back with the work.'
+      ),
+      { target: { value: 'looks good' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    // Waits for `busy` to clear too (the `finally` after the resolved save), so no state
+    // update from this click is still pending once the test ends.
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: 'Add comment' })
+          .disabled
+      ).toBe(false)
+    );
+    expect(saved).toBe(true);
+  });
+
+  it('does not call onSaved when the save itself fails — the draft stays put', async () => {
+    let saved = false;
+    let rejected = false;
+    renderComposer({
+      onSubmit: () => {
+        rejected = true;
+        return Promise.reject(new Error('network down'));
+      },
+      onSaved: () => {
+        saved = true;
+      },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        'What should change? This goes back with the work.'
+      ),
+      { target: { value: 'looks good' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    // Waits for the button's own `busy` state to clear (the `finally` after the rejection),
+    // rather than just `rejected`, so no state update from this click is still pending once
+    // the assertion below runs.
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: 'Add comment' })
+          .disabled
+      ).toBe(false)
+    );
+    expect(rejected).toBe(true);
+    expect(saved).toBe(false);
+  });
+});
+
+describe('ReviewComposer — `Apply now`', () => {
+  // Pierre's real suggestion editor cannot be driven under `bun test` (see
+  // `submitAndApplyNow`'s doc comment in suggestionRange.ts — its text measurement needs a
+  // canvas context happy-dom does not implement), so these only cover the reachable state:
+  // an untouched editor, where the suggestion is by definition still equal to its seed. The
+  // save-then-apply orchestration itself (id threading, ordering, and the no-rollback-on-
+  // failure guarantee) is pinned directly in suggestionRange.test.ts's `submitAndApplyNow`
+  // tests instead.
+  it('offers no Apply now button when the suggestion still matches its seed', () => {
+    renderComposer({
+      fileContents: 'a\nb\nc\n',
+      onApply: () => Promise.resolve(),
+    });
+    expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull();
+  });
+
+  it('offers no Apply now button when there is nowhere to apply into', () => {
+    renderComposer({ fileContents: 'a\nb\nc\n' });
+    expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull();
   });
 });

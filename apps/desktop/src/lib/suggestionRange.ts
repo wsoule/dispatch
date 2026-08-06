@@ -71,3 +71,51 @@ export function resolveApplySuggestionFailure(
   }
   return { message: 'Could not apply this suggestion.', disable: false };
 }
+
+/**
+ * Whether the composer's `Apply now` button has anything to do: a real edit (not just the
+ * unchanged seed — see `suggestionForSubmit`) AND somewhere to apply it (the caller passes
+ * whether an `onApply` function was actually supplied, mirroring how `ReviewThread`'s own Apply
+ * button is withheld rather than shown disabled when there is no run to apply into).
+ */
+export function canApplyNow(
+  seed: string,
+  edited: string,
+  hasApplyTarget: boolean
+): boolean {
+  return hasApplyTarget && suggestionForSubmit(seed, edited) !== undefined;
+}
+
+/**
+ * `Apply now`'s save-then-apply orchestration: save the comment, then immediately apply its
+ * suggestion through the exact same `apply` function `ReviewThread`'s own Apply button uses
+ * (callers pass that bound function in, including its `invalidate` call — this never
+ * duplicates that logic).
+ *
+ * A failed apply must never look like a failed save, and must never undo it: the reviewer's
+ * writing is the thing that must never be lost, and the commit stays retryable from the
+ * thread's own Apply button once it renders. So this only ever *reports* an apply failure via
+ * `onApplyNowFailed` — it does not reject and does not retry — and always resolves with the
+ * comment `save` produced. It DOES reject if `save` itself fails, since then nothing was
+ * created and there is nothing for `apply` or `onApplyNowFailed` to do.
+ *
+ * Kept here, pulled out of `ReviewComposer`, because the ordering and never-roll-back guarantees
+ * are exactly the kind of logic worth pinning with a direct unit test rather than a DOM
+ * interaction — and Pierre's real editor cannot be driven under `bun test` at all: its text
+ * measurement calls `canvas.getContext('2d')`, which happy-dom does not implement, so there is
+ * no way to simulate the keystroke that would produce a changed suggestion to click `Apply now`
+ * with in a render test.
+ */
+export async function submitAndApplyNow<T extends { id: string }>(
+  save: () => Promise<T>,
+  apply: (commentId: string) => Promise<void>,
+  onApplyNowFailed: (commentId: string, outcome: ApplySuggestionOutcome) => void
+): Promise<T> {
+  const created = await save();
+  try {
+    await apply(created.id);
+  } catch (err) {
+    onApplyNowFailed(created.id, resolveApplySuggestionFailure(err));
+  }
+  return created;
+}

@@ -4,9 +4,12 @@ import { CodeView } from '@pierre/diffs/react';
 import { Check, CornerDownRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
+import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
 import {
+  canApplyNow,
   resolveApplySuggestionFailure,
   seedFromRange,
+  submitAndApplyNow,
   suggestionForSubmit,
 } from '@/lib/suggestionRange';
 import { cn } from '@/lib/utils';
@@ -22,6 +25,14 @@ interface ReviewThreadProps {
    * withheld entirely rather than shown disabled, since there is nothing the reviewer could do
    * about it here. */
   onApply?: () => Promise<void>;
+  /**
+   * Seeds this thread's Apply state as already-failed — used only for a comment that was just
+   * created via the composer's `Apply now`, whose own apply attempt failed *after* the save
+   * already succeeded. By the time that failure is known the composer is gone (the save closed
+   * it), so this is the only surface left to show it, and it shows the exact same
+   * message/disable state a live click here would have produced.
+   */
+  initialApplyError?: ApplySuggestionOutcome;
 }
 
 /** Where the thread's Apply button stands: never attempted, in flight, or failed with a reason
@@ -44,11 +55,18 @@ export function ReviewThread({
   onResolve,
   onReply,
   onApply,
+  initialApplyError,
 }: ReviewThreadProps) {
   const [reply, setReply] = useState('');
-  const [applyState, setApplyState] = useState<ApplyState>({
-    status: 'idle',
-  });
+  const [applyState, setApplyState] = useState<ApplyState>(() =>
+    initialApplyError === undefined
+      ? { status: 'idle' }
+      : {
+          status: 'failed',
+          message: initialApplyError.message,
+          disabled: initialApplyError.disable,
+        }
+  );
 
   // Fires the apply and turns any rejection into the sentence + disable decision
   // `resolveApplySuggestionFailure` makes — see its own doc comment for why only
@@ -176,8 +194,27 @@ interface ComposerProps {
    * to fetch from) — the suggestion editor stays withheld rather than mounting `edit: true` on
    * an item with no real contents, the same landmine `buildItems`'s load gate exists for. */
   fileContents: string | null;
-  onSubmit: (body: string, suggestion?: string) => void;
+  /** Saves the comment, resolving with the created record. Widened from a fire-and-forget
+   * `void` return so `Apply now` can act on the new comment's id — see `submitAndApplyNow`. */
+  onSubmit: (body: string, suggestion?: string) => Promise<ReviewComment>;
+  /** Called once `onSubmit` resolves — for both buttons, the moment the comment is durably
+   * saved — so the parent can close this composer. Kept separate from `Apply now`'s own apply
+   * attempt settling: a failed apply after a successful save must not keep the just-written
+   * comment (or the composer) hostage, so this fires on the save alone. */
+  onSaved: () => void;
   onCancel: () => void;
+  /** Applies a just-created comment's suggestion — the exact same bound function
+   * `PierreReviewDiff` wires to every `ReviewThread`'s Apply button (its `invalidate` call
+   * included), reused here rather than duplicated. Omitted wherever that is (no run to apply
+   * into), which withholds the `Apply now` button entirely, same as `ReviewThread`'s own Apply. */
+  onApply?: (commentId: string) => Promise<void>;
+  /** Reports a failed `Apply now` apply step (after its save already succeeded) so the parent
+   * can seed the resulting `ReviewThread`'s Apply button with the same failure — see
+   * `ReviewThread`'s `initialApplyError`. */
+  onApplyNowFailed?: (
+    commentId: string,
+    outcome: ApplySuggestionOutcome
+  ) => void;
 }
 
 /**
@@ -189,6 +226,11 @@ interface ComposerProps {
  * That nested `CodeView` relies on an ancestor `EditProvider` to resolve its editor factory
  * (`PierreReviewDiff` already supplies one around the whole diff); it does not create its own,
  * so standalone render tests must wrap this component in one themselves.
+ *
+ * Offers two ways to submit once there is a real suggestion: `Suggest` just saves the comment;
+ * `Apply now` saves it and immediately applies it through `submitAndApplyNow` — see that
+ * function's own doc comment for why the save-then-apply orchestration lives there rather than
+ * inline here.
  */
 export function ReviewComposer({
   line,
@@ -196,9 +238,13 @@ export function ReviewComposer({
   file,
   fileContents,
   onSubmit,
+  onSaved,
   onCancel,
+  onApply,
+  onApplyNowFailed,
 }: ComposerProps) {
   const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
   const start = startLine ?? line;
   const seed = useMemo(
     () =>
@@ -223,10 +269,43 @@ export function ReviewComposer({
     };
   }, [fileContents, file, seed, start, line]);
 
-  const submit = () => {
+  const suggestion = suggestionForSubmit(seed, suggestionText);
+
+  // Saves the comment. Both buttons reach here; `Apply now` chains an apply attempt onto it
+  // (see `handleApplyNow` below). A save failure leaves the composer open with the draft
+  // intact — `onSaved` is only called once `onSubmit` actually resolves.
+  const handleSuggest = () => {
     const trimmed = body.trim();
-    if (trimmed === '') return;
-    onSubmit(trimmed, suggestionForSubmit(seed, suggestionText));
+    if (trimmed === '' || busy) return;
+    setBusy(true);
+    onSubmit(trimmed, suggestion)
+      .then(() => onSaved())
+      .catch(() => {
+        // Nothing was created — the draft stays in the box for the reviewer to retry.
+      })
+      .finally(() => setBusy(false));
+  };
+
+  // `Apply now`: save, then immediately apply via `submitAndApplyNow`, which guarantees the
+  // saved comment is never rolled back or hidden just because the apply step failed. Closes
+  // the composer as soon as the SAVE resolves (matching `handleSuggest`) — not once apply
+  // settles — so a slow or failing apply never leaves the composer, or the comment it already
+  // wrote, stuck in limbo.
+  const handleApplyNow = () => {
+    const trimmed = body.trim();
+    if (trimmed === '' || busy || onApply === undefined) return;
+    if (suggestion === undefined) return;
+    setBusy(true);
+    submitAndApplyNow(
+      () => onSubmit(trimmed, suggestion),
+      onApply,
+      (commentId, outcome) => onApplyNowFailed?.(commentId, outcome)
+    )
+      .then(() => onSaved())
+      .catch(() => {
+        // The save itself failed — same as `handleSuggest`, nothing was created to apply.
+      })
+      .finally(() => setBusy(false));
   };
 
   return (
@@ -243,7 +322,7 @@ export function ReviewComposer({
         onKeyDown={(e) => {
           if (e.key === 'Escape') onCancel();
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && body.trim()) {
-            submit();
+            handleSuggest();
           }
         }}
         placeholder="What should change? This goes back with the work."
@@ -267,12 +346,22 @@ export function ReviewComposer({
       <div className="mt-1.5 flex gap-2">
         <button
           type="button"
-          disabled={body.trim() === ''}
-          onClick={submit}
+          disabled={body.trim() === '' || busy}
+          onClick={handleSuggest}
           className="bg-accent text-accent-foreground rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
         >
-          {suggestionText !== seed ? 'Suggest' : 'Add comment'}
+          {suggestion !== undefined ? 'Suggest' : 'Add comment'}
         </button>
+        {canApplyNow(seed, suggestionText, onApply !== undefined) && (
+          <button
+            type="button"
+            disabled={body.trim() === '' || busy}
+            onClick={handleApplyNow}
+            className="shadow-hairline rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
+          >
+            Apply now
+          </button>
+        )}
         <button
           type="button"
           onClick={onCancel}

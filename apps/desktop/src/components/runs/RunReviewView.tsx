@@ -58,6 +58,7 @@ interface RunReviewViewProps {
   /** Line-level review comments on this run, and the actions over them. Optional so the older
    * call sites that never had them keep compiling with the panel hidden. */
   reviewComments?: import('@dispatch/client').ReviewComment[];
+  /** Resolves with the created comment — see `PierreReviewDiff`'s `onAdd` for why. */
   onAddComment?: (input: {
     file: string;
     line: number;
@@ -66,7 +67,7 @@ interface RunReviewViewProps {
     body: string;
     /** Replacement text for the commented lines. Omitted for a prose-only comment. */
     suggestion?: string;
-  }) => Promise<void>;
+  }) => Promise<import('@dispatch/client').ReviewComment>;
   onResolveComment?: (commentId: string, resolved: boolean) => Promise<void>;
   onReplyComment?: (commentId: string, body: string) => Promise<void>;
   /** Commits a comment's suggestion onto the run branch — see `PierreReviewDiff`'s `onApply`. */

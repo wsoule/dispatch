@@ -25,6 +25,7 @@ import {
   resolveEditFailure,
 } from '@/lib/reviewDiffItems';
 import { isTerminalRunState } from '@/lib/runState';
+import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
 
 interface PierreReviewDiffProps {
   /** Backs the contents loader that fills in what a patch's own hunks don't carry — omitted
@@ -43,6 +44,10 @@ interface PierreReviewDiffProps {
   /**
    * Where a new line comment goes. Omit it when there is nowhere to put one
    * (a GitHub PR) and the gutter's "+" is withheld rather than left dead.
+   *
+   * Resolves with the created comment, not `void` — the composer's `Apply now` action needs
+   * the new comment's id back to apply its suggestion immediately, through the same path the
+   * thread's own Apply button uses.
    */
   onAdd?: (input: {
     file: string;
@@ -53,7 +58,7 @@ interface PierreReviewDiffProps {
     /** Replacement text for the commented lines, when the reviewer wrote one in the
      * composer's suggestion editor. */
     suggestion?: string;
-  }) => Promise<void>;
+  }) => Promise<ReviewComment>;
   onResolve: (commentId: string, resolved: boolean) => Promise<void>;
   onReply: (commentId: string, body: string) => Promise<void>;
   /** Commits a comment's suggestion onto the run branch. Omitted the same way `onAdd` is — a
@@ -112,6 +117,15 @@ export function PierreReviewDiff({
   // composer's suggestion editor seeds from. `null` while that fetch is in flight, which keeps
   // the suggestion editor withheld (see `ComposerProps.fileContents`'s own doc comment).
   const [composerContents, setComposerContents] = useState<string | null>(null);
+  // A comment whose `Apply now` save succeeded but whose immediate apply attempt failed — see
+  // `submitAndApplyNow`. Keyed by comment id, read once by the `ReviewThread` that eventually
+  // renders for it (via `initialApplyError`) so the failure shows there with the same
+  // message/disable state a live click on that thread's own Apply button would have produced.
+  // Never cleared: `ReviewThread` only reads its seed once on mount, so a stale entry for a
+  // comment that no longer exists is simply never looked up again.
+  const [applyNowFailures, setApplyNowFailures] = useState<
+    Map<string, ApplySuggestionOutcome>
+  >(new Map());
   // The live line selection. Pierre owns the drag; this only reads it, so that clicking the
   // gutter + on a selected range comments on the whole range rather than the one line hovered.
   const [selection, setSelection] = useState<{
@@ -148,6 +162,29 @@ export function PierreReviewDiff({
   const diffOptions = useMemo(
     () => ({ ...toDiffRenderOptions(diffDisplay), loadDiffFiles }),
     [diffDisplay, loadDiffFiles]
+  );
+
+  // The one place a suggestion actually gets applied — shared by every `ReviewThread`'s own
+  // Apply button AND the composer's `Apply now`, so there is exactly one call site to keep the
+  // cache-eviction step correct rather than two that could drift apart. Rejects outright when
+  // there is nowhere to apply into, the same "withhold, don't half-wire" rule `onApply` being
+  // absent already enforces everywhere else.
+  const applyAndInvalidate = useCallback(
+    (commentId: string, file: string): Promise<void> => {
+      if (onApply === undefined) {
+        return Promise.reject(
+          new Error('no run to apply this suggestion into')
+        );
+      }
+      return onApply(commentId).then(() => {
+        // The suggestion just landed on disk, changing both this file's contents and its sha —
+        // without this, the next edit (or suggestion seeded from a fresh pencil click) would
+        // read the pre-apply cache and send a stale precondition, same as `handleEditComplete`'s
+        // own success path below.
+        invalidate(file);
+      });
+    },
+    [onApply, invalidate]
   );
 
   const files = useMemo(() => {
@@ -195,28 +232,40 @@ export function PierreReviewDiff({
       const annMeta = annotation.metadata;
       if (annMeta === undefined) return null;
       if (annMeta.kind === 'composer') {
+        const closeComposer = () => {
+          setComposing(null);
+          setComposerContents(null);
+        };
         return (
           <ReviewComposer
             line={composing?.line ?? 0}
             startLine={annMeta.startLine}
             file={annMeta.file}
             fileContents={composerContents}
-            onCancel={() => {
-              setComposing(null);
-              setComposerContents(null);
-            }}
-            onSubmit={(body, suggestion) => {
-              void onAdd?.({
-                file: annMeta.file,
-                line: composing?.line ?? 0,
-                startLine: annMeta.startLine,
-                anchorText: annMeta.anchorText,
-                body,
-                suggestion,
-              });
-              setComposing(null);
-              setComposerContents(null);
-            }}
+            onCancel={closeComposer}
+            onSaved={closeComposer}
+            onSubmit={(body, suggestion) =>
+              onAdd === undefined
+                ? Promise.reject(new Error('nowhere to add this comment'))
+                : onAdd({
+                    file: annMeta.file,
+                    line: composing?.line ?? 0,
+                    startLine: annMeta.startLine,
+                    anchorText: annMeta.anchorText,
+                    body,
+                    suggestion,
+                  })
+            }
+            onApply={
+              onApply === undefined
+                ? undefined
+                : (commentId) => applyAndInvalidate(commentId, annMeta.file)
+            }
+            onApplyNowFailed={(commentId, outcome) =>
+              setApplyNowFailures((prev) =>
+                new Map(prev).set(commentId, outcome)
+              )
+            }
           />
         );
       }
@@ -260,16 +309,9 @@ export function PierreReviewDiff({
               onApply={
                 onApply === undefined
                   ? undefined
-                  : () =>
-                      onApply(c.id).then(() => {
-                        // The suggestion just landed on disk, changing both this file's
-                        // contents and its sha — without this, the next edit (or suggestion
-                        // seeded from a fresh pencil click) would read the pre-apply cache and
-                        // send a stale precondition, same as `handleEditComplete`'s own success
-                        // path below.
-                        invalidate(c.file);
-                      })
+                  : () => applyAndInvalidate(c.id, c.file)
               }
+              initialApplyError={applyNowFailures.get(c.id)}
             />
           ))}
         </div>
@@ -282,7 +324,8 @@ export function PierreReviewDiff({
       onResolve,
       onReply,
       onApply,
-      invalidate,
+      applyAndInvalidate,
+      applyNowFailures,
     ]
   );
 
