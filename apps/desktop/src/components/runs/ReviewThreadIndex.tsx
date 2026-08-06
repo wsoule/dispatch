@@ -85,8 +85,8 @@ export function ReviewThreadIndex({
                   comment={c}
                   anchor="exact"
                   destination={destination}
-                  onResolve={(resolved) => void onResolve(c.id, resolved)}
-                  onReply={(body) => void onReply(c.id, body)}
+                  onResolve={(resolved) => onResolve(c.id, resolved)}
+                  onReply={(body) => onReply(c.id, body)}
                 />
               </div>
             ))}

@@ -22,12 +22,19 @@ const COMPOSER_PLACEHOLDER: Record<ReviewDestination, string> = {
   github: 'What should change? This publishes with your review.',
 };
 
+// The third reply state, shown in place of the input on a staged GitHub
+// draft. There is no thread on GitHub to reply into until a verdict
+// publishes the note, so the box is withheld rather than left to fail.
+const STAGED_REPLY_NOTE =
+  'Staged — this note reaches GitHub when you submit your review. ' +
+  'Replying and resolving open up then.';
+
 interface ReviewThreadProps {
   comment: ReviewComment;
   /** How the anchor has fared since the comment was written. */
   anchor: 'exact' | 'moved' | 'outdated';
-  onResolve: (resolved: boolean) => void;
-  onReply: (body: string) => void;
+  onResolve: (resolved: boolean) => Promise<void>;
+  onReply: (body: string) => Promise<void>;
   destination?: ReviewDestination;
 }
 
@@ -46,6 +53,39 @@ export function ReviewThread({
   destination = 'agent',
 }: ReviewThreadProps) {
   const [reply, setReply] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // A GitHub draft exists only on local disk until a verdict publishes it, so
+  // it has neither a comment id to reply to nor a thread to resolve. Both
+  // controls are withheld instead of being offered and left to fail.
+  const staged = destination === 'github' && comment.pending;
+
+  // Clears the box only once the reply has actually landed: clearing it on
+  // keypress destroyed the reviewer's text whenever the write failed.
+  async function sendReply() {
+    const body = reply.trim();
+    if (body === '' || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onReply(body);
+      setReply('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleResolved() {
+    setError(null);
+    try {
+      await onResolve(!comment.resolved);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   return (
     <div
@@ -67,25 +107,27 @@ export function ReviewThread({
           </span>
         )}
         <span className="flex-1" />
-        <button
-          type="button"
-          onClick={() => onResolve(!comment.resolved)}
-          className={cn(
-            'text-[11px]',
-            comment.resolved
-              ? 'text-state-review'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          {comment.resolved ? (
-            <span className="inline-flex items-center gap-1">
-              <Check className="size-3" />
-              resolved
-            </span>
-          ) : (
-            'resolve'
-          )}
-        </button>
+        {!staged && (
+          <button
+            type="button"
+            onClick={() => void toggleResolved()}
+            className={cn(
+              'text-[11px]',
+              comment.resolved
+                ? 'text-state-review'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {comment.resolved ? (
+              <span className="inline-flex items-center gap-1">
+                <Check className="size-3" />
+                resolved
+              </span>
+            ) : (
+              'resolve'
+            )}
+          </button>
+        )}
       </div>
 
       <p className="mt-1.5 text-[12.5px] leading-relaxed">{comment.body}</p>
@@ -102,22 +144,30 @@ export function ReviewThread({
         </div>
       ))}
 
-      {!comment.resolved && (
-        <div className="mt-2 flex gap-2">
-          <input
-            value={reply}
-            onChange={(e) => setReply(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && reply.trim() !== '') {
-                onReply(reply.trim());
-                setReply('');
-              }
-            }}
-            placeholder={REPLY_PLACEHOLDER[destination]}
-            className="shadow-hairline min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] outline-none"
-          />
-        </div>
+      {error !== null && (
+        <p role="alert" className="text-destructive mt-1.5 text-[11.5px]">
+          {error}
+        </p>
       )}
+
+      {!comment.resolved &&
+        (staged ? (
+          <p className="text-muted-foreground mt-2 text-[11.5px]">
+            {STAGED_REPLY_NOTE}
+          </p>
+        ) : (
+          <div className="mt-2 flex gap-2">
+            <input
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void sendReply();
+              }}
+              placeholder={REPLY_PLACEHOLDER[destination]}
+              className="shadow-hairline min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] outline-none"
+            />
+          </div>
+        ))}
     </div>
   );
 }
@@ -126,7 +176,8 @@ interface ComposerProps {
   line: number;
   /** First line of a range comment; omitted for a single line. */
   startLine?: number;
-  onSubmit: (body: string) => void;
+  /** Resolves once the note is stored; the caller closes the composer then. */
+  onSubmit: (body: string) => Promise<void>;
   onCancel: () => void;
   destination?: ReviewDestination;
 }
@@ -140,6 +191,26 @@ export function ReviewComposer({
   destination = 'agent',
 }: ComposerProps) {
   const [body, setBody] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Only a successful write closes this box (the caller unmounts it), so a
+  // failed one leaves the composed note on screen with the reason beneath it
+  // rather than discarding what the reviewer just wrote.
+  async function submit() {
+    const text = body.trim();
+    if (text === '' || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onSubmit(text);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="bg-card shadow-hairline-strong my-1.5 ml-[90px] rounded-lg p-3">
       <div className="dense-label text-accent-foreground">
@@ -153,18 +224,21 @@ export function ReviewComposer({
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') onCancel();
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && body.trim()) {
-            onSubmit(body.trim());
-          }
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit();
         }}
         placeholder={COMPOSER_PLACEHOLDER[destination]}
         className="mt-1.5 min-h-[52px] w-full resize-y bg-transparent text-[12.5px] outline-none"
       />
+      {error !== null && (
+        <p role="alert" className="text-destructive text-[11.5px]">
+          {error}
+        </p>
+      )}
       <div className="mt-1.5 flex gap-2">
         <button
           type="button"
-          disabled={body.trim() === ''}
-          onClick={() => onSubmit(body.trim())}
+          disabled={busy || body.trim() === ''}
+          onClick={() => void submit()}
           className="bg-accent text-accent-foreground rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
         >
           Add comment
