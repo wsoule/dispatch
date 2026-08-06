@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
+import type { ReviewDestination } from './ReviewThread';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
 import { toDiffRenderOptions } from '@/lib/diffDisplay';
@@ -27,8 +28,8 @@ interface PierreReviewDiffProps {
   patch: string;
   comments: ReviewComment[];
   /**
-   * Where a new line comment goes. Omit it when there is nowhere to put one
-   * (a GitHub PR) and the gutter's "+" is withheld rather than left dead.
+   * Where a new line comment goes. Omit it when there is nowhere to put one,
+   * and the gutter's "+" is withheld rather than left dead.
    */
   onAdd?: (input: {
     file: string;
@@ -39,6 +40,8 @@ interface PierreReviewDiffProps {
   }) => Promise<void>;
   onResolve: (commentId: string, resolved: boolean) => Promise<void>;
   onReply: (commentId: string, body: string) => Promise<void>;
+  /** Where notes written here end up. Defaults to the run wording. */
+  destination?: ReviewDestination;
   /** Files the reviewer has ticked off — rendered collapsed, the way GitHub does. */
   viewed?: ReadonlySet<string>;
   /** Restricts rendering to one file. Omit for the whole patch in one scroller. */
@@ -70,6 +73,7 @@ export function PierreReviewDiff({
   onAdd,
   onResolve,
   onReply,
+  destination = 'agent',
   viewed,
   only,
   findings,
@@ -184,6 +188,7 @@ export function PierreReviewDiff({
           <ReviewComposer
             line={composing?.line ?? 0}
             startLine={meta.startLine}
+            destination={destination}
             onCancel={() => setComposing(null)}
             onSubmit={(body) => {
               void onAdd?.({
@@ -233,6 +238,7 @@ export function PierreReviewDiff({
               // definition where it belongs; drift against the working tree is reported by the
               // store's own anchor check.
               anchor="exact"
+              destination={destination}
               onResolve={(resolved) => void onResolve(c.id, resolved)}
               onReply={(body) => void onReply(c.id, body)}
             />
@@ -240,7 +246,7 @@ export function PierreReviewDiff({
         </div>
       );
     },
-    [composing, onAdd, onResolve, onReply]
+    [composing, destination, onAdd, onResolve, onReply]
   );
 
   const renderGutterUtility = useCallback(
