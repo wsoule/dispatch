@@ -1,7 +1,13 @@
 import { DEFAULT_FIX_LOOP, loadConfig } from '@dispatch/core';
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
 import { expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -9,7 +15,13 @@ import { dirname, join } from 'node:path';
 import { writeBoard } from '../src/board.js';
 import { actorFile, runsDir } from '../src/paths.js';
 import { FINDINGS } from '../src/records.js';
-import { RUN_STATES, TERMINAL_STATES, writeRuns } from '../src/runs.js';
+import { buildRepo } from '../src/repo.js';
+import {
+  clearRunHistory,
+  RUN_STATES,
+  TERMINAL_STATES,
+  writeRuns,
+} from '../src/runs.js';
 
 function build(): { root: string; home: string } {
   const root = mkdtempSync(join(tmpdir(), 'demo-runs-root-'));
@@ -294,12 +306,15 @@ test("the fix loop's three rounds on t-58cc03 resume twice then escalate fresh o
 
 // buildReviewQueue in apps/desktop/src/components/runs/ReviewQueue.tsx shows
 // one row per unreviewed, unarchived, terminal 'execute' run — with no
-// dedup by task. A fix loop's superseded rounds must be archived or the same
-// task would show up once per round, which is exactly the "meaningless
-// noise" the task brief warns a blanket-unset reviewedAt produces. This is a
-// trimmed copy of that file's `needsHumanLook`/`buildReviewQueue` filter
-// (apps/desktop isn't importable from here either), verifying the seeded
-// fixture never produces two rows for one task.
+// dedup by task. A fix loop's superseded rounds drop out of that queue via a
+// bare `reviewedAt` (no `reviewAction`) rather than `archivedAt` — see
+// RunSpec's own doc comment in runs.ts — so the same task doesn't show up
+// once per round, which is exactly the "meaningless noise" a blanket-unset
+// reviewedAt would produce, while every round still stays visible in the
+// default Runs view. This is a trimmed copy of that file's
+// `needsHumanLook`/`buildReviewQueue` filter (apps/desktop isn't importable
+// from here either), verifying the seeded fixture never produces two rows
+// for one task.
 function needsHumanLook(run: {
   state: string;
   reviewedAt?: string;
@@ -508,4 +523,78 @@ test('every transcript file ends with a trailing newline', () => {
     expect(readFileSync(join(dir, file), 'utf8').endsWith('\n')).toBe(true);
   }
   expect(readFileSync(actorFile(root, home), 'utf8').endsWith('\n')).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// C1: reset must actually clear a clone's prior run history, not just leave
+// writeRuns to overwrite its own known filenames on top of whatever was
+// already there.
+// ---------------------------------------------------------------------------
+
+test('clearRunHistory deletes a stray file writeRuns would never know to overwrite', () => {
+  const { root, home } = build();
+  const dir = runsDir(root, home);
+
+  // Plant a file with a name writeRuns never writes — a run killed mid-demo
+  // or a leftover `<runId>.review.json` would look exactly like this: not
+  // one of writeRuns's own filenames, so a plain re-run of writeRuns leaves
+  // it untouched.
+  const strayFile = join(dir, 'r-deadbeef.review.json');
+  writeFileSync(strayFile, '{"stray": true}\n');
+  expect(existsSync(strayFile)).toBe(true);
+  expect(existsSync(actorFile(root, home))).toBe(true);
+
+  clearRunHistory(root, home);
+
+  expect(existsSync(strayFile)).toBe(false);
+  expect(existsSync(dir)).toBe(false);
+  expect(existsSync(actorFile(root, home))).toBe(false);
+});
+
+test('clearRunHistory leaves a fresh writeRuns call with no stray survivors', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-runs-root-'));
+  const home = mkdtempSync(join(tmpdir(), 'demo-runs-home-'));
+  writeRuns(root, home, 'wsoule679');
+  const dir = runsDir(root, home);
+  const strayFile = join(dir, 'r-deadbeef.jsonl');
+  writeFileSync(strayFile, 'not a real transcript\n');
+
+  clearRunHistory(root, home);
+  writeRuns(root, home, 'wsoule679');
+
+  expect(existsSync(strayFile)).toBe(false);
+  expect(readdirSync(dir)).not.toContain('r-deadbeef.jsonl');
+});
+
+// ---------------------------------------------------------------------------
+// I4: writeReviewDiffs's real-git path (computeFixDiff, resolveRef, the
+// merge-base and --name-status parsing) is never reached by any other test
+// in this file, since `build()` above seeds against a bare mkdtempSync root
+// with no `.git` — the existsSync guard at the top of writeReviewDiffs
+// always fires. Build a real repo with buildRepo first so this test is the
+// one place that guard is actually false.
+// ---------------------------------------------------------------------------
+
+test('writeReviewDiffs computes and persists a real diff when rootDir has a real git history', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-runs-repo-'));
+  buildRepo({ root, push: false });
+  const home = mkdtempSync(join(tmpdir(), 'demo-runs-home-'));
+  writeRuns(root, home, 'wsoule679');
+
+  const dir = runsDir(root, home);
+  for (const runId of ['r-2e91aa', 'r-7f4a2b', 'r-4b91de']) {
+    const raw = readFileSync(join(dir, `${runId}.diff.json`), 'utf8');
+    const snapshot = JSON.parse(raw) as {
+      patch: string;
+      files: { path: string; status: string }[];
+    };
+    expect(typeof snapshot.patch).toBe('string');
+    expect(snapshot.patch.length).toBeGreaterThan(0);
+    expect(snapshot.patch).toContain('CartProvider.ts');
+    expect(Array.isArray(snapshot.files)).toBe(true);
+    expect(snapshot.files.length).toBeGreaterThan(0);
+    expect(snapshot.files.some((f) => f.path.includes('CartProvider.ts'))).toBe(
+      true
+    );
+  }
 });

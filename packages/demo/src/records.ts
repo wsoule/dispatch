@@ -56,7 +56,7 @@ export const FINDINGS: Finding[] = [
     detail:
       'JSON.parse(raw) is cast straight to CartLine[] with no runtime check; a corrupted session row would silently hand the client garbage. Guard sku/qty before returning.',
     file: 'src/cart/CartProvider.ts',
-    line: 12,
+    line: 15,
     ruling: null,
     round: 0,
     createdAt: ago(3, 2),

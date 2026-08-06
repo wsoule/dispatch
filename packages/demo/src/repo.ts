@@ -172,7 +172,7 @@ function realpathIfPossible(p: string): string {
 // sides are realpath-resolved so a caller passing an already-realpath'd temp
 // path (or a TMPDIR that itself resolves through a symlink, e.g. macOS's
 // /var -> /private/var) isn't wrongly rejected.
-function assertSafeToDelete(root: string): void {
+export function assertSafeToDelete(root: string): void {
   const resolved = realpathIfPossible(root);
   const allowedRoots = [
     realpathIfPossible(DEMO.ignore),
@@ -197,6 +197,38 @@ export function skipInstallArtifacts(src: string): boolean {
   return base !== 'node_modules' && base !== 'bun.lock';
 }
 
+// Filenames that must never reach a commit in the demo's repo — it is pushed
+// to a public GitHub remote, so anything matching here would be leaked the
+// moment it's force-pushed and can never be un-leaked by a later push.
+// Broader than a literal "credentials.json": also catches a stray `.env`,
+// a `*.pem`/`*.key`, or an `id_rsa*` private key, since `buildRepo` copies
+// the whole template with a filter that only excludes install artifacts
+// (skipInstallArtifacts, above) — nothing else in the template is vetted.
+const SUSPICIOUS_BASENAME = /credential|\.env$|\.pem$|^id_rsa|\.key$/i;
+
+/** Narrows `stagedFiles` down to the ones whose basename looks like a credential. */
+export function findSuspiciousStagedFiles(stagedFiles: string[]): string[] {
+  return stagedFiles.filter((f) => SUSPICIOUS_BASENAME.test(basename(f)));
+}
+
+// Throws when anything currently staged (`git diff --cached`) in `root`
+// looks like a credential. Call this right after every `git add -A` and
+// before the commit/push that follows it — checking post-commit or only
+// once at the very end would let a secret slip into history (and a public
+// remote) before anything caught it.
+export function assertNoCredentialsStaged(root: string): void {
+  const staged = git(root, 'diff', '--cached', '--name-only')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '');
+  const suspicious = findSuspiciousStagedFiles(staged);
+  if (suspicious.length > 0) {
+    throw new Error(
+      `refusing to commit in ${root}: staged files that look like credentials: ${suspicious.join(', ')}`
+    );
+  }
+}
+
 /** Copies the template into `root`, commits main, then lays down one branch per in-review fix. */
 export function buildRepo(opts: { root: string; push: boolean }): void {
   const { root, push } = opts;
@@ -210,12 +242,14 @@ export function buildRepo(opts: { root: string; push: boolean }): void {
 
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'add', '-A');
+  assertNoCredentialsStaged(root);
   git(root, 'commit', '-qm', 'initial: storefront');
 
   for (const fix of BRANCH_FIXES) {
     git(root, 'checkout', '-q', '-b', fix.branch, 'main');
     writeFileSync(join(root, fix.file), fix.contents);
     git(root, 'add', '-A');
+    assertNoCredentialsStaged(root);
     git(root, 'commit', '-qm', `fix: ${fix.task}`);
     git(root, 'checkout', '-q', 'main');
   }

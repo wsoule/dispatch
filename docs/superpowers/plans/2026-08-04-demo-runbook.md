@@ -62,9 +62,17 @@ bun packages/demo/src/cli.ts preflight
   detail** first to elaborate it via an agent).
 - **Say:** "Ideas land here first — clustering and epic-grouping happen before
   anything becomes a task."
-- **If it breaks:** Nothing to cluster → the seeded inbox has three per-actor
-  files; switch actor (wsoule679/pmirand/dokafor) in the sidebar if one looks
-  empty.
+- **Note:** There is no actor switcher anywhere in the app — the sidebar's Inbox
+  list is always scoped to the daemon's own local actor (the identity file under
+  `DISPATCH_HOME`, i.e. Wyat/`wsoule679` on this machine). What you see listed
+  is only the owner's captures. Clustering is what reaches past that: it reads
+  every actor's inbox file (`listAll()`, not `list()`) so a group can span
+  captures pmirand and dokafor made in their own inboxes too — narrate it as
+  "clustering sees the whole team's captures; this list is just mine."
+- **If it breaks:** Nothing to cluster → the seeded owner inbox has six items;
+  if clustering itself finds nothing, narrate from the teammate inboxes' seeded
+  content instead (`.dispatch/inbox/pmirand.md`, `.dispatch/inbox/dokafor.md`)
+  rather than looking for a switcher that doesn't exist.
 
 ### 3. Drafts tray
 
@@ -104,6 +112,14 @@ bun packages/demo/src/cli.ts preflight
   Click a finding to see it anchored to its diff line as a comment.
 - **Say:** "Every finding here is anchored to the exact line it's about — not a
   free-floating comment."
+- **Caution — only Comment is safe to click here.** No seeded run ever gets a
+  real `git worktree add` (that's deliberate — it's what lets diff snapshots
+  stand in instead). **Request changes** reuses the run's seeded `worktreePath`
+  and starts a real executor there; **Approve** enqueues a rebase in it. Both
+  point at a path that was never actually created, so both error immediately on
+  this run. Stick to **Comment** on `t-2e91aa`'s review; save a real
+  Approve/Request changes for stop 4's live run, which does get a genuine
+  worktree.
 - **If it breaks:** Diff pane shows "Couldn't load this run's diff" → this is
   seeded to work (a real `git diff` snapshot on
   `r-2e91aa`/`r-7f4a2b`/`r-4b91de`); if it still fails, findings are still
@@ -171,19 +187,38 @@ bun packages/demo/src/cli.ts preflight
 
   ```bash
   bun packages/demo/src/cli.ts teammate claim t-1d77e5
+  ```
+
+  Then, **in the app**, open task `t-6c40de` ("Persist the cart across devices")
+  and change its **assignee**. This local edit is what makes the next command a
+  genuine collision instead of a fast-forward — the spec's definition of
+  `conflict` is both sides editing _different fields of the same task_, and
+  `teammate conflict` below only ever touches `status:`. Immediately after
+  saving that edit, run:
+
+  ```bash
   bun packages/demo/src/cli.ts teammate conflict t-6c40de
   ```
 
-  Watch the sync chip change and the board update with no manual merge. Then
-  Sidebar → **Settings** → **Integrations** to show the Linear panel.
+  `teammate conflict` rewrites `t-6c40de`'s `status:` line to `in-progress` and
+  pushes from the teammate clone; your local edit changed `assignee:` on that
+  same file. Because the two edits land on different fields of one file,
+  `pull --rebase` cannot fast-forward and the registered task merge driver
+  actually resolves a real field-by-field 3-way merge — that is what "no manual
+  merge" is demonstrating. Watch the sync chip change and the board settle with
+  both edits present. Then Sidebar → **Settings** → **Integrations** to show the
+  Linear panel.
 
 - **Say:** "A teammate just claimed a task and moved another one — the merge
   driver resolved both without anyone touching git."
 - **If it breaks:** `teammate claim`/`conflict` errors on push rejection → the
   teammate clone was stale relative to origin (e.g. you ran it a second time
-  without `reset`); re-run `reset`. Linear panel shows disconnected → expected
-  if this machine's `~/.dispatch/credentials.json` has no key; narrate the
-  `config.yml` fields (`teamId`, `statusMap`, `direction`) instead of a live
+  without `reset`); re-run `reset`. If you forget the local assignee edit (or it
+  lands after, not before, `teammate conflict`), there is no local commit for
+  the pull to rebase against — it just fast-forwards and the merge driver never
+  runs; `reset` and redo the beat in order. Linear panel shows disconnected →
+  expected if this machine's `~/.dispatch/credentials.json` has no key; narrate
+  the `config.yml` fields (`teamId`, `statusMap`, `direction`) instead of a live
   sync.
 
 ### 11. Settings tour
@@ -205,15 +240,19 @@ bun packages/demo/src/cli.ts preflight
    produce a waiting planner after a restart. You must kick off a real plan
    draft live, shortly before this stop.
 
-2. **`r-c05e19` (t-58cc03's fix-loop round 4) has no working diff.** Its seeded
-   `branch` (`dispatch/execute-t-58cc03-c05e19`) is never created by `reset` —
-   repo.ts only creates real branches for the two `BRANCH_FIXES` entries. This
-   is deliberately **not** fixed: opening the run is safe either way (the daemon
-   returns a graceful 409, the desktop app shows "Couldn't load the diff"
-   inline, nothing crashes), but the row has no real diff to show. Simplest
-   handling: don't click it. It sits in the review queue alongside `r-3d90c1`,
-   `r-1e6a4f`, and `r-88bf02` — of those four, only `r-1e6a4f` (t-3f8a21's
-   fallback, stop 4) is meant to be opened during the walkthrough.
+2. **The review queue has 6 rows, not 4 — and `r-c05e19` isn't a special case,
+   just one of 11.** `repo.ts` only ever creates real branches for the two
+   `BRANCH_FIXES` entries (`t-2e91aa`, `t-58cc03`) plus whatever a fix loop's
+   resumed rounds reuse from them, so 10 of the 14 seeded runs point at a
+   `branch` `reset` never actually creates, and 11 of the 14 have no persisted
+   diff snapshot. Only `r-2e91aa`, `r-7f4a2b`, and `r-4b91de` have a real diff
+   behind them (see stop 5/7). This is deliberately **not** fixed further:
+   opening any of the other runs is safe either way (the daemon returns a
+   graceful 409, the desktop app shows "Couldn't load the diff" inline, nothing
+   crashes), they just have nothing real to show. The review queue itself lists
+   6 rows: `r-2e91aa`, `r-3d90c1`, `r-c05e19`, `r-1e6a4f`, `r-88bf02`, and
+   `r-f30c76`. Of those, only `r-1e6a4f` (t-3f8a21's fallback, stop 4) is meant
+   to be opened during the walkthrough.
 
 3. **Carto has no UI surface at all (stop 8).** Not carto-specific to this
    machine — there is no blast-radius panel, view, or button in
@@ -221,10 +260,15 @@ bun packages/demo/src/cli.ts preflight
    narration, not a click, until a UI is built for it.
 
 4. **`dispatch merge-task` must be resolvable on PATH.** Boot with `--init` (see
-   pre-flight) or the merge driver silently falls back to line-based merging for
-   stop 10 — it happens to still succeed for this specific claim/conflict pair
-   (the two edits land on different frontmatter lines), but doesn't exercise the
-   feature being demonstrated.
+   pre-flight) or the merge driver silently falls back to git's own line-based
+   3-way merge for stop 10. Stop 10's local `assignee:` edit and the `status:`
+   edit `teammate conflict` pushes land on two different frontmatter lines of
+   the same task file, so plain git can often auto-resolve that specific pair
+   without a visible conflict even without `--init` — a missing `--init` won't
+   reliably surface as a failure, it just silently swaps the field-aware
+   `dispatch-task` driver the stop is meant to demonstrate for line-based git
+   behaving the same way by coincidence. Confirm `--init` was actually passed at
+   boot rather than trusting a clean merge alone as proof the real driver ran.
 
 5. **`DISPATCH_HOME` must be an absolute path.** A relative one works for
    loading run/actor state but breaks worktree creation (see pre-flight) and
