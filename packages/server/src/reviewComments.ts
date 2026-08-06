@@ -54,6 +54,12 @@ export interface ReviewComment {
   githubUpdatedAt?: string;
   /** Source of the comment: 'local' or 'github'. Defaults to 'local'. */
   origin?: string;
+  /**
+   * GraphQL node id of the GitHub review thread this comment belongs to.
+   * REST never reports this — only `PrManager.syncReviewThreads`'s GraphQL
+   * query does — and resolving/unresolving the thread needs it.
+   */
+  githubThreadId?: string;
 }
 
 export interface ReviewReply {

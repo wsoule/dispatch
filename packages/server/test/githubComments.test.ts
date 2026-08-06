@@ -231,6 +231,29 @@ test('rule 5: a published local comment with no githubId survives, to be pushed'
   expect(merged[0]).toEqual(published);
 });
 
+test('a remote-win keeps the locally-known review thread id', () => {
+  // REST (what mapGitHubComment/remote are built from) has no concept of a
+  // thread's GraphQL node id — only syncReviewThreads sets githubThreadId —
+  // so a remote body winning must not wipe it out.
+  const local = comment({
+    id: 'rc-local',
+    githubId: 30,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+    githubThreadId: 'PRRT_kwDOAB3',
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 30,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.githubThreadId).toBe('PRRT_kwDOAB3');
+});
+
 test('rule 6: a remote-only comment is inserted', () => {
   const remote = comment({
     id: 'rc-gh',
