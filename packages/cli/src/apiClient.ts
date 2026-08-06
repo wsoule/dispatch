@@ -78,14 +78,14 @@ export interface DiffFile {
   status: string;
 }
 
-export interface DiffResult {
+interface DiffResult {
   patch: string;
   files: DiffFile[];
 }
 
-export type PlanState = 'running' | 'ready' | 'failed';
+type PlanState = 'running' | 'ready' | 'failed';
 
-export interface PlannedTask {
+interface PlannedTask {
   title: string;
   description: string;
   acceptanceCriteria: string[];
@@ -100,13 +100,13 @@ export interface PlanProposal {
   tasks: PlannedTask[];
 }
 
-export interface PlanMessage {
+interface PlanMessage {
   role: 'user' | 'assistant';
   text: string;
   at: string;
 }
 
-export interface PlannerQuestion {
+interface PlannerQuestion {
   id: string;
   question: string;
   options: string[];
@@ -127,19 +127,19 @@ export interface PlanRecord {
   confirmedAt?: string;
 }
 
-export interface ConfirmResult {
+interface ConfirmResult {
   epicId?: string;
   taskIds: string[];
 }
 
-export interface EpicSession {
+interface EpicSession {
   epicId: string;
   concurrency: number;
   active: boolean;
   completedAt?: string;
 }
 
-export interface EpicProgressChild {
+interface EpicProgressChild {
   id: string;
   title: string;
   status: string;
@@ -170,7 +170,7 @@ export type ServerEvent =
 
 // Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
 // an out-of-fence edit an agent asked for, blocked until someone decides it.
-export interface ScopeRequest {
+interface ScopeRequest {
   id: string;
   runId: string;
   paths: string[];

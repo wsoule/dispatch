@@ -158,6 +158,21 @@ function Row({
 }
 
 /**
+ * Whether a run still owes a human a look. Not just `finished`: a run
+ * force-failed by boot reconciliation can have completed all its work on the
+ * branch and never reach that state, which left it invisible here. A session id
+ * stands in for "the agent actually got going", separating that case from one
+ * that never started. Cancels stay out — a human stopped those on purpose.
+ */
+function needsHumanLook(run: RunMeta): boolean {
+  if (run.reviewedAt !== undefined) return false;
+  if (run.state === 'finished' || run.state === 'interrupted-dirty') {
+    return true;
+  }
+  return run.state === 'failed' && (run.sessionId ?? '') !== '';
+}
+
+/**
  * Runs awaiting review plus every open repo PR, newest first. A
  * dispatch-opened PR arrives via both sources; the run-backed row
  * wins, since only it reaches send-back.
@@ -178,9 +193,7 @@ export function buildReviewQueue(
     if ((run.kind ?? 'execute') !== 'execute') continue;
     if (run.archivedAt !== undefined) continue;
     const isPr = run.prUrl !== undefined;
-    if (!isPr && !(run.state === 'finished' && run.reviewedAt === undefined)) {
-      continue;
-    }
+    if (!isPr && !needsHumanLook(run)) continue;
     if (run.prUrl !== undefined) claimedUrls.add(run.prUrl);
     items.push({
       target: { kind: 'run', runId: run.id },

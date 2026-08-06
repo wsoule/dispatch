@@ -305,7 +305,7 @@ describe('doctor — task-file merge driver', () => {
     await makeProgram(gitCtx).parseAsync(argv, { from: 'user' });
   }
 
-  beforeEach(async () => {
+  beforeEach(() => {
     gitRoot = mkdtempSync(join(tmpdir(), 'dispatch-cli-git-'));
     spawnSync('git', ['init', '-q'], { cwd: gitRoot });
     gitLines = [];

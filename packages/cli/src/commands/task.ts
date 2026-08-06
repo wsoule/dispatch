@@ -53,11 +53,11 @@ function validate<T extends string>(
   return value as T;
 }
 
-export function taskRow(t: TaskDoc): string[] {
+function taskRow(t: TaskDoc): string[] {
   return [t.meta.id, t.meta.status, t.meta.priority, t.meta.kind, t.meta.title];
 }
 
-export const TABLE_HEADER = ['ID', 'STATUS', 'PRI', 'KIND', 'TITLE'];
+const TABLE_HEADER = ['ID', 'STATUS', 'PRI', 'KIND', 'TITLE'];
 
 export function registerTaskCommands(program: Command, ctx: CliContext): void {
   const task = program.command('task').description('Manage tasks and epics');

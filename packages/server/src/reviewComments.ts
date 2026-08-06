@@ -86,9 +86,6 @@ export interface AddCommentInput {
   pending?: boolean;
 }
 
-/** How a submitted review lands. Mirrors the three things a reviewer can actually decide. */
-export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
-
 function newId(prefix: string): string {
   return `${prefix}-${randomBytes(3).toString('hex')}`;
 }

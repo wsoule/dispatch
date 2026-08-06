@@ -39,19 +39,17 @@ export function useResizablePane(
   const isDragging = useRef(false);
 
   // After mount, re-clamp the restored width against the live container width in case a
-  // previously-persisted wide value exceeds the max-50%-of-container invariant. Runs once
-  // on mount; intentionally excludes width and containerRef from deps to run only at mount.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps
+  // previously-persisted wide value exceeds the max-50%-of-container invariant. Reads the
+  // current width through the functional setter rather than closing over `width`, so this
+  // stays a mount-only effect (`containerRef` is a stable ref object) instead of re-running
+  // on every resize; React skips the re-render when the clamp is a no-op.
   useLayoutEffect(() => {
     const containerWidth = containerRef.current?.clientWidth;
     if (containerWidth) {
       const max = Math.max(MIN_WIDTH_PX, containerWidth * MAX_WIDTH_RATIO);
-      const clamped = Math.min(Math.max(width, MIN_WIDTH_PX), max);
-      if (clamped !== width) {
-        setWidth(clamped);
-      }
+      setWidth((current) => Math.min(Math.max(current, MIN_WIDTH_PX), max));
     }
-  }, []);
+  }, [containerRef]);
 
   // `maxWidth` (and therefore the `aria-valuemax` a caller reports for the resize handle) is
   // derived from the container's *current* clientWidth, but nothing above re-renders this hook

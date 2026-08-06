@@ -11,7 +11,7 @@ export type FixLoopTone = 'waiting' | 'failed' | 'neutral';
 
 /** Why a stopped loop stopped. A loop capped before this field existed has no
  *  `stopReason`, so fall back to the server's own `rounds-exhausted`. */
-export function fixLoopStopReason(state: FixLoopState): FixLoopStop {
+function fixLoopStopReason(state: FixLoopState): FixLoopStop {
   return state.stopReason ?? 'rounds-exhausted';
 }
 

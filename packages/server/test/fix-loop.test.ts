@@ -1000,7 +1000,8 @@ describe('an undeclared write', () => {
       f.title.includes('outside declared writes')
     );
     expect(undeclared).toHaveLength(1);
-    expect(undeclared[0].file).toBe('undeclared.ts');
+    // Batched: the paths live in `files`, so a later round adds nothing here.
+    expect(undeclared[0].files).toEqual(['undeclared.ts']);
     expect(undeclared[0].severity).toBe('minor');
   }, 30000);
 });

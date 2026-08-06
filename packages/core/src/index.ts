@@ -29,6 +29,7 @@ export {
 } from './actor.js';
 export type { ActorKind, ActorRef } from './actor.js';
 export { slugify } from './slug.js';
+export { describeValue } from './describe.js';
 export { isOutstanding } from './timeline.js';
 export {
   untrustedBlock,
@@ -73,6 +74,7 @@ export {
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
+  DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
@@ -88,6 +90,7 @@ export type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  RepoDigestConfig,
   VerifyConfig,
   VerifyStep,
 } from './config.js';

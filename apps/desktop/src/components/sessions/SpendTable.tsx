@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
-export interface SpendRow {
+interface SpendRow {
   key: string;
   label: ReactNode;
   sessionCount: number;

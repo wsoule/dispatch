@@ -1,6 +1,7 @@
 import {
   ASSIGNEES,
   ConfigError,
+  describeValue,
   getSection,
   KINDS,
   loadConfig,
@@ -168,7 +169,7 @@ function validateEnumField(
 ): string | null {
   if (value === undefined) return null;
   if (typeof value !== 'string' || !allowed.includes(value)) {
-    return `invalid ${label}: ${String(value)} (expected ${allowed.join('|')})`;
+    return `invalid ${label}: ${describeValue(value)} (expected ${allowed.join('|')})`;
   }
   return null;
 }
@@ -333,7 +334,7 @@ async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   ) {
     return errorResponse(
       400,
-      `invalid planner: ${String(body.planner)} (expected ${knownPlannerNames.join('|')})`
+      `invalid planner: ${describeValue(body.planner)} (expected ${knownPlannerNames.join('|')})`
     );
   }
   const plannerName =
@@ -471,7 +472,7 @@ async function createRun(
   ) {
     return errorResponse(
       400,
-      `invalid executor: ${String(executorField)} (expected ${knownExecutorNames.join('|')})`
+      `invalid executor: ${describeValue(executorField)} (expected ${knownExecutorNames.join('|')})`
     );
   }
 
@@ -725,7 +726,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
 // next one would move. `pendingOutgoing`/`pendingIncoming` are computed live
 // (BoardSyncer.pendingCounts()) on every request, not cached from the last
 // attempt, so they stay accurate between debounced syncs.
-export interface SyncStatus extends SyncResult {
+interface SyncStatus extends SyncResult {
   pendingOutgoing: number;
   pendingIncoming: number;
   /** When the last sync attempt finished, or `null` before the first one. */
@@ -1196,7 +1197,7 @@ function deleteBranch(ctx: ApiContext, branch: string, url: URL): Response {
 
 // A `GitBranch` joined with whatever run claims that name, mirroring
 // Orchestrator.listBranches' join but for every branch, not just dispatch/*.
-export interface GitBranchWithRun extends GitBranch {
+interface GitBranchWithRun extends GitBranch {
   runId?: string;
   taskId?: string;
   taskTitle?: string;
@@ -2026,7 +2027,7 @@ async function startPlan(req: Request, ctx: ApiContext): Promise<Response> {
   ) {
     return errorResponse(
       400,
-      `invalid planner: ${String(body.planner)} (expected ${knownPlannerNames.join('|')})`
+      `invalid planner: ${describeValue(body.planner)} (expected ${knownPlannerNames.join('|')})`
     );
   }
   const plannerName =
@@ -2588,7 +2589,7 @@ export function isTrustedOrigin(origin: string): boolean {
 // on only after the handler ran). Kept alongside the token guard below as
 // defence in depth: Origin rejects the browser case, the token the co-resident
 // case.
-export function rejectUntrustedOrigin(req: Request): Response | null {
+function rejectUntrustedOrigin(req: Request): Response | null {
   if (READ_ONLY_METHODS.has(req.method)) return null;
   const origin = req.headers.get('origin');
   // Browsers always send Origin on a state change; the CLI, MCP and curl never do.
@@ -2647,7 +2648,7 @@ function matchesRoute(
  * `GET /api/health` is the only open route, because the CLI, MCP and the
  * desktop sidecar all probe it to discover a daemon before they hold a token.
  */
-export function requiredTier(
+function requiredTier(
   method: string,
   segments: readonly string[]
 ): AuthTier | null {

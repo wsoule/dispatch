@@ -81,6 +81,10 @@ export interface ExecutorEvents {
     toolName: string;
     input: unknown;
   }): void;
+  // The run's resume handle, reported as soon as the executor learns it —
+  // onFinish's copy arrives too late to survive a daemon that dies mid-run.
+  // Optional: not every executor has a resumable session.
+  onSession?(sessionId: string): void;
   onFinish(finish: {
     state: 'finished' | 'failed';
     costUsd?: number;

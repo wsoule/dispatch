@@ -17,15 +17,17 @@ function stubFetch(): {
 } {
   const original = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  globalThis.fetch = (async (
+  globalThis.fetch = ((
     url: string | URL,
     init?: RequestInit
   ): Promise<Response> => {
     calls.push({ url: String(url), init });
-    return new Response(JSON.stringify({}), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
+    return Promise.resolve(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
   }) as typeof fetch;
   return { calls, restore: () => (globalThis.fetch = original) };
 }
@@ -110,11 +112,13 @@ describe("the auth failure's stable code", () => {
   // thrown ApiError carried out of it.
   function stubAuthError(status: number, code: string): () => void {
     const original = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ error: 'some prose', code }), {
-        status,
-        headers: { 'content-type': 'application/json' },
-      })) as unknown as typeof fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'some prose', code }), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        })
+      )) as unknown as typeof fetch;
     return () => (globalThis.fetch = original);
   }
 

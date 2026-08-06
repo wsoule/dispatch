@@ -546,6 +546,68 @@ describe('ClaudeExecutor session-id capture on a mid-stream failure', () => {
   });
 });
 
+// The session id reaching onFinish is not enough on its own: a daemon that
+// dies mid-run never sees a finish, so the run's resume handle has to be
+// reported the moment the init message names it. Orchestrator.recordSession
+// is what persists it; this is the executor half of that contract.
+describe('ClaudeExecutor session-id reporting during a run', () => {
+  it('reports the session through onSession before the run finishes', async () => {
+    const repo = initGitRepo('dispatch-claude-live-session-');
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      function* fakeMessages(): Generator<any> {
+        yield {
+          type: 'system',
+          subtype: 'init',
+          session_id: 'sess-reported-early',
+        };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-reported-early',
+          total_cost_usd: 0.01,
+          num_turns: 1,
+          is_error: false,
+          result: '',
+        };
+      }
+      const executor = new ClaudeExecutor(
+        () => fakeMessages() as unknown as Query
+      );
+
+      // Order, not just presence: a session reported only alongside the
+      // finish would satisfy a containment check while leaving the crash
+      // window exactly as wide as before.
+      const order: string[] = [];
+      await new Promise<void>((resolve) => {
+        const events: ExecutorEvents = {
+          onEntry: () => {},
+          onApprovalRequest: () => {},
+          onSession: (sessionId) => order.push(`session:${sessionId}`),
+          onFinish: () => {
+            order.push('finish');
+            resolve();
+          },
+        };
+        executor.start(
+          {
+            cwd: repo,
+            projectRoot: repo,
+            prompt: 'do the thing',
+            permissionMode: 'acceptEdits',
+            maxTurns: 5,
+          },
+          events
+        );
+      });
+
+      expect(order).toEqual(['session:sess-reported-early', 'finish']);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 // Bug 2 (fix/executor-mcp-wiring): a run whose underlying SDK stream ends
 // with no 'result' message at all — the CLI process getting killed out from
 // under an approval it was waiting on, or any other abrupt exit — must still
@@ -1011,10 +1073,18 @@ describe('ClaudeExecutor graceful stop', () => {
       release = resolve;
     });
     const query = {
-      async *[Symbol.asyncIterator]() {
-        await done;
-      },
-      interrupt: async () => {
+      // A stream that produces nothing: the first `next()` parks on `done` and
+      // then reports the stream ended, so the run under test stays in flight
+      // until `release()` is called. Written as an explicit iterator rather
+      // than a generator because a generator that never yields is exactly what
+      // this needs to express and cannot.
+      [Symbol.asyncIterator]: () => ({
+        next: async (): Promise<IteratorResult<never>> => {
+          await done;
+          return { done: true, value: undefined };
+        },
+      }),
+      interrupt: () => {
         state.interrupts += 1;
       },
       close: () => {

@@ -8,7 +8,12 @@ import {
   readRepoDigest,
   RepoDigestCache,
   repoDigestPath,
+  shouldRegenerate,
   writeRepoDigest,
+} from '../../src/orchestrator/repoDigest.js';
+import type {
+  DigestResult,
+  RepoDigest,
 } from '../../src/orchestrator/repoDigest.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
@@ -38,11 +43,13 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function makeCommit(message: string): string {
-  writeFileSync(join(rootDir, `${message}.txt`), `${message}\n`);
-  runGitSync(rootDir, ['add', '-A']);
-  runGitSync(rootDir, ['commit', '-m', message]);
-  return runGitSync(rootDir, ['rev-parse', 'HEAD']).trim();
+// Every fake generator returns the DigestResult shape; most tests do not care
+// about cost, so the noise stays here.
+function generated(
+  markdown: string,
+  costUsd: number | null = null
+): Promise<DigestResult> {
+  return Promise.resolve({ markdown, costUsd });
 }
 
 describe('readRepoDigest', () => {
@@ -61,6 +68,35 @@ describe('readRepoDigest', () => {
       generatedAt: '2026-08-03T00:00:00.000Z',
       markdown: '# map',
     });
+  });
+
+  it('round-trips a cost when one was recorded', () => {
+    writeRepoDigest(rootDir, {
+      commit: 'abc1234',
+      generatedAt: '2026-08-03T00:00:00.000Z',
+      markdown: '# map',
+      costUsd: 0.0412,
+    });
+    expect(readRepoDigest(rootDir)?.costUsd).toBe(0.0412);
+  });
+
+  // The record is built field by field, so a cost that is not a number is
+  // dropped rather than served as one.
+  it('drops a non-numeric cost rather than rejecting the record', () => {
+    const path = repoDigestPath(rootDir);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        commit: 'abc1234',
+        generatedAt: '2026-08-03T00:00:00.000Z',
+        markdown: '# map',
+        costUsd: 'free',
+      })
+    );
+    const read = readRepoDigest(rootDir);
+    expect(read?.markdown).toBe('# map');
+    expect(read?.costUsd).toBeUndefined();
   });
 
   it('treats a corrupt cache file as nothing cached rather than throwing', () => {
@@ -104,12 +140,57 @@ describe('headCommit', () => {
   });
 });
 
+describe('shouldRegenerate', () => {
+  const cfg = { enabled: true, cooldownHours: 6 };
+  const now = new Date('2026-08-04T12:00:00.000Z');
+  const digest = (over: Partial<RepoDigest> = {}): RepoDigest => ({
+    commit: 'aaa',
+    generatedAt: '2026-08-04T11:00:00.000Z',
+    markdown: '# map',
+    ...over,
+  });
+
+  it('never generates when the feature is switched off', () => {
+    expect(shouldRegenerate(null, 'bbb', now, { ...cfg, enabled: false })).toBe(
+      false
+    );
+  });
+
+  // The cooldown must not gate the first generation: a project with no digest
+  // is exactly the case the feature exists for.
+  it('generates immediately when nothing is cached, whatever the cooldown', () => {
+    expect(
+      shouldRegenerate(null, 'bbb', now, { ...cfg, cooldownHours: 999 })
+    ).toBe(true);
+  });
+
+  it('does not generate while the cached digest matches HEAD', () => {
+    expect(shouldRegenerate(digest(), 'aaa', now, cfg)).toBe(false);
+  });
+
+  // The whole point: every merge-queue merge moves HEAD, and without this each
+  // one bought another full-repo read.
+  it('does not generate for a stale digest still inside the cooldown', () => {
+    expect(shouldRegenerate(digest(), 'bbb', now, cfg)).toBe(false);
+  });
+
+  it('generates for a stale digest once the cooldown has passed', () => {
+    const old = digest({ generatedAt: '2026-08-04T05:00:00.000Z' });
+    expect(shouldRegenerate(old, 'bbb', now, cfg)).toBe(true);
+  });
+
+  it('treats an unparseable timestamp as infinitely old', () => {
+    const broken = digest({ generatedAt: 'not a date' });
+    expect(shouldRegenerate(broken, 'bbb', now, cfg)).toBe(true);
+  });
+});
+
 describe('RepoDigestCache', () => {
   it('serves nothing and generates in the background on a cold cache', async () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return Promise.resolve('# generated map');
+      return generated('# generated map');
     });
 
     // The first dispatch pays nothing and gets nothing — it must not block.
@@ -127,7 +208,7 @@ describe('RepoDigestCache', () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return Promise.resolve('# map');
+      return generated('# map');
     });
     cache.current();
     await settle();
@@ -138,21 +219,18 @@ describe('RepoDigestCache', () => {
     expect(calls).toBe(1);
   });
 
-  // The staleness guard: without the `cached.commit !== head` comparison the
-  // cache would serve a map of a repo that has since moved, forever.
+  // The staleness guard: without it the cache would serve a map of a repo that
+  // has since moved, forever. Seeded rather than generated so the record is
+  // older than the cooldown — this test is about staleness, not throttling.
   it('regenerates after HEAD moves, and serves the stale map meanwhile', async () => {
-    let generated = '# map at first commit';
+    writeRepoDigest(rootDir, {
+      commit: 'a-commit-that-is-long-gone',
+      generatedAt: '2026-08-01T00:00:00.000Z',
+      markdown: '# map at first commit',
+    });
     const cache = new RepoDigestCache(rootDir, () =>
-      Promise.resolve(generated)
+      generated('# map at second commit')
     );
-    cache.current();
-    await settle();
-    const firstCommit = headCommit(rootDir);
-    expect(firstCommit).not.toBeNull();
-    expect(readRepoDigest(rootDir)?.commit).toBe(firstCommit as string);
-
-    const secondCommit = makeCommit('second');
-    generated = '# map at second commit';
 
     // Still serves the old map on the dispatch that discovers the staleness —
     // an out-of-date map labelled with its commit beats no map at all.
@@ -160,15 +238,100 @@ describe('RepoDigestCache', () => {
     await settle();
 
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map at second commit');
-    expect(readRepoDigest(rootDir)?.commit).toBe(secondCommit);
+    const head = headCommit(rootDir);
+    expect(head).not.toBeNull();
+    expect(readRepoDigest(rootDir)?.commit).toBe(head as string);
+  });
+
+  it('does not regenerate a stale digest inside the cooldown', async () => {
+    writeRepoDigest(rootDir, {
+      commit: 'an-old-commit',
+      generatedAt: new Date().toISOString(),
+      markdown: '# stale but recent',
+    });
+    let calls = 0;
+    const cache = new RepoDigestCache(
+      rootDir,
+      () => {
+        calls += 1;
+        return generated('# fresh');
+      },
+      () => ({ enabled: true, cooldownHours: 6 })
+    );
+
+    expect(cache.current()?.markdown).toBe('# stale but recent');
+    await settle();
+    expect(calls).toBe(0);
+  });
+
+  // `current()` is on the dispatch path and must never throw. loadConfig throws
+  // on a malformed config.yml, so the reader is guarded here rather than
+  // trusting every caller to hand in a safe one.
+  it('falls back to defaults when the config cannot be read', async () => {
+    writeRepoDigest(rootDir, {
+      commit: 'an-old-commit',
+      generatedAt: new Date().toISOString(),
+      markdown: '# cached',
+    });
+    let calls = 0;
+    const cache = new RepoDigestCache(
+      rootDir,
+      () => {
+        calls += 1;
+        return generated('# fresh');
+      },
+      () => {
+        throw new Error('invalid .dispatch/config.yml');
+      }
+    );
+
+    expect(() => cache.current()).not.toThrow();
+    expect(cache.current()?.markdown).toBe('# cached');
+    await settle();
+    // Defaults are enabled with a six-hour cooldown, and this record is new.
+    expect(calls).toBe(0);
+  });
+
+  it('never calls the generator when the feature is switched off', async () => {
+    let calls = 0;
+    const cache = new RepoDigestCache(
+      rootDir,
+      () => {
+        calls += 1;
+        return generated('# map');
+      },
+      () => ({ enabled: false, cooldownHours: 6 })
+    );
+
+    expect(cache.current()).toBeNull();
+    await settle();
+    expect(calls).toBe(0);
+  });
+
+  it('persists what the generation cost', async () => {
+    const cache = new RepoDigestCache(rootDir, () =>
+      generated('# map', 0.0412)
+    );
+    cache.current();
+    await settle();
+    expect(readRepoDigest(rootDir)?.costUsd).toBe(0.0412);
+  });
+
+  it('omits the cost when the SDK did not report one', async () => {
+    const cache = new RepoDigestCache(rootDir, () => generated('# map'));
+    cache.current();
+    await settle();
+    const written = readRepoDigest(rootDir);
+    expect(written?.markdown).toBe('# map');
+    expect(written?.costUsd).toBeUndefined();
   });
 
   it('runs one generation at a time no matter how many dispatches race', async () => {
     let calls = 0;
-    let release: (markdown: string) => void = () => {};
+    let release: (result: DigestResult) => void = () => {};
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return new Promise<string>((resolve) => {
+      return new Promise<DigestResult>((resolve) => {
         release = resolve;
       });
     });
@@ -178,25 +341,49 @@ describe('RepoDigestCache', () => {
     cache.current();
     expect(calls).toBe(1);
 
-    release('# map');
+    release({ markdown: '# map', costUsd: null });
     await settle();
     expect(calls).toBe(1);
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map');
   });
 
-  it('retries on the next dispatch after a generation failure', async () => {
+  // A failed generation writes nothing, so `generatedAt` stays old and the
+  // cooldown alone would let the next dispatch try again — a failed spawn per
+  // dispatch, forever.
+  it('does not retry a failed generation while inside the backoff', async () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return calls === 1
-        ? Promise.reject(new Error('no CLI on PATH'))
-        : Promise.resolve('# map');
+      return Promise.reject(new Error('no CLI on PATH'));
     });
 
     cache.current();
     await settle();
     expect(calls).toBe(1);
     expect(readRepoDigest(rootDir)).toBeNull();
+
+    cache.current();
+    await settle();
+    expect(calls).toBe(1);
+  });
+
+  // Retrying a transient failure quickly is deliberate; the backoff only stops
+  // it happening on every dispatch.
+  it('retries a failed generation once the backoff has passed', async () => {
+    let calls = 0;
+    const cache = new RepoDigestCache(rootDir, () => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new Error('no CLI on PATH'))
+        : generated('# map');
+    });
+
+    cache.current();
+    await settle();
+    expect(calls).toBe(1);
+
+    // Reach past the backoff without sleeping through it.
+    cache.forgetLastAttemptForTest();
 
     cache.current();
     await settle();
@@ -204,17 +391,18 @@ describe('RepoDigestCache', () => {
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map');
   });
 
-  it('does not cache an empty generation, so a blank answer is retried', async () => {
+  it('does not cache an empty generation, and retries it after the backoff', async () => {
     let calls = 0;
     const cache = new RepoDigestCache(rootDir, () => {
       calls += 1;
-      return Promise.resolve(calls === 1 ? '   \n  ' : '# map');
+      return generated(calls === 1 ? '   \n  ' : '# map');
     });
 
     cache.current();
     await settle();
     expect(readRepoDigest(rootDir)).toBeNull();
 
+    cache.forgetLastAttemptForTest();
     cache.current();
     await settle();
     expect(readRepoDigest(rootDir)?.markdown).toBe('# map');
@@ -226,7 +414,7 @@ describe('RepoDigestCache', () => {
     try {
       const cache = new RepoDigestCache(plain, () => {
         calls += 1;
-        return Promise.resolve('# map');
+        return generated('# map');
       });
       expect(cache.current()).toBeNull();
       await settle();

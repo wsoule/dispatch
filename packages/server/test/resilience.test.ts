@@ -6,13 +6,8 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { json } from './json.js';
 import { useTestAuth } from './testAuth.js';
-
-// `Response.json()` types as `Promise<unknown>` under this repo's strict,
-// DOM-less tsconfig; same escape hatch as api.test.ts.
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 // Waits for `check` to become true, polling every `intervalMs`, rejecting
 // after `timeoutMs` — used below to wait for the watcher's debounced rebuild

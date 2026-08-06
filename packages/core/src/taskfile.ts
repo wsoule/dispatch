@@ -1,6 +1,7 @@
 import YAML from 'yaml';
 
 import { isValidAssignee } from './actor.js';
+import { describeValue } from './describe.js';
 import type {
   Assignee,
   Priority,
@@ -53,10 +54,16 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     throw new TaskParseError(`invalid kind: ${String(raw.kind)}`, file);
   }
   if (raw.priority != null && !PRIORITIES.includes(raw.priority as Priority)) {
-    throw new TaskParseError(`invalid priority: ${String(raw.priority)}`, file);
+    throw new TaskParseError(
+      `invalid priority: ${describeValue(raw.priority)}`,
+      file
+    );
   }
-  if (raw.assignee != null && !isValidAssignee(String(raw.assignee))) {
-    throw new TaskParseError(`invalid assignee: ${String(raw.assignee)}`, file);
+  if (raw.assignee != null) {
+    const assignee = describeValue(raw.assignee);
+    if (!isValidAssignee(assignee)) {
+      throw new TaskParseError(`invalid assignee: ${assignee}`, file);
+    }
   }
   if (raw['self-review'] != null && typeof raw['self-review'] !== 'boolean') {
     throw new TaskParseError(`invalid self-review: expected a boolean`, file);
@@ -68,7 +75,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     throw new TaskParseError(`invalid exercised: expected a boolean`, file);
   }
   if (raw.risk != null && !TASK_RISKS.includes(raw.risk as TaskRisk)) {
-    throw new TaskParseError(`invalid risk: ${String(raw.risk)}`, file);
+    throw new TaskParseError(`invalid risk: ${describeValue(raw.risk)}`, file);
   }
   if (raw.model != null && typeof raw.model !== 'string') {
     throw new TaskParseError(`invalid model: expected a string`, file);

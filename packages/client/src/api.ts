@@ -440,7 +440,7 @@ export interface UpdateFindingPatch {
 
 // Why a stopped fix loop is not `complete`. Mirrors FixLoopStop in
 // packages/server/src/orchestrator/fixLoop.ts.
-export type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
 
 // Mirrors FixLoopState in packages/server/src/orchestrator/fixLoop.ts: where a
 // task's review -> fix -> re-review loop currently stands.

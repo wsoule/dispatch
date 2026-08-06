@@ -9,6 +9,7 @@ import {
   Megaphone,
   MessageSquare,
   MessageSquarePlus,
+  Play,
   Send,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -16,7 +17,11 @@ import { useState } from 'react';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { groupLogEntries } from '../../lib/runLog';
-import { isTerminalRunState } from '../../lib/runState';
+import {
+  continueMessage,
+  deriveRunDisposition,
+  isTerminalRunState,
+} from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './QuestionCard';
@@ -137,6 +142,10 @@ export function RunLogView({
   const groups = groupLogEntries(entries);
   const terminal = isTerminalRunState(meta.state);
   const canSend = SENDABLE_STATES.has(meta.state);
+  // Only a run that stopped short of finishing has something to *continue* —
+  // and only one with a session id, which is the same thing the server's own
+  // resume gate checks, so the button never offers what would 400.
+  const canContinue = deriveRunDisposition(meta) === 'stopped-short';
 
   // Finds the most recent tool-log entry with a matching name to back the
   // approval card's input preview — see the field doc comment above for why
@@ -151,13 +160,12 @@ export function RunLogView({
           .at(-1)?.toolInput
       : undefined;
 
-  async function submit() {
-    if (draft.trim() === '') return;
+  async function send(text: string, resume: boolean) {
     setSending(true);
     setError(null);
     try {
-      if (terminal) await onRequestChanges(draft.trim());
-      else await onSendMessage(draft.trim());
+      if (resume) await onRequestChanges(text);
+      else await onSendMessage(text);
       setDraft('');
       // Sending is an explicit "I'm caught up" signal, so re-pin even if the user had
       // scrolled back through history to write the message.
@@ -167,6 +175,17 @@ export function RunLogView({
     } finally {
       setSending(false);
     }
+  }
+
+  async function submit() {
+    if (draft.trim() === '') return;
+    await send(draft.trim(), terminal);
+  }
+
+  // Deliberately not gated on a non-empty draft, unlike submit(): a run that was
+  // cut off mid-task needs no feedback written to be worth resuming.
+  async function continueRun() {
+    await send(continueMessage(draft), true);
   }
 
   return (
@@ -279,9 +298,11 @@ export function RunLogView({
       {(canSend || terminal) && (
         <div className="border-border flex flex-col gap-1.5 border-t pt-3">
           <span className="text-muted-foreground text-[11px]">
-            {terminal
-              ? 'This run is done — sending feedback resumes it with your notes.'
-              : 'Talk to the agent — it reads this while the run keeps going.'}
+            {!terminal
+              ? 'Talk to the agent — it reads this while the run keeps going.'
+              : canContinue
+                ? 'This run stopped before finishing — Continue picks it up on the same branch, or send notes to change course.'
+                : 'This run is done — sending feedback resumes it with your notes.'}
           </span>
           <div className="flex gap-2">
             <Textarea
@@ -302,6 +323,17 @@ export function RunLogView({
               disabled={sending}
               className="min-h-0 flex-1 resize-none"
             />
+            {canContinue && (
+              <Button
+                variant="secondary"
+                disabled={sending}
+                onClick={() => void continueRun()}
+                className="self-end"
+              >
+                <Play className="size-3.5" />
+                Continue
+              </Button>
+            )}
             <Button
               disabled={sending}
               onClick={() => void submit()}
