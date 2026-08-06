@@ -35,11 +35,21 @@ interface ReviewThreadProps {
   initialApplyError?: ApplySuggestionOutcome;
 }
 
-/** Where the thread's Apply button stands: never attempted, in flight, or failed with a reason
- *  and whether that failure means retrying is pointless. */
+/**
+ * Where the thread's Apply button stands: never attempted, in flight, resolved, or failed with
+ * a reason and whether that failure means retrying is pointless.
+ *
+ * `succeeded` is its own status rather than folding a resolved apply back into `idle` — see the
+ * effect below. It renders identically to `idle` (plain, enabled "Apply", no message): this task
+ * has repeatedly had to fix the UI implying a commit landed when it didn't, and the deliberate
+ * choice here is not to invent a new visual "applied" confirmation in a fix round scoped to a
+ * state-management bug, only to make success a real, distinguishable state in the type so a
+ * later failure can never be mistaken for describing it.
+ */
 type ApplyState =
   | { status: 'idle' }
   | { status: 'applying' }
+  | { status: 'succeeded' }
   | { status: 'failed'; message: string; disabled: boolean };
 
 /**
@@ -78,11 +88,16 @@ export function ReviewThread({
   // that failure: the reviewer would see an idle, clickable Apply button over a suggestion that
   // was never actually applied. This effect is what re-derives `applyState` when that happens.
   //
-  // Guarded to only ever move `idle` → `failed`, never overwrite an in-progress or already-
-  // resolved `handleApply` call below: `applyNowFailures` in `PierreReviewDiff` never mutates an
-  // existing entry once set (see its own doc comment), so `initialApplyError`'s identity is
-  // stable after the one transition from `undefined` to defined — this does not re-fire on
-  // every render, and does not clobber a later live click's own outcome.
+  // Guarded to only ever move `idle` → `failed`, never overwrite an in-progress `applying` OR an
+  // already-`succeeded` `handleApply` call below. The `succeeded` distinction is why this guard
+  // is safe: before it existed, a resolved apply reset `applyState` back to `idle`, which this
+  // effect's `current.status === 'idle'` check could not tell apart from "never attempted" — a
+  // reviewer who clicked Apply themselves, on a freshly-mounted thread whose `Apply now` apply
+  // was still resolving, and whose own click won that race, could see this effect overwrite
+  // their real success with the OTHER attempt's stale failure once it arrived. `applyNowFailures`
+  // in `PierreReviewDiff` never mutates an existing entry once set (see its own doc comment), so
+  // `initialApplyError`'s identity is stable after the one transition from `undefined` to
+  // defined — this does not re-fire on every render.
   useEffect(() => {
     if (initialApplyError === undefined) return;
     setApplyState((current) =>
@@ -98,12 +113,13 @@ export function ReviewThread({
 
   // Fires the apply and turns any rejection into the sentence + disable decision
   // `resolveApplySuggestionFailure` makes — see its own doc comment for why only
-  // anchor-drifted disables the button rather than every failure.
+  // anchor-drifted disables the button rather than every failure. Lands on `succeeded`, not
+  // `idle`, on success — see `ApplyState`'s own doc comment for why that distinction exists.
   const handleApply = () => {
     if (onApply === undefined) return;
     setApplyState({ status: 'applying' });
     onApply()
-      .then(() => setApplyState({ status: 'idle' }))
+      .then(() => setApplyState({ status: 'succeeded' }))
       .catch((err: unknown) => {
         const outcome = resolveApplySuggestionFailure(err);
         setApplyState({
