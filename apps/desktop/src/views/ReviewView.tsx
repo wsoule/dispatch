@@ -195,6 +195,14 @@ export function ReviewView({
     if (selected !== null && !paths.includes(selected)) setSelected(null);
   }, [paths, selected]);
 
+  // Notes written here but not yet on GitHub. Every verdict button publishes
+  // them, Comment included — so the panel needs the count to know whether
+  // Comment is a review submit or a plain conversation comment.
+  const stagedNoteCount = useMemo(
+    () => (isPrTarget ? reviewComments.filter((c) => c.pending).length : 0),
+    [isPrTarget, reviewComments]
+  );
+
   const commentsByFile = useMemo(() => {
     const map = new Map<string, number>();
     for (const c of reviewComments) {
@@ -335,6 +343,7 @@ export function ReviewView({
       error={repoPr.prDetailError}
       onReview={repoPr.handleReview}
       onComment={repoPr.handleComment}
+      stagedNotes={stagedNoteCount}
     />
   ) : run !== undefined && run.prUrl !== undefined ? (
     <PrReviewPanel
@@ -509,8 +518,8 @@ export function ReviewView({
                 in-reply payloads) — it lands in the conversation above. */}
             {isPrTarget && (
               <p className="text-muted-foreground text-[11.5px]">
-                Notes stay staged until you approve or request changes above,
-                then publish to GitHub as one review. Replies written on
+                Notes stay staged until you comment, approve or request changes
+                above, then publish to GitHub as one review. Replies written on
                 github.com show in the conversation, not in these threads.
               </p>
             )}

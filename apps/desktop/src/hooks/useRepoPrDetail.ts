@@ -117,13 +117,16 @@ export function useRepoPrDetail(
 
   // GET /api/prs/:number/comments is not a local read: it pulls GitHub's
   // comments, merges them with local drafts and tags each with its review
-  // thread — two `gh` round trips — so this deliberately has no poll of its
-  // own. Nothing broadcasts `review.changed` for a PR target either, so the
-  // list is kept fresh by re-pulling at the three moments it can be wrong:
-  // whenever this query mounts or regains focus (`staleTime: 0` overrides
-  // main.tsx's shared 30s, which would otherwise serve a cached list to a
-  // reviewer reopening the PR after commenting on github.com), and after
-  // every mutation below.
+  // thread — four `gh` round trips — so this has no poll of its own.
+  // Nothing broadcasts `review.changed` for a PR target either, so the
+  // list is kept fresh by re-pulling at the two moments it can be wrong:
+  // whenever this query mounts (`staleTime: 0` overrides main.tsx's shared
+  // 30s, which would otherwise serve a stale list to a reviewer reopening the
+  // PR inside that window), and after every mutation below.
+  //
+  // Focus refetch is off even so: `staleTime: 0` would otherwise re-arm it,
+  // and firing this whole sync on every alt-tab back buys nothing the
+  // per-mutation reload does not already cover.
   const {
     data: reviewComments,
     error: reviewCommentsErrorDetail,
@@ -138,6 +141,8 @@ export function useRepoPrDetail(
     },
     enabled: client !== null && number !== null,
     staleTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
   });
   const reviewCommentsError =
