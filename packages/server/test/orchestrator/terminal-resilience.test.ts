@@ -55,8 +55,9 @@ interface Harness {
 }
 
 // Every run parks at one approval gate, so a test can corrupt state while the
-// run is live and then release it into its terminal path.
-function makeHarness(fillRetryDelayMs?: number): Harness {
+// run is live and then release it into its terminal path. `session` scripts the
+// executor to report a resume handle mid-run, before that gate.
+function makeHarness(fillRetryDelayMs?: number, session?: string): Harness {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
   cache.rebuild(store);
@@ -70,6 +71,7 @@ function makeHarness(fillRetryDelayMs?: number): Harness {
   orchestrator.registerExecutor(
     'fake',
     new FakeExecutor({
+      session,
       steps: [{ approval: { requestId: 'go', toolName: 'noop', input: {} } }],
       finish: { state: 'finished', costUsd: 0, turns: 1 },
     })
@@ -249,5 +251,30 @@ describe('terminal bookkeeping never swallows the terminal hooks', () => {
     expect(next.orchestrator.list().find((r) => r.id === run.id)?.state).toBe(
       'interrupted-dirty'
     );
+  });
+});
+
+describe('a run force-failed by boot reconciliation stays resumable', () => {
+  it('keeps the session id the executor reported mid-run', async () => {
+    const first = makeHarness(undefined, 'sess-mid-run');
+    const task = first.store.create({ title: 'crashed before finishing' });
+    const run = await first.orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () =>
+        first.orchestrator.getRun(run.id)?.meta.state === 'awaiting-approval'
+    );
+
+    // A fresh process over the same project — a daemon restart. The run never
+    // reached a terminal state, so boot reconciliation force-fails it.
+    const next = makeHarness();
+    next.orchestrator.reconcileOnBoot();
+
+    const healed = next.orchestrator.list().find((r) => r.id === run.id);
+    expect(healed?.state).toBe('failed');
+    // The point of the whole exercise: a session id only ever written at
+    // finish is lost on exactly the runs that most need resuming, because a
+    // crashed run never reaches its finish. Orchestrator.sendMessage's
+    // `resume: true` gate keys on this field, so without it the run is dead.
+    expect(healed?.sessionId).toBe('sess-mid-run');
   });
 });

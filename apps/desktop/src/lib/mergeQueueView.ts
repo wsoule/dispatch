@@ -130,7 +130,7 @@ export function isMidFlight(state: MergeQueueEntryState): boolean {
 }
 
 /** A held entry is stalled indefinitely, which reads as urgent even though it is not a failure. */
-export function isStalled(state: MergeQueueEntryState): boolean {
+function isStalled(state: MergeQueueEntryState): boolean {
   return state === 'blocked-environment';
 }
 

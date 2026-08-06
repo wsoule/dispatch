@@ -56,7 +56,7 @@ export interface NavState {
 
 /** One visited destination. Runs and Review key off a run id, so it travels
  * with the entry — going back to a review you had open should reopen it. */
-export interface NavEntry {
+interface NavEntry {
   section: 'project' | 'global';
   projectView: ProjectView;
   globalView: GlobalView;

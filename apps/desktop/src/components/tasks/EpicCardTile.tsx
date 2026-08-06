@@ -21,7 +21,7 @@ import { Input } from '@/ui/input';
 // since the two cards' JSX around it differs enough that sharing the type alone wouldn't
 // save much, and both files independently need it with no natural home to hoist it to
 // without creating an extra shared-types file for two small interfaces.
-export interface CardDragProps {
+interface CardDragProps {
   setNodeRef: (node: HTMLElement | null) => void;
   style: React.CSSProperties | undefined;
   attributes: DraggableAttributes;

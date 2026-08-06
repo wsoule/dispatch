@@ -9,6 +9,7 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_REPO_DIGEST,
   loadConfig,
 } from '../src/config.js';
 
@@ -47,6 +48,7 @@ describe('loadConfig', () => {
       linear: DEFAULT_LINEAR,
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,
+      repoDigest: DEFAULT_REPO_DIGEST,
     });
   });
   it('merges file values over defaults', () => {
@@ -304,5 +306,58 @@ describe('the carto block', () => {
     expect(() => loadConfig(writeConfig('carto: nope\n'))).toThrow(
       /invalid \.dispatch\/config\.yml: carto must be a mapping/
     );
+  });
+});
+
+describe('repoDigest config', () => {
+  it('defaults to enabled with a six-hour cooldown when the block is absent', () => {
+    expect(loadConfig(writeConfig('statuses: [todo]\n')).repoDigest).toEqual({
+      enabled: true,
+      cooldownHours: 6,
+    });
+  });
+
+  it('reads an explicit block', () => {
+    const dir = writeConfig(
+      'repoDigest:\n  enabled: false\n  cooldownHours: 24\n'
+    );
+    expect(loadConfig(dir).repoDigest).toEqual({
+      enabled: false,
+      cooldownHours: 24,
+    });
+  });
+
+  it('fills each field independently from the defaults', () => {
+    const dir = writeConfig('repoDigest:\n  cooldownHours: 1\n');
+    expect(loadConfig(dir).repoDigest).toEqual({
+      enabled: true,
+      cooldownHours: 1,
+    });
+  });
+
+  it('rejects a non-positive cooldown', () => {
+    const dir = writeConfig('repoDigest:\n  cooldownHours: 0\n');
+    expect(() => loadConfig(dir)).toThrow(ConfigError);
+    expect(() => loadConfig(dir)).toThrow(
+      /repoDigest\.cooldownHours must be a positive number/
+    );
+  });
+
+  it('rejects a non-boolean enabled', () => {
+    const dir = writeConfig('repoDigest:\n  enabled: "yes"\n');
+    expect(() => loadConfig(dir)).toThrow(
+      /repoDigest\.enabled must be a boolean/
+    );
+  });
+
+  it('rejects a non-object block', () => {
+    expect(() => loadConfig(writeConfig('repoDigest: 5\n'))).toThrow(
+      /repoDigest must be an object/
+    );
+  });
+
+  it('mutating a returned block does not poison later loads', () => {
+    loadConfig(root).repoDigest.cooldownHours = 999;
+    expect(loadConfig(root).repoDigest.cooldownHours).toBe(6);
   });
 });

@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test';
 
 import type { RunDisposition } from './runState';
 import {
+  CONTINUE_PROMPT,
+  continueMessage,
   deriveRunDisposition,
   deriveStopControl,
   isTerminalRunState,
@@ -107,6 +109,23 @@ describe('deriveRunDisposition', () => {
         })
       )
     ).toBe('closed');
+  });
+});
+
+describe('continueMessage', () => {
+  // The whole point of a one-click Continue: a run cut off mid-task needs no
+  // feedback written, so an empty composer must still resume it.
+  test('falls back to a canned continuation when nothing was typed', () => {
+    expect(continueMessage('')).toBe(CONTINUE_PROMPT);
+    expect(continueMessage('   \n  ')).toBe(CONTINUE_PROMPT);
+  });
+
+  // Continue sits beside Request changes in the same composer, so a human who
+  // typed first and then hit the wrong one must not silently lose their words.
+  test('sends what the human typed rather than dropping it', () => {
+    expect(continueMessage('  finish the failing test  ')).toBe(
+      'finish the failing test'
+    );
   });
 });
 

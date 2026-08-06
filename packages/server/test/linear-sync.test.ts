@@ -85,48 +85,51 @@ class FakeLinearClient implements LinearClient {
     return new Date(Date.now() + 5_000 + ++this.tick).toISOString();
   }
 
-  async viewer(): Promise<LinearResult<LinearViewer>> {
-    return {
+  viewer(): Promise<LinearResult<LinearViewer>> {
+    return Promise.resolve({
       ok: true,
       data: { id: 'u-1', name: 'Test', email: 'test@example.com' },
-    };
+    });
   }
 
-  async teams(): Promise<LinearResult<LinearTeam[]>> {
-    return { ok: true, data: [{ id: 'team-1', key: 'HYD', name: 'Hydrogen' }] };
+  teams(): Promise<LinearResult<LinearTeam[]>> {
+    return Promise.resolve({
+      ok: true,
+      data: [{ id: 'team-1', key: 'HYD', name: 'Hydrogen' }],
+    });
   }
 
-  async workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
-    return { ok: true, data: STATES };
+  workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
+    return Promise.resolve({ ok: true, data: STATES });
   }
 
-  async labels(): Promise<LinearResult<LinearLabel[]>> {
-    return { ok: true, data: LABELS };
+  labels(): Promise<LinearResult<LinearLabel[]>> {
+    return Promise.resolve({ ok: true, data: LABELS });
   }
 
-  async issuesUpdatedSince(
+  issuesUpdatedSince(
     _teamId: string,
     since: string | null
   ): Promise<LinearResult<LinearIssuePage>> {
-    if (this.issuesFailure !== null) return this.issuesFailure;
+    if (this.issuesFailure !== null) return Promise.resolve(this.issuesFailure);
     this.sinceSeen.push(since);
     const nodes =
       since === null
         ? this.issues
         : this.issues.filter((i) => i.updatedAt > since);
-    return {
+    return Promise.resolve({
       ok: true,
       data: {
         issues: nodes.map((i) => ({ ...i })),
         truncated: this.truncated,
       },
-    };
+    });
   }
 
-  async issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
-    if (this.linkFailure !== null) return this.linkFailure;
+  issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
+    if (this.linkFailure !== null) return Promise.resolve(this.linkFailure);
     this.linkQueries++;
-    return {
+    return Promise.resolve({
       ok: true,
       data: this.issues.map((i) => ({
         id: i.id,
@@ -134,13 +137,11 @@ class FakeLinearClient implements LinearClient {
         url: i.url,
         updatedAt: i.updatedAt,
       })),
-    };
+    });
   }
 
-  async createIssue(
-    input: LinearIssueInput
-  ): Promise<LinearResult<LinearIssue>> {
-    if (this.createFailure !== null) return this.createFailure;
+  createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {
+    if (this.createFailure !== null) return Promise.resolve(this.createFailure);
     this.onCreate?.();
     this.created.push(input);
     const issue = this.materialize(
@@ -149,17 +150,21 @@ class FakeLinearClient implements LinearClient {
       input
     );
     this.issues.push(issue);
-    return { ok: true, data: { ...issue } };
+    return Promise.resolve({ ok: true, data: { ...issue } });
   }
 
-  async updateIssue(
+  updateIssue(
     id: string,
     input: LinearIssueInput
   ): Promise<LinearResult<LinearIssue>> {
     this.updated.push({ id, input });
     const index = this.issues.findIndex((i) => i.id === id);
     if (index < 0) {
-      return { ok: false, kind: 'graphql', error: `unknown issue: ${id}` };
+      return Promise.resolve({
+        ok: false,
+        kind: 'graphql',
+        error: `unknown issue: ${id}`,
+      });
     }
     const issue = this.materialize(
       id,
@@ -168,7 +173,7 @@ class FakeLinearClient implements LinearClient {
       this.issues[index]
     );
     this.issues[index] = issue;
-    return { ok: true, data: { ...issue } };
+    return Promise.resolve({ ok: true, data: { ...issue } });
   }
 
   // Applies a mutation input to an issue the way Linear would, so a pull after a

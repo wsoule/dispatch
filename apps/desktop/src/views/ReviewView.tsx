@@ -18,8 +18,7 @@ import {
   useTaskFindings,
 } from '../hooks/useOrchestration';
 import { useRepoPrDetail } from '../hooks/useRepoPrDetail';
-import { deriveFeedState } from '../lib/feedState';
-import { countOpenFindings } from '../lib/findings';
+import { findingWarnings, partitionFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { openFindingsByFile } from '../lib/reviewAttention';
 import { caseWarnings, summarizeCase } from '../lib/reviewCase';
@@ -252,12 +251,9 @@ export function ReviewView({
       data.runDetail?.evidence ?? [],
       data.runDetail?.mutations ?? []
     );
-    const openFindings = countOpenFindings(findings).open;
     return [
       ...caseWarnings(summary),
-      ...(openFindings > 0
-        ? [`${openFindings} open finding${openFindings === 1 ? '' : 's'}`]
-        : []),
+      ...findingWarnings(partitionFindings(findings)),
     ];
   }, [data.runDetail, findings]);
 
@@ -679,11 +675,4 @@ function Header({
       </div>
     </div>
   );
-}
-
-/** Kept exported for the nav badge — how many runs are waiting on a review right now. */
-export function countAwaitingReview(
-  runs: Parameters<typeof deriveFeedState>[0][]
-): number {
-  return runs.filter((r) => deriveFeedState(r) === 'review').length;
 }

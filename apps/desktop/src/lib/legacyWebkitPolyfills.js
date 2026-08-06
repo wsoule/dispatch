@@ -29,6 +29,11 @@
   }
 
   // Array.prototype.at / String.prototype.at — Safari 15.4.
+  /**
+   * @this {ArrayLike<unknown>}
+   * @param {number} index
+   * @returns {unknown}
+   */
   function at(index) {
     var length = this.length;
     var i = Math.trunc(index) || 0;
@@ -41,6 +46,12 @@
 
   // Array.prototype.findLast / findLastIndex — Safari 15.4. findLastIndex is
   // included because the two share this loop and callers routinely pair them.
+  /**
+   * @this {ArrayLike<unknown>}
+   * @param {(value: unknown, index: number, self: ArrayLike<unknown>) => unknown} predicate
+   * @param {unknown} [thisArg]
+   * @returns {number}
+   */
   function findLastIndex(predicate, thisArg) {
     if (typeof predicate !== 'function') {
       throw new TypeError('predicate must be a function');
@@ -51,22 +62,58 @@
     return -1;
   }
   define(Array.prototype, 'findLastIndex', findLastIndex);
-  define(Array.prototype, 'findLast', function findLast(predicate, thisArg) {
-    var index = findLastIndex.call(this, predicate, thisArg);
-    return index === -1 ? undefined : this[index];
-  });
+  define(
+    Array.prototype,
+    'findLast',
+    /**
+     * @this {ArrayLike<unknown>}
+     * @param {(value: unknown, index: number, self: ArrayLike<unknown>) => unknown} predicate
+     * @param {unknown} [thisArg]
+     * @returns {unknown}
+     */
+    function findLast(predicate, thisArg) {
+      var index = findLastIndex.call(this, predicate, thisArg);
+      return index === -1 ? undefined : this[index];
+    }
+  );
 
   // Object.hasOwn — Safari 15.4.
-  define(Object, 'hasOwn', function hasOwn(target, key) {
-    return Object.prototype.hasOwnProperty.call(target, key);
-  });
+  define(
+    Object,
+    'hasOwn',
+    /**
+     * @param {object} target
+     * @param {PropertyKey} key
+     * @returns {boolean}
+     */
+    function hasOwn(target, key) {
+      // The cast states what `Function.prototype.call` erases: this webview's
+      // tsconfig leaves `strictBindCallApply` off, so `.call(...)` widens an
+      // otherwise-known `boolean` to `any`.
+      return /** @type {boolean} */ (
+        Object.prototype.hasOwnProperty.call(target, key)
+      );
+    }
+  );
 
   // Array.prototype.toSorted — Safari 16.4. Sorts a copy, so unlike `sort` the
   // receiver is left alone.
-  define(Array.prototype, 'toSorted', function toSorted(compare) {
-    if (compare !== undefined && typeof compare !== 'function') {
-      throw new TypeError('comparator must be a function');
+  define(
+    Array.prototype,
+    'toSorted',
+    /**
+     * @this {ArrayLike<unknown>}
+     * @param {((a: unknown, b: unknown) => number) | undefined} [compare]
+     * @returns {unknown[]}
+     */
+    function toSorted(compare) {
+      if (compare !== undefined && typeof compare !== 'function') {
+        throw new TypeError('comparator must be a function');
+      }
+      // Same `.call(...)` widening as in `hasOwn` above — name the copy's type
+      // so the sorted result stays typed.
+      var copy = /** @type {unknown[]} */ (Array.prototype.slice.call(this));
+      return copy.sort(compare);
     }
-    return Array.prototype.slice.call(this).sort(compare);
-  });
+  );
 })();

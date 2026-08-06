@@ -646,7 +646,12 @@ export class ClaudeExecutor implements Executor {
               events.onEntry(entry);
             }
           } else if (message.type === 'system') {
-            sessionId = message.session_id;
+            if (message.session_id !== sessionId) {
+              sessionId = message.session_id;
+              // Handed up now, not just carried to onFinish below — a daemon
+              // that dies mid-run never reaches a finish.
+              events.onSession?.(sessionId);
+            }
           } else if (message.type === 'result') {
             gotResult = true;
             if (!interrupted) events.onFinish(finishFromResult(message));

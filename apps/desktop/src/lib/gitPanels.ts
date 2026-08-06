@@ -107,7 +107,7 @@ export function reconcileGitPanelSelection<T>(
   return withIndex(state, panel, next);
 }
 
-export type GitFileSection = 'conflicted' | 'staged' | 'unstaged' | 'untracked';
+type GitFileSection = 'conflicted' | 'staged' | 'unstaged' | 'untracked';
 
 export interface GitFileRow {
   section: GitFileSection;

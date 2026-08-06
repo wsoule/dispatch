@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils';
 
 /** Where one step of a multi-phase pipeline has got to. */
-export type StepStatus = 'passed' | 'active' | 'pending' | 'failed';
+type StepStatus = 'passed' | 'active' | 'pending' | 'failed';
 
 export interface Step {
   name: string;

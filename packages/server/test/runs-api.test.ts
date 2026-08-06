@@ -1,4 +1,5 @@
 import { TaskStore } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,8 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
+import type { RunMeta } from '../src/orchestrator/types.js';
+import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth, wsUrl } from './testAuth.js';
 
@@ -39,12 +42,6 @@ function gatedFakeScript(): FakeExecutor {
     steps: [{ approval: { requestId: 'go', toolName: 'noop', input: {} } }],
     finish: { state: 'finished', costUsd: 0, turns: 1 },
   });
-}
-
-// Same escape hatch as api.test.ts/resilience.test.ts: `Response.json()`
-// types as `Promise<unknown>` under this repo's strict, DOM-less tsconfig.
-function json(res: Response): Promise<any> {
-  return res.json();
 }
 
 async function waitFor(
@@ -106,13 +103,13 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-async function createTask(title: string): Promise<any> {
+async function createTask(title: string): Promise<TaskDoc> {
   const res = await fetch(`${baseUrl}/api/tasks`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title }),
   });
-  return json(res);
+  return (await json(res)) as TaskDoc;
 }
 
 describe('POST /api/tasks/:id/runs', () => {
@@ -739,7 +736,7 @@ describe('WebSocket run.changed / run.log broadcasts', () => {
 describe('/api/branches', () => {
   // Dispatches a run and waits for it to finish, leaving one un-reviewed
   // branch + worktree behind for the branches routes to act on.
-  async function finishedRun(title = 'Branch surface'): Promise<any> {
+  async function finishedRun(title = 'Branch surface'): Promise<RunMeta> {
     const task = await createTask(title);
     const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
       method: 'POST',
@@ -751,7 +748,7 @@ describe('/api/branches', () => {
       const run = await json(await fetch(`${baseUrl}/api/runs/${meta.id}`));
       return run.meta.state === 'finished';
     });
-    return meta;
+    return meta as RunMeta;
   }
 
   it('lists a finished run as reviewable', async () => {

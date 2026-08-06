@@ -1,3 +1,5 @@
+import { describeValue } from '@dispatch/core';
+
 import type { ApiContext } from '../api.js';
 import type { ReviewScope } from '../orchestrator/review.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
@@ -32,7 +34,7 @@ export async function startTaskReview(
   if (body.scope !== undefined && !SCOPES.includes(body.scope as string)) {
     return errorResponse(
       400,
-      `invalid scope: ${String(body.scope)} (expected ${SCOPES.join('|')})`
+      `invalid scope: ${describeValue(body.scope)} (expected ${SCOPES.join('|')})`
     );
   }
   if (

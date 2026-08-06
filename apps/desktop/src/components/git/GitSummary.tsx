@@ -19,8 +19,6 @@ interface GitSummaryProps {
   reclaiming?: boolean;
 }
 
-export type { GitFilter };
-
 /** What git is costing you, above the list of branches. Every number is also a filter, so a
  *  count is a way into the rows behind it rather than a readout you then have to act on. */
 export function GitSummary({

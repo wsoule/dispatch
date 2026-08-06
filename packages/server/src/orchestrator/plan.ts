@@ -38,11 +38,11 @@ function generatePlanId(
 // flight; `ready` means the last turn settled and `proposal` holds a working
 // proposal that can be refined further or confirmed; `failed` means the last
 // turn errored.
-export type PlanState = 'running' | 'ready' | 'failed';
+type PlanState = 'running' | 'ready' | 'failed';
 
 // One entry in a plan's conversation transcript: a `user` message (the opening
 // prompt or a follow-up) or the `assistant` reply that answered it.
-export interface PlanMessage {
+interface PlanMessage {
   role: 'user' | 'assistant';
   text: string;
   at: string;

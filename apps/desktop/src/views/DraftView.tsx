@@ -63,6 +63,11 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
   const proposal = draft.proposal;
   const task = proposal?.tasks[0];
   const statuses = data.config?.statuses ?? [];
+  // The status a fresh draft opens in. Pulled out as a string because the
+  // hydration effect below depends on it: `statuses` is a new array identity on
+  // every render whenever the config hasn't loaded, so depending on the array
+  // would re-run that effect each render.
+  const defaultStatus = statuses[0] ?? 'backlog';
 
   const [editable, setEditable] = useState<EditableTaskDraft>(() =>
     editableDraftFrom(
@@ -72,7 +77,7 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
         acceptanceCriteria: task?.acceptanceCriteria ?? [],
         priority: task?.priority ?? 'none',
       },
-      statuses[0] ?? 'backlog'
+      defaultStatus
     )
   );
   // Stable per-row identity for the acceptance-criteria inputs, so editing one row never
@@ -98,13 +103,13 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
           acceptanceCriteria: task.acceptanceCriteria,
           priority: task.priority,
         },
-        statuses[0] ?? 'backlog'
+        defaultStatus
       )
     );
     setCriterionKeys(task.acceptanceCriteria.map((_, i) => `criterion-${i}`));
     nextCriterionKey.current = task.acceptanceCriteria.length;
     setHydrated(true);
-  }, [hydrated, task, statuses]);
+  }, [hydrated, task, defaultStatus]);
 
   function editDraft(patch: Partial<EditableTaskDraft>) {
     setEditable((prev) => ({ ...prev, ...patch }));

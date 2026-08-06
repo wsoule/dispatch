@@ -50,7 +50,7 @@ export function describeError(err: unknown): string {
  * ignore the ones that matter. These are the actions whose effect happens
  * somewhere you are not looking: a queue, a remote, a directory on disk.
  */
-export const SUCCESS_MESSAGES: Record<string, string> = {
+const SUCCESS_MESSAGES: Record<string, string> = {
   handleEnqueueMerge: 'Queued to merge',
   handleEnqueueMergeStack: 'Stack queued to merge',
   handleMergeAllReady: 'Ready work queued to merge',

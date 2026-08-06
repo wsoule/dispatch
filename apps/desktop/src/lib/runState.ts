@@ -100,6 +100,22 @@ export function deriveRunDisposition(meta: RunMeta): RunDisposition {
   return resumable ? 'stopped-short' : 'dead';
 }
 
+/**
+ * What Continue resumes a `stopped-short` run with when the composer is empty.
+ * Such a run was cut off rather than wrong, so there is nothing to critique —
+ * it needs re-orienting, which is why this says where to look rather than just
+ * "carry on".
+ */
+export const CONTINUE_PROMPT =
+  'Continue where you left off. Re-read the task and your own transcript above first, then pick up from the last thing you were doing.';
+
+/** The text a Continue click sends: the typed draft when there is one, so hitting
+ * Continue instead of Request changes never discards what was written. */
+export function continueMessage(draft: string): string {
+  const typed = draft.trim();
+  return typed === '' ? CONTINUE_PROMPT : typed;
+}
+
 export interface RunSurveyNotice {
   title: string;
   body: string;

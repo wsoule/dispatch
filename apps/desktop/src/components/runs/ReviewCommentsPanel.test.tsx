@@ -3,8 +3,8 @@ import { expect, test } from 'bun:test';
 
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 
-const noop = async () => {};
-const submit = async () => ({ published: 0 });
+const noop = () => Promise.resolve();
+const submit = () => Promise.resolve({ published: 0 });
 
 // `RunReviewView` renders this panel and is deliberately not edited alongside the full-page
 // review's rework, so the split into thread index + verdict bar has to leave both halves
