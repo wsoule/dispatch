@@ -96,19 +96,13 @@ export function canApplyNow(
  * (callers pass that bound function in, including its `invalidate` call — this never
  * duplicates that logic).
  *
- * A failed apply must never look like a failed save, and must never undo it: the reviewer's
- * writing is the thing that must never be lost, and the commit stays retryable from the
- * thread's own Apply button once it renders. So this only ever *reports* an apply failure via
- * `onApplyNowFailed` — it does not reject and does not retry — and always resolves with the
- * comment `save` produced. It DOES reject if `save` itself fails, since then nothing was
- * created and there is nothing for `apply` or `onApplyNowFailed` to do.
+ * A failed apply must never look like a failed save or undo one: it is only *reported* via
+ * `onApplyNowFailed`, never rethrown, and this always resolves with the comment `save` produced
+ * so the commit stays retryable from the thread's own Apply button. It does reject when `save`
+ * itself fails, since then there is nothing to apply.
  *
- * Kept here, pulled out of `ReviewComposer`, because the ordering and never-roll-back guarantees
- * are exactly the kind of logic worth pinning with a direct unit test rather than a DOM
- * interaction — and Pierre's real editor cannot be driven under `bun test` at all: its text
- * measurement calls `canvas.getContext('2d')`, which happy-dom does not implement, so there is
- * no way to simulate the keystroke that would produce a changed suggestion to click `Apply now`
- * with in a render test.
+ * Lives here rather than inline in `ReviewComposer` so the ordering is unit-testable: driving
+ * Pierre's real editor to produce a changed suggestion is not possible under `bun test`.
  */
 export async function submitAndApplyNow<T extends { id: string }>(
   save: () => Promise<T>,

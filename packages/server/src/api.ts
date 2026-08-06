@@ -953,20 +953,16 @@ async function readRunFile(
 const REVIEWER_EDIT_TRAILER = 'Dispatch-Reviewer-Edit';
 
 /**
- * Writes `contents` to `onDisk`, stages `file`, and commits just that path with
- * `subject` plus the reviewer-edit trailer. The commit is scoped to `file` so a
- * reviewer's fix never carries whatever else the agent left staged — which is
- * exactly what the trailer exists to keep separable.
+ * Writes `contents` to `onDisk` and commits just that path with `subject` plus the
+ * reviewer-edit trailer — scoped to `file` so the commit never carries whatever
+ * else the agent left staged, which is what the trailer exists to keep separable.
  *
- * Any failure after the write puts the worktree back as it was found: the file
- * gets its previous contents, and the index gets its previous entry for that
- * path (not a reset to HEAD, which would discard an agent's staged version).
- * Otherwise a hook-rejected commit would leave a half-applied write behind and
- * the reviewer's honest retry would come back as a bogus `stale-base`.
+ * Any failure after the write restores both the file and its previous index entry
+ * (not a reset to HEAD, which would drop an agent's staged version), so a rejected
+ * commit can't leave a half-applied write for the next attempt to trip over.
  *
- * Shared by applyRunEdit and applySuggestion: both are a human's edit landing
- * as a commit on the run branch, and differ only in how the new contents were
- * produced (typed directly vs. spliced from a comment's suggestion).
+ * Shared by applyRunEdit and applySuggestion, which differ only in how the new
+ * contents were produced.
  */
 async function writeAndCommit(
   ctx: ApiContext,
