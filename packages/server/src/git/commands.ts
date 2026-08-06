@@ -72,11 +72,12 @@ function resolveRealParent(path: string): string {
  * calling git) need this instead of a plain string check: a worktree can
  * contain a committed symlinked directory pointing outside itself, and a
  * pure `.split('/').includes('..')` test never sees that redirect.
+ *
+ * Module-local: callers outside this file want `resolveWorktreeFilePath`, which
+ * also rejects a symlinked leaf. Exporting only the strict form keeps a caller
+ * from reaching for the weaker one by accident.
  */
-export function resolveWorktreePath(
-  root: string,
-  rawPath: string
-): string | null {
+function resolveWorktreePath(root: string, rawPath: string): string | null {
   if (rawPath === '' || rawPath.startsWith('-')) return null;
   const realRoot = realOrSelf(resolve(root));
   const resolved = resolveRealParent(resolve(realRoot, rawPath));
