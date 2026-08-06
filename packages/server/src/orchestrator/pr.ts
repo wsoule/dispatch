@@ -981,6 +981,16 @@ export class PrManager {
       return { pushed: 0 };
     }
 
+    const pushedIds = new Set(pending.map((c) => c.id));
+    // Record that this batch has left, in its own write, before the pull
+    // below can fail. GitHub has the comments now and there is no way to
+    // delete them, so a record still marked `pending` would be posted a
+    // second time by the next verdict and duplicate the note for good.
+    const posted = this.ctx.reviewComments
+      .list(target)
+      .map((c) => (pushedIds.has(c.id) ? { ...c, pending: false } : c));
+    this.ctx.reviewComments.replaceAll(target, posted);
+
     // The batch just posted now exists on GitHub with real ids. Reviewer
     // replies and resolution written locally against these drafts exist
     // nowhere else — GitHub never saw them — so they have to be carried
@@ -997,13 +1007,11 @@ export class PrManager {
         resolved: c.resolved,
       });
     }
-    const pushedIds = new Set(pending.map((c) => c.id));
 
-    // Pull BEFORE writing anything locally. If this fails, the original
-    // drafts are still on disk exactly as the reviewer left them (stale —
-    // GitHub already has the review — but recoverable on the next sync)
-    // rather than deleted with nothing to replace them, which reordering
-    // "delete, write, then pull" would risk on a pull failure.
+    // Pull BEFORE writing the merge. If this fails, the batch is already
+    // marked non-pending above (so nothing re-sends it) and the reviewer's
+    // text is still on disk, rather than deleted with nothing to replace
+    // it — which reordering "delete, write, then pull" would risk.
     const remote = await this.pullRemoteComments(location);
     // Re-read rather than reuse `all`/`pending`: this.run above awaited two
     // network round trips (the POST and this pull), wide open for a
@@ -1013,13 +1021,22 @@ export class PrManager {
     const remaining = this.ctx.reviewComments
       .list(target)
       .filter((c) => !pushedIds.has(c.id));
+    // Every githubId the store already knew about. A draft's replacement is
+    // by definition an id that is new here, so restricting the carry-forward
+    // to those is what stops a same-file, same-body draft from overwriting
+    // an unrelated already-synced comment's replies and resolved flag.
+    const knownIds = new Set(
+      remaining
+        .map((c) => c.githubId)
+        .filter((id): id is number => id !== undefined)
+    );
     // mapGitHubComment always sets githubId and pending together — so
     // letting mergeComments' remote-only rule create the replacement here
     // (rather than flipping `pending` on the draft directly) is what keeps
     // those two fields from ever landing as two separate writes, which is
     // the invariant mergeComments itself cannot enforce.
     const merged = mergeComments(remaining, remote).map((c) => {
-      if (c.githubId === undefined) return c;
+      if (c.githubId === undefined || knownIds.has(c.githubId)) return c;
       const extra = localExtras.get(`${c.file} ${c.body}`);
       if (extra === undefined) return c;
       return { ...c, replies: extra.replies, resolved: extra.resolved };

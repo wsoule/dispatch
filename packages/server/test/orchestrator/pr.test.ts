@@ -1329,9 +1329,9 @@ describe('PrManager.pushPrReview', () => {
   // Regression: pushPrReview used to delete the draft, write that, THEN
   // re-pull — so a re-pull failure left the draft deleted with nothing to
   // replace it, even though the review had already posted successfully.
-  // Pulling before writing anything means a failed pull here leaves the
-  // original draft exactly as it was.
-  it('leaves the original draft intact if the re-pull fails after a successful push', async () => {
+  // Pulling before writing the merge means a failed pull here keeps the
+  // reviewer's text; only the "already posted" marker has been written.
+  it('keeps the reviewer text if the re-pull fails after a successful push', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
     stub.listResult = listResultWithHeadRefOid('sha-abc123');
@@ -1345,7 +1345,89 @@ describe('PrManager.pushPrReview', () => {
       OrchestratorConflictError
     );
 
-    expect(harness.reviewComments.list(prTarget)).toEqual([draft]);
+    expect(harness.reviewComments.list(prTarget)).toEqual([
+      { ...draft, pending: false },
+    ]);
+  });
+
+  // Regression: a successful POST followed by a failed pull used to leave
+  // the batch `pending`, so the next verdict posted the whole thing again —
+  // and nothing deletes a PR review comment, so the duplicate was forever.
+  it('does not re-post a batch whose pull failed when a later verdict runs', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    seedPending(harness);
+    stub.apiResult = { ok: false, stdout: '', stderr: 'rate limited' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.pushPrReview(9, 'approve', 'LGTM')).rejects.toThrow(
+      OrchestratorConflictError
+    );
+
+    // The reviewer tries again. The comment is already on GitHub, so the
+    // second review must carry no comments at all.
+    const second = await pr.pushPrReview(9, 'comment', 'trying again');
+
+    expect(second.pushed).toBe(0);
+    expect(stub.postedReviewPayloads).toHaveLength(2);
+    expect(stub.postedReviewPayloads[1]?.comments).toEqual([]);
+  });
+
+  // Regression: the extras carry-forward was applied to every merged comment
+  // with a githubId, keyed on file+body — so staging a new draft that
+  // happened to repeat an existing comment's file and text overwrote that
+  // comment's replies and resolved flag with the draft's empty ones, with
+  // nothing anywhere to restore them from.
+  it("leaves an unrelated synced comment's reply alone when a draft repeats its text", async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    // Already on GitHub, carrying a reply and resolution that exist only
+    // locally, on the same file and with the same body as the draft below.
+    const synced = syncedComment({
+      id: 'rc-synced',
+      file: 'src/a.ts',
+      line: 3,
+      body: 'nit: typo',
+      resolved: true,
+      replies: [
+        {
+          id: 'rr-1',
+          author: 'teammate',
+          body: 'fixed in the next push',
+          created: '2026-08-02T00:00:00Z',
+        },
+      ],
+    });
+    harness.reviewComments.replaceAll(prTarget, [synced]);
+    seedPending(harness, { file: 'src/a.ts', line: 40, body: 'nit: typo' });
+    // The pull returns both: the old comment unchanged, and the draft's
+    // freshly created GitHub copy.
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        rawGitHubComment({ id: 555, path: 'src/a.ts', body: 'nit: typo' }),
+        rawGitHubComment({
+          id: 778,
+          path: 'src/a.ts',
+          line: 40,
+          body: 'nit: typo',
+        }),
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.pushPrReview(9, 'comment', 'one more');
+
+    const stored = harness.reviewComments.list(prTarget);
+    const old = stored.find((c) => c.githubId === 555);
+    expect(old?.resolved).toBe(true);
+    expect(old?.replies).toHaveLength(1);
+    expect(old?.replies[0]?.body).toBe('fixed in the next push');
+    // The draft's own replacement still lands, empty extras and all.
+    expect(stored.find((c) => c.githubId === 778)).toBeDefined();
   });
 
   // Regression: the draft was deleted and recreated wholesale from
