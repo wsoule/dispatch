@@ -175,6 +175,42 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
     ).toBe(false);
     expect(screen.queryByText(/agent is working/)).toBeNull();
   });
+
+  // The real bug this covers: `Apply now`'s apply step is a POST that does a file write and a
+  // git commit, racing a plain GET refetch of the comment list that the save's own
+  // `invalidateReview()` kicks off first. That refetch very plausibly wins, so this thread
+  // mounts (with no failure yet known) BEFORE `onApplyNowFailed` ever reports one — the failure
+  // arrives as a *prop change* on an already-mounted thread, not as its initial value. A
+  // `useState` lazy initializer only runs once, at mount, so relying on it alone would silently
+  // drop that failure — a rejected apply that could never be discovered from the UI.
+  it('picks up a failure that arrives after mount, not just at initial render', () => {
+    const props = {
+      comment: comment({ suggestion: 'const b = 2;' }),
+      anchor: 'exact' as const,
+      onResolve: () => {},
+      onReply: () => {},
+      onApply: () => Promise.resolve(),
+    };
+    const { rerender } = render(<ReviewThread {...props} />);
+    expect(screen.queryByText(/agent is working/)).toBeNull();
+
+    rerender(
+      <ReviewThread
+        {...props}
+        initialApplyError={{
+          message: 'An agent is working in this worktree…',
+          disable: true,
+        }}
+      />
+    );
+
+    expect(
+      screen.getByText('An agent is working in this worktree…')
+    ).toBeDefined();
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Apply' }).disabled
+    ).toBe(true);
+  });
 });
 
 describe('ReviewThread — the existing thread behaviour', () => {

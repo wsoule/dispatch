@@ -68,6 +68,34 @@ export function ReviewThread({
         }
   );
 
+  // `initialApplyError` can arrive strictly AFTER this thread has already mounted: `Apply now`'s
+  // apply step is a POST that does a real file write and git commit, racing the plain GET
+  // refetch its own preceding save kicks off — a refetch that very plausibly wins, since it does
+  // far less work. When it does, this thread mounts (via `applyState`'s lazy initializer above,
+  // reading `initialApplyError === undefined`) before the apply has even settled, and the
+  // failure — once `PierreReviewDiff` learns of it — arrives on a LATER render as a changed prop.
+  // A lazy initializer only ever runs once, at mount, so relying on it alone would silently drop
+  // that failure: the reviewer would see an idle, clickable Apply button over a suggestion that
+  // was never actually applied. This effect is what re-derives `applyState` when that happens.
+  //
+  // Guarded to only ever move `idle` → `failed`, never overwrite an in-progress or already-
+  // resolved `handleApply` call below: `applyNowFailures` in `PierreReviewDiff` never mutates an
+  // existing entry once set (see its own doc comment), so `initialApplyError`'s identity is
+  // stable after the one transition from `undefined` to defined — this does not re-fire on
+  // every render, and does not clobber a later live click's own outcome.
+  useEffect(() => {
+    if (initialApplyError === undefined) return;
+    setApplyState((current) =>
+      current.status === 'idle'
+        ? {
+            status: 'failed',
+            message: initialApplyError.message,
+            disabled: initialApplyError.disable,
+          }
+        : current
+    );
+  }, [initialApplyError]);
+
   // Fires the apply and turns any rejection into the sentence + disable decision
   // `resolveApplySuggestionFailure` makes — see its own doc comment for why only
   // anchor-drifted disables the button rather than every failure.
