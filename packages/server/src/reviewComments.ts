@@ -52,8 +52,12 @@ export interface ReviewComment {
   githubId?: number;
   /** GitHub comment update timestamp when synced from GitHub. */
   githubUpdatedAt?: string;
-  /** Source of the comment: 'local' or 'github'. Defaults to 'local'. */
-  origin?: string;
+  /**
+   * Which side of the mirror wrote this record first. `add` stamps 'local',
+   * `mapGitHubComment` stamps 'github'. Absent only on records written
+   * before the mirror existed.
+   */
+  origin?: 'local' | 'github';
   /**
    * GraphQL node id of the GitHub review thread this comment belongs to.
    * REST never reports this — only `PrManager.syncReviewThreads`'s GraphQL
@@ -172,6 +176,7 @@ export class ReviewCommentStore {
       pending: input.pending ?? true,
       created: now,
       replies: [],
+      origin: 'local',
     };
     const all = this.list(target);
     all.push(comment);
