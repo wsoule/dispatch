@@ -944,7 +944,7 @@ async function readRunFile(
 
 /** Trailer marking a commit a human made while reviewing, so an audit export can
  *  separate reviewer corrections from agent work without parsing the subject. */
-export const REVIEWER_EDIT_TRAILER = 'Dispatch-Reviewer-Edit';
+const REVIEWER_EDIT_TRAILER = 'Dispatch-Reviewer-Edit';
 
 /**
  * Writes `contents` to `onDisk`, stages `file`, and commits with `subject` plus
