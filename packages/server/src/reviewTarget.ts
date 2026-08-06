@@ -1,6 +1,6 @@
 /**
  * What a review is looking at: a local run's diff, or a GitHub pull request.
- * Mirrors apps/desktop/src/lib/reviewTarget.ts, which the UI keys on.
+ * Mirrored by @dispatch/client's wire type, which the UI re-exports.
  */
 export type ReviewTarget =
   | { kind: 'run'; runId: string }
