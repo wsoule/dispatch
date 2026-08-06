@@ -767,7 +767,13 @@ class ScriptedReviewer implements Executor {
 
 // A DepMap with no edges — the default for tests that don't care about
 // dependency scope, so they don't have to scan a real workspace.
-const EMPTY_DEP_MAP: DepMap = { dependents: () => [], mirrors: () => [] };
+const EMPTY_DEP_MAP: DepMap = {
+  dependents: () => [],
+  mirrors: () => [],
+  reach: () => {
+    throw new Error('unused');
+  },
+};
 
 // Fixed git identity so ReviewRunner's actorContext resolves deterministically
 // (handle 'test', from the local part of the email) across every test.
@@ -1119,6 +1125,9 @@ describe('ReviewRunner', () => {
     const fakeDepMap: DepMap = {
       dependents: (file) => (file === 'src.ts' ? manyDependents : []),
       mirrors: (file) => (file === 'src.ts' ? ['mirror.ts'] : []),
+      reach: () => {
+        throw new Error('unused');
+      },
     };
     const reviewer = new ScriptedReviewer('{"findings": []}');
     const { runner, store } = setupReview(reviewer, {
@@ -1154,6 +1163,9 @@ describe('ReviewRunner', () => {
         return [];
       },
       mirrors: () => [],
+      reach: () => {
+        throw new Error('unused');
+      },
     };
     const reviewer = new ScriptedReviewer('{"findings": []}');
     const { runner, store } = setupReview(reviewer, {
