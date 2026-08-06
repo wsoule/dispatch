@@ -13,9 +13,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { writeBoard } from '../src/board.js';
+import { git } from '../src/git.js';
 import { actorFile, runsDir } from '../src/paths.js';
 import { FINDINGS } from '../src/records.js';
-import { buildRepo } from '../src/repo.js';
+import { BRANCH_FIXES, buildRepo } from '../src/repo.js';
 import {
   clearRunHistory,
   RUN_STATES,
@@ -592,6 +593,58 @@ test('writeReviewDiffs computes and persists a real diff when rootDir has a real
     expect(snapshot.patch.length).toBeGreaterThan(0);
     expect(snapshot.patch).toContain('CartProvider.ts');
     expect(Array.isArray(snapshot.files)).toBe(true);
+    expect(snapshot.files.length).toBeGreaterThan(0);
+    expect(snapshot.files.some((f) => f.path.includes('CartProvider.ts'))).toBe(
+      true
+    );
+  }
+});
+
+// Reproduces the real `demo reset` crash: a teammate clone whose local
+// `main` never got created. `git clone` only checks out the remote's
+// default branch locally — every other branch, including `main` itself
+// when the remote's default is something else, exists solely as
+// `origin/<branch>`. This bit a real run when the storefront remote's
+// default branch was briefly a stray `__authtest`: computeFixDiff's
+// `git merge-base main ref` failed with "Not a valid object name main"
+// because no local `main` existed in the clone. Simulate that exact shape
+// here (rather than against the happy-path buildRepo root the test above
+// uses, which creates `main` locally and never exercises this) by cloning
+// from a local bare repo (never DEMO.remote) and then deleting the clone's
+// local `main`, leaving only `origin/main`.
+test('writeReviewDiffs still produces non-empty diffs when the clone has no local main, only origin/main', () => {
+  const owner = mkdtempSync(join(tmpdir(), 'demo-runs-repo-'));
+  buildRepo({ root: owner, push: false });
+
+  const bare = mkdtempSync(join(tmpdir(), 'demo-runs-bare-'));
+  git(bare, 'init', '-q', '--bare', '-b', 'main');
+  git(owner, 'remote', 'add', 'origin', bare);
+  git(owner, 'push', '-q', '--all', 'origin');
+
+  const clone = mkdtempSync(join(tmpdir(), 'demo-runs-clone-'));
+  git(dirname(clone), 'clone', '-q', bare, clone);
+
+  const fixBranch = BRANCH_FIXES[0].branch;
+  git(clone, 'checkout', '-q', fixBranch);
+  git(clone, 'branch', '-D', 'main');
+  expect(() =>
+    git(clone, 'rev-parse', '--verify', '--quiet', 'main')
+  ).toThrow();
+  expect(git(clone, 'rev-parse', '--verify', 'origin/main').trim()).not.toBe(
+    ''
+  );
+
+  const home = mkdtempSync(join(tmpdir(), 'demo-runs-home-'));
+  writeRuns(clone, home, 'wsoule679');
+
+  const dir = runsDir(clone, home);
+  for (const runId of ['r-2e91aa', 'r-7f4a2b', 'r-4b91de']) {
+    const raw = readFileSync(join(dir, `${runId}.diff.json`), 'utf8');
+    const snapshot = JSON.parse(raw) as {
+      patch: string;
+      files: { path: string; status: string }[];
+    };
+    expect(snapshot.patch.length).toBeGreaterThan(0);
     expect(snapshot.files.length).toBeGreaterThan(0);
     expect(snapshot.files.some((f) => f.path.includes('CartProvider.ts'))).toBe(
       true

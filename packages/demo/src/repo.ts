@@ -46,18 +46,31 @@ export interface DiffResult {
 // reviewed run's worktree), so `diff()`'s snapshot fallback has real content
 // to serve for the runs the demo path's Review/Verify stops actually open.
 // `git clone` only ever checks out the default branch locally; every OTHER
-// branch (including a BRANCH_FIXES entry) exists only as a remote-tracking
-// ref (`origin/<branch>`) until something explicitly checks it out. That's
-// true for DEMO.teammateRoot always, and would even be true for DEMO.root
-// itself after a real `git clone` — buildRepo happens to create its branches
-// locally directly (no clone involved), so `root` alone resolves there, but
-// nothing about computeFixDiff should assume which case it's in.
+// branch (including a BRANCH_FIXES entry, and even `main` itself when the
+// remote's default branch is something else) exists only as a
+// remote-tracking ref (`origin/<branch>`) until something explicitly checks
+// it out. That's true for DEMO.teammateRoot always, and would even be true
+// for DEMO.root itself after a real `git clone` — buildRepo happens to
+// create its branches locally directly (no clone involved), so `root` alone
+// resolves there, but nothing calling resolveRef should assume which case
+// it's in. Throws instead of guessing when neither form exists, so callers
+// fail with an actionable message instead of a raw "Not a valid object
+// name" surfacing from whatever git command consumes the (wrong) ref.
 function resolveRef(root: string, branch: string): string {
   try {
     git(root, 'rev-parse', '--verify', '--quiet', branch);
     return branch;
   } catch {
-    return `origin/${branch}`;
+    // fall through to the origin/<branch> fallback below
+  }
+  const remote = `origin/${branch}`;
+  try {
+    git(root, 'rev-parse', '--verify', '--quiet', remote);
+    return remote;
+  } catch {
+    throw new Error(
+      `cannot resolve ref "${branch}" in ${root}: neither a local branch nor "${remote}" exists`
+    );
   }
 }
 
@@ -66,8 +79,9 @@ export function computeFixDiff(root: string, taskId: string): DiffResult {
   if (fix === undefined) {
     throw new Error(`no BRANCH_FIXES entry for ${taskId}`);
   }
+  const baseRef = resolveRef(root, 'main');
   const ref = resolveRef(root, fix.branch);
-  const mergeBase = git(root, 'merge-base', 'main', ref).trim();
+  const mergeBase = git(root, 'merge-base', baseRef, ref).trim();
   const patch = git(root, 'diff', mergeBase, ref);
   const nameStatus = git(root, 'diff', '--name-status', mergeBase, ref);
   const files: DiffFile[] = nameStatus
