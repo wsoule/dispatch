@@ -1,4 +1,4 @@
-import type { Finding, ReviewComment } from '@dispatch/client';
+import type { ApiClient, Finding, ReviewComment } from '@dispatch/client';
 import type { CodeViewDiffItem, DiffLineAnnotation } from '@pierre/diffs';
 import { processPatch } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
@@ -10,6 +10,7 @@ import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
+import { useRunFileLoader } from '@/hooks/useRunFileContents';
 import { toDiffRenderOptions } from '@/lib/diffDisplay';
 
 /** What each annotation carries, so `renderAnnotation` knows what to draw. */
@@ -24,6 +25,13 @@ type Annotation =
     };
 
 interface PierreReviewDiffProps {
+  /** Backs the contents loader that fills in what a patch's own hunks don't carry — omitted
+   * (or `null`) call sites simply render without hunk expansion, same as before the loader
+   * existed, rather than the diff itself failing. */
+  client?: ApiClient | null;
+  /** The run whose worktree `loadDiffFiles` reads from. Omit where there is no run to read from
+   * (a GitHub PR) — see `client` above for what that degrades to. */
+  runId?: string;
   patch: string;
   comments: ReviewComment[];
   /**
@@ -65,6 +73,8 @@ interface PierreReviewDiffProps {
  * same gesture as on GitHub: hover the line, click the +.
  */
 export function PierreReviewDiff({
+  client,
+  runId,
   patch,
   comments,
   onAdd,
@@ -92,9 +102,12 @@ export function PierreReviewDiff({
   } | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
   const [diffDisplay] = useDiffDisplaySettings();
+  // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
+  // run's worktree, which is what makes unchanged-region expansion possible at all.
+  const { loadDiffFiles } = useRunFileLoader(client ?? null, runId);
   const diffOptions = useMemo(
-    () => toDiffRenderOptions(diffDisplay),
-    [diffDisplay]
+    () => ({ ...toDiffRenderOptions(diffDisplay), loadDiffFiles }),
+    [diffDisplay, loadDiffFiles]
   );
 
   const files = useMemo(() => {

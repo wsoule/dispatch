@@ -1,4 +1,9 @@
-import type { DiffResult, MergeQueueSnapshot, RunMeta } from '@dispatch/client';
+import type {
+  ApiClient,
+  DiffResult,
+  MergeQueueSnapshot,
+  RunMeta,
+} from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
 import {
@@ -20,6 +25,9 @@ import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
 
 interface RunReviewViewProps {
+  /** Feeds `PierreReviewDiff`'s contents loader — omitted only by call sites that predate it,
+   * which keep rendering without hunk expansion rather than failing to compile. */
+  client?: ApiClient | null;
   meta: RunMeta;
   diff: DiffResult | undefined;
   diffLoading: boolean;
@@ -74,6 +82,7 @@ interface RunReviewViewProps {
  * under the first.
  */
 export function RunReviewView({
+  client,
   meta,
   diff,
   diffLoading,
@@ -190,6 +199,8 @@ export function RunReviewView({
           onReplyComment !== undefined &&
           diff !== undefined ? (
             <PierreReviewDiff
+              client={client}
+              runId={meta.id}
               patch={diff.patch}
               comments={reviewComments ?? []}
               onAdd={onAddComment}

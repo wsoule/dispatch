@@ -451,6 +451,10 @@ export function ReviewView({
                 commentCount={commentsByFile.get(selected) ?? 0}
               />
               <PierreReviewDiff
+                client={data.client}
+                // `undefined` for a PR target: there is no run worktree to load a PR's file
+                // contents from, so the diff renders without hunk expansion, same as before.
+                runId={run?.id}
                 patch={diff.patch}
                 only={selected}
                 comments={reviewComments}
