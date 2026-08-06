@@ -1,10 +1,10 @@
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { actorFile, runKey, runsDir } from './paths.js';
 import { FINDINGS } from './records.js';
-import { BRANCH_FIXES } from './repo.js';
+import { BRANCH_FIXES, computeFixDiff } from './repo.js';
 
 // ---------------------------------------------------------------------------
 // Hand-kept mirrors of @dispatch/server's orchestrator types.
@@ -845,6 +845,41 @@ function writeStoppedRun(dir: string, rootDir: string): void {
   });
 }
 
+// Same path Orchestrator.persistDiffSnapshot writes to (see
+// packages/server/src/orchestrator/paths.ts's diffSnapshotPath): alongside
+// the transcript, named `<runId>.diff.json`.
+function diffSnapshotPath(dir: string, runId: string): string {
+  return join(dir, `${runId}.diff.json`);
+}
+
+// Seeds the review surface's diff for every seeded run that reviews or
+// verifies t-2e91aa's real fix branch (r-2e91aa, r-7f4a2b, r-4b91de — see
+// writePortedRuns/writeReviewRun/writeVerifyRun above). Without this, none of
+// them have a live worktree (no seeded run ever gets one) or a persisted
+// snapshot, so Orchestrator.diff() 409s and the demo's central "Review
+// surface" beat has nothing to show. t-58cc03's chain (including the known
+// r-c05e19 gap — see the Task 9 report) is deliberately left unseeded here:
+// none of its runs sit in the review queue's default view the same way, and
+// guessing at kind:'review'/'verify' branch semantics beyond this one
+// well-understood case risked shipping a snapshot that looked right but
+// wasn't.
+//
+// `rootDir` must be a real clone with BRANCH_FIXES' branches already
+// committed — true for both DEMO.root and DEMO.teammateRoot inside the real
+// `reset` flow (see cli.ts), but every one of this package's own tests calls
+// writeRuns() against a bare scratch tmpdir with no git history at all.
+// Skip cleanly rather than throwing when there's nothing to diff against,
+// same convention as this file's other "demo has never been generated"
+// guards.
+function writeReviewDiffs(dir: string, rootDir: string): void {
+  if (!existsSync(join(rootDir, '.git'))) return;
+  const diff = computeFixDiff(rootDir, 't-2e91aa');
+  const json = JSON.stringify(diff);
+  for (const runId of ['r-2e91aa', 'r-7f4a2b', 'r-4b91de']) {
+    writeFileSync(diffSnapshotPath(dir, runId), json);
+  }
+}
+
 /** Writes this clone's actor identity file at `actorFile(rootDir, home)`. */
 function writeActorIdentity(
   rootDir: string,
@@ -877,6 +912,7 @@ export function writeRuns(rootDir: string, home: string, handle: string): void {
   writeScopeRequestRun(dir, rootDir);
   writePlanDraftRun(dir, rootDir);
   writeStoppedRun(dir, rootDir);
+  writeReviewDiffs(dir, rootDir);
 
   writeActorIdentity(rootDir, home, handle);
 }

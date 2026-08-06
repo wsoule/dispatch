@@ -19,6 +19,67 @@ export interface BranchFix {
   contents: string;
 }
 
+// Hand-kept mirror of packages/server/src/orchestrator/worktree.ts's
+// DiffResult/DiffFile — see runs.ts's own "hand-kept mirrors" comment for why
+// this package can't import @dispatch/server's types directly.
+export interface DiffFile {
+  path: string;
+  status: string;
+}
+
+export interface DiffResult {
+  patch: string;
+  files: DiffFile[];
+}
+
+// Computes the same {patch, files} shape Orchestrator.diff() would produce
+// from a live worktree (see WorktreeManager.diff() in
+// packages/server/src/orchestrator/worktree.ts), but directly from the two
+// real refs a BRANCH_FIXES entry creates — merge-base(main, fix.branch), then
+// `git diff`/`git diff --name-status` from there to the fix branch's tip.
+//
+// No seeded demo run ever gets a real `git worktree add`, so without this,
+// every review/verify run's diff pane 409s ("run has no worktree to diff")
+// — confirmed against a live daemon while building this fixture. runs.ts
+// writes this result to each such run's `<runId>.diff.json` snapshot (the
+// same file Orchestrator.persistDiffSnapshot writes right before deleting a
+// reviewed run's worktree), so `diff()`'s snapshot fallback has real content
+// to serve for the runs the demo path's Review/Verify stops actually open.
+// `git clone` only ever checks out the default branch locally; every OTHER
+// branch (including a BRANCH_FIXES entry) exists only as a remote-tracking
+// ref (`origin/<branch>`) until something explicitly checks it out. That's
+// true for DEMO.teammateRoot always, and would even be true for DEMO.root
+// itself after a real `git clone` — buildRepo happens to create its branches
+// locally directly (no clone involved), so `root` alone resolves there, but
+// nothing about computeFixDiff should assume which case it's in.
+function resolveRef(root: string, branch: string): string {
+  try {
+    git(root, 'rev-parse', '--verify', '--quiet', branch);
+    return branch;
+  } catch {
+    return `origin/${branch}`;
+  }
+}
+
+export function computeFixDiff(root: string, taskId: string): DiffResult {
+  const fix = BRANCH_FIXES.find((f) => f.task === taskId);
+  if (fix === undefined) {
+    throw new Error(`no BRANCH_FIXES entry for ${taskId}`);
+  }
+  const ref = resolveRef(root, fix.branch);
+  const mergeBase = git(root, 'merge-base', 'main', ref).trim();
+  const patch = git(root, 'diff', mergeBase, ref);
+  const nameStatus = git(root, 'diff', '--name-status', mergeBase, ref);
+  const files: DiffFile[] = nameStatus
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      const [status, ...rest] = line.split('\t');
+      return { path: rest.join('\t'), status: status ?? '' };
+    });
+  return { patch, files };
+}
+
 // The in-review tasks: broken on main, fixed on their own branch, so the review
 // surface has a real diff to render.
 export const BRANCH_FIXES: BranchFix[] = [

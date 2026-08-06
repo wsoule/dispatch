@@ -18,6 +18,18 @@ function rewriteField(text: string, key: string, value: string): string {
   return text.replace(pattern, `${key}: ${value}`);
 }
 
+// Rebases onto whatever origin/HEAD's tracking branch picked up since this
+// clone was last synced, then pushes. The demo runs these commands live and
+// out of order (see the design spec's Purpose section) — by the time a
+// presenter reaches the teammate beat, Wyat's own daemon has almost always
+// already pushed unrelated board edits, so a bare `git push` here would
+// reject as non-fast-forward. Rebasing first is what actually exercises the
+// registered merge driver end to end, not just narrates it.
+function pushCurrentBranch(cwd: string): void {
+  git(cwd, 'pull', '-q', '--rebase');
+  git(cwd, 'push', '-q', 'origin', 'HEAD');
+}
+
 /** Rewrites `file`'s `assignee:` line to `human:<handle>`, commits, and pushes from `cwd`. */
 export function claimIn(cwd: string, file: string, handle: string): void {
   const path = join(cwd, file);
@@ -29,7 +41,7 @@ export function claimIn(cwd: string, file: string, handle: string): void {
   writeFileSync(path, updated);
   git(cwd, 'add', file);
   git(cwd, 'commit', '-qm', `claim ${file} as ${handle}`);
-  git(cwd, 'push', '-q', 'origin', 'HEAD');
+  pushCurrentBranch(cwd);
 }
 
 /**
@@ -48,7 +60,7 @@ export function conflictIn(cwd: string, file: string): void {
   writeFileSync(path, updated);
   git(cwd, 'add', file);
   git(cwd, 'commit', '-qm', `move ${file} to in-progress`);
-  git(cwd, 'push', '-q', 'origin', 'HEAD');
+  pushCurrentBranch(cwd);
 }
 
 // Task files are named `<id>-<slug>.md` (see board.ts's writeTasks); a caller
@@ -129,7 +141,7 @@ export function addTaskIn(cwd: string): string {
 
   git(cwd, 'add', relFile);
   git(cwd, 'commit', '-qm', `add task ${id}`);
-  git(cwd, 'push', '-q', 'origin', 'HEAD');
+  pushCurrentBranch(cwd);
   return id;
 }
 
