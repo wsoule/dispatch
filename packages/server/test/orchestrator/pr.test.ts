@@ -140,6 +140,54 @@ class StubRunner {
   // from `apiResult` above (the line-comments call).
   diffResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   filesResult: CommandResult = { ok: true, stdout: '[]', stderr: '' };
+  // `gh api -X POST repos/O/R/pulls/N/comments` result replyToComment
+  // reads — the created reply comment, shaped like a normal REST comment
+  // payload (distinct from `apiResult`, which is the GET list shape).
+  replyResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({
+      id: 901,
+      body: 'thanks for the catch',
+      user: { login: 'teammate' },
+      created_at: '2026-08-05T00:00:00Z',
+    }),
+    stderr: '',
+  };
+  // Captured POST args for the reply endpoint, same "read from the stub at
+  // call time" reasoning as postedReviewPayloads.
+  readonly postedReplyPayloads: { body: string; inReplyTo: string }[] = [];
+  // `gh api graphql` result for the `reviewThreads` query syncReviewThreads
+  // sends — one thread whose only comment has databaseId 555, matching
+  // rawGitHubComment()'s default id below.
+  reviewThreadsResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                {
+                  id: 'PRRT_thread1',
+                  comments: { nodes: [{ databaseId: 555 }] },
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+    stderr: '',
+  };
+  // `gh api graphql` result for the resolve/unresolveReviewThread mutation
+  // resolveComment sends.
+  resolveThreadResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({
+      data: { resolveReviewThread: { thread: { id: 'PRRT_thread1' } } },
+    }),
+    stderr: '',
+  };
   // `gh pr list --json …` result listRepoPrs parses — one open PR by
   // default, shaped exactly like gh's real output (author as a `{login}`
   // object, camelCase field names).
@@ -218,6 +266,38 @@ class StubRunner {
         );
       }
       return this.pushReviewResult;
+    }
+    // replyToComment's POST — also matched on argv content and placed
+    // ahead of the generic '/pulls/N/comments$' GET branch below, which
+    // would otherwise swallow this POST and hand back the GET-shaped
+    // apiResult array instead of a single created-comment payload.
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      cmd.includes('POST') &&
+      cmd.some((arg) => /\/pulls\/\d+\/comments$/.test(arg))
+    ) {
+      const bodyArg = cmd.find((arg) => arg.startsWith('body='));
+      const inReplyToArg = cmd.find((arg) => arg.startsWith('in_reply_to='));
+      if (bodyArg !== undefined && inReplyToArg !== undefined) {
+        this.postedReplyPayloads.push({
+          body: bodyArg.slice('body='.length),
+          inReplyTo: inReplyToArg.slice('in_reply_to='.length),
+        });
+      }
+      return this.replyResult;
+    }
+    // syncReviewThreads' query and resolveComment's mutation both shell
+    // out to `gh api graphql`; distinguished by the query text itself
+    // (the mutation starts with the `mutation` keyword). Placed ahead of
+    // the generic 'gh api' branch below for the same reason as the two
+    // branches above.
+    if (cmd[0] === 'gh' && cmd[1] === 'api' && cmd[2] === 'graphql') {
+      const queryArg = cmd.find((arg) => arg.startsWith('query='));
+      const query = queryArg?.slice('query='.length).trimStart() ?? '';
+      return query.startsWith('mutation')
+        ? this.resolveThreadResult
+        : this.reviewThreadsResult;
     }
     // Also placed ahead of the generic branch, though it currently answers
     // identically to it — syncPrComments hits the exact same REST endpoint
@@ -1367,5 +1447,287 @@ describe('PrManager.pushPrReview', () => {
       c.cmd.some((arg) => /\/pulls\/9\/comments$/.test(arg))
     );
     expect(getCalls).toHaveLength(0);
+  });
+});
+
+// A comment already synced from GitHub (has a githubId), built directly
+// rather than via syncPrComments — replyToComment/resolveComment tests only
+// care about the fields they read, not the pull/merge machinery.
+function syncedComment(over: Partial<ReviewComment> = {}): ReviewComment {
+  return {
+    id: 'rc-synced',
+    file: 'src/a.ts',
+    line: 3,
+    anchorText: 'const x = 1;',
+    author: 'teammate',
+    body: 'why one?',
+    resolved: false,
+    pending: false,
+    created: '2026-08-01T00:00:00Z',
+    replies: [],
+    githubId: 555,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    origin: 'github',
+    ...over,
+  };
+}
+
+describe('PrManager.replyToComment', () => {
+  it('refuses to reply to a comment with no githubId, without posting anything', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const draft = harness.reviewComments.add(prTarget, {
+      file: 'src/a.ts',
+      line: 3,
+      anchorText: 'const x = 1;',
+      body: 'a local draft',
+      pending: true,
+    });
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.replyToComment(9, draft.id, 'a reply')).rejects.toThrow(
+      OrchestratorConflictError
+    );
+
+    const postCalls = stub.calls.filter(
+      (c) => c.cmd.includes('POST') && c.cmd.some((a) => a.includes('comments'))
+    );
+    expect(postCalls).toHaveLength(0);
+  });
+
+  it('posts with in_reply_to set to the parent githubId and appends the reply locally', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const parent = syncedComment();
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    const updated = await pr.replyToComment(
+      9,
+      parent.id,
+      'thanks for the catch'
+    );
+
+    expect(stub.postedReplyPayloads).toEqual([
+      { body: 'thanks for the catch', inReplyTo: '555' },
+    ]);
+    expect(updated.replies).toHaveLength(1);
+    expect(updated.replies[0]?.body).toBe('thanks for the catch');
+    expect(updated.replies[0]?.author).toBe('teammate');
+    const stored = harness.reviewComments.list(prTarget);
+    expect(stored[0]?.replies).toHaveLength(1);
+  });
+
+  it('404s an unknown comment id', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(
+      pr.replyToComment(9, 'rc-does-not-exist', 'hello')
+    ).rejects.toThrow(OrchestratorNotFoundError);
+  });
+
+  it('409s when the reply POST fails', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    stub.replyResult = { ok: false, stdout: '', stderr: 'gh boom' };
+    const parent = syncedComment();
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.replyToComment(9, parent.id, 'hi')).rejects.toThrow(
+      OrchestratorConflictError
+    );
+  });
+});
+
+describe('PrManager.syncReviewThreads', () => {
+  it('parses the reviewThreads GraphQL response and stores thread ids by comment', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const parent = syncedComment();
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncReviewThreads(9);
+
+    expect(comments[0]?.githubThreadId).toBe('PRRT_thread1');
+    expect(harness.reviewComments.list(prTarget)[0]?.githubThreadId).toBe(
+      'PRRT_thread1'
+    );
+  });
+
+  it('leaves a comment without a matching thread node untouched', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    // No thread in the response references this comment's databaseId.
+    stub.reviewThreadsResult = {
+      ok: true,
+      stdout: JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    id: 'PRRT_other',
+                    comments: { nodes: [{ databaseId: 12345 }] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+      stderr: '',
+    };
+    const parent = syncedComment();
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncReviewThreads(9);
+
+    expect(comments[0]?.githubThreadId).toBeUndefined();
+  });
+
+  it('tolerates a response with no reviewThreads data rather than throwing', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    stub.reviewThreadsResult = {
+      ok: true,
+      stdout: JSON.stringify({ data: { repository: { pullRequest: null } } }),
+      stderr: '',
+    };
+    const parent = syncedComment();
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncReviewThreads(9);
+
+    expect(comments[0]?.githubThreadId).toBeUndefined();
+  });
+
+  it('sends owner, repo, and number as graphql variables', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.syncReviewThreads(9);
+
+    const call = stub.calls.find(
+      (c) => c.cmd[1] === 'api' && c.cmd[2] === 'graphql'
+    )?.cmd;
+    expect(call).toContain('owner=example');
+    expect(call).toContain('repo=repo');
+    expect(call).toContain('number=9');
+  });
+
+  it('409s when the graphql call fails', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    stub.reviewThreadsResult = { ok: false, stdout: '', stderr: 'gh boom' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.syncReviewThreads(9)).rejects.toThrow(
+      OrchestratorConflictError
+    );
+  });
+
+  it('409s when the graphql call returns invalid JSON', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    stub.reviewThreadsResult = { ok: true, stdout: 'not json', stderr: '' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.syncReviewThreads(9)).rejects.toThrow(/invalid JSON/);
+  });
+});
+
+describe('PrManager.resolveComment', () => {
+  it('fails loudly on a comment with no githubThreadId, without shelling out at all', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const parent = syncedComment();
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.resolveComment(9, parent.id, true)).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it('resolves via resolveReviewThread and marks the comment resolved locally', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const parent = syncedComment({ githubThreadId: 'PRRT_thread1' });
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    const updated = await pr.resolveComment(9, parent.id, true);
+
+    expect(updated.resolved).toBe(true);
+    expect(harness.reviewComments.list(prTarget)[0]?.resolved).toBe(true);
+    const call = stub.calls.find(
+      (c) => c.cmd[1] === 'api' && c.cmd[2] === 'graphql'
+    )?.cmd;
+    const queryArg = call?.find((a) => a.startsWith('query='));
+    expect(queryArg).toContain('resolveReviewThread');
+    expect(call).toContain('id=PRRT_thread1');
+  });
+
+  it('unresolves via unresolveReviewThread', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const parent = syncedComment({
+      githubThreadId: 'PRRT_thread1',
+      resolved: true,
+    });
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    const updated = await pr.resolveComment(9, parent.id, false);
+
+    expect(updated.resolved).toBe(false);
+    const call = stub.calls.find(
+      (c) => c.cmd[1] === 'api' && c.cmd[2] === 'graphql'
+    )?.cmd;
+    const queryArg = call?.find((a) => a.startsWith('query='));
+    expect(queryArg).toContain('unresolveReviewThread');
+  });
+
+  it('404s an unknown comment id', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(
+      pr.resolveComment(9, 'rc-does-not-exist', true)
+    ).rejects.toThrow(OrchestratorNotFoundError);
+  });
+
+  it('409s when the mutation fails, leaving the local record unresolved', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const parent = syncedComment({ githubThreadId: 'PRRT_thread1' });
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    stub.resolveThreadResult = { ok: false, stdout: '', stderr: 'gh boom' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.resolveComment(9, parent.id, true)).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    expect(harness.reviewComments.list(prTarget)[0]?.resolved).toBe(false);
   });
 });

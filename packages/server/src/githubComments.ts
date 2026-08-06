@@ -140,6 +140,11 @@ export function mergeComments(
       githubId: l.githubId,
       githubUpdatedAt: winner.githubUpdatedAt,
       origin: l.origin,
+      // REST has no thread node id (only syncReviewThreads sets one),
+      // so it always comes from the local side, never from `winner`.
+      ...(l.githubThreadId !== undefined
+        ? { githubThreadId: l.githubThreadId }
+        : {}),
     });
   }
 

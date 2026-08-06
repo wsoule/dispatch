@@ -1028,6 +1028,227 @@ export class PrManager {
     this.ctx.reviewComments.replaceAll(target, merged);
     return { pushed: pending.length };
   }
+
+  // POST /api/prs/:number/comments/:id/reply (Task 5). Replies to one
+  // review thread via REST's `in_reply_to`, which only works against a
+  // comment GitHub already knows about — a local-only draft has no
+  // `githubId` and thus no thread to reply into, so that case is refused
+  // rather than silently posted as a new top-level comment (which would
+  // orphan the reviewer's reply from the thread they meant to answer).
+  async replyToComment(
+    number: number,
+    commentId: string,
+    body: string
+  ): Promise<ReviewComment> {
+    const pr = await this.resolvePrForComments(number);
+    const location = parsePrUrl(pr.url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
+    }
+    const target: ReviewTarget = { kind: 'pr', number };
+    const parent = this.ctx.reviewComments
+      .list(target)
+      .find((c) => c.id === commentId);
+    if (parent === undefined) {
+      throw new OrchestratorNotFoundError(
+        `review comment not found: ${commentId}`
+      );
+    }
+    if (parent.githubId === undefined) {
+      throw new OrchestratorConflictError(
+        `comment has not been pushed to GitHub yet: ${commentId}`
+      );
+    }
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'api',
+      '-X',
+      'POST',
+      `repos/${location.owner}/${location.repo}/pulls/${location.number}/comments`,
+      '-f',
+      `body=${body}`,
+      '-F',
+      `in_reply_to=${parent.githubId}`,
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh api pulls/comments POST failed: ${commandErrorText(result)}`
+      );
+    }
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(result.stdout) as Record<string, unknown>;
+    } catch {
+      throw new OrchestratorConflictError(
+        'gh api pulls/comments POST returned invalid JSON'
+      );
+    }
+    // GitHub's created comment is the source of truth for who/what/when —
+    // not the caller's locally-known identity — since the person posting
+    // a reply in dispatch may not be who `gh` is authenticated as.
+    const replyBody = typeof raw.body === 'string' ? raw.body : body;
+    const replyAuthor = authorLogin(raw.user);
+    const replyCreated =
+      typeof raw.created_at === 'string'
+        ? raw.created_at
+        : new Date().toISOString();
+    return this.ctx.reviewComments.reply(
+      target,
+      commentId,
+      replyBody,
+      replyAuthor,
+      replyCreated
+    );
+  }
+
+  // POST /api/prs/:number/threads/sync (Task 5). REST has no notion of a
+  // review thread, only individual comments — resolving one needs the
+  // thread's GraphQL node id, which this fetches and stashes on every
+  // local comment it can match by `githubId` (REST's numeric id, exposed
+  // in GraphQL as `databaseId`). Comments GitHub does not (yet) know
+  // about, or whose thread the response does not cover, are left as-is.
+  async syncReviewThreads(number: number): Promise<ReviewComment[]> {
+    const pr = await this.resolvePrForComments(number);
+    const location = parsePrUrl(pr.url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
+    }
+    const query = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          comments(first: 100) {
+            nodes { databaseId }
+          }
+        }
+      }
+    }
+  }
+}`;
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'api',
+      'graphql',
+      '-f',
+      `query=${query}`,
+      '-f',
+      `owner=${location.owner}`,
+      '-f',
+      `repo=${location.repo}`,
+      '-F',
+      `number=${location.number}`,
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh api graphql reviewThreads failed: ${commandErrorText(result)}`
+      );
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(result.stdout);
+    } catch {
+      throw new OrchestratorConflictError(
+        'gh api graphql reviewThreads returned invalid JSON'
+      );
+    }
+    const threadIdByCommentId = collectThreadIds(raw);
+
+    const target: ReviewTarget = { kind: 'pr', number };
+    const updated = this.ctx.reviewComments.list(target).map((c) => {
+      if (c.githubId === undefined) return c;
+      const threadId = threadIdByCommentId.get(c.githubId);
+      return threadId === undefined ? c : { ...c, githubThreadId: threadId };
+    });
+    this.ctx.reviewComments.replaceAll(target, updated);
+    return updated;
+  }
+
+  // POST /api/prs/:number/comments/:id/resolve (Task 5). Resolving is a
+  // property of the review thread, not the comment, and REST cannot touch
+  // it at all — only the `resolveReviewThread`/`unresolveReviewThread`
+  // GraphQL mutations can. A comment syncReviewThreads has not (yet)
+  // tagged with a `githubThreadId` has nothing for that mutation to act
+  // on, so it fails loudly here — without shelling out at all — rather
+  // than flipping the local flag and reporting success on a change GitHub
+  // never saw.
+  async resolveComment(
+    number: number,
+    commentId: string,
+    resolved: boolean
+  ): Promise<ReviewComment> {
+    const target: ReviewTarget = { kind: 'pr', number };
+    const comment = this.ctx.reviewComments
+      .list(target)
+      .find((c) => c.id === commentId);
+    if (comment === undefined) {
+      throw new OrchestratorNotFoundError(
+        `review comment not found: ${commentId}`
+      );
+    }
+    if (comment.githubThreadId === undefined) {
+      throw new OrchestratorConflictError(
+        `comment has no known GitHub review thread: ${commentId}`
+      );
+    }
+    const mutation = resolved ? 'resolveReviewThread' : 'unresolveReviewThread';
+    const query = `mutation($id: ID!) {
+  ${mutation}(input: {threadId: $id}) {
+    thread { id }
+  }
+}`;
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'api',
+      'graphql',
+      '-f',
+      `query=${query}`,
+      '-f',
+      `id=${comment.githubThreadId}`,
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh api graphql ${mutation} failed: ${commandErrorText(result)}`
+      );
+    }
+    return this.ctx.reviewComments.setResolved(target, commentId, resolved);
+  }
+}
+
+// Walks a `reviewThreads` GraphQL response into a REST comment id ->
+// GraphQL thread node id lookup. Deliberately tolerant of every shape
+// gone wrong (missing repository/pullRequest, absent nodes) — a thread
+// sync should degrade to "no threads tagged" rather than throw on a
+// payload that answered the query but had nothing to report yet.
+function collectThreadIds(raw: unknown): Map<number, string> {
+  const threadIdByCommentId = new Map<number, string>();
+  if (raw === null || typeof raw !== 'object') return threadIdByCommentId;
+  const nodes = (
+    raw as {
+      data?: {
+        repository?: {
+          pullRequest?: { reviewThreads?: { nodes?: unknown[] } } | null;
+        } | null;
+      };
+    }
+  ).data?.repository?.pullRequest?.reviewThreads?.nodes;
+  if (!Array.isArray(nodes)) return threadIdByCommentId;
+  for (const node of nodes) {
+    if (node === null || typeof node !== 'object') continue;
+    const thread = node as { id?: unknown; comments?: { nodes?: unknown[] } };
+    if (typeof thread.id !== 'string') continue;
+    const commentNodes = thread.comments?.nodes;
+    if (!Array.isArray(commentNodes)) continue;
+    for (const c of commentNodes) {
+      if (c === null || typeof c !== 'object') continue;
+      const databaseId = (c as { databaseId?: unknown }).databaseId;
+      if (typeof databaseId === 'number') {
+        threadIdByCommentId.set(databaseId, thread.id);
+      }
+    }
+  }
+  return threadIdByCommentId;
 }
 
 // Pulls a `login` off gh's author/user object shape (either `{login}` from the
