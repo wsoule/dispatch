@@ -132,35 +132,40 @@ export function buildItems({
       fileDiff,
       annotations,
       // A file you have ticked off collapses, so a long review visibly shrinks as you work
-      // through it rather than staying the same size forever.
-      collapsed: viewed?.has(fileDiff.name) ?? false,
+      // through it rather than staying the same size forever — EXCEPT the file actually
+      // entering edit mode right now, which is force-expanded regardless of `viewed`.
+      // Pierre's own doc comment for `edit` says it is "ignored while `collapsed` is true";
+      // without this override, clicking the pencil on a file the reviewer had ticked viewed
+      // would resolve the load gate and set `edit: true` while `collapsed` stayed `true` too
+      // — Pierre never attaches an editor for it, but the one-file-at-a-time lock (every
+      // other pencil hidden, this file's gutter "+" suppressed) is still engaged, with no
+      // escape but re-clicking the same pencil.
+      collapsed: edit ? false : (viewed?.has(fileDiff.name) ?? false),
       edit,
       version: edit ? 1 : 0,
     };
   });
 }
 
-/** The server's machine-readable `applyRunEdit` 409 codes, each with a different fix — see
- * `packages/server/src/api.ts`'s `applyRunEdit`. */
+/**
+ * The server's machine-readable `applyRunEdit` 409 codes, each with a different fix — see
+ * `packages/server/src/api.ts`'s `applyRunEdit`.
+ *
+ * `worktree-busy` and `stale-base` say outright that the edit was not saved. `PierreReviewDiff`
+ * always closes the editor on any failure (see `resolveEditFailure`) — an earlier version left
+ * it open for these two, believing that preserved the reviewer's draft, but Pierre tears the
+ * editor down before this message is ever shown and there is no way to seed a freshly attached
+ * editor with unsaved text. Saying nothing about that would have let the old "keep it open" UI
+ * imply the draft survived when it didn't; these sentences say what actually happened instead.
+ */
 const EDIT_ERROR_MESSAGES: Record<string, string> = {
   'worktree-busy':
-    'An agent is working in this worktree — wait for it to finish.',
+    'An agent is working in this worktree, so this edit was not saved — wait for it to finish, then reopen the file and redo it.',
   'stale-base':
-    'This file changed while you were editing. Reload the diff to see the new version.',
+    'This file changed while you were editing, so this edit was not saved. Reload the diff to see the new version.',
   'worktree-missing': "This run's worktree is gone.",
   'empty-contents': "Couldn't read this file — nothing was written.",
 };
-
-/** True for the two 409s worth retrying without losing the reviewer's edit: the worktree just
- * needs to free up, or the base moved and a reload will let them decide what to do. The other
- * two (`worktree-missing`, `empty-contents`) describe a run that has nothing left to save into. */
-export function isRecoverableEditError(error: unknown): boolean {
-  return (
-    error instanceof ApiError &&
-    error.status === 409 &&
-    (error.message === 'worktree-busy' || error.message === 'stale-base')
-  );
-}
 
 /**
  * Turns a failed `applyRunEdit` call into the sentence the reviewer sees. Each 409's `error`
@@ -172,4 +177,44 @@ export function editErrorMessage(error: unknown): string {
     return EDIT_ERROR_MESSAGES[error.message] ?? 'Could not save this edit.';
   }
   return 'Could not save this edit.';
+}
+
+/** What `PierreReviewDiff`'s `handleEditComplete` should do to its own state after a failed
+ * `applyRunEdit`. */
+export interface EditFailureOutcome {
+  /**
+   * Always `null`. `onItemEditComplete` fires only once Pierre has already torn the editor
+   * down (its own doc comment: "when an item's edit session ends"), and there is no
+   * documented way to seed a freshly attached editor with the reviewer's unsaved draft. An
+   * earlier version set `editing` back to the file on a "recoverable" 409, intending to keep
+   * the draft alive — but `editing` going `false` then `true` across renders is exactly what
+   * tears the old editor down and attaches a new one seeded from on-disk (or cached) content,
+   * so the draft was lost regardless, while the shown message implied otherwise. Closing
+   * unconditionally means the UI never promises more than Pierre can actually deliver.
+   */
+  editing: null;
+  /**
+   * `true` only for `stale-base` — the one failure where the file's on-disk content genuinely
+   * changed while the reviewer was editing, which makes both the loader's cached contents/sha
+   * and this component's own `loaded` marker wrong. Evicting them means the reviewer's next
+   * look at the file (via a fresh pencil click) fetches the real current content rather than
+   * the now-stale cached copy. The other three failures never touched disk, so their cached
+   * entries are still correct and evicting them would just cost an unnecessary refetch.
+   */
+  refetchContents: boolean;
+}
+
+/**
+ * Decides what a failed `applyRunEdit` means for `editing`/cache state — pulled out of the
+ * component so the "never re-open the editor on a false promise" behaviour (see
+ * `EditFailureOutcome.editing`'s doc comment) is unit-testable without rendering `CodeView`.
+ */
+export function resolveEditFailure(error: unknown): EditFailureOutcome {
+  return {
+    editing: null,
+    refetchContents:
+      error instanceof ApiError &&
+      error.status === 409 &&
+      error.message === 'stale-base',
+  };
 }

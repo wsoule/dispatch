@@ -22,7 +22,7 @@ import type { Annotation } from '@/lib/reviewDiffItems';
 import {
   buildItems,
   editErrorMessage,
-  isRecoverableEditError,
+  resolveEditFailure,
 } from '@/lib/reviewDiffItems';
 import { isTerminalRunState } from '@/lib/runState';
 
@@ -351,11 +351,23 @@ export function PierreReviewDiff({
         })
         .catch((err: unknown) => {
           setEditError({ file: item.id, message: editErrorMessage(err) });
-          // worktree-busy and stale-base are both worth retrying without losing the edit —
-          // leaving `editing` pointed at this file re-enters edit mode on the next render
-          // rather than discarding the reviewer's work. The other failures (worktree gone,
-          // nothing to write) have nothing left to retry into.
-          setEditing(isRecoverableEditError(err) ? item.id : null);
+          // `resolveEditFailure` always closes the editor — see its doc comment on `editing`
+          // for why an earlier version's "leave it open to keep the draft" on
+          // worktree-busy/stale-base was actually a false promise (Pierre had already torn
+          // the editor down by the time this callback runs). `refetchContents` is true only
+          // for stale-base, where the file's on-disk content genuinely changed underneath
+          // the reviewer, so its cached copy is now wrong too.
+          const outcome = resolveEditFailure(err);
+          setEditing(outcome.editing);
+          if (outcome.refetchContents) {
+            invalidate(item.id);
+            baseShaRef.current.delete(item.id);
+            setLoaded((prev) => {
+              const next = new Set(prev);
+              next.delete(item.id);
+              return next;
+            });
+          }
         });
     },
     [client, runId, invalidate]
