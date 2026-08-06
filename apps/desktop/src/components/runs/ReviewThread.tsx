@@ -4,12 +4,31 @@ import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
+/**
+ * Where a note written here ends up: back to the agent on a run's own diff, or
+ * onto the pull request on GitHub. Only the wording differs — the two paths
+ * are otherwise identical — but telling a reviewer the wrong one is the exact
+ * misrepresentation the PR composer was held back for.
+ */
+export type ReviewDestination = 'agent' | 'github';
+
+const REPLY_PLACEHOLDER: Record<ReviewDestination, string> = {
+  agent: 'Reply — the agent reads this when you send the work back',
+  github: 'Reply — posts to this thread on GitHub',
+};
+
+const COMPOSER_PLACEHOLDER: Record<ReviewDestination, string> = {
+  agent: 'What should change? This goes back with the work.',
+  github: 'What should change? This publishes with your review.',
+};
+
 interface ReviewThreadProps {
   comment: ReviewComment;
   /** How the anchor has fared since the comment was written. */
   anchor: 'exact' | 'moved' | 'outdated';
   onResolve: (resolved: boolean) => void;
   onReply: (body: string) => void;
+  destination?: ReviewDestination;
 }
 
 /**
@@ -24,6 +43,7 @@ export function ReviewThread({
   anchor,
   onResolve,
   onReply,
+  destination = 'agent',
 }: ReviewThreadProps) {
   const [reply, setReply] = useState('');
 
@@ -93,7 +113,7 @@ export function ReviewThread({
                 setReply('');
               }
             }}
-            placeholder="Reply — the agent reads this when you send the work back"
+            placeholder={REPLY_PLACEHOLDER[destination]}
             className="shadow-hairline min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] outline-none"
           />
         </div>
@@ -108,6 +128,7 @@ interface ComposerProps {
   startLine?: number;
   onSubmit: (body: string) => void;
   onCancel: () => void;
+  destination?: ReviewDestination;
 }
 
 /** The inline "comment on line N" box, anchored beneath the line it targets. */
@@ -116,6 +137,7 @@ export function ReviewComposer({
   startLine,
   onSubmit,
   onCancel,
+  destination = 'agent',
 }: ComposerProps) {
   const [body, setBody] = useState('');
   return (
@@ -135,7 +157,7 @@ export function ReviewComposer({
             onSubmit(body.trim());
           }
         }}
-        placeholder="What should change? This goes back with the work."
+        placeholder={COMPOSER_PLACEHOLDER[destination]}
         className="mt-1.5 min-h-[52px] w-full resize-y bg-transparent text-[12.5px] outline-none"
       />
       <div className="mt-1.5 flex gap-2">

@@ -1,6 +1,7 @@
 import type { ReviewComment } from '@dispatch/client';
 import { useMemo } from 'react';
 
+import type { ReviewDestination } from './ReviewThread';
 import { ReviewThread } from './ReviewThread';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
@@ -10,7 +11,18 @@ interface ReviewThreadIndexProps {
   onReply: (commentId: string, body: string) => Promise<void>;
   /** Scrolls the diff to a thread. Omitted when there is no diff to scroll. */
   onJumpTo?: (comment: ReviewComment) => void;
+  /** Where notes written here end up. Defaults to the run wording. */
+  destination?: ReviewDestination;
 }
+
+const EMPTY_HINT: Record<ReviewDestination, string> = {
+  agent:
+    'Hover a diff line and click the ✎ to leave a note. Nothing reaches ' +
+    'the agent until you submit the review.',
+  github:
+    'Hover a diff line and click the ✎ to leave a note. Nothing reaches ' +
+    'GitHub until you submit a review from the panel above.',
+};
 
 /**
  * Every thread on this review, grouped by file.
@@ -23,6 +35,7 @@ export function ReviewThreadIndex({
   onResolve,
   onReply,
   onJumpTo,
+  destination = 'agent',
 }: ReviewThreadIndexProps) {
   const byFile = useMemo(() => {
     const map = new Map<string, ReviewComment[]>();
@@ -43,8 +56,7 @@ export function ReviewThreadIndex({
 
       {comments.length === 0 ? (
         <p className="text-muted-foreground text-[12.5px]">
-          Hover a diff line and click the ✎ to leave a note. Nothing reaches the
-          agent until you submit the review.
+          {EMPTY_HINT[destination]}
         </p>
       ) : (
         [...byFile.entries()].map(([path, list]) => (
@@ -72,6 +84,7 @@ export function ReviewThreadIndex({
                 <ReviewThread
                   comment={c}
                   anchor="exact"
+                  destination={destination}
                   onResolve={(resolved) => void onResolve(c.id, resolved)}
                   onReply={(body) => void onReply(c.id, body)}
                 />
