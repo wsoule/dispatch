@@ -54,6 +54,30 @@ function stubClient(
   return { client, calls };
 }
 
+// Same shape as `stubClient`, but the response map is keyed by `runId` first — for asserting
+// that switching runs actually reaches the server again rather than serving a previous run's
+// cached answer.
+function stubClientPerRun(
+  responses: Record<
+    string,
+    Record<string, { contents: string; sha: string } | ApiError>
+  >
+): { client: ApiClient; calls: FetchCall[] } {
+  const calls: FetchCall[] = [];
+  const client = {
+    fetchRunFile: (runId: string, path: string, side: 'old' | 'new') => {
+      calls.push({ runId, path, side });
+      const response = responses[runId]?.[`${side}:${path}`];
+      if (response === undefined) {
+        return Promise.reject(new ApiError('no such file: ' + path, 404));
+      }
+      if (response instanceof ApiError) return Promise.reject(response);
+      return Promise.resolve(response);
+    },
+  } as unknown as ApiClient;
+  return { client, calls };
+}
+
 describe('useRunFileLoader — loadDiffFiles', () => {
   test('with no runId, supplies no loader at all', () => {
     const { client } = stubClient({});
@@ -135,6 +159,24 @@ describe('useRunFileLoader — loadDiffFiles', () => {
     expect(loaded).toEqual({
       oldFile: null,
       newFile: { name: 'added.txt', contents: 'new content\n' },
+    });
+  });
+
+  test('a 404 on the new side (deleted file) falls back to empty content rather than throwing', async () => {
+    const { client } = stubClient({
+      'old:removed.txt': { contents: 'old content\n', sha: 's1' },
+      // 'new:removed.txt' intentionally absent from the map, so the stub 404s — the file no
+      // longer exists in the run's worktree.
+    });
+    const { result } = renderHook(() => useRunFileLoader(client, RUN_ID));
+    const loaded = await result.current.loadDiffFiles?.(
+      metadata({ name: 'removed.txt', type: 'deleted' })
+    );
+    // `FileDiffLoadedFiles` has no "no newFile" variant — an empty string is the closest thing
+    // to absent the type allows, and the diff still renders rather than throwing.
+    expect(loaded).toEqual({
+      oldFile: { name: 'removed.txt', contents: 'old content\n' },
+      newFile: { name: 'removed.txt', contents: '' },
     });
   });
 
@@ -251,5 +293,65 @@ describe('useRunFileLoader — ensureLoaded', () => {
     // ensureLoaded already warmed the 'new' side; loadDiffFiles only had to fetch 'old'.
     expect(calls).toHaveLength(2);
     expect(calls.filter((c) => c.side === 'new')).toHaveLength(1);
+  });
+});
+
+describe('useRunFileLoader — cache scoping by runId', () => {
+  // `PierreReviewDiff` does not remount when the reviewer picks a different run in the same
+  // session — the review queue and the run detail panel both swap the `runId` prop in place,
+  // no `key` prop tears the component (and its cache) down. `rerender` here reproduces exactly
+  // that: same hook instance, same underlying `cacheRef`, new `runId`.
+  test('ensureLoaded does not serve one run’s content and sha for another run', async () => {
+    const { client } = stubClientPerRun({
+      'run-a': {
+        'new:src/foo.ts': { contents: 'run A content\n', sha: 'sha-a' },
+      },
+      'run-b': {
+        'new:src/foo.ts': { contents: 'run B content\n', sha: 'sha-b' },
+      },
+    });
+    const { result, rerender } = renderHook(
+      ({ runId }: { runId: string }) => useRunFileLoader(client, runId),
+      { initialProps: { runId: 'run-a' } }
+    );
+
+    const runAContent = await result.current.ensureLoaded('src/foo.ts');
+    expect(runAContent).toEqual({ contents: 'run A content\n', sha: 'sha-a' });
+
+    rerender({ runId: 'run-b' });
+    const runBContent = await result.current.ensureLoaded('src/foo.ts');
+    // The precondition for the next task's edit mode: run B's sha, not run A's stale one.
+    expect(runBContent).toEqual({ contents: 'run B content\n', sha: 'sha-b' });
+  });
+
+  test('loadDiffFiles does not serve one run’s content for another run', async () => {
+    const { client } = stubClientPerRun({
+      'run-a': {
+        'old:src/foo.ts': { contents: 'A before\n', sha: 'sha-a-old' },
+        'new:src/foo.ts': { contents: 'A after\n', sha: 'sha-a-new' },
+      },
+      'run-b': {
+        'old:src/foo.ts': { contents: 'B before\n', sha: 'sha-b-old' },
+        'new:src/foo.ts': { contents: 'B after\n', sha: 'sha-b-new' },
+      },
+    });
+    const { result, rerender } = renderHook(
+      ({ runId }: { runId: string }) => useRunFileLoader(client, runId),
+      { initialProps: { runId: 'run-a' } }
+    );
+    const fileDiff = metadata({ name: 'src/foo.ts', type: 'change' });
+
+    const runALoaded = await result.current.loadDiffFiles?.(fileDiff);
+    expect(runALoaded).toEqual({
+      oldFile: { name: 'src/foo.ts', contents: 'A before\n' },
+      newFile: { name: 'src/foo.ts', contents: 'A after\n' },
+    });
+
+    rerender({ runId: 'run-b' });
+    const runBLoaded = await result.current.loadDiffFiles?.(fileDiff);
+    expect(runBLoaded).toEqual({
+      oldFile: { name: 'src/foo.ts', contents: 'B before\n' },
+      newFile: { name: 'src/foo.ts', contents: 'B after\n' },
+    });
   });
 });
