@@ -6,6 +6,7 @@ import { basename, join } from 'node:path';
 
 import { git } from './git.js';
 import { DEMO } from './paths.js';
+import { findSuspiciousStagedFiles } from './repo.js';
 import { TERMINAL_STATES } from './runs.js';
 
 // One preflight assertion's outcome. `ok: false` always carries a concrete,
@@ -116,11 +117,13 @@ export function checkRunsTerminal(runsDir: string): Check {
 /**
  * Asserts none of `stagedFiles` looks like a credentials file — the demo
  * repo is public, so a Linear API key committed into it can never be
- * un-leaked by a later force-push.
+ * un-leaked by a later force-push. Shares its matcher (findSuspiciousStagedFiles
+ * in repo.ts) with `assertNoCredentialsStaged`, which runs this same check
+ * mid-`buildRepo`/`reset`, before either ever pushes.
  */
 export function checkNoCredentialsStaged(stagedFiles: string[]): Check {
   const name = 'no credentials staged for commit';
-  const suspicious = stagedFiles.filter((f) => /credential/i.test(basename(f)));
+  const suspicious = findSuspiciousStagedFiles(stagedFiles);
   if (suspicious.length > 0) {
     return {
       name,

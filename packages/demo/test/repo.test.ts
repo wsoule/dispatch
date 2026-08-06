@@ -14,7 +14,13 @@ import { join, resolve } from 'node:path';
 
 import { git } from '../src/git.js';
 import { DEMO } from '../src/paths.js';
-import { BRANCH_FIXES, buildRepo, skipInstallArtifacts } from '../src/repo.js';
+import {
+  assertNoCredentialsStaged,
+  BRANCH_FIXES,
+  buildRepo,
+  findSuspiciousStagedFiles,
+  skipInstallArtifacts,
+} from '../src/repo.js';
 
 function build(): string {
   const root = mkdtempSync(join(tmpdir(), 'demo-repo-'));
@@ -110,3 +116,57 @@ test.skipIf(!tmpdirHasSymlinkHop)(
     expect(() => buildRepo({ root: realRoot, push: false })).not.toThrow();
   }
 );
+
+// I5: buildRepo's cpSync filter (skipInstallArtifacts) only ever excludes
+// node_modules/bun.lock — nothing vets the rest of the template for a
+// credential file before it's committed and, on a real reset, force-pushed
+// to a public remote. assertNoCredentialsStaged is what closes that gap;
+// this proves it actually fires on a real staged file, not just against a
+// hand-built string list (that part is covered by preflight.test.ts).
+test('assertNoCredentialsStaged throws when a credential-shaped file is actually staged in a real repo', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-cred-'));
+  git(root, 'init', '-q', '-b', 'main');
+  writeFileSync(join(root, 'credentials.json'), '{"apiKey": "leaked"}\n');
+  git(root, 'add', '-A');
+
+  expect(() => assertNoCredentialsStaged(root)).toThrow(/credentials\.json/);
+});
+
+test('assertNoCredentialsStaged does not throw on an ordinary staged file', () => {
+  const root = mkdtempSync(join(tmpdir(), 'demo-cred-'));
+  git(root, 'init', '-q', '-b', 'main');
+  writeFileSync(join(root, 'README.md'), 'hello\n');
+  git(root, 'add', '-A');
+
+  expect(() => assertNoCredentialsStaged(root)).not.toThrow();
+});
+
+test('findSuspiciousStagedFiles catches .env, .pem, id_rsa*, and .key filenames beyond just "credential"', () => {
+  const suspicious = findSuspiciousStagedFiles([
+    'src/index.ts',
+    '.env',
+    'certs/server.pem',
+    'keys/id_rsa',
+    'keys/id_rsa.pub',
+    'secrets/api.key',
+    'credentials.json',
+  ]);
+  expect(suspicious.sort()).toEqual(
+    [
+      '.env',
+      'certs/server.pem',
+      'keys/id_rsa',
+      'keys/id_rsa.pub',
+      'secrets/api.key',
+      'credentials.json',
+    ].sort()
+  );
+});
+
+// buildRepo commits twice (main, then once per BRANCH_FIXES entry) before
+// ever pushing — assertNoCredentialsStaged runs after every `git add -A`
+// inside it, so this confirms the whole pipeline stays clean on the real
+// template, not just that the guard function itself works in isolation.
+test('buildRepo runs clean against the real template with no credential check tripped', () => {
+  expect(() => build()).not.toThrow();
+});

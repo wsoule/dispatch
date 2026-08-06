@@ -7,8 +7,12 @@ import { git } from './git.js';
 import { DEMO, OWNER, TEAMMATE } from './paths.js';
 import { runPreflight } from './preflight.js';
 import { writeRecords } from './records.js';
-import { buildRepo } from './repo.js';
-import { writeRuns } from './runs.js';
+import {
+  assertNoCredentialsStaged,
+  assertSafeToDelete,
+  buildRepo,
+} from './repo.js';
+import { clearRunHistory, writeRuns } from './runs.js';
 import { addTask, claim, conflict } from './teammate.js';
 
 function usage(): void {
@@ -41,10 +45,12 @@ function reset(): void {
   writeBoard(DEMO.root);
   writeRecords(DEMO.root);
   git(DEMO.root, 'add', '-A');
+  assertNoCredentialsStaged(DEMO.root);
   git(DEMO.root, 'commit', '-qm', 'demo: seed board and records');
   git(DEMO.root, 'push', '-q', 'origin', 'main');
 
   console.log(`demo: cloning ${DEMO.remote} into ${DEMO.teammateRoot}`);
+  assertSafeToDelete(DEMO.teammateRoot);
   rmSync(DEMO.teammateRoot, { recursive: true, force: true });
   mkdirSync(dirname(DEMO.teammateRoot), { recursive: true });
   git(
@@ -54,6 +60,15 @@ function reset(): void {
     DEMO.remote,
     DEMO.teammateRoot
   );
+
+  // Clears both DISPATCH_HOMEs' prior run history before reseeding. Without
+  // this, writeRuns() only ever overwrites the exact filenames it knows
+  // about, so a run killed mid-demo (or any other stray file under the runs
+  // dir) would survive every future reset — exactly what leaves the next
+  // demo showing a red run the operator already "fixed" with reset.
+  console.log('demo: clearing prior run history for both clones');
+  clearRunHistory(DEMO.root, DEMO.home);
+  clearRunHistory(DEMO.teammateRoot, DEMO.teammateHome);
 
   // Both clones must already exist on disk before this runs: writeRuns()
   // seeds each run's diff snapshot straight from git (see runs.ts's

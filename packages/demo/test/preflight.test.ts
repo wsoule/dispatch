@@ -34,3 +34,20 @@ test('a credentials file staged for commit fails preflight', () => {
 test('a clean stage passes', () => {
   expect(checkNoCredentialsStaged(['.dispatch/config.yml']).ok).toBe(true);
 });
+
+test('a .env, a .pem, an id_rsa key, or a .key file staged for commit all fail preflight', () => {
+  for (const suspicious of [
+    '.env',
+    'server.pem',
+    'id_rsa',
+    'id_rsa.pub',
+    'api.key',
+  ]) {
+    const check = checkNoCredentialsStaged([
+      '.dispatch/config.yml',
+      suspicious,
+    ]);
+    expect(check.ok).toBe(false);
+    expect(check.detail).toContain(suspicious);
+  }
+});

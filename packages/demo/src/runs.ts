@@ -1,10 +1,10 @@
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { actorFile, runKey, runsDir } from './paths.js';
 import { FINDINGS } from './records.js';
-import { BRANCH_FIXES, computeFixDiff } from './repo.js';
+import { assertSafeToDelete, BRANCH_FIXES, computeFixDiff } from './repo.js';
 
 // ---------------------------------------------------------------------------
 // Hand-kept mirrors of @dispatch/server's orchestrator types.
@@ -889,6 +889,27 @@ function writeActorIdentity(
   const file = actorFile(rootDir, home);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify({ handle })}\n`);
+}
+
+/**
+ * Deletes a clone's prior run transcripts and actor identity file, so a
+ * `reset` genuinely starts run history over instead of layering new runs on
+ * top of whatever the last demo left behind. `writeRuns` below only ever
+ * overwrites the exact filenames it knows about (`<runId>.jsonl`,
+ * `<runId>.diff.json`, the actor file) — a run killed mid-demo, a stray
+ * `<runId>.review.json`, or any other leftover under the runs dir would
+ * otherwise survive every future reset. Routes both deletes through
+ * `assertSafeToDelete` (repo.ts) so this can only ever touch a path under
+ * .agents/ignore or the OS temp dir, the same guard `buildRepo` uses.
+ */
+export function clearRunHistory(rootDir: string, home: string): void {
+  const dir = runsDir(rootDir, home);
+  assertSafeToDelete(dir);
+  rmSync(dir, { recursive: true, force: true });
+
+  const file = actorFile(rootDir, home);
+  assertSafeToDelete(file);
+  rmSync(file, { force: true });
 }
 
 /**

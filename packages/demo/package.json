@@ -1,6 +1,9 @@
 {
   "name": "@dispatch/demo",
   "private": true,
+  "bin": {
+    "demo": "./src/cli.ts"
+  },
   "type": "module",
   "scripts": {
     "tsc": "tsc --noEmit",

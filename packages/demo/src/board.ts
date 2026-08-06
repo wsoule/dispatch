@@ -341,6 +341,8 @@ function writeConfig(root: string): void {
 autoCommit: true
 
 verifySteps:
+  - name: install
+    command: bun install
   - name: typecheck
     command: bun run tsc
   - name: test
