@@ -378,9 +378,9 @@ describe('GitRepo: stage-hunk and unstage-hunk', () => {
 describe('GitRepo: fetch remote validation', () => {
   it('rejects a URL/transport remote without invoking git', async () => {
     let called = false;
-    const fakeRun: CommandRunner = async () => {
+    const fakeRun: CommandRunner = () => {
       called = true;
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const unsafeRepo = new GitRepo(root, fakeRun);
 
@@ -392,9 +392,9 @@ describe('GitRepo: fetch remote validation', () => {
 
   it('rejects an ext:: transport spec without invoking git', async () => {
     let called = false;
-    const fakeRun: CommandRunner = async () => {
+    const fakeRun: CommandRunner = () => {
       called = true;
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const unsafeRepo = new GitRepo(root, fakeRun);
 
@@ -406,9 +406,9 @@ describe('GitRepo: fetch remote validation', () => {
 
   it('rejects a leading-dash remote (a valueless flag like --prune) without invoking git', async () => {
     let called = false;
-    const fakeRun: CommandRunner = async () => {
+    const fakeRun: CommandRunner = () => {
       called = true;
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const unsafeRepo = new GitRepo(root, fakeRun);
 
@@ -447,9 +447,9 @@ describe('GitRepo: never throws on a failing git command', () => {
 describe('GitRepo: path and ref safety', () => {
   it('rejects a path that escapes the repo root without invoking git', async () => {
     let called = false;
-    const fakeRun: CommandRunner = async () => {
+    const fakeRun: CommandRunner = () => {
       called = true;
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const unsafeRepo = new GitRepo('/tmp/some-repo', fakeRun);
 
@@ -461,9 +461,9 @@ describe('GitRepo: path and ref safety', () => {
 
   it('rejects a ref argument that looks like a flag without invoking git', async () => {
     let called = false;
-    const fakeRun: CommandRunner = async () => {
+    const fakeRun: CommandRunner = () => {
       called = true;
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const unsafeRepo = new GitRepo('/tmp/some-repo', fakeRun);
 
@@ -479,9 +479,9 @@ describe('GitRepo: path and ref safety', () => {
     symlinkSync(outside, join(root, 'escape-link'));
 
     let called = false;
-    const fakeRun: CommandRunner = async () => {
+    const fakeRun: CommandRunner = () => {
       called = true;
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const guardedRepo = new GitRepo(root, fakeRun);
 
@@ -497,9 +497,9 @@ describe('GitRepo: path and ref safety', () => {
     symlinkSync(outside, join(root, 'escape-dir'));
 
     let called = false;
-    const fakeRun: CommandRunner = async () => {
+    const fakeRun: CommandRunner = () => {
       called = true;
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const guardedRepo = new GitRepo(root, fakeRun);
 
@@ -530,12 +530,17 @@ describe('GitRepo: path and ref safety', () => {
 
 describe('GitRepo: commit sha resolution', () => {
   it('reports ok:false rather than an empty sha when rev-parse fails after a successful commit', async () => {
-    const fakeRun: CommandRunner = async (_cwd, cmd) => {
-      if (cmd.includes('commit')) return { ok: true, stdout: '', stderr: '' };
+    const fakeRun: CommandRunner = (_cwd, cmd) => {
+      if (cmd.includes('commit'))
+        return Promise.resolve({ ok: true, stdout: '', stderr: '' });
       if (cmd.includes('rev-parse')) {
-        return { ok: false, stdout: '', stderr: 'fatal: ambiguous HEAD' };
+        return Promise.resolve({
+          ok: false,
+          stdout: '',
+          stderr: 'fatal: ambiguous HEAD',
+        });
       }
-      return { ok: true, stdout: '', stderr: '' };
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
     };
     const fakeRepo = new GitRepo(root, fakeRun);
 

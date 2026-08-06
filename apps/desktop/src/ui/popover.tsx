@@ -15,14 +15,6 @@ function PopoverTrigger({
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
 }
 
-// Positions the popover against an element without Radix's click-to-toggle behaviour, for
-// popovers whose open state is driven entirely by the caller.
-function PopoverAnchor({
-  ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Anchor>) {
-  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />;
-}
-
 function PopoverContent({
   className,
   align = 'center',
@@ -45,4 +37,4 @@ function PopoverContent({
   );
 }
 
-export { Popover, PopoverAnchor, PopoverTrigger, PopoverContent };
+export { Popover, PopoverTrigger, PopoverContent };

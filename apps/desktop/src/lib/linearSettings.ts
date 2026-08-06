@@ -5,7 +5,7 @@ import type {
   LinearSyncSummary,
   LinearWorkflowState,
 } from '@dispatch/client';
-import { parseExternal } from '@dispatch/core/browser';
+import { describeValue, parseExternal } from '@dispatch/core/browser';
 
 /** Sentinel for "no team state chosen" in the status-map editor's `<select>` — native select
  *  values can't be the empty string, matching PropertyControls' `NO_EPIC` convention. */
@@ -109,7 +109,7 @@ export function linearKeySourceNote(
 /** Turns a failed teams/states fetch into something worth showing. A 401 means the stored key
  *  was rejected, which otherwise looks identical to having no key at all. */
 export function describeFetchFailure(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : describeValue(error);
   // Key on ApiError's numeric status, never the message: the message is the server's prose
   // (`body.error`) and carries no status digits, as ApiError's own `code` doc comment warns.
   const status = error instanceof ApiError ? error.status : null;

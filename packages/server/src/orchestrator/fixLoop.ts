@@ -28,7 +28,7 @@ export type { EscalationStep } from '@dispatch/core';
 
 /** The label a blocking ruling puts on the task, so it is visible on the board
  *  rather than only inside the finding that caused it. */
-export const BLOCKED_LABEL = 'blocked';
+const BLOCKED_LABEL = 'blocked';
 
 export type FixLoopVerdict = 'parked' | 'blocked';
 
@@ -40,10 +40,10 @@ export const ADJUDICATION_VERDICTS: readonly string[] = ['parked', 'blocked'];
  *  `fixloop.capped` event so no consumer has to infer it from the round. */
 export type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
 
-export const MIN_FIX_LOOP_CAP = 1;
+const MIN_FIX_LOOP_CAP = 1;
 /** An upper bound on the round budget: every round dispatches a real agent
  *  run, so an unbounded cap is an unbounded spend. */
-export const MAX_FIX_LOOP_CAP = 50;
+const MAX_FIX_LOOP_CAP = 50;
 
 export interface FixLoopState {
   taskId: string;
@@ -67,7 +67,7 @@ export interface FixLoopState {
 
 // A finding a clean review may not retire on its own: both of these mean the
 // decision to ship belongs to a human, not to a reviewer that found nothing.
-export function requiresRuling(finding: Finding): boolean {
+function requiresRuling(finding: Finding): boolean {
   return finding.severity === 'critical' || finding.recommendation === 'blocks';
 }
 

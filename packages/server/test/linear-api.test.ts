@@ -26,6 +26,7 @@ import type {
   LinearTeam,
   LinearViewer,
 } from '../src/linear/client.js';
+import { json } from './json.js';
 import { useTestAuth } from './testAuth.js';
 
 const STATES: LinearWorkflowState[] = [
@@ -33,52 +34,59 @@ const STATES: LinearWorkflowState[] = [
   { id: 's-done', name: 'Done', type: 'completed' },
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function json(res: Response): Promise<any> {
-  return res.json();
-}
-
 // Serves fixed metadata and records writes; the API tests never open a socket to
 // Linear, and never mutate anything but this object.
 class StubLinearClient implements LinearClient {
   created: LinearIssueInput[] = [];
 
-  async viewer(): Promise<LinearResult<LinearViewer>> {
-    return {
+  viewer(): Promise<LinearResult<LinearViewer>> {
+    return Promise.resolve({
       ok: true,
       data: { id: 'u-1', name: 'Test', email: 'test@example.com' },
-    };
+    });
   }
 
-  async teams(): Promise<LinearResult<LinearTeam[]>> {
-    return { ok: true, data: [{ id: 'team-1', key: 'HYD', name: 'Hydrogen' }] };
+  teams(): Promise<LinearResult<LinearTeam[]>> {
+    return Promise.resolve({
+      ok: true,
+      data: [{ id: 'team-1', key: 'HYD', name: 'Hydrogen' }],
+    });
   }
 
-  async workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
-    return { ok: true, data: STATES };
+  workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
+    return Promise.resolve({ ok: true, data: STATES });
   }
 
-  async labels(): Promise<LinearResult<LinearLabel[]>> {
-    return { ok: true, data: [] };
+  labels(): Promise<LinearResult<LinearLabel[]>> {
+    return Promise.resolve({ ok: true, data: [] });
   }
 
-  async issuesUpdatedSince(): Promise<LinearResult<LinearIssuePage>> {
-    return { ok: true, data: { issues: [], truncated: false } };
+  issuesUpdatedSince(): Promise<LinearResult<LinearIssuePage>> {
+    return Promise.resolve({
+      ok: true,
+      data: { issues: [], truncated: false },
+    });
   }
 
-  async issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
-    return { ok: true, data: [] };
+  issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
+    return Promise.resolve({ ok: true, data: [] });
   }
 
-  async createIssue(
-    input: LinearIssueInput
-  ): Promise<LinearResult<LinearIssue>> {
+  createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {
     this.created.push(input);
-    return { ok: false, kind: 'graphql', error: 'not exercised' };
+    return Promise.resolve({
+      ok: false,
+      kind: 'graphql',
+      error: 'not exercised',
+    });
   }
 
-  async updateIssue(): Promise<LinearResult<LinearIssue>> {
-    return { ok: false, kind: 'graphql', error: 'not exercised' };
+  updateIssue(): Promise<LinearResult<LinearIssue>> {
+    return Promise.resolve({
+      ok: false,
+      kind: 'graphql',
+      error: 'not exercised',
+    });
   }
 }
 

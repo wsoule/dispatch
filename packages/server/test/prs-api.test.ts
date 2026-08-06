@@ -7,16 +7,9 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
+import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
-
-// Item B: GET /api/prs — every open PR in the repo (not just ones dispatch
-// itself opened). Same escape hatch as every other *-api.test.ts file:
-// `Response.json()` types as `Promise<unknown>` under this repo's strict,
-// DOM-less tsconfig.
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 function initDispatchGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-prs-api-'));
@@ -42,12 +35,18 @@ interface StubResults {
   reviewResult?: CommandResult;
   commentResult?: CommandResult;
   apiResult?: CommandResult;
+  diffResult?: CommandResult;
+  filesResult?: CommandResult;
 }
 
 function stubRunner(results: StubResults) {
-  return async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
+  return (_cwd: string, cmd: string[]): Promise<CommandResult> => {
     if (cmd[0] === 'gh' && cmd[1] === '--version') {
-      return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
+      return Promise.resolve({
+        ok: true,
+        stdout: 'gh version 2.0.0',
+        stderr: '',
+      });
     }
     if (
       cmd[0] === 'git' &&
@@ -55,17 +54,17 @@ function stubRunner(results: StubResults) {
       cmd[2] === 'get-url' &&
       cmd[3] === 'origin'
     ) {
-      return {
+      return Promise.resolve({
         ok: true,
         stdout: 'https://github.com/example/repo.git',
         stderr: '',
-      };
+      });
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'list') {
-      return results.listResult;
+      return Promise.resolve(results.listResult);
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
-      return (
+      return Promise.resolve(
         results.viewResult ?? {
           ok: false,
           stdout: '',
@@ -74,7 +73,7 @@ function stubRunner(results: StubResults) {
       );
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'review') {
-      return (
+      return Promise.resolve(
         results.reviewResult ?? {
           ok: false,
           stdout: '',
@@ -83,7 +82,7 @@ function stubRunner(results: StubResults) {
       );
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'comment') {
-      return (
+      return Promise.resolve(
         results.commentResult ?? {
           ok: false,
           stdout: '',
@@ -91,10 +90,35 @@ function stubRunner(results: StubResults) {
         }
       );
     }
-    if (cmd[0] === 'gh' && cmd[1] === 'api') {
-      return results.apiResult ?? { ok: true, stdout: '[]', stderr: '' };
+    if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'diff') {
+      return Promise.resolve(
+        results.diffResult ?? {
+          ok: false,
+          stdout: '',
+          stderr: 'no diffResult stubbed',
+        }
+      );
     }
-    return { ok: false, stdout: '', stderr: 'unhandled stub command' };
+    // '--paginate' precedes the path, so the endpoint is the last argument.
+    if (
+      cmd[0] === 'gh' &&
+      cmd[1] === 'api' &&
+      (cmd.at(-1)?.endsWith('/files') ?? false)
+    ) {
+      return Promise.resolve(
+        results.filesResult ?? { ok: true, stdout: '[]', stderr: '' }
+      );
+    }
+    if (cmd[0] === 'gh' && cmd[1] === 'api') {
+      return Promise.resolve(
+        results.apiResult ?? { ok: true, stdout: '[]', stderr: '' }
+      );
+    }
+    return Promise.resolve({
+      ok: false,
+      stdout: '',
+      stderr: 'unhandled stub command',
+    });
   };
 }
 
@@ -160,6 +184,10 @@ afterEach(async () => {
 
 describe('GET /api/prs', () => {
   it('returns the parsed list of open repo PRs when the project has pr capability', async () => {
+    // Exercises every field listRepoPrs() reads from `gh pr list --json`
+    // (not just the pre-widening subset), so this pins the full wire shape
+    // GET /api/prs actually returns — including real status values, not
+    // just the zero/null defaults a sparser stub would produce.
     handle = await startServer({
       rootDir: root,
       port: 0,
@@ -173,9 +201,22 @@ describe('GET /api/prs', () => {
               title: 'A repo PR',
               url: 'https://github.com/example/repo/pull/3',
               headRefName: 'some-branch',
+              headRefOid: 'deadbeef',
               author: { login: 'someone' },
               isDraft: false,
               updatedAt: '2026-07-22T00:00:00Z',
+              isCrossRepository: true,
+              headRepositoryOwner: { login: 'someone-fork-owner' },
+              reviewDecision: 'APPROVED',
+              mergeable: 'MERGEABLE',
+              statusCheckRollup: [
+                { conclusion: 'SUCCESS' },
+                { conclusion: 'SUCCESS' },
+                { status: 'IN_PROGRESS' },
+              ],
+              additions: 7,
+              deletions: 1,
+              changedFiles: 3,
             },
           ]),
           stderr: '',
@@ -194,9 +235,18 @@ describe('GET /api/prs', () => {
         title: 'A repo PR',
         url: 'https://github.com/example/repo/pull/3',
         headRefName: 'some-branch',
+        headRefOid: 'deadbeef',
         author: 'someone',
         isDraft: false,
         updatedAt: '2026-07-22T00:00:00Z',
+        isCrossRepository: true,
+        headRepositoryOwner: 'someone-fork-owner',
+        reviewDecision: 'APPROVED',
+        mergeable: 'MERGEABLE',
+        checks: { passed: 2, failed: 0, pending: 1, total: 3 },
+        additions: 7,
+        deletions: 1,
+        changedFiles: 3,
       },
     ]);
   });
@@ -453,6 +503,64 @@ describe('POST /api/prs/:number/comment', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ body: 'looks good' }),
     });
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('GET /api/prs/:number/diff', () => {
+  it('returns the PR diff', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({
+        listResult: listResultWithRepoPr(),
+        diffResult: {
+          ok: true,
+          stdout: 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-old\n+new\n',
+          stderr: '',
+        },
+        filesResult: {
+          ok: true,
+          stdout: JSON.stringify([{ filename: 'x.ts', status: 'modified' }]),
+          stderr: '',
+        },
+      }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/diff`);
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as { patch: string; files: unknown[] };
+    expect(body.patch).toContain('diff --git');
+    expect(body.files).toEqual([{ path: 'x.ts', status: 'M' }]);
+  });
+
+  it('404s for a PR that is not open', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithRepoPr() }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/404/diff`);
+    expect(res.status).toBe(404);
+  });
+
+  it('409s when the project lacks the pr capability', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/diff`);
     expect(res.status).toBe(409);
   });
 });

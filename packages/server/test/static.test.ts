@@ -8,13 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { json } from './json.js';
 import { useTestAuth } from './testAuth.js';
-
-// `Response.json()` types as `Promise<unknown>` under this repo's strict,
-// DOM-less tsconfig — same escape hatch as api.test.ts.
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const webPackageDir = join(moduleDir, '..', '..', 'web');

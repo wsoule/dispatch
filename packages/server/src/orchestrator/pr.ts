@@ -9,6 +9,7 @@ import {
   OrchestratorNotFoundError,
   TERMINAL_RUN_STATES,
 } from './types.js';
+import type { DiffResult } from './worktree.js';
 
 export interface CommandResult {
   ok: boolean;
@@ -174,7 +175,7 @@ export interface PrManagerContext {
 
 // A CI check rollup summarized to counts the UI can render as a compact
 // pass/fail/pending line, instead of the raw per-check array GitHub returns.
-export interface PrCheckSummary {
+interface PrCheckSummary {
   passed: number;
   failed: number;
   pending: number;
@@ -184,7 +185,7 @@ export interface PrCheckSummary {
 // The reviewable state of a run's GitHub PR, from `gh pr view --json …`.
 // Every field is what the review UI needs to show status at a glance without
 // the person leaving the app for GitHub.
-export interface PrStatus {
+interface PrStatus {
   number: number;
   url: string;
   title: string;
@@ -202,7 +203,7 @@ export interface PrStatus {
 // One item in a PR's conversation — a submitted review (with its verdict), a
 // PR-level comment, or a code-line comment (carrying its file + line). Unified
 // into one shape so the UI renders them as a single time-ordered thread.
-export interface PrConversationItem {
+interface PrConversationItem {
   kind: 'review' | 'comment' | 'line-comment';
   author: string;
   body: string;
@@ -224,10 +225,8 @@ export interface PrDetail {
 export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
 
 // One open PR in the repo, from `gh pr list --json …` — the body of
-// `GET /api/prs` (item B: the PRs page lists every open PR, not just the
-// ones dispatch itself opened). `author` is flattened to its `login` string
-// (mirroring PrConversationItem's own author handling) rather than exposing
-// gh's `{login: string}` object shape.
+// `GET /api/prs`. Carries the same status the review UI shows, so the queue
+// renders every row from one batched call instead of a `gh pr view` per PR.
 export interface RepoPr {
   number: number;
   title: string;
@@ -236,6 +235,18 @@ export interface RepoPr {
   author: string;
   isDraft: boolean;
   updatedAt: string;
+  /** Head commit SHA — the `commit_id` GitHub wants when posting a review comment. */
+  headRefOid: string;
+  /** True when the head branch lives in a fork; gates Phase 4's confirm. */
+  isCrossRepository: boolean;
+  /** Login owning the head repository, named in that confirm. */
+  headRepositoryOwner: string;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
+  checks: PrCheckSummary;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
 }
 
 // Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
@@ -243,7 +254,7 @@ export interface RepoPr {
 // return) can address the right repo/PR. Returns null for anything that isn't
 // a recognizable PR URL, so a caller degrades to "no line comments" rather
 // than throwing on a malformed stored URL.
-export function parsePrUrl(
+function parsePrUrl(
   url: string
 ): { owner: string; repo: string; number: number } | null {
   const match = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
@@ -268,7 +279,7 @@ function summarizeChecks(rollup: unknown): PrCheckSummary {
   for (const raw of rollup) {
     if (raw === null || typeof raw !== 'object') continue;
     const check = raw as { conclusion?: unknown; state?: unknown };
-    const verdict = String(check.conclusion ?? check.state ?? '').toUpperCase();
+    const verdict = ghString(check.conclusion ?? check.state).toUpperCase();
     summary.total += 1;
     if (
       verdict === 'SUCCESS' ||
@@ -290,6 +301,18 @@ function summarizeChecks(rollup: unknown): PrCheckSummary {
   }
   return summary;
 }
+
+// GitHub's per-file status strings, mapped to the single letters the diff UI
+// already renders (matching `git diff --name-status` output).
+const FILE_STATUS_LETTER: Record<string, string> = {
+  added: 'A',
+  modified: 'M',
+  changed: 'M',
+  unchanged: 'M',
+  removed: 'D',
+  renamed: 'R',
+  copied: 'C',
+};
 
 /**
  * The PR review path (spec §5 Review): pushes a finished run's branch and
@@ -412,7 +435,9 @@ export class PrManager {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,author,isDraft,updatedAt',
+      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
+        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
+        'statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -431,12 +456,21 @@ export class PrManager {
     }
     return raw.map((item) => ({
       number: Number(item.number ?? 0),
-      title: String(item.title ?? ''),
-      url: String(item.url ?? ''),
-      headRefName: String(item.headRefName ?? ''),
+      title: ghString(item.title),
+      url: ghString(item.url),
+      headRefName: ghString(item.headRefName),
       author: authorLogin(item.author),
       isDraft: item.isDraft === true,
-      updatedAt: String(item.updatedAt ?? ''),
+      updatedAt: ghString(item.updatedAt),
+      headRefOid: ghString(item.headRefOid),
+      isCrossRepository: item.isCrossRepository === true,
+      headRepositoryOwner: authorLogin(item.headRepositoryOwner),
+      reviewDecision: (item.reviewDecision as RepoPr['reviewDecision']) ?? null,
+      mergeable: (item.mergeable as RepoPr['mergeable']) ?? null,
+      checks: summarizeChecks(item.statusCheckRollup),
+      additions: Number(item.additions ?? 0),
+      deletions: Number(item.deletions ?? 0),
+      changedFiles: Number(item.changedFiles ?? 0),
     }));
   }
 
@@ -557,8 +591,8 @@ export class PrManager {
 
     const status: PrStatus = {
       number: Number(raw.number ?? 0),
-      url: String(raw.url ?? url),
-      title: String(raw.title ?? fallbackTitle),
+      url: ghString(raw.url, url),
+      title: ghString(raw.title, fallbackTitle),
       state: (raw.state as PrStatus['state']) ?? 'OPEN',
       isDraft: raw.isDraft === true,
       reviewDecision:
@@ -576,14 +610,14 @@ export class PrManager {
     // "PENDING"/empty review row for a self-review-in-progress otherwise.
     if (Array.isArray(raw.reviews)) {
       for (const r of raw.reviews as Array<Record<string, unknown>>) {
-        const state = String(r.state ?? '').toUpperCase();
-        const body = String(r.body ?? '');
+        const state = ghString(r.state).toUpperCase();
+        const body = ghString(r.body);
         if (state === 'PENDING' || (state === '' && body === '')) continue;
         conversation.push({
           kind: 'review',
           author: authorLogin(r.author),
           body,
-          createdAt: String(r.submittedAt ?? r.createdAt ?? ''),
+          createdAt: ghString(r.submittedAt ?? r.createdAt),
           state: state as PrConversationItem['state'],
         });
       }
@@ -594,8 +628,8 @@ export class PrManager {
         conversation.push({
           kind: 'comment',
           author: authorLogin(c.author),
-          body: String(c.body ?? ''),
-          createdAt: String(c.createdAt ?? ''),
+          body: ghString(c.body),
+          createdAt: ghString(c.createdAt),
         });
       }
     }
@@ -618,9 +652,9 @@ export class PrManager {
             conversation.push({
               kind: 'line-comment',
               author: authorLogin(c.user),
-              body: String(c.body ?? ''),
-              createdAt: String(c.created_at ?? ''),
-              path: c.path !== undefined ? String(c.path) : undefined,
+              body: ghString(c.body),
+              createdAt: ghString(c.created_at),
+              path: c.path !== undefined ? ghString(c.path) : undefined,
               line:
                 c.line !== undefined && c.line !== null
                   ? Number(c.line)
@@ -634,6 +668,66 @@ export class PrManager {
     }
     conversation.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return { status, conversation };
+  }
+
+  // GET /api/prs/:number/diff. A PR's diff in the same shape a run's worktree
+  // diff produces, so the review UI renders both through one component.
+  //
+  // Two calls, mirroring worktree.diff(): `gh pr diff` for the raw patch, and
+  // the REST files list for per-file status, which `pr diff` does not report.
+  // Nothing here parses the patch — `DiffResult.patch` is stdout verbatim.
+  async getPrDiffByUrl(url: string): Promise<DiffResult> {
+    const location = parsePrUrl(url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${url}`);
+    }
+    const patch = await this.run(this.ctx.rootDir, ['gh', 'pr', 'diff', url]);
+    if (!patch.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr diff failed: ${commandErrorText(patch)}`
+      );
+    }
+    const listed = await this.run(this.ctx.rootDir, [
+      'gh',
+      'api',
+      '--paginate',
+      `repos/${location.owner}/${location.repo}/pulls/${location.number}/files`,
+    ]);
+    if (!listed.ok) {
+      throw new OrchestratorConflictError(
+        `gh api pulls/files failed: ${commandErrorText(listed)}`
+      );
+    }
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(listed.stdout) as Array<Record<string, unknown>>;
+    } catch {
+      throw new OrchestratorConflictError(
+        'gh api pulls/files returned invalid JSON'
+      );
+    }
+    // Guard each element's shape rather than stringifying whatever arrived:
+    // `String(obj)` on a non-string filename silently yields the literal
+    // text "[object Object]" as a file path, which would render as a
+    // real-looking but garbage row in the diff UI. A malformed entry throws
+    // instead, matching this function's existing fail-loudly posture.
+    const files = raw.map((item) => {
+      const filename = item.filename;
+      if (typeof filename !== 'string') {
+        throw new OrchestratorConflictError(
+          'gh api pulls/files returned a file entry with no string filename'
+        );
+      }
+      const status = item.status;
+      return {
+        path: filename,
+        status:
+          typeof status === 'string'
+            ? (FILE_STATUS_LETTER[status] ?? 'M')
+            : 'M',
+      };
+    });
+    return { patch: patch.stdout, files };
   }
 
   // POST /api/runs/:id/pr/review. Submits a GitHub review on the run's PR —
@@ -702,6 +796,18 @@ export class PrManager {
     }
     return this.getPrDetailByUrl(url);
   }
+}
+
+// Reads a string field off gh's `--json` output, which parses as `unknown`.
+// Objects and arrays fall back rather than stringifying to "[object Object]",
+// so a shape change in gh's payload surfaces as an empty field instead of
+// garbage text stored on a PR record.
+function ghString(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return fallback;
 }
 
 // Pulls a `login` off gh's author/user object shape (either `{login}` from the

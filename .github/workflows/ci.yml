@@ -37,6 +37,12 @@ jobs:
       - name: Stylelint
         run: bun run lint:css
 
+      # Runs after Build for the same reason Lint does: knip resolves
+      # cross-package imports through each package.json's `exports` field,
+      # which points at dist/*.
+      - name: Dead code
+        run: bun run lint:deadcode
+
       - name: TypeScript
         run: bun run tsc
 

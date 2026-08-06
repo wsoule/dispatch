@@ -364,6 +364,18 @@ export interface RepoPr {
   author: string;
   isDraft: boolean;
   updatedAt: string;
+  /** Head commit SHA — the `commit_id` GitHub wants when posting a review comment. */
+  headRefOid: string;
+  /** True when the head branch lives in a fork; gates Phase 4's confirm. */
+  isCrossRepository: boolean;
+  /** Login owning the head repository, named in that confirm. */
+  headRepositoryOwner: string;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' | null;
+  checks: PrCheckSummary;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
 }
 
 // The notes/triage hub — mirrors Note / NoteKind in packages/server/src/notes.ts. A
@@ -428,7 +440,7 @@ export interface UpdateFindingPatch {
 
 // Why a stopped fix loop is not `complete`. Mirrors FixLoopStop in
 // packages/server/src/orchestrator/fixLoop.ts.
-export type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
 
 // Mirrors FixLoopState in packages/server/src/orchestrator/fixLoop.ts: where a
 // task's review -> fix -> re-review loop currently stands.
@@ -1353,6 +1365,8 @@ export interface ApiClient {
   // same way every other PR route does when this project lacks the `pr`
   // capability.
   fetchRepoPrDetail(number: number): Promise<PrDetail>;
+  /** The PR's diff in the same shape `fetchRunDiff` returns. */
+  fetchRepoPrDiff(number: number): Promise<DiffResult>;
   reviewRepoPr(
     number: number,
     event: PrReviewEvent,
@@ -1815,6 +1829,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     fetchRepoPrs: () => request(target, '/api/prs'),
     fetchRepoPrDetail: (number) => request(target, `/api/prs/${number}/detail`),
+    fetchRepoPrDiff: (number) => request(target, `/api/prs/${number}/diff`),
     reviewRepoPr: (number, event, body) =>
       request(target, `/api/prs/${number}/review`, {
         method: 'POST',

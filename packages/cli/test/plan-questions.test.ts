@@ -47,38 +47,44 @@ function startStubDaemon() {
   let answered = false;
   const server = Bun.serve({
     port: 0,
-    async fetch(req) {
+    fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === '/api/health') {
-        return Response.json({ ok: true, version: '0.0.1' });
+        return Promise.resolve(Response.json({ ok: true, version: '0.0.1' }));
       }
       if (url.pathname === '/api/plan' && req.method === 'POST') {
-        return Response.json({ planId: 'plan-42' });
+        return Promise.resolve(Response.json({ planId: 'plan-42' }));
       }
       if (url.pathname === '/api/plan/plan-42/message') {
         answered = true;
-        return Response.json({ ok: true });
+        return Promise.resolve(Response.json({ ok: true }));
       }
       if (url.pathname === '/api/plan/plan-42') {
-        return Response.json({
-          id: 'plan-42',
-          prompt: 'redo checkout',
-          state: 'ready',
-          messages: [
-            { role: 'user', text: 'redo checkout', at: '2026-01-01T00:00:00Z' },
-            {
-              role: 'assistant',
-              text: 'One thing first.',
-              at: '2026-01-01T00:00:01Z',
-            },
-          ],
-          questions: answered ? [] : QUESTIONS,
-          ...(answered ? { proposal: PROPOSAL } : {}),
-          createdAt: '2026-01-01T00:00:00Z',
-          updatedAt: '2026-01-01T00:00:02Z',
-        });
+        return Promise.resolve(
+          Response.json({
+            id: 'plan-42',
+            prompt: 'redo checkout',
+            state: 'ready',
+            messages: [
+              {
+                role: 'user',
+                text: 'redo checkout',
+                at: '2026-01-01T00:00:00Z',
+              },
+              {
+                role: 'assistant',
+                text: 'One thing first.',
+                at: '2026-01-01T00:00:01Z',
+              },
+            ],
+            questions: answered ? [] : QUESTIONS,
+            ...(answered ? { proposal: PROPOSAL } : {}),
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:02Z',
+          })
+        );
       }
-      return new Response('not found', { status: 404 });
+      return Promise.resolve(new Response('not found', { status: 404 }));
     },
   });
   const daemonsDir = join(fakeHome, '.dispatch', 'daemons');

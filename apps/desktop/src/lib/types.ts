@@ -52,19 +52,19 @@ export interface SessionDetail {
   files_changed: FileChanged[];
 }
 
-export interface DailyActivity {
+interface DailyActivity {
   /** `YYYY-MM-DD`. */
   date: string;
   count: number;
 }
 
-export interface AgentUsage {
+interface AgentUsage {
   agent: string;
   session_count: number;
   total_cost_usd: number;
 }
 
-export interface ModelUsage {
+interface ModelUsage {
   /** Raw model id (e.g. `claude-opus-5`); null for sessions with no model recorded. Map to a
    * display label with `modelDisplayName` from `lib/models.ts`. */
   model: string | null;
@@ -72,7 +72,7 @@ export interface ModelUsage {
   total_cost_usd: number;
 }
 
-export interface DiffLine {
+interface DiffLine {
   tag: 'insert' | 'delete' | 'equal';
   content: string;
 }
@@ -86,7 +86,7 @@ export interface FileDiff {
   edit_count: number;
 }
 
-export interface ActiveSessionSummary {
+interface ActiveSessionSummary {
   session_id: string;
   session_title: string | null;
   session_summary: string | null;
@@ -110,7 +110,7 @@ export interface DashboardStats {
   active_session: ActiveSessionSummary | null;
 }
 
-export interface ReportTotals {
+interface ReportTotals {
   total_cost_usd: number;
   session_count: number;
   prompt_tokens: number;
@@ -119,14 +119,14 @@ export interface ReportTotals {
   cache_creation_tokens: number;
 }
 
-export interface ReportProjectRow {
+interface ReportProjectRow {
   project_id: string;
   project_name: string;
   session_count: number;
   total_cost_usd: number;
 }
 
-export interface ReportTagRow {
+interface ReportTagRow {
   tag: string;
   session_count: number;
   total_cost_usd: number;

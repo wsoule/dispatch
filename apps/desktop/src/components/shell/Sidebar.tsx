@@ -79,7 +79,7 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
   { id: 'settings', label: 'Settings', icon: Cog },
 ];
 
-export interface SwitchProject {
+interface SwitchProject {
   path: string;
   name: string;
 }
