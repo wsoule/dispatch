@@ -267,7 +267,12 @@ export interface DispatchProjectData {
     startLine?: number;
     anchorText: string;
     body: string;
+    /** Replacement text for the commented lines. Omitted for a prose-only comment. */
+    suggestion?: string;
   }) => Promise<void>;
+  /** Commits a comment's suggestion onto the run branch. Fails with a 409 `anchor-drifted`
+   * `ApiError` if the code named by the comment's line range has moved since it was written. */
+  handleApplySuggestion: (commentId: string) => Promise<void>;
   /** Submits the staged review: publishes its comments, then acts on the verdict. */
   handleSubmitReview: (
     verdict: import('@dispatch/client').ReviewVerdict,
@@ -2017,9 +2022,24 @@ export function useDispatchProject(
       startLine?: number;
       anchorText: string;
       body: string;
+      /** Replacement text for the commented lines. Omitted for a prose-only comment. */
+      suggestion?: string;
     }): Promise<void> => {
       if (client === null || selectedRunId === null) return;
       await client.addReviewComment(selectedRunId, input);
+      invalidateReview();
+    },
+    [client, selectedRunId, invalidateReview]
+  );
+
+  // Commits a comment's suggestion onto the run branch. The server broadcasts `review.changed`
+  // on success, which the socket handler above already turns into a `runDiffQueryKey`
+  // invalidation — this call adds the same immediate `reviewQueryKey` refresh the other review
+  // actions here give themselves, rather than waiting on that round trip.
+  const handleApplySuggestion = useCallback(
+    async (commentId: string): Promise<void> => {
+      if (client === null || selectedRunId === null) return;
+      await client.applySuggestion(selectedRunId, commentId);
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]
@@ -2315,6 +2335,7 @@ export function useDispatchProject(
     handleClusterInbox,
     reviewComments: reviewComments ?? [],
     handleAddReviewComment,
+    handleApplySuggestion,
     handleResolveReviewComment,
     handleReplyReviewComment,
     handleSendBack,

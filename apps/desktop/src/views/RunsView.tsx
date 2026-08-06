@@ -510,6 +510,7 @@ export function RunsView({
                       onAddComment={data.handleAddReviewComment}
                       onResolveComment={data.handleResolveReviewComment}
                       onReplyComment={data.handleReplyReviewComment}
+                      onApplySuggestion={data.handleApplySuggestion}
                       onSubmitReview={data.handleSubmitReview}
                     />
                   )}
