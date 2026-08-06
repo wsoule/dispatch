@@ -1,5 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { DEFAULT_REPO_DIGEST } from '@dispatch/core';
+import type { RepoDigestConfig } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -17,6 +19,8 @@ export interface RepoDigest {
   commit: string;
   generatedAt: string;
   markdown: string;
+  /** What the generating call cost, when the SDK reported it. */
+  costUsd?: number;
 }
 
 // Where the cache lives — beside the transcripts, since it is per-project state
@@ -30,6 +34,10 @@ export function repoDigestPath(rootDir: string): string {
 // its tokens. This is a ceiling on a generator that ignores its instructions,
 // not a target.
 const MAX_DIGEST_CHARS = 6000;
+
+// Deliberately far shorter than the success cooldown. Retrying a transient
+// failure quickly is the intent; this only stops it happening every dispatch.
+const FAILED_ATTEMPT_BACKOFF_MS = 5 * 60 * 1000;
 
 const DIGEST_PROMPT =
   'Write a concise orientation map of this repository for an engineer who is ' +
@@ -64,6 +72,11 @@ export function readRepoDigest(rootDir: string): RepoDigest | null {
       commit: record.commit,
       generatedAt: record.generatedAt,
       markdown: record.markdown,
+      // Omitted rather than defaulted: a record written before costs were
+      // tracked has no cost, which is not the same as a cost of zero.
+      ...(typeof record.costUsd === 'number' && Number.isFinite(record.costUsd)
+        ? { costUsd: record.costUsd }
+        : {}),
     };
   } catch {
     return null;
@@ -94,9 +107,16 @@ export function headCommit(rootDir: string): string | null {
   }
 }
 
-/** Generates the digest markdown for a checkout. Injectable so tests never
- * reach the real model. */
-export type DigestGenerator = (rootDir: string) => Promise<string>;
+/** What one generation produced: the map, and what it cost when the SDK said. */
+export interface DigestResult {
+  markdown: string;
+  /** null when the result message carried no cost. */
+  costUsd: number | null;
+}
+
+/** Generates the digest for a checkout. Injectable so tests never reach the
+ * real model. */
+export type DigestGenerator = (rootDir: string) => Promise<DigestResult>;
 
 // The real generator: one read-only Agent SDK turn against the main checkout,
 // configured exactly like ClaudePlanner's (plan permissions so no tool
@@ -105,7 +125,7 @@ export type DigestGenerator = (rootDir: string) => Promise<string>;
 export async function generateRepoDigest(
   rootDir: string,
   queryFn: typeof query = query
-): Promise<string> {
+): Promise<DigestResult> {
   const options: Options = {
     cwd: rootDir,
     permissionMode: 'plan',
@@ -119,12 +139,42 @@ export async function generateRepoDigest(
       if (message.subtype !== 'success') {
         throw new Error(`repo digest failed: ${message.subtype}`);
       }
-      return message.result;
+      return {
+        markdown: message.result,
+        costUsd:
+          typeof message.total_cost_usd === 'number'
+            ? message.total_cost_usd
+            : null,
+      };
     }
     throw new Error('repo digest produced no result message');
   } catch (err) {
     throw new Error(rewriteMissingCliError((err as Error).message));
   }
+}
+
+/** Whether a dispatch should pay for a fresh digest.
+ *
+ * Time, not HEAD equality, is the gate: a digest is an orientation map rather
+ * than an index, so one written a few commits ago is nearly as useful as one
+ * written now — and every merge-queue merge moves HEAD, so keying on equality
+ * alone bought a full-repo read per merge. */
+export function shouldRegenerate(
+  cached: RepoDigest | null,
+  head: string,
+  now: Date,
+  config: RepoDigestConfig
+): boolean {
+  if (!config.enabled) return false;
+  // No digest at all is the case the feature exists for, so the cooldown must
+  // not gate it.
+  if (cached === null) return true;
+  if (cached.commit === head) return false;
+  const writtenAt = Date.parse(cached.generatedAt);
+  // A corrupt timestamp counts as infinitely old, so it regenerates rather
+  // than wedging the cache shut.
+  if (Number.isNaN(writtenAt)) return true;
+  return now.getTime() - writtenAt >= config.cooldownHours * 60 * 60 * 1000;
 }
 
 /**
@@ -150,9 +200,18 @@ export class RepoDigestCache {
   // dispatched together would otherwise each start their own generation.
   private refreshing = false;
 
+  // In memory, not on disk: a daemon restart usually means the operator just
+  // fixed what was broken and should get an immediate retry.
+  private lastAttemptAt: number | null = null;
+
   constructor(
     private readonly rootDir: string,
-    private readonly generate?: DigestGenerator
+    private readonly generate?: DigestGenerator,
+    // Read per call rather than frozen at construction, so a config edit
+    // applies without a daemon restart — same as Orchestrator.orchestratorCaps.
+    private readonly readConfig: () => RepoDigestConfig = () => ({
+      ...DEFAULT_REPO_DIGEST,
+    })
   ) {}
 
   current(): RepoDigest | null {
@@ -161,28 +220,63 @@ export class RepoDigestCache {
     const head = headCommit(this.rootDir);
     // A null head means we can't tell fresh from stale, so we serve what we
     // have and don't burn a model call guessing.
-    if (head !== null && (cached === null || cached.commit !== head)) {
+    if (
+      head !== null &&
+      shouldRegenerate(cached, head, new Date(), this.config())
+    ) {
       this.refresh(head);
     }
     return cached;
   }
 
-  // Fire-and-forget. Every failure path logs and clears the flag so a transient
-  // one (no CLI on PATH, a model error) is retried on the next dispatch rather
-  // than wedging the cache shut for the life of the daemon.
+  // loadConfig throws on a malformed config.yml, and this sits on the dispatch
+  // path, so a bad edit falls back to the throttled defaults rather than
+  // breaking `current()`'s promise never to throw.
+  private config(): RepoDigestConfig {
+    try {
+      return this.readConfig();
+    } catch {
+      return { ...DEFAULT_REPO_DIGEST };
+    }
+  }
+
+  /** Clears the failure backoff so a test can reach past it without sleeping. */
+  forgetLastAttemptForTest(): void {
+    this.lastAttemptAt = null;
+  }
+
+  // Fire-and-forget. A failure logs and clears the flag so a transient one (no
+  // CLI on PATH, a model error) is retried rather than wedging the cache shut
+  // for the life of the daemon — but only once the backoff has passed, since a
+  // failed generation writes nothing for the cooldown to read.
   private refresh(commit: string): void {
     const generate = this.generate;
     if (generate === undefined || this.refreshing) return;
+    if (
+      this.lastAttemptAt !== null &&
+      Date.now() - this.lastAttemptAt < FAILED_ATTEMPT_BACKOFF_MS
+    ) {
+      return;
+    }
+    this.lastAttemptAt = Date.now();
     this.refreshing = true;
     void generate(this.rootDir)
-      .then((markdown) => {
-        const trimmed = markdown.trim();
+      .then((result) => {
+        const trimmed = result.markdown.trim();
         if (trimmed === '') return;
         writeRepoDigest(this.rootDir, {
           commit,
           generatedAt: new Date().toISOString(),
           markdown: trimmed.slice(0, MAX_DIGEST_CHARS),
+          ...(result.costUsd !== null ? { costUsd: result.costUsd } : {}),
         });
+        console.log(
+          `dispatchd: regenerated repo digest for ${commit.slice(0, 7)} (${
+            result.costUsd !== null
+              ? `$${result.costUsd.toFixed(4)}`
+              : 'cost unreported'
+          })`
+        );
       })
       .catch((err: unknown) => {
         console.error(

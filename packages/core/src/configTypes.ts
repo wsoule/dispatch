@@ -15,6 +15,20 @@ export interface OrchestratorConfig {
   epicConcurrency: number;
 }
 
+export interface RepoDigestConfig {
+  /** False stops all generation; the cache still serves what is on disk. */
+  enabled: boolean;
+  /** Minimum age of a cached digest before a stale one is regenerated. */
+  cooldownHours: number;
+}
+
+// Six hours: a digest is an orientation map, not an index, so one written a few
+// commits ago is nearly as useful as one written now.
+export const DEFAULT_REPO_DIGEST: RepoDigestConfig = {
+  enabled: true,
+  cooldownHours: 6,
+};
+
 /** One named gate in the verify pipeline. */
 export interface VerifyStep {
   name: string;
@@ -36,6 +50,7 @@ export interface DispatchConfig {
    *  the verify stage has nothing to dispatch, so a task simply skips it. */
   verify?: VerifyConfig;
   carto: CartoConfig;
+  repoDigest: RepoDigestConfig;
 }
 
 /** Whether Dispatch uses carto for the dependency graph, and whether it may

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-export interface DiffFile {
+interface DiffFile {
   path: string;
   status: string;
 }

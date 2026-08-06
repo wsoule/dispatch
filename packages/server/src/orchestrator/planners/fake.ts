@@ -7,7 +7,7 @@ import type {
 
 // One scripted assistant turn — `proposal` may be `null` for a questions-only
 // turn; `reply` defaults to a canned stand-in when omitted.
-export interface FakePlannerTurn {
+interface FakePlannerTurn {
   reply?: string;
   proposal: PlanProposal | null;
   questions?: PlannerQuestion[];
@@ -52,7 +52,7 @@ const DEFAULT_REPLY = '(fake planner turn)';
 export class FakePlanner implements Planner {
   constructor(private readonly script: FakePlannerScript) {}
 
-  async start(
+  start(
     _prompt: string,
     _model?: string,
     _mode?: 'plan' | 'draft'
@@ -60,7 +60,7 @@ export class FakePlanner implements Planner {
     return this.turnAt(0);
   }
 
-  async sendMessage(
+  sendMessage(
     sessionId: string | undefined,
     _message: string,
     _model?: string,
@@ -73,29 +73,33 @@ export class FakePlanner implements Planner {
 
   // Resolves the turn at `index` (the number of turns already consumed) from
   // whichever script shape this planner was built with, and stamps the next
-  // sessionId so the following turn advances by one.
-  private turnAt(index: number): PlannerTurn {
+  // sessionId so the following turn advances by one. A scripted failure comes
+  // back as a *rejection*, not a synchronous throw — that is how a real
+  // planner surfaces an error to PlanManager, and what the callers await.
+  private turnAt(index: number): Promise<PlannerTurn> {
     if (!this.script.ok) {
-      throw new Error(this.script.error);
+      return Promise.reject(new Error(this.script.error));
     }
     const nextSessionId = String(index + 1);
     if ('turns' in this.script) {
       const turn = this.script.turns[index];
       if (turn === undefined) {
-        throw new Error(`FakePlanner: no scripted turn at index ${index}`);
+        return Promise.reject(
+          new Error(`FakePlanner: no scripted turn at index ${index}`)
+        );
       }
-      return {
+      return Promise.resolve({
         reply: turn.reply ?? DEFAULT_REPLY,
         proposal: turn.proposal,
         questions: turn.questions ?? [],
         sessionId: nextSessionId,
-      };
+      });
     }
-    return {
+    return Promise.resolve({
       reply: this.script.reply ?? DEFAULT_REPLY,
       proposal: this.script.proposal,
       questions: this.script.questions ?? [],
       sessionId: nextSessionId,
-    };
+    });
   }
 }

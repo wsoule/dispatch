@@ -27,7 +27,8 @@ function formatInput(toolInput: unknown): string {
   try {
     return JSON.stringify(toolInput, null, 2);
   } catch {
-    return String(toolInput);
+    // Only a cyclic input lands here, and it has no useful text form.
+    return '(input could not be displayed)';
   }
 }
 

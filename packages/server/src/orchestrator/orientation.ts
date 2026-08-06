@@ -24,7 +24,7 @@ export interface SkillSummary {
 }
 
 /** A run already in flight, and the files it has declared or touched. */
-export interface ConcurrentRun {
+interface ConcurrentRun {
   id: string;
   taskTitle: string;
   claims: string[];

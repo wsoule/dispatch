@@ -423,7 +423,7 @@ export class Orchestrator {
 
   // Starts a non-execute run against `head` on its own throwaway branch, and
   // leaves the task alone. `buildPrompt` runs once the worktree exists.
-  async dispatchAuxRun(opts: {
+  dispatchAuxRun(opts: {
     taskId: string;
     kind: RunKind;
     head: string;
@@ -500,7 +500,7 @@ export class Orchestrator {
       },
       executor
     );
-    return this.registry.get(runId)!;
+    return Promise.resolve(this.registry.get(runId)!);
   }
 
   // Force-fails a non-execute run whose reported success a post-run check

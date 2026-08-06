@@ -44,7 +44,7 @@ describe('ClaudePlanner Bun compatibility', () => {
 describe('ClaudePlanner.start', () => {
   it('returns the reply, proposal, and session id from a successful result', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async function* fakeMessages(): AsyncGenerator<any> {
+    function* fakeMessages(): Generator<any> {
       yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
       yield {
         type: 'result',
@@ -66,7 +66,7 @@ describe('ClaudePlanner.start', () => {
   it('runs read-only with no subagents, no user settings, and no MCP servers', async () => {
     const proposal: PlanProposal = { tasks: [] };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async function* fakeMessages(): AsyncGenerator<any> {
+    function* fakeMessages(): Generator<any> {
       yield {
         type: 'result',
         subtype: 'success',
@@ -95,7 +95,7 @@ describe('ClaudePlanner.start', () => {
 
   it('rejects when the result message is an error subtype', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async function* fakeMessages(): AsyncGenerator<any> {
+    function* fakeMessages(): Generator<any> {
       yield {
         type: 'result',
         subtype: 'error_during_execution',
@@ -116,7 +116,7 @@ describe('ClaudePlanner.start', () => {
       calls += 1;
       const attempt = calls;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      async function* fakeMessages(): AsyncGenerator<any> {
+      function* fakeMessages(): Generator<any> {
         if (attempt === 1) {
           yield { type: 'result', subtype: 'success', session_id: 'sess-1' };
           return;
@@ -145,7 +145,7 @@ describe('ClaudePlanner.start', () => {
   it('rejects with actionable text when both attempts carry no structured_output', async () => {
     let calls = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async function* fakeMessages(): AsyncGenerator<any> {
+    function* fakeMessages(): Generator<any> {
       yield { type: 'result', subtype: 'success' };
     }
     const fakeQueryFn = () => {
@@ -162,7 +162,7 @@ describe('ClaudePlanner.start', () => {
 
   it('rejects when the stream ends with no result message at all', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async function* fakeMessages(): AsyncGenerator<any> {
+    function* fakeMessages(): Generator<any> {
       yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
     }
     const fakeQueryFn = () => fakeMessages() as unknown as Query;
@@ -196,7 +196,7 @@ describe('ClaudePlanner.sendMessage', () => {
     const fakeQueryFn = (args: any) => {
       capturedResume = args.options.resume;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      async function* fakeMessages(): AsyncGenerator<any> {
+      function* fakeMessages(): Generator<any> {
         yield {
           type: 'result',
           subtype: 'success',
@@ -226,7 +226,7 @@ describe('ClaudePlanner.sendMessage', () => {
       resumes.push(args.options.resume);
       const attempt = calls;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      async function* fakeMessages(): AsyncGenerator<any> {
+      function* fakeMessages(): Generator<any> {
         if (attempt === 1) {
           yield { type: 'result', subtype: 'success', session_id: 'sess-1' };
           return;
@@ -274,7 +274,7 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
     try {
       let calls = 0;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      async function* fakeMessages(): AsyncGenerator<any> {
+      function* fakeMessages(): Generator<any> {
         yield {
           type: 'result',
           subtype: 'success',
@@ -318,11 +318,18 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
     const originalWhich = Bun.which;
     Bun.which = (() => null) as typeof Bun.which;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      async function* fakeMessages(): AsyncGenerator<any> {
-        throw new Error(MISSING_CLI_MESSAGE);
-      }
-      const fakeQueryFn = () => fakeMessages() as unknown as Query;
+      // Fails only once the caller starts iterating — the lazy shape the SDK
+      // uses for a missing native CLI. An explicit iterator, not a generator:
+      // a generator body that only throws never yields, which is precisely
+      // what a generator cannot express.
+      const failingMessages = {
+        [Symbol.asyncIterator]: () => ({
+          next(): Promise<IteratorResult<never>> {
+            throw new Error(MISSING_CLI_MESSAGE);
+          },
+        }),
+      };
+      const fakeQueryFn = () => failingMessages as unknown as Query;
       const planner = new ClaudePlanner('/tmp/does-not-matter', fakeQueryFn);
 
       await expect(planner.start('build the thing')).rejects.toThrow(

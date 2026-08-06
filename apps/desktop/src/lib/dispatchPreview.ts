@@ -12,9 +12,9 @@ import type { TaskDoc } from '@dispatch/core/browser';
  * appears in the preview, either starting now or explicitly queued.
  */
 
-export type DispatchDisposition = 'starts-now' | 'queued' | 'not-ready';
+type DispatchDisposition = 'starts-now' | 'queued' | 'not-ready';
 
-export interface DispatchPreviewRow {
+interface DispatchPreviewRow {
   taskId: string;
   title: string;
   disposition: DispatchDisposition;

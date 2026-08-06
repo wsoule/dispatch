@@ -4,6 +4,7 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_REPO_DIGEST,
 } from '@dispatch/core/browser';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -29,6 +30,7 @@ export const testConfig: DispatchConfig = {
   linear: DEFAULT_LINEAR,
   fixLoop: DEFAULT_FIX_LOOP,
   carto: DEFAULT_CARTO,
+  repoDigest: DEFAULT_REPO_DIGEST,
 };
 
 export const testProject = { path: '/tmp/demo', name: 'demo' };
@@ -72,13 +74,14 @@ export function dataWith(
     refetchLinearStates: () => {},
     linearLinks: {},
     handleUpdateConfig: async () => {},
-    handleConnectLinear: async () => ({
-      connected: true,
-      viewer: { name: 'x' },
-    }),
-    handleDisconnectLinear: async () => {},
-    handleSyncLinear: async () => ({}),
-    handleImportLinear: async () => ({}),
+    handleConnectLinear: () =>
+      Promise.resolve({
+        connected: true,
+        viewer: { name: 'x' },
+      }),
+    handleDisconnectLinear: () => {},
+    handleSyncLinear: () => Promise.resolve({}),
+    handleImportLinear: () => Promise.resolve({}),
     ...rest,
   } as unknown as DispatchProjectData;
 }

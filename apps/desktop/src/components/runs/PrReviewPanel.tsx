@@ -7,59 +7,25 @@ import type {
 import {
   Check,
   CircleDot,
-  Clock,
   ExternalLink,
   GitMerge,
   GitPullRequest,
   MessageSquare,
   X,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
 import { useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { Markdown } from './Markdown';
-import { cn } from '@/lib/utils';
+import {
+  PrChecksPill,
+  REVIEW_VERDICT,
+  STATE_TONE,
+  StatusPill,
+} from './PrStatusPills';
 import { Button } from '@/ui/button';
 import { Skeleton } from '@/ui/skeleton';
 import { Textarea } from '@/ui/textarea';
-
-// A small pill for one PR status fact (state, review decision, mergeability).
-function StatusPill({
-  icon,
-  children,
-  tone = 'muted',
-}: {
-  icon?: ReactNode;
-  children: ReactNode;
-  tone?: 'green' | 'amber' | 'red' | 'purple' | 'muted';
-}) {
-  const toneClass = {
-    green: 'border-state-review-edge bg-state-review-surface text-state-review',
-    amber:
-      'border-state-waiting-edge bg-state-waiting-surface text-state-waiting',
-    red: 'border-destructive/30 bg-destructive/10 text-destructive',
-    purple: 'border-primary/30 bg-primary/10 text-primary',
-    muted: 'border-border bg-muted/60 text-muted-foreground',
-  }[tone];
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium',
-        toneClass
-      )}
-    >
-      {icon}
-      {children}
-    </span>
-  );
-}
-
-const STATE_TONE: Record<PrStatus['state'], 'green' | 'purple' | 'red'> = {
-  OPEN: 'green',
-  MERGED: 'purple',
-  CLOSED: 'red',
-};
 
 // The header row: PR number + title, its open/merged state, review decision,
 // CI check counts, mergeability, the diffstat, and a link out to GitHub.
@@ -106,24 +72,7 @@ function PrStatusHeader({ status }: { status: PrStatus }) {
           </StatusPill>
         )}
 
-        {checks.total > 0 && (
-          <StatusPill
-            tone={
-              checks.failed > 0 ? 'red' : checks.pending > 0 ? 'amber' : 'green'
-            }
-            icon={
-              checks.failed > 0 ? (
-                <X className="size-3" />
-              ) : checks.pending > 0 ? (
-                <Clock className="size-3" />
-              ) : (
-                <Check className="size-3" />
-              )
-            }
-          >
-            {checks.passed}/{checks.total} checks
-          </StatusPill>
-        )}
+        <PrChecksPill checks={checks} />
 
         {status.mergeable === 'CONFLICTING' && (
           <StatusPill tone="red" icon={<GitMerge className="size-3" />}>
@@ -140,16 +89,6 @@ function PrStatusHeader({ status }: { status: PrStatus }) {
     </div>
   );
 }
-
-const REVIEW_VERDICT: Record<
-  NonNullable<PrConversationItem['state']>,
-  { label: string; tone: 'green' | 'amber' | 'muted' }
-> = {
-  APPROVED: { label: 'approved', tone: 'green' },
-  CHANGES_REQUESTED: { label: 'requested changes', tone: 'amber' },
-  COMMENTED: { label: 'commented', tone: 'muted' },
-  DISMISSED: { label: 'dismissed', tone: 'muted' },
-};
 
 // One conversation entry — a submitted review (with its verdict), a PR-level
 // comment, or a code-line comment (tagged with its file:line).

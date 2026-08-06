@@ -10,26 +10,26 @@ import { dirname } from 'node:path';
 
 import type { NormalizedEntry, RunMeta, RunState, RunSurvey } from './types.js';
 
-export interface TranscriptHeaderLine {
+interface TranscriptHeaderLine {
   type: 'header';
   meta: RunMeta;
 }
 
-export interface TranscriptEntryLine {
+interface TranscriptEntryLine {
   type: 'entry';
   entry: NormalizedEntry;
 }
 
 // A command the implementer ran, recorded via `record_evidence` rather than
 // narrated in the run's own output — see CommandEvidence.
-export interface TranscriptEvidenceLine {
+interface TranscriptEvidenceLine {
   type: 'evidence';
   evidence: CommandEvidence;
 }
 
 // A mutation-test result, recorded via `record_mutation` — see
 // MutationEvidence for why `testsFailed: 0` matters.
-export interface TranscriptMutationLine {
+interface TranscriptMutationLine {
   type: 'mutation';
   mutation: MutationEvidence;
 }
@@ -37,7 +37,7 @@ export interface TranscriptMutationLine {
 // Finish fields (costUsd/turns/sessionId/error) only become known once a run
 // reaches a terminal state, so they ride along on that state transition
 // rather than needing a separate transcript line type.
-export interface TranscriptStateLine {
+interface TranscriptStateLine {
   type: 'state';
   state: RunState;
   ts: string;

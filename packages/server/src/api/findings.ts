@@ -1,3 +1,4 @@
+import { describeValue } from '@dispatch/core';
 import type {
   FindingRecommendation,
   FindingSeverity,
@@ -88,7 +89,7 @@ export async function createFinding(
   ) {
     return errorResponse(
       400,
-      `invalid recommendation: ${String(body.recommendation)} (expected ${RECOMMENDATIONS.join('|')})`
+      `invalid recommendation: ${describeValue(body.recommendation)} (expected ${RECOMMENDATIONS.join('|')})`
     );
   }
   const finding = ctx.findingStore.add({
@@ -124,7 +125,7 @@ export async function updateFinding(
   ) {
     return errorResponse(
       400,
-      `invalid verdict: ${String(body.verdict)} (expected ${PATCHABLE_VERDICTS.join('|')}` +
+      `invalid verdict: ${describeValue(body.verdict)} (expected ${PATCHABLE_VERDICTS.join('|')}` +
         ` — park and block ${ADJUDICATED_ERROR})`
     );
   }

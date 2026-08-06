@@ -1,4 +1,4 @@
-import { PRIORITIES, TASK_RISKS } from '@dispatch/core';
+import { describeValue, PRIORITIES, TASK_RISKS } from '@dispatch/core';
 import type { Priority, TaskRisk } from '@dispatch/core';
 
 import { OrchestratorClientError } from './types.js';
@@ -15,15 +15,6 @@ export interface PlannedTask {
   // validatePlannedTask); the live planner's schema always sets both.
   writes?: string[];
   risk?: TaskRisk;
-}
-
-// The single-task shape a reviewer edits before saving — a `PlannedTask`
-// minus `blockedByIndices`, directly mappable to core's `CreateInput`.
-export interface TaskDraft {
-  title: string;
-  description: string;
-  acceptanceCriteria: string[];
-  priority: Priority;
 }
 
 // The shape a Planner produces and a client confirms. `epic` is optional —
@@ -204,7 +195,7 @@ function validatePlannedTask(
       !(TASK_RISKS as readonly string[]).includes(t.risk))
   ) {
     throw new OrchestratorClientError(
-      `invalid risk: ${String(t.risk)} (expected ${TASK_RISKS.join('|')})`
+      `invalid risk: ${describeValue(t.risk)} (expected ${TASK_RISKS.join('|')})`
     );
   }
   return {

@@ -12,6 +12,7 @@ import type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  RepoDigestConfig,
   VerifyConfig,
 } from './configTypes.js';
 import {
@@ -20,6 +21,7 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
@@ -75,6 +77,7 @@ const DEFAULTS: DispatchConfig = {
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
   carto: { ...DEFAULT_CARTO },
+  repoDigest: { ...DEFAULT_REPO_DIGEST },
 };
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -155,6 +158,42 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
     epicConcurrency: epicConcurrency ?? DEFAULT_ORCHESTRATOR.epicConcurrency,
     verifyTimeoutSec: verifyTimeoutSec ?? DEFAULT_ORCHESTRATOR.verifyTimeoutSec,
+  };
+}
+
+// Validates the optional `repoDigest:` block, same contract as
+// parseOrchestratorConfig — only `undefined` falls back to defaults.
+function parseRepoDigestConfig(raw: unknown): RepoDigestConfig {
+  if (raw === undefined) return { ...DEFAULT_REPO_DIGEST };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: repoDigest must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { enabled } = obj;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: repoDigest.enabled must be a boolean'
+    );
+  }
+
+  const { cooldownHours } = obj;
+  if (
+    cooldownHours !== undefined &&
+    (typeof cooldownHours !== 'number' ||
+      !Number.isFinite(cooldownHours) ||
+      cooldownHours <= 0)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: repoDigest.cooldownHours must be a positive number'
+    );
+  }
+
+  return {
+    enabled: enabled ?? DEFAULT_REPO_DIGEST.enabled,
+    cooldownHours: cooldownHours ?? DEFAULT_REPO_DIGEST.cooldownHours,
   };
 }
 
@@ -417,6 +456,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       },
       fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
       carto: { ...DEFAULTS.carto },
+      repoDigest: { ...DEFAULTS.repoDigest },
     };
   }
   let parsed: unknown;
@@ -482,6 +522,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     fixLoop: parseFixLoopConfig(raw.fixLoop),
     verify: parseVerifyConfig(raw.verify),
     carto: parseCarto(raw.carto),
+    repoDigest: parseRepoDigestConfig(raw.repoDigest),
   };
 }
 

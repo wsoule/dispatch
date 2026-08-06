@@ -9,6 +9,7 @@ import {
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { makeFakeGhRunner } from './fakeGh.js';
 import { startServer } from './index.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
 import type { FakeExecutorScript } from './orchestrator/executors/fake.js';
@@ -16,7 +17,6 @@ import { FakeExecutor } from './orchestrator/executors/fake.js';
 import type { PlanProposal } from './orchestrator/planner.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import { FakePlanner } from './orchestrator/planners/fake.js';
-import type { CommandRunner } from './orchestrator/pr.js';
 
 // ---------------------------------------------------------------------------
 // Phase 7 fakes hook (DISPATCH_ENABLE_FAKES / DISPATCH_FAKE_APPROVAL)
@@ -167,196 +167,6 @@ const DEFAULT_FAKE_PROPOSAL: PlanProposal = {
     },
   ],
 };
-
-// An in-memory stand-in for the `gh`/`git` CLI, gated on DISPATCH_FAKE_GH so
-// the PR review surface is fully demoable/testable without a real remote. It
-// keeps per-PR state (created PRs, their reviews and comments) so that posting
-// a review or comment through the app actually shows up on the next status
-// read — the whole open -> review -> see-your-review loop works against it.
-function makeFakeGhRunner(): CommandRunner {
-  interface FakePr {
-    number: number;
-    url: string;
-    title: string;
-    headRefName: string;
-    author: string;
-    state: string;
-    reviews: Array<Record<string, unknown>>;
-    comments: Array<Record<string, unknown>>;
-    lineComments: Array<Record<string, unknown>>;
-  }
-  const prs = new Map<string, FakePr>();
-  let counter = 41;
-  const ok = (stdout = '') => Promise.resolve({ ok: true, stdout, stderr: '' });
-  const flagValue = (cmd: string[], name: string): string | undefined => {
-    const i = cmd.indexOf(name);
-    return i >= 0 && i < cmd.length - 1 ? cmd[i + 1] : undefined;
-  };
-
-  // The one standalone fake PR (#7, dependabot) that `gh pr list` has always
-  // reported without dispatch ever "creating" it via `gh pr create` below —
-  // so the PRs page's "Other open PRs" section has a real non-dispatch row
-  // in demo mode. Seeded straight into `prs` (rather than assembled ad hoc
-  // inside the `list` handler, as it used to be) so `gh pr view`/`review`/
-  // `comment` of this PR — item B's in-app review surface for those rows —
-  // resolve against the same map every dispatch-created PR does, instead of
-  // map-missing into the generic "PR not found" default below.
-  const standaloneUrl = 'https://github.com/dispatch-demo/repo/pull/7';
-  prs.set(standaloneUrl, {
-    number: 7,
-    url: standaloneUrl,
-    title: 'Bump dependency versions',
-    headRefName: 'deps/bump-versions',
-    author: 'dependabot',
-    state: 'OPEN',
-    reviews: [],
-    comments: [
-      {
-        author: { login: 'dependabot' },
-        body: 'Superseded by a newer version bump — should still be safe to merge as-is.',
-        createdAt: new Date().toISOString(),
-      },
-    ],
-    lineComments: [],
-  });
-
-  return (_cwd, cmd) => {
-    const [bin, sub, action] = cmd;
-    const now = new Date().toISOString();
-
-    if (bin === 'gh' && sub === '--version')
-      return ok('gh version 2.0.0 (fake)');
-    if (bin === 'git' && sub === 'remote') {
-      return ok('https://github.com/dispatch-demo/repo.git');
-    }
-    if (bin === 'git' && sub === 'push') return ok();
-
-    if (bin === 'gh' && sub === 'pr' && action === 'create') {
-      counter += 1;
-      const url = `https://github.com/dispatch-demo/repo/pull/${counter}`;
-      prs.set(url, {
-        number: counter,
-        url,
-        title: flagValue(cmd, '--title') ?? 'Pull request',
-        headRefName: `dispatch/fake-${counter}`,
-        author: 'you',
-        state: 'OPEN',
-        reviews: [],
-        comments: [
-          {
-            author: { login: 'teammate' },
-            body: 'Thanks for opening this — taking a look now.',
-            createdAt: now,
-          },
-        ],
-        lineComments: [
-          {
-            user: { login: 'teammate' },
-            body: 'Nit: could this marker string be a named constant?',
-            created_at: now,
-            path: 'FAKE_OUTPUT.txt',
-            line: 1,
-          },
-        ],
-      });
-      return ok(url);
-    }
-
-    if (bin === 'gh' && sub === 'pr' && action === 'list') {
-      // Every open PR in `prs` — every one this fake has "opened" via
-      // `gh pr create` below, plus the standalone fake PR (#7, dependabot)
-      // seeded above — so the PRs page's "Other open PRs" section has a real
-      // non-dispatch row to render in demo mode (DISPATCH_FAKE_GH=1), not
-      // just an empty section. Read straight off each PR's own headRefName/
-      // author (rather than a hardcoded `dispatch/fake-N` + `you` here) now
-      // that both dispatch-created and the standalone PR carry those fields
-      // themselves — see the standalone seed's own comment for why it's in
-      // this same map rather than assembled ad hoc here.
-      const open = [...prs.values()]
-        .filter((pr) => pr.state === 'OPEN')
-        .map((pr) => ({
-          number: pr.number,
-          title: pr.title,
-          url: pr.url,
-          headRefName: pr.headRefName,
-          author: { login: pr.author },
-          isDraft: false,
-          updatedAt: now,
-        }));
-      return ok(JSON.stringify(open));
-    }
-
-    if (bin === 'gh' && sub === 'pr' && action === 'view') {
-      const url = cmd[3];
-      const pr = prs.get(url);
-      if (flagValue(cmd, '--json') === 'state') {
-        return ok(JSON.stringify({ state: pr?.state ?? 'OPEN' }));
-      }
-      const approved = pr?.reviews.some((r) => r.state === 'APPROVED') ?? false;
-      const changes =
-        pr?.reviews.some((r) => r.state === 'CHANGES_REQUESTED') ?? false;
-      return ok(
-        JSON.stringify({
-          number: pr?.number ?? 0,
-          url,
-          title: pr?.title ?? 'Pull request',
-          state: pr?.state ?? 'OPEN',
-          isDraft: false,
-          reviewDecision: approved
-            ? 'APPROVED'
-            : changes
-              ? 'CHANGES_REQUESTED'
-              : 'REVIEW_REQUIRED',
-          mergeable: 'MERGEABLE',
-          statusCheckRollup: [
-            { conclusion: 'SUCCESS' },
-            { conclusion: 'SUCCESS' },
-            { status: 'IN_PROGRESS' },
-          ],
-          additions: 12,
-          deletions: 3,
-          changedFiles: 2,
-          reviews: pr?.reviews ?? [],
-          comments: pr?.comments ?? [],
-        })
-      );
-    }
-
-    if (bin === 'gh' && sub === 'api') {
-      const match = /pulls\/(\d+)\/comments/.exec(cmd[2] ?? '');
-      const pr = [...prs.values()].find((p) => String(p.number) === match?.[1]);
-      return ok(JSON.stringify(pr?.lineComments ?? []));
-    }
-
-    if (bin === 'gh' && sub === 'pr' && action === 'review') {
-      const pr = prs.get(cmd[3]);
-      const state = cmd.includes('--approve')
-        ? 'APPROVED'
-        : cmd.includes('--request-changes')
-          ? 'CHANGES_REQUESTED'
-          : 'COMMENTED';
-      pr?.reviews.push({
-        author: { login: 'you' },
-        body: flagValue(cmd, '--body') ?? '',
-        state,
-        submittedAt: now,
-      });
-      return ok();
-    }
-
-    if (bin === 'gh' && sub === 'pr' && action === 'comment') {
-      const pr = prs.get(cmd[3]);
-      pr?.comments.push({
-        author: { login: 'you' },
-        body: flagValue(cmd, '--body') ?? '',
-        createdAt: now,
-      });
-      return ok();
-    }
-
-    return ok();
-  };
-}
 
 // Minimal flag parsing (no commander dependency here — `@dispatch/cli` is the
 // one place that owns the user-facing CLI surface; this bin is just what

@@ -7,17 +7,15 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { Note } from '../src/notes.js';
+import type { PlanRecord } from '../src/orchestrator/plan.js';
 import type {
   Planner,
   PlannerTurn,
   PlanProposal,
 } from '../src/orchestrator/planner.js';
+import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
-
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 async function waitFor(
   check: () => Promise<boolean>,
@@ -51,27 +49,27 @@ class RecordingPlanner implements Planner {
 
   constructor(private readonly proposal: PlanProposal) {}
 
-  async start(prompt: string): Promise<PlannerTurn> {
+  start(prompt: string): Promise<PlannerTurn> {
     this.prompts.push(prompt);
-    return {
+    return Promise.resolve({
       reply: 'drafted a task',
       proposal: this.proposal,
       questions: [],
       sessionId: '1',
-    };
+    });
   }
 
-  async sendMessage(
+  sendMessage(
     _sessionId: string | undefined,
     message: string
   ): Promise<PlannerTurn> {
     this.prompts.push(message);
-    return {
+    return Promise.resolve({
       reply: 'refined',
       proposal: this.proposal,
       questions: [],
       sessionId: '2',
-    };
+    });
   }
 }
 
@@ -136,12 +134,14 @@ async function createNote(
   return (await json(res)) as Note;
 }
 
-async function waitForReadyPlan(planId: string): Promise<any> {
+async function waitForReadyPlan(planId: string): Promise<PlanRecord> {
   await waitFor(async () => {
     const r = await json(await fetch(`${baseUrl}/api/plan/${planId}`));
     return r.state !== 'running';
   });
-  return json(await fetch(`${baseUrl}/api/plan/${planId}`));
+  return (await json(
+    await fetch(`${baseUrl}/api/plan/${planId}`)
+  )) as PlanRecord;
 }
 
 describe('POST /api/notes/:id/enrich', () => {

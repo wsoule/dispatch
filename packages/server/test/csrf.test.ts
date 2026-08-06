@@ -8,14 +8,9 @@ import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import { FakePlanner } from '../src/orchestrator/planners/fake.js';
+import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
-
-// `Response.json()` types as `Promise<unknown>` under this repo's DOM-less
-// tsconfig — same escape hatch the other API suites use.
-function json(res: Response): Promise<any> {
-  return res.json();
-}
 
 function initDispatchGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-csrf-'));

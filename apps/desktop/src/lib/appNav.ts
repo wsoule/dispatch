@@ -12,7 +12,6 @@ export type ProjectView =
   | 'board'
   | 'runs'
   | 'branches'
-  | 'pull-requests'
   | 'review'
   | 'brain-dump'
   | 'plans'
@@ -57,7 +56,7 @@ export interface NavState {
 
 /** One visited destination. Runs and Review key off a run id, so it travels
  * with the entry — going back to a review you had open should reopen it. */
-export interface NavEntry {
+interface NavEntry {
   section: 'project' | 'global';
   projectView: ProjectView;
   globalView: GlobalView;
@@ -147,14 +146,11 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       };
     case 'setProjectView': {
       const activeRunId =
-        // Runs and Pull requests both key their selection off `activeRunId` (a PR is just a
-        // run with an open PR), so keep it when moving between those two; any other view
-        // clears it so re-entering starts fresh rather than reopening a stale selection.
-        action.view === 'runs' ||
-        action.view === 'pull-requests' ||
-        // Review is a full-page view OF the selected run, so moving into it must keep the
-        // selection rather than clearing it and landing on an empty surface.
-        action.view === 'review'
+        // Runs and Review both key their selection off `activeRunId`, and
+        // Review is a full-page view OF the selected run, so moving between
+        // them keeps it; any other view clears it rather than reopening a
+        // stale selection.
+        action.view === 'runs' || action.view === 'review'
           ? state.activeRunId
           : null;
       // Only the draft view itself renders a selected draft, so any other

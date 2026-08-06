@@ -55,7 +55,7 @@ export interface FeedRowModel {
   waitingOn: 'approval' | 'question' | null;
 }
 
-export interface FeedGroupModel {
+interface FeedGroupModel {
   state: FeedState;
   /** Rows matching the current filter, before the cap. */
   total: number;

@@ -26,7 +26,30 @@ bun run lint
 bun run lint:fix
 bun run lint:css
 bun run lint:css:fix
+bun run lint:deadcode
+bun run lint:deadcode:fix
 ```
+
+## Dead Code
+
+`bun run lint:deadcode` runs knip, which fails CI on any unused file, export,
+type, dependency, or binary. It is gated at zero, so deleting the last caller of
+something makes the build red until the thing itself goes too.
+
+Run it after removing code, and note that it needs a build first — knip resolves
+cross-package imports through each `package.json`'s `exports` field, which
+points at `dist/`:
+
+```bash
+bun run build
+bun run lint:deadcode
+```
+
+`bun run lint:deadcode:fix` strips the `export` keyword from unused exports
+rather than deleting them, which usually turns the finding into a `tsc`/oxlint
+unused-local error pointing at the declaration to remove. Config lives in
+`knip.json`; entry points it cannot infer, plus the two runtime-resolved
+workspace deps, are declared there with comments.
 
 For code changes, also run the relevant package-level typecheck:
 

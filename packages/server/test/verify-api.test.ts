@@ -72,7 +72,7 @@ let taskId: string;
 let head: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
-beforeEach(async () => {
+beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
   process.env.DISPATCH_HOME = fakeHome;
   root = initDispatchGitRepo();

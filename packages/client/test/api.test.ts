@@ -16,15 +16,17 @@ function stubFetch(): {
 } {
   const original = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  globalThis.fetch = (async (
+  globalThis.fetch = ((
     url: string | URL,
     init?: RequestInit
   ): Promise<Response> => {
     calls.push({ url: String(url), init });
-    return new Response(JSON.stringify({}), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
+    return Promise.resolve(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
   }) as typeof fetch;
   return { calls, restore: () => (globalThis.fetch = original) };
 }

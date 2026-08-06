@@ -10,13 +10,18 @@ function stubFetch(
   reply: { status?: number; body: unknown; headers?: Record<string, string> },
   seen: { init?: RequestInit; url?: string } = {}
 ): typeof fetch {
-  return (async (url: string, init: RequestInit) => {
+  return ((url: string, init: RequestInit) => {
     seen.url = url;
     seen.init = init;
-    return new Response(JSON.stringify(reply.body), {
-      status: reply.status ?? 200,
-      headers: { 'content-type': 'application/json', ...(reply.headers ?? {}) },
-    });
+    return Promise.resolve(
+      new Response(JSON.stringify(reply.body), {
+        status: reply.status ?? 200,
+        headers: {
+          'content-type': 'application/json',
+          ...(reply.headers ?? {}),
+        },
+      })
+    );
   }) as unknown as typeof fetch;
 }
 
@@ -126,19 +131,21 @@ describe('HttpLinearClient pagination', () => {
   it('follows endCursor until hasNextPage goes false', async () => {
     let call = 0;
     const client = new HttpLinearClient(KEY, {
-      fetchImpl: (async () => {
+      fetchImpl: (() => {
         call++;
         const hasNextPage = call === 1;
-        return new Response(
-          JSON.stringify({
-            data: {
-              teams: {
-                nodes: [{ id: `t-${call}`, key: 'K', name: `Team ${call}` }],
-                pageInfo: { hasNextPage, endCursor: 'cursor-1' },
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                teams: {
+                  nodes: [{ id: `t-${call}`, key: 'K', name: `Team ${call}` }],
+                  pageInfo: { hasNextPage, endCursor: 'cursor-1' },
+                },
               },
-            },
-          }),
-          { headers: { 'content-type': 'application/json' } }
+            }),
+            { headers: { 'content-type': 'application/json' } }
+          )
         );
       }) as unknown as typeof fetch,
     });

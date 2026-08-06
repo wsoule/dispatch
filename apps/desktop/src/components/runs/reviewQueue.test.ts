@@ -58,6 +58,54 @@ describe('buildReviewQueue', () => {
     expect(buildReviewQueue([run({ kind: undefined })])).toHaveLength(1);
   });
 
+  // The gap this queue had: a run force-failed by boot reconciliation (a daemon
+  // restart) can still have finished its work on the branch, but keying the
+  // inbox on `finished` meant it never appeared and had to be hunted down by
+  // hand. A session id is the proxy for "the agent actually got going".
+  test('queues a failed run whose agent had a session', () => {
+    const queue = buildReviewQueue([
+      run({ state: 'failed', sessionId: 's-1' }),
+    ]);
+    expect(queue).toHaveLength(1);
+  });
+
+  // No session means the run never started — a spawn failure, a missing CLI.
+  // There is nothing on the branch for a human to look at.
+  test('drops a failed run that never got a session', () => {
+    expect(buildReviewQueue([run({ state: 'failed' })])).toHaveLength(0);
+    expect(
+      buildReviewQueue([run({ state: 'failed', sessionId: '' })])
+    ).toHaveLength(0);
+  });
+
+  // A cancel is a human decision that already happened, so the inbox has no
+  // news to deliver — queueing it would just make every stop need a discard.
+  test('never queues a cancelled run, session or not', () => {
+    const queue = buildReviewQueue([
+      run({ state: 'cancelled', sessionId: 's-1' }),
+    ]);
+    expect(queue).toHaveLength(0);
+  });
+
+  // `interrupted-dirty` means "failed and left uncommitted work" — the one
+  // state that is unambiguously a human's problem.
+  test('queues an interrupted-dirty run', () => {
+    expect(
+      buildReviewQueue([run({ state: 'interrupted-dirty' })])
+    ).toHaveLength(1);
+  });
+
+  test('still drops a failed run a human has already closed out', () => {
+    const queue = buildReviewQueue([
+      run({
+        state: 'failed',
+        sessionId: 's-1',
+        reviewedAt: '2026-08-04T01:00:00.000Z',
+      }),
+    ]);
+    expect(queue).toHaveLength(0);
+  });
+
   test('keeps an open PR even once it has been reviewed locally', () => {
     const queue = buildReviewQueue([
       run({ prUrl: 'https://github.com/x/y/pull/1', state: 'running' }),

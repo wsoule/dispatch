@@ -71,7 +71,7 @@ export type MergeQueueEntryState =
   | 'failed';
 
 /** One named verify gate's outcome on a queue entry. */
-export interface VerifyStepResult {
+interface VerifyStepResult {
   name: string;
   status: 'pending' | 'running' | 'passed' | 'failed';
   /** Wall-clock duration, set once the step comes to rest. */

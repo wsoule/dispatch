@@ -22,7 +22,7 @@ function dispatchHome(): string {
 // Runs and worktrees are keyed by a short hash of the project's absolute
 // rootDir (same scheme as daemonfile.ts's `daemonFileKey`), so state for
 // multiple dispatch projects never collides under one DISPATCH_HOME.
-export function rootHash(rootDir: string): string {
+function rootHash(rootDir: string): string {
   return createHash('sha256').update(rootDir).digest('hex').slice(0, 12);
 }
 
