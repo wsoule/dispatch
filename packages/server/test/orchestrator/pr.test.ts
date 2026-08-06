@@ -1217,6 +1217,39 @@ describe('PrManager.syncPrComments', () => {
     expect(getCall).not.toContain('--slurp');
   });
 
+  it('attaches a pulled reply to its parent comment', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        rawGitHubComment(),
+        rawGitHubComment({
+          id: 556,
+          in_reply_to_id: 555,
+          body: 'agreed',
+          created_at: '2026-08-01T00:05:00Z',
+        }),
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncPrComments(9);
+
+    // Exactly one root comment — the reply must not appear as a second
+    // top-level thread.
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.githubId).toBe(555);
+    expect(comments[0]?.replies).toHaveLength(1);
+    expect(comments[0]?.replies[0]).toMatchObject({
+      githubId: 556,
+      body: 'agreed',
+    });
+    // Persisted, not just returned.
+    expect(harness.reviewComments.list(prTarget)).toEqual(comments);
+  });
+
   it('404s a PR number the repo does not currently have open', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();

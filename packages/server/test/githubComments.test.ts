@@ -1,6 +1,11 @@
 import { expect, test } from 'bun:test';
 
-import { mapGitHubComment, mergeComments } from '../src/githubComments.js';
+import {
+  attachGitHubReplies,
+  mapGitHubComment,
+  mergeComments,
+  partitionGitHubComments,
+} from '../src/githubComments.js';
 import type { ReviewComment } from '../src/reviewComments.js';
 
 const base = {
@@ -274,4 +279,120 @@ test('rule 6: a remote-only comment is inserted', () => {
   expect(merged).toHaveLength(1);
   expect(merged[0]?.githubId).toBe(55);
   expect(merged[0]?.origin).toBe('github');
+});
+
+// A raw reply payload: structurally a root comment (same path/line/
+// diff_hunk) plus in_reply_to_id, per the brief's verified payload facts.
+function rawReply(
+  over: Partial<Record<string, unknown>> = {}
+): Record<string, unknown> {
+  return {
+    id: 201,
+    in_reply_to_id: 101,
+    path: 'src/a.ts',
+    line: 12,
+    diff_hunk: '@@ -1,3 +1,4 @@\n context\n+const x = 1;',
+    body: 'agreed',
+    user: { login: 'teammate' },
+    created_at: '2026-08-01T01:00:00Z',
+    ...over,
+  };
+}
+
+test('partitionGitHubComments splits a reply from a root by in_reply_to_id', () => {
+  const { roots, replies } = partitionGitHubComments([base, rawReply()]);
+  expect(roots).toEqual([base]);
+  expect(replies).toEqual([rawReply()]);
+});
+
+test('partitionGitHubComments treats in_reply_to_id: null as a root, not a reply', () => {
+  // A root's real-world in_reply_to_id is null, not absent — a truthiness
+  // check would misclassify it as a reply.
+  const { roots, replies } = partitionGitHubComments([
+    { ...base, in_reply_to_id: null },
+  ]);
+  expect(roots).toHaveLength(1);
+  expect(replies).toHaveLength(0);
+});
+
+test('attachGitHubReplies attaches a reply to its parent by githubId', () => {
+  const parent: ReviewComment = comment({ id: 'rc-parent', githubId: 101 });
+  const attached = attachGitHubReplies([parent], [rawReply()]);
+  expect(attached).toHaveLength(1);
+  expect(attached[0]?.replies).toHaveLength(1);
+  expect(attached[0]?.replies[0]).toMatchObject({
+    githubId: 201,
+    author: 'teammate',
+    body: 'agreed',
+    created: '2026-08-01T01:00:00Z',
+  });
+});
+
+test('attachGitHubReplies updates a Dispatch-posted reply in place, not a duplicate', () => {
+  const parent: ReviewComment = comment({
+    id: 'rc-parent',
+    githubId: 101,
+    replies: [
+      {
+        id: 'rr-local',
+        author: 'me',
+        body: 'agreed',
+        created: '2026-08-01T00:30:00Z',
+        githubId: 201,
+      },
+    ],
+  });
+  const attached = attachGitHubReplies(
+    [parent],
+    [rawReply({ body: 'agreed (edited)' })]
+  );
+  expect(attached[0]?.replies).toHaveLength(1);
+  // The local reply's own id is stable — callers key store operations off it.
+  expect(attached[0]?.replies[0]?.id).toBe('rr-local');
+  expect(attached[0]?.replies[0]?.body).toBe('agreed (edited)');
+});
+
+test('attachGitHubReplies never drops a local reply with no githubId', () => {
+  const parent: ReviewComment = comment({
+    id: 'rc-parent',
+    githubId: 101,
+    replies: [
+      {
+        id: 'rr-draft',
+        author: 'me',
+        body: 'not posted yet',
+        created: '2026-08-01T00:45:00Z',
+      },
+    ],
+  });
+  const attached = attachGitHubReplies([parent], [rawReply()]);
+  expect(attached[0]?.replies).toContainEqual(parent.replies[0]);
+  expect(attached[0]?.replies).toHaveLength(2);
+});
+
+test('attachGitHubReplies drops a reply whose parent is absent', () => {
+  const other: ReviewComment = comment({ id: 'rc-other', githubId: 999 });
+  const attached = attachGitHubReplies([other], [rawReply()]);
+  expect(attached).toHaveLength(1);
+  expect(attached[0]?.replies).toHaveLength(0);
+});
+
+test('attachGitHubReplies orders replies oldest-first', () => {
+  const parent: ReviewComment = comment({ id: 'rc-parent', githubId: 101 });
+  const attached = attachGitHubReplies(
+    [parent],
+    [
+      rawReply({
+        id: 301,
+        body: 'later',
+        created_at: '2026-08-02T00:00:00Z',
+      }),
+      rawReply({
+        id: 201,
+        body: 'earlier',
+        created_at: '2026-08-01T00:00:00Z',
+      }),
+    ]
+  );
+  expect(attached[0]?.replies.map((r) => r.body)).toEqual(['earlier', 'later']);
 });
