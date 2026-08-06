@@ -71,16 +71,32 @@ interface ReachResult {
   entries: { path: string; hops: number }[]; // closest-first
   count: number;
   maxHops: number; // deepest hop actually reached
-  backend: 'carto' | 'scanner';
+  sources: ('carto' | 'scanner')[]; // which graphs contributed
   degraded: boolean; // carto was configured but unavailable this call
   truncated: boolean; // a cap stopped the walk
 }
 ```
 
-Two implementations, one shape. The carto path reads native `hop_distance`. The
-scanner path breadth-first-searches `dependents()`, recording the **shortest**
-distance to each file — the same rule carto's dedupe already applies — with a
-visited set so cycles terminate.
+**Carto never answers alone.** `createCartoDepMap.dependents()` unions carto's
+blast radius with the scanner's reverse-import graph, because neither dominates:
+carto resolves specifiers naively and misses workspace `exports` edges the
+scanner catches, while the scanner only understands `.ts`/`.tsx`. So `sources`
+is a list, not a single backend, and is `['scanner']` only when carto is absent
+or degraded.
+
+Each graph contributes distance differently, and `reach` reconciles them:
+
+- **Carto** supplies native `hop_distance` (1..N) per file.
+- **Scanner** supplies one-hop reverse-import edges; `reach` breadth-first
+  searches them to derive distance, with a visited set so cycles terminate.
+- **Union by shortest distance.** A file reachable at 2 hops through carto and 1
+  through the scanner is recorded at 1 — the same shortest-wins rule
+  `normalizeBlastRadius` already applies within carto's own multiple routes.
+
+`reach` must **not** reuse `mergeRoundRobin`. That merge interleaves two lists
+by source so a scanner-only dependent survives `DEPENDENT_CAP` (20) when carto
+returns far more; it deliberately does not order by distance. Ordering a human
+view that way would present an interleaving as if it were a distance ranking.
 
 Caps are mandatory. The recorded fixture reaches 30 files at 5 hops on a small
 repo; this monorepo would reach hundreds.
@@ -157,8 +173,8 @@ swallowed.
 
 - **The scanner is TS/TSX-only.** It is not merely shallower than carto — it is
   blind to other languages, so on a polyglot repo it can return a small number
-  that reads as authoritative. Both surfaces name the backend, and the scanner's
-  label states what it walks.
+  that reads as authoritative. Both surfaces name the contributing `sources`,
+  and a scanner-only result states what it walks.
 - **Truncation.** When a cap stops the walk, the UI reads "500+ files (capped)",
   not "500 files".
 - **Carto degrading mid-flight.** A half-written `.carto` container during a
@@ -186,8 +202,14 @@ The graph walk is where subtle wrongness hides:
 - **Caps.** Hitting either cap sets `truncated`. A test asserts the flag, not
   just the truncated length — an unflagged truncation is the silent
   under-report this design exists to prevent.
-- **Backend parity.** One synthetic graph through both backends yields the same
-  shape, so they cannot drift.
+- **Union by shortest.** A file carto reports at 2 hops and the scanner reaches
+  at 1 is recorded at 1. A test pins this, since the naive union would keep
+  whichever arrived first.
+- **Scanner-only parity.** The same synthetic graph with carto absent yields the
+  same shape with `sources: ['scanner']`, so the two paths cannot drift.
+- **No round-robin.** A test asserts `reach`'s output is ordered by hop
+  distance, not interleaved by source — the failure mode if someone reuses
+  `mergeRoundRobin` for symmetry with `dependents()`.
 
 Plus: a resolution test per subject; API route tests covering not-found and
 degraded; and panel logic extracted pure and unit-tested, following the desktop
