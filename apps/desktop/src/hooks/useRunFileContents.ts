@@ -35,14 +35,20 @@ export function useRunFileLoader(
   client: ApiClient | null,
   runId: string | undefined
 ): UseRunFileLoaderResult {
-  // Keyed by `${side}:${path}` so old/new sides of the same file cache independently. Storing
-  // the promise itself (not just its resolved value) is what makes a repeat call before the
-  // first one settles reuse it instead of firing a second request.
+  // Keyed by `${runId}:${side}:${path}` — the `runId` segment is not optional. Two runs can
+  // touch the same path (a retry, a related task, a stack), and this Map is a single `useRef`
+  // that outlives any one `runId`: neither `PierreReviewDiff` nor its call sites remount when
+  // the reviewer switches runs in the same session (the review queue and the run detail panel
+  // both swap `runId` in place, no `key` prop tears the component down). Without `runId` in the
+  // key, run B would read run A's cached contents and sha — silently wrong code, and a stale
+  // sha that would let an edit in the next task write against the wrong baseline. Storing the
+  // promise itself (not just its resolved value) is what makes a repeat call before the first
+  // one settles reuse it instead of firing a second request.
   const cacheRef = useRef(new Map<string, Promise<RunFileSide | null>>());
 
   const fetchSide = useCallback(
     (path: string, side: Side): Promise<RunFileSide | null> => {
-      const key = `${side}:${path}`;
+      const key = `${runId ?? ''}:${side}:${path}`;
       const cached = cacheRef.current.get(key);
       if (cached !== undefined) return cached;
       // With no run to ask, there is nothing to fetch — resolve null rather than reject, same
