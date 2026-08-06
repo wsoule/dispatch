@@ -189,37 +189,40 @@ bun packages/demo/src/cli.ts preflight
   bun packages/demo/src/cli.ts teammate claim t-1d77e5
   ```
 
-  Then, **in the app**, open task `t-6c40de` ("Persist the cart across devices")
-  and change its **assignee**. This local edit is what makes the next command a
-  genuine collision instead of a fast-forward — the spec's definition of
-  `conflict` is both sides editing _different fields of the same task_, and
-  `teammate conflict` below only ever touches `status:`. Immediately after
-  saving that edit, run:
+  Then run the conflict command **first**:
 
   ```bash
   bun packages/demo/src/cli.ts teammate conflict t-6c40de
   ```
 
   `teammate conflict` rewrites `t-6c40de`'s `status:` line to `in-progress` and
-  pushes from the teammate clone; your local edit changed `assignee:` on that
-  same file. Because the two edits land on different fields of one file,
-  `pull --rebase` cannot fast-forward and the registered task merge driver
-  actually resolves a real field-by-field 3-way merge — that is what "no manual
-  merge" is demonstrating. Watch the sync chip change and the board settle with
-  both edits present. Then Sidebar → **Settings** → **Integrations** to show the
-  Linear panel.
+  pushes from the teammate clone. Within the next 60 seconds (the daemon's
+  periodic-sync window, `DEFAULT_PERIODIC_MS`), open task `t-6c40de` ("Persist
+  the cart across devices") **in the app** and change its **assignee**. That
+  local edit lands on a sync-worktree HEAD that's already stale relative to the
+  teammate's pushed `status:` commit, so the daemon's next sync has to rebase
+  your assignee commit onto it — inside `DEMO.root`'s sync worktree, a linked
+  worktree of the `dispatch init`'d repo that shares its `.git/config`, so the
+  registered task merge driver is present and actually resolves a real
+  field-by-field 3-way merge. That is what "no manual merge" is demonstrating.
+  Watch the sync chip change and the board settle with both edits present. Then
+  Sidebar → **Settings** → **Integrations** to show the Linear panel.
 
 - **Say:** "A teammate just claimed a task and moved another one — the merge
   driver resolved both without anyone touching git."
 - **If it breaks:** `teammate claim`/`conflict` errors on push rejection → the
   teammate clone was stale relative to origin (e.g. you ran it a second time
-  without `reset`); re-run `reset`. If you forget the local assignee edit (or it
-  lands after, not before, `teammate conflict`), there is no local commit for
-  the pull to rebase against — it just fast-forwards and the merge driver never
-  runs; `reset` and redo the beat in order. Linear panel shows disconnected →
-  expected if this machine's `~/.dispatch/credentials.json` has no key; narrate
-  the `config.yml` fields (`teamId`, `statusMap`, `direction`) instead of a live
-  sync.
+  without `reset`); re-run `reset`. If the assignee edit happens **before**
+  `teammate conflict`, or more than ~60 seconds **after** it, the daemon's
+  periodic sync commits and pushes the assignee edit on its own, before the
+  teammate's `status:` push ever meets it in `DEMO.root`'s sync worktree — the
+  teammate's later push then rebases inside the teammate clone instead, which
+  was never `dispatch init`'d and has no `merge.dispatch-task.driver`
+  registered, so git's built-in text merge resolves it with no error and no
+  signal to the operator that the field-aware driver never ran. `reset` and redo
+  the beat in order. Linear panel shows disconnected → expected if this
+  machine's `~/.dispatch/credentials.json` has no key; narrate the `config.yml`
+  fields (`teamId`, `statusMap`, `direction`) instead of a live sync.
 
 ### 11. Settings tour
 
@@ -259,16 +262,26 @@ bun packages/demo/src/cli.ts preflight
    `apps/desktop/src` regardless of whether carto is installed. Treat stop 8 as
    narration, not a click, until a UI is built for it.
 
-4. **`dispatch merge-task` must be resolvable on PATH.** Boot with `--init` (see
-   pre-flight) or the merge driver silently falls back to git's own line-based
-   3-way merge for stop 10. Stop 10's local `assignee:` edit and the `status:`
-   edit `teammate conflict` pushes land on two different frontmatter lines of
-   the same task file, so plain git can often auto-resolve that specific pair
-   without a visible conflict even without `--init` — a missing `--init` won't
-   reliably surface as a failure, it just silently swaps the field-aware
-   `dispatch-task` driver the stop is meant to demonstrate for line-based git
-   behaving the same way by coincidence. Confirm `--init` was actually passed at
-   boot rather than trusting a clean merge alone as proof the real driver ran.
+4. **`dispatch merge-task` must be resolvable on PATH — and the registration is
+   scoped to `DEMO.root` only.** Boot with `--init` (see pre-flight) or the
+   merge driver silently falls back to git's own line-based 3-way merge. But
+   `--init` alone doesn't guarantee stop 10 exercises the real driver:
+   `mergeDriverSetup.ts` registers `merge.dispatch-task.driver` in `DEMO.root`'s
+   **local** git config only. The teammate clone at
+   `.agents/ignore/teammate/storefront` is a plain `git clone` — never
+   `dispatch init`'d — so it inherits the committed `.gitattributes`
+   (`merge=dispatch-task`) but not the driver definition. Any merge that
+   resolves inside that clone falls back to git's line-based merge with no
+   error, regardless of what flags the daemon booted with. Stop 10's `assignee:`
+   and `status:` edits land on two different frontmatter lines of the same task
+   file, so plain git can often auto-resolve that pair without a visible
+   conflict even when the real driver never ran — a missing driver won't
+   reliably surface as a failure. The stop's ordering (run `teammate conflict`
+   first, then the assignee edit within the 60s sync window) is what forces the
+   rebase to happen inside `DEMO.root`'s sync worktree — a linked worktree of
+   the `dispatch init`'d repo that shares its `.git/config` — where the driver
+   is actually present. Confirm `--init` was passed at boot **and** that stop 10
+   ran in this order; a clean merge alone isn't proof the real driver ran.
 
 5. **`DISPATCH_HOME` must be an absolute path.** A relative one works for
    loading run/actor state but breaks worktree creation (see pre-flight) and
