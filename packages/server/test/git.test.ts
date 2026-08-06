@@ -550,6 +550,98 @@ describe('GitRepo: commit sha resolution', () => {
   });
 });
 
+describe('GitRepo: commit scoped to paths', () => {
+  it('commits only the named path, leaving an unrelated staged file staged', async () => {
+    writeFileSync(join(root, 'target.txt'), 'base\n');
+    writeFileSync(join(root, 'other.txt'), 'base\n');
+    setupGit(root, ['add', '-A']);
+    setupGit(root, ['commit', '-m', 'initial']);
+    // Exactly the shape an `interrupted-dirty` run leaves behind: the agent's own
+    // work sits staged in the index while the reviewer edits a different file.
+    writeFileSync(join(root, 'other.txt'), 'agent work\n');
+    setupGit(root, ['add', 'other.txt']);
+    writeFileSync(join(root, 'target.txt'), 'reviewer fix\n');
+    await repo.stage(['target.txt']);
+
+    const result = await repo.commit({
+      message: 'review: edit target.txt',
+      paths: ['target.txt'],
+    });
+
+    expect(result.ok).toBe(true);
+    const shown = await repo.show('HEAD', 'other.txt');
+    if (!shown.ok) throw new Error(shown.stderr);
+    expect(shown.contents).toBe('base\n');
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.staged).toEqual([{ path: 'other.txt', status: 'M' }]);
+  });
+
+  it('refuses a path that escapes the repository root without invoking git', async () => {
+    const calls: string[][] = [];
+    const fakeRun: CommandRunner = (_cwd, cmd) => {
+      calls.push(cmd);
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
+    };
+
+    const result = await new GitRepo(root, fakeRun).commit({
+      message: 'x',
+      paths: ['../outside.txt'],
+    });
+
+    expect(result).toEqual({ ok: false, stderr: PATH_ESCAPE_ERROR });
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('GitRepo: index entry capture and restore', () => {
+  it('puts a clobbered index entry back exactly as it was', async () => {
+    writeFileSync(join(root, 'a.txt'), 'base\n');
+    setupGit(root, ['add', 'a.txt']);
+    setupGit(root, ['commit', '-m', 'initial']);
+    writeFileSync(join(root, 'a.txt'), 'agent staged\n');
+    setupGit(root, ['add', 'a.txt']);
+
+    const before = await repo.indexEntry('a.txt');
+    if (!before.ok) throw new Error(before.stderr);
+    writeFileSync(join(root, 'a.txt'), 'reviewer edit\n');
+    await repo.stage(['a.txt']);
+    const restored = await repo.restoreIndexEntry('a.txt', before.entry);
+    writeFileSync(join(root, 'a.txt'), 'agent staged\n');
+
+    expect(restored.ok).toBe(true);
+    const staged = await repo.diff({ staged: true, path: 'a.txt' });
+    if (!staged.ok) throw new Error(staged.stderr);
+    expect(staged.patch).toContain('+agent staged');
+    expect(staged.patch).not.toContain('reviewer edit');
+  });
+
+  it('removes the index entry again for a path that was not in the index', async () => {
+    writeFileSync(join(root, 'a.txt'), 'base\n');
+    setupGit(root, ['add', 'a.txt']);
+    setupGit(root, ['commit', '-m', 'initial']);
+    writeFileSync(join(root, 'new.txt'), 'brand new\n');
+
+    const before = await repo.indexEntry('new.txt');
+    if (!before.ok) throw new Error(before.stderr);
+    expect(before.entry).toBe(null);
+    await repo.stage(['new.txt']);
+    const restored = await repo.restoreIndexEntry('new.txt', before.entry);
+
+    expect(restored.ok).toBe(true);
+    const status = await repo.status();
+    if (!status.ok) throw new Error(status.stderr);
+    expect(status.staged).toEqual([]);
+    expect(status.untracked).toEqual(['new.txt']);
+  });
+
+  it('refuses a path that escapes the repository root', async () => {
+    const result = await repo.indexEntry('../outside.txt');
+
+    expect(result).toEqual({ ok: false, stderr: PATH_ESCAPE_ERROR });
+  });
+});
+
 describe('GitRepo: show', () => {
   it('reads a file at a ref, not the working tree', async () => {
     writeFileSync(join(root, 'a.txt'), 'hello\n');

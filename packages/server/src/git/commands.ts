@@ -40,6 +40,12 @@ export const STAGED_DISCARD_PREFIX =
 export const COMMIT_SHA_UNRESOLVED_PREFIX =
   'commit succeeded but could not resolve its sha: ';
 
+/** One path's index entry: the file mode and blob sha git has staged for it. */
+export interface GitIndexEntry {
+  mode: string;
+  sha: string;
+}
+
 // A plain remote name only — never a URL or transport spec (see fetch() below).
 const REMOTE_NAME_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._-]*$/;
 
@@ -78,8 +84,17 @@ function resolveRealParent(path: string): string {
  * from reaching for the weaker one by accident.
  */
 function resolveWorktreePath(root: string, rawPath: string): string | null {
+  return resolveUnderRealRoot(realOrSelf(resolve(root)), rawPath);
+}
+
+// The boundary check itself, taking a root that is already absolute and
+// symlink-resolved. Split out so a caller holding a memoized real root (see
+// GitRepo.realRoot) isn't forced to realpath it again on every path it checks.
+function resolveUnderRealRoot(
+  realRoot: string,
+  rawPath: string
+): string | null {
   if (rawPath === '' || rawPath.startsWith('-')) return null;
-  const realRoot = realOrSelf(resolve(root));
   const resolved = resolveRealParent(resolve(realRoot, rawPath));
   const rel = relative(realRoot, resolved);
   if (rel === '..' || rel.startsWith(`..${sep}`)) return null;
@@ -96,10 +111,11 @@ function resolveWorktreePath(root: string, rawPath: string): string | null {
  * external target. Only routes that touch the filesystem directly (not
  * through GitRepo) need this stricter form.
  *
- * A symlink leaf is rejected outright rather than resolved-and-re-checked:
- * that avoids a TOCTOU window between validating the target and actually
- * reading/writing it, at the cost of also refusing the rarer legitimate case
- * of a symlink that points back inside the worktree.
+ * Rejects a symlink leaf outright rather than resolving and re-checking its
+ * target, at the cost of refusing the rarer legitimate case of a symlink
+ * pointing back inside the worktree. It does not close the window between this
+ * check and the read/write itself — the caller's own content precondition (see
+ * api.ts's `baseSha` re-check) is what catches a swap in that gap.
  */
 export function resolveWorktreeFilePath(
   root: string,
@@ -156,7 +172,7 @@ export class GitRepo {
   // boundary check to resolveWorktreePath's underlying logic so there is one
   // definition of "escapes the root," shared with direct-fs routes in api.ts.
   private safePath(rawPath: string): string | null {
-    return resolveWorktreePath(this.realRoot(), rawPath) === null
+    return resolveUnderRealRoot(this.realRoot(), rawPath) === null
       ? null
       : rawPath;
   }
@@ -262,6 +278,50 @@ export class GitRepo {
     const safe = this.safePaths(paths);
     if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
     const result = await this.runGit(['add', '--', ...safe]);
+    return result.ok
+      ? { ok: true }
+      : { ok: false, stderr: commandErrorText(result) };
+  }
+
+  // What the index currently holds for one path, or null when the path has no
+  // index entry at all. Paired with restoreIndexEntry so a caller that stages
+  // over someone else's staged blob can put the original back — `unstage` can't,
+  // since it resets the entry to HEAD rather than to what was there.
+  async indexEntry(
+    path: string
+  ): Promise<GitOutcome<{ entry: GitIndexEntry | null }>> {
+    const safe = this.safePath(path);
+    if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
+    const result = await this.runGit(['ls-files', '--stage', '-z', '--', safe]);
+    if (!result.ok) return { ok: false, stderr: commandErrorText(result) };
+    // `<mode> <sha> <stage>\t<path>`, NUL-terminated per record.
+    const record = result.stdout.split('\0').find((r) => r !== '');
+    if (record === undefined) return { ok: true, entry: null };
+    const [mode, sha] = record.split('\t')[0]?.split(' ') ?? [];
+    if (mode === undefined || sha === undefined) {
+      return { ok: false, stderr: `unparsable index entry: ${record}` };
+    }
+    return { ok: true, entry: { mode, sha } };
+  }
+
+  // Puts `path`'s index entry back to `entry`, or removes it when `entry` is
+  // null (the path was untracked before). Leaves the working tree alone.
+  async restoreIndexEntry(
+    path: string,
+    entry: GitIndexEntry | null
+  ): Promise<GitOutcome> {
+    const safe = this.safePath(path);
+    if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
+    const result = await this.runGit(
+      entry === null
+        ? ['update-index', '--force-remove', '--', safe]
+        : [
+            'update-index',
+            '--add',
+            '--cacheinfo',
+            `${entry.mode},${entry.sha},${safe}`,
+          ]
+    );
     return result.ok
       ? { ok: true }
       : { ok: false, stderr: commandErrorText(result) };
@@ -379,13 +439,22 @@ export class GitRepo {
 
   // `amend` takes no `confirm`, unlike discard/stashDrop/`branch -D`: it rewrites
   // HEAD but destroys nothing, leaving the replaced commit at HEAD@{1} in the reflog.
+  //
+  // `paths` scopes the commit to those pathspecs, so whatever else the index
+  // happens to hold stays staged instead of riding along — a reviewer edit must
+  // not carry the agent's unrelated staged work (see api.ts writeAndCommit).
   async commit(opts: {
     message: string;
     amend?: boolean;
+    paths?: string[];
   }): Promise<GitOutcome<{ sha: string }>> {
+    const safe =
+      opts.paths === undefined ? undefined : this.safePaths(opts.paths);
+    if (safe === null) return { ok: false, stderr: PATH_ESCAPE_ERROR };
     const args = ['commit'];
     if (opts.amend === true) args.push('--amend');
     args.push('-m', opts.message);
+    if (safe !== undefined) args.push('--', ...safe);
     const result = await this.runGit(args);
     if (!result.ok) return { ok: false, stderr: commandErrorText(result) };
     const head = await this.runGit(['rev-parse', 'HEAD']);

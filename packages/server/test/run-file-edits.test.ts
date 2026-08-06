@@ -1,6 +1,8 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -200,6 +202,25 @@ describe('GET /api/runs/:id/file', () => {
       `/api/runs/${runId}/file?path=../../etc/passwd&side=new`
     );
     expect(res.status).toBe(400);
+  });
+
+  it('still serves the committed side of a path that is a symlink on disk', async () => {
+    // `side=old` only ever runs `git show`, which reads a symlink as an
+    // ordinary blob and never follows it — so an in-repo symlink is legitimate
+    // content here, not an escape attempt. Committed on the base branch and
+    // present in the worktree, exactly as a checkout of such a repo looks.
+    symlinkSync('a.txt', join(root, 'link.txt'));
+    runGitSync(root, ['add', 'link.txt']);
+    runGitSync(root, ['commit', '-m', 'add a symlink']);
+    symlinkSync('a.txt', join(worktree, 'link.txt'));
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/file?path=link.txt&side=old`
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { contents: string };
+    expect(body.contents).toBe('a.txt');
   });
 
   it('does not disclose a file reached through a leaf symlink', async () => {
@@ -444,6 +465,204 @@ describe('POST /api/runs/:id/edits', () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe('a reviewer commit stays scoped to the file it edits', () => {
+  it('leaves the agent’s unrelated staged work out of the commit', async () => {
+    // An `interrupted-dirty` run is terminal, so editing is allowed — and by
+    // construction its worktree has agent-staged paths sitting in the index.
+    writeFileSync(join(worktree, 'agent.txt'), 'agent work\n');
+    runGitSync(worktree, ['add', 'agent.txt']);
+    const { sha } = await json<{ sha: string }>(
+      await apiFetch(`/api/runs/${runId}/file?path=a.txt&side=new`)
+    );
+
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const files = Bun.spawnSync(
+      ['git', 'show', '--name-only', '--format=', 'HEAD'],
+      { cwd: worktree }
+    );
+    expect(files.stdout.toString().trim().split('\n')).toEqual(['a.txt']);
+    // Still staged, untouched — the reviewer never asked to commit it.
+    const staged = Bun.spawnSync(['git', 'diff', '--cached', '--name-only'], {
+      cwd: worktree,
+    });
+    expect(staged.stdout.toString().trim()).toBe('agent.txt');
+  });
+
+  it('leaves the agent’s staged work out of an applied suggestion too', async () => {
+    writeFileSync(join(worktree, 'agent.txt'), 'agent work\n');
+    runGitSync(worktree, ['add', 'agent.txt']);
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+      suggestion: 'fixed',
+    });
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(200);
+    const files = Bun.spawnSync(
+      ['git', 'show', '--name-only', '--format=', 'HEAD'],
+      { cwd: worktree }
+    );
+    expect(files.stdout.toString().trim().split('\n')).toEqual(['a.txt']);
+  });
+});
+
+describe('a failed commit leaves the worktree as it found it', () => {
+  // Nothing on this route passes `--no-verify`, so a repo with a failing
+  // pre-commit hook is the ordinary way `git commit` returns non-zero after
+  // the write and stage have already landed.
+  function installFailingPreCommitHook(): void {
+    const hooks = join(worktree, '.git-hooks');
+    mkdirSync(hooks, { recursive: true });
+    const hook = join(hooks, 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+    chmodSync(hook, 0o755);
+    runGitSync(worktree, ['config', 'core.hooksPath', hooks]);
+  }
+
+  it('reverts the write so a retry is not rejected as stale-base', async () => {
+    installFailingPreCommitHook();
+    const { sha } = await json<{ sha: string }>(
+      await apiFetch(`/api/runs/${runId}/file?path=a.txt&side=new`)
+    );
+
+    const failed = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+
+    expect(failed.status).toBe(500);
+    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('changed\n');
+    // The reviewer's honest reaction to "could not save" is to try again with
+    // the same baseSha; a half-applied write would answer that with a
+    // stale-base 409 blaming an agent that never touched the file.
+    const retry = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+    expect(retry.status).toBe(500);
+  });
+
+  it("puts back the agent's staged version of the same file", async () => {
+    writeFileSync(join(worktree, 'a.txt'), 'agent staged\n');
+    runGitSync(worktree, ['add', 'a.txt']);
+    installFailingPreCommitHook();
+    const { sha } = await json<{ sha: string }>(
+      await apiFetch(`/api/runs/${runId}/file?path=a.txt&side=new`)
+    );
+
+    const failed = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+
+    expect(failed.status).toBe(500);
+    const staged = Bun.spawnSync(['git', 'diff', '--cached'], {
+      cwd: worktree,
+    });
+    expect(staged.stdout.toString()).toContain('+agent staged');
+    expect(staged.stdout.toString()).not.toContain('fixed');
+  });
+
+  it('leaves a brand-new file untracked again rather than staged', async () => {
+    installFailingPreCommitHook();
+
+    const failed = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'brand-new.txt',
+        contents: 'hello\n',
+        baseSha: sha256Hex(''),
+      }),
+    });
+
+    expect(failed.status).toBe(500);
+    const staged = Bun.spawnSync(['git', 'diff', '--cached', '--name-only'], {
+      cwd: worktree,
+    });
+    expect(staged.stdout.toString().trim()).toBe('');
+  });
+});
+
+describe('an already-reviewed run is closed to further edits', () => {
+  // `canEdit` in the UI hides the pencil once `reviewedAt` is set, but the
+  // route is reachable directly and the branch may already be merged.
+  function markReviewed(): void {
+    const registry = (orchestrator as unknown as { registry: RunRegistry })
+      .registry;
+    registry.updateMeta(runId, { reviewedAt: new Date().toISOString() });
+  }
+
+  it('409s run-reviewed on an edit', async () => {
+    const { sha } = await json<{ sha: string }>(
+      await apiFetch(`/api/runs/${runId}/file?path=a.txt&side=new`)
+    );
+    markReviewed();
+
+    const res = await apiFetch(`/api/runs/${runId}/edits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        file: 'a.txt',
+        contents: 'fixed\n',
+        baseSha: sha,
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'run-reviewed',
+    });
+    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('changed\n');
+  });
+
+  it('409s run-reviewed on an applied suggestion', async () => {
+    const comment = await addComment({
+      file: 'a.txt',
+      line: 1,
+      anchorText: 'changed',
+      suggestion: 'fixed',
+    });
+    markReviewed();
+
+    const res = await apiFetch(
+      `/api/runs/${runId}/comments/${comment.id}/apply`,
+      { method: 'POST' }
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'run-reviewed',
+    });
+    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('changed\n');
   });
 });
 
