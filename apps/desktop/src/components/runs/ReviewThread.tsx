@@ -266,14 +266,11 @@ interface ComposerProps {
  * suggestion editor — seeded from the commented range so a reviewer can write the exact
  * replacement text rather than describing it in words.
  *
- * That nested `CodeView` relies on an ancestor `EditProvider` to resolve its editor factory
- * (`PierreReviewDiff` already supplies one around the whole diff); it does not create its own,
- * so standalone render tests must wrap this component in one themselves.
+ * That nested `CodeView` needs an ancestor `EditProvider` to resolve its editor factory, which
+ * `PierreReviewDiff` supplies — standalone render tests must wrap this themselves.
  *
- * Offers two ways to submit once there is a real suggestion: `Suggest` just saves the comment;
- * `Apply now` saves it and immediately applies it through `submitAndApplyNow` — see that
- * function's own doc comment for why the save-then-apply orchestration lives there rather than
- * inline here.
+ * Once there is a real suggestion it offers `Suggest` (save the comment) and `Apply now` (save
+ * and immediately apply, via `submitAndApplyNow`).
  */
 export function ReviewComposer({
   line,

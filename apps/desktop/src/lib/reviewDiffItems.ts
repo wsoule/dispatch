@@ -169,12 +169,8 @@ export function decideEditSave(input: {
  * The server's machine-readable `applyRunEdit` 409 codes, each with a different fix — see
  * `packages/server/src/api.ts`'s `applyRunEdit`.
  *
- * `worktree-busy` and `stale-base` say outright that the edit was not saved. `PierreReviewDiff`
- * always closes the editor on any failure (see `resolveEditFailure`) — an earlier version left
- * it open for these two, believing that preserved the reviewer's draft, but Pierre tears the
- * editor down before this message is ever shown and there is no way to seed a freshly attached
- * editor with unsaved text. Saying nothing about that would have let the old "keep it open" UI
- * imply the draft survived when it didn't; these sentences say what actually happened instead.
+ * `worktree-busy` and `stale-base` say outright that the edit was not saved, because the editor
+ * is already torn down by the time these are shown and the draft is genuinely gone.
  */
 const EDIT_ERROR_MESSAGES: Record<string, string> = {
   'worktree-busy':
@@ -203,23 +199,14 @@ export function editErrorMessage(error: unknown): string {
  * `applyRunEdit`. */
 export interface EditFailureOutcome {
   /**
-   * Always `null`. `onItemEditComplete` fires only once Pierre has already torn the editor
-   * down (its own doc comment: "when an item's edit session ends"), and there is no
-   * documented way to seed a freshly attached editor with the reviewer's unsaved draft. An
-   * earlier version set `editing` back to the file on a "recoverable" 409, intending to keep
-   * the draft alive — but `editing` going `false` then `true` across renders is exactly what
-   * tears the old editor down and attaches a new one seeded from on-disk (or cached) content,
-   * so the draft was lost regardless, while the shown message implied otherwise. Closing
-   * unconditionally means the UI never promises more than Pierre can actually deliver.
+   * Always `null`. `onItemEditComplete` fires only after Pierre has torn the editor down, and
+   * re-attaching one cannot be seeded with the reviewer's unsaved draft — so reopening would
+   * show on-disk content while implying the draft survived.
    */
   editing: null;
   /**
-   * `true` only for `stale-base` — the one failure where the file's on-disk content genuinely
-   * changed while the reviewer was editing, which makes both the loader's cached contents/sha
-   * and this component's own `loaded` marker wrong. Evicting them means the reviewer's next
-   * look at the file (via a fresh pencil click) fetches the real current content rather than
-   * the now-stale cached copy. The other three failures never touched disk, so their cached
-   * entries are still correct and evicting them would just cost an unnecessary refetch.
+   * `true` only for `stale-base`, the one failure where disk actually changed underneath the
+   * reviewer, which makes the loader's cached contents/sha and the `loaded` marker wrong.
    */
   refetchContents: boolean;
 }
