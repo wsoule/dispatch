@@ -1163,10 +1163,10 @@ describe('PrManager.syncPrComments', () => {
   // review comments at 30. mergeComments treats a local githubId absent
   // from the pull as an upstream delete, so a truncated pull on a
   // >30-comment PR would erase comments 31+ (and their local-only replies/
-  // resolved state) on every sync. Shaped exactly as `gh api --paginate
-  // --slurp` returns multi-page output: one outer array wrapping each
-  // page's own array.
-  it('sends --paginate --slurp and reconstructs every page, so nothing past 30 comments is dropped', async () => {
+  // resolved state) on every sync. Shaped as `gh api --paginate` really
+  // returns an array response: the pages already merged into one array,
+  // the same shape the `/files` call in getPrDiffByUrl parses.
+  it('sends --paginate and keeps every page, so nothing past 30 comments is dropped', async () => {
     const harness = makeHarness();
     const existing: ReviewComment[] = Array.from({ length: 35 }, (_, i) => ({
       id: `rc-existing-${i}`,
@@ -1187,12 +1187,10 @@ describe('PrManager.syncPrComments', () => {
 
     const toRaw = (c: ReviewComment) =>
       rawGitHubComment({ id: c.githubId, path: c.file, body: c.body });
-    const page1 = existing.slice(0, 30).map(toRaw);
-    const page2 = existing.slice(30).map(toRaw);
     const stub = new StubRunner();
     stub.apiResult = {
       ok: true,
-      stdout: JSON.stringify([page1, page2]),
+      stdout: JSON.stringify(existing.map(toRaw)),
       stderr: '',
     };
     const pr = new PrManager(harness, true, stub.run);
@@ -1206,7 +1204,9 @@ describe('PrManager.syncPrComments', () => {
       c.cmd.some((arg) => /\/pulls\/9\/comments$/.test(arg))
     )?.cmd;
     expect(getCall).toContain('--paginate');
-    expect(getCall).toContain('--slurp');
+    // `--slurp` is for non-array responses and only raises the gh version
+    // floor here; asserted absent so it does not come back by cargo cult.
+    expect(getCall).not.toContain('--slurp');
   });
 
   it('404s a PR number the repo does not currently have open', async () => {
