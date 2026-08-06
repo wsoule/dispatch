@@ -21,6 +21,7 @@ import { createReviewEditor } from '@/lib/pierreEditor';
 import type { Annotation } from '@/lib/reviewDiffItems';
 import {
   buildItems,
+  decideEditSave,
   editErrorMessage,
   resolveEditFailure,
 } from '@/lib/reviewDiffItems';
@@ -111,7 +112,6 @@ export function PierreReviewDiff({
     line: number;
     /** Set when the reviewer had a range selected — the comment covers startLine..line. */
     startLine?: number;
-    anchorText: string;
   } | null>(null);
   // The new-side contents of `composing.file`, once `ensureLoaded` resolves — what the
   // composer's suggestion editor seeds from. `null` while that fetch is in flight, which keeps
@@ -146,10 +146,16 @@ export function PierreReviewDiff({
     file: string;
     message: string;
   } | null>(null);
-  // The sha `ensureLoaded` returned when a file's edit session began — the precondition
-  // `applyRunEdit` needs. A ref, not state: it never drives a render on its own, only reads
-  // triggered by `onItemEditComplete`.
-  const baseShaRef = useRef(new Map<string, string>());
+  // What each open edit session started from: the sha `applyRunEdit` needs as its precondition,
+  // and the contents a save is compared against to spot a no-op. A ref, not state: it never
+  // drives a render on its own, only reads triggered by `onItemEditComplete`.
+  const sessionRef = useRef(
+    new Map<string, { baseSha: string; contents: string }>()
+  );
+  // The file the reviewer pressed Save on. Pierre ends an edit session for several reasons —
+  // Save, Cancel, the item leaving `items` — and this is what tells the one that should commit
+  // apart from the ones that must not (see `decideEditSave`).
+  const saveRequestRef = useRef<string | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
   const [diffDisplay] = useDiffDisplaySettings();
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
@@ -244,14 +250,17 @@ export function PierreReviewDiff({
             fileContents={composerContents}
             onCancel={closeComposer}
             onSaved={closeComposer}
-            onSubmit={(body, suggestion) =>
+            onSubmit={(body, suggestion, anchorText) =>
               onAdd === undefined
                 ? Promise.reject(new Error('nowhere to add this comment'))
                 : onAdd({
                     file: annMeta.file,
                     line: composing?.line ?? 0,
                     startLine: annMeta.startLine,
-                    anchorText: annMeta.anchorText,
+                    // Read out of the same contents the composer seeded its
+                    // suggestion editor from, so the anchor can never describe
+                    // different text than the suggestion replaces.
+                    anchorText,
                     body,
                     suggestion,
                   })
@@ -360,7 +369,6 @@ export function PierreReviewDiff({
               ...(inRange
                 ? { startLine: Math.min(selection.start, selection.end) }
                 : {}),
-              anchorText: '',
             });
             // Cleared first so a previous compose's contents can't briefly seed this one's
             // suggestion editor while the new fetch is in flight.
@@ -388,13 +396,17 @@ export function PierreReviewDiff({
       if (pendingEdit !== null || editing !== null) return;
       setEditError(null);
       setPendingEdit(file);
+      saveRequestRef.current = null;
       void ensureLoaded(file).then((result) => {
         setPendingEdit(null);
         if (result === null) {
           setEditError({ file, message: "Couldn't load this file." });
           return;
         }
-        baseShaRef.current.set(file, result.sha);
+        sessionRef.current.set(file, {
+          baseSha: result.sha,
+          contents: result.contents,
+        });
         setLoaded((prev) => new Set(prev).add(file));
         setEditing(file);
       });
@@ -402,19 +414,56 @@ export function PierreReviewDiff({
     [ensureLoaded, pendingEdit, editing]
   );
 
-  // Ends the current edit session by clearing `editing` — `buildItems` recomputes `edit: false`
-  // for that item on the next render, which is what makes `CodeView` tear the editor down and
-  // call `onItemEditComplete` (below) with its final text.
-  const endEdit = useCallback((file: string) => {
+  // Save: record that this session's end is a deliberate save, then clear `editing` —
+  // `buildItems` recomputes `edit: false`, which is what makes `CodeView` tear the editor
+  // down and call `onItemEditComplete` (below) with its final text.
+  const saveEdit = useCallback((file: string) => {
+    saveRequestRef.current = file;
     setEditing((current) => (current === file ? null : current));
   }, []);
 
+  // Cancel: ends the session the same way but without the save request, so the completion
+  // below discards the draft instead of committing it.
+  const cancelEdit = useCallback((file: string) => {
+    saveRequestRef.current = null;
+    sessionRef.current.delete(file);
+    setEditError(null);
+    setEditing((current) => (current === file ? null : current));
+  }, []);
+
+  // Drops a file's cached contents, sha and load marker, so the reviewer's next edit reads
+  // fresh bytes rather than a copy that is now wrong on disk.
+  const forgetFile = useCallback(
+    (file: string) => {
+      invalidate(file);
+      sessionRef.current.delete(file);
+      setLoaded((prev) => {
+        const next = new Set(prev);
+        next.delete(file);
+        return next;
+      });
+    },
+    [invalidate]
+  );
+
   const handleEditComplete = useCallback(
     (item: CodeViewItem<Annotation>, file: FileContents) => {
-      const baseSha = baseShaRef.current.get(item.id);
-      // No recorded sha means this item's edit session never went through `beginEdit` (so
-      // never through the load gate either) — there is nothing safe to save against.
-      if (client == null || runId === undefined || baseSha === undefined) {
+      const requestedFile = saveRequestRef.current;
+      if (requestedFile === item.id) saveRequestRef.current = null;
+      const decision = decideEditSave({
+        requestedFile,
+        itemId: item.id,
+        contents: file.contents,
+        session: sessionRef.current.get(item.id),
+      });
+      if (decision.post === false) {
+        // Cancelled, torn down by a file switch, or saved untouched — nothing to write, and
+        // nothing to report either. Just make sure edit mode is closed.
+        setEditing((current) => (current === item.id ? null : current));
+        if (decision.reason === 'unchanged') setEditError(null);
+        return;
+      }
+      if (client == null || runId === undefined) {
         setEditing(null);
         return;
       }
@@ -422,19 +471,13 @@ export function PierreReviewDiff({
         .applyRunEdit(runId, {
           file: item.id,
           contents: file.contents,
-          baseSha,
+          baseSha: decision.baseSha,
         })
         .then(() => {
           // The sha and contents on disk just changed — without evicting both caches, the
           // reviewer's next edit to this file would send a stale `baseSha` and the server
           // would reject it with 409 stale-base.
-          invalidate(item.id);
-          baseShaRef.current.delete(item.id);
-          setLoaded((prev) => {
-            const next = new Set(prev);
-            next.delete(item.id);
-            return next;
-          });
+          forgetFile(item.id);
           setEditError(null);
           setEditing(null);
         })
@@ -448,19 +491,21 @@ export function PierreReviewDiff({
           // the reviewer, so its cached copy is now wrong too.
           const outcome = resolveEditFailure(err);
           setEditing(outcome.editing);
-          if (outcome.refetchContents) {
-            invalidate(item.id);
-            baseShaRef.current.delete(item.id);
-            setLoaded((prev) => {
-              const next = new Set(prev);
-              next.delete(item.id);
-              return next;
-            });
-          }
+          if (outcome.refetchContents) forgetFile(item.id);
         });
     },
-    [client, runId, invalidate]
+    [client, runId, forgetFile]
   );
+
+  // A file can leave the rendered set with its editor still open — `ReviewView` swaps `only`
+  // when the reviewer picks a different file, and passes no `key`, so `editing` outlives the
+  // item it names. Every other pencil is hidden while one file is being edited, so a stale
+  // `editing` would lock the whole diff until the original file was reselected.
+  useEffect(() => {
+    if (editing === null || files.some((f) => f.name === editing)) return;
+    setEditing(null);
+    setEditError(null);
+  }, [files, editing]);
 
   const renderHeaderMetadata = useCallback(
     (item: { id: string }) => {
@@ -472,30 +517,49 @@ export function PierreReviewDiff({
       // nothing.
       const isPending = pendingEdit !== null;
       const error = editError?.file === item.id ? editError.message : null;
-      // While another file is being edited, its pencil is the only one that should be
-      // clickable — showing the rest as live buttons would suggest a second file could be
-      // opened for edit at the same time, which `editing` can never represent.
+      // While another file is being edited, its own controls are the only ones that should be
+      // live — showing the rest as clickable would suggest a second file could be opened for
+      // edit at the same time, which `editing` can never represent.
       if (editing !== null && !isEditing) return null;
       return (
         <span className="flex items-center gap-1.5">
           {error !== null && (
             <span className="text-destructive text-[11px]">{error}</span>
           )}
-          <button
-            type="button"
-            aria-label={isEditing ? 'Stop editing this file' : 'Edit this file'}
-            disabled={isPending}
-            onClick={() => (isEditing ? endEdit(item.id) : beginEdit(item.id))}
-            className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center disabled:opacity-50"
-          >
-            <Pencil
-              className={isEditing ? 'text-accent-foreground size-3' : 'size-3'}
-            />
-          </button>
+          {isEditing ? (
+            <>
+              <button
+                type="button"
+                onClick={() => saveEdit(item.id)}
+                className="text-accent-foreground text-[11px]"
+              >
+                Save
+              </button>
+              {/* Cancel is the only way out that keeps the file as it was — without it,
+                  leaving edit mode always meant a commit attempt. */}
+              <button
+                type="button"
+                onClick={() => cancelEdit(item.id)}
+                className="text-muted-foreground hover:text-foreground text-[11px]"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              aria-label="Edit this file"
+              disabled={isPending}
+              onClick={() => beginEdit(item.id)}
+              className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center disabled:opacity-50"
+            >
+              <Pencil className="size-3" />
+            </button>
+          )}
         </span>
       );
     },
-    [canEdit, editing, pendingEdit, editError, beginEdit, endEdit]
+    [canEdit, editing, pendingEdit, editError, beginEdit, saveEdit, cancelEdit]
   );
 
   // Declarative jump: the effect fires when `scrollTo` changes identity, so clicking the same

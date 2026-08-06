@@ -114,15 +114,13 @@ test.describe('editing a run diff end to end', () => {
 
     // `beginEdit` (PierreReviewDiff.tsx) awaits `ensureLoaded` — a real
     // fetch to GET /runs/:id/file — before flipping `editing`, which is what
-    // flips this button's label to "Stop editing this file". Waiting for it
-    // doubles as the load-gate assertion: if the fetch fails, `editing`
-    // never flips and this times out instead of silently entering edit mode
-    // on an empty document (the exact failure the load gate exists to
-    // prevent — see PierreReviewDiff.test.tsx's "load gate" tests).
-    const stopEditingButton = page.getByRole('button', {
-      name: 'Stop editing this file',
-    });
-    await expect(stopEditingButton).toBeVisible({ timeout: 10_000 });
+    // swaps the pencil for Save/Cancel. Waiting for it doubles as the
+    // load-gate assertion: if the fetch fails, `editing` never flips and this
+    // times out instead of silently entering edit mode on an empty document
+    // (the exact failure the load gate exists to prevent — see
+    // PierreReviewDiff.test.tsx's "load gate" tests).
+    const saveButton = page.getByRole('button', { name: 'Save' });
+    await expect(saveButton).toBeVisible({ timeout: 10_000 });
 
     // The editable region itself: `contentEditable: "true"`, `role:
     // "textbox"`, `ariaMultiLine: "true"` in @pierre/diffs' compiled
@@ -150,13 +148,13 @@ test.describe('editing a run diff end to end', () => {
     await page.keyboard.press('End');
     await page.keyboard.type(` ${marker}`);
 
-    // Ends the edit session. Per @pierre/diffs' own doc comment,
-    // `onItemEditComplete` fires once, with final contents, when edit turns
-    // off — which is what drives `handleEditComplete` (PierreReviewDiff.tsx)
-    // to POST /runs/:id/edits, commit on the run branch, and (via the
-    // existing `review.changed` SSE handler in useDispatchProject.ts)
-    // invalidate the run-diff query.
-    await stopEditingButton.click();
+    // Ends the edit session as a deliberate save. Per @pierre/diffs' own doc
+    // comment, `onItemEditComplete` fires once, with final contents, when
+    // edit turns off — which is what drives `handleEditComplete`
+    // (PierreReviewDiff.tsx) to POST /runs/:id/edits, commit on the run
+    // branch, and (via the existing `review.changed` SSE handler in
+    // useDispatchProject.ts) invalidate the run-diff query.
+    await saveButton.click();
 
     // Rules out the two recoverable-409 sentences (`editErrorMessage` in
     // reviewDiffItems.ts) explicitly, rather than relying on the marker
@@ -173,9 +171,8 @@ test.describe('editing a run diff end to end', () => {
       timeout: 10_000,
     });
 
-    // Editing ended cleanly — the pencil is back to its resting state rather
-    // than stuck on "Stop editing this file", which would mean the save
-    // never completed.
+    // Editing ended cleanly — the pencil is back rather than the header still
+    // showing Save/Cancel, which would mean the save never completed.
     await expect(
       page.getByRole('button', { name: 'Edit this file' })
     ).toBeVisible();

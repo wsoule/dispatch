@@ -13,7 +13,6 @@ export type Annotation =
   | {
       kind: 'composer';
       file: string;
-      anchorText: string;
       startLine?: number;
     };
 
@@ -25,7 +24,6 @@ export interface BuildItemsInput {
     file: string;
     line: number;
     startLine?: number;
-    anchorText: string;
   } | null;
   /** Files the reviewer has ticked off — rendered collapsed. */
   viewed?: ReadonlySet<string>;
@@ -42,26 +40,14 @@ export interface BuildItemsInput {
  * on top: comment threads, agent findings, an open composer, viewed/collapsed state, and edit
  * mode.
  *
- * Deliberately pulled out of `PierreReviewDiff`'s `useMemo` and into its own module (rather than
- * just exported from the component file) — the component's module graph pulls in
- * `PierreWorkerPool`, which imports `@pierre/diffs/worker/worker.js?worker&url`, a Vite-only
- * import specifier `bun test` cannot resolve at all. Importing anything from the component file,
- * even a single named export, would still evaluate that whole chain. This module has no such
- * import, so the load gate below is unit-testable without a DOM.
+ * Lives outside the component file so it is testable without a DOM: that file's module graph
+ * reaches `PierreWorkerPool`'s Vite-only `?worker&url` import, which `bun test` cannot resolve.
  *
- * **The load gate**: `edit` only becomes `true` once `loaded` says the file's contents have
- * actually resolved (`editing === id && loaded.has(id)`), never from `editing` alone. A headless
- * spike of `@pierre/diffs` proved that setting `edit: true` on an item whose contents have not
- * loaded yet still attaches an editor — but that editor's document is empty (`getText()` returns
- * `''`). Saving that would silently overwrite the agent's work with nothing, so `edit` must never
- * turn on before contents are confirmed in hand. `loadDiffFiles` (the contents loader Pierre
- * calls to expand hunks) is lazy and makes no calls until a file first needs them, so `editing`
- * alone can be set well before any contents exist for that file.
+ * **The load gate**: `edit` turns on only once `loaded` confirms the file's contents arrived,
+ * never from `editing` alone. Pierre attaches an editor to an unloaded item too, but with an
+ * empty document — saving that would overwrite the agent's work with nothing.
  *
- * Pierre requires bumping an item's `version` whenever its `edit` flag changes, or it silently
- * keeps rendering the previous (non-edit) view — see the `edit` field's own doc comment in
- * `CodeViewDiffItem`. `edit ? 1 : 0` is enough: `edit` only has two states, so any transition
- * between them is always a version change too.
+ * `version` must change whenever `edit` does or Pierre keeps rendering the previous view.
  */
 export function buildItems({
   files,
@@ -116,7 +102,6 @@ export function buildItems({
         metadata: {
           kind: 'composer',
           file: composing.file,
-          anchorText: composing.anchorText,
           ...(composing.startLine !== undefined
             ? { startLine: composing.startLine }
             : {}),
@@ -147,6 +132,39 @@ export function buildItems({
   });
 }
 
+/** Why a finished edit session is not being POSTed, or the precondition it will be POSTed with. */
+export type EditSaveDecision =
+  | { post: false; reason: 'not-requested' | 'no-session' | 'unchanged' }
+  | { post: true; baseSha: string };
+
+/**
+ * Decides whether a finished edit session should be written back.
+ *
+ * Pierre ends a session for several reasons — edit turned off, the item collapsed, the item
+ * removed from `items` — and only one of them is the reviewer pressing Save. `requestedFile`
+ * is what tells those apart, so cancelling or switching files never commits silently.
+ *
+ * A save whose text is byte-identical to what the session opened with is a no-op too: writing
+ * it would stage nothing and `git commit` would fail with "nothing to commit".
+ */
+export function decideEditSave(input: {
+  /** The file the reviewer pressed Save on, or null for any other way a session ended. */
+  requestedFile: string | null;
+  itemId: string;
+  contents: string;
+  /** What the session opened with, recorded when the load gate resolved. */
+  session: { baseSha: string; contents: string } | undefined;
+}): EditSaveDecision {
+  if (input.requestedFile !== input.itemId) {
+    return { post: false, reason: 'not-requested' };
+  }
+  if (input.session === undefined) return { post: false, reason: 'no-session' };
+  if (input.session.contents === input.contents) {
+    return { post: false, reason: 'unchanged' };
+  }
+  return { post: true, baseSha: input.session.baseSha };
+}
+
 /**
  * The server's machine-readable `applyRunEdit` 409 codes, each with a different fix — see
  * `packages/server/src/api.ts`'s `applyRunEdit`.
@@ -165,6 +183,8 @@ const EDIT_ERROR_MESSAGES: Record<string, string> = {
     'This file changed while you were editing, so this edit was not saved. Reload the diff to see the new version.',
   'worktree-missing': "This run's worktree is gone.",
   'empty-contents': "Couldn't read this file — nothing was written.",
+  'run-reviewed':
+    'This run has already been reviewed, so its branch is closed to further edits.',
 };
 
 /**

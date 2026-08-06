@@ -228,13 +228,10 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
     };
     const { rerender } = render(<ReviewThread {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    // The button returns to enabled once the click's own apply resolves — waiting on that
+    // The button reads "Applied" once the click's own apply resolves — waiting on that
     // means the success has actually landed in state before the late failure arrives below.
     await waitFor(() =>
-      expect(
-        screen.getByRole<HTMLButtonElement>('button', { name: 'Apply' })
-          .disabled
-      ).toBe(false)
+      expect(screen.queryByRole('button', { name: 'Applied' })).not.toBeNull()
     );
 
     rerender(
@@ -248,6 +245,58 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
     );
 
     expect(screen.queryByText('The code here has changed…')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Applied' })).not.toBeNull();
+  });
+});
+
+describe('ReviewThread — a landed apply says so', () => {
+  // A second click after a successful apply used to come back as 409
+  // anchor-drifted ("the code here has changed"), because the suggestion had
+  // already replaced the anchored line — a confusing way to learn the first
+  // click worked. The button reports the outcome instead of inviting a retry.
+  it('shows a disabled Applied button once the apply resolves', async () => {
+    render(
+      <ReviewThread
+        comment={comment({ suggestion: 'const b = 2;' })}
+        anchor="exact"
+        onResolve={() => {}}
+        onReply={() => {}}
+        onApply={() => Promise.resolve()}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: 'Applied' })
+          .disabled
+      ).toBe(true)
+    );
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
+  });
+
+  it('does not fire a second apply after one has landed', async () => {
+    let calls = 0;
+    render(
+      <ReviewThread
+        comment={comment({ suggestion: 'const b = 2;' })}
+        anchor="exact"
+        onResolve={() => {}}
+        onReply={() => {}}
+        onApply={() => {
+          calls += 1;
+          return Promise.resolve();
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Applied' })).not.toBeNull()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Applied' }));
+
+    expect(calls).toBe(1);
   });
 });
 
@@ -435,6 +484,75 @@ describe('ReviewComposer — the suggestion editor', () => {
     );
     expect(rejected).toBe(true);
     expect(saved).toBe(false);
+  });
+});
+
+describe('ReviewComposer — the anchor it records', () => {
+  // Without a real anchor every human suggestion is permanently un-appliable:
+  // `resolveAnchor` calls an empty `anchorText` outdated, so apply answers 409
+  // anchor-drifted and the thread claims the code changed when it never did.
+  // Captured here, from the same `fileContents` the suggestion editor seeds
+  // from, so the two can never describe different text.
+  it('records the commented line’s own text as the anchor', () => {
+    let submitted: string | null = null;
+    renderComposer({
+      line: 2,
+      fileContents: 'const a = 0;\nconst b = 1;\nconst c = 2;\n',
+      onSubmit: (_body, _suggestion, anchorText) => {
+        submitted = anchorText;
+        return Promise.resolve(comment());
+      },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        'What should change? This goes back with the work.'
+      ),
+      { target: { value: 'nit' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(submitted).toBe('const b = 1;');
+  });
+
+  it('anchors a range comment to its LAST line, which is what resolveAnchor checks', () => {
+    let submitted: string | null = null;
+    renderComposer({
+      startLine: 1,
+      line: 3,
+      fileContents: 'const a = 0;\nconst b = 1;\nconst c = 2;\n',
+      onSubmit: (_body, _suggestion, anchorText) => {
+        submitted = anchorText;
+        return Promise.resolve(comment());
+      },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        'What should change? This goes back with the work.'
+      ),
+      { target: { value: 'nit' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(submitted).toBe('const c = 2;');
+  });
+
+  it('records an empty anchor only when there are no contents to read one from', () => {
+    let submitted: string | null = null;
+    renderComposer({
+      fileContents: null,
+      onSubmit: (_body, _suggestion, anchorText) => {
+        submitted = anchorText;
+        return Promise.resolve(comment());
+      },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        'What should change? This goes back with the work.'
+      ),
+      { target: { value: 'nit' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    // No contents means no suggestion editor either, so this can only ever be
+    // a prose comment — there is nothing appliable to leave un-anchored.
+    expect(submitted).toBe('');
   });
 });
 

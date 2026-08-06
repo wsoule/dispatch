@@ -39,12 +39,9 @@ interface ReviewThreadProps {
  * Where the thread's Apply button stands: never attempted, in flight, resolved, or failed with
  * a reason and whether that failure means retrying is pointless.
  *
- * `succeeded` is its own status rather than folding a resolved apply back into `idle` — see the
- * effect below. It renders identically to `idle` (plain, enabled "Apply", no message): this task
- * has repeatedly had to fix the UI implying a commit landed when it didn't, and the deliberate
- * choice here is not to invent a new visual "applied" confirmation in a fix round scoped to a
- * state-management bug, only to make success a real, distinguishable state in the type so a
- * later failure can never be mistaken for describing it.
+ * `succeeded` is its own status rather than folding a resolved apply back into `idle`, so a late
+ * failure from a different attempt can never be mistaken for describing it (see the effect
+ * below), and so a landed apply reads as "Applied" instead of inviting a second click.
  */
 type ApplyState =
   | { status: 'idle' }
@@ -78,26 +75,12 @@ export function ReviewThread({
         }
   );
 
-  // `initialApplyError` can arrive strictly AFTER this thread has already mounted: `Apply now`'s
-  // apply step is a POST that does a real file write and git commit, racing the plain GET
-  // refetch its own preceding save kicks off — a refetch that very plausibly wins, since it does
-  // far less work. When it does, this thread mounts (via `applyState`'s lazy initializer above,
-  // reading `initialApplyError === undefined`) before the apply has even settled, and the
-  // failure — once `PierreReviewDiff` learns of it — arrives on a LATER render as a changed prop.
-  // A lazy initializer only ever runs once, at mount, so relying on it alone would silently drop
-  // that failure: the reviewer would see an idle, clickable Apply button over a suggestion that
-  // was never actually applied. This effect is what re-derives `applyState` when that happens.
+  // `initialApplyError` can arrive after this thread has mounted — `Apply now`'s apply step
+  // races the refetch its own save kicks off — and a lazy initializer only runs once, so this
+  // effect is what picks up a failure that lands on a later render.
   //
-  // Guarded to only ever move `idle` → `failed`, never overwrite an in-progress `applying` OR an
-  // already-`succeeded` `handleApply` call below. The `succeeded` distinction is why this guard
-  // is safe: before it existed, a resolved apply reset `applyState` back to `idle`, which this
-  // effect's `current.status === 'idle'` check could not tell apart from "never attempted" — a
-  // reviewer who clicked Apply themselves, on a freshly-mounted thread whose `Apply now` apply
-  // was still resolving, and whose own click won that race, could see this effect overwrite
-  // their real success with the OTHER attempt's stale failure once it arrived. `applyNowFailures`
-  // in `PierreReviewDiff` never mutates an existing entry once set (see its own doc comment), so
-  // `initialApplyError`'s identity is stable after the one transition from `undefined` to
-  // defined — this does not re-fire on every render.
+  // Only ever moves `idle` → `failed`, so a stale failure from the `Apply now` attempt can't
+  // overwrite a live click's `applying` or `succeeded` state.
   useEffect(() => {
     if (initialApplyError === undefined) return;
     setApplyState((current) =>
@@ -175,16 +158,25 @@ export function ReviewThread({
 
       {comment.suggestion !== undefined && onApply !== undefined && (
         <div className="mt-1.5 flex items-center gap-2">
+          {/* A landed apply reads "Applied" and stops taking clicks: a second one would
+              splice over the line the suggestion just replaced, and come back as 409
+              anchor-drifted — "the code here has changed" — which is a baffling way to
+              find out the first click worked. */}
           <button
             type="button"
             disabled={
               applyState.status === 'applying' ||
+              applyState.status === 'succeeded' ||
               (applyState.status === 'failed' && applyState.disabled)
             }
             onClick={handleApply}
             className="bg-accent text-accent-foreground rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
           >
-            {applyState.status === 'applying' ? 'Applying…' : 'Apply'}
+            {applyState.status === 'applying'
+              ? 'Applying…'
+              : applyState.status === 'succeeded'
+                ? 'Applied'
+                : 'Apply'}
           </button>
           {applyState.status === 'failed' && (
             <span className="text-destructive text-[11px]">
@@ -239,8 +231,15 @@ interface ComposerProps {
    * an item with no real contents, the same landmine `buildItems`'s load gate exists for. */
   fileContents: string | null;
   /** Saves the comment, resolving with the created record. Widened from a fire-and-forget
-   * `void` return so `Apply now` can act on the new comment's id — see `submitAndApplyNow`. */
-  onSubmit: (body: string, suggestion?: string) => Promise<ReviewComment>;
+   * `void` return so `Apply now` can act on the new comment's id — see `submitAndApplyNow`.
+   *
+   * `anchorText` is read out of `fileContents` here rather than passed in, so the anchor and
+   * the suggestion are guaranteed to come from the same copy of the file. */
+  onSubmit: (
+    body: string,
+    suggestion: string | undefined,
+    anchorText: string
+  ) => Promise<ReviewComment>;
   /** Called once `onSubmit` resolves — for both buttons, the moment the comment is durably
    * saved — so the parent can close this composer. Kept separate from `Apply now`'s own apply
    * attempt settling: a failed apply after a successful save must not keep the just-written
@@ -314,6 +313,15 @@ export function ReviewComposer({
   }, [fileContents, file, seed, start, line]);
 
   const suggestion = suggestionForSubmit(seed, suggestionText);
+  // The anchor is the LAST line of the range, because that is the line
+  // `resolveAnchor` checks server-side. Empty only when there are no contents to
+  // read — which also means no suggestion editor, so nothing appliable is left
+  // un-anchored.
+  const anchorText = useMemo(
+    () =>
+      fileContents === null ? '' : seedFromRange(fileContents, line, line),
+    [fileContents, line]
+  );
 
   // Saves the comment. Both buttons reach here; `Apply now` chains an apply attempt onto it
   // (see `handleApplyNow` below). A save failure leaves the composer open with the draft
@@ -322,7 +330,7 @@ export function ReviewComposer({
     const trimmed = body.trim();
     if (trimmed === '' || busy) return;
     setBusy(true);
-    onSubmit(trimmed, suggestion)
+    onSubmit(trimmed, suggestion, anchorText)
       .then(() => onSaved())
       .catch(() => {
         // Nothing was created — the draft stays in the box for the reviewer to retry.
@@ -341,7 +349,7 @@ export function ReviewComposer({
     if (suggestion === undefined) return;
     setBusy(true);
     submitAndApplyNow(
-      () => onSubmit(trimmed, suggestion),
+      () => onSubmit(trimmed, suggestion, anchorText),
       onApply,
       (commentId, outcome) => onApplyNowFailed?.(commentId, outcome)
     )
