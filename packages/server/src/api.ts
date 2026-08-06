@@ -97,7 +97,7 @@ import {
   formatCommentsForAgent,
   ReviewCommentStore,
 } from './reviewComments.js';
-import type { AddCommentInput } from './reviewComments.js';
+import type { AddCommentInput, ReviewComment } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
@@ -992,6 +992,48 @@ async function addReviewComment(
   return jsonResponse(comment, 201);
 }
 
+// The comment `target` holds under `commentId`, or undefined. Reply and
+// resolve both branch on whether GitHub already knows the record.
+function commentOn(
+  ctx: ApiContext,
+  target: ReviewTarget,
+  commentId: string
+): ReviewComment | undefined {
+  return ctx.reviewComments.list(target).find((c) => c.id === commentId);
+}
+
+// Resolves a comment where the reviewer can see it resolved. On a run whose
+// work is on a PR, resolution belongs to GitHub's review thread — doing it
+// locally would leave the run row and the PR row permanently disagreeing.
+// A draft GitHub has never seen, and a PR that is no longer open, have no
+// thread to touch and stay local.
+async function resolveCommentForRun(
+  ctx: ApiContext,
+  target: ReviewTarget,
+  commentId: string,
+  resolved: boolean
+): Promise<ReviewComment> {
+  const local = (): ReviewComment =>
+    ctx.reviewComments.setResolved(target, commentId, resolved);
+  if (target.kind !== 'pr') return local();
+  const comment = commentOn(ctx, target, commentId);
+  if (comment?.githubId === undefined) return local();
+  try {
+    // Thread ids arrive only through syncReviewThreads, which the run
+    // surface never calls — fetch one now so there is something to resolve.
+    if (comment.githubThreadId === undefined) {
+      await ctx.prManager.syncReviewThreads(target.number);
+    }
+  } catch (err) {
+    if (!(err instanceof OrchestratorNotFoundError)) throw err;
+    return local();
+  }
+  if (commentOn(ctx, target, commentId)?.githubThreadId === undefined) {
+    return local();
+  }
+  return ctx.prManager.resolveComment(target.number, commentId, resolved);
+}
+
 // PATCH /api/runs/:id/comments/:commentId — resolve or unresolve a thread.
 async function updateReviewComment(
   req: Request,
@@ -1006,7 +1048,8 @@ async function updateReviewComment(
     return errorResponse(400, 'resolved must be a boolean');
   }
   try {
-    const comment = ctx.reviewComments.setResolved(
+    const comment = await resolveCommentForRun(
+      ctx,
       commentTargetForRun(ctx, runId),
       commentId,
       body.resolved
@@ -1014,7 +1057,34 @@ async function updateReviewComment(
     ctx.events.broadcast({ type: 'review.changed', runId });
     return jsonResponse(comment);
   } catch (err) {
+    // The store's own miss is a plain Error; a `gh` failure on the PR path
+    // is a typed conflict and keeps its own 409 through handleApi.
+    if (err instanceof OrchestratorConflictError) throw err;
     return errorResponse(404, (err as Error).message);
+  }
+}
+
+// Adds to a thread wherever the thread lives. On a run whose work is on a
+// PR, a reply to a comment GitHub already knows about is posted there under
+// GitHub's own author and id. A pending draft exists nowhere else, so its
+// reply stays local and rides along when pushPrReview carries it forward.
+async function replyToCommentForRun(
+  ctx: ApiContext,
+  target: ReviewTarget,
+  commentId: string,
+  body: string
+): Promise<ReviewComment> {
+  const local = (): ReviewComment =>
+    ctx.reviewComments.reply(target, commentId, body);
+  if (target.kind !== 'pr') return local();
+  if (commentOn(ctx, target, commentId)?.githubId === undefined) return local();
+  try {
+    return await ctx.prManager.replyToComment(target.number, commentId, body);
+  } catch (err) {
+    // Same closed-PR fallback as the push: the record is still local, and a
+    // reply the reviewer wrote must not be lost to a PR that has landed.
+    if (!(err instanceof OrchestratorNotFoundError)) throw err;
+    return local();
   }
 }
 
@@ -1032,7 +1102,8 @@ async function replyReviewComment(
     return errorResponse(400, 'body is required');
   }
   try {
-    const comment = ctx.reviewComments.reply(
+    const comment = await replyToCommentForRun(
+      ctx,
       commentTargetForRun(ctx, runId),
       commentId,
       body.body.trim()
@@ -1040,6 +1111,7 @@ async function replyReviewComment(
     ctx.events.broadcast({ type: 'review.changed', runId });
     return jsonResponse(comment);
   } catch (err) {
+    if (err instanceof OrchestratorConflictError) throw err;
     return errorResponse(404, (err as Error).message);
   }
 }
@@ -1055,18 +1127,25 @@ async function pushRunReviewToPr(
   summary: string,
   opts: { pendingBefore: number }
 ): Promise<number> {
-  // A `comment` verdict with neither a note nor a pending comment is not a
-  // review at all. It is a local no-op today and stays one, rather than
-  // posting an empty review to the PR.
-  if (verdict === 'comment' && summary === '' && opts.pendingBefore === 0) {
-    return 0;
-  }
+  // Nothing pending means the batch has already left — the line comments are
+  // protected by the `pending` flip, but the review body is not, so pushing
+  // again would land a second review on the PR every time a submit whose
+  // send-back failed is retried. There is nothing new to send: do not post.
+  if (opts.pendingBefore === 0) return 0;
   const body =
     summary === '' && verdict !== 'approve'
       ? 'See the line comments.'
       : summary;
-  const { pushed } = await ctx.prManager.pushPrReview(number, verdict, body);
-  return pushed;
+  try {
+    const { pushed } = await ctx.prManager.pushPrReview(number, verdict, body);
+    return pushed;
+  } catch (err) {
+    // A closed or merged PR is not in `gh pr list`, so resolving it 404s
+    // before anything is posted. The GitHub half is over; publish locally so
+    // the comments stop sitting pending and still reach the agent.
+    if (!(err instanceof OrchestratorNotFoundError)) throw err;
+    return ctx.reviewComments.publishPending({ kind: 'pr', number });
+  }
 }
 
 /**
