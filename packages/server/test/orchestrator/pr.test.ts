@@ -1664,6 +1664,84 @@ describe('PrManager.syncReviewThreads', () => {
     );
   });
 
+  // The mirror is meant to be bidirectional: `isResolved` was in the
+  // response shape but never selected, so a thread resolved on github.com
+  // stayed open in Dispatch and one unresolved there stayed resolved here
+  // (and so stayed out of the agent handoff) forever.
+  it.each([true, false])(
+    'takes isResolved=%p from the thread, so github.com resolution shows here',
+    async (isResolved) => {
+      const harness = makeHarness();
+      const stub = new StubRunner();
+      stub.listResult = listResultWithHeadRefOid('sha-abc123');
+      stub.reviewThreadsResult = {
+        ok: true,
+        stdout: JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: 'PRRT_thread1',
+                      isResolved,
+                      comments: { nodes: [{ databaseId: 555 }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+        stderr: '',
+      };
+      // Seeded with the opposite of what GitHub reports, so the assertion
+      // can only pass if the flag actually crossed over.
+      harness.reviewComments.replaceAll(prTarget, [
+        syncedComment({ resolved: !isResolved }),
+      ]);
+      const pr = new PrManager(harness, true, stub.run);
+
+      const comments = await pr.syncReviewThreads(9);
+
+      expect(comments[0]?.resolved).toBe(isResolved);
+      expect(harness.reviewComments.list(prTarget)[0]?.resolved).toBe(
+        isResolved
+      );
+    }
+  );
+
+  it('asks for isResolved in the query it sends', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.syncReviewThreads(9);
+
+    const query = stub.calls
+      .find((c) => c.cmd[1] === 'api' && c.cmd[2] === 'graphql')
+      ?.cmd.find((arg) => arg.startsWith('query='));
+    expect(query).toContain('isResolved');
+  });
+
+  // A response that omits the flag must not be read as "unresolved" — that
+  // would silently reopen every locally resolved thread.
+  it('leaves a locally resolved comment alone when the thread omits isResolved', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = listResultWithHeadRefOid('sha-abc123');
+    harness.reviewComments.replaceAll(prTarget, [
+      syncedComment({ resolved: true }),
+    ]);
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncReviewThreads(9);
+
+    expect(comments[0]?.resolved).toBe(true);
+    expect(comments[0]?.githubThreadId).toBe('PRRT_thread1');
+  });
+
   it('leaves a comment without a matching thread node untouched', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
