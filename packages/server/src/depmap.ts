@@ -451,9 +451,16 @@ export function createSourceChangeHandler(
   };
 }
 
+export interface BlastEntry {
+  path: string;
+  hops: number;
+}
+
 // A path reachable via more than one route keeps only its closest hop, then
 // the result sorts by (hops, name) ascending to match buildDepMap's ordering.
-export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
+export function normalizeBlastRadiusEntries(
+  raw: CartoBlastRadius
+): BlastEntry[] {
   // path -> nearest hop distance seen for it, so a duplicate route can only
   // ever shrink the recorded distance, never add a second entry.
   const closest = new Map<string, number>();
@@ -481,7 +488,13 @@ export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
     .sort(([pa, ha], [pb, hb]) =>
       ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
     )
-    .map(([path]) => path);
+    .map(([path, hops]) => ({ path, hops }));
+}
+
+// Prompt builders only need the path list; UI consumers that need hop
+// distance should use normalizeBlastRadiusEntries directly.
+export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
+  return normalizeBlastRadiusEntries(raw).map((e) => e.path);
 }
 
 /** Why a CartoDepMap stopped using carto, for the caller to surface once. */
