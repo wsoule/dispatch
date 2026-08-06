@@ -190,8 +190,11 @@ export function PierreReviewDiff({
             startLine={meta.startLine}
             destination={destination}
             onCancel={() => setComposing(null)}
-            onSubmit={(body) => {
-              void onAdd?.({
+            // Closed only after the write resolves, so a rejected POST leaves
+            // the composer open with the note still in it and the reason
+            // shown beneath — `ReviewComposer` catches and renders it.
+            onSubmit={async (body) => {
+              await onAdd?.({
                 file: meta.file,
                 line: composing?.line ?? 0,
                 startLine: meta.startLine,
@@ -239,8 +242,8 @@ export function PierreReviewDiff({
               // store's own anchor check.
               anchor="exact"
               destination={destination}
-              onResolve={(resolved) => void onResolve(c.id, resolved)}
-              onReply={(body) => void onReply(c.id, body)}
+              onResolve={(resolved) => onResolve(c.id, resolved)}
+              onReply={(body) => onReply(c.id, body)}
             />
           ))}
         </div>
