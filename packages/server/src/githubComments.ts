@@ -16,6 +16,13 @@ function newId(prefix: string): string {
 export function mapGitHubComment(
   raw: Record<string, unknown>
 ): ReviewComment | null {
+  // A reply carries `in_reply_to_id` and comes back from the same GET as
+  // its parent; PrManager.replyToComment already nests locally posted
+  // replies, so mapping one here would duplicate it as a second thread.
+  if (raw.in_reply_to_id !== undefined && raw.in_reply_to_id !== null) {
+    return null;
+  }
+
   // Reject payloads without a usable path.
   const path = raw.path;
   if (typeof path !== 'string' || path.trim() === '') {

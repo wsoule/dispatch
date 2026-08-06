@@ -180,11 +180,17 @@ class StubRunner {
     stderr: '',
   };
   // `gh api graphql` result for the resolve/unresolveReviewThread mutation
-  // resolveComment sends.
+  // resolveComment sends. Carries both mutations' response keys so the
+  // same default answers either verdict correctly — resolveComment reads
+  // `data.<mutationName>`, and a real GraphQL response only ever has the
+  // one key matching whichever mutation was actually sent.
   resolveThreadResult: CommandResult = {
     ok: true,
     stdout: JSON.stringify({
-      data: { resolveReviewThread: { thread: { id: 'PRRT_thread1' } } },
+      data: {
+        resolveReviewThread: { thread: { id: 'PRRT_thread1' } },
+        unresolveReviewThread: { thread: { id: 'PRRT_thread1' } },
+      },
     }),
     stderr: '',
   };
@@ -1516,8 +1522,21 @@ describe('PrManager.replyToComment', () => {
     expect(updated.replies).toHaveLength(1);
     expect(updated.replies[0]?.body).toBe('thanks for the catch');
     expect(updated.replies[0]?.author).toBe('teammate');
+    // The created reply's own GitHub id, from replyResult's `id: 901` —
+    // recorded so a later pull can recognise it instead of re-adding it.
+    expect(updated.replies[0]?.githubId).toBe(901);
     const stored = harness.reviewComments.list(prTarget);
     expect(stored[0]?.replies).toHaveLength(1);
+
+    // `in_reply_to` is an integer per GitHub's REST schema — `-f` would send
+    // it as a quoted string. Asserting the flag, not just the key=value
+    // text, catches a `-F` -> `-f` regression that would only fail for real.
+    const postCall = stub.calls.find((c) =>
+      c.cmd.some((a) => a.startsWith('in_reply_to='))
+    )?.cmd;
+    const idx = postCall?.findIndex((a) => a.startsWith('in_reply_to='));
+    expect(idx).not.toBeUndefined();
+    expect(postCall?.[(idx ?? 0) - 1]).toBe('-F');
   });
 
   it('404s an unknown comment id', async () => {
@@ -1629,6 +1648,13 @@ describe('PrManager.syncReviewThreads', () => {
     expect(call).toContain('owner=example');
     expect(call).toContain('repo=repo');
     expect(call).toContain('number=9');
+    // `number` is GraphQL's `Int!`, not a string — `-f` would send it
+    // quoted. Asserting the flag catches a `-F` -> `-f` regression that
+    // would only fail for real, never against this stub.
+    const numberIdx = call?.findIndex((a) => a === 'number=9');
+    expect(call?.[(numberIdx ?? 0) - 1]).toBe('-F');
+    const ownerIdx = call?.findIndex((a) => a === 'owner=example');
+    expect(call?.[(ownerIdx ?? 0) - 1]).toBe('-f');
   });
 
   it('409s when the graphql call fails', async () => {
@@ -1727,6 +1753,33 @@ describe('PrManager.resolveComment', () => {
 
     await expect(pr.resolveComment(9, parent.id, true)).rejects.toThrow(
       OrchestratorConflictError
+    );
+    expect(harness.reviewComments.list(prTarget)[0]?.resolved).toBe(false);
+  });
+
+  it('rejects a GraphQL-errors response even though gh exits 0, leaving the local record unresolved', async () => {
+    // GitHub's GraphQL endpoint answers a stale/deleted thread id (or a
+    // permission problem) with HTTP 200 and a null mutation payload plus
+    // an `errors` array — `gh` reports that as ok:true. Reverting the
+    // extractMutationThreadId/graphqlErrorMessage check (trusting
+    // `result.ok` alone) makes this test pass by reporting success on a
+    // resolve GitHub never actually applied.
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const parent = syncedComment({ githubThreadId: 'PRRT_thread1' });
+    harness.reviewComments.replaceAll(prTarget, [parent]);
+    stub.resolveThreadResult = {
+      ok: true,
+      stdout: JSON.stringify({
+        data: { resolveReviewThread: null },
+        errors: [{ message: 'Could not resolve to a node with the id.' }],
+      }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.resolveComment(9, parent.id, true)).rejects.toThrow(
+      /Could not resolve to a node with the id\./
     );
     expect(harness.reviewComments.list(prTarget)[0]?.resolved).toBe(false);
   });
