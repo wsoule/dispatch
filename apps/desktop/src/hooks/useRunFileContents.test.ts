@@ -296,6 +296,86 @@ describe('useRunFileLoader — ensureLoaded', () => {
   });
 });
 
+describe('useRunFileLoader — invalidate', () => {
+  test('forces the next ensureLoaded to refetch rather than serve the stale cached value', async () => {
+    const { client, calls } = stubClient({
+      'new:a.txt': { contents: 'hello\n', sha: 'sha-1' },
+    });
+    const { result } = renderHook(() => useRunFileLoader(client, RUN_ID));
+    expect(await result.current.ensureLoaded('a.txt')).toEqual({
+      contents: 'hello\n',
+      sha: 'sha-1',
+    });
+    expect(calls).toHaveLength(1);
+
+    // Simulates the server-side state an `applyRunEdit` commit leaves behind: same path,
+    // different contents and sha.
+    const { client: after } = stubClient({
+      'new:a.txt': { contents: 'edited\n', sha: 'sha-2' },
+    });
+    // Swap the stub the hook's own closures read from (`fetchRunFile`), the way a fresh
+    // `applyRunEdit` response would change what the server now returns for this path.
+    (client as unknown as { fetchRunFile: unknown }).fetchRunFile = (
+      after as unknown as { fetchRunFile: unknown }
+    ).fetchRunFile;
+
+    result.current.invalidate('a.txt');
+    expect(await result.current.ensureLoaded('a.txt')).toEqual({
+      contents: 'edited\n',
+      sha: 'sha-2',
+    });
+  });
+
+  test('leaves other files and the old side untouched', async () => {
+    const { client, calls } = stubClient({
+      'old:a.txt': { contents: 'before\n', sha: 'old-sha' },
+      'new:a.txt': { contents: 'hello\n', sha: 'sha-1' },
+      'new:b.txt': { contents: 'other\n', sha: 'sha-b' },
+    });
+    const { result } = renderHook(() => useRunFileLoader(client, RUN_ID));
+    await result.current.ensureLoaded('a.txt');
+    await result.current.ensureLoaded('b.txt');
+    await result.current.loadDiffFiles?.(
+      metadata({ name: 'a.txt', type: 'change' })
+    );
+    expect(calls).toHaveLength(3); // new:a, new:b, old:a
+
+    result.current.invalidate('a.txt');
+    // `b.txt`'s cache entry is untouched.
+    await result.current.ensureLoaded('b.txt');
+    expect(calls).toHaveLength(3);
+    // `a.txt`'s `old` side is untouched — only `new` is ever invalidated.
+    await result.current.loadDiffFiles?.(
+      metadata({ name: 'a.txt', type: 'change' })
+    );
+    expect(calls).toHaveLength(4); // one more: new:a re-fetched, old:a served from cache
+  });
+
+  test('keys by runId, so invalidating under one run leaves another run’s cache alone', async () => {
+    const { client } = stubClientPerRun({
+      'run-a': { 'new:src/foo.ts': { contents: 'run A\n', sha: 'sha-a' } },
+      'run-b': { 'new:src/foo.ts': { contents: 'run B\n', sha: 'sha-b' } },
+    });
+    const { result: resultA } = renderHook(() =>
+      useRunFileLoader(client, 'run-a')
+    );
+    const { result: resultB } = renderHook(() =>
+      useRunFileLoader(client, 'run-b')
+    );
+    await resultA.current.ensureLoaded('src/foo.ts');
+    await resultB.current.ensureLoaded('src/foo.ts');
+
+    // Invalidating run A's entry must not touch run B's — they're separate hook instances
+    // with separate `cacheRef`s in the real component, but the key format itself (which
+    // `invalidate` has to reproduce exactly) is what this guards.
+    resultA.current.invalidate('src/foo.ts');
+    expect(await resultB.current.ensureLoaded('src/foo.ts')).toEqual({
+      contents: 'run B\n',
+      sha: 'sha-b',
+    });
+  });
+});
+
 describe('useRunFileLoader — cache scoping by runId', () => {
   // `PierreReviewDiff` does not remount when the reviewer picks a different run in the same
   // session — the review queue and the run detail panel both swap the `runId` prop in place,

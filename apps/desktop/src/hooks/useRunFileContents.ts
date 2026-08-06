@@ -21,6 +21,12 @@ export interface UseRunFileLoaderResult {
    * `null` on failure). The edit-mode task uses this to check "are this file's contents loaded
    * yet?" and to read the `sha` its save precondition needs. */
   ensureLoaded: (file: string) => Promise<RunFileSide | null>;
+  /** Drops the cached `new`-side entry for `file`, so the next `ensureLoaded`/`loadDiffFiles`
+   * call re-fetches it from disk. A successful `applyRunEdit` changes both the file's contents
+   * and its sha on disk — without this, the cache would keep serving the pre-edit sha as the
+   * precondition for the reviewer's next edit, and the server would reject it with 409
+   * stale-base. */
+  invalidate: (file: string) => void;
 }
 
 type Side = 'old' | 'new';
@@ -68,6 +74,15 @@ export function useRunFileLoader(
     [fetchSide]
   );
 
+  // Only the `new` side is ever invalidated: an edit changes the working-tree copy, not the
+  // base-branch content `old` reads, so `old`'s cache entry is still correct.
+  const invalidate = useCallback(
+    (file: string) => {
+      cacheRef.current.delete(`${runId ?? ''}:new:${file}`);
+    },
+    [runId]
+  );
+
   const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     if (client === null || runId === undefined) return undefined;
     return async (fileDiff): Promise<FileDiffLoadedFiles> => {
@@ -99,5 +114,5 @@ export function useRunFileLoader(
     };
   }, [client, runId, fetchSide]);
 
-  return { loadDiffFiles, ensureLoaded };
+  return { loadDiffFiles, ensureLoaded, invalidate };
 }
