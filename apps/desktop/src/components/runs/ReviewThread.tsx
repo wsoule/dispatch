@@ -29,6 +29,12 @@ const STAGED_REPLY_NOTE =
   'Staged — this note reaches GitHub when you submit your review. ' +
   'Replying and resolving open up then.';
 
+// Shown when a note is on GitHub but Dispatch has not read its ids back yet
+// (a thread sync that failed, or a PR past the 100-thread page). Replying
+// would 409, so the box waits for the next refresh instead of failing.
+const UNLINKED_REPLY_NOTE =
+  'Not linked to its GitHub thread yet — reopen this review to pick it up.';
+
 interface ReviewThreadProps {
   comment: ReviewComment;
   /** How the anchor has fared since the comment was written. */
@@ -56,10 +62,16 @@ export function ReviewThread({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // A GitHub draft exists only on local disk until a verdict publishes it, so
-  // it has neither a comment id to reply to nor a thread to resolve. Both
-  // controls are withheld instead of being offered and left to fail.
-  const staged = destination === 'github' && comment.pending;
+  // Both GitHub verbs need an id the server has actually seen: replying
+  // needs the comment's `githubId`, resolving needs the thread's node id.
+  // Gating on those rather than on `pending` also covers a pushed note
+  // whose ids have not been read back yet, which used to 409 on click.
+  const isGitHub = destination === 'github';
+  const canReply = !isGitHub || comment.githubId !== undefined;
+  const canResolve = !isGitHub || comment.githubThreadId !== undefined;
+  // Staged says "submit your review"; anything else missing its ids is a
+  // sync gap, and saying the wrong one is its own small lie.
+  const replyNote = comment.pending ? STAGED_REPLY_NOTE : UNLINKED_REPLY_NOTE;
 
   // Clears the box only once the reply has actually landed: clearing it on
   // keypress destroyed the reviewer's text whenever the write failed.
@@ -107,7 +119,7 @@ export function ReviewThread({
           </span>
         )}
         <span className="flex-1" />
-        {!staged && (
+        {canResolve && (
           <button
             type="button"
             onClick={() => void toggleResolved()}
@@ -151,9 +163,9 @@ export function ReviewThread({
       )}
 
       {!comment.resolved &&
-        (staged ? (
+        (!canReply ? (
           <p className="text-muted-foreground mt-2 text-[11.5px]">
-            {STAGED_REPLY_NOTE}
+            {replyNote}
           </p>
         ) : (
           <div className="mt-2 flex gap-2">
