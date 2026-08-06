@@ -1132,6 +1132,7 @@ export class PrManager {
       reviewThreads(first: 100) {
         nodes {
           id
+          isResolved
           comments(first: 100) {
             nodes { databaseId }
           }
@@ -1166,13 +1167,23 @@ export class PrManager {
         'gh api graphql reviewThreads returned invalid JSON'
       );
     }
-    const threadIdByCommentId = collectThreadIds(raw);
+    const threadByCommentId = collectThreads(raw);
 
     const target: ReviewTarget = { kind: 'pr', number };
     const updated = this.ctx.reviewComments.list(target).map((c) => {
       if (c.githubId === undefined) return c;
-      const threadId = threadIdByCommentId.get(c.githubId);
-      return threadId === undefined ? c : { ...c, githubThreadId: threadId };
+      const thread = threadByCommentId.get(c.githubId);
+      if (thread === undefined) return c;
+      // GitHub owns resolution — it lives on the thread, and this is the one
+      // place Dispatch reads it back, so resolving on github.com shows here.
+      // A response missing the flag leaves the local value alone.
+      return {
+        ...c,
+        githubThreadId: thread.id,
+        ...(thread.isResolved !== undefined
+          ? { resolved: thread.isResolved }
+          : {}),
+      };
     });
     this.ctx.reviewComments.replaceAll(target, updated);
     return updated;
@@ -1236,12 +1247,20 @@ export class PrManager {
   }
 }
 
+// One GitHub review thread as syncReviewThreads needs it: the node id to
+// resolve against, and GitHub's own resolution flag (absent when the
+// response omitted it, which must not be read as "unresolved").
+interface GitHubReviewThread {
+  id: string;
+  isResolved?: boolean;
+}
+
 // Walks a `reviewThreads` GraphQL response into a REST comment id -> thread
-// node id lookup, tolerant of every missing-field shape (a thread sync
-// should degrade to "nothing tagged", not throw on a still-valid response).
-function collectThreadIds(raw: unknown): Map<number, string> {
-  const threadIdByCommentId = new Map<number, string>();
-  if (raw === null || typeof raw !== 'object') return threadIdByCommentId;
+// lookup, tolerant of every missing-field shape (a thread sync should
+// degrade to "nothing tagged", not throw on a still-valid response).
+function collectThreads(raw: unknown): Map<number, GitHubReviewThread> {
+  const threadByCommentId = new Map<number, GitHubReviewThread>();
+  if (raw === null || typeof raw !== 'object') return threadByCommentId;
   const nodes = (
     raw as {
       data?: {
@@ -1251,22 +1270,32 @@ function collectThreadIds(raw: unknown): Map<number, string> {
       };
     }
   ).data?.repository?.pullRequest?.reviewThreads?.nodes;
-  if (!Array.isArray(nodes)) return threadIdByCommentId;
+  if (!Array.isArray(nodes)) return threadByCommentId;
   for (const node of nodes) {
     if (node === null || typeof node !== 'object') continue;
-    const thread = node as { id?: unknown; comments?: { nodes?: unknown[] } };
+    const thread = node as {
+      id?: unknown;
+      isResolved?: unknown;
+      comments?: { nodes?: unknown[] };
+    };
     if (typeof thread.id !== 'string') continue;
+    const entry: GitHubReviewThread = {
+      id: thread.id,
+      ...(typeof thread.isResolved === 'boolean'
+        ? { isResolved: thread.isResolved }
+        : {}),
+    };
     const commentNodes = thread.comments?.nodes;
     if (!Array.isArray(commentNodes)) continue;
     for (const c of commentNodes) {
       if (c === null || typeof c !== 'object') continue;
       const databaseId = (c as { databaseId?: unknown }).databaseId;
       if (typeof databaseId === 'number') {
-        threadIdByCommentId.set(databaseId, thread.id);
+        threadByCommentId.set(databaseId, entry);
       }
     }
   }
-  return threadIdByCommentId;
+  return threadByCommentId;
 }
 
 // Reads `data.<mutation>.thread.id`; undefined on parse failure or a null
