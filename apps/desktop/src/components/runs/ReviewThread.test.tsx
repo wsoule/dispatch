@@ -211,6 +211,44 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
       screen.getByRole<HTMLButtonElement>('button', { name: 'Apply' }).disabled
     ).toBe(true);
   });
+
+  // The double-apply race this covers: a comment created via `Apply now` mounts before its own
+  // `Apply now` apply attempt has settled (see the test above), so its Apply button starts
+  // enabled and clickable. If the reviewer clicks it themselves and THAT click succeeds before
+  // the original `Apply now` failure ever reaches `onApplyNowFailed`, the late failure must not
+  // overwrite a success that already landed — the suggestion really was applied, and saying
+  // otherwise would be exactly the kind of lie this task exists to prevent.
+  it('does not let a late stale failure overwrite an already-successful apply', async () => {
+    const props = {
+      comment: comment({ suggestion: 'const b = 2;' }),
+      anchor: 'exact' as const,
+      onResolve: () => {},
+      onReply: () => {},
+      onApply: () => Promise.resolve(),
+    };
+    const { rerender } = render(<ReviewThread {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    // The button returns to enabled once the click's own apply resolves — waiting on that
+    // means the success has actually landed in state before the late failure arrives below.
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: 'Apply' })
+          .disabled
+      ).toBe(false)
+    );
+
+    rerender(
+      <ReviewThread
+        {...props}
+        initialApplyError={{
+          message: 'The code here has changed…',
+          disable: true,
+        }}
+      />
+    );
+
+    expect(screen.queryByText('The code here has changed…')).toBeNull();
+  });
 });
 
 describe('ReviewThread — the existing thread behaviour', () => {
