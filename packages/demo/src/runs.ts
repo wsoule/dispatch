@@ -95,18 +95,23 @@ function ago(days: number, hours = 0): string {
 // A run's own opaque resume handle, derived from its id the same way the
 // marketing-screenshot fixture did (`'s-' + rid[2:]`) — good enough for a
 // static fixture, since nothing ever actually resumes it against a real SDK.
+// A resumed round must NOT get its own fresh id here — the real orchestrator
+// carries `oldMeta.sessionId` forward unchanged across a resume chain (see
+// requestChanges/recordSession in orchestrator.ts), so a resumed RunSpec
+// passes the parent's id via `RunSpec.sessionId` to override this default.
 function sessionIdFor(id: string): string {
   return `s-${id.slice(2)}`;
 }
 
-// Same slugging rule as board.ts's task-file slug: lowercase title,
-// non-alphanumerics collapsed to `-`, capped and trimmed.
+// Same slugging rule as board.ts's task-file slug: lowercase title, runs of
+// non-alphanumerics collapsed to a single `-`, capped and trimmed. Collapsing
+// the run (rather than mapping each character 1:1) matters for a title like
+// "Add a /health endpoint": a lone char-by-char mapping turns the space+slash
+// into TWO separate hyphens ("add-a--health-endpoint").
 function slug(title: string): string {
   return title
     .toLowerCase()
-    .split('')
-    .map((c) => (/[a-z0-9]/.test(c) ? c : '-'))
-    .join('')
+    .replace(/[^a-z0-9]+/g, '-')
     .slice(0, 32)
     .replace(/^-+|-+$/g, '');
 }
@@ -157,6 +162,20 @@ function Msg(taskTitle: string, id: string, text: string): NormalizedEntry {
   };
 }
 
+// One fix-loop prompt, injected as the next conversation turn on a resumed
+// run — the shape Orchestrator.requestChanges actually records for
+// `sendMessage(runId, prompt, { resume: true })`: `{ ts, kind: 'message',
+// from: 'user', text }`, with no `fromLabel`/`toUser`. That pair is reserved
+// for an agent's own `messageUser()` calls (Msg, above) — a fix round's
+// prompt is not the agent broadcasting to the human, it is the loop's
+// automated feedback arriving the same way a human's own "request changes"
+// text would. RunLogView.tsx renders `toUser: true` as a "TO YOU" megaphone
+// callout; using Msg() here would make a fix round look like it is talking
+// TO the human instead of receiving instructions FROM the loop.
+function FixMsg(text: string): NormalizedEntry {
+  return { ts: '', kind: 'message', from: 'user', text };
+}
+
 // One system-authored note — the shape Orchestrator.requestStop appends to
 // record why a run wrapped up when it did.
 function Sys(text: string): NormalizedEntry {
@@ -172,6 +191,10 @@ interface RunSpec {
   baseBranch: string;
   model: string;
   resumedFrom?: string;
+  // Overrides the derived `sessionIdFor(spec.id)`. A resumed round must set
+  // this to its parent's session id — a real resume keeps the SAME session
+  // across the whole chain (see sessionIdFor's comment above).
+  sessionId?: string;
   worktreePath: string;
   // A single timestamp anchors the whole run (header, every entry, and the
   // final state line) — the same simplification the ported fixture used,
@@ -184,14 +207,19 @@ interface RunSpec {
   state: RunState;
   costUsd: number;
   turns: number;
+  // `reviewed` alone (no `reviewAction`) writes a bare `reviewedAt` — the
+  // lever a fix loop's superseded round uses to drop out of the review
+  // queue (needsHumanLook in ReviewQueue.tsx returns false on `reviewedAt`
+  // alone) while staying OUT of archiveFilter.ts's hidden set, which keys
+  // only on `archivedAt`. `reviewAction` on top additionally records how a
+  // run was actually closed out (e.g. 'merge').
   reviewed?: boolean;
   reviewAction?: 'merge' | 'discard' | 'pr';
   stopped?: boolean;
-  // Set when a later run in the same chain supersedes this one (see
-  // writeFixLoopRuns) — buildReviewQueue in
-  // apps/desktop/src/components/runs/ReviewQueue.tsx skips archived runs, so
-  // this is what keeps a resumed fix-loop round's earlier attempts from each
-  // showing up as their own "needs review" row for the same task.
+  // Set when a run's task/branch is done and should disappear from the
+  // default Runs view entirely (archiveFilter.ts hides anything with
+  // `archivedAt`). NOT used for a fix loop's superseded rounds — see
+  // `reviewed` above — since those need to stay visible as history.
   archivedDaysAgo?: number;
   archivedHoursAgo?: number;
 }
@@ -202,7 +230,7 @@ interface RunSpec {
 // packages/server/src/orchestrator/transcript.ts read back.
 function writeRun(dir: string, spec: RunSpec): void {
   const ts = ago(spec.daysAgo, spec.hoursAgo);
-  const sessionId = sessionIdFor(spec.id);
+  const sessionId = spec.sessionId ?? sessionIdFor(spec.id);
   const meta: RunMeta = {
     id: spec.id,
     taskId: spec.taskId,
@@ -242,7 +270,13 @@ function writeRun(dir: string, spec: RunSpec): void {
   };
   if (spec.reviewed === true) {
     finish.reviewedAt = ts;
-    finish.reviewAction = spec.reviewAction ?? 'merge';
+    // Bare `reviewedAt` (no `reviewAction`) is deliberate for a superseded
+    // fix-loop round — it was never literally merged or discarded, just
+    // dedup'd out of the review queue. Only write the field when a caller
+    // states what actually happened.
+    if (spec.reviewAction !== undefined) {
+      finish.reviewAction = spec.reviewAction;
+    }
   }
   if (spec.stopped === true) {
     finish.stopRequestedAt = ts;
@@ -271,7 +305,10 @@ function writePortedRuns(dir: string, rootDir: string): void {
     baseBranch: 'main',
     model: 'claude-opus-5',
     worktreePath: worktreePathFor(rootDir, 'r-2e91aa'),
-    daysAgo: 0,
+    // Oldest run in this task's chain: the review below (writeReviewRun) and
+    // the verify after it (writeVerifyRun) both have to read as happening
+    // AFTER this execute run finished, not before it.
+    daysAgo: 3,
     entries: [
       A('Reading how the cart is stored today before moving it.'),
       T('Read', { file_path: 'src/cart/CartProvider.ts' }),
@@ -298,7 +335,10 @@ function writePortedRuns(dir: string, rootDir: string): void {
     baseBranch: 'main',
     model: 'claude-opus-5',
     worktreePath: worktreePathFor(rootDir, 'r-58cc03'),
-    daysAgo: 2,
+    // The oldest run in the fix loop's chain (writeFixLoopRuns) — round 1
+    // resumes this run's own session and must be dispatched (createdAt)
+    // strictly after this run finishes (updatedAt).
+    daysAgo: 4,
     entries: [
       A('Looking at how results are scored now.'),
       T('Read', { file_path: 'src/search/rank.ts' }),
@@ -315,10 +355,10 @@ function writePortedRuns(dir: string, rootDir: string): void {
     costUsd: 4.83,
     turns: 28,
     // Superseded once the fix loop's round 1 resumes this run's own session
-    // (see writeFixLoopRuns) — archived so it doesn't ALSO show up as its
-    // own "needs review" row for the same task.
-    archivedDaysAgo: 2,
-    archivedHoursAgo: 6,
+    // (see writeFixLoopRuns) — a bare `reviewedAt` (no `reviewAction`) so it
+    // drops out of the review queue without also disappearing from the
+    // default Runs view (see RunSpec's `reviewed` doc comment).
+    reviewed: true,
   });
 
   writeRun(dir, {
@@ -347,7 +387,7 @@ function writePortedRuns(dir: string, rootDir: string): void {
     id: 'r-71ff03',
     taskId: 't-71ff03',
     taskTitle: 'Add a /health endpoint',
-    branch: branchFor('t-71ff03', 'Add a health endpoint'),
+    branch: branchFor('t-71ff03', 'Add a /health endpoint'),
     baseBranch: 'main',
     model: 'claude-opus-5',
     worktreePath: worktreePathFor(rootDir, 'r-71ff03'),
@@ -437,8 +477,11 @@ function writeReviewRun(dir: string, rootDir: string): void {
     baseBranch: branchFixFor(taskId),
     model: 'claude-opus-5',
     worktreePath: worktreePathFor(rootDir, id),
-    daysAgo: 3,
-    hoursAgo: 1,
+    // Dispatched after r-2e91aa (writePortedRuns, daysAgo: 3) actually
+    // finished, and before the verify run below it (writeVerifyRun,
+    // daysAgo: 1) — the chain has to read execute -> review -> verify.
+    daysAgo: 2,
+    hoursAgo: 10,
     entries,
     state: 'finished',
     costUsd: 1.87,
@@ -469,6 +512,15 @@ function writeFixLoopRuns(dir: string, rootDir: string): void {
   const resumedBranch = branchFixFor(taskId);
   const resumedWorktree = worktreePathFor(rootDir, 'r-58cc03');
 
+  // r-58cc03's model and session id carry forward unchanged across the
+  // whole resume chain — requestChanges sets `model: oldMeta.model` and
+  // `sessionId: oldMeta.sessionId` (see the comment above requestChanges in
+  // orchestrator.ts). r-58cc03 ran on claude-opus-5, so round 1 (which
+  // resumes it) and round 2 (which resumes round 1) must both show
+  // claude-opus-5 and r-58cc03's session id, not a fresh sonnet session.
+  const parentModel = 'claude-opus-5';
+  const parentSessionId = sessionIdFor('r-58cc03');
+
   const round1Id = 'r-9d3c81';
   writeRun(dir, {
     id: round1Id,
@@ -477,15 +529,14 @@ function writeFixLoopRuns(dir: string, rootDir: string): void {
     kind: 'execute',
     branch: resumedBranch,
     baseBranch: 'main',
-    model: 'claude-sonnet-5',
+    model: parentModel,
     resumedFrom: 'r-58cc03',
+    sessionId: parentSessionId,
     worktreePath: resumedWorktree,
     daysAgo: 2,
     hoursAgo: 6,
     entries: [
-      Msg(
-        taskTitle,
-        round1Id,
+      FixMsg(
         `# Fix round 1 of 5 — ${taskId}: ${taskTitle}\n\nOpen findings from the last review need addressing before this can merge.`
       ),
       T('Read', { file_path: 'src/search/rank.ts' }),
@@ -501,10 +552,11 @@ function writeFixLoopRuns(dir: string, rootDir: string): void {
     state: 'finished',
     costUsd: 1.42,
     turns: 9,
-    // Superseded by round 2's resume — see the archivedAt note on r-58cc03
-    // above.
-    archivedDaysAgo: 2,
-    archivedHoursAgo: 3,
+    // Superseded by round 2's resume — a bare `reviewedAt` (no
+    // `reviewAction`) drops it out of the review queue without hiding it
+    // from the default Runs view (see RunSpec's `reviewed` doc comment and
+    // r-58cc03's own note above).
+    reviewed: true,
   });
 
   const round2Id = 'r-2a77f0';
@@ -515,15 +567,14 @@ function writeFixLoopRuns(dir: string, rootDir: string): void {
     kind: 'execute',
     branch: resumedBranch,
     baseBranch: 'main',
-    model: 'claude-sonnet-5',
+    model: parentModel,
     resumedFrom: round1Id,
+    sessionId: parentSessionId,
     worktreePath: resumedWorktree,
     daysAgo: 2,
     hoursAgo: 3,
     entries: [
-      Msg(
-        taskTitle,
-        round2Id,
+      FixMsg(
         `# Fix round 2 of 5 — ${taskId}: ${taskTitle}\n\nThe exact-SKU boost is still a flat constant rather than a real ceiling — a long enough title can out-score it.`
       ),
       T('Read', { file_path: 'src/search/rank.ts' }),
@@ -539,13 +590,22 @@ function writeFixLoopRuns(dir: string, rootDir: string): void {
     state: 'finished',
     costUsd: 2.05,
     turns: 13,
-    // Superseded by round 4's fresh dispatch — see the archivedAt note on
-    // r-58cc03 above. Round 4 (below) is the one left unreviewed: it is
+    // Superseded by round 4's fresh dispatch — same bare-`reviewedAt` lever
+    // as round 1 above. Round 4 (below) is the one left unreviewed: it is
     // t-58cc03's current HEAD, and one of the two in-review tasks the demo
     // reviews live.
-    archivedDaysAgo: 2,
-    archivedHoursAgo: 0,
+    reviewed: true,
   });
+
+  // What dispatchFix() in fixLoop.ts really selects for a `modelTier:
+  // 'high'` step: `models.execute` straight from config, unconditionally —
+  // not necessarily a "bigger" model than whatever a resumed round happened
+  // to be on. This project's config.yml (board.ts's writeConfig) sets
+  // `models.execute: claude-sonnet-5`, so round 4 lands on sonnet even
+  // though rounds 1-2 above resumed r-58cc03's opus session. That reads as
+  // a downgrade by name only; the narration below says so rather than
+  // leaving an unexplained contradiction on screen.
+  const round4Model = 'claude-sonnet-5';
 
   const round4Id = 'r-c05e19';
   writeRun(dir, {
@@ -558,12 +618,12 @@ function writeFixLoopRuns(dir: string, rootDir: string): void {
     // base — dispatchFix() passes `head: previous?.branch`, not the task's
     // original base commit.
     baseBranch: resumedBranch,
-    model: 'claude-sonnet-5',
+    model: round4Model,
     worktreePath: worktreePathFor(rootDir, round4Id),
     daysAgo: 2,
     entries: [
       A(
-        `Fix round 4 of 5 — ${taskId}: ${taskTitle}. Dispatched fresh at the high tier: normalization needs to be consistent across rank.ts, index.ts, and tokenize.ts, and a resumed session three rounds deep is the wrong place to re-derive that from scratch.`
+        `Fix round 4 of 5 — ${taskId}: ${taskTitle}. Dispatched fresh on ${round4Model} — this project's high-tier escalation model, not a continuation of the opus session the earlier rounds resumed: normalization needs to be consistent across rank.ts, index.ts, and tokenize.ts, and a resumed session three rounds deep is the wrong place to re-derive that from scratch.`
       ),
       T('Read', { file_path: 'src/search/tokenize.ts' }),
       T('Read', { file_path: 'src/search/index.ts' }),
