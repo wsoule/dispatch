@@ -20,6 +20,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 export interface DepMap {
   dependents(file: string): string[];
   mirrors(file: string): string[];
+  reach(files: string[], opts?: Partial<ReachOptions>): ReachResult;
 }
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx'];
@@ -311,6 +312,9 @@ export function buildDepMap(rootDir: string): DepMap {
       const start = normalizeInputPath(file);
       return [...(reverseMirrors.get(start) ?? [])].sort();
     },
+    reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
+      return reachOver(this, files, { ...DEFAULT_REACH, ...opts });
+    },
   };
 }
 
@@ -456,6 +460,17 @@ export interface BlastEntry {
   hops: number;
 }
 
+// Closest first, then by path so output is stable. Shared by
+// normalizeBlastRadiusEntries and reachOver so both hop-distance results sort
+// identically — a second copy of this comparator is how ordering bugs creep in.
+export function sortEntries(closest: Map<string, number>): BlastEntry[] {
+  return [...closest.entries()]
+    .sort(([pa, ha], [pb, hb]) =>
+      ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
+    )
+    .map(([path, hops]) => ({ path, hops }));
+}
+
 // A path reachable via more than one route keeps only its closest hop, then
 // the result sorts by (hops, name) ascending to match buildDepMap's ordering.
 export function normalizeBlastRadiusEntries(
@@ -484,17 +499,74 @@ export function normalizeBlastRadiusEntries(
     const existing = closest.get(path);
     if (existing === undefined || hops < existing) closest.set(path, hops);
   }
-  return [...closest.entries()]
-    .sort(([pa, ha], [pb, hb]) =>
-      ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
-    )
-    .map(([path, hops]) => ({ path, hops }));
+  return sortEntries(closest);
 }
 
 // Prompt builders only need the path list; UI consumers that need hop
 // distance should use normalizeBlastRadiusEntries directly.
 export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
   return normalizeBlastRadiusEntries(raw).map((e) => e.path);
+}
+
+export interface ReachOptions {
+  maxHops: number;
+  maxFiles: number;
+}
+
+export interface ReachResult {
+  entries: BlastEntry[]; // closest-first
+  count: number;
+  maxHops: number; // deepest hop actually reached
+  sources: ('carto' | 'scanner')[];
+  degraded: boolean;
+  truncated: boolean;
+}
+
+export const DEFAULT_REACH: ReachOptions = { maxHops: 5, maxFiles: 500 };
+
+// Breadth-first over reverse-import edges, recording the shortest distance to
+// each file. Seeds are excluded from their own result — a file is not its own
+// blast radius. Shared by every DepMap implementation so the walk's
+// termination and truncation rules only exist in one place.
+export function reachOver(
+  map: DepMap,
+  files: string[],
+  opts: ReachOptions
+): ReachResult {
+  const seeds = new Set(files);
+  const closest = new Map<string, number>();
+  let frontier = [...seeds];
+  let hops = 0;
+  let truncated = false;
+
+  while (frontier.length > 0 && hops < opts.maxHops) {
+    hops++;
+    const next: string[] = [];
+    for (const file of frontier) {
+      for (const dependent of map.dependents(file)) {
+        if (seeds.has(dependent) || closest.has(dependent)) continue;
+        if (closest.size >= opts.maxFiles) {
+          truncated = true;
+          continue;
+        }
+        closest.set(dependent, hops);
+        next.push(dependent);
+      }
+    }
+    frontier = next;
+  }
+  // A frontier still holding work when the hop cap stopped us means the walk
+  // was cut short, not exhausted.
+  if (frontier.length > 0) truncated = true;
+
+  return {
+    entries: sortEntries(closest),
+    count: closest.size,
+    maxHops: closest.size === 0 ? 0 : Math.max(...closest.values()),
+    sources: ['scanner'],
+    degraded: false,
+    truncated,
+  };
 }
 
 /** Why a CartoDepMap stopped using carto, for the caller to surface once. */
@@ -562,6 +634,9 @@ export function createCartoDepMap(
     },
     mirrors(file: string): string[] {
       return fallback.mirrors(file);
+    },
+    reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
+      return reachOver(this, files, { ...DEFAULT_REACH, ...opts });
     },
   };
 }

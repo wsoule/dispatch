@@ -255,6 +255,9 @@ function fakeDepMap(dependents: string[]): DepMap {
   return {
     dependents: () => dependents,
     mirrors: () => [],
+    reach: () => {
+      throw new Error('unused');
+    },
   };
 }
 
