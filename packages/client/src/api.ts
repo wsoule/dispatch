@@ -826,12 +826,14 @@ export interface ReviewReply {
   author: string;
   body: string;
   created: string;
+  /** GitHub comment id, when this reply was posted to or pulled from GitHub. */
+  githubId?: number;
 }
 
 /**
  * What a review is looking at: a local run's diff, or a GitHub pull request.
- * Mirrors packages/server/src/reviewTarget.ts and
- * apps/desktop/src/lib/reviewTarget.ts, which the UI keys on.
+ * Mirrors packages/server/src/reviewTarget.ts; the desktop re-exports this
+ * one rather than declaring a third copy.
  */
 export type ReviewTarget =
   | { kind: 'run'; runId: string }
@@ -855,6 +857,21 @@ export interface ReviewComment {
   resolved: boolean;
   created: string;
   replies: ReviewReply[];
+  /**
+   * GitHub's own comment id, set once the comment exists on the PR. This —
+   * not `pending` — is what says whether GitHub can be talked to about this
+   * comment: replying needs an id GitHub already knows.
+   */
+  githubId?: number;
+  /** GitHub comment update timestamp, when synced from GitHub. */
+  githubUpdatedAt?: string;
+  /**
+   * GraphQL node id of the comment's GitHub review thread. Resolution lives
+   * on the thread, so resolving is only offered once this is known.
+   */
+  githubThreadId?: string;
+  /** Which side of the mirror wrote this record first. */
+  origin?: 'local' | 'github';
 }
 
 /** One model-proposed grouping of related captures, ready to become an epic. */
