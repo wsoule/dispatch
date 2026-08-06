@@ -95,6 +95,7 @@ import {
   formatCommentsForAgent,
   ReviewCommentStore,
 } from './reviewComments.js';
+import type { AddCommentInput } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
@@ -889,21 +890,19 @@ function listReviewComments(ctx: ApiContext, runId: string): Response {
   return jsonResponse(ctx.reviewComments.list({ kind: 'run', runId }));
 }
 
-/**
- * POST /api/runs/:id/comments — leave a line-level note on the diff.
- *
- * `anchorText` is required and is the whole point: it records what the line said when the
- * comment was written, which is the only way to tell later whether the comment still points at
- * the code it was about. Without it a comment silently drifts onto unrelated lines as the agent
- * pushes commits.
- */
-async function addReviewComment(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
+type ParsedBody<T> = { ok: true; value: T } | { ok: false; response: Response };
+
+// Shared body validation for POST .../comments on both the run- and
+// PR-keyed routes: `anchorText` is required and is the whole point — it
+// records what the line said when the comment was written, which is the
+// only way to tell later whether the comment still points at the code it
+// was about. Without it a comment silently drifts onto unrelated lines as
+// the agent (or a fresh push to the PR) moves things around.
+async function parseAddCommentInput(
+  req: Request
+): Promise<ParsedBody<AddCommentInput>> {
   const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
+  if (!parsed.ok) return parsed;
   const body = parsed.value as {
     file?: unknown;
     line?: unknown;
@@ -913,17 +912,20 @@ async function addReviewComment(
     pending?: unknown;
   };
   if (typeof body.file !== 'string' || body.file === '') {
-    return errorResponse(400, 'file is required');
+    return { ok: false, response: errorResponse(400, 'file is required') };
   }
   if (typeof body.line !== 'number' || !Number.isInteger(body.line)) {
-    return errorResponse(400, 'line must be an integer');
+    return {
+      ok: false,
+      response: errorResponse(400, 'line must be an integer'),
+    };
   }
   if (typeof body.body !== 'string' || body.body.trim() === '') {
-    return errorResponse(400, 'body is required');
+    return { ok: false, response: errorResponse(400, 'body is required') };
   }
-  const comment = ctx.reviewComments.add(
-    { kind: 'run', runId },
-    {
+  return {
+    ok: true,
+    value: {
       file: body.file,
       line: body.line,
       startLine:
@@ -933,8 +935,19 @@ async function addReviewComment(
       anchorText: typeof body.anchorText === 'string' ? body.anchorText : '',
       body: body.body.trim(),
       pending: body.pending !== false,
-    }
-  );
+    },
+  };
+}
+
+// POST /api/runs/:id/comments — leave a line-level note on the diff.
+async function addReviewComment(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await parseAddCommentInput(req);
+  if (!parsed.ok) return parsed.response;
+  const comment = ctx.reviewComments.add({ kind: 'run', runId }, parsed.value);
   ctx.events.broadcast({ type: 'review.changed', runId });
   return jsonResponse(comment, 201);
 }
@@ -1617,6 +1630,180 @@ async function commentRepoPr(
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
   const detail = await ctx.prManager.commentPrByUrl(pr.url, body.body);
   return jsonResponse(detail);
+}
+
+// Shared by every /api/prs/:number/comments* route below: the store never
+// talks to `gh`, so a bad number would otherwise write/read a nonsense
+// `pr-NaN` target slug instead of 400ing. Mirrors PrManager's own private
+// `requirePrNumber`, which the routes that DO call `gh` (below) go through
+// internally.
+function requirePrNumberParam(numberParam: string): number | null {
+  const number = Number(numberParam);
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+/**
+ * GET /api/prs/:number/comments — the PR-keyed twin of GET
+ * /api/runs/:id/comments, but not a plain local read: a PR's comments can
+ * change on github.com between page loads, so this pulls GitHub's current
+ * set first (PrManager.syncPrComments — merges via mergeComments' six
+ * rules and persists), then tags each with its review-thread id
+ * (PrManager.syncReviewThreads) so PATCH .../comments/:id below has
+ * something to resolve against. Both calls resolve `number` against
+ * listRepoPrs() themselves (see PrManager.resolvePrForComments) — nothing
+ * here forwards a caller-supplied URL to `gh`.
+ */
+async function listPrComments(
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  await ctx.prManager.syncPrComments(number);
+  const comments = await ctx.prManager.syncReviewThreads(number);
+  return jsonResponse(comments);
+}
+
+// POST /api/prs/:number/comments — the PR-keyed twin of POST
+// /api/runs/:id/comments: a purely local draft, same as the run-keyed
+// route. It stays `pending` on disk until POST
+// /api/prs/:number/review-submit publishes it as part of one GitHub
+// review — nothing here talks to `gh`.
+async function addPrComment(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  const parsed = await parseAddCommentInput(req);
+  if (!parsed.ok) return parsed.response;
+  const comment = ctx.reviewComments.add({ kind: 'pr', number }, parsed.value);
+  return jsonResponse(comment, 201);
+}
+
+/**
+ * PATCH /api/prs/:number/comments/:commentId — resolves or unresolves the
+ * comment's GitHub review thread (PrManager.resolveComment). Unlike the
+ * run-keyed route's plain local flag flip, this talks to GitHub over
+ * GraphQL: resolution lives on the *thread*, not the comment, and REST has
+ * no way to touch it. 409s a comment GET hasn't threaded yet (no
+ * `githubThreadId`) rather than flipping a local flag GitHub never saw.
+ */
+async function updatePrComment(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string,
+  commentId: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { resolved?: unknown };
+  if (typeof body.resolved !== 'boolean') {
+    return errorResponse(400, 'resolved must be a boolean');
+  }
+  const comment = await ctx.prManager.resolveComment(
+    number,
+    commentId,
+    body.resolved
+  );
+  return jsonResponse(comment);
+}
+
+/**
+ * POST /api/prs/:number/comments/:commentId/reply — posts the reply to
+ * GitHub via REST's `in_reply_to` (PrManager.replyToComment), then appends
+ * it locally under GitHub's own author/timestamp/id rather than the
+ * caller's. 409s a comment that was never pushed to GitHub (no
+ * `githubId`) — there is no thread there to reply into.
+ */
+async function replyPrComment(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string,
+  commentId: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { body?: unknown };
+  if (typeof body.body !== 'string' || body.body.trim() === '') {
+    return errorResponse(400, 'body is required');
+  }
+  const comment = await ctx.prManager.replyToComment(
+    number,
+    commentId,
+    body.body.trim()
+  );
+  return jsonResponse(comment);
+}
+
+/**
+ * POST /api/prs/:number/review-submit — pushes the pending comment batch
+ * as one GitHub review (PrManager.pushPrReview).
+ *
+ * Deliberately NOT named POST /api/prs/:number/review: that path already
+ * exists above (reviewRepoPr) as a `gh pr review` one-shot verdict with no
+ * comment batch involved at all. Reusing it here would fire both `gh pr
+ * review` AND this batch push for one submit action — two separate
+ * reviews landing on the same PR. Naming this sibling `-submit` instead
+ * mirrors POST /api/runs/:id/review-submit, which sits next to the
+ * unrelated POST /api/runs/:id/review for exactly the same reason.
+ *
+ * GitHub 422s a `comment` verdict with both an empty body and an empty
+ * comment batch — there is nothing to submit. Checked here, before the
+ * call, so that case is one clear 400 instead of a raw `gh api` error
+ * string reaching the caller.
+ */
+async function submitPrReview(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { verdict?: unknown; body?: unknown };
+  const verdict = body.verdict;
+  if (
+    verdict !== 'approve' &&
+    verdict !== 'request-changes' &&
+    verdict !== 'comment'
+  ) {
+    return errorResponse(
+      400,
+      "invalid verdict: expected 'approve', 'request-changes' or 'comment'"
+    );
+  }
+  const text = typeof body.body === 'string' ? body.body.trim() : '';
+  if (verdict === 'request-changes' && text === '') {
+    return errorResponse(400, 'a request-changes review requires a body');
+  }
+  if (verdict === 'comment' && text === '') {
+    const pending = ctx.reviewComments.pendingCount({ kind: 'pr', number });
+    if (pending === 0) {
+      return errorResponse(
+        400,
+        'nothing to submit — leave a note or a comment first'
+      );
+    }
+  }
+  const result = await ctx.prManager.pushPrReview(number, verdict, text);
+  return jsonResponse(result);
 }
 
 // `fromRunId` is optional and identifies the SENDER (a different run than
@@ -3050,6 +3237,50 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await commentRepoPr(req, ctx, segments[1]);
+      }
+      // GET/POST /api/prs/:number/comments, PATCH .../comments/:commentId,
+      // POST .../comments/:commentId/reply — the line-comment mirror's
+      // PR-keyed twin of the /api/runs/:id/comments verbs above. See
+      // listPrComments/addPrComment/updatePrComment/replyPrComment: each
+      // resolves `number` itself (via PrManager, never a caller-supplied
+      // URL) before any `gh` call.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'comments' &&
+        method === 'GET'
+      ) {
+        return await listPrComments(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'comments' &&
+        method === 'POST'
+      ) {
+        return await addPrComment(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'comments' &&
+        method === 'PATCH'
+      ) {
+        return await updatePrComment(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'comments' &&
+        segments[4] === 'reply' &&
+        method === 'POST'
+      ) {
+        return await replyPrComment(req, ctx, segments[1], segments[3]);
+      }
+      // POST /api/prs/:number/review-submit — see submitPrReview for why
+      // this is not named .../review (that path is reviewRepoPr, above).
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review-submit' &&
+        method === 'POST'
+      ) {
+        return await submitPrReview(req, ctx, segments[1]);
       }
     }
 

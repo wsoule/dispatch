@@ -867,7 +867,7 @@ export function useDispatchProject(
       if (client === null || selectedRunId === null) {
         throw new Error('no run selected');
       }
-      return client.fetchReviewComments(selectedRunId);
+      return client.fetchReviewComments({ kind: 'run', runId: selectedRunId });
     },
     enabled: client !== null && selectedRunId !== null,
   });
@@ -2014,7 +2014,10 @@ export function useDispatchProject(
       body: string;
     }): Promise<void> => {
       if (client === null || selectedRunId === null) return;
-      await client.addReviewComment(selectedRunId, input);
+      await client.addReviewComment(
+        { kind: 'run', runId: selectedRunId },
+        input
+      );
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]
@@ -2023,7 +2026,11 @@ export function useDispatchProject(
   const handleResolveReviewComment = useCallback(
     async (commentId: string, resolved: boolean): Promise<void> => {
       if (client === null || selectedRunId === null) return;
-      await client.resolveReviewComment(selectedRunId, commentId, resolved);
+      await client.resolveReviewComment(
+        { kind: 'run', runId: selectedRunId },
+        commentId,
+        resolved
+      );
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]
@@ -2032,7 +2039,11 @@ export function useDispatchProject(
   const handleReplyReviewComment = useCallback(
     async (commentId: string, body: string): Promise<void> => {
       if (client === null || selectedRunId === null) return;
-      await client.replyReviewComment(selectedRunId, commentId, body);
+      await client.replyReviewComment(
+        { kind: 'run', runId: selectedRunId },
+        commentId,
+        body
+      );
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]

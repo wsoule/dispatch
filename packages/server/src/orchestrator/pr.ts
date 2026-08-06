@@ -906,11 +906,12 @@ export class PrManager {
     return merged;
   }
 
-  // POST /api/prs/:number/review (Task 6). Submits every pending comment on
-  // a PR target as one GitHub review — the push half of the mirror. Every
-  // pending comment rides one `comments[]` array on a single request;
-  // looping per comment would make GitHub render N separate reviews
-  // instead of one.
+  // POST /api/prs/:number/review-submit (Task 6) — not .../review, which
+  // already exists as reviewRepoPr's one-shot `gh pr review` verdict; this
+  // is the push half of the comment mirror instead. Submits every pending
+  // comment on a PR target as one GitHub review: every pending comment
+  // rides one `comments[]` array on a single request, since looping per
+  // comment would make GitHub render N separate reviews instead of one.
   async pushPrReview(
     number: number,
     verdict: PrReviewEvent,
@@ -1099,9 +1100,11 @@ export class PrManager {
     );
   }
 
-  // POST /api/prs/:number/threads/sync (Task 5). REST has no notion of a
-  // review thread; this fetches each thread's GraphQL node id and stashes
-  // it on every local comment matched by `githubId` (== `databaseId`).
+  // Called from GET /api/prs/:number/comments (Task 6), right after
+  // syncPrComments — not its own route. REST has no notion of a review
+  // thread; this fetches each thread's GraphQL node id and stashes it on
+  // every local comment matched by `githubId` (== `databaseId`), so
+  // resolveComment below has something to resolve against.
   async syncReviewThreads(number: number): Promise<ReviewComment[]> {
     const pr = await this.resolvePrForComments(number);
     const location = parsePrUrl(pr.url);
@@ -1160,8 +1163,9 @@ export class PrManager {
     return updated;
   }
 
-  // POST /api/prs/:number/comments/:id/resolve (Task 5). Only GraphQL's
-  // `resolveReviewThread`/`unresolveReviewThread` can touch this — a
+  // PATCH /api/prs/:number/comments/:id (Task 6) — the PR-keyed twin of
+  // PATCH /api/runs/:id/comments/:id, but over GraphQL: only
+  // `resolveReviewThread`/`unresolveReviewThread` can touch this. A
   // comment with no `githubThreadId` yet fails loudly here, with no `gh`
   // call at all, rather than flipping the local flag on nothing.
   async resolveComment(
