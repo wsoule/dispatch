@@ -663,12 +663,14 @@ export class PrManager {
     }
     // Code-line comments come from the REST API, not `pr view` — best-effort,
     // so a permissions/parse hiccup just drops the line comments rather than
-    // failing the whole status read.
+    // failing the whole status read. `--paginate` because this endpoint pages
+    // at 30 and the review rail promises github.com replies show up here.
     const location = parsePrUrl(url);
     if (location !== null) {
       const rest = await this.run(this.ctx.rootDir, [
         'gh',
         'api',
+        '--paginate',
         `repos/${location.owner}/${location.repo}/pulls/${location.number}/comments`,
       ]);
       if (rest.ok) {
@@ -848,17 +850,12 @@ export class PrManager {
   // before it writes anything locally (see that method for why that order
   // matters).
   //
-  // `--paginate --slurp`: the REST endpoint pages at 30 comments, and
-  // unpaginated it silently truncates at page 1. mergeComments treats any
-  // local record whose githubId is absent from a pull as deleted upstream,
-  // so a truncated pull on a >30-comment PR would read as GitHub having
-  // deleted comments 31+ and erase their local-only replies/resolved state
-  // on every sync. `--paginate` alone concatenates each page as a separate
-  // top-level JSON value (not valid as one JSON.parse target); `--slurp`
-  // wraps them into one outer array of pages instead. `.flat()` then
-  // collapses that one level of page-arrays into a flat item list — and is
-  // a no-op on an already-flat array, so it equally handles a real
-  // multi-page response and this file's flat single-array test fixtures.
+  // `--paginate`: the REST endpoint pages at 30 comments, and unpaginated it
+  // silently truncates at page 1 — which mergeComments would read as GitHub
+  // having deleted comments 31+, erasing their local-only replies/resolved
+  // state on every sync. gh merges the pages of an array response into one
+  // array (the same way getPrDiffByUrl's `/files` call relies on), so the
+  // output stays a single JSON.parse target.
   private async pullRemoteComments(
     location: NonNullable<ReturnType<typeof parsePrUrl>>
   ): Promise<ReviewComment[]> {
@@ -866,7 +863,6 @@ export class PrManager {
       'gh',
       'api',
       '--paginate',
-      '--slurp',
       `repos/${location.owner}/${location.repo}/pulls/${location.number}/comments`,
     ]);
     if (!result.ok) {
@@ -876,6 +872,8 @@ export class PrManager {
     }
     let raw: unknown[];
     try {
+      // `.flat()` is a no-op on the flat array gh returns; it is kept so a
+      // page-wrapped array (what `--slurp` would produce) also parses.
       raw = (JSON.parse(result.stdout) as unknown[]).flat();
     } catch {
       throw new OrchestratorConflictError(
