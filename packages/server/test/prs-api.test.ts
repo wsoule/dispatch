@@ -925,6 +925,52 @@ describe('POST /api/prs/:number/comments', () => {
     expect(res.status).toBe(400);
   });
 
+  // Review finding: `pending: false` was accepted here, and pushPrReview
+  // only ever pushes what is pending — so such a record could never reach
+  // GitHub, and its Reply and Resolve would 409 forever. The run-keyed
+  // route has no push step and still takes it.
+  it('400s pending:false, which could never reach GitHub', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({ listResult: listResultWithCommentPr() }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${COMMENT_PR.number}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/b.ts',
+          line: 5,
+          anchorText: 'const y = 2;',
+          body: 'why two?',
+          pending: false,
+        }),
+      }
+    );
+    expect(res.status).toBe(400);
+
+    // The other half of the asymmetry, asserted here so the two cannot
+    // drift apart: the run-keyed route publishes locally and still takes it.
+    const runRes = await fetch(`${baseUrl}/api/runs/run-x/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        file: 'src/b.ts',
+        line: 5,
+        anchorText: 'const y = 2;',
+        body: 'why two?',
+        pending: false,
+      }),
+    });
+    expect(runRes.status).toBe(201);
+  });
+
   // Review finding: this was the only PR-comment route that skipped
   // resolveRepoPrByNumber, so it 201ed a draft against a PR number that
   // was never checked against the repo's actual open PRs.
