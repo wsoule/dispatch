@@ -469,6 +469,7 @@ export function ReviewView({
                 onAdd={isPrTarget ? undefined : data.handleAddReviewComment}
                 onResolve={data.handleResolveReviewComment}
                 onReply={data.handleReplyReviewComment}
+                onApply={isPrTarget ? undefined : data.handleApplySuggestion}
               />
             </>
           )}

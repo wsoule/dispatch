@@ -50,9 +50,16 @@ interface PierreReviewDiffProps {
     startLine?: number;
     anchorText: string;
     body: string;
+    /** Replacement text for the commented lines, when the reviewer wrote one in the
+     * composer's suggestion editor. */
+    suggestion?: string;
   }) => Promise<void>;
   onResolve: (commentId: string, resolved: boolean) => Promise<void>;
   onReply: (commentId: string, body: string) => Promise<void>;
+  /** Commits a comment's suggestion onto the run branch. Omitted the same way `onAdd` is — a
+   * GitHub PR target has no run worktree to apply into — which withholds the thread's Apply
+   * button entirely rather than showing it disabled. */
+  onApply?: (commentId: string) => Promise<void>;
   /** Files the reviewer has ticked off — rendered collapsed, the way GitHub does. */
   viewed?: ReadonlySet<string>;
   /** Restricts rendering to one file. Omit for the whole patch in one scroller. */
@@ -87,6 +94,7 @@ export function PierreReviewDiff({
   onAdd,
   onResolve,
   onReply,
+  onApply,
   viewed,
   only,
   findings,
@@ -100,6 +108,10 @@ export function PierreReviewDiff({
     startLine?: number;
     anchorText: string;
   } | null>(null);
+  // The new-side contents of `composing.file`, once `ensureLoaded` resolves — what the
+  // composer's suggestion editor seeds from. `null` while that fetch is in flight, which keeps
+  // the suggestion editor withheld (see `ComposerProps.fileContents`'s own doc comment).
+  const [composerContents, setComposerContents] = useState<string | null>(null);
   // The live line selection. Pierre owns the drag; this only reads it, so that clicking the
   // gutter + on a selected range comments on the whole range rather than the one line hovered.
   const [selection, setSelection] = useState<{
@@ -187,16 +199,23 @@ export function PierreReviewDiff({
           <ReviewComposer
             line={composing?.line ?? 0}
             startLine={annMeta.startLine}
-            onCancel={() => setComposing(null)}
-            onSubmit={(body) => {
+            file={annMeta.file}
+            fileContents={composerContents}
+            onCancel={() => {
+              setComposing(null);
+              setComposerContents(null);
+            }}
+            onSubmit={(body, suggestion) => {
               void onAdd?.({
                 file: annMeta.file,
                 line: composing?.line ?? 0,
                 startLine: annMeta.startLine,
                 anchorText: annMeta.anchorText,
                 body,
+                suggestion,
               });
               setComposing(null);
+              setComposerContents(null);
             }}
           />
         );
@@ -238,12 +257,33 @@ export function PierreReviewDiff({
               anchor="exact"
               onResolve={(resolved) => void onResolve(c.id, resolved)}
               onReply={(body) => void onReply(c.id, body)}
+              onApply={
+                onApply === undefined
+                  ? undefined
+                  : () =>
+                      onApply(c.id).then(() => {
+                        // The suggestion just landed on disk, changing both this file's
+                        // contents and its sha — without this, the next edit (or suggestion
+                        // seeded from a fresh pencil click) would read the pre-apply cache and
+                        // send a stale precondition, same as `handleEditComplete`'s own success
+                        // path below.
+                        invalidate(c.file);
+                      })
+              }
             />
           ))}
         </div>
       );
     },
-    [composing, onAdd, onResolve, onReply]
+    [
+      composing,
+      composerContents,
+      onAdd,
+      onResolve,
+      onReply,
+      onApply,
+      invalidate,
+    ]
   );
 
   const renderGutterUtility = useCallback(
@@ -279,6 +319,12 @@ export function PierreReviewDiff({
                 : {}),
               anchorText: '',
             });
+            // Cleared first so a previous compose's contents can't briefly seed this one's
+            // suggestion editor while the new fetch is in flight.
+            setComposerContents(null);
+            void ensureLoaded(item.id).then((result) => {
+              setComposerContents(result?.contents ?? null);
+            });
           }}
           className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center"
         >
@@ -286,7 +332,7 @@ export function PierreReviewDiff({
         </button>
       );
     },
-    [selection, editing]
+    [selection, editing, ensureLoaded]
   );
 
   // Begins an edit session for `file`, gated on its contents actually being in hand — see

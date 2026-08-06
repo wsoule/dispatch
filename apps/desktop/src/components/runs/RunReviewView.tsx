@@ -61,11 +61,16 @@ interface RunReviewViewProps {
   onAddComment?: (input: {
     file: string;
     line: number;
+    startLine?: number;
     anchorText: string;
     body: string;
+    /** Replacement text for the commented lines. Omitted for a prose-only comment. */
+    suggestion?: string;
   }) => Promise<void>;
   onResolveComment?: (commentId: string, resolved: boolean) => Promise<void>;
   onReplyComment?: (commentId: string, body: string) => Promise<void>;
+  /** Commits a comment's suggestion onto the run branch — see `PierreReviewDiff`'s `onApply`. */
+  onApplySuggestion?: (commentId: string) => Promise<void>;
   /** Submits the staged review — publishes its comments, then acts on the verdict. */
   onSubmitReview?: (
     verdict: import('@dispatch/client').ReviewVerdict,
@@ -102,6 +107,7 @@ export function RunReviewView({
   onAddComment,
   onResolveComment,
   onReplyComment,
+  onApplySuggestion,
   onSubmitReview,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
@@ -207,6 +213,7 @@ export function RunReviewView({
               onAdd={onAddComment}
               onResolve={onResolveComment}
               onReply={onReplyComment}
+              onApply={onApplySuggestion}
             />
           ) : (
             <RunDiffView
