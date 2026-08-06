@@ -86,6 +86,16 @@ describe('resolveApplySuggestionFailure', () => {
     expect(outcome.message).toBe("This run's worktree is gone.");
   });
 
+  it('disables the button on run-reviewed, which no retry can clear', () => {
+    const outcome = resolveApplySuggestionFailure(
+      new ApiError('run-reviewed', 409)
+    );
+    expect(outcome.disable).toBe(true);
+    expect(outcome.message).toBe(
+      'This run has already been reviewed, so its branch is closed to further edits.'
+    );
+  });
+
   it('falls back to a generic sentence for an unrecognised 409, without disabling', () => {
     const outcome = resolveApplySuggestionFailure(
       new ApiError('something-else', 409)

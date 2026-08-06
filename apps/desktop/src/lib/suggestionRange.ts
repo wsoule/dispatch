@@ -31,13 +31,15 @@ export interface ApplySuggestionOutcome {
   /** Reviewer-facing sentence explaining the failure. */
   message: string;
   /**
-   * True only for `anchor-drifted` — the one failure where retrying the exact same request
-   * would fail the same way, because the code the suggestion names has moved since it was
-   * written and applying by line number would edit the wrong lines. Every other failure (a
-   * busy worktree, a missing one) is transient or environmental, so the button stays clickable.
+   * True for the failures where retrying the exact same request can only fail the same way:
+   * the anchored code has moved, or the run has been reviewed and its branch is closed. A busy
+   * or missing worktree is transient or environmental, so the button stays clickable.
    */
   disable: boolean;
 }
+
+// Failures no retry can clear — see `ApplySuggestionOutcome.disable`.
+const PERMANENT_APPLY_FAILURES = new Set(['anchor-drifted', 'run-reviewed']);
 
 /**
  * The server's machine-readable `applySuggestion` 409 codes, mirrored from
@@ -51,12 +53,14 @@ const APPLY_SUGGESTION_ERROR_MESSAGES: Record<string, string> = {
   'worktree-busy':
     'An agent is working in this worktree — wait for it to finish, then try again.',
   'worktree-missing': "This run's worktree is gone.",
+  'run-reviewed':
+    'This run has already been reviewed, so its branch is closed to further edits.',
 };
 
 /**
  * Turns a failed `applySuggestion` call into the sentence the reviewer sees, and decides whether
- * retrying could ever succeed. Pulled out of `ReviewThread` so the "only anchor-drifted disables"
- * decision is unit-testable without rendering the thread.
+ * retrying could ever succeed. Pulled out of `ReviewThread` so the disable decision is
+ * unit-testable without rendering the thread.
  */
 export function resolveApplySuggestionFailure(
   error: unknown
@@ -66,7 +70,7 @@ export function resolveApplySuggestionFailure(
       message:
         APPLY_SUGGESTION_ERROR_MESSAGES[error.message] ??
         'Could not apply this suggestion.',
-      disable: error.message === 'anchor-drifted',
+      disable: PERMANENT_APPLY_FAILURES.has(error.message),
     };
   }
   return { message: 'Could not apply this suggestion.', disable: false };

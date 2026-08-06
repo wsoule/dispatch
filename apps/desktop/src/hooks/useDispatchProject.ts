@@ -2049,7 +2049,12 @@ export function useDispatchProject(
   // actions here give themselves, rather than waiting on that round trip.
   const handleApplySuggestion = useCallback(
     async (commentId: string): Promise<void> => {
-      if (client === null || selectedRunId === null) return;
+      // Same rule as `handleAddReviewComment`: resolve only when the POST really happened, or
+      // throw. Resolving with nothing would let the thread render a landed "Applied" — and
+      // evict the file cache — for a request that was never sent.
+      if (client === null || selectedRunId === null) {
+        throw new Error('dispatchd client not ready');
+      }
       await client.applySuggestion(selectedRunId, commentId);
       invalidateReview();
     },
