@@ -243,12 +243,16 @@ export class ReviewCommentStore {
   /**
    * Moves every comment from one target onto the end of another. A run whose
    * comments now resolve to its PR would otherwise strand what it wrote
-   * before. Emptying the source is what makes a second call a no-op.
+   * before. Ids the destination already holds are skipped instead of
+   * appended: the two writes are not atomic, so a move that failed to empty
+   * the source must converge on the next call rather than duplicate.
    */
   moveAll(from: ReviewTarget, to: ReviewTarget): void {
     const moving = this.list(from);
     if (moving.length === 0) return;
-    this.write(to, [...this.list(to), ...moving]);
+    const existing = this.list(to);
+    const known = new Set(existing.map((c) => c.id));
+    this.write(to, [...existing, ...moving.filter((c) => !known.has(c.id))]);
     this.write(from, []);
   }
 

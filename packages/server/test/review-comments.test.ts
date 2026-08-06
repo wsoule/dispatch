@@ -257,6 +257,26 @@ describe('ReviewCommentStore.moveAll', () => {
     store.moveAll(run('r-2'), pr);
     expect(store.list(pr)).toHaveLength(1);
   });
+
+  // The two writes are not atomic: if emptying the source fails, the same
+  // records sit in both files. Moving again must converge rather than append
+  // a second copy on every request that resolves the run to its PR.
+  test('does not re-append what the destination already has', () => {
+    const store = new ReviewCommentStore(root(), '');
+    const kept = store.add(run('r-1'), {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'one',
+    });
+    store.moveAll(run('r-1'), pr);
+    // As if `write(from, [])` had thrown after the destination write landed.
+    store.replaceAll(run('r-1'), [kept]);
+
+    store.moveAll(run('r-1'), pr);
+    expect(store.list(pr).map((c) => c.id)).toEqual([kept.id]);
+    expect(store.list(run('r-1'))).toEqual([]);
+  });
 });
 
 describe('ReviewCommentStore attribution', () => {
