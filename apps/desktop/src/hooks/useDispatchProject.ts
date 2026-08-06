@@ -12,6 +12,7 @@ import type {
   PlanProposal,
   PlanRecord,
   RepoPr,
+  ReviewComment,
   RunDetail,
   RunMeta,
   RunQuestion,
@@ -261,6 +262,11 @@ export interface DispatchProjectData {
 
   /** Line-level review comments on the selected run's diff. */
   reviewComments: import('@dispatch/client').ReviewComment[];
+  /**
+   * Resolves with the created comment, not just `void` — the composer's `Apply now` action
+   * needs the new comment's id back so it can immediately apply its suggestion through the
+   * same path the thread's own Apply button uses.
+   */
   handleAddReviewComment: (input: {
     file: string;
     line: number;
@@ -269,7 +275,7 @@ export interface DispatchProjectData {
     body: string;
     /** Replacement text for the commented lines. Omitted for a prose-only comment. */
     suggestion?: string;
-  }) => Promise<void>;
+  }) => Promise<ReviewComment>;
   /** Commits a comment's suggestion onto the run branch. Fails with a 409 `anchor-drifted`
    * `ApiError` if the code named by the comment's line range has moved since it was written. */
   handleApplySuggestion: (commentId: string) => Promise<void>;
@@ -2024,10 +2030,15 @@ export function useDispatchProject(
       body: string;
       /** Replacement text for the commented lines. Omitted for a prose-only comment. */
       suggestion?: string;
-    }): Promise<void> => {
-      if (client === null || selectedRunId === null) return;
-      await client.addReviewComment(selectedRunId, input);
+    }): Promise<ReviewComment> => {
+      // Mirrors `handleEnrichTask`'s guard: this must resolve with a real comment or throw,
+      // never resolve with nothing — `Apply now` awaits this to get the id it applies next.
+      if (client === null || selectedRunId === null) {
+        throw new Error('dispatchd client not ready');
+      }
+      const created = await client.addReviewComment(selectedRunId, input);
       invalidateReview();
+      return created;
     },
     [client, selectedRunId, invalidateReview]
   );
