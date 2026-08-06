@@ -60,6 +60,15 @@ test('a payload with no path is dropped rather than stored half-formed', () => {
   expect(mapGitHubComment({ ...base, path: undefined })).toBeNull();
 });
 
+test('a reply payload is dropped rather than duplicated as a top-level thread', () => {
+  // GET .../comments returns replies alongside their parent, carrying the
+  // same path/line/diff_hunk. PrManager.replyToComment already nests a
+  // locally posted reply under its parent; reverting the in_reply_to_id
+  // check here would make this same reply reappear as a second, standalone
+  // comment anchored at the same file and line on the very next pull.
+  expect(mapGitHubComment({ ...base, in_reply_to_id: 101 })).toBeNull();
+});
+
 // Builds a minimal, valid ReviewComment for mergeComments tests, with
 // overrides for the fields each rule actually turns on.
 function comment(overrides: Partial<ReviewComment> = {}): ReviewComment {

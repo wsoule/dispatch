@@ -67,6 +67,8 @@ export interface ReviewReply {
   author: string;
   body: string;
   created: string;
+  /** GitHub comment id, when this reply was posted to or pulled from GitHub. */
+  githubId?: number;
 }
 
 export interface AddCommentInput {
@@ -182,14 +184,23 @@ export class ReviewCommentStore {
     commentId: string,
     body: string,
     author = this.defaultAuthor,
-    now = new Date().toISOString()
+    now = new Date().toISOString(),
+    // Set by PrManager.replyToComment once GitHub has confirmed the post,
+    // so a later pull can recognise this reply instead of re-adding it.
+    githubId?: number
   ): ReviewComment {
     const all = this.list(target);
     const comment = all.find((c) => c.id === commentId);
     if (comment === undefined) {
       throw new Error(`review comment not found: ${commentId}`);
     }
-    comment.replies.push({ id: newId('rr'), author, body, created: now });
+    comment.replies.push({
+      id: newId('rr'),
+      author,
+      body,
+      created: now,
+      ...(githubId !== undefined ? { githubId } : {}),
+    });
     this.write(target, all);
     return comment;
   }

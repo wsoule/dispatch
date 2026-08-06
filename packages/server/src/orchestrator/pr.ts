@@ -1029,12 +1029,9 @@ export class PrManager {
     return { pushed: pending.length };
   }
 
-  // POST /api/prs/:number/comments/:id/reply (Task 5). Replies to one
-  // review thread via REST's `in_reply_to`, which only works against a
-  // comment GitHub already knows about — a local-only draft has no
-  // `githubId` and thus no thread to reply into, so that case is refused
-  // rather than silently posted as a new top-level comment (which would
-  // orphan the reviewer's reply from the thread they meant to answer).
+  // POST /api/prs/:number/comments/:id/reply (Task 5). Replies via REST's
+  // `in_reply_to`, which needs a comment GitHub already knows about — a
+  // local-only draft has no `githubId`, so that case is refused up front.
   async replyToComment(
     number: number,
     commentId: string,
@@ -1084,29 +1081,27 @@ export class PrManager {
       );
     }
     // GitHub's created comment is the source of truth for who/what/when —
-    // not the caller's locally-known identity — since the person posting
-    // a reply in dispatch may not be who `gh` is authenticated as.
+    // `gh` may be authenticated as someone other than the caller.
     const replyBody = typeof raw.body === 'string' ? raw.body : body;
     const replyAuthor = authorLogin(raw.user);
     const replyCreated =
       typeof raw.created_at === 'string'
         ? raw.created_at
         : new Date().toISOString();
+    const replyGithubId = typeof raw.id === 'number' ? raw.id : undefined;
     return this.ctx.reviewComments.reply(
       target,
       commentId,
       replyBody,
       replyAuthor,
-      replyCreated
+      replyCreated,
+      replyGithubId
     );
   }
 
   // POST /api/prs/:number/threads/sync (Task 5). REST has no notion of a
-  // review thread, only individual comments — resolving one needs the
-  // thread's GraphQL node id, which this fetches and stashes on every
-  // local comment it can match by `githubId` (REST's numeric id, exposed
-  // in GraphQL as `databaseId`). Comments GitHub does not (yet) know
-  // about, or whose thread the response does not cover, are left as-is.
+  // review thread; this fetches each thread's GraphQL node id and stashes
+  // it on every local comment matched by `githubId` (== `databaseId`).
   async syncReviewThreads(number: number): Promise<ReviewComment[]> {
     const pr = await this.resolvePrForComments(number);
     const location = parsePrUrl(pr.url);
@@ -1165,14 +1160,10 @@ export class PrManager {
     return updated;
   }
 
-  // POST /api/prs/:number/comments/:id/resolve (Task 5). Resolving is a
-  // property of the review thread, not the comment, and REST cannot touch
-  // it at all — only the `resolveReviewThread`/`unresolveReviewThread`
-  // GraphQL mutations can. A comment syncReviewThreads has not (yet)
-  // tagged with a `githubThreadId` has nothing for that mutation to act
-  // on, so it fails loudly here — without shelling out at all — rather
-  // than flipping the local flag and reporting success on a change GitHub
-  // never saw.
+  // POST /api/prs/:number/comments/:id/resolve (Task 5). Only GraphQL's
+  // `resolveReviewThread`/`unresolveReviewThread` can touch this — a
+  // comment with no `githubThreadId` yet fails loudly here, with no `gh`
+  // call at all, rather than flipping the local flag on nothing.
   async resolveComment(
     number: number,
     commentId: string,
@@ -1212,15 +1203,23 @@ export class PrManager {
         `gh api graphql ${mutation} failed: ${commandErrorText(result)}`
       );
     }
+    // GitHub's GraphQL endpoint returns HTTP 200 even when the mutation
+    // itself failed (stale/deleted thread id, no permission) — the failure
+    // only shows up as a null payload plus an `errors` array, so `result.ok`
+    // alone is not proof anything actually resolved.
+    const threadId = extractMutationThreadId(result.stdout, mutation);
+    if (threadId === undefined) {
+      throw new OrchestratorConflictError(
+        `gh api graphql ${mutation} failed: ${graphqlErrorMessage(result.stdout)}`
+      );
+    }
     return this.ctx.reviewComments.setResolved(target, commentId, resolved);
   }
 }
 
-// Walks a `reviewThreads` GraphQL response into a REST comment id ->
-// GraphQL thread node id lookup. Deliberately tolerant of every shape
-// gone wrong (missing repository/pullRequest, absent nodes) — a thread
-// sync should degrade to "no threads tagged" rather than throw on a
-// payload that answered the query but had nothing to report yet.
+// Walks a `reviewThreads` GraphQL response into a REST comment id -> thread
+// node id lookup, tolerant of every missing-field shape (a thread sync
+// should degrade to "nothing tagged", not throw on a still-valid response).
 function collectThreadIds(raw: unknown): Map<number, string> {
   const threadIdByCommentId = new Map<number, string>();
   if (raw === null || typeof raw !== 'object') return threadIdByCommentId;
@@ -1249,6 +1248,41 @@ function collectThreadIds(raw: unknown): Map<number, string> {
     }
   }
   return threadIdByCommentId;
+}
+
+// Reads `data.<mutation>.thread.id`; undefined on parse failure or a null
+// `data`/`data.<mutation>` — GitHub's own HTTP-200 failure signal.
+function extractMutationThreadId(
+  stdout: string,
+  mutation: string
+): string | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const data = (raw as { data?: Record<string, unknown> | null }).data;
+  if (data === null || data === undefined) return undefined;
+  const entry = data[mutation] as { thread?: { id?: unknown } } | null;
+  const id = entry?.thread?.id;
+  return typeof id === 'string' ? id : undefined;
+}
+
+// Best-effort reason for a graphql call that reported ok:true without
+// truly succeeding — GitHub's `errors[0].message`, or a generic fallback.
+function graphqlErrorMessage(stdout: string): string {
+  try {
+    const raw = JSON.parse(stdout) as {
+      errors?: Array<{ message?: unknown }>;
+    };
+    const message = raw.errors?.[0]?.message;
+    if (typeof message === 'string' && message !== '') return message;
+  } catch {
+    return 'invalid JSON response';
+  }
+  return 'no thread returned';
 }
 
 // Pulls a `login` off gh's author/user object shape (either `{login}` from the
