@@ -1553,6 +1553,19 @@ describe('run review routes on a Dispatch-opened PR', () => {
   // a terminal run before it will push a branch and stamp `prUrl`.
   const FINISHES: FakeExecutorScript = { finish: { state: 'finished' } };
 
+  // Same, but reporting a session id — what `sendMessage(resume: true)`
+  // needs before it will re-dispatch a terminal run into its own worktree.
+  const RESUMABLE: FakeExecutorScript = {
+    finish: { state: 'finished', sessionId: 's-1' },
+  };
+
+  // Pauses at an approval gate, so a test can act on a deterministically
+  // live run — the mid-run message path, not the resume one.
+  const STAYS_LIVE: FakeExecutorScript = {
+    steps: [{ approval: { requestId: 'gate', toolName: 'noop', input: {} } }],
+    finish: { state: 'finished', sessionId: 's-1' },
+  };
+
   const OK: CommandResult = { ok: true, stdout: '', stderr: '' };
 
   // `gh pr create`'s only stdout is the new PR's url; returning COMMENT_PR's
@@ -1662,6 +1675,14 @@ describe('run review routes on a Dispatch-opened PR', () => {
     });
   }
 
+  function sendBack(runId: string, note: string): Promise<Response> {
+    return fetch(`${baseUrl}/api/runs/${runId}/send-back`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+  }
+
   function replyToComment(
     runId: string,
     commentId: string,
@@ -1713,6 +1734,56 @@ describe('run review routes on a Dispatch-opened PR', () => {
       ),
     };
   }
+
+  // A run is reviewed AFTER it finishes, so a terminal run is the send-back's
+  // normal case — and the plain message path refuses one outright.
+  it("resumes a finished run's send-back instead of refusing it", async () => {
+    await start({ listResult: listResultWithCommentPr() }, RESUMABLE);
+    const runId = await dispatchRun();
+    await waitFor(async () => {
+      const run = await json(await fetch(`${baseUrl}/api/runs/${runId}`));
+      return run.meta.state === 'finished';
+    });
+
+    const res = await sendBack(runId, 'please fix x');
+    expect(res.status).toBe(200);
+    const resumed = await json(res);
+    expect(resumed.id).not.toBe(runId);
+    expect(resumed.resumedFrom).toBe(runId);
+  });
+
+  // The ruling: resuming pushes more commits onto the same branch, which is
+  // exactly how the request-changes loop updates a PR — nothing is torn down.
+  it('resumes a finished run that has an open PR', async () => {
+    await start(
+      {
+        listResult: listResultWithCommentPr(),
+        pushBranchResult: OK,
+        createResult: CREATES_COMMENT_PR,
+      },
+      RESUMABLE
+    );
+    const runId = await runWithOpenPr();
+
+    const res = await sendBack(runId, 'please fix x');
+    expect(res.status).toBe(200);
+    expect((await json(res)).resumedFrom).toBe(runId);
+  });
+
+  it('keeps a live run on the mid-run message path', async () => {
+    await start({ listResult: listResultWithCommentPr() }, STAYS_LIVE);
+    const runId = await dispatchRun();
+    await waitFor(async () => {
+      const run = await json(await fetch(`${baseUrl}/api/runs/${runId}`));
+      return run.meta.state === 'awaiting-approval';
+    });
+
+    const res = await sendBack(runId, 'while you are in there');
+    expect(res.status).toBe(200);
+    const meta = await json(res);
+    expect(meta.id).toBe(runId);
+    expect(meta.resumedFrom).toBeUndefined();
+  });
 
   it('writes a run-with-PR comment to the PR store, not the run store', async () => {
     await start(
@@ -1882,9 +1953,9 @@ describe('run review routes on a Dispatch-opened PR', () => {
     expect(sent).toContain('Line 3');
   });
 
-  // Documents what a finished run-with-PR actually does: the batch reaches
-  // GitHub, and the agent resume is refused by the orchestrator (a run with
-  // an open PR is not resumable) — reported, not silently swallowed.
+  // A resume can still be refused — FINISHES reports no session id, so this
+  // run has nothing to resume into. What matters is that the GitHub half is
+  // reported alongside the refusal rather than silently swallowed.
   it('reports the resume refusal without losing the GitHub push', async () => {
     const payloads: Record<string, unknown>[] = [];
     await start(

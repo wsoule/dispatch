@@ -783,7 +783,9 @@ export class Orchestrator {
           `task already has a live run: ${live.id}`
         );
       }
-      this.requireNoOpenPr(meta);
+      // Deliberately NOT requireNoOpenPr: an open PR is the primary
+      // request-changes case. Resuming tears nothing down — the agent
+      // continues on the same branch and its commits update the PR.
       return this.requestChanges(
         meta,
         text,
@@ -2340,13 +2342,15 @@ export class Orchestrator {
   }
 
   // I4: once PrManager.openPr has pushed a run's branch and opened a PR
-  // (recorded as meta.prUrl), every *local* review/resume action must
-  // refuse rather than race the remote review — a local merge/discard
-  // would tear down the very worktree/branch the open PR points at, and
-  // resuming would keep pushing commits to a branch someone may already be
-  // reviewing on GitHub. The poller (PrManager.pollOnce) already skips any
-  // run that's been reviewed, so this is the complementary guard on the
-  // still-open side.
+  // (recorded as meta.prUrl), every action that would DESTROY that branch or
+  // its worktree must refuse — a local merge/discard, a branch delete or a
+  // free-disk would tear down the very thing the open PR points at. The
+  // poller (PrManager.pollOnce) already skips any run that's been reviewed,
+  // so this is the complementary guard on the still-open side.
+  //
+  // Resuming is deliberately not on that list: it adds commits to the branch
+  // rather than removing it, which is how a request-changes review is meant
+  // to reach a Dispatch-opened PR. See sendMessage's resume block.
   private requireNoOpenPr(meta: RunMeta): void {
     if (meta.prUrl !== undefined) {
       throw new OrchestratorConflictError(
