@@ -1,12 +1,24 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
+import type { FakeExecutorScript } from '../src/orchestrator/executors/fake.js';
+import type { Orchestrator } from '../src/orchestrator/orchestrator.js';
+import { reviewCommentsPath } from '../src/orchestrator/paths.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
+import type { ReviewComment } from '../src/reviewComments.js';
+import type { ReviewTarget } from '../src/reviewTarget.js';
 import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
@@ -52,6 +64,11 @@ interface StubResults {
   // whether the query text starts with `mutation`, same as pr.test.ts.
   reviewThreadsResult?: CommandResult;
   resolveThreadResult?: CommandResult;
+  // `git push -u origin <branch>` and `gh pr create` — the two calls
+  // PrManager.openPr makes before it stamps a run's `prUrl`, which the
+  // Dispatch-opened-PR describe at the bottom of this file needs.
+  pushBranchResult?: CommandResult;
+  createResult?: CommandResult;
 }
 
 // Captures the JSON body pushPrReview writes to its scratch file, read at
@@ -80,6 +97,24 @@ function stubRunner(
         stdout: 'https://github.com/example/repo.git',
         stderr: '',
       });
+    }
+    if (cmd[0] === 'git' && cmd[1] === 'push') {
+      return Promise.resolve(
+        results.pushBranchResult ?? {
+          ok: false,
+          stdout: '',
+          stderr: 'no pushBranchResult stubbed',
+        }
+      );
+    }
+    if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'create') {
+      return Promise.resolve(
+        results.createResult ?? {
+          ok: false,
+          stdout: '',
+          stderr: 'no createResult stubbed',
+        }
+      );
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'list') {
       return Promise.resolve(results.listResult);
@@ -345,6 +380,9 @@ let fakeHome: string;
 let root: string;
 let handle: ServerHandle;
 let baseUrl: string;
+// Captured through startServer's registerExecutors hook — only the
+// Dispatch-opened-PR describe at the bottom needs it.
+let orchestrator: Orchestrator;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(() => {
@@ -1497,5 +1535,321 @@ describe('POST /api/prs/:number/review-submit', () => {
       }
     );
     expect(res.status).toBe(409);
+  });
+});
+
+// A PR Dispatch opened itself is BOTH targets (spec §Review): it resolves to
+// `pr` so a line comment reaches GitHub, and stays a `run` so the review can
+// still travel back to the agent. The ReviewQueue dedups such a PR to its
+// run-backed row, so every assertion below drives the /api/runs/:id/*
+// routes — the only ones that row can reach.
+describe('run review routes on a Dispatch-opened PR', () => {
+  // A run that finishes immediately: enough to reach openPr, which requires
+  // a terminal run before it will push a branch and stamp `prUrl`.
+  const FINISHES: FakeExecutorScript = { finish: { state: 'finished' } };
+
+  const OK: CommandResult = { ok: true, stdout: '', stderr: '' };
+
+  // `gh pr create`'s only stdout is the new PR's url; returning COMMENT_PR's
+  // makes the run resolve to PR #42, the one listResultWithCommentPr serves.
+  const CREATES_COMMENT_PR: CommandResult = {
+    ok: true,
+    stdout: `${COMMENT_PR.url}\n`,
+    stderr: '',
+  };
+
+  async function start(
+    results: StubResults,
+    script: FakeExecutorScript,
+    postedReviewPayloads?: Record<string, unknown>[]
+  ): Promise<void> {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner(results, postedReviewPayloads),
+      registerExecutors: (o) => {
+        orchestrator = o;
+        o.registerExecutor('fake', new FakeExecutor(script));
+      },
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+  }
+
+  async function waitFor(check: () => Promise<boolean>): Promise<void> {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('waitFor timed out');
+  }
+
+  // Reads a target's comment file straight off disk — the only way to prove
+  // WHICH store a run's comment actually landed in, since the run routes now
+  // serve both.
+  function stored(target: ReviewTarget): ReviewComment[] {
+    const path = reviewCommentsPath(root, target);
+    if (!existsSync(path)) return [];
+    return JSON.parse(readFileSync(path, 'utf8')) as ReviewComment[];
+  }
+
+  async function dispatchRun(): Promise<string> {
+    const task = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'PR me' }),
+      })
+    );
+    const run = await json(
+      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ executor: 'fake' }),
+      })
+    );
+    return run.id as string;
+  }
+
+  // Dispatches a run, waits for it to finish, then opens its PR through the
+  // production route (POST /api/runs/:id/review { action: 'pr' }) rather than
+  // stamping `prUrl` behind the API's back.
+  async function runWithOpenPr(): Promise<string> {
+    const runId = await dispatchRun();
+    await waitFor(async () => {
+      const run = await json(await fetch(`${baseUrl}/api/runs/${runId}`));
+      return run.meta.state === 'finished';
+    });
+    const res = await fetch(`${baseUrl}/api/runs/${runId}/review`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'pr' }),
+    });
+    expect(res.status).toBe(200);
+    return runId;
+  }
+
+  function addComment(runId: string, body: string): Promise<Response> {
+    return fetch(`${baseUrl}/api/runs/${runId}/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        file: 'src/a.ts',
+        line: 3,
+        anchorText: 'const x = 1;',
+        body,
+      }),
+    });
+  }
+
+  function submitReview(
+    runId: string,
+    verdict: string,
+    body: string
+  ): Promise<Response> {
+    return fetch(`${baseUrl}/api/runs/${runId}/review-submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ verdict, body }),
+    });
+  }
+
+  it('writes a run-with-PR comment to the PR store, not the run store', async () => {
+    await start(
+      {
+        listResult: listResultWithCommentPr(),
+        pushBranchResult: OK,
+        createResult: CREATES_COMMENT_PR,
+      },
+      FINISHES
+    );
+    const runId = await runWithOpenPr();
+
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+    expect(
+      stored({ kind: 'pr', number: COMMENT_PR.number }).map((c) => c.body)
+    ).toEqual(['why one?']);
+    expect(stored({ kind: 'run', runId })).toEqual([]);
+
+    // And the run route still serves it: the ReviewQueue row is run-keyed.
+    const listRes = await fetch(`${baseUrl}/api/runs/${runId}/comments`);
+    expect(listRes.status).toBe(200);
+    expect((await json(listRes)).map((c: ReviewComment) => c.body)).toEqual([
+      'why one?',
+    ]);
+  });
+
+  it('leaves a run without a PR on its own store', async () => {
+    await start({ listResult: listResultWithCommentPr() }, FINISHES);
+    const runId = await dispatchRun();
+
+    expect((await addComment(runId, 'local only')).status).toBe(201);
+    expect(stored({ kind: 'run', runId }).map((c) => c.body)).toEqual([
+      'local only',
+    ]);
+    expect(stored({ kind: 'pr', number: COMMENT_PR.number })).toEqual([]);
+  });
+
+  // The migration case: comments written before the PR existed sit in the
+  // run's own file, which nothing would read once the resolver points at the
+  // PR. They move across on the first run-comment request after the PR opens.
+  it('carries comments written before the PR onto the PR store', async () => {
+    await start(
+      {
+        listResult: listResultWithCommentPr(),
+        pushBranchResult: OK,
+        createResult: CREATES_COMMENT_PR,
+      },
+      FINISHES
+    );
+    const runId = await dispatchRun();
+    await waitFor(async () => {
+      const run = await json(await fetch(`${baseUrl}/api/runs/${runId}`));
+      return run.meta.state === 'finished';
+    });
+    expect((await addComment(runId, 'written before the PR')).status).toBe(201);
+    expect(stored({ kind: 'run', runId })).toHaveLength(1);
+
+    const prRes = await fetch(`${baseUrl}/api/runs/${runId}/review`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'pr' }),
+    });
+    expect(prRes.status).toBe(200);
+
+    const listRes = await fetch(`${baseUrl}/api/runs/${runId}/comments`);
+    expect((await json(listRes)).map((c: ReviewComment) => c.body)).toEqual([
+      'written before the PR',
+    ]);
+    expect(stored({ kind: 'pr', number: COMMENT_PR.number })).toHaveLength(1);
+    expect(stored({ kind: 'run', runId })).toEqual([]);
+  });
+
+  it('pushes a run-with-PR submit to GitHub as one review', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(
+      {
+        listResult: listResultWithCommentPr(),
+        pushBranchResult: OK,
+        createResult: CREATES_COMMENT_PR,
+        pushReviewResult: { ok: true, stdout: '{}', stderr: '' },
+        commentsListResult: commentsListResultFor(
+          rawGitHubComment({ id: 777, body: 'why one?' })
+        ),
+      },
+      FINISHES,
+      payloads
+    );
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    const res = await submitReview(runId, 'comment', 'one note');
+    expect(res.status).toBe(200);
+    expect((await json(res)).published).toBe(1);
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({
+      commit_id: COMMENT_PR.headRefOid,
+      event: 'COMMENT',
+      body: 'one note',
+    });
+    expect(payloads[0].comments).toHaveLength(1);
+
+    // The surviving record came back from GitHub's own pull carrying its id,
+    // which is what pushPrReview does and publishPending cannot: a local
+    // publish would leave `githubId` undefined.
+    const after = stored({ kind: 'pr', number: COMMENT_PR.number });
+    expect(after).toHaveLength(1);
+    expect(after[0].githubId).toBe(777);
+    expect(after[0].pending).toBe(false);
+  });
+
+  it('publishes a run-without-PR submit locally and never shells out', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start({ listResult: listResultWithCommentPr() }, FINISHES, payloads);
+    const runId = await dispatchRun();
+    expect((await addComment(runId, 'local only')).status).toBe(201);
+
+    const res = await submitReview(runId, 'comment', '');
+    expect(res.status).toBe(200);
+    expect((await json(res)).published).toBe(1);
+    expect(payloads).toEqual([]);
+    expect(stored({ kind: 'run', runId })[0].pending).toBe(false);
+    expect(stored({ kind: 'run', runId })[0].githubId).toBeUndefined();
+  });
+
+  // The "both" the spec asks for: the comment reaches GitHub AND the same
+  // comment is rendered into what the agent is told. `prUrl` is stamped
+  // directly here because openPr only ever runs on a terminal run, and a
+  // terminal run cannot be messaged at all — see the next test.
+  it('still renders a run-with-PR comment into the agent send-back', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(
+      {
+        listResult: listResultWithCommentPr(),
+        pushReviewResult: { ok: true, stdout: '{}', stderr: '' },
+        commentsListResult: commentsListResultFor(
+          rawGitHubComment({ id: 777, body: 'why one?' })
+        ),
+      },
+      {
+        steps: [
+          { approval: { requestId: 'gate', toolName: 'noop', input: {} } },
+        ],
+        finish: { state: 'finished' },
+      },
+      payloads
+    );
+    const runId = await dispatchRun();
+    await waitFor(async () => {
+      const run = await json(await fetch(`${baseUrl}/api/runs/${runId}`));
+      return run.meta.state === 'awaiting-approval';
+    });
+    orchestrator.setRunPrUrl(runId, COMMENT_PR.url);
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    const res = await submitReview(runId, 'request-changes', 'please fix');
+    expect(res.status).toBe(200);
+    expect(payloads).toHaveLength(1);
+
+    const run = await json(await fetch(`${baseUrl}/api/runs/${runId}`));
+    const sent = run.entries
+      .filter((e: { kind: string }) => e.kind === 'message')
+      .map((e: { text: string }) => e.text)
+      .join('\n');
+    expect(sent).toContain('please fix');
+    expect(sent).toContain('why one?');
+    expect(sent).toContain('Line 3');
+  });
+
+  // Documents what a finished run-with-PR actually does: the batch reaches
+  // GitHub, and the agent resume is refused by the orchestrator (a run with
+  // an open PR is not resumable) — reported, not silently swallowed.
+  it('reports the resume refusal without losing the GitHub push', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(
+      {
+        listResult: listResultWithCommentPr(),
+        pushBranchResult: OK,
+        createResult: CREATES_COMMENT_PR,
+        pushReviewResult: { ok: true, stdout: '{}', stderr: '' },
+        commentsListResult: commentsListResultFor(
+          rawGitHubComment({ id: 777, body: 'why one?' })
+        ),
+      },
+      FINISHES,
+      payloads
+    );
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    const res = await submitReview(runId, 'request-changes', 'please fix');
+    expect(res.status).toBe(409);
+    const body = await json(res);
+    expect(body.published).toBe(1);
+    expect(body.error).toBeString();
+    expect(payloads).toHaveLength(1);
   });
 });

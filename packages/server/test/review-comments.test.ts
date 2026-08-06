@@ -219,6 +219,46 @@ describe('ReviewCommentStore', () => {
   });
 });
 
+// moveAll is how a run whose work moved onto a PR keeps the comments it
+// already had: once that run's comments resolve to the PR target, anything
+// left behind in the run's own file is invisible to every surface.
+describe('ReviewCommentStore.moveAll', () => {
+  const pr = { kind: 'pr', number: 9 } as const;
+
+  test('moves a run’s comments onto the pr target and empties the run', () => {
+    const store = new ReviewCommentStore(root(), '');
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'one' });
+    store.add(run('r-1'), { file: 'a', line: 2, anchorText: 'y', body: 'two' });
+    store.moveAll(run('r-1'), pr);
+    expect(store.list(pr).map((c) => c.body)).toEqual(['one', 'two']);
+    expect(store.list(run('r-1'))).toEqual([]);
+  });
+
+  test('appends after what the pr target already had', () => {
+    const store = new ReviewCommentStore(root(), '');
+    store.add(pr, { file: 'a', line: 1, anchorText: 'x', body: 'from github' });
+    store.add(run('r-1'), {
+      file: 'a',
+      line: 2,
+      anchorText: 'y',
+      body: 'mine',
+    });
+    store.moveAll(run('r-1'), pr);
+    expect(store.list(pr).map((c) => c.body)).toEqual(['from github', 'mine']);
+  });
+
+  // Every run comment route calls this, so a second call must not duplicate
+  // what the first one already moved.
+  test('is a no-op the second time, and when there was nothing to move', () => {
+    const store = new ReviewCommentStore(root(), '');
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'one' });
+    store.moveAll(run('r-1'), pr);
+    store.moveAll(run('r-1'), pr);
+    store.moveAll(run('r-2'), pr);
+    expect(store.list(pr)).toHaveLength(1);
+  });
+});
+
 describe('ReviewCommentStore attribution', () => {
   test('an added comment defaults to the store’s configured author', () => {
     const store = new ReviewCommentStore(root(), 'human:wyat');

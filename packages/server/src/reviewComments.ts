@@ -241,6 +241,18 @@ export class ReviewCommentStore {
   }
 
   /**
+   * Moves every comment from one target onto the end of another. A run whose
+   * comments now resolve to its PR would otherwise strand what it wrote
+   * before. Emptying the source is what makes a second call a no-op.
+   */
+  moveAll(from: ReviewTarget, to: ReviewTarget): void {
+    const moving = this.list(from);
+    if (moving.length === 0) return;
+    this.write(to, [...this.list(to), ...moving]);
+    this.write(from, []);
+  }
+
+  /**
    * Publishes every pending comment on a target, returning how many were
    * released.
    *

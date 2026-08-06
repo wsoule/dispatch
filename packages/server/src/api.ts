@@ -78,7 +78,8 @@ import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
-import type { PrManager } from './orchestrator/pr.js';
+import type { PrManager, PrReviewEvent } from './orchestrator/pr.js';
+import { parsePrUrl } from './orchestrator/pr.js';
 import type {
   QuestionRegistry,
   RunQuestion,
@@ -886,9 +887,28 @@ async function linearStates(
   return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
 }
 
+// Which comment store a run's review verbs use. A run whose work lives on a
+// GitHub PR keeps its comments with the PR, so a note reaches the reviewer
+// there and still travels back to the agent. Anything written before the PR
+// was opened moves across on the first call, since the run's own file stops
+// being read the moment this starts answering `pr`.
+function commentTargetForRun(ctx: ApiContext, runId: string): ReviewTarget {
+  const runTarget: ReviewTarget = { kind: 'run', runId };
+  // The in-memory registry first (boot hydrates every run on disk into it);
+  // getRun's transcript replay is the fallback, and reads the whole file.
+  const meta =
+    ctx.orchestrator.list().find((r) => r.id === runId) ??
+    ctx.orchestrator.getRun(runId)?.meta;
+  const location = meta?.prUrl === undefined ? null : parsePrUrl(meta.prUrl);
+  if (location === null) return runTarget;
+  const prTarget: ReviewTarget = { kind: 'pr', number: location.number };
+  ctx.reviewComments.moveAll(runTarget, prTarget);
+  return prTarget;
+}
+
 // GET /api/runs/:id/comments — every review comment on this run's diff.
 function listReviewComments(ctx: ApiContext, runId: string): Response {
-  return jsonResponse(ctx.reviewComments.list({ kind: 'run', runId }));
+  return jsonResponse(ctx.reviewComments.list(commentTargetForRun(ctx, runId)));
 }
 
 type ParsedBody<T> = { ok: true; value: T } | { ok: false; response: Response };
@@ -964,7 +984,10 @@ async function addReviewComment(
 ): Promise<Response> {
   const parsed = await parseAddCommentInput(req);
   if (!parsed.ok) return parsed.response;
-  const comment = ctx.reviewComments.add({ kind: 'run', runId }, parsed.value);
+  const comment = ctx.reviewComments.add(
+    commentTargetForRun(ctx, runId),
+    parsed.value
+  );
   ctx.events.broadcast({ type: 'review.changed', runId });
   return jsonResponse(comment, 201);
 }
@@ -984,7 +1007,7 @@ async function updateReviewComment(
   }
   try {
     const comment = ctx.reviewComments.setResolved(
-      { kind: 'run', runId },
+      commentTargetForRun(ctx, runId),
       commentId,
       body.resolved
     );
@@ -1010,7 +1033,7 @@ async function replyReviewComment(
   }
   try {
     const comment = ctx.reviewComments.reply(
-      { kind: 'run', runId },
+      commentTargetForRun(ctx, runId),
       commentId,
       body.body.trim()
     );
@@ -1019,6 +1042,31 @@ async function replyReviewComment(
   } catch (err) {
     return errorResponse(404, (err as Error).message);
   }
+}
+
+// Sends a run-with-PR's pending batch to GitHub as one review instead of
+// publishing it locally, returning how many were pushed. GitHub rejects a
+// COMMENT/REQUEST_CHANGES review with an empty body, so a note-less submit
+// gets a stand-in rather than gh's raw 422.
+async function pushRunReviewToPr(
+  ctx: ApiContext,
+  number: number,
+  verdict: PrReviewEvent,
+  summary: string,
+  opts: { pendingBefore: number }
+): Promise<number> {
+  // A `comment` verdict with neither a note nor a pending comment is not a
+  // review at all. It is a local no-op today and stays one, rather than
+  // posting an empty review to the PR.
+  if (verdict === 'comment' && summary === '' && opts.pendingBefore === 0) {
+    return 0;
+  }
+  const body =
+    summary === '' && verdict !== 'approve'
+      ? 'See the line comments.'
+      : summary;
+  const { pushed } = await ctx.prManager.pushPrReview(number, verdict, body);
+  return pushed;
 }
 
 /**
@@ -1055,7 +1103,7 @@ async function submitReview(
     );
   }
   const summary = typeof body.body === 'string' ? body.body.trim() : '';
-  const target: ReviewTarget = { kind: 'run', runId };
+  const target = commentTargetForRun(ctx, runId);
 
   // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
   // run. The other two verdicts are meaningful on their own.
@@ -1067,7 +1115,15 @@ async function submitReview(
     );
   }
 
-  const published = ctx.reviewComments.publishPending(target);
+  // On a run whose work is on a PR the batch goes to GitHub instead of being
+  // published locally: pushPrReview clears `pending` in the same step it
+  // assigns `githubId`, which publishPending alongside it would split apart.
+  const published =
+    target.kind === 'pr'
+      ? await pushRunReviewToPr(ctx, target.number, verdict, summary, {
+          pendingBefore,
+        })
+      : ctx.reviewComments.publishPending(target);
   ctx.events.broadcast({ type: 'review.changed', runId });
 
   if (verdict === 'request-changes') {
@@ -1148,7 +1204,7 @@ async function sendBackRun(
   const body = parsed.value as { note?: unknown };
   const note = typeof body.note === 'string' ? body.note.trim() : '';
   const threads = formatCommentsForAgent(
-    ctx.reviewComments.list({ kind: 'run', runId })
+    ctx.reviewComments.list(commentTargetForRun(ctx, runId))
   );
 
   if (note === '' && threads === '') {
