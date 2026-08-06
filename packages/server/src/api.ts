@@ -921,6 +921,21 @@ async function readRunFile(
   if (!existsSync(meta.worktreePath)) {
     return errorResponse(409, 'worktree-missing');
   }
+  if (side === 'old') {
+    // No strict leaf check on this branch: it never touches the filesystem, and
+    // `git show` reads a symlink as an ordinary blob rather than following it,
+    // so an in-repo symlink is legitimate content here. GitRepo's own pathspec
+    // guard still covers an escaping path.
+    const shown = await new GitRepo(meta.worktreePath).show(
+      meta.baseBranch,
+      path
+    );
+    if (!shown.ok) return errorResponse(404, shown.stderr);
+    return jsonResponse({
+      contents: shown.contents,
+      sha: sha256Hex(shown.contents),
+    });
+  }
   // Resolves every parent symlink, and rejects the leaf if it is itself a
   // symlink, so neither a symlinked directory nor a symlinked file inside the
   // worktree can be used to read a file the caller has no business seeing
@@ -928,15 +943,6 @@ async function readRunFile(
   // does — see resolveWorktreeFilePath).
   const onDisk = resolveWorktreeFilePath(meta.worktreePath, path);
   if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
-  const repo = new GitRepo(meta.worktreePath);
-  if (side === 'old') {
-    const shown = await repo.show(meta.baseBranch, path);
-    if (!shown.ok) return errorResponse(404, shown.stderr);
-    return jsonResponse({
-      contents: shown.contents,
-      sha: sha256Hex(shown.contents),
-    });
-  }
   if (!existsSync(onDisk)) return errorResponse(404, `no such file: ${path}`);
   const contents = readFileSync(onDisk, 'utf8');
   return jsonResponse({ contents, sha: sha256Hex(contents) });
@@ -947,9 +953,16 @@ async function readRunFile(
 const REVIEWER_EDIT_TRAILER = 'Dispatch-Reviewer-Edit';
 
 /**
- * Writes `contents` to `onDisk`, stages `file`, and commits with `subject` plus
- * the reviewer-edit trailer. Reverts the write if staging fails, so a rejected
- * stage never leaves an uncommitted change sitting in the worktree.
+ * Writes `contents` to `onDisk`, stages `file`, and commits just that path with
+ * `subject` plus the reviewer-edit trailer. The commit is scoped to `file` so a
+ * reviewer's fix never carries whatever else the agent left staged — which is
+ * exactly what the trailer exists to keep separable.
+ *
+ * Any failure after the write puts the worktree back as it was found: the file
+ * gets its previous contents, and the index gets its previous entry for that
+ * path (not a reset to HEAD, which would discard an agent's staged version).
+ * Otherwise a hook-rejected commit would leave a half-applied write behind and
+ * the reviewer's honest retry would come back as a bogus `stale-base`.
  *
  * Shared by applyRunEdit and applySuggestion: both are a human's edit landing
  * as a commit on the run branch, and differ only in how the new contents were
@@ -966,6 +979,15 @@ async function writeAndCommit(
   runId: string
 ): Promise<Response> {
   const repo = new GitRepo(meta.worktreePath);
+  // Captured before anything is staged, so the failure path below can put the
+  // index back to exactly this rather than to HEAD.
+  const indexBefore = await repo.indexEntry(file);
+  if (!indexBefore.ok) {
+    return errorResponse(
+      indexBefore.stderr === PATH_ESCAPE_ERROR ? 400 : 500,
+      indexBefore.stderr
+    );
+  }
   // The path was already proven to resolve inside the worktree by the caller,
   // so this write can't land outside it; `stage`'s own escape check below is
   // just defense in depth (and still catches a pathspec git itself refuses).
@@ -980,8 +1002,13 @@ async function writeAndCommit(
   }
   const committed = await repo.commit({
     message: `${subject}\n\n${REVIEWER_EDIT_TRAILER}: ${runId}`,
+    paths: [file],
   });
-  if (!committed.ok) return errorResponse(500, committed.stderr);
+  if (!committed.ok) {
+    writeFileSync(onDisk, previous);
+    await repo.restoreIndexEntry(file, indexBefore.entry);
+    return errorResponse(500, committed.stderr);
+  }
 
   ctx.events.broadcast({ type: 'review.changed', runId });
   return jsonResponse({ commit: committed.sha });
@@ -1020,6 +1047,7 @@ async function applyRunEdit(
   const meta = detail.meta;
   if (!existsSync(meta.worktreePath))
     return errorResponse(409, 'worktree-missing');
+  if (meta.reviewedAt !== undefined) return errorResponse(409, 'run-reviewed');
 
   // Resolves every parent symlink and rejects a symlink leaf, so neither a
   // symlinked directory nor a symlinked file inside the worktree can
@@ -1081,6 +1109,7 @@ async function applySuggestion(
   const meta = detail.meta;
   if (!existsSync(meta.worktreePath))
     return errorResponse(409, 'worktree-missing');
+  if (meta.reviewedAt !== undefined) return errorResponse(409, 'run-reviewed');
 
   const comment = ctx.reviewComments
     .list(runId)
