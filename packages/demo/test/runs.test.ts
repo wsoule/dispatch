@@ -1,4 +1,4 @@
-import { DEFAULT_FIX_LOOP } from '@dispatch/core';
+import { DEFAULT_FIX_LOOP, loadConfig } from '@dispatch/core';
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { writeBoard } from '../src/board.js';
 import { actorFile, runsDir } from '../src/paths.js';
 import { FINDINGS } from '../src/records.js';
 import { RUN_STATES, TERMINAL_STATES, writeRuns } from '../src/runs.js';
@@ -37,7 +38,12 @@ interface ReplayedRun {
     baseBranch: string;
     kind?: string;
     resumedFrom?: string;
+    createdAt: string;
+    updatedAt: string;
+    model?: string;
+    sessionId?: string;
     reviewedAt?: string;
+    reviewAction?: string;
     archivedAt?: string;
     stopRequestedAt?: string;
   };
@@ -65,7 +71,9 @@ function replay(path: string): ReplayedRun {
     evidence?: CommandEvidence;
     mutation?: MutationEvidence;
     state?: string;
+    sessionId?: string;
     reviewedAt?: string;
+    reviewAction?: string;
     archivedAt?: string;
     stopRequestedAt?: string;
   }[];
@@ -89,7 +97,9 @@ function replay(path: string): ReplayedRun {
       state = line.state;
       meta = {
         ...meta,
+        sessionId: line.sessionId ?? meta.sessionId,
         reviewedAt: line.reviewedAt ?? meta.reviewedAt,
+        reviewAction: line.reviewAction ?? meta.reviewAction,
         archivedAt: line.archivedAt ?? meta.archivedAt,
         stopRequestedAt: line.stopRequestedAt ?? meta.stopRequestedAt,
       };
@@ -348,6 +358,122 @@ test('the already-merged done-task runs carry reviewedAt; the two in-review anch
     const run = replay(join(dir, `${id}.jsonl`));
     expect(run.meta.reviewedAt).toBeUndefined();
   }
+});
+
+test("a fix round's injected prompt matches requestChanges's real shape — {kind:'message', from:'user', text}, not an agent-to-user broadcast", () => {
+  // orchestrator.ts's requestChanges records the fix loop's prompt as
+  // `{ ts, kind: 'message', from: 'user', text }` — no `fromLabel`, no
+  // `toUser`. RunLogView.tsx renders that pair (`from:'agent', toUser:true`)
+  // as a "TO YOU" megaphone callout reserved for an agent's own
+  // messageUser() calls; using that shape here would make a fix round look
+  // like it is broadcasting instructions to the human instead of receiving
+  // them from the loop.
+  const { root, home } = build();
+  const dir = runsDir(root, home);
+  for (const id of ['r-9d3c81', 'r-2a77f0']) {
+    const run = replay(join(dir, `${id}.jsonl`));
+    const first = run.entries[0];
+    expect(first?.kind).toBe('message');
+    expect(first?.from).toBe('user');
+    expect(first?.fromLabel).toBeUndefined();
+    expect(first?.toUser).toBeUndefined();
+  }
+});
+
+test("every seeded run's timeline is internally consistent: createdAt <= updatedAt, archivedAt (when present) >= createdAt, and a resume dispatches after its parent finished", () => {
+  const { root, home } = build();
+  const dir = runsDir(root, home);
+  const runs = allTranscripts(dir);
+  const byId = new Map(runs.map((r) => [r.meta.id, r]));
+  expect(runs.length).toBeGreaterThan(0);
+
+  for (const run of runs) {
+    expect(run.meta.createdAt <= run.meta.updatedAt).toBe(true);
+    if (run.meta.archivedAt !== undefined) {
+      expect(run.meta.archivedAt >= run.meta.createdAt).toBe(true);
+    }
+    if (run.meta.resumedFrom !== undefined) {
+      const parent = byId.get(run.meta.resumedFrom);
+      expect(parent).toBeDefined();
+      expect(run.meta.createdAt > parent!.meta.updatedAt).toBe(true);
+    }
+  }
+});
+
+test("the fix loop's superseded rounds drop out of the review queue via a bare reviewedAt, not archivedAt, so all four rounds stay visible in the default Runs view", () => {
+  // archiveFilter.ts's hideArchivedRuns hides any run with `archivedAt` set
+  // when "show archived" is off (the default) — archiving r-58cc03/round
+  // 1/round 2 would leave only round 4 visible on screen, hiding the very
+  // fix loop the demo wants to show. A bare `reviewedAt` (no `reviewAction`)
+  // dedups the review queue instead (needsHumanLook returns false on
+  // `reviewedAt` alone) without going through archivedAt at all.
+  const { root, home } = build();
+  const dir = runsDir(root, home);
+  for (const id of ['r-58cc03', 'r-9d3c81', 'r-2a77f0']) {
+    const run = replay(join(dir, `${id}.jsonl`));
+    expect(run.meta.reviewedAt).toBeDefined();
+    expect(run.meta.reviewAction).toBeUndefined();
+    expect(run.meta.archivedAt).toBeUndefined();
+  }
+  // Round 4 is the chain's current HEAD — still owed a human look.
+  const head = replay(join(dir, 'r-c05e19.jsonl'));
+  expect(head.meta.reviewedAt).toBeUndefined();
+  expect(head.meta.archivedAt).toBeUndefined();
+});
+
+test("the fix loop's resumed rounds inherit r-58cc03's model and session id rather than minting their own", () => {
+  // requestChanges (orchestrator.ts) sets `model: oldMeta.model` and
+  // `sessionId: oldMeta.sessionId` on every resumed round — a follow-up must
+  // answer on the model/session the conversation started on.
+  const { root, home } = build();
+  const dir = runsDir(root, home);
+  const parent = replay(join(dir, 'r-58cc03.jsonl'));
+  expect(parent.meta.model).toBe('claude-opus-5');
+  expect(parent.meta.sessionId).toBeDefined();
+
+  for (const id of ['r-9d3c81', 'r-2a77f0']) {
+    const run = replay(join(dir, `${id}.jsonl`));
+    expect(run.meta.model).toBe(parent.meta.model);
+    expect(run.meta.sessionId).toBe(parent.meta.sessionId);
+  }
+});
+
+test("fix round 4's model matches what dispatchFix really selects for modelTier: 'high', and the round's own narration names it", () => {
+  // fixLoop.ts's dispatchFix() uses `models.execute` from config,
+  // unconditionally, for a `high` step — not necessarily a "bigger" model
+  // than whatever a resumed round is on. Resolve it through the real config
+  // loader against the project's actual generated config.yml rather than
+  // hardcoding the value here, so this test breaks (not the fixture,
+  // silently) if board.ts's config or core's model resolution ever drifts.
+  const configRoot = mkdtempSync(join(tmpdir(), 'demo-runs-config-'));
+  writeBoard(configRoot);
+  const config = loadConfig(configRoot);
+  const highStep = config.fixLoop.escalation.find(
+    (s) => s.modelTier === 'high'
+  );
+  // Confirms round 4 really is the escalation ladder's high-tier round —
+  // otherwise the assertions below would be checking the wrong round.
+  expect(highStep?.round).toBe(4);
+
+  const { root, home } = build();
+  const dir = runsDir(root, home);
+  const round4 = replay(join(dir, 'r-c05e19.jsonl'));
+  expect(round4.meta.model).toBe(config.models.execute);
+
+  const text = round4.entries.map((e) => e.text ?? '').join('\n');
+  expect(text).toContain(config.models.execute);
+});
+
+test("branchFor uses the run's real taskTitle, collapsing runs of non-alphanumerics into a single hyphen", () => {
+  // branchFor was previously fed the doctored title 'Add a health endpoint'
+  // to dodge a double hyphen from 'Add a /health endpoint' — the real title
+  // must be passed, with slug() collapsing the space+slash run itself.
+  const { root, home } = build();
+  const dir = runsDir(root, home);
+  const run = replay(join(dir, 'r-71ff03.jsonl'));
+  expect(run.meta.taskTitle).toBe('Add a /health endpoint');
+  expect(run.meta.branch).toBe('dispatch/t-71ff03-add-a-health-endpoint');
+  expect(run.meta.branch).not.toContain('--');
 });
 
 test('regenerating writes byte-identical transcripts', () => {
