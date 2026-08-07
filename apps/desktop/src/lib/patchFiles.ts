@@ -20,9 +20,19 @@ export interface SplitPatchResult {
 // more than one file — so it must be parsed up front with `parsePatchFiles`.
 // Never throws: parser failures and empty parses come back as an error
 // result the caller can render as an inline message.
-export function splitPatchFiles(patch: string): SplitPatchResult {
+//
+// `cacheKeyPrefix` is forwarded to Pierre, which stamps each file with a
+// `prefix-patch-file` cache key — that key is what lets the worker pool reuse a
+// rendered diff instead of re-tokenizing it. Omitted by callers whose patches
+// are one-shot, since a cache entry nothing looks up again only costs memory.
+export function splitPatchFiles(
+  patch: string,
+  cacheKeyPrefix?: string
+): SplitPatchResult {
   try {
-    const files = parsePatchFiles(patch).flatMap((parsed) => parsed.files);
+    const files = parsePatchFiles(patch, cacheKeyPrefix).flatMap(
+      (parsed) => parsed.files
+    );
     if (files.length === 0) {
       return { files: [], error: 'No file diffs found in patch' };
     }

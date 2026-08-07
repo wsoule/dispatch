@@ -1,6 +1,10 @@
 import type { CodeViewItem, FileDiffMetadata } from '@pierre/diffs';
-import type { CodeViewHandle, CodeViewProps } from '@pierre/diffs/react';
-import { CodeView } from '@pierre/diffs/react';
+import type {
+  CodeViewHandle,
+  CodeViewProps,
+  CreateEditor,
+} from '@pierre/diffs/react';
+import { CodeView, EditProvider } from '@pierre/diffs/react';
 import { CircleAlert, FileX, Loader2 } from 'lucide-react';
 import type { Ref } from 'react';
 import { useMemo } from 'react';
@@ -11,12 +15,64 @@ import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
 import { toDiffRenderOptions } from '@/lib/diffDisplay';
 import { splitPatchFiles } from '@/lib/patchFiles';
 
+/** What a surface renders: the files `only` left standing, or an inline-able parse error. */
+export interface ParsedPatchFiles {
+  files: FileDiffMetadata[];
+  error: string | null;
+}
+
+/**
+ * The one parse a diff surface does: raw patch in, renderable files out, `only` already applied.
+ *
+ * Exported because a caller can need the file list *outside* item-building — the review diff
+ * reads it from an effect, which no render prop can reach. Such a caller runs this hook itself
+ * and hands the result back through `DiffSurface`'s `parsed` prop, so the patch is still parsed
+ * exactly once per render rather than once in each place that wants the files.
+ */
+export function useParsedPatchFiles(
+  patch: string | undefined,
+  only?: string,
+  cacheKeyPrefix?: string
+): ParsedPatchFiles {
+  // `undefined`/blank means there is nothing to parse yet, which is an empty result rather than
+  // a failure — the caller shows its "nothing here" sentence, not an error.
+  const parsed = useMemo(
+    () =>
+      patch === undefined || patch.trim() === ''
+        ? null
+        : splitPatchFiles(patch, cacheKeyPrefix),
+    [patch, cacheKeyPrefix]
+  );
+  return useMemo(() => {
+    if (parsed === null) return { files: [], error: null };
+    if (parsed.error !== null) return { files: [], error: parsed.error };
+    return {
+      files:
+        only === undefined
+          ? parsed.files
+          : parsed.files.filter((f) => f.name === only),
+      error: null,
+    };
+  }, [parsed, only]);
+}
+
 interface DiffSurfaceProps<T> {
   /** The raw multi-file patch. `undefined` (or blank) renders `emptyLabel`. */
   patch: string | undefined;
+  /**
+   * The already-parsed form of `patch`, from `useParsedPatchFiles`. Only for a caller that also
+   * reads the files itself (see that hook) — passing it skips this component's own parse, so the
+   * two can never disagree and the patch is never parsed twice.
+   */
+  parsed?: ParsedPatchFiles;
   loading?: boolean;
   /** Restricts rendering to one file's diff within the patch. Omit to render every file. */
   only?: string;
+  /**
+   * Namespaces the worker pool's render cache for this patch, so re-rendering the same file
+   * reuses its tokenized diff. Omit where a patch is shown once and thrown away.
+   */
+  cacheKeyPrefix?: string;
   /** Kept per caller rather than unified: each surface says something different about what
    * "nothing here" means, and those sentences are user-facing. */
   emptyLabel?: string;
@@ -32,6 +88,13 @@ interface DiffSurfaceProps<T> {
   renderGutterUtility?: CodeViewProps<T>['renderGutterUtility'];
   renderHeaderMetadata?: CodeViewProps<T>['renderHeaderMetadata'];
   onSelectedLinesChange?: CodeViewProps<T>['onSelectedLinesChange'];
+  onItemEditComplete?: CodeViewProps<T>['onItemEditComplete'];
+  /**
+   * Makes items with `edit: true` actually editable: `CodeView` resolves its editor factory from
+   * an ancestor `EditProvider`, which is mounted here only when a caller supplies one. Omitted
+   * on a read-only surface so no editor machinery is set up for items that never ask for it.
+   */
+  createEditor?: CreateEditor<T>;
   /**
    * Classes for the `CodeView` element itself, which must stay the actual scroll container:
    * `CodeView` attaches its scroll listener to this exact element and reads its own `scrollTop`
@@ -67,8 +130,10 @@ function toDiffItems<T>(files: FileDiffMetadata[]): CodeViewItem<T>[] {
  */
 export function DiffSurface<T = undefined>({
   patch,
+  parsed,
   loading = false,
   only,
+  cacheKeyPrefix,
   emptyLabel = 'No changes to show.',
   items,
   options,
@@ -76,29 +141,24 @@ export function DiffSurface<T = undefined>({
   renderGutterUtility,
   renderHeaderMetadata,
   onSelectedLinesChange,
+  onItemEditComplete,
+  createEditor,
   className = 'min-h-0 w-full flex-1 overflow-auto',
   viewRef,
 }: DiffSurfaceProps<T>) {
-  // Parsed once per patch: either the per-file diff metadata or an inline-able error.
-  // `null` while there is nothing to parse (no patch yet, or an empty one).
-  const parsed = useMemo(
-    () =>
-      patch === undefined || patch.trim() === ''
-        ? null
-        : splitPatchFiles(patch),
-    [patch]
+  // Skipped when the caller already parsed: `patch` goes in as `undefined`, so the hook returns
+  // its empty result without touching the parser rather than parsing the same string twice.
+  const ownParse = useParsedPatchFiles(
+    parsed === undefined ? patch : undefined,
+    only,
+    cacheKeyPrefix
   );
+  const { files, error } = parsed ?? ownParse;
   const [diffDisplay] = useDiffDisplaySettings();
   const diffOptions = useMemo(
     () => ({ ...toDiffRenderOptions(diffDisplay), ...options }),
     [diffDisplay, options]
   );
-  const files = useMemo(() => {
-    if (parsed === null || parsed.error !== null) return [];
-    return only === undefined
-      ? parsed.files
-      : parsed.files.filter((f) => f.name === only);
-  }, [parsed, only]);
   const codeItems = useMemo(
     () => (items === undefined ? toDiffItems<T>(files) : items(files)),
     [items, files]
@@ -116,13 +176,11 @@ export function DiffSurface<T = undefined>({
       </div>
     );
   }
-  if (parsed !== null && parsed.error !== null) {
+  if (error !== null) {
     return (
       <div className={`${stateClass} text-center`}>
         <CircleAlert className="size-5" />
-        <p className="text-[13px]">
-          Couldn&rsquo;t load the diff: {parsed.error}
-        </p>
+        <p className="text-[13px]">Couldn&rsquo;t load the diff: {error}</p>
       </div>
     );
   }
@@ -135,22 +193,34 @@ export function DiffSurface<T = undefined>({
     );
   }
 
+  const view = (
+    <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
+      <CodeView<T>
+        ref={viewRef}
+        items={codeItems}
+        options={diffOptions}
+        renderAnnotation={renderAnnotation}
+        renderGutterUtility={renderGutterUtility}
+        renderHeaderMetadata={renderHeaderMetadata}
+        onSelectedLinesChange={onSelectedLinesChange}
+        onItemEditComplete={onItemEditComplete}
+        className={className}
+      />
+    </PierreWorkerPool>
+  );
+
   return (
     // One boundary for the whole view: with a single `CodeView` there is no longer a per-file
     // subtree to fail on its own, so a crash in any file costs the diff rather than the app.
     <ErrorBoundary label="the diff">
-      <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
-        <CodeView<T>
-          ref={viewRef}
-          items={codeItems}
-          options={diffOptions}
-          renderAnnotation={renderAnnotation}
-          renderGutterUtility={renderGutterUtility}
-          renderHeaderMetadata={renderHeaderMetadata}
-          onSelectedLinesChange={onSelectedLinesChange}
-          className={className}
-        />
-      </PierreWorkerPool>
+      {/* Outside the worker pool, not between it and `CodeView`: `EditProvider` is only a
+          context, and keeping the pool's child the `CodeView` element itself means the
+          arrangement doesn't change based on whether a caller edits. */}
+      {createEditor === undefined ? (
+        view
+      ) : (
+        <EditProvider<T> createEditor={createEditor}>{view}</EditProvider>
+      )}
     </ErrorBoundary>
   );
 }

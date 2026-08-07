@@ -29,7 +29,7 @@ void mock.module('@/components/runs/PierreWorkerPool', () => ({
   },
 }));
 
-const { DiffSurface } = await import('./DiffSurface');
+const { DiffSurface, useParsedPatchFiles } = await import('./DiffSurface');
 
 const TWO_FILE_PATCH = `diff --git a/a.ts b/a.ts
 index 1111111..2222222 100644
@@ -213,5 +213,118 @@ describe('DiffSurface — what reaches CodeView', () => {
     );
 
     expect(container.firstElementChild?.className).toBe('h-full overflow-auto');
+  });
+
+  // The worker pool reuses a rendered diff by cache key, and Pierre defaults an unkeyed file's
+  // key to its own path — so two surfaces showing the same path with different content would
+  // share one entry. A prefix namespaces a surface's patch out of that collision, and nothing
+  // about it is visible in the DOM.
+  it('stamps prefixed cache keys on the parsed files', () => {
+    render(<DiffSurface patch={TWO_FILE_PATCH} cacheKeyPrefix="review" />);
+
+    const items = codeViewProps?.items as {
+      fileDiff: FileDiffMetadata;
+    }[];
+    expect(items.map((i) => i.fileDiff.cacheKey)).toEqual([
+      'review-0-0',
+      'review-0-1',
+    ]);
+  });
+
+  // `onItemEditComplete` is how an edit gets committed; `createEditor` is what makes an
+  // `edit: true` item editable at all. Neither shows up in the DOM.
+  it('hands the edit callbacks through to CodeView', () => {
+    const onItemEditComplete = () => undefined;
+
+    render(
+      <DiffSurface
+        patch={TWO_FILE_PATCH}
+        onItemEditComplete={onItemEditComplete}
+        createEditor={(() => undefined) as never}
+      />
+    );
+
+    expect(codeViewProps?.onItemEditComplete).toBe(onItemEditComplete);
+  });
+});
+
+describe('DiffSurface — a caller that parses the patch itself', () => {
+  // `PierreReviewDiff` reads the file list from an effect, which no render prop can reach, so it
+  // owns the parse and hands the result back. The surface must then render *that* list rather
+  // than re-parsing — otherwise the two could disagree about which files exist.
+  it('renders the caller’s parsed files instead of parsing again', () => {
+    function Harness() {
+      const parsed = useParsedPatchFiles(TWO_FILE_PATCH, 'b.ts', 'review');
+      return (
+        <DiffSurface
+          patch={TWO_FILE_PATCH}
+          parsed={parsed}
+          only="b.ts"
+          renderHeaderMetadata={nameItem}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    expect(renderedFiles()).toEqual(['b.ts']);
+  });
+
+  it('shows the caller’s parse error rather than its own empty label', () => {
+    function Harness() {
+      const parsed = useParsedPatchFiles('this is not a patch');
+      return (
+        <DiffSurface
+          patch="this is not a patch"
+          parsed={parsed}
+          emptyLabel="Empty."
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    expect(
+      screen.queryByText(/Couldn’t load the diff: No file diffs found in patch/)
+    ).not.toBeNull();
+    expect(screen.queryByText('Empty.')).toBeNull();
+  });
+});
+
+describe('useParsedPatchFiles', () => {
+  function readFiles(
+    patch: string | undefined,
+    only?: string
+  ): { names: string[]; error: string | null } {
+    let seen: { names: string[]; error: string | null } = {
+      names: [],
+      error: null,
+    };
+    function Harness() {
+      const parsed = useParsedPatchFiles(patch, only);
+      seen = {
+        names: parsed.files.map((f) => f.name),
+        error: parsed.error,
+      };
+      return null;
+    }
+    render(<Harness />);
+    return seen;
+  }
+
+  it('reports an empty, error-free result when there is nothing to parse', () => {
+    expect(readFiles(undefined)).toEqual({ names: [], error: null });
+    expect(readFiles('   \n')).toEqual({ names: [], error: null });
+  });
+
+  it('narrows to `only` before handing the files back', () => {
+    expect(readFiles(TWO_FILE_PATCH, 'a.ts').names).toEqual(['a.ts']);
+  });
+
+  it('reports a parse failure as an error rather than throwing', () => {
+    expect(readFiles('this is not a patch')).toEqual({
+      names: [],
+      error: 'No file diffs found in patch',
+    });
   });
 });

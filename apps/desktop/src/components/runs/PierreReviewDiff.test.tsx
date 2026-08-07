@@ -397,6 +397,58 @@ describe('PierreReviewDiff — switching files while an editor is open', () => {
   });
 });
 
+const ADDED_FILE_PATCH = `diff --git a/new.ts b/new.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/new.ts
+@@ -0,0 +1,2 @@
++const a = 0;
++const b = 1;
+`;
+
+describe('PierreReviewDiff — the pencil gate reads the parsed file’s type', () => {
+  // The diff's shell (parse, worker pool, states) moved to `DiffSurface`, but this gate still
+  // needs the parsed file list: Pierre can't attach an editor to an added file, so its pencil
+  // has to be withheld rather than shown doing nothing.
+  it('withholds the pencil on an added file', () => {
+    render(
+      <PierreReviewDiff
+        client={fakeClient()}
+        runId="r1"
+        meta={runMeta()}
+        patch={ADDED_FILE_PATCH}
+        comments={[]}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+      />
+    );
+
+    // Guards the assertion below against passing vacuously: a patch that failed to parse would
+    // render a message instead of the diff, and show no pencil for that reason.
+    expect(
+      screen.queryByText(/No changes to show|Couldn’t load the diff/)
+    ).toBe(null);
+    expect(screen.queryByRole('button', { name: 'Edit this file' })).toBeNull();
+  });
+
+  it('still offers it on a changed file', () => {
+    renderDiff({ only: 'a.ts' });
+
+    expect(
+      screen.queryByRole('button', { name: 'Edit this file' })
+    ).not.toBeNull();
+  });
+});
+
+describe('PierreReviewDiff — nothing to render', () => {
+  it('says so when `only` names a file the patch does not contain', () => {
+    renderDiff({ only: 'gone.ts' });
+
+    expect(screen.queryByText('No changes to show.')).not.toBeNull();
+  });
+});
+
 describe('decideEditSave — what a finished edit session should do', () => {
   const session = { baseSha: 'sha1', contents: 'const a = 0;\n' };
 
