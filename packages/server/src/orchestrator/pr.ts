@@ -840,13 +840,11 @@ export class PrManager {
   // merge base against the PR's base branch — the pair startReview() needs.
   async fetchPrHead(number: number): Promise<{ ref: string; base: string }> {
     const pr = await this.resolvePrForComments(number);
-    const ref = `dispatch-pr-${number}`;
-    // Force: a re-review after new commits (or a force-push) must update
-    // `ref`, not fail on a non-fast-forward. The base branch rides the
-    // same fetch with no explicit dest, so it lands on `origin/<base>` —
-    // mergeQueue.ts's `fetchBase` does the same for a PR run, since the
-    // bare local branch is only as fresh as the user's last pull and a
-    // merge-base against it can silently widen the diff below.
+    // Fully qualified, not a bare branch name: an unqualified dest DWIMs to
+    // refs/heads/, which would permanently add a branch to Dispatch's own
+    // branch UI per review and let `--force` clobber a same-named one.
+    const ref = `refs/dispatch/pr/${number}`;
+    // Force: a re-review after new commits must update `ref`, not fail.
     const fetch = await this.run(this.ctx.rootDir, [
       'git',
       'fetch',
@@ -860,6 +858,8 @@ export class PrManager {
         `git fetch pull/${number}/head failed: ${commandErrorText(fetch)}`
       );
     }
+    // origin/<base>, not the bare branch: refreshed by the fetch above,
+    // so a stale local branch can't silently widen the diff below.
     const mergeBase = await this.run(this.ctx.rootDir, [
       'git',
       'merge-base',

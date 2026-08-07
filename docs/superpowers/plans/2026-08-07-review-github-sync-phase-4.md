@@ -100,10 +100,17 @@ deliberately.
 **Produces:** `fetchPrHead(number): Promise<{ ref: string; base: string }>` —
 consumed by Task 5.
 
-- `git fetch origin pull/<n>/head:dispatch-pr-<n>` — works for forks as well as
-  same-repo branches, which is why it beats `gh pr checkout`.
-- Resolve the merge base against the PR's base branch; that is `startReview`'s
-  `base`.
+- `git fetch origin pull/<n>/head:refs/dispatch/pr/<n>` — works for forks as
+  well as same-repo branches, which is why it beats `gh pr checkout`. The
+  destination is a fully-qualified ref, not a bare branch name
+  (`dispatch-pr-<n>`): an unqualified destination DWIMs to `refs/heads/`, which
+  would permanently add a branch to Dispatch's own branch UI on every review,
+  let `--force` clobber a same-named user branch, and make git refuse the fetch
+  outright if that branch name is checked out anywhere.
+- Resolve the merge base against `origin/<PR base branch>` — not the bare local
+  base branch, which is only as fresh as the user's last pull and would silently
+  widen the reviewed diff to whatever the real base picked up since. That merge
+  base is `startReview`'s `base`.
 - A failed fetch throws `OrchestratorConflictError` with the git error text —
   never a silent empty ref.
 - Re-fetching an existing ref must **update** it, not fail. A second review of
