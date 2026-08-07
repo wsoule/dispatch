@@ -631,11 +631,16 @@ function clickGutter(
   fireEvent.click(button);
 }
 
-/** Pierre's own line-selection callback, which only fires because `enableLineSelection` is on. */
+/**
+ * Pierre's own line-selection callback, which only fires because `enableLineSelection` is on.
+ *
+ * `file` is variable on purpose: one `CodeView` renders every file of a patch, so it names which
+ * file the drag happened in and a helper that hardcoded it could never surface a discarded id.
+ */
 function dragLineNumbers(
   start: number,
   end: number,
-  side: 'additions' | 'deletions' = 'additions'
+  options: { side?: 'additions' | 'deletions'; file?: string } = {}
 ): void {
   const onSelectedLinesChange = codeViewProps?.onSelectedLinesChange as
     | ((
@@ -649,7 +654,10 @@ function dragLineNumbers(
     throw new Error('the diff is not listening for line selections');
   }
   act(() => {
-    onSelectedLinesChange({ id: 'a.ts', range: { start, end, side } });
+    onSelectedLinesChange({
+      id: options.file ?? 'a.ts',
+      range: { start, end, side: options.side ?? 'additions' },
+    });
   });
 }
 
@@ -675,6 +683,26 @@ function renderForSelection(
       {...(props.onAddToChat === undefined
         ? {}
         : { onAddToChat: props.onAddToChat })}
+    />
+  );
+}
+
+/**
+ * The whole patch in one scroller, with no `only` — how `RunReviewView` renders this. Every file
+ * shares one `CodeView`, so a line number on its own does not say which file it belongs to.
+ */
+function renderWholePatch(onAddToChat: (snippet: Snippet) => void) {
+  return render(
+    <PierreReviewDiff
+      client={fakeClient()}
+      runId="r1"
+      meta={runMeta()}
+      patch={TWO_FILE_PATCH}
+      comments={[]}
+      onAdd={() => Promise.reject(new Error('not used here'))}
+      onResolve={() => Promise.resolve()}
+      onReply={() => Promise.resolve()}
+      onAddToChat={onAddToChat}
     />
   );
 }
@@ -762,6 +790,31 @@ describe('PierreReviewDiff — arming the action bar from the gutter', () => {
     expect(selectionBar()).not.toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // `ReviewView` swaps `only` without remounting, so a bar armed on the file being left would
+  // otherwise stay on screen over the file arriving — pointing at lines that are no longer drawn.
+  it('clears the bar when the surface switches to another file', () => {
+    const { rerender } = renderForSelection({ onAddToChat: () => {} });
+    clickGutter(2);
+    expect(selectionBar()).not.toBeNull();
+
+    rerender(
+      <PierreReviewDiff
+        client={fakeClient()}
+        runId="r1"
+        meta={runMeta()}
+        patch={TWO_FILE_PATCH}
+        only="b.ts"
+        comments={[]}
+        onAdd={() => Promise.reject(new Error('not used here'))}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+        onAddToChat={() => {}}
+      />
+    );
 
     expect(selectionBar()).toBeNull();
   });
@@ -913,13 +966,48 @@ describe('PierreReviewDiff — a dragged line range arms the whole range', () =>
     ]);
   });
 
+  // One `CodeView` renders every file of a patch, so a range dragged in `b.ts` is live state
+  // while the reviewer clicks the gutter in `a.ts`. Comparing line numbers alone armed `a.ts`
+  // with `b.ts`'s range — a comment or a chat snippet on the wrong lines.
+  it('ignores a range dragged in a different file', () => {
+    const attached: Snippet[] = [];
+    renderWholePatch((snippet) => attached.push(snippet));
+
+    dragLineNumbers(1, 2, { file: 'b.ts' });
+    clickGutter(2, { file: 'a.ts' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
+    ]);
+  });
+
+  // The control for the test above: the file check must reject a foreign range, not every range.
+  it('still arms the range when the drag was in the clicked file', () => {
+    const attached: Snippet[] = [];
+    renderWholePatch((snippet) => attached.push(snippet));
+
+    dragLineNumbers(1, 2, { file: 'b.ts' });
+    clickGutter(2, { file: 'b.ts' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      {
+        file: 'b.ts',
+        startLine: 1,
+        endLine: 2,
+        text: 'const c = 0;\nconst d = 2;',
+      },
+    ]);
+  });
+
   // A range dragged down the deleted column names base-file lines, which say nothing about the
   // code under review — the click falls back to the one line it is actually on.
   it('ignores a dragged range on the deletions side', () => {
     const attached: Snippet[] = [];
     renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
 
-    dragLineNumbers(1, 2, 'deletions');
+    dragLineNumbers(1, 2, { side: 'deletions' });
     clickGutter(2);
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
 
