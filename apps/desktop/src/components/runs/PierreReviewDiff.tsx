@@ -21,9 +21,13 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DiffSurface, useParsedPatchFiles } from '../code/DiffSurface';
-import type { CodeSelection, SelectionAction } from '../code/SelectionActions';
+import { lineTextFromPatch } from '../code/lineTextFromPatch';
+import type {
+  CodeSelection,
+  SelectionAction,
+  SelectionAnchor,
+} from '../code/SelectionActions';
 import { SelectionActions } from '../code/SelectionActions';
-import { useSelectedCode } from '../code/useSelectedCode';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
 import { snippetFromSelection } from '@/lib/conversation';
@@ -55,7 +59,8 @@ interface PierreReviewDiffProps {
   comments: ReviewComment[];
   /**
    * Where a new line comment goes. Omit it when there is nowhere to put one
-   * (a GitHub PR) and the gutter's "+" is withheld rather than left dead.
+   * (a GitHub PR) and the gutter affordance is withheld rather than left dead — which takes the
+   * action bar with it, since that affordance is the only thing that arms it.
    *
    * Resolves with the created comment, not `void` — the composer's `Apply now` action needs
    * the new comment's id back to apply its suggestion immediately, through the same path the
@@ -97,6 +102,30 @@ interface PierreReviewDiffProps {
 }
 
 /**
+ * The clicked gutter affordance's box, in the coordinate space of the frame the bar is placed
+ * inside. Taken from the button's own `getBoundingClientRect()` rather than from a `Range`: an
+ * element's box reads the same either side of a shadow root, and a `Range`'s does not — which is
+ * what left the bar invisible when this was driven by a text selection.
+ *
+ * `null` when there is no frame to measure against; the bar then renders unpositioned rather than
+ * not at all.
+ */
+function anchorFrom(
+  button: Element,
+  frame: HTMLElement | null
+): SelectionAnchor | null {
+  if (frame === null) return null;
+  const box = button.getBoundingClientRect();
+  const frameBox = frame.getBoundingClientRect();
+  return {
+    top: box.top - frameBox.top,
+    bottom: box.bottom - frameBox.top,
+    left: box.left - frameBox.left,
+    width: frameBox.width,
+  };
+}
+
+/**
  * The review diff: Pierre's `CodeView` with comment threads injected as line annotations.
  *
  * An earlier version of this parsed the patch by hand and drew its own rows, on the belief that
@@ -105,8 +134,12 @@ interface PierreReviewDiffProps {
  * GitHub-style inline threads need. Using it means the diff keeps syntax highlighting,
  * virtualisation, hunk expansion and the worker pool, none of which a hand-rolled renderer had.
  *
- * `renderGutterUtility` supplies the hover affordance on each line, so starting a comment is the
- * same gesture as on GitHub: hover the line, click the +.
+ * `renderGutterUtility` supplies the hover affordance on each line, and clicking it arms the
+ * floating action bar for that line — Add to chat, Copy, Comment. One affordance rather than
+ * two: an earlier attempt armed the bar from a text selection over the code instead, which
+ * never worked in a browser because a `Range` across Pierre's shadow roots cannot be read
+ * reliably. Everything on this path — the hovered line, the button's own box, the line text —
+ * is synchronous and needs neither a `Range` nor a fetch.
  */
 export function PierreReviewDiff({
   client,
@@ -151,11 +184,13 @@ export function PierreReviewDiff({
     end: number;
     side?: string;
   } | null>(null);
-  // What the floating action bar acts on: the reviewer's text selection, resolved to the lines
-  // it covers. `null` is "nothing to act on" and keeps the bar off screen entirely.
-  const [codeSelection, setCodeSelection] = useState<CodeSelection | null>(
-    null
-  );
+  // What the floating action bar acts on, armed by clicking a line's gutter affordance: the
+  // lines it covers plus where to hang the bar. `null` is "nothing armed" and keeps the bar off
+  // screen entirely.
+  const [armed, setArmed] = useState<{
+    selection: CodeSelection;
+    anchor: SelectionAnchor | null;
+  } | null>(null);
   // The one file currently in edit mode, or the one whose load is in flight from a pencil
   // click — only ever one of each, see `buildItems`'s doc comment for why.
   const [editing, setEditing] = useState<string | null>(null);
@@ -182,9 +217,6 @@ export function PierreReviewDiff({
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
   // The positioning frame for the floating selection bar, which is absolutely placed inside it.
   const containerRef = useRef<HTMLDivElement>(null);
-  // The gesture the bar runs on. Not Pierre's line selection: that needs `enableLineSelection`
-  // and only ever starts from the line-number column, so dragging across code never reaches it.
-  const selected = useSelectedCode(containerRef);
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
   // run's worktree, which is what makes unchanged-region expansion (and editing) possible at
   // all.
@@ -192,9 +224,14 @@ export function PierreReviewDiff({
     client ?? null,
     runId
   );
-  // Merged over the reviewer's own display settings by `DiffSurface`; only the loader is
-  // review-specific.
-  const diffOptions = useMemo(() => ({ loadDiffFiles }), [loadDiffFiles]);
+  // Merged over the reviewer's own display settings by `DiffSurface`; only these two are
+  // review-specific. `enableLineSelection` is what makes a drag down the line-number column
+  // select a range, which is the only way `onSelectedLinesChange` ever fires — without it the
+  // gutter affordance could never arm more than the one line it sits on.
+  const diffOptions = useMemo(
+    () => ({ loadDiffFiles, enableLineSelection: true }),
+    [loadDiffFiles]
+  );
 
   // The one place a suggestion actually gets applied — shared by every `ReviewThread`'s own
   // Apply button AND the composer's `Apply now`, so there is exactly one call site to keep the
@@ -362,9 +399,9 @@ export function PierreReviewDiff({
     ]
   );
 
-  // Opens the line-comment composer on `file`, optionally over a range. One function because
-  // there are now two ways in — the gutter "+" and the selection bar's Comment — and both must
-  // seed the suggestion editor from the same contents fetch rather than growing a second path.
+  // Opens the line-comment composer on `file`, optionally over a range — reached from the
+  // action bar's Comment, which is the one way in now that the gutter affordance arms the bar
+  // instead of opening this directly.
   const openComposer = useCallback(
     (file: string, line: number, startLine?: number) => {
       setComposing({
@@ -388,30 +425,44 @@ export function PierreReviewDiff({
       item: { id: string }
     ) => {
       // The file being edited already has the caret fighting for the same click — withholding
-      // the "+" here keeps the two from competing over the same gesture.
+      // the affordance here keeps the two from competing over the same gesture.
       if (editing === item.id) return null;
       return (
         <button
           type="button"
-          aria-label="Comment on this line"
-          onClick={() => {
+          aria-label="Actions for this line"
+          onClick={(event) => {
             const hovered = getHoveredLine();
             const line = hovered?.lineNumber;
-            // Only the additions side can be commented on: a deleted line is not there for the
-            // agent to change, so a note anchored to it would point at nothing.
+            // Only the additions side can be acted on: a deleted line is not there for the agent
+            // to change, so a comment anchored to it would point at nothing and its text is not
+            // in the file under review.
             if (line === undefined || hovered?.side === 'deletions') return;
-            // If the reviewer dragged a range that contains this line, comment on the whole
-            // range — that is what the selection was for. Otherwise it is a single line.
+            // If the reviewer dragged a range that contains this line, arm the whole range —
+            // that is what the selection was for. Otherwise it is a single line.
             const inRange =
               selection !== null &&
               selection.side !== 'deletions' &&
               line >= Math.min(selection.start, selection.end) &&
               line <= Math.max(selection.start, selection.end);
-            openComposer(
-              item.id,
-              inRange ? Math.max(selection.start, selection.end) : line,
-              inRange ? Math.min(selection.start, selection.end) : undefined
-            );
+            const startLine = inRange
+              ? Math.min(selection.start, selection.end)
+              : line;
+            const endLine = inRange
+              ? Math.max(selection.start, selection.end)
+              : line;
+            setArmed({
+              selection: {
+                file: item.id,
+                startLine,
+                endLine,
+                // Read out of the already-parsed patch: synchronous, and empty rather than
+                // absent for a file type whose lines it cannot name, because a bar with an
+                // empty snippet is recoverable and a missing bar is not.
+                text: lineTextFromPatch(files, item.id, startLine, endLine),
+              },
+              anchor: anchorFrom(event.currentTarget, containerRef.current),
+            });
           }}
           className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center"
         >
@@ -419,7 +470,7 @@ export function PierreReviewDiff({
         </button>
       );
     },
-    [selection, editing, openComposer]
+    [selection, editing, files]
   );
 
   // Begins an edit session for `file`, gated on its contents actually being in hand — see
@@ -612,24 +663,23 @@ export function PierreReviewDiff({
     ]
   );
 
-  /**
-   * Turns the reviewer's selection into something the action bar can act on.
-   *
-   * The rendered rows are the only source: they say which lines the diff drew, synchronously,
-   * with no fetch to fail and no text to match. A selection that covers no row — the gutter, a
-   * file header, the deleted side alone — arms nothing, which is the rule that keeps the bar
-   * from appearing over code the reviewer never selected.
-   *
-   * `only` names the file, so a surface rendering the whole patch at once offers no bar: a line
-   * number alone cannot say which of its files it belongs to.
-   */
+  // Escape is the keyboard way out of an armed bar. Deliberately the only dismissal besides
+  // invoking an action: outside-click and scroll-following are not wired, and the bar not
+  // following scroll is a known, accepted limitation.
   useEffect(() => {
-    if (selected === null || only === undefined) {
-      setCodeSelection(null);
-      return;
-    }
-    setCodeSelection({ file: only, ...selected.lines, text: selected.text });
-  }, [selected, only]);
+    if (armed === null) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setArmed(null);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [armed]);
+
+  // A file leaving the rendered set takes its armed bar with it — `ReviewView` swaps `only`
+  // without remounting, so a bar left standing would act on a file no longer on screen.
+  useEffect(() => {
+    setArmed(null);
+  }, [only]);
 
   // Supplied as data, so `SelectionActions` itself never learns what chat, copy or comment
   // mean. Each is withheld rather than shown dead where it has nowhere to go.
@@ -667,6 +717,21 @@ export function PierreReviewDiff({
     }
     return actions;
   }, [onAddToChat, onAdd, openComposer]);
+
+  // The bar is armed until the reviewer uses it: every action disarms on its way out, so a
+  // second click can never act on a line the reviewer has already dealt with. Wrapped here
+  // rather than inside each action so the actions themselves stay about chat, copy and comment.
+  const armedActions = useMemo<SelectionAction[]>(
+    () =>
+      selectionActions.map((action) => ({
+        ...action,
+        onInvoke: (sel: CodeSelection) => {
+          action.onInvoke(sel);
+          setArmed(null);
+        },
+      })),
+    [selectionActions]
+  );
 
   // Declarative jump: the effect fires when `scrollTo` changes identity, so clicking the same
   // thread twice still scrolls (the caller bumps `nonce`).
@@ -714,16 +779,16 @@ export function PierreReviewDiff({
         }
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
-        // No `onAdd` means no destination for a comment, so the hover "+" that starts one is not
-        // offered at all.
+        // No `onAdd` means no destination for a comment, so the hover affordance is not offered
+        // at all — and with it goes the action bar, since nothing else arms one.
         renderGutterUtility={
           onAdd === undefined ? undefined : renderGutterUtility
         }
       />
       <SelectionActions
-        selection={codeSelection}
-        anchor={selected?.anchor ?? null}
-        actions={selectionActions}
+        selection={armed?.selection ?? null}
+        anchor={armed?.anchor ?? null}
+        actions={armedActions}
       />
     </div>
   );

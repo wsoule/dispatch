@@ -551,97 +551,15 @@ describe('isEditableDiffType', () => {
   });
 });
 
-/**
- * Where Pierre puts its rendered rows: inside the scroll container, which is itself inside the
- * wrapper the action bar positions against. This mirrors the ancestor chain measured in a real
- * browser on the review surface — `text → div → div → div.min-h-0.w-full → div.relative.flex` —
- * so a test cannot pass by constructing a containment relationship the app does not have.
- */
-function rowHost(): Element {
-  const host = document.querySelector('.overflow-auto > div');
-  if (host === null) throw new Error('no rendered diff to select inside');
-  return host;
-}
-
-// One rendered diff row, shaped the way Pierre's `processLine` emits one: the row carries the
-// line number it drew and its type, and the code sits in a child element.
-function appendRow(
-  host: Element | ShadowRoot,
-  line: number,
-  text: string,
-  type = 'change-addition'
-): HTMLElement {
-  const el = document.createElement('div');
-  el.setAttribute('data-line', String(line));
-  el.setAttribute('data-line-type', type);
-  const code = document.createElement('span');
-  code.appendChild(document.createTextNode(text));
-  el.appendChild(code);
-  host.appendChild(el);
-  return el;
-}
-
-// One line-number cell, shaped the way Pierre's `createGutterItem` emits it: a line *number*,
-// but no `data-line`, because a gutter cell is not a row of code.
-function appendGutterItem(host: Element, line: number): HTMLElement {
-  const el = document.createElement('div');
-  el.setAttribute('data-column-number', String(line));
-  el.setAttribute('data-line-type', 'change-addition');
-  el.setAttribute('data-line-index', String(line - 1));
-  const label = document.createElement('span');
-  label.appendChild(document.createTextNode(String(line)));
-  el.appendChild(label);
-  host.appendChild(el);
-  return el;
-}
-
-function selectBetween(first: Node, last: Node): void {
-  const range = document.createRange();
-  range.setStart(first, 0);
-  range.setEnd(last, (last.textContent ?? '').length);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-  act(() => {
-    document.dispatchEvent(new Event('selectionchange'));
-  });
-}
-
-/**
- * The reviewer's real gesture: a drag across rendered code, which the browser reports as an
- * ordinary DOM text selection. happy-dom lays nothing out, so `CodeView` renders no rows to drag
- * over and the rows are put where Pierre would put them first.
- *
- * Deliberately NOT Pierre's `onSelectedLinesChange`. That callback cannot fire for this gesture
- * at all (`enableLineSelection` defaults off, and a line selection only ever starts from the
- * line-number column), which is why an earlier version of this feature rendered no bar in a real
- * browser while its tests were green.
- */
-function addRows(
-  rows: { line: number; text: string; type?: string }[]
-): HTMLElement[] {
-  const host = rowHost();
-  return rows.map((r) =>
-    appendRow(host, r.line, r.text, r.type ?? 'change-addition')
-  );
-}
-
-function selectAcrossRows(elements: HTMLElement[]): void {
-  const first = elements.at(0)?.firstChild?.firstChild;
-  const last = elements.at(-1)?.firstChild?.firstChild;
-  if (first == null || last == null) throw new Error('no row text to select');
-  selectBetween(first, last);
-}
-
-function selectRows(
-  rows: { line: number; text: string; type?: string }[]
-): void {
-  selectAcrossRows(addRows(rows));
-}
+/** What Pierre hands `renderGutterUtility`: a way to read the hovered line, and the file. */
+type GutterRenderer = (
+  getHoveredLine: () => { lineNumber?: number; side?: string } | undefined,
+  item: { id: string }
+) => ReactNode;
 
 // happy-dom lays nothing out, so every rect is zero unless a test says otherwise. Stubbing the
-// rows' own boxes is what makes placement assertable at all — it is measured from the row
-// elements, never from the selection.
+// clicked button's own box is what makes placement assertable at all — the bar is measured from
+// that element, never from a selection.
 function stubRect(
   el: Element,
   rect: { top: number; left: number; bottom: number; width: number }
@@ -665,51 +583,73 @@ function positioningFrame(): HTMLElement {
 }
 
 /**
- * Split view — the default layout — as Pierre renders it: two `[data-code]` columns, deletions
- * first, then additions (`DiffHunksRenderer.renderFullAST`). The drag runs from the deleted
- * column down into the additions column, which is what a wide drag across a split diff produces
- * and what a human hit when this feature shipped with the bar refusing anything that touched a
- * deleted line.
+ * The reviewer's real gesture: hover a line, click its gutter affordance.
+ *
+ * happy-dom renders no code rows and therefore no gutter, so the affordance is asked for exactly
+ * the way Pierre asks for it — `renderGutterUtility(getHoveredLine, item)` — then mounted and
+ * clicked for real. Everything under test after that point is the component's own: reading the
+ * hovered line, deciding single-line vs range, measuring the button's box, and pulling the line
+ * text out of the parsed patch.
  */
-function selectAcrossSplitColumns(): void {
-  const pre = document.createElement('pre');
-  const deletions = document.createElement('code');
-  deletions.setAttribute('data-code', '');
-  deletions.setAttribute('data-deletions', '');
-  const additions = document.createElement('code');
-  additions.setAttribute('data-code', '');
-  additions.setAttribute('data-additions', '');
-  pre.append(deletions, additions);
-  rowHost().appendChild(pre);
-
-  const deleted = appendRow(deletions, 4, 'const old = 1;', 'change-deletion');
-  appendRow(deletions, 5, 'const older = 0;', 'change-deletion');
-  // A context line sits in both columns with a different number in each; only the additions
-  // column's number is a line in the code under review.
-  appendRow(deletions, 6, '  shared();', 'context');
-  appendRow(additions, 7, '  shared();', 'context');
-  appendRow(additions, 8, 'const fresh = 2;');
-  const lastAdded = appendRow(additions, 9, 'const newer = 3;');
-
-  selectBetween(
-    deleted.firstChild?.firstChild as Node,
-    lastAdded.firstChild?.firstChild as Node
+function gutterAffordance(
+  line: number,
+  options: { side?: string; file?: string } = {}
+): HTMLElement {
+  const renderGutter = codeViewProps?.renderGutterUtility as
+    | GutterRenderer
+    | undefined;
+  if (renderGutter === undefined) {
+    throw new Error('the diff offered no gutter affordance to click');
+  }
+  const node = renderGutter(
+    () => ({ lineNumber: line, side: options.side ?? 'additions' }),
+    { id: options.file ?? 'a.ts' }
   );
+  if (node === null || node === undefined) {
+    throw new Error('the gutter affordance was withheld for this line');
+  }
+  // Its own container, queried directly: `CodeView` also renders one of these for its own
+  // (unhovered) gutter, so a document-wide query would not say which button was clicked.
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  render(node, { container: host });
+  const button = host.querySelector('button');
+  if (button === null) throw new Error('the affordance rendered no button');
+  return button;
 }
 
-/** A selection with no diff row above it: what a shadow-DOM surface hands back when the engine
- * retargets the range to its host, and what a selection outside the diff looks like. */
-function selectLooseText(text: string, host?: Element): void {
-  const span = document.createElement('span');
-  span.appendChild(document.createTextNode(text));
-  (host ?? rowHost()).appendChild(span);
-  selectBetween(span.firstChild as Node, span.firstChild as Node);
+function clickGutter(
+  line: number,
+  options: {
+    side?: string;
+    file?: string;
+    rect?: { top: number; left: number; bottom: number; width: number };
+  } = {}
+): void {
+  const button = gutterAffordance(line, options);
+  if (options.rect !== undefined) stubRect(button, options.rect);
+  fireEvent.click(button);
 }
 
-function clearSelection(): void {
-  window.getSelection()?.removeAllRanges();
+/** Pierre's own line-selection callback, which only fires because `enableLineSelection` is on. */
+function dragLineNumbers(
+  start: number,
+  end: number,
+  side: 'additions' | 'deletions' = 'additions'
+): void {
+  const onSelectedLinesChange = codeViewProps?.onSelectedLinesChange as
+    | ((
+        sel: {
+          id: string;
+          range: { start: number; end: number; side: string };
+        } | null
+      ) => void)
+    | undefined;
+  if (onSelectedLinesChange === undefined) {
+    throw new Error('the diff is not listening for line selections');
+  }
   act(() => {
-    document.dispatchEvent(new Event('selectionchange'));
+    onSelectedLinesChange({ id: 'a.ts', range: { start, end, side } });
   });
 }
 
@@ -744,7 +684,7 @@ function selectionBar(): HTMLElement | null {
 }
 
 /**
- * Settles the already-resolved contents fetch a selection kicks off, then flushes React.
+ * Settles the already-resolved contents fetch the composer kicks off, then flushes React.
  *
  * Deliberately not `waitFor`: its polling runs on a timer, and in a full-suite run Pierre's
  * shared render queue starves those for seconds at a time, which surfaces as a hang rather
@@ -757,297 +697,88 @@ async function settle(): Promise<void> {
   });
 }
 
-describe('PierreReviewDiff — the selection action bar', () => {
-  it('offers nothing until code is actually selected', () => {
+describe('PierreReviewDiff — arming the action bar from the gutter', () => {
+  it('offers nothing until the gutter affordance is clicked', () => {
     renderForSelection({ onAddToChat: () => {} });
 
     expect(selectionBar()).toBeNull();
-  });
-
-  it('appears once rendered code is selected', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-
-    selectRows([{ line: 12, text: '  sku: string;' }]);
-    await settle();
-
-    expect(selectionBar()).not.toBeNull();
-  });
-
-  it('goes away when the selection is dropped', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    selectRows([{ line: 12, text: '  sku: string;' }]);
-    await settle();
-    expect(selectionBar()).not.toBeNull();
-
-    clearSelection();
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // A selection in the chat dock, or in a comment thread, is not a selection in the diff.
-  it('ignores a selection outside the diff', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    const outside = document.createElement('div');
-    document.body.appendChild(outside);
-
-    selectLooseText('  sku: string;', outside);
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // The whole point of reading the rendered rows: arming the bar must not depend on anything
-  // that can fail. A run whose worktree has been cleaned up cannot serve its files, and the
-  // earlier version of this feature went dark on exactly that.
-  it('still names the lines when the file cannot be fetched at all', async () => {
-    const attached: Snippet[] = [];
-    render(
-      <PierreReviewDiff
-        client={fakeClient({
-          fetchRunFile: () => Promise.reject(new Error('worktree gone')),
-        })}
-        runId="r1"
-        meta={runMeta()}
-        patch={TWO_FILE_PATCH}
-        only="a.ts"
-        comments={[]}
-        onResolve={() => Promise.resolve()}
-        onReply={() => Promise.resolve()}
-        onAddToChat={(snippet) => attached.push(snippet)}
-      />
-    );
-
-    selectRows([
-      { line: 12, text: '  sku: string;' },
-      { line: 13, text: '  score: number;' },
-    ]);
-    await settle();
-
-    expect(selectionBar()).not.toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
-    expect(attached[0]).toMatchObject({
-      file: 'a.ts',
-      startLine: 12,
-      endLine: 13,
-    });
-  });
-
-  // Split is the default layout, and its two columns are separate subtrees, so a drag down the
-  // additions column routinely begins or ends in the deleted one. Refusing those selections
-  // suppressed the bar for essentially every multi-line drag in the default view — which is the
-  // failure a human saw on screen.
-  it('arms in split view and names only the additions-side lines', async () => {
-    const attached: Snippet[] = [];
-    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
-
-    selectAcrossSplitColumns();
-    await settle();
-
-    expect(selectionBar()).not.toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
-    expect(attached[0]).toMatchObject({
-      file: 'a.ts',
-      // 7 is the context line's additions-side number, not the 6 the deleted column shows for
-      // the same line; 4 and 5 are deletions and are not lines here at all.
-      startLine: 7,
-      endLine: 9,
-    });
-  });
-
-  // Placement comes from the rows the drag crossed, not from the selection: a `Range` spanning a
-  // shadow boundary is what made the previous positioning both untestable and, on screen,
-  // invisible. A row element's own box reads the same either side of a shadow root.
-  it('hangs the bar above the first row the drag crossed', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    stubRect(positioningFrame(), {
-      top: 100,
-      left: 50,
-      bottom: 800,
-      width: 900,
-    });
-    const rows = addRows([
-      { line: 12, text: '  sku: string;' },
-      { line: 13, text: '  score: number;' },
-    ]);
-    stubRect(rows[0], { top: 400, left: 90, bottom: 420, width: 800 });
-    stubRect(rows[1], { top: 420, left: 90, bottom: 440, width: 800 });
-
-    selectAcrossRows(rows);
-    await settle();
-
-    // Both boxes are viewport-absolute, so the bar's offsets are their difference.
-    expect(selectionBar()?.style.top).toBe('300px');
-    expect(selectionBar()?.style.left).toBe('40px');
-    expect(selectionBar()?.className).toContain('-translate-y-full');
-  });
-
-  it('drops the bar below the selection when it is against the top of the pane', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    stubRect(positioningFrame(), {
-      top: 100,
-      left: 50,
-      bottom: 800,
-      width: 900,
-    });
-    const rows = addRows([
-      { line: 1, text: 'first line of the file' },
-      { line: 2, text: 'second line' },
-    ]);
-    stubRect(rows[0], { top: 110, left: 90, bottom: 130, width: 800 });
-    stubRect(rows[1], { top: 130, left: 90, bottom: 150, width: 800 });
-
-    selectAcrossRows(rows);
-    await settle();
-
-    // 10px of room above is not enough for the bar, so it goes under the last row instead.
-    expect(selectionBar()?.style.top).toBe('50px');
-    expect(selectionBar()?.className).not.toContain('-translate-y-full');
-  });
-
-  // The rendered diff is the authority on which lines it drew. Searching the file for the text
-  // is only a fallback, and must never override rows that already said.
-  it('takes the lines from the rows, not from where the text sits in the file', async () => {
-    const attached: Snippet[] = [];
-    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
-
-    // `fakeClient` serves this text on line 2; the row says the diff drew it on line 40.
-    selectRows([{ line: 40, text: 'const b = 2;' }]);
-    await settle();
-    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
-
-    expect(attached[0]).toMatchObject({ startLine: 40, endLine: 40 });
-  });
-
-  // A deleted line's number belongs to the base file, and its text is not in the new one, so
-  // neither the rows nor the fallback can name lines for it.
-  it('stays away for a deletion-side row', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-
-    selectRows([{ line: 4, text: 'const gone = 1;', type: 'change-deletion' }]);
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // The failure the user hit: a drag on the line-number gutter armed the bar while a drag on the
-  // code did not. Gutter items carry `data-column-number` and `data-line-type` but deliberately
-  // no `data-line` (Pierre's `createGutterItem`), so they are not rows — and there is no longer
-  // any second path that can arm the bar from text alone.
-  it('arms nothing from a drag down the line-number gutter', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    addRows([{ line: 12, text: '  sku: string;' }]);
-    const gutter = document.createElement('div');
-    gutter.setAttribute('data-gutter', '');
-    rowHost().appendChild(gutter);
-    const first = appendGutterItem(gutter, 12);
-    const last = appendGutterItem(gutter, 13);
-
-    selectBetween(
-      first.firstChild?.firstChild as Node,
-      last.firstChild?.firstChild as Node
-    );
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // Even a gutter row that somehow carried `data-line` must not count: it is not code, and the
-  // reviewer selected none.
-  it('ignores a `data-line` that sits inside the gutter', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    const gutter = document.createElement('div');
-    gutter.setAttribute('data-gutter', '');
-    rowHost().appendChild(gutter);
-    const row = appendRow(gutter, 12, '12');
-
-    selectBetween(
-      row.firstChild?.firstChild as Node,
-      row.firstChild?.firstChild as Node
-    );
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // Pierre renders each file into its own shadow root on some surfaces, and an engine that
-  // retargets the selection reports the host rather than the row. The real boundaries are
-  // recovered through the shadow root's own selection.
-  it('reads rows that live inside a shadow root', async () => {
-    const attached: Snippet[] = [];
-    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
-    const host = document.createElement('div');
-    host.appendChild(document.createTextNode('retargeted'));
-    rowHost().appendChild(host);
-    const shadow = host.attachShadow({ mode: 'open' });
-    const inner = appendRow(shadow, 21, '  hidden(): void;');
-
-    const innerRange = document.createRange();
-    innerRange.selectNodeContents(inner.firstChild as Node);
-    (
-      shadow as ShadowRoot & { getSelection?: () => Selection | null }
-    ).getSelection = () =>
-      ({ rangeCount: 1, getRangeAt: () => innerRange }) as unknown as Selection;
-
-    // What the document reports is the host, which says nothing about which row was selected.
-    selectBetween(host.firstChild as Node, host.firstChild as Node);
-    await settle();
-
-    expect(selectionBar()).not.toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
-    expect(attached[0]).toMatchObject({ startLine: 21, endLine: 21 });
-  });
-
-  it('stays away when the selection covers no code row at all', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-
-    // Text inside the diff but not in a row — a file header, a hunk label, stray chrome.
-    selectLooseText('src/a.ts');
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // Selecting again must not leave the bar acting on the previous selection for a frame: the
-  // bar moves with the new one immediately, so a click there would attach the wrong code.
-  it('drops the previous selection the moment a new one starts', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    selectRows([{ line: 12, text: '  sku: string;' }]);
-    await settle();
-    expect(selectionBar()).not.toBeNull();
-
-    // A selection that covers no row replaces it with nothing, rather than leaving the bar
-    // hanging over lines that are no longer selected.
-    selectLooseText('src/a.ts');
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  it('withholds Add to chat where there is no chat to add to', async () => {
-    renderForSelection();
-
-    selectRows([{ line: 12, text: '  sku: string;' }]);
-    await settle();
-
-    expect(selectionBar()).not.toBeNull();
     expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
   });
 
-  it('hands the chat the selected code and the lines it was drawn on', async () => {
+  it('arms the bar for the clicked line', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    expect(selectionBar()).toBeNull();
+
+    clickGutter(2);
+
+    expect(selectionBar()).not.toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Add to chat' })
+    ).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Comment' })).not.toBeNull();
+  });
+
+  // A deleted line's number belongs to the base file and its text is not in the new one, so
+  // there is nothing for chat, copy or a comment to point at.
+  it('arms nothing from the deletions side', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    clickGutter(2, { side: 'deletions' });
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('arms nothing when the hovered line cannot be read', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    const renderGutter = codeViewProps?.renderGutterUtility as GutterRenderer;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    render(
+      renderGutter(() => undefined, { id: 'a.ts' }),
+      { container: host }
+    );
+
+    fireEvent.click(host.querySelector('button') as HTMLElement);
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('hands the chat the armed line, its number and its text from the patch', () => {
     const attached: Snippet[] = [];
     renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
 
-    selectRows([{ line: 12, text: '  sku: string;' }]);
-    await settle();
+    clickGutter(2);
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
 
     expect(attached).toEqual([
-      { file: 'a.ts', startLine: 12, endLine: 12, text: '  sku: string;' },
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
     ]);
   });
 
-  it('copies the selected code to the clipboard', async () => {
+  it('clears the bar once an action is invoked', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    clickGutter(2);
+    expect(selectionBar()).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('clears the bar on Escape', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    clickGutter(2);
+    expect(selectionBar()).not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('copies the armed line to the clipboard', () => {
     const written: string[] = [];
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -1060,22 +791,17 @@ describe('PierreReviewDiff — the selection action bar', () => {
     });
     renderForSelection({ onAddToChat: () => {} });
 
-    selectRows([{ line: 12, text: '  sku: string;' }]);
-    await settle();
+    clickGutter(1);
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
-    expect(written).toEqual(['  sku: string;']);
+    expect(written).toEqual(['const a = 0;']);
   });
 
-  // Comment is a second entry point to the composer the gutter "+" already opens, not a
-  // parallel one — so it must produce the same composer annotation on the same range.
-  it('opens the existing composer on the selected range', async () => {
+  // Commenting is now one click further than it was — the gutter arms the bar, the bar opens the
+  // composer — and this is the test that says the second click still reaches the same composer.
+  it('opens the composer on the armed line', async () => {
     renderForSelection({ onAddToChat: () => {} });
-    selectRows([
-      { line: 12, text: '  sku: string;' },
-      { line: 13, text: '  score: number;' },
-    ]);
-    await settle();
+    clickGutter(2);
 
     fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
     await settle();
@@ -1086,15 +812,137 @@ describe('PierreReviewDiff — the selection action bar', () => {
     );
     expect(
       annotations.map((a) => a.metadata).filter((m) => m?.kind === 'composer')
-    ).toEqual([{ kind: 'composer', file: 'a.ts', startLine: 12 }]);
+    ).toEqual([{ kind: 'composer', file: 'a.ts' }]);
+  });
+
+  // A patch carries only the lines its hunks cover, and some file types carry none at all. An
+  // empty snippet is recoverable; a bar that never appears is the failure this gesture replaced.
+  it('still arms when the patch does not carry the line’s text', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    clickGutter(40);
+
+    expect(selectionBar()).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 40, endLine: 40, text: '' },
+    ]);
+  });
+
+  it('withholds Add to chat where there is no chat to add to', () => {
+    renderForSelection();
+
+    clickGutter(2);
+
+    expect(selectionBar()).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
   });
 });
 
-// The gesture end to end, wired exactly the way `ReviewView` wires it: the diff owns the
-// selection, the dock owns the pending attachments, and neither module in between
+describe('PierreReviewDiff — a dragged line range arms the whole range', () => {
+  // `onSelectedLinesChange` only ever fires because the review surface turns Pierre's line
+  // selection on; without this option the range branch below is unreachable dead code.
+  it('turns on Pierre’s line selection', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    const options = codeViewProps?.options as
+      | { enableLineSelection?: boolean }
+      | undefined;
+    expect(options?.enableLineSelection).toBe(true);
+  });
+
+  it('arms the dragged range when the clicked line is inside it', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    dragLineNumbers(1, 2);
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      {
+        file: 'a.ts',
+        startLine: 1,
+        endLine: 2,
+        text: 'const a = 0;\nconst b = 2;',
+      },
+    ]);
+  });
+
+  it('arms only the clicked line when it sits outside the dragged range', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    dragLineNumbers(1, 1);
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
+    ]);
+  });
+
+  // A range dragged down the deleted column names base-file lines, which say nothing about the
+  // code under review — the click falls back to the one line it is actually on.
+  it('ignores a dragged range on the deletions side', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    dragLineNumbers(1, 2, 'deletions');
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
+    ]);
+  });
+});
+
+describe('PierreReviewDiff — where the bar hangs', () => {
+  // Placement comes from the clicked button's own box. A `Range` spanning a shadow boundary is
+  // what made the previous positioning both untestable and, on screen, invisible; an element's
+  // own box reads the same either side of a shadow root.
+  it('hangs the bar above the clicked affordance', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    stubRect(positioningFrame(), {
+      top: 100,
+      left: 50,
+      bottom: 800,
+      width: 900,
+    });
+
+    clickGutter(2, { rect: { top: 400, left: 90, bottom: 420, width: 16 } });
+
+    // Both boxes are viewport-absolute, so the bar's offsets are their difference.
+    expect(selectionBar()?.style.top).toBe('300px');
+    expect(selectionBar()?.style.left).toBe('40px');
+    expect(selectionBar()?.className).toContain('-translate-y-full');
+  });
+
+  it('drops the bar below the line when it is against the top of the pane', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    stubRect(positioningFrame(), {
+      top: 100,
+      left: 50,
+      bottom: 800,
+      width: 900,
+    });
+
+    clickGutter(1, { rect: { top: 110, left: 90, bottom: 130, width: 16 } });
+
+    // 10px of room above is not enough for the bar, so it goes under the line instead.
+    expect(selectionBar()?.style.top).toBe('30px');
+    expect(selectionBar()?.className).not.toContain('-translate-y-full');
+  });
+});
+
+// The gesture end to end, wired exactly the way `ReviewView` wires it: the diff owns the armed
+// line, the dock owns the pending attachments, and neither module in between
 // (`SelectionActions`, `SnippetComposer`) knows a run exists. This is the only test that holds
 // the two halves together.
-describe('select code, then chat about it', () => {
+describe('arm a line, then chat about it', () => {
   function Wiring({ client }: { client: ApiClient }) {
     const chatRef = useRef<ReviewChatHandle>(null);
     const handleAddToChat = useCallback((snippet: Snippet) => {
@@ -1109,6 +957,7 @@ describe('select code, then chat about it', () => {
           patch={TWO_FILE_PATCH}
           only="a.ts"
           comments={[]}
+          onAdd={() => Promise.reject(new Error('not used here'))}
           onResolve={() => Promise.resolve()}
           onReply={() => Promise.resolve()}
           onAddToChat={handleAddToChat}
@@ -1123,7 +972,7 @@ describe('select code, then chat about it', () => {
     );
   }
 
-  it('carries the selected lines all the way into a stored message', async () => {
+  it('carries the armed lines all the way into a stored message', async () => {
     const added: Parameters<ApiClient['addChatMessage']>[0][] = [];
     const client = fakeClient({
       baseUrl: 'http://127.0.0.1:4321',
@@ -1148,17 +997,13 @@ describe('select code, then chat about it', () => {
       </QueryClientProvider>
     );
 
-    selectRows([
-      { line: 12, text: '  sku: string;' },
-      { line: 13, text: '  score: number;' },
-    ]);
-    await settle();
+    dragLineNumbers(1, 2);
+    clickGutter(2);
     expect(selectionBar()).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
 
-    // The dock opened itself and is holding the snippet as a chip, named for the lines the
-    // rendered rows said the drag crossed.
-    expect(screen.queryByText('a.ts (12-13)')).not.toBeNull();
+    // The dock opened itself and is holding the snippet as a chip, named for the lines armed.
+    expect(screen.queryByText('a.ts (1-2)')).not.toBeNull();
 
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'why is this needed?' },
@@ -1170,7 +1015,7 @@ describe('select code, then chat about it', () => {
       subject: 'run:r1',
       role: 'human',
       body: 'why is this needed?',
-      snippets: [{ file: 'a.ts', startLine: 12, endLine: 13 }],
+      snippets: [{ file: 'a.ts', startLine: 1, endLine: 2 }],
       target: 'run-agent',
     });
   });
