@@ -3,7 +3,7 @@ import { ApiError } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
 import { Waypoints } from 'lucide-react';
 
-import { summarizeImpact } from '../../lib/impactSummary';
+import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../../lib/impactSummary';
 import { Badge } from '@/ui/badge';
 import {
   EmptyState,
@@ -15,12 +15,6 @@ import {
 } from '@/ui/chrome';
 import { Skeleton } from '@/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
-
-// `ReviewRunner`'s DEPENDENT_CAP (packages/server/src/orchestrator/review.ts)
-// — the number of dependents the review agent actually saw. Passed as a
-// default rather than imported: apps/desktop talks to the server over HTTP
-// only and does not depend on packages/server.
-const DEFAULT_REVIEW_CAP = 20;
 
 // The scanner only understands .ts/.tsx imports, so a scanner-backed result
 // can look complete on a polyglot repo while missing most of it. Shown as a
