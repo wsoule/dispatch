@@ -23,6 +23,7 @@ import {
   buildItems,
   decideEditSave,
   editErrorMessage,
+  isEditableDiffType,
   resolveEditFailure,
 } from '@/lib/reviewDiffItems';
 import { isTerminalRunState } from '@/lib/runState';
@@ -510,6 +511,11 @@ export function PierreReviewDiff({
   const renderHeaderMetadata = useCallback(
     (item: { id: string }) => {
       if (!canEdit) return null;
+      // Withheld entirely on a file Pierre cannot attach an editor to, the same way the whole
+      // pencil is withheld on a non-terminal run — a control that silently does nothing is
+      // worse than no control.
+      const fileType = files.find((f) => f.name === item.id)?.type;
+      if (fileType !== undefined && !isEditableDiffType(fileType)) return null;
       const isEditing = editing === item.id;
       // Disabled for every file while any one file's load is in flight, not just the file it's
       // for — `beginEdit` itself refuses to start a second load until this one settles, so a
@@ -559,7 +565,16 @@ export function PierreReviewDiff({
         </span>
       );
     },
-    [canEdit, editing, pendingEdit, editError, beginEdit, saveEdit, cancelEdit]
+    [
+      canEdit,
+      files,
+      editing,
+      pendingEdit,
+      editError,
+      beginEdit,
+      saveEdit,
+      cancelEdit,
+    ]
   );
 
   // Declarative jump: the effect fires when `scrollTo` changes identity, so clicking the same
