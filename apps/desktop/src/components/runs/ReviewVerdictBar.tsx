@@ -185,22 +185,24 @@ export function ReviewVerdictBar({
       </p>
     ) : null;
 
-  // Shown only for a run whose work is on a PR. The label has to carry the
-  // whole meaning: leaving it off is not "skip the review", it is "keep the
-  // review off GitHub" — the agent hears about it either way.
+  // Shown only for a run whose work is on a PR. The explanation sits inside
+  // the label, in both layouts: leaving the box off is not "skip the review",
+  // it is "keep the review off GitHub", and a hover `title` says that to
+  // nobody using a keyboard or a screen reader.
   const githubCheckbox = !canPostToGitHub ? null : (
-    <label
-      title="Leaving this off still sends the review to the agent — only the pull request is left alone."
-      className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11.5px]"
-    >
+    <label className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px]">
       <input
         type="checkbox"
         checked={postToGitHub}
         onChange={(e) => setPostToGitHub(e.target.checked)}
         className="accent-accent size-3 shrink-0"
       />
-      <GitPullRequest className="size-3" />
+      <GitPullRequest className="size-3 shrink-0" />
       Also post to GitHub
+      <span className="text-muted-foreground text-[11px] leading-snug">
+        Off, the review still goes back to the agent — only the pull request is
+        left alone.
+      </span>
     </label>
   );
 
@@ -256,8 +258,10 @@ export function ReviewVerdictBar({
           {aiReviewButton}
           {submitButton}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="dense-meta">{countText}</span>
+        {/* Wraps: the GitHub label carries a full sentence, which on a narrow
+            window would otherwise squeeze the status text beside it. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="dense-meta shrink-0">{countText}</span>
           {githubCheckbox}
           {warnings}
           <span className="flex-1" />
@@ -328,15 +332,7 @@ export function ReviewVerdictBar({
         })}
       </div>
 
-      {githubCheckbox !== null && (
-        <div className="mt-2 flex flex-col gap-0.5">
-          {githubCheckbox}
-          <span className="text-muted-foreground text-[11px] leading-snug">
-            Off, the review still publishes and still goes back to the agent.
-            This only decides whether the pull request hears about it too.
-          </span>
-        </div>
-      )}
+      {githubCheckbox !== null && <div className="mt-2">{githubCheckbox}</div>}
 
       {error !== null && (
         <p className="text-state-failed mt-2 text-[12px]">{error}</p>

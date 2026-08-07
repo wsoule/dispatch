@@ -1,5 +1,6 @@
 export {
   ApiError,
+  canPostReviewToPr,
   connectEvents,
   createApiClient,
   httpToWs,

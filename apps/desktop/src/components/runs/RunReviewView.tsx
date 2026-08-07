@@ -1,4 +1,5 @@
 import type { DiffResult, MergeQueueSnapshot, RunMeta } from '@dispatch/client';
+import { canPostReviewToPr } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
 import {
@@ -217,7 +218,7 @@ export function RunReviewView({
                 onResolve={onResolveComment}
                 onReply={onReplyComment}
                 onSubmit={onSubmitReview}
-                canPostToGitHub={hasOpenPr}
+                canPostToGitHub={canPostReviewToPr(meta.prUrl)}
               />
             </div>
           )}
