@@ -987,6 +987,58 @@ describe('ReviewRunner', () => {
     expect(comment.anchorText).toBe('export const answer = 42;');
   });
 
+  // A review with an explicit target files its comments there instead of
+  // under the reviewed run's slug — the seam Phase 4's PR agent needs.
+  it('posts findings to the pending review target instead of the run', async () => {
+    const reviewer = new ScriptedReviewer(
+      JSON.stringify({
+        findings: [
+          {
+            severity: 'critical',
+            title: 'answer is not 42',
+            detail: 'the whole point of the file',
+            file: 'src.ts',
+            line: 1,
+            recommendation: 'blocks',
+          },
+        ],
+      })
+    );
+    const { orchestrator, runner, store, reviewComments } =
+      setupReview(reviewer);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'harden sync', writes: ['src.ts'] });
+    const implRun = await orchestrator.dispatch(task.meta.id, 'fake');
+    const { base, head } = commitRange();
+
+    const reviewMeta = await runner.startReview({
+      taskId: task.meta.id,
+      base,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+      runId: implRun.id,
+      target: { kind: 'pr', number: 7 },
+    });
+    await waitFor(
+      () => orchestrator.getRun(reviewMeta.id)?.meta.state === 'finished'
+    );
+    await waitFor(
+      () => reviewComments.list({ kind: 'pr', number: 7 }).length === 1
+    );
+
+    const [comment] = reviewComments.list({ kind: 'pr', number: 7 });
+    expect(comment.body).toContain('answer is not 42');
+    // The run slug must stay empty — the finding went to the PR, not here.
+    expect(
+      reviewComments.list({ kind: 'run', runId: implRun.id })
+    ).toHaveLength(0);
+  });
+
   it('posts no comments for a review that was not dispatched against a run', async () => {
     const reviewer = new ScriptedReviewer(
       JSON.stringify({
