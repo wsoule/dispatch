@@ -53,8 +53,8 @@ import {
 } from './api/scopeRequests.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
-import type { ConversationStore, Snippet } from './conversations.js';
-import { isSubjectRef } from './conversations.js';
+import type { ConversationStore } from './conversations.js';
+import { isSnippet, isSubjectRef } from './conversations.js';
 import type { EventBus } from './events.js';
 import type { FindingStore } from './findings.js';
 import {
@@ -1195,10 +1195,19 @@ async function addChatMessage(
   if (typeof body.body !== 'string' || body.body.trim() === '') {
     return errorResponse(400, 'body is required');
   }
+  // Rejected rather than stored: a snippet missing a field is not recoverable later, and it
+  // reaches the reviewer's chat as `undefined (undefined-undefined)` on a chip.
+  const snippets = body.snippets ?? [];
+  if (!Array.isArray(snippets) || !snippets.every(isSnippet)) {
+    return errorResponse(
+      400,
+      'snippets must each carry file, text and integer startLine/endLine'
+    );
+  }
   const message = ctx.conversations.add(body.subject, {
     role: body.role,
     body: body.body.trim(),
-    snippets: Array.isArray(body.snippets) ? (body.snippets as Snippet[]) : [],
+    snippets,
     target: typeof body.target === 'string' ? body.target : undefined,
   });
   return jsonResponse(message, 201);

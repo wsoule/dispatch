@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import {
-  snippetFromSelection,
-  snippetLabel,
-  subjectForRun,
-} from './conversation';
+import { snippetFromSelection, snippetLabel } from './conversation';
 
 describe('snippetLabel', () => {
   it('renders a range', () => {
@@ -17,12 +13,6 @@ describe('snippetLabel', () => {
     expect(
       snippetLabel({ file: 'src/a.ts', startLine: 7, endLine: 7, text: '' })
     ).toBe('src/a.ts (7)');
-  });
-});
-
-describe('subjectForRun', () => {
-  it('namespaces a run id', () => {
-    expect(subjectForRun('r-abc')).toBe('run:r-abc');
   });
 });
 

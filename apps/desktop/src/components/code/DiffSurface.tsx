@@ -6,7 +6,7 @@ import type {
 } from '@pierre/diffs/react';
 import { CodeView, EditProvider } from '@pierre/diffs/react';
 import { CircleAlert, FileX, Loader2 } from 'lucide-react';
-import type { Ref } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { useMemo } from 'react';
 
 import { PierreWorkerPool } from '../runs/PierreWorkerPool';
@@ -111,6 +111,28 @@ interface DiffSurfaceProps<T> {
   viewRef?: Ref<CodeViewHandle<T>>;
 }
 
+/**
+ * Runs a slot's render prop inside its own component, so a throw from the *call* lands under the
+ * boundary wrapping this rather than above it.
+ */
+function Slot({ render }: { render: () => ReactNode }) {
+  return <>{render()}</>;
+}
+
+/**
+ * One file's React-rendered slot, isolated. `CodeView` portals each item's header metadata,
+ * annotations and gutter into that file's own subtree, so a throw in one file's thread or
+ * finding costs that slot instead of blanking the whole pane — the per-file boundaries the
+ * one-`CodeView` consolidation would otherwise have dropped.
+ */
+function isolateSlot(file: string, render: () => ReactNode): ReactNode {
+  return (
+    <ErrorBoundary label={`the diff for ${file}`}>
+      <Slot render={render} />
+    </ErrorBoundary>
+  );
+}
+
 // One plain diff item per file: what a surface with no review state layered on top needs.
 function toDiffItems<T>(files: FileDiffMetadata[]): CodeViewItem<T>[] {
   return files.map((fileDiff) => ({
@@ -163,6 +185,37 @@ export function DiffSurface<T = undefined>({
     () => (items === undefined ? toDiffItems<T>(files) : items(files)),
     [items, files]
   );
+  // Memoized because `CodeView` memoizes its slot portals on these identities — a fresh wrapper
+  // each render would re-render every file's slots on every keystroke in a composer.
+  const slots = useMemo(
+    () => ({
+      renderAnnotation:
+        renderAnnotation === undefined
+          ? undefined
+          : (
+              annotation: Parameters<NonNullable<typeof renderAnnotation>>[0],
+              item: Parameters<NonNullable<typeof renderAnnotation>>[1]
+            ) => isolateSlot(item.id, () => renderAnnotation(annotation, item)),
+      renderGutterUtility:
+        renderGutterUtility === undefined
+          ? undefined
+          : (
+              getHoveredLine: Parameters<
+                NonNullable<typeof renderGutterUtility>
+              >[0],
+              item: Parameters<NonNullable<typeof renderGutterUtility>>[1]
+            ) =>
+              isolateSlot(item.id, () =>
+                renderGutterUtility(getHoveredLine, item)
+              ),
+      renderHeaderMetadata:
+        renderHeaderMetadata === undefined
+          ? undefined
+          : (item: Parameters<NonNullable<typeof renderHeaderMetadata>>[0]) =>
+              isolateSlot(item.id, () => renderHeaderMetadata(item)),
+    }),
+    [renderAnnotation, renderGutterUtility, renderHeaderMetadata]
+  );
 
   // `h-full` fills a caller whose parent is a plain block; `flex-1` does the same where the
   // parent is a flex column, in which a percentage height can resolve to zero.
@@ -199,9 +252,9 @@ export function DiffSurface<T = undefined>({
         ref={viewRef}
         items={codeItems}
         options={diffOptions}
-        renderAnnotation={renderAnnotation}
-        renderGutterUtility={renderGutterUtility}
-        renderHeaderMetadata={renderHeaderMetadata}
+        renderAnnotation={slots.renderAnnotation}
+        renderGutterUtility={slots.renderGutterUtility}
+        renderHeaderMetadata={slots.renderHeaderMetadata}
         onSelectedLinesChange={onSelectedLinesChange}
         onItemEditComplete={onItemEditComplete}
         className={className}
@@ -210,8 +263,8 @@ export function DiffSurface<T = undefined>({
   );
 
   return (
-    // One boundary for the whole view: with a single `CodeView` there is no longer a per-file
-    // subtree to fail on its own, so a crash in any file costs the diff rather than the app.
+    // The outer boundary: the per-file ones above cover each file's own slots, and this catches
+    // everything that is not one file's — the parse, the virtualizer, the worker pool.
     <ErrorBoundary label="the diff">
       {/* Outside the worker pool, not between it and `CodeView`: `EditProvider` is only a
           context, and keeping the pool's child the `CodeView` element itself means the

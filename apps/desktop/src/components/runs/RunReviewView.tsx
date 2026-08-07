@@ -3,6 +3,7 @@ import type {
   DiffResult,
   MergeQueueSnapshot,
   RunMeta,
+  Snippet,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
@@ -14,11 +15,13 @@ import {
   MessageSquarePlus,
   Trash2,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { isTerminalRunState } from '../../lib/runState';
 import { PierreReviewDiff } from './PierreReviewDiff';
 import { QueueMergeControl } from './QueueMergeControl';
+import type { ReviewChatHandle } from './ReviewChatPanel';
+import { ReviewChatPanel } from './ReviewChatPanel';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 import { RunDiffView } from './RunDiffView';
 import { Button } from '@/ui/button';
@@ -115,6 +118,12 @@ export function RunReviewView({
   const [changesDraft, setChangesDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The chat dock owns the pending attachments; the diff only hands them over, the same split
+  // `ReviewView` uses so neither the selection bar nor the composer learns a run exists.
+  const chatRef = useRef<ReviewChatHandle>(null);
+  const handleAddToChat = useCallback((snippet: Snippet) => {
+    chatRef.current?.attach(snippet);
+  }, []);
 
   // How many members of this run's task's stack (its blockedBy-connected
   // component) are worth a "Queue stack" action: each one whose latest run is
@@ -197,30 +206,47 @@ export function RunReviewView({
       )}
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-4 overflow-hidden">
-        <div className="min-h-0 overflow-auto">
-          {/* Pierre's CodeView with comment threads injected as line annotations — same
-              renderer as everywhere else, so syntax highlighting, virtualisation and hunk
-              expansion all come along. */}
-          {onAddComment !== undefined &&
-          onResolveComment !== undefined &&
-          onReplyComment !== undefined &&
-          diff !== undefined ? (
-            <PierreReviewDiff
+        <div className="flex min-h-0 flex-col gap-2 overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-auto">
+            {/* Pierre's CodeView with comment threads injected as line annotations — same
+                renderer as everywhere else, so syntax highlighting, virtualisation and hunk
+                expansion all come along. */}
+            {onAddComment !== undefined &&
+            onResolveComment !== undefined &&
+            onReplyComment !== undefined &&
+            diff !== undefined ? (
+              <PierreReviewDiff
+                client={client}
+                runId={meta.id}
+                meta={meta}
+                patch={diff.patch}
+                comments={reviewComments ?? []}
+                onAdd={onAddComment}
+                onResolve={onResolveComment}
+                onReply={onReplyComment}
+                onApply={onApplySuggestion}
+                // This surface has a run, so it has a conversation subject — the reason a PR
+                // target withholds this does not apply here.
+                onAddToChat={client == null ? undefined : handleAddToChat}
+              />
+            ) : (
+              <RunDiffView
+                diff={diff}
+                diffLoading={diffLoading}
+                diffError={diffError}
+              />
+            )}
+          </div>
+          {/* Beneath the diff rather than in the right rail, which belongs to the comment
+              batch — the same placement `ReviewView` uses. */}
+          {client != null && (
+            <ReviewChatPanel
               client={client}
+              ref={chatRef}
               runId={meta.id}
-              meta={meta}
-              patch={diff.patch}
-              comments={reviewComments ?? []}
-              onAdd={onAddComment}
-              onResolve={onResolveComment}
-              onReply={onReplyComment}
-              onApply={onApplySuggestion}
-            />
-          ) : (
-            <RunDiffView
-              diff={diff}
-              diffLoading={diffLoading}
-              diffError={diffError}
+              canResumeAgent={
+                isTerminalRunState(meta.state) && meta.reviewedAt === undefined
+              }
             />
           )}
         </div>
