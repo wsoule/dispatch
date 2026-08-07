@@ -1,3 +1,4 @@
+import { canPostReviewToPr } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -530,7 +531,7 @@ export function ReviewView({
           layout="bar"
           comments={reviewComments}
           onSubmit={data.handleSubmitReview}
-          canPostToGitHub={run?.prUrl !== undefined}
+          canPostToGitHub={canPostReviewToPr(run?.prUrl)}
           onStartAiReview={handleStartAiReview}
           extraWarnings={verdictWarnings}
         />

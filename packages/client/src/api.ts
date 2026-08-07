@@ -1151,6 +1151,18 @@ export function taskQueryString(filter: TaskFilter = {}): string {
   return params.size > 0 ? `?${params.toString()}` : '';
 }
 
+/**
+ * Whether a run's `prUrl` is one `submitReview({ postToGitHub: true })` can
+ * actually reach. The server resolves the PR by parsing the url and 400s
+ * anything it cannot, so a UI keyed on "has a prUrl" alone would offer a
+ * choice that always fails. Kept in step with `parsePrUrl` in
+ * packages/server/src/orchestrator/pr.ts.
+ */
+export function canPostReviewToPr(prUrl: string | undefined): boolean {
+  if (prUrl === undefined) return false;
+  return /github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(prUrl);
+}
+
 // Pure helper (no DOM involved): swaps an http(s) origin for its ws(s)
 // equivalent and appends `/ws`.
 export function httpToWs(origin: string): string {
