@@ -19,7 +19,7 @@ export function isSubjectRef(value: unknown): value is SubjectRef {
   );
 }
 
-interface Snippet {
+export interface Snippet {
   file: string;
   startLine: number;
   endLine: number;
