@@ -205,6 +205,7 @@ class StubRunner {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        baseRefName: 'main',
         headRefOid: '',
         author: { login: 'teammate' },
         isDraft: true,
@@ -221,12 +222,25 @@ class StubRunner {
     ]),
     stderr: '',
   };
+  // `git fetch`/`git merge-base` results fetchPrHead reads — distinct from
+  // every `gh` stub above, matched on `cmd[0] === 'git'` so they never
+  // collide with the `gh api`/`gh pr` branches.
+  fetchResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  mergeBaseResult: CommandResult = {
+    ok: true,
+    stdout: 'mergebasesha1234\n',
+    stderr: '',
+  };
   delayMs = 0;
 
   run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
     this.calls.push({ cwd, cmd });
     if (this.delayMs > 0) await sleep(this.delayMs);
     if (cmd[0] === 'git' && cmd[1] === 'push') return this.pushResult;
+    if (cmd[0] === 'git' && cmd[1] === 'fetch') return this.fetchResult;
+    if (cmd[0] === 'git' && cmd[1] === 'merge-base') {
+      return this.mergeBaseResult;
+    }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'create') {
       return this.createResult;
     }
@@ -844,6 +858,7 @@ describe('PrManager.listRepoPrs', () => {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        baseRefName: 'main',
         author: 'teammate',
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
@@ -871,9 +886,9 @@ describe('PrManager.listRepoPrs', () => {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
-        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
-        'statusCheckRollup,additions,deletions,changedFiles',
+      'number,title,url,headRefName,baseRefName,headRefOid,author,isDraft,' +
+        'updatedAt,isCrossRepository,headRepositoryOwner,reviewDecision,' +
+        'mergeable,statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -1064,6 +1079,115 @@ describe('PrManager.getPrDiffByUrl', () => {
   });
 });
 
+// Phase 4 Task 2: fetchPrHead checks a PR's head into a local ref a review
+// worktree can be cut from, plus the merge base startReview() needs. All of
+// it goes through StubRunner's `run`, so no test here touches a real remote.
+describe('PrManager.fetchPrHead', () => {
+  it('fetches pull/<n>/head into dispatch-pr-<n> and returns that ref', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.fetchPrHead(9);
+
+    expect(result.ref).toBe('dispatch-pr-9');
+    const fetchCall = stub.calls.find(
+      (c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch'
+    )?.cmd;
+    expect(fetchCall).toEqual([
+      'git',
+      'fetch',
+      '--force',
+      'origin',
+      'pull/9/head:dispatch-pr-9',
+    ]);
+  });
+
+  it("resolves the merge base against the PR's base branch and returns it", async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.mergeBaseResult = { ok: true, stdout: 'deadbeef1234\n', stderr: '' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.fetchPrHead(9);
+
+    expect(result.base).toBe('deadbeef1234');
+    const mergeBaseCall = stub.calls.find(
+      (c) => c.cmd[0] === 'git' && c.cmd[1] === 'merge-base'
+    )?.cmd;
+    // stub.listResult's PR #9 fixture carries baseRefName: 'main'.
+    expect(mergeBaseCall).toEqual([
+      'git',
+      'merge-base',
+      'main',
+      'dispatch-pr-9',
+    ]);
+  });
+
+  it('throws OrchestratorConflictError carrying the git error text on a failed fetch', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.fetchResult = {
+      ok: false,
+      stdout: '',
+      stderr: "fatal: couldn't find remote ref pull/9/head",
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(9)).rejects.toThrow(OrchestratorConflictError);
+    await expect(pr.fetchPrHead(9)).rejects.toThrow(
+      /couldn't find remote ref pull\/9\/head/
+    );
+  });
+
+  // Regression: a plain (non-forced) refspec fetch is rejected by real git
+  // on a non-fast-forward update — reviewing the same PR again after new
+  // commits (or a force-push) is the normal case, not an edge case. Asserted
+  // via the argv itself (proven against real git in review, not against this
+  // stub, which would answer ok:true either way) so removing `--force` fails
+  // this test even though the stub can't reproduce the rejection.
+  it('re-fetches an existing ref by forcing the update, not failing', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.fetchPrHead(9);
+    const second = await pr.fetchPrHead(9);
+
+    expect(second.ref).toBe('dispatch-pr-9');
+    const fetchCalls = stub.calls.filter(
+      (c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch'
+    );
+    expect(fetchCalls).toHaveLength(2);
+    expect(fetchCalls.every((c) => c.cmd.includes('--force'))).toBe(true);
+  });
+
+  it('throws OrchestratorConflictError carrying the git error text on a failed merge-base', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.mergeBaseResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'fatal: not a valid object name main',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(9)).rejects.toThrow(
+      /not a valid object name main/
+    );
+  });
+
+  it('404s a PR number the repo does not currently have open', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(404)).rejects.toThrow(
+      OrchestratorNotFoundError
+    );
+  });
+});
+
 // A ReviewTarget for PR #9 — matches StubRunner's default listResult entry
 // (number 9, url .../pull/9), so most tests below resolve without needing
 // to override the list stub just to pick a number.
@@ -1080,6 +1204,7 @@ function listResultWithHeadRefOid(sha: string): CommandResult {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        baseRefName: 'main',
         headRefOid: sha,
         author: { login: 'teammate' },
         isDraft: true,
