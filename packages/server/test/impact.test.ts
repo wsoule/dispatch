@@ -29,6 +29,7 @@ function deps(over: Partial<ImpactDeps> = {}): ImpactDeps {
     changedFilesForRun: () => null,
     writesForTask: () => null,
     trackedFiles: () => ['src/db.ts', 'src/api.ts'],
+    fileExists: () => false,
     ...over,
   };
 }
@@ -77,4 +78,63 @@ test('a task with no declared writes says so rather than guessing', () => {
     deps({ writesForTask: () => [] })
   );
   expect(result).toEqual({ ok: false, reason: 'no-declared-writes' });
+});
+
+test('a task whose declared writes match no tracked file says so, not a false empty', () => {
+  const result = computeImpact(
+    { kind: 'task', taskId: 't-1' },
+    deps({ writesForTask: () => ['packages/newthing/**'] })
+  );
+  expect(result).toEqual({ ok: false, reason: 'writes-match-nothing' });
+});
+
+test('a file subject that is neither tracked nor present on disk is not-found', () => {
+  const result = computeImpact(
+    { kind: 'file', path: 'src/db/clint.ts' },
+    deps({ trackedFiles: () => ['src/db/client.ts'], fileExists: () => false })
+  );
+  expect(result).toEqual({ ok: false, reason: 'not-found' });
+});
+
+test('a tracked-but-deleted file is still a valid subject', () => {
+  const result = computeImpact(
+    { kind: 'file', path: 'src/db.ts' },
+    deps({ trackedFiles: () => ['src/db.ts'], fileExists: () => false })
+  );
+  expect(result.ok).toBe(true);
+});
+
+test('an untracked-but-present file is still a valid subject', () => {
+  const result = computeImpact(
+    { kind: 'file', path: 'src/new.ts' },
+    deps({ trackedFiles: () => [], fileExists: () => true })
+  );
+  expect(result.ok).toBe(true);
+});
+
+test('reach is called with the resolved seeds, not an unrelated empty array', () => {
+  const calls: string[][] = [];
+  const result = computeImpact(
+    { kind: 'task', taskId: 't-1' },
+    deps({
+      writesForTask: () => ['src/*.ts'],
+      depMap: () => ({
+        ...depMap,
+        reach: (files: string[]) => {
+          calls.push(files);
+          return {
+            entries: [],
+            count: 0,
+            maxHops: 0,
+            sources: ['scanner'],
+            degraded: false,
+            truncated: false,
+          };
+        },
+      }),
+    })
+  );
+  expect(result.ok).toBe(true);
+  expect(calls).toHaveLength(1);
+  expect([...calls[0]].sort()).toEqual(['src/api.ts', 'src/db.ts']);
 });

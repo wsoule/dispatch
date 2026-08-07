@@ -61,12 +61,18 @@ function HopSplitBar({
   );
 }
 
-// A task with no declared `writes` resolves to an empty reach with this
-// reason echoed by the server — a real answer, not an error, so it reads as
-// its own sentence rather than the raw `no-declared-writes` string.
+// A task can resolve to an empty reach for two distinct, real reasons the
+// server echoes back rather than errors — no declared writes at all, or
+// declared writes that matched no tracked file (the normal state of a
+// not-yet-started task). Each gets its own sentence rather than a raw reason
+// id, and unrecognized reasons still surface as *something* rather than
+// silently falling through to "No files affected."
 function reasonMessage(reason: string | undefined): string | null {
   if (reason === 'no-declared-writes') {
     return 'This task declares no writes, so it has no blast radius to show.';
+  }
+  if (reason === 'writes-match-nothing') {
+    return "This task's declared writes don't match any tracked file yet.";
   }
   return reason ?? null;
 }
@@ -89,7 +95,7 @@ export function ImpactPanel({
   reviewCap = DEFAULT_REVIEW_CAP,
   className,
 }: ImpactPanelProps) {
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: ['impact', client?.baseUrl, subject, id],
     queryFn: () => {
       if (client === null) throw new Error('no API client');
@@ -108,6 +114,11 @@ export function ImpactPanel({
     data && message === null
       ? { reach: data.reach, summary: summarizeImpact(data.reach, reviewCap) }
       : null;
+  // True while the request is still in flight AND while it is disabled
+  // (e.g. no API client yet, `enabled: false` above) — a disabled query
+  // never becomes `isError` and never produces `data`, so without this it
+  // would fall through to a bare header forever instead of a loading state.
+  const pending = !isError && data === undefined;
 
   return (
     <Panel className={className}>
@@ -127,7 +138,7 @@ export function ImpactPanel({
         Impact
       </PanelHeader>
 
-      {isLoading && (
+      {pending && (
         <div className="flex flex-col gap-2 p-3">
           <Skeleton className="h-3.5 w-2/3" />
           <Skeleton className="h-1.5 w-full" />
@@ -144,15 +155,15 @@ export function ImpactPanel({
         />
       )}
 
-      {!isLoading && !isError && message !== null && (
+      {!pending && !isError && message !== null && (
         <EmptyState message={message} />
       )}
 
-      {!isLoading && !isError && resolved && resolved.summary.total === 0 && (
+      {!pending && !isError && resolved && resolved.summary.total === 0 && (
         <EmptyState message="No files affected." />
       )}
 
-      {!isLoading && !isError && resolved && resolved.summary.total > 0 && (
+      {!pending && !isError && resolved && resolved.summary.total > 0 && (
         <ImpactBody summary={resolved.summary} />
       )}
     </Panel>

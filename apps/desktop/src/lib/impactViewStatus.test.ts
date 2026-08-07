@@ -18,6 +18,7 @@ test('a failed request is reported as an error, never an empty state', () => {
     error: new ApiError('path escapes the repository root', 400),
     entries: [],
     filter: '',
+    resolved: true,
   });
   expect(status).toEqual({
     kind: 'error',
@@ -31,6 +32,7 @@ test('an error wins even when stale entries are still sitting in cache', () => {
     error: new ApiError('not found', 404),
     entries,
     filter: '',
+    resolved: true,
   });
   expect(status.kind).toBe('error');
 });
@@ -41,6 +43,7 @@ test('a non-ApiError failure still reports as an error, with a generic message',
     error: new Error('network down'),
     entries: [],
     filter: '',
+    resolved: true,
   });
   expect(status).toEqual({
     kind: 'error',
@@ -54,6 +57,7 @@ test('no entries and no error is a real empty state', () => {
     error: null,
     entries: [],
     filter: '',
+    resolved: true,
   });
   expect(status).toEqual({ kind: 'empty', message: 'No files affected.' });
 });
@@ -64,11 +68,49 @@ test('entries present but filtered to nothing says so distinctly', () => {
     error: null,
     entries,
     filter: 'nope',
+    resolved: true,
   });
   expect(status).toEqual({
     kind: 'empty',
     message: 'No files match that filter.',
   });
+});
+
+// The regression this pins: a disabled query (e.g. no API client yet) never
+// becomes `isError` and never produces `entries`, so without an explicit
+// `resolved: false` it would fall through to "No files affected." forever —
+// a terminal false-empty, not a transient loading flash.
+test('an unresolved query with no entries is pending, not empty', () => {
+  const status = resolveAffectedFilesStatus({
+    isError: false,
+    error: null,
+    entries: [],
+    filter: '',
+    resolved: false,
+  });
+  expect(status).toEqual({ kind: 'pending' });
+});
+
+test('an unresolved query is pending even if stale entries linger', () => {
+  const status = resolveAffectedFilesStatus({
+    isError: false,
+    error: null,
+    entries,
+    filter: '',
+    resolved: false,
+  });
+  expect(status.kind).toBe('pending');
+});
+
+test('an error still wins over an unresolved query', () => {
+  const status = resolveAffectedFilesStatus({
+    isError: true,
+    error: new ApiError('boom', 500),
+    entries: [],
+    filter: '',
+    resolved: false,
+  });
+  expect(status.kind).toBe('error');
 });
 
 test('entries survive into grouped output when nothing failed', () => {
@@ -77,6 +119,7 @@ test('entries survive into grouped output when nothing failed', () => {
     error: null,
     entries,
     filter: '',
+    resolved: true,
   });
   expect(status).toEqual({
     kind: 'entries',

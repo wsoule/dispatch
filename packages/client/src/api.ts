@@ -1044,9 +1044,11 @@ export interface ImpactReach {
   truncated: boolean;
 }
 
-// The body of `GET /api/impact`. `reason` is set only on the 200 a task with
-// no declared writes gets back — an empty reach that is a real answer, not an
-// error (see getImpact in packages/server/src/api/impact.ts).
+// The body of `GET /api/impact`. `reason` is set only on the 200s a task
+// subject can get back with an empty reach that is still a real answer, not
+// an error: `no-declared-writes` (nothing declared) or `writes-match-nothing`
+// (declared writes matched no tracked file) — see getImpact in
+// packages/server/src/api/impact.ts.
 export interface ImpactResponse {
   subject: ImpactSubject;
   seeds: string[];

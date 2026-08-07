@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/ui/select';
+import { Skeleton } from '@/ui/skeleton';
 
 interface ImpactViewProps {
   data: DispatchProjectData;
@@ -96,10 +97,20 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
   // Decided by a pure function (see impactViewStatus.ts) rather than inline
   // here, specifically so a failed request can never be rendered as "no
   // files affected" — `ImpactPanel` above already shows the real error;
-  // this panel must agree with it, not contradict it.
+  // this panel must agree with it, not contradict it. `resolved` is false
+  // both while the query is still in flight and when it is disabled (no
+  // API client yet), so neither case renders as a false "No files
+  // affected." — see the terminal-false-empty bug this replaced.
   const status = useMemo(
-    () => resolveAffectedFilesStatus({ isError, error, entries, filter }),
-    [isError, error, entries, filter]
+    () =>
+      resolveAffectedFilesStatus({
+        isError,
+        error,
+        entries,
+        filter,
+        resolved: response !== undefined,
+      }),
+    [isError, error, entries, filter, response]
   );
   const shownCount =
     status.kind === 'entries'
@@ -231,7 +242,12 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
                 )}
               </PanelRow>
 
-              {status.kind === 'empty' ? (
+              {status.kind === 'pending' ? (
+                <div className="flex flex-col gap-2 p-3">
+                  <Skeleton className="h-3.5 w-2/3" />
+                  <Skeleton className="h-3.5 w-1/2" />
+                </div>
+              ) : status.kind === 'empty' ? (
                 <EmptyState message={status.message} />
               ) : (
                 status.groups.map((group) => (

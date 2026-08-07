@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import type { ApiContext } from '../api.js';
 import type { ReachResult } from '../depmap.js';
 import type { ImpactSubject } from '../impact.js';
@@ -56,20 +59,22 @@ export async function getImpact(ctx: ApiContext, url: URL): Promise<Response> {
         ? { kind: 'run', runId: id }
         : { kind: 'task', taskId: id };
 
-  // Only a task with declared writes ever reaches computeImpact's
-  // trackedFiles() call; peeking at the same writes avoids a wasted spawn.
+  // computeImpact's trackedFiles() call is only reachable for a file subject
+  // (existence check) or a task with declared writes (seed expansion);
+  // peeking at the same writes here avoids a wasted spawn for other kinds.
   let trackedFilesValue: string[] = [];
-  if (subject.kind === 'task') {
-    const writes = writesForTask(ctx, subject.taskId);
-    if (writes !== null && writes.length > 0) {
-      try {
-        trackedFilesValue = await ctx.trackedFilesCache.get();
-      } catch (err) {
-        if (err instanceof TrackedFilesError) {
-          return errorResponse(502, err.message);
-        }
-        throw err;
+  const needsTrackedFiles =
+    subject.kind === 'file' ||
+    (subject.kind === 'task' &&
+      (writesForTask(ctx, subject.taskId) ?? []).length > 0);
+  if (needsTrackedFiles) {
+    try {
+      trackedFilesValue = await ctx.trackedFilesCache.get();
+    } catch (err) {
+      if (err instanceof TrackedFilesError) {
+        return errorResponse(500, err.message);
       }
+      throw err;
     }
   }
 
@@ -79,6 +84,7 @@ export async function getImpact(ctx: ApiContext, url: URL): Promise<Response> {
     changedFilesForRun: (runId) => changedFilesForRun(ctx, runId),
     writesForTask: (taskId) => writesForTask(ctx, taskId),
     trackedFiles: () => trackedFilesValue,
+    fileExists: (path) => existsSync(resolve(ctx.rootDir, path)),
   });
 
   if (result.ok) {
@@ -95,7 +101,8 @@ export async function getImpact(ctx: ApiContext, url: URL): Promise<Response> {
   if (result.reason === 'outside-root') {
     return errorResponse(400, 'path escapes the repository root');
   }
-  // 'no-declared-writes' — a task that declares nothing is a real answer,
+  // 'no-declared-writes' / 'writes-match-nothing' — a task that declares
+  // nothing, or whose writes resolve to no tracked file, is a real answer,
   // not an error: it gets a 200 with an empty reach and the reason echoed.
   return jsonResponse({
     subject,

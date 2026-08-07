@@ -14,11 +14,22 @@ export interface ImpactDeps {
   changedFilesForRun(runId: string): string[] | null;
   writesForTask(taskId: string): string[] | null;
   trackedFiles(): string[];
+  // Whether a relative path exists on disk right now — a tracked file can be
+  // deleted, and a brand-new file may not be tracked yet, so neither check
+  // alone is enough to tell a typo apart from a real subject.
+  fileExists(path: string): boolean;
 }
 
 export type ImpactResult =
   | { ok: true; subject: ImpactSubject; seeds: string[]; reach: ReachResult }
-  | { ok: false; reason: 'not-found' | 'outside-root' | 'no-declared-writes' };
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'outside-root'
+        | 'no-declared-writes'
+        | 'writes-match-nothing';
+    };
 
 // Resolves a file subject's path against rootDir and rejects anything that
 // escapes it (e.g. `../../etc/passwd`) before any graph call — the seed set
@@ -44,6 +55,13 @@ export function computeImpact(
     case 'file': {
       const seed = seedFromPath(deps.rootDir, subject.path);
       if (seed === null) return { ok: false, reason: 'outside-root' };
+      // A path that is neither tracked nor present on disk is a typo, not a
+      // file with an empty blast radius — tracked-but-deleted and
+      // untracked-but-present are both legitimate, so either check passing
+      // is enough.
+      if (!deps.trackedFiles().includes(seed) && !deps.fileExists(seed)) {
+        return { ok: false, reason: 'not-found' };
+      }
       seeds = [seed];
       break;
     }
@@ -62,6 +80,12 @@ export function computeImpact(
       seeds = deps
         .trackedFiles()
         .filter((file) => matchesDeclaredWrites(writes, file));
+      // Declared writes that match nothing (e.g. files not created yet) are
+      // a real answer, distinct from declaring no writes at all — both must
+      // avoid falling through to a false "0 files affected".
+      if (seeds.length === 0) {
+        return { ok: false, reason: 'writes-match-nothing' };
+      }
       break;
     }
   }

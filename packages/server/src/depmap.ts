@@ -659,6 +659,10 @@ export function createCartoDepMap(
       const closest = new Map<string, number>();
       for (const entry of scanner.entries) closest.set(entry.path, entry.hops);
 
+      // Tracks whether this branch itself dropped an entry, either past the
+      // hop budget or because the file cap was already full when a genuinely
+      // new path arrived. Neither case is covered by scanner.truncated.
+      let cartoDroppedEntry = false;
       for (const file of files) {
         let entries: BlastEntry[];
         try {
@@ -671,24 +675,28 @@ export function createCartoDepMap(
           return { ...scanner, degraded: true };
         }
         for (const entry of entries) {
-          if (seeds.has(entry.path) || entry.hops > options.maxHops) continue;
+          if (seeds.has(entry.path)) continue;
+          if (entry.hops > options.maxHops) {
+            cartoDroppedEntry = true;
+            continue;
+          }
           const existing = closest.get(entry.path);
           if (existing !== undefined && existing <= entry.hops) continue;
           if (existing === undefined && closest.size >= options.maxFiles) {
+            cartoDroppedEntry = true;
             continue;
           }
           closest.set(entry.path, entry.hops);
         }
       }
 
-      const capped = closest.size >= options.maxFiles;
       return {
         entries: sortEntries(closest),
         count: closest.size,
         maxHops: closest.size === 0 ? 0 : Math.max(...closest.values()),
         sources: ['carto', 'scanner'],
         degraded: false,
-        truncated: scanner.truncated || capped,
+        truncated: scanner.truncated || cartoDroppedEntry,
       };
     },
   };
