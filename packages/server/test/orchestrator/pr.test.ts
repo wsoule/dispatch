@@ -1083,35 +1083,34 @@ describe('PrManager.getPrDiffByUrl', () => {
 // worktree can be cut from, plus the merge base startReview() needs. All of
 // it goes through StubRunner's `run`, so no test here touches a real remote.
 describe('PrManager.fetchPrHead', () => {
-  it('fetches pull/<n>/head into dispatch-pr-<n> and returns that ref', async () => {
+  it('fetches pull/<n>/head into refs/dispatch/pr/<n> and returns that ref', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
 
     const result = await pr.fetchPrHead(9);
 
-    expect(result.ref).toBe('dispatch-pr-9');
+    expect(result.ref).toBe('refs/dispatch/pr/9');
     const fetchCall = stub.calls.find(
       (c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch'
     )?.cmd;
-    // The base branch (stub.listResult's PR #9 fixture: baseRefName 'main')
-    // rides the same fetch, with no explicit dest, so `origin/main` is
-    // refreshed too — see the merge-base test below for why that matters.
+    // Fully qualified, not `dispatch-pr-9`: an unqualified dest would DWIM
+    // to refs/heads/ and permanently add a branch per review. The base
+    // branch (fixture: baseRefName 'main') rides the same fetch, with no
+    // explicit dest, so `origin/main` is refreshed too.
     expect(fetchCall).toEqual([
       'git',
       'fetch',
       '--force',
       'origin',
-      'pull/9/head:dispatch-pr-9',
+      'pull/9/head:refs/dispatch/pr/9',
       'main',
     ]);
   });
 
-  // Regression: the merge base must be resolved against `origin/<base>`,
-  // never the bare local branch name. A bare `main` is only as fresh as
-  // whatever the user last pulled — reviewing against a stale merge base
-  // silently widens the diff to every commit the real base picked up
-  // since, and the agent posts findings on lines the PR never touched.
+  // Regression: merge base must resolve against `origin/<base>`, never the
+  // bare local branch — a stale local `main` silently widens the diff to
+  // commits the PR never touched, and findings land on the wrong lines.
   it('resolves the merge base against origin/<base>, not the bare branch name', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
@@ -1129,7 +1128,7 @@ describe('PrManager.fetchPrHead', () => {
       'git',
       'merge-base',
       'origin/main',
-      'dispatch-pr-9',
+      'refs/dispatch/pr/9',
     ]);
   });
 
@@ -1163,7 +1162,7 @@ describe('PrManager.fetchPrHead', () => {
     await pr.fetchPrHead(9);
     const second = await pr.fetchPrHead(9);
 
-    expect(second.ref).toBe('dispatch-pr-9');
+    expect(second.ref).toBe('refs/dispatch/pr/9');
     const fetchCalls = stub.calls.filter(
       (c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch'
     );
