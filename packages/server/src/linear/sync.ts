@@ -684,15 +684,20 @@ export class LinearSync {
   ): Promise<void> {
     const { taskIds, pulledTaskIds, remoteWins, createOnly } = opts;
     const explicit = taskIds !== undefined;
-    const candidates = this.deps.store
+    // A derived task's description is the artifact's own prose (a PR body),
+    // and it exists only to anchor a local review — so it never becomes an
+    // issue, not even on an explicit push, which is still a request to
+    // publish it to a whole team's tracker.
+    const publishable = this.deps.store
       .listSafe()
-      .docs.filter((doc) =>
-        explicit
-          ? taskIds.includes(doc.meta.id)
-          : !pulledTaskIds.has(doc.meta.id) &&
-            doc.meta.archivedAt === undefined &&
-            isOutstanding(doc.meta.updated, state.pushed[doc.meta.id])
-      );
+      .docs.filter((doc) => doc.meta.derivedFrom === undefined);
+    const candidates = publishable.filter((doc) =>
+      explicit
+        ? taskIds.includes(doc.meta.id)
+        : !pulledTaskIds.has(doc.meta.id) &&
+          doc.meta.archivedAt === undefined &&
+          isOutstanding(doc.meta.updated, state.pushed[doc.meta.id])
+    );
     const unchecked = createOnly
       ? new Set<string>()
       : await this.verifyBeforeSending(session, state, summary, candidates, {
