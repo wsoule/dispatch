@@ -172,6 +172,21 @@ test('a carto entry blocked by an already-full file cap still reports truncated'
   expect(result.truncated).toBe(true);
 });
 
+test('carto active: a non-.ts seed is never flagged unanalyzed, since carto is multi-language', () => {
+  const scanner = scannerOf({});
+  const reader = readerOf({
+    'main.py': {
+      count: 1,
+      hops: 1,
+      files: [{ file: 'other.py', hop_distance: 1 }],
+    },
+  });
+  const map = createCartoDepMap('/repo', reader, scanner);
+  const result = map.reach(['main.py']);
+  expect(result.sources).toEqual(['carto', 'scanner']);
+  expect(result.unanalyzedSeeds).toEqual([]);
+});
+
 test('a throwing reader degrades to the scanner and says so', () => {
   const scanner = scannerOf({ 'a.ts': ['b.ts'] });
   const reader = {
@@ -184,4 +199,18 @@ test('a throwing reader degrades to the scanner and says so', () => {
   expect(result.entries).toEqual([{ path: 'b.ts', hops: 1 }]);
   expect(result.sources).toEqual(['scanner']);
   expect(result.degraded).toBe(true);
+  expect(result.unanalyzedSeeds).toEqual([]);
+});
+
+test('a degraded reader still flags a non-.ts seed unanalyzed, since it fell back to the scanner alone', () => {
+  const scanner = scannerOf({});
+  const reader = {
+    blastRadius(): CartoBlastRadius {
+      throw new Error('container half-written');
+    },
+  };
+  const map = createCartoDepMap('/repo', reader, scanner);
+  const result = map.reach(['notes.jsonl']);
+  expect(result.degraded).toBe(true);
+  expect(result.unanalyzedSeeds).toEqual(['notes.jsonl']);
 });

@@ -41,6 +41,7 @@ export function resolveAffectedFilesStatus({
   filter,
   resolved,
   reason,
+  zeroMessage,
 }: {
   isError: boolean;
   error: unknown;
@@ -54,6 +55,13 @@ export function resolveAffectedFilesStatus({
    *  (see `computeImpact` in packages/server/src/impact.ts). Undefined for
    *  every other response, including a genuine zero-dependent result. */
   reason?: string;
+  /** What to show when there are no entries at all (not filtered to
+   *  nothing) — `summarizeImpact`'s `zeroMessage`, so a genuine zero and an
+   *  analysability-limited zero read the same honesty-checked way here as
+   *  they do in `ImpactPanel` above this view, rather than this module
+   *  inventing its own copy. Defaults to the generic message so a caller
+   *  with no summary yet (nothing has resolved) still renders something. */
+  zeroMessage?: string;
 }): AffectedFilesStatus {
   if (isError) {
     return {
@@ -74,7 +82,7 @@ export function resolveAffectedFilesStatus({
       kind: 'empty',
       message:
         entries.length === 0
-          ? 'No files affected.'
+          ? (zeroMessage ?? 'No files affected.')
           : 'No files match that filter.',
     };
   }

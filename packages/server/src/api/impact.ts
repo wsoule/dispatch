@@ -18,6 +18,7 @@ const EMPTY_REACH: ReachResult = {
   sources: [],
   degraded: false,
   truncated: false,
+  unanalyzedSeeds: [],
 };
 
 // The files a run's diff touched; null (not a thrown error) signals an

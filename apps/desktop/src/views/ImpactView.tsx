@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react';
 import { ImpactPanel } from '../components/impact/ImpactPanel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef } from '../lib/appNav';
+import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../lib/impactSummary';
 import { resolveAffectedFilesStatus } from '../lib/impactViewStatus';
 import {
   EmptyState,
@@ -94,6 +95,16 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
   });
 
   const entries = response?.reach.entries ?? NO_ENTRIES;
+  // The same pure summary `ImpactPanel` renders from, computed once here so
+  // this panel's zero-count wording (genuine zero vs. an unanalyzable seed)
+  // matches it exactly rather than this view inventing its own copy.
+  const summary = useMemo(
+    () =>
+      response
+        ? summarizeImpact(response.reach, response.seeds, DEFAULT_REVIEW_CAP)
+        : null,
+    [response]
+  );
   // Decided by a pure function (see impactViewStatus.ts) rather than inline
   // here, specifically so a failed request can never be rendered as "no
   // files affected" — `ImpactPanel` above already shows the real error;
@@ -114,8 +125,9 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
         filter,
         resolved: response !== undefined,
         reason: response?.reason,
+        zeroMessage: summary?.zeroMessage,
       }),
-    [isError, error, entries, filter, response]
+    [isError, error, entries, filter, response, summary]
   );
   const shownCount =
     status.kind === 'entries'

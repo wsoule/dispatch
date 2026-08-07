@@ -112,7 +112,10 @@ export function ImpactPanel({
   const message = data ? reasonMessage(data.reason) : null;
   const resolved =
     data && message === null
-      ? { reach: data.reach, summary: summarizeImpact(data.reach, reviewCap) }
+      ? {
+          reach: data.reach,
+          summary: summarizeImpact(data.reach, data.seeds, reviewCap),
+        }
       : null;
   // True while the request is still in flight AND while it is disabled
   // (e.g. no API client yet, `enabled: false` above) — a disabled query
@@ -160,7 +163,7 @@ export function ImpactPanel({
       )}
 
       {!pending && !isError && resolved && resolved.summary.total === 0 && (
-        <EmptyState message="No files affected." />
+        <EmptyState message={resolved.summary.zeroMessage} />
       )}
 
       {!pending && !isError && resolved && resolved.summary.total > 0 && (
@@ -223,6 +226,7 @@ function ImpactBody({
         <MetaText>{summary.label}</MetaText>
       </div>
       <HopSplitBar direct={summary.direct} downstream={summary.downstream} />
+      {summary.analysisNote && <HintText>{summary.analysisNote}</HintText>}
       {summary.coverage && <HintText>{summary.coverage}</HintText>}
     </PanelRow>
   );
