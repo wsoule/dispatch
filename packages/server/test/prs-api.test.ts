@@ -1813,6 +1813,13 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     return JSON.parse(readFileSync(path, 'utf8')) as ReviewComment[];
   }
 
+  // A review run parked at an approval nobody answers — non-terminal for as
+  // long as a test needs, with no timer still ticking after teardown.
+  const STAYS_LIVE: FakeExecutorScript = {
+    steps: [{ approval: { requestId: 'gate', toolName: 'noop', input: {} } }],
+    finish: { state: 'finished' },
+  };
+
   it('synthesizes a task from the PR and dispatches a review of its head', async () => {
     const calls = await startWithCallLog({
       viewResult: bodyViewResult('Removes the stray semicolon.'),
@@ -1919,9 +1926,73 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     await startWithCallLog();
 
     const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
-    expect(res.status).toBe(500);
+    // 409, not a 500: WorktreeManager throws a bare Error, and the 500 that
+    // becomes carries no CORS headers — the webview would see only a network
+    // failure with no way to tell what, if anything, was created.
+    expect(res.status).toBe(409);
+    const body = await json(res);
+    expect(body.error).toMatch(/could not start the PR review/);
+    expect(body.error).toMatch(/worktree add/);
     expect(tasks()).toEqual([]);
     expect(orchestrator.list()).toEqual([]);
+  });
+
+  // The other half of the rollback: once a run exists, deleting the task
+  // would strand that run's taskId, so the task stays. Induced for real —
+  // the worktree cut succeeds (the ref exists) and buildPrompt then fails on
+  // a base that is not a commit, which is exactly dispatchAuxRun's own
+  // buildPrompt catch.
+  it('keeps the task when a run already references it', async () => {
+    await startWithCallLog({
+      mergeBaseResult: {
+        ok: true,
+        stdout: '0000000000000000000000000000000000000000\n',
+        stderr: '',
+      },
+    });
+    createPrHeadRef(FORK_PR.number);
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).not.toBe(202);
+
+    const surviving = tasks();
+    expect(surviving).toHaveLength(1);
+    const runs = orchestrator.list();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].taskId).toBe(surviving[0].meta.id);
+    expect(runs[0].state).toBe('failed');
+  });
+
+  // Every dispatch mints a fresh task, so dispatchAuxRun's per-task live-run
+  // guard can never fire here. Without a PR-level one, a double click files
+  // two runs' findings on the same PR — and the eventual submit posts every
+  // line comment to GitHub twice.
+  it('refuses a second review while one is still running', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+    createPrHeadRef(FORK_PR.number);
+
+    const first = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(first.status).toBe(202);
+    const second = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(second.status).toBe(409);
+    expect((await json(second)).error).toMatch(/already being reviewed/);
+
+    // And it refused before creating anything: still one task, one run.
+    expect(tasks()).toHaveLength(1);
+    expect(orchestrator.list()).toHaveLength(1);
+  });
+
+  // The guard is per PR, not a global "one review at a time" lock.
+  it('allows a review of a different PR while one is running', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+    createPrHeadRef(FORK_PR.number);
+    createPrHeadRef(REPO_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+    expect((await postReviewAgent(REPO_PR.number, {})).status).toBe(202);
+    expect(tasks()).toHaveLength(2);
   });
 });
 

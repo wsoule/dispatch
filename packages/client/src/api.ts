@@ -1427,11 +1427,12 @@ export interface ApiClient {
    * Hands a repo PR to a review agent, which checks the PR's head out and
    * runs in it — executing that code on this machine. A fork PR 409s (the
    * message names the head owner) until `confirmFork` says the user agreed.
+   * Resolves with the review run it started, so a caller can confirm it.
    */
   startPrAgentReview(
     number: number,
     input?: { confirmFork?: boolean }
-  ): Promise<void>;
+  ): Promise<RunMeta>;
   // The notes/triage hub.
   // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
   // the splitting rule has exactly one implementation. `convertInbox` reports per-item results

@@ -83,7 +83,10 @@ import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
 import { forkConfirmMessage, parsePrUrl } from './orchestrator/pr.js';
-import { buildPrReviewTask } from './orchestrator/prReviewTask.js';
+import {
+  buildPrReviewTask,
+  isPrReviewTaskFor,
+} from './orchestrator/prReviewTask.js';
 import type {
   QuestionRegistry,
   RunQuestion,
@@ -2115,6 +2118,24 @@ function forkGate(pr: RepoPr, confirmFork: boolean): Response | null {
   );
 }
 
+// The review run already reviewing this PR, if one is still going. Every
+// dispatch mints a fresh task, so dispatchAuxRun's per-task live-run guard
+// can never fire for these — this is the guard that can.
+function liveReviewRunForPr(ctx: ApiContext, number: number): RunMeta | null {
+  const taskIds = new Set(
+    ctx.store
+      .list()
+      .filter((doc) => isPrReviewTaskFor(doc.meta, number))
+      .map((doc) => doc.meta.id)
+  );
+  const live = ctx.orchestrator
+    .list()
+    .find(
+      (run) => taskIds.has(run.taskId) && !TERMINAL_RUN_STATES.has(run.state)
+    );
+  return live ?? null;
+}
+
 // POST /api/prs/:number/review-agent — hand a repo PR to a review agent.
 // The gate is the first thing past resolution deliberately: when it refuses,
 // no ref, worktree, task or run exists yet, so there is nothing to undo.
@@ -2130,21 +2151,21 @@ async function startPrAgentReview(
   const confirmFork = parsed.value.confirmFork === true;
   const refused = forkGate(pr, confirmFork);
   if (refused !== null) return refused;
+  // Two reviews of one PR file both sets of findings on the same PR, and a
+  // later submit would post every line comment to GitHub twice.
+  const live = liveReviewRunForPr(ctx, pr.number);
+  if (live !== null) {
+    return errorResponse(
+      409,
+      `PR #${pr.number} is already being reviewed by run ${live.id}`
+    );
+  }
   return jsonResponse(await dispatchPrAgentReview(ctx, pr, confirmFork), 202);
 }
 
-/**
- * Turns a repo PR into a review run, in the order the steps become undoable.
- *
- * The two `gh` reads come first because they create nothing; the head ref
- * next; the synthesized task only once the ref it will be reviewed at
- * exists; the run last. A failure before the task therefore leaves nothing
- * behind, and a failure after it takes the task with it (see
- * rollbackSynthesizedTask) — no orphan task, no worktree without a task.
- *
- * The worktree stays behind fetchPrHead, which is where the fork gate is
- * structural: a path that cut one from an already-fetched ref would skip it.
- */
+// Turns a repo PR into a review run, ordered so a failure leaves nothing
+// half-created: the two `gh` reads create nothing, the ref precedes the task,
+// and a review that fails to start takes its task with it.
 async function dispatchPrAgentReview(
   ctx: ApiContext,
   pr: RepoPr,
@@ -2152,15 +2173,18 @@ async function dispatchPrAgentReview(
 ): Promise<RunMeta> {
   const body = await ctx.prManager.getPrBodyByUrl(pr.url);
   const files = await ctx.prManager.listPrFilesByUrl(pr.url);
-  // `resolved: pr` reuses the snapshot the gate above decided on, rather
-  // than a second `gh pr list` that could answer differently by now.
+  // `resolved: pr` reuses the snapshot the gate decided on — no second `gh
+  // pr list`, no window between the two. fetchPrHead reads fork-ness off
+  // that RepoPr rather than deriving it, so it must be the real one.
   const { ref, base } = await ctx.prManager.fetchPrHead(pr.number, {
     confirmFork,
     resolved: pr,
   });
   const task = ctx.store.create(buildPrReviewTask({ ...pr, body }, files));
-  ctx.cache.rebuild(ctx.store);
   try {
+    ctx.cache.rebuild(ctx.store);
+    // The worktree is cut here, behind fetchPrHead: any path that cut one
+    // from an already-fetched ref would slip past the fork gate entirely.
     const meta = await ctx.reviewRunner.startReview({
       taskId: task.meta.id,
       base,
@@ -2176,8 +2200,24 @@ async function dispatchPrAgentReview(
     return meta;
   } catch (err) {
     rollbackSynthesizedTask(ctx, task.meta.id);
-    throw err;
+    throw routableDispatchError(err);
   }
+}
+
+// WorktreeManager.add throws a bare Error, which api.ts's typed mapping does
+// not route — the 500 it becomes carries no CORS headers, so the webview sees
+// only a network failure. Re-raise anything unmapped as the 409 it really is.
+function routableDispatchError(err: unknown): Error {
+  const mapped =
+    err instanceof OrchestratorNotFoundError ||
+    err instanceof OrchestratorConflictError ||
+    err instanceof OrchestratorClientError ||
+    err instanceof TaskParseError ||
+    err instanceof ConfigError;
+  if (mapped) return err;
+  return new OrchestratorConflictError(
+    `could not start the PR review: ${(err as Error).message}`
+  );
 }
 
 // A task whose review never started is debris: nothing links to it and

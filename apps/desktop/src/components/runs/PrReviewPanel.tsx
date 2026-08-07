@@ -3,6 +3,7 @@ import type {
   PrDetail,
   PrReviewEvent,
   PrStatus,
+  RunMeta,
 } from '@dispatch/client';
 import {
   Bot,
@@ -144,7 +145,7 @@ interface PrReviewPanelProps {
    * that code. Absent where there is nothing to dispatch — a run's own PR
    * panel reviews the run's worktree instead.
    */
-  onAgentReview?: (confirmFork: boolean) => Promise<void>;
+  onAgentReview?: (confirmFork: boolean) => Promise<RunMeta>;
   /**
    * The login owning the head repository, set only when it is a fork. Its
    * presence is what turns the review button into a confirmation first.
@@ -211,8 +212,18 @@ export function PrReviewPanel({
   // reused as the queue switches rows, and agreeing to run one PR's code must
   // never carry over to the next.
   const [askedForPr, setAskedForPr] = useState<number | null>(null);
+  // Same reasoning for the dispatched-run notice: it belongs to the PR it was
+  // dispatched for, and must not read as this PR's once the queue moves on.
+  const [dispatched, setDispatched] = useState<{
+    prNumber: number;
+    runId: string;
+  } | null>(null);
   const prNumber = detail?.status.number ?? null;
   const askingFork = askedForPr !== null && askedForPr === prNumber;
+  const dispatchedRunId =
+    dispatched !== null && dispatched.prNumber === prNumber
+      ? dispatched.runId
+      : null;
 
   async function act(run: () => Promise<void>) {
     setBusy(true);
@@ -236,7 +247,10 @@ export function PrReviewPanel({
     setBusy(true);
     setActionError(null);
     try {
-      await onAgentReview(confirmFork);
+      const meta = await onAgentReview(confirmFork);
+      // Saying which run started is what stops a second click: without it the
+      // pane looks identical before and after a successful dispatch.
+      if (prNumber !== null) setDispatched({ prNumber, runId: meta.id });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -284,6 +298,11 @@ export function PrReviewPanel({
             </p>
           ) : (
             <div className="flex flex-col gap-2">
+              {dispatchedRunId !== null && (
+                <p className="text-muted-foreground text-[12px]">
+                  Review dispatched &mdash; run {dispatchedRunId}.
+                </p>
+              )}
               {onAgentReview !== undefined &&
                 (askingFork && forkOwner !== undefined ? (
                   <ForkConfirm

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import type { RepoPr } from '../../src/orchestrator/pr.js';
 import {
   buildPrReviewTask,
+  isPrReviewTaskFor,
   PR_REVIEW_LABEL,
 } from '../../src/orchestrator/prReviewTask.js';
 
@@ -130,5 +131,31 @@ describe('buildPrReviewTask', () => {
     const pr = makePr();
     const files = [{ path: 'src/retry.ts' }];
     expect(buildPrReviewTask(pr, files)).toEqual(buildPrReviewTask(pr, files));
+  });
+});
+
+// What stops a second dispatch for a PR already under review: the api layer
+// finds the task it made last time through this, so the two have to agree.
+describe('isPrReviewTaskFor', () => {
+  function metaFor(number: number, title: string) {
+    const input = buildPrReviewTask(makePr({ number, title }), []);
+    return { title: input.title, labels: input.labels ?? [] };
+  }
+
+  it('matches the task buildPrReviewTask made for that PR', () => {
+    expect(isPrReviewTaskFor(metaFor(7, 'Bump deps'), 7)).toBe(true);
+  });
+
+  it('does not match another PR, including a prefix-sharing number', () => {
+    const meta = metaFor(11, 'Fix a typo');
+    expect(isPrReviewTaskFor(meta, 1)).toBe(false);
+    expect(isPrReviewTaskFor(meta, 7)).toBe(false);
+  });
+
+  // A human-written task called "Review PR #7: ..." is not one of ours; the
+  // label is what says a dispatch synthesized it.
+  it('does not match a same-titled task without the label', () => {
+    const meta = metaFor(7, 'Bump deps');
+    expect(isPrReviewTaskFor({ ...meta, labels: [] }, 7)).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import type { PrDetail, PrReviewEvent } from '@dispatch/client';
+import type { PrDetail, PrReviewEvent, RunMeta } from '@dispatch/client';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
@@ -53,6 +53,21 @@ const OTHER_DETAIL: PrDetail = {
   status: { ...DETAIL.status, number: 8 },
 };
 
+// The run POST /api/prs/:number/review-agent answers with — the panel reports
+// its id back, which is what tells the user the click did something.
+const DISPATCHED: RunMeta = {
+  id: 'r-review1',
+  taskId: 't-abc123',
+  taskTitle: 'Review PR #7: Mirror review comments',
+  executor: 'claude',
+  state: 'running',
+  branch: 'dispatch/review-t-abc123',
+  baseBranch: 'refs/dispatch/pr/7',
+  worktreePath: '/tmp/wt',
+  createdAt: '2026-08-07T00:00:00Z',
+  updatedAt: '2026-08-07T00:00:00Z',
+};
+
 // The fork gate's UI half (spec Decision 3). Handing a PR to a review agent
 // runs that PR's code here, so a fork has to say whose code it is first.
 function agentPanel(
@@ -70,7 +85,7 @@ function agentPanel(
       forkOwner={forkOwner}
       onAgentReview={(confirmFork) => {
         confirms.push(confirmFork);
-        return Promise.resolve();
+        return Promise.resolve(DISPATCHED);
       }}
     />
   );
@@ -112,6 +127,25 @@ describe('PrReviewPanel agent review', () => {
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     expect(confirms).toEqual([]);
     expect(screen.queryByText(/on this machine/i)).toBeNull();
+  });
+
+  // A user who clicks and sees nothing change clicks again — and a second
+  // review of the same PR ends up posting every line comment to GitHub twice.
+  test('a dispatched review names the run it started', async () => {
+    setupAgentReview(undefined);
+    await waitFor(() =>
+      expect(screen.getAllByText(/run r-review1/i).length).toBe(1)
+    );
+  });
+
+  // The notice belongs to the PR it was dispatched for, same as the confirm.
+  test('switching to another PR drops the dispatched notice', async () => {
+    const { switchPr } = setupAgentReview(undefined);
+    await waitFor(() =>
+      expect(screen.getAllByText(/run r-review1/i).length).toBe(1)
+    );
+    switchPr('other-org');
+    expect(screen.queryAllByText(/run r-review1/i).length).toBe(0);
   });
 
   // A confirm is agreement to run ONE PR's code. Carried across a switch, the
