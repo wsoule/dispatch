@@ -1966,10 +1966,25 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     expect(await json(res)).toEqual([]);
   });
 
-  it('404s findings for a PR number the repo does not have', async () => {
+  // Local-only by design: the panel refetches this on every mount and focus,
+  // and resolving the number against `gh pr list` would spend a subprocess per
+  // refetch to 404 a number the caller read off a PR it is already showing.
+  it('runs no gh command to serve findings', async () => {
+    const calls = await startWithCallLog();
+    const before = calls.length;
+
+    const res = await fetch(`${baseUrl}/api/prs/999/findings`);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual([]);
+    expect(calls.slice(before)).toEqual([]);
+  });
+
+  it('400s findings for a PR number that is not a number', async () => {
     await startWithCallLog();
 
-    expect((await fetch(`${baseUrl}/api/prs/999/findings`)).status).toBe(404);
+    const res = await fetch(`${baseUrl}/api/prs/abc/findings`);
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toContain('invalid PR number');
   });
 
   // Nothing else would ever close it: aux runs leave their task alone, so a

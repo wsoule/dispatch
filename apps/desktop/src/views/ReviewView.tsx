@@ -229,7 +229,11 @@ export function ReviewView({
   const { findings } = useTaskFindings(data.client, data.port, run?.taskId);
   // A PR review's task is synthesized server-side and no client holds its id,
   // so its findings come back keyed by PR number instead.
-  const prFindings = usePrFindings(data.client, data.port, selectedPrNumber);
+  const { findings: prFindings, error: prFindingsError } = usePrFindings(
+    data.client,
+    data.port,
+    selectedPrNumber
+  );
   const findingsByFile = useMemo(
     () => openFindingsByFile(findings),
     [findings]
@@ -373,6 +377,7 @@ export function ReviewView({
       stagedNotes={stagedNoteCount}
       onAgentReview={handleAgentPrReview}
       findings={prFindings}
+      findingsError={prFindingsError}
       forkOwner={
         selectedRepoPr?.isCrossRepository === true
           ? selectedRepoPr.headRepositoryOwner

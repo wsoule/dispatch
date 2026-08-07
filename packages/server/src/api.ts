@@ -2146,23 +2146,27 @@ function liveReviewRunForPr(ctx: ApiContext, number: number): RunMeta | null {
  * GET /api/prs/:number/findings — what agent reviews of this PR found.
  *
  * A located finding also becomes a line comment on the diff, but an unlocated
- * one (`file`/`line` null — "this approach is wrong") has nowhere to hang,
- * and
+ * one (`file`/`line` null — "this approach is wrong") has nowhere to hang, and
  * a PR target has no run behind it to open a findings panel on. This route is
  * the only surface those reach.
  *
  * Every review of a PR mints a fresh task, so findings for the same PR are
  * gathered across all of them, newest review last.
+ *
+ * Purely local: the task store and the finding store, no `gh`. The number is
+ * validated rather than resolved against the repo's open PRs on purpose —
+ * the panel refetches this on every mount and focus, and a subprocess per
+ * refetch would buy nothing but a 404 for a number the caller read off a PR
+ * it is already displaying.
  */
-async function listPrFindings(
-  ctx: ApiContext,
-  numberParam: string
-): Promise<Response> {
-  const pr = await resolveRepoPrByNumber(ctx, numberParam);
-  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+function listPrFindings(ctx: ApiContext, numberParam: string): Response {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
   const findings = ctx.store
     .list()
-    .filter((doc) => isPrReviewTaskFor(doc.meta, pr.number))
+    .filter((doc) => isPrReviewTaskFor(doc.meta, number))
     .flatMap((doc) => ctx.findingStore.list({ taskId: doc.meta.id }));
   return jsonResponse(findings);
 }
@@ -3963,7 +3967,7 @@ export async function handleApi(
         segments[2] === 'findings' &&
         method === 'GET'
       ) {
-        return await listPrFindings(ctx, segments[1]);
+        return listPrFindings(ctx, segments[1]);
       }
       // GET/POST /api/prs/:number/comments, PATCH .../comments/:commentId,
       // POST .../comments/:commentId/reply — the line-comment mirror's
