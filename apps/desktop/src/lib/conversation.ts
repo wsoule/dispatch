@@ -11,10 +11,6 @@ export function snippetLabel(snippet: Snippet): string {
   return `${snippet.file} (${range})`;
 }
 
-export function subjectForRun(runId: string): string {
-  return `run:${runId}`;
-}
-
 /**
  * The one place a selection becomes an attachment. They are deliberately different types — a
  * `CodeSelection` is a live UI gesture, a `Snippet` is what gets persisted — so this conversion

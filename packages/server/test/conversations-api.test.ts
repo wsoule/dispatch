@@ -110,6 +110,63 @@ describe('conversation routes', () => {
     expect(res.status).toBe(400);
   });
 
+  // A snippet missing a field is unrecoverable once stored and reaches the reviewer's chat as
+  // `undefined (undefined-undefined)` on a chip, so it is rejected rather than filed.
+  it('400s a snippet missing its line numbers rather than storing it', async () => {
+    const res = await apiFetch('/api/conversations', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: 'run:r-1',
+        role: 'human',
+        body: 'x',
+        snippets: [{ file: 'a.ts', text: 'const a = 1;' }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const after = await apiFetch('/api/conversations?subject=run%3Ar-1');
+    expect((await after.json()) as unknown[]).toEqual([]);
+  });
+
+  it('400s a snippet whose lines are not numbers', async () => {
+    const res = await apiFetch('/api/conversations', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: 'run:r-1',
+        role: 'human',
+        body: 'x',
+        snippets: [
+          { file: 'a.ts', startLine: '1', endLine: 2, text: 'const a = 1;' },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('400s snippets that are not a list at all', async () => {
+    const res = await apiFetch('/api/conversations', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: 'run:r-1',
+        role: 'human',
+        body: 'x',
+        snippets: { file: 'a.ts' },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('still accepts a message with no snippets field at all', async () => {
+    const res = await apiFetch('/api/conversations', {
+      method: 'POST',
+      body: JSON.stringify({ subject: 'run:r-1', role: 'human', body: 'x' }),
+    });
+
+    expect(res.status).toBe(201);
+  });
+
   it('400s a DELETE with an unrecognised subject', async () => {
     const res = await apiFetch(
       '/api/conversations/cm-abc?subject=session%3A1',

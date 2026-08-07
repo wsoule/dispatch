@@ -6,7 +6,8 @@ import { useCallback, useImperativeHandle, useMemo, useState } from 'react';
 
 import type { ChatTarget } from '../chat/SnippetComposer';
 import { SnippetComposer } from '../chat/SnippetComposer';
-import { snippetLabel, subjectForRun } from '@/lib/conversation';
+import { snippetLabel } from '@/lib/conversation';
+import { reviewTargetKey } from '@/lib/reviewTarget';
 
 /** How the diff hands a selection to the dock. Imperative because the two sit side by side in
  * `ReviewView` and the pending attachments belong to the dock, not to the page. */
@@ -30,7 +31,7 @@ interface ReviewChatPanelProps {
  * The review's chat dock: everything about *this run* that the composer, the selection bar and
  * the conversation store deliberately do not know.
  *
- * It is the only place that turns a run into a subject (`subjectForRun`) and into targets, which
+ * It is the only place that turns a run into a subject (`reviewTargetKey`) and into targets, which
  * is what lets the same composer and the same selection bar serve a Git-page diff or a GitHub PR
  * unchanged — they never learn what a run is.
  *
@@ -45,7 +46,7 @@ export function ReviewChatPanel({
   ref,
 }: ReviewChatPanelProps) {
   const queryClient = useQueryClient();
-  const subject = subjectForRun(runId);
+  const subject = reviewTargetKey({ kind: 'run', runId });
   // Keyed on the subject and the daemon it came from — never on the run id, so a subject that
   // is not a run reads from exactly the same cache entry shape.
   const queryKey = useMemo(

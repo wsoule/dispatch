@@ -37,6 +37,42 @@ export interface ChatMessage {
   created: string;
 }
 
+/**
+ * A snippet as stored. Guards the two places untrusted JSON becomes one — a request body and a
+ * conversation file on disk — because a malformed snippet is not caught anywhere downstream and
+ * renders on a chip as `undefined (undefined-undefined)`.
+ */
+export function isSnippet(value: unknown): value is Snippet {
+  if (typeof value !== 'object' || value === null) return false;
+  const snippet = value as Record<string, unknown>;
+  return (
+    typeof snippet.file === 'string' &&
+    typeof snippet.text === 'string' &&
+    typeof snippet.startLine === 'number' &&
+    Number.isInteger(snippet.startLine) &&
+    snippet.startLine >= 0 &&
+    typeof snippet.endLine === 'number' &&
+    Number.isInteger(snippet.endLine) &&
+    snippet.endLine >= 0
+  );
+}
+
+/** A stored message, checked field by field — see `isSnippet` for why the cast it replaces was
+ * not enough. */
+export function isChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return (
+    typeof message.id === 'string' &&
+    (message.role === 'human' || message.role === 'agent') &&
+    typeof message.body === 'string' &&
+    typeof message.created === 'string' &&
+    Array.isArray(message.snippets) &&
+    message.snippets.every(isSnippet) &&
+    (message.target === undefined || typeof message.target === 'string')
+  );
+}
+
 export interface AddMessageInput {
   role: 'human' | 'agent';
   body: string;
@@ -64,7 +100,9 @@ export class ConversationStore {
     if (!existsSync(path)) return [];
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-      return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
+      // Filtered, not cast: a hand-edited or half-written file otherwise reaches the UI as a
+      // message with missing fields, which renders as `undefined` rather than failing loudly.
+      return Array.isArray(parsed) ? parsed.filter(isChatMessage) : [];
     } catch {
       // A corrupt file degrades to "no conversation" rather than taking the daemon down, the
       // same way every other per-run artifact here behaves.

@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ConversationStore, isSubjectRef } from '../src/conversations';
+import {
+  ConversationStore,
+  isChatMessage,
+  isSnippet,
+  isSubjectRef,
+} from '../src/conversations';
+import { conversationPath } from '../src/orchestrator/paths';
 
 let fakeHome: string;
 const original = process.env.DISPATCH_HOME;
@@ -37,7 +43,80 @@ describe('isSubjectRef', () => {
   });
 });
 
+describe('isSnippet', () => {
+  test('accepts a complete snippet', () => {
+    expect(
+      isSnippet({ file: 'a.ts', startLine: 1, endLine: 2, text: 'x' })
+    ).toBe(true);
+  });
+
+  test('rejects the shapes that render as `undefined (undefined-undefined)`', () => {
+    expect(isSnippet({ file: 'a.ts', text: 'x' })).toBe(false);
+    expect(isSnippet({ startLine: 1, endLine: 2, text: 'x' })).toBe(false);
+    expect(
+      isSnippet({ file: 'a.ts', startLine: '1', endLine: 2, text: 'x' })
+    ).toBe(false);
+    expect(
+      isSnippet({ file: 'a.ts', startLine: 1.5, endLine: 2, text: 'x' })
+    ).toBe(false);
+    expect(isSnippet({ file: 'a.ts', startLine: 1, endLine: 2 })).toBe(false);
+    expect(isSnippet(null)).toBe(false);
+    expect(isSnippet('a.ts')).toBe(false);
+  });
+});
+
+describe('isChatMessage', () => {
+  const valid = {
+    id: 'cm-1',
+    role: 'human',
+    body: 'why this?',
+    snippets: [],
+    created: '2026-08-07T00:00:00.000Z',
+  };
+
+  test('accepts a stored message', () => {
+    expect(isChatMessage(valid)).toBe(true);
+    expect(isChatMessage({ ...valid, target: 'run-agent' })).toBe(true);
+  });
+
+  test('rejects a message whose fields do not hold up', () => {
+    expect(isChatMessage({ ...valid, role: 'system' })).toBe(false);
+    expect(isChatMessage({ ...valid, id: undefined })).toBe(false);
+    expect(isChatMessage({ ...valid, created: undefined })).toBe(false);
+    expect(isChatMessage({ ...valid, snippets: undefined })).toBe(false);
+    expect(isChatMessage({ ...valid, target: 7 })).toBe(false);
+  });
+
+  // The reason this checks snippets element by element rather than just `Array.isArray`.
+  test('rejects a message carrying one malformed snippet', () => {
+    expect(
+      isChatMessage({ ...valid, snippets: [{ file: 'a.ts', text: 'x' }] })
+    ).toBe(false);
+  });
+});
+
 describe('ConversationStore', () => {
+  // A hand-edited or half-written file otherwise reaches the UI as a message with missing
+  // fields, which renders as `undefined` rather than failing loudly.
+  test('drops malformed entries from a conversation file instead of casting them', () => {
+    const dir = root();
+    const store = new ConversationStore(dir);
+    store.add('run:r-1', { role: 'human', body: 'kept', snippets: [] });
+    const path = conversationPath(dir, 'run:r-1');
+    const stored = JSON.parse(readFileSync(path, 'utf8')) as unknown[];
+    writeFileSync(
+      path,
+      JSON.stringify([
+        ...stored,
+        { id: 'cm-bad', role: 'human', body: 'no created, no snippets' },
+      ])
+    );
+
+    const all = new ConversationStore(dir).list('run:r-1');
+
+    expect(all.map((m) => m.body)).toEqual(['kept']);
+  });
+
   test('adds and reads back across instances', () => {
     const dir = root();
     new ConversationStore(dir).add('run:r-1', {

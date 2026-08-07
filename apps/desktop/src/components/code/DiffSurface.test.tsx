@@ -248,6 +248,44 @@ describe('DiffSurface — what reaches CodeView', () => {
   });
 });
 
+describe('DiffSurface — per-file crash isolation', () => {
+  // The one-`CodeView` consolidation replaced `RunDiffView`/`GitDiffPane`'s per-file boundaries
+  // with a single one for the whole pane, and Pierre only catches on the file *load* path — so a
+  // throw while rendering one file's slots blanked every file. Each file's slots get their own
+  // boundary again.
+  it('keeps the other files rendered when one file’s slot throws', () => {
+    render(
+      <DiffSurface
+        patch={TWO_FILE_PATCH}
+        renderHeaderMetadata={(item) => {
+          if (item.id === 'a.ts') throw new Error('this file’s slot is broken');
+          return nameItem(item);
+        }}
+      />
+    );
+
+    expect(renderedFiles()).toEqual(['b.ts']);
+    // The pane itself is still a diff, not the whole-view fallback.
+    expect(screen.queryByText(/Couldn’t load the diff/)).toBeNull();
+  });
+
+  it('names the file that crashed rather than the whole diff', () => {
+    render(
+      <DiffSurface
+        patch={TWO_FILE_PATCH}
+        renderHeaderMetadata={(item) => {
+          if (item.id === 'a.ts') throw new Error('this file’s slot is broken');
+          return nameItem(item);
+        }}
+      />
+    );
+
+    expect(screen.queryAllByText(/the diff for a\.ts/).length).toBeGreaterThan(
+      0
+    );
+  });
+});
+
 describe('DiffSurface — a caller that parses the patch itself', () => {
   // `PierreReviewDiff` reads the file list from an effect, which no render prop can reach, so it
   // owns the parse and hands the result back. The surface must then render *that* list rather

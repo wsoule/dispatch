@@ -5,8 +5,7 @@ import type { FileDiffMetadata } from '@pierre/diffs';
  *
  * A patch's `additionLines` holds only the lines its hunks cover, so the number is not the index:
  * each hunk maps `additionStart .. additionStart + additionCount - 1` onto `additionLineIndex`
- * onwards. Once a diff has been hydrated with the whole file (`isPartial === false`) a line
- * outside every hunk is simply its 1-based position, which is what an expanded region needs.
+ * onwards.
  */
 function indexOfLine(fileDiff: FileDiffMetadata, line: number): number | null {
   for (const hunk of fileDiff.hunks) {
@@ -15,7 +14,9 @@ function indexOfLine(fileDiff: FileDiffMetadata, line: number): number | null {
       return hunk.additionLineIndex + offset;
     }
   }
-  return fileDiff.isPartial ? null : line - 1;
+  // No whole-file fallback: `CodeView` hydrates through `hydratePartialDiff('clone', …)`, so the
+  // metadata this reads stays partial and a line outside every hunk is never carried here.
+  return null;
 }
 
 /**
