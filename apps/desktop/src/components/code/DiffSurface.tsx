@@ -69,8 +69,8 @@ interface DiffSurfaceProps<T> {
   /** Restricts rendering to one file's diff within the patch. Omit to render every file. */
   only?: string;
   /**
-   * Namespaces the worker pool's render cache for this patch, so re-rendering the same file
-   * reuses its tokenized diff. Omit where a patch is shown once and thrown away.
+   * Namespaces this patch's entries in the worker pool's render cache. Pierre falls back to
+   * keying a file by its path alone, which collides with any other surface showing that path.
    */
   cacheKeyPrefix?: string;
   /** Kept per caller rather than unified: each surface says something different about what

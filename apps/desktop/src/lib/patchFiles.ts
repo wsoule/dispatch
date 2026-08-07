@@ -21,10 +21,9 @@ export interface SplitPatchResult {
 // Never throws: parser failures and empty parses come back as an error
 // result the caller can render as an inline message.
 //
-// `cacheKeyPrefix` is forwarded to Pierre, which stamps each file with a
-// `prefix-patch-file` cache key — that key is what lets the worker pool reuse a
-// rendered diff instead of re-tokenizing it. Omitted by callers whose patches
-// are one-shot, since a cache entry nothing looks up again only costs memory.
+// `cacheKeyPrefix` namespaces each file's worker-pool cache key. Without one
+// Pierre keys a file by its path alone, so two surfaces rendering the same path
+// with different content collide in the module-scope pool they share.
 export function splitPatchFiles(
   patch: string,
   cacheKeyPrefix?: string
