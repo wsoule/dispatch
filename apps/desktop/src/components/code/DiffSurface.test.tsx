@@ -269,6 +269,52 @@ describe('DiffSurface — per-file crash isolation', () => {
     expect(screen.queryByText(/Couldn’t load the diff/)).toBeNull();
   });
 
+  // `renderHeaderMetadata` is the only slot happy-dom actually drives (no rows, so no annotations;
+  // an unhovered gutter). Isolating only that one would still pass the two tests above while
+  // `renderAnnotation` and `renderGutterUtility` went to `CodeView` bare — a fixture simpler than
+  // production, which is exactly the shape that let the abandoned gesture ship green. These three
+  // read the props `DiffSurface` actually handed over and render each one's output: an unwrapped
+  // prop throws on the call, before anything can catch it.
+  it.each([
+    [
+      'renderAnnotation',
+      () => codeViewProps?.renderAnnotation,
+      // What `CodeView` passes: the annotation, then the item.
+      [{ lineNumber: 1, side: 'additions' }, { id: 'a.ts' }],
+    ],
+    [
+      'renderGutterUtility',
+      () => codeViewProps?.renderGutterUtility,
+      // A hovered-line *getter*, then the item — Pierre never passes the line directly.
+      [() => ({ lineNumber: 1, side: 'additions' }), { id: 'a.ts' }],
+    ],
+    [
+      'renderHeaderMetadata',
+      () => codeViewProps?.renderHeaderMetadata,
+      [{ id: 'a.ts' }],
+    ],
+  ] as const)('isolates a throw from %s', (_name, pick, args) => {
+    const boom = () => {
+      throw new Error('this file’s slot is broken');
+    };
+    render(
+      <DiffSurface
+        patch={TWO_FILE_PATCH}
+        renderAnnotation={boom}
+        renderGutterUtility={boom}
+        renderHeaderMetadata={boom}
+      />
+    );
+
+    const slot = pick() as (...args: unknown[]) => ReactNode;
+    expect(typeof slot).toBe('function');
+    render(<>{slot(...args)}</>);
+
+    expect(screen.queryAllByText(/the diff for a\.ts/).length).toBeGreaterThan(
+      0
+    );
+  });
+
   it('names the file that crashed rather than the whole diff', () => {
     render(
       <DiffSurface
