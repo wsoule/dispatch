@@ -603,17 +603,51 @@ function selectBetween(first: Node, last: Node): void {
  * line-number column), which is why an earlier version of this feature rendered no bar in a real
  * browser while its tests were green.
  */
-function selectRows(
+function addRows(
   rows: { line: number; text: string; type?: string }[]
-): void {
+): HTMLElement[] {
   const host = rowHost();
-  const elements = rows.map((r) =>
+  return rows.map((r) =>
     appendRow(host, r.line, r.text, r.type ?? 'change-addition')
   );
+}
+
+function selectAcrossRows(elements: HTMLElement[]): void {
   const first = elements.at(0)?.firstChild?.firstChild;
   const last = elements.at(-1)?.firstChild?.firstChild;
   if (first == null || last == null) throw new Error('no row text to select');
   selectBetween(first, last);
+}
+
+function selectRows(
+  rows: { line: number; text: string; type?: string }[]
+): void {
+  selectAcrossRows(addRows(rows));
+}
+
+// happy-dom lays nothing out, so every rect is zero unless a test says otherwise. Stubbing the
+// rows' own boxes is what makes placement assertable at all — it is measured from the row
+// elements, never from the selection.
+function stubRect(
+  el: Element,
+  rect: { top: number; left: number; bottom: number; width: number }
+): void {
+  el.getBoundingClientRect = () =>
+    ({
+      ...rect,
+      right: rect.left + rect.width,
+      height: rect.bottom - rect.top,
+      x: rect.left,
+      y: rect.top,
+      toJSON: () => ({}),
+    }) as DOMRect;
+}
+
+/** The element the bar is positioned inside: the wrapper `PierreReviewDiff` renders. */
+function positioningFrame(): HTMLElement {
+  const frame = document.querySelector<HTMLElement>('.relative');
+  if (frame === null) throw new Error('no positioning frame rendered');
+  return frame;
 }
 
 /**
@@ -805,6 +839,56 @@ describe('PierreReviewDiff — the selection action bar', () => {
       startLine: 7,
       endLine: 9,
     });
+  });
+
+  // Placement comes from the rows the drag crossed, not from the selection: a `Range` spanning a
+  // shadow boundary is what made the previous positioning both untestable and, on screen,
+  // invisible. A row element's own box reads the same either side of a shadow root.
+  it('hangs the bar above the first row the drag crossed', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    stubRect(positioningFrame(), {
+      top: 100,
+      left: 50,
+      bottom: 800,
+      width: 900,
+    });
+    const rows = addRows([
+      { line: 12, text: '  sku: string;' },
+      { line: 13, text: '  score: number;' },
+    ]);
+    stubRect(rows[0], { top: 400, left: 90, bottom: 420, width: 800 });
+    stubRect(rows[1], { top: 420, left: 90, bottom: 440, width: 800 });
+
+    selectAcrossRows(rows);
+    await settle();
+
+    // Both boxes are viewport-absolute, so the bar's offsets are their difference.
+    expect(selectionBar()?.style.top).toBe('300px');
+    expect(selectionBar()?.style.left).toBe('40px');
+    expect(selectionBar()?.className).toContain('-translate-y-full');
+  });
+
+  it('drops the bar below the selection when it is against the top of the pane', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    stubRect(positioningFrame(), {
+      top: 100,
+      left: 50,
+      bottom: 800,
+      width: 900,
+    });
+    const rows = addRows([
+      { line: 1, text: 'first line of the file' },
+      { line: 2, text: 'second line' },
+    ]);
+    stubRect(rows[0], { top: 110, left: 90, bottom: 130, width: 800 });
+    stubRect(rows[1], { top: 130, left: 90, bottom: 150, width: 800 });
+
+    selectAcrossRows(rows);
+    await settle();
+
+    // 10px of room above is not enough for the bar, so it goes under the last row instead.
+    expect(selectionBar()?.style.top).toBe('50px');
+    expect(selectionBar()?.className).not.toContain('-translate-y-full');
   });
 
   // The rendered diff is the authority on which lines it drew. Searching the file for the text

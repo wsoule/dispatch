@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 
-import { diffLinesFromRange } from './selectedDiffLines';
+import { diffRowsFromRange, linesFromRows } from './selectedDiffLines';
+
+// The two steps a selection goes through, together: which rows it crossed, and what lines those
+// are. The caller keeps the rows to position the action bar off them, which is why they are
+// separate functions.
+function diffLinesFromRange(range: Range) {
+  return linesFromRows(diffRowsFromRange(range));
+}
 
 // A rendered diff row, shaped the way Pierre's `processLine` emits one: the row carries the line
 // number it drew and its type, and the code sits in a child element.

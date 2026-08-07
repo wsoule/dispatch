@@ -45,29 +45,37 @@ function rowsUnder(range: Range): Element[] {
 }
 
 /**
- * Which lines a DOM range covers, read straight off the row attributes Pierre renders
- * (`data-line`, `data-line-type` — see its own `utils/processLine`, and the hit-testing in
+ * The rendered rows a DOM range crosses, in document order, restricted to the side that is
+ * actually in the code under review.
+ *
+ * Every row the range *crosses* is considered, not just the two it starts and ends on. Those two
+ * boundaries are the least reliable part of a selection: a drag released in the gap between rows
+ * lands on a container with no row above it, and in a split diff — the default layout — a drag
+ * down one column can begin or end in the other.
+ *
+ * Deletion-side rows are dropped rather than the whole selection refused: a drag down the
+ * additions column that clips the deleted column still means the additions it covered. An empty
+ * result means the selection was entirely on the deleted side, or reached no row at all — an
+ * engine that retargets a shadow-DOM selection hands back the host.
+ */
+export function diffRowsFromRange(range: Range): Element[] {
+  return rowsUnder(range).filter(
+    (row) => overlaps(range, row) && !isDeletionSide(row)
+  );
+}
+
+/**
+ * Which lines those rows are, read straight off the attributes Pierre renders (`data-line`,
+ * `data-line-type` — see its own `utils/processLine`, and the hit-testing in
  * `managers/InteractionManager.resolvePointerTarget` that reads the same ones).
  *
  * This is the answer the rendered diff already knows, so it needs no file fetch, no string
  * search and no round trip — which matters because a selection is a live gesture and anything
  * that can fail would otherwise take the whole action bar down with it.
- *
- * Every row the range *crosses* is considered, not just the two it starts and ends on. Those two
- * boundaries are the least reliable part of a selection: a drag released in the gap between rows
- * lands on a container with no row above it, and in a split diff — the default layout — a drag
- * down one column can begin or end in the other. Judging by what the range crosses means the
- * lines are the ones the reviewer highlighted, wherever the pointer happened to come to rest.
- *
- * Deletion-side rows are dropped rather than refused: a drag down the additions column that
- * clips the deleted column still means the additions the reviewer highlighted. Only a selection
- * that is *entirely* on the deleted side comes back `null`, because it has no line in the code
- * under review to name at all.
  */
-export function diffLinesFromRange(range: Range): SelectedLines | null {
+export function linesFromRows(rows: Element[]): SelectedLines | null {
   const lines: number[] = [];
-  for (const row of rowsUnder(range)) {
-    if (!overlaps(range, row) || isDeletionSide(row)) continue;
+  for (const row of rows) {
     const line = Number.parseInt(row.getAttribute('data-line') ?? '', 10);
     if (Number.isFinite(line)) lines.push(line);
   }
