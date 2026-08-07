@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ErrorBoundary } from '../shell/ErrorBoundary';
 import { PierreWorkerPool } from './PierreWorkerPool';
+import type { ReviewDestination } from './ReviewThread';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
@@ -44,8 +45,8 @@ interface PierreReviewDiffProps {
   patch: string;
   comments: ReviewComment[];
   /**
-   * Where a new line comment goes. Omit it when there is nowhere to put one
-   * (a GitHub PR) and the gutter's "+" is withheld rather than left dead.
+   * Where a new line comment goes. Omit it when there is nowhere to put one,
+   * and the gutter's "+" is withheld rather than left dead.
    *
    * Resolves with the created comment, not `void` — the composer's `Apply now` action needs
    * the new comment's id back to apply its suggestion immediately, through the same path the
@@ -63,10 +64,12 @@ interface PierreReviewDiffProps {
   }) => Promise<ReviewComment>;
   onResolve: (commentId: string, resolved: boolean) => Promise<void>;
   onReply: (commentId: string, body: string) => Promise<void>;
-  /** Commits a comment's suggestion onto the run branch. Omitted the same way `onAdd` is — a
-   * GitHub PR target has no run worktree to apply into — which withholds the thread's Apply
-   * button entirely rather than showing it disabled. */
+  /** Commits a comment's suggestion onto the run branch. Omitted where there is no run
+   * worktree to apply into (a GitHub PR target), which withholds the thread's Apply button
+   * entirely rather than showing it disabled. */
   onApply?: (commentId: string) => Promise<void>;
+  /** Where notes written here end up. Defaults to the run wording. */
+  destination?: ReviewDestination;
   /** Files the reviewer has ticked off — rendered collapsed, the way GitHub does. */
   viewed?: ReadonlySet<string>;
   /** Restricts rendering to one file. Omit for the whole patch in one scroller. */
@@ -102,6 +105,7 @@ export function PierreReviewDiff({
   onResolve,
   onReply,
   onApply,
+  destination = 'agent',
   viewed,
   only,
   findings,
@@ -249,7 +253,11 @@ export function PierreReviewDiff({
             startLine={annMeta.startLine}
             file={annMeta.file}
             fileContents={composerContents}
+            destination={destination}
             onCancel={closeComposer}
+            // Closed only once the write resolves, so a rejected POST leaves
+            // the composer open with the note still in it and the reason shown
+            // beneath — `ReviewComposer` catches and renders it.
             onSaved={closeComposer}
             onSubmit={(body, suggestion, anchorText) =>
               onAdd === undefined
@@ -314,8 +322,9 @@ export function PierreReviewDiff({
               // definition where it belongs; drift against the working tree is reported by the
               // store's own anchor check.
               anchor="exact"
-              onResolve={(resolved) => void onResolve(c.id, resolved)}
-              onReply={(body) => void onReply(c.id, body)}
+              destination={destination}
+              onResolve={(resolved) => onResolve(c.id, resolved)}
+              onReply={(body) => onReply(c.id, body)}
               onApply={
                 onApply === undefined
                   ? undefined
@@ -330,6 +339,7 @@ export function PierreReviewDiff({
     [
       composing,
       composerContents,
+      destination,
       onAdd,
       onResolve,
       onReply,

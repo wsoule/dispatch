@@ -2,7 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import { reviewCommentsPath } from './orchestrator/paths.js';
+import {
+  reviewCommentsPath,
+  reviewPushMarkerPath,
+} from './orchestrator/paths.js';
+import type { ReviewTarget } from './reviewTarget.js';
 
 /**
  * Line-level review comments on a run's diff.
@@ -52,13 +56,48 @@ export interface ReviewComment {
   created: string;
   /** Replies, oldest first. A thread is a comment plus these. */
   replies: ReviewReply[];
+  /** GitHub comment ID when synced from GitHub; undefined for local comments. */
+  githubId?: number;
+  /** GitHub comment update timestamp when synced from GitHub. */
+  githubUpdatedAt?: string;
+  /**
+   * Which side of the mirror wrote this record first. `add` stamps 'local',
+   * `mapGitHubComment` stamps 'github'. Absent only on records written
+   * before the mirror existed.
+   */
+  origin?: 'local' | 'github';
+  /**
+   * GraphQL node id of the GitHub review thread this comment belongs to.
+   * REST never reports this — only `PrManager.syncReviewThreads`'s GraphQL
+   * query does — and resolving/unresolving the thread needs it.
+   */
+  githubThreadId?: string;
 }
 
-interface ReviewReply {
+export interface ReviewReply {
   id: string;
   author: string;
   body: string;
   created: string;
+  /** GitHub comment id, when this reply was posted to or pulled from GitHub. */
+  githubId?: number;
+}
+
+/**
+ * What the last review pushed to GitHub for one target carried.
+ * Compared against a fresh submit to tell a genuine second review from a
+ * retry of one that already landed — see `ReviewCommentStore.lastPush`.
+ */
+export interface ReviewPushMarker {
+  verdict: string;
+  body: string;
+  /**
+   * Ids of the comments that push put on GitHub which the store has not yet
+   * matched to a `githubId` — the window where the POST succeeded and the
+   * pull that assigns those ids did not. Without it those records read as
+   * never-sent and the next push would post them a second time.
+   */
+  commentIds: string[];
 }
 
 export interface AddCommentInput {
@@ -141,12 +180,12 @@ export class ReviewCommentStore {
     private readonly defaultAuthor: string
   ) {}
 
-  private file(runId: string): string {
-    return reviewCommentsPath(this.rootDir, runId);
+  private file(target: ReviewTarget): string {
+    return reviewCommentsPath(this.rootDir, target);
   }
 
-  list(runId: string): ReviewComment[] {
-    const path = this.file(runId);
+  list(target: ReviewTarget): ReviewComment[] {
+    const path = this.file(target);
     if (!existsSync(path)) return [];
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
@@ -158,14 +197,14 @@ export class ReviewCommentStore {
     }
   }
 
-  private write(runId: string, comments: ReviewComment[]): void {
-    const path = this.file(runId);
+  private write(target: ReviewTarget, comments: ReviewComment[]): void {
+    const path = this.file(target);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify(comments, null, 2)}\n`);
   }
 
   add(
-    runId: string,
+    target: ReviewTarget,
     input: AddCommentInput,
     now = new Date().toISOString()
   ): ReviewComment {
@@ -184,75 +223,155 @@ export class ReviewCommentStore {
       pending: input.pending ?? true,
       created: now,
       replies: [],
+      origin: 'local',
     };
-    const all = this.list(runId);
+    const all = this.list(target);
     all.push(comment);
-    this.write(runId, all);
+    this.write(target, all);
     return comment;
   }
 
   reply(
-    runId: string,
+    target: ReviewTarget,
     commentId: string,
     body: string,
     author = this.defaultAuthor,
-    now = new Date().toISOString()
+    now = new Date().toISOString(),
+    // Set by PrManager.replyToComment once GitHub has confirmed the post,
+    // so a later pull can recognise this reply instead of re-adding it.
+    githubId?: number
   ): ReviewComment {
-    const all = this.list(runId);
+    const all = this.list(target);
     const comment = all.find((c) => c.id === commentId);
     if (comment === undefined) {
       throw new Error(`review comment not found: ${commentId}`);
     }
-    comment.replies.push({ id: newId('rr'), author, body, created: now });
-    this.write(runId, all);
+    comment.replies.push({
+      id: newId('rr'),
+      author,
+      body,
+      created: now,
+      ...(githubId !== undefined ? { githubId } : {}),
+    });
+    this.write(target, all);
     return comment;
   }
 
   setResolved(
-    runId: string,
+    target: ReviewTarget,
     commentId: string,
     resolved: boolean
   ): ReviewComment {
-    const all = this.list(runId);
+    const all = this.list(target);
     const comment = all.find((c) => c.id === commentId);
     if (comment === undefined) {
       throw new Error(`review comment not found: ${commentId}`);
     }
     comment.resolved = resolved;
-    this.write(runId, all);
+    this.write(target, all);
     return comment;
   }
 
-  remove(runId: string, commentId: string): void {
+  remove(target: ReviewTarget, commentId: string): void {
     this.write(
-      runId,
-      this.list(runId).filter((c) => c.id !== commentId)
+      target,
+      this.list(target).filter((c) => c.id !== commentId)
     );
   }
 
   /**
-   * Publishes every pending comment on a run, returning how many were released.
+   * Replaces a target's entire comment set in one write.
+   *
+   * The GitHub pull path (PrManager.syncPrComments) always has a full merged
+   * array to persist, not one record to touch — every other method here
+   * mutates a single comment, so none of them fit that shape.
+   */
+  replaceAll(target: ReviewTarget, comments: ReviewComment[]): void {
+    this.write(target, comments);
+  }
+
+  /**
+   * Moves every comment from one target onto the end of another. A run whose
+   * comments now resolve to its PR would otherwise strand what it wrote
+   * before. Ids the destination already holds are skipped instead of
+   * appended: the two writes are not atomic, so a move that failed to empty
+   * the source must converge on the next call rather than duplicate.
+   */
+  moveAll(from: ReviewTarget, to: ReviewTarget): void {
+    const moving = this.list(from);
+    if (moving.length === 0) return;
+    const existing = this.list(to);
+    const known = new Set(existing.map((c) => c.id));
+    this.write(to, [...existing, ...moving.filter((c) => !known.has(c.id))]);
+    this.write(from, []);
+  }
+
+  /**
+   * Publishes every pending comment on a target, returning how many were
+   * released.
    *
    * Called when a review is submitted. Deliberately separate from acting on the verdict, and
    * done first: the comments become real, and only then does the caller resume or enqueue. If
    * the verdict action fails, the reviewer's writing still survives — the reverse order would
    * lose it.
    */
-  publishPending(runId: string): number {
-    const all = this.list(runId);
+  publishPending(target: ReviewTarget): number {
+    const all = this.list(target);
     let count = 0;
     for (const c of all) {
       if (!c.pending) continue;
       c.pending = false;
       count += 1;
     }
-    if (count > 0) this.write(runId, all);
+    if (count > 0) this.write(target, all);
     return count;
   }
 
   /** How many comments are staged but unsent — the number the review bar counts down. */
-  pendingCount(runId: string): number {
-    return this.list(runId).filter((c) => c.pending).length;
+  pendingCount(target: ReviewTarget): number {
+    return this.list(target).filter((c) => c.pending).length;
+  }
+
+  /**
+   * What the last review successfully pushed to GitHub for this target
+   * carried.
+   *
+   * A submit that repeats it with nothing new to send is a retry, not a new
+   * review, and posting it again would duplicate the review on the PR —
+   * nothing on GitHub's side deduplicates one. `null` when nothing has been
+   * pushed yet.
+   */
+  lastPush(target: ReviewTarget): ReviewPushMarker | null {
+    const path = reviewPushMarkerPath(this.rootDir, target);
+    if (!existsSync(path)) return null;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      const marker = parsed as Partial<ReviewPushMarker> | null;
+      if (
+        marker === null ||
+        typeof marker.verdict !== 'string' ||
+        typeof marker.body !== 'string'
+      ) {
+        return null;
+      }
+      // A marker written before `commentIds` existed reads as "no ids known",
+      // which pushes those records again rather than silently dropping them.
+      const ids = Array.isArray(marker.commentIds)
+        ? marker.commentIds.filter((id): id is string => typeof id === 'string')
+        : [];
+      return { verdict: marker.verdict, body: marker.body, commentIds: ids };
+    } catch {
+      // Same degradation as `list`: an unreadable marker means "nothing
+      // pushed yet", which pushes again rather than staying silent.
+      return null;
+    }
+  }
+
+  /** Records a push, so the next identical submit can recognise its retry. */
+  recordPush(target: ReviewTarget, marker: ReviewPushMarker): void {
+    const path = reviewPushMarkerPath(this.rootDir, target);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`);
   }
 }
 

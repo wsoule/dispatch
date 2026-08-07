@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { type ReviewTarget, reviewTargetSlug } from '../reviewTarget.js';
+
 // `DISPATCH_HOME` lets tests (and anything else) redirect all dispatch state
 // away from the real home directory; production use always falls back to it.
 // Mirrors daemonfile.ts's `daemonHome()` — kept as a separate copy here
@@ -44,12 +46,29 @@ export function diffSnapshotPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.diff.json`);
 }
 
-// Where a run's review comments live — the line-level notes a human leaves on its diff. Kept
-// per-run alongside the transcript and diff snapshot rather than in the worktree, for the same
-// reason the snapshot is: every review path removes the worktree, and a comment has to outlive
-// the code it was written against so it can travel back to the agent.
-export function reviewCommentsPath(rootDir: string, runId: string): string {
-  return join(runsDir(rootDir), `${runId}.review.json`);
+// Where a review target's comments live — the line-level notes a human
+// leaves on its diff. Kept alongside the transcript and diff snapshot rather
+// than in the worktree, for the same reason the snapshot is: every review
+// path removes the worktree, and a comment has to outlive the code it was
+// written against so it can travel back to the agent. A run target's slug is
+// its bare run id, so this stays byte-identical to the path every review
+// file was already written to.
+export function reviewCommentsPath(
+  rootDir: string,
+  target: ReviewTarget
+): string {
+  return join(runsDir(rootDir), `${reviewTargetSlug(target)}.review.json`);
+}
+
+// What the last review pushed to GitHub for this target said — the sibling
+// of the comment file above, so it survives a daemon restart the same way.
+// Only a PR target is ever recorded, so moveAll's run-to-PR migration has
+// no marker to strand.
+export function reviewPushMarkerPath(
+  rootDir: string,
+  target: ReviewTarget
+): string {
+  return join(runsDir(rootDir), `${reviewTargetSlug(target)}.review-push.json`);
 }
 
 // Where the merge queue's persisted state (queued/active entries plus

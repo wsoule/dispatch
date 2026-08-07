@@ -19,6 +19,7 @@ import type { EventBus } from '../events.js';
 import type { FindingStore } from '../findings.js';
 import type { LedgerStore } from '../ledger.js';
 import type { ReviewCommentStore } from '../reviewComments.js';
+import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
 import { reviewDir, reviewOutputPath, reviewPackagePath } from './paths.js';
 import { untrustedBlock, untrustedFenced, untrustedInline } from './prompt.js';
@@ -990,6 +991,7 @@ export class ReviewRunner {
   ): void {
     const runId = pending.reviewedRunId;
     if (runId === undefined) return;
+    const target: ReviewTarget = { kind: 'run', runId };
 
     let posted = 0;
     for (const finding of findings) {
@@ -997,7 +999,7 @@ export class ReviewRunner {
       // findings panel rather than being anchored to a guessed line.
       const { file, line } = finding;
       if (file === null || line === null) continue;
-      this.ctx.reviewComments.add(runId, {
+      this.ctx.reviewComments.add(target, {
         file,
         line,
         anchorText: readLineAt(this.ctx.rootDir, pending.head, file, line),

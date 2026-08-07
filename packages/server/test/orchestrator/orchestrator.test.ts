@@ -1188,14 +1188,42 @@ describe('Orchestrator PR guards', () => {
     );
   });
 
-  it('409s sendMessage(resume: true) once a run has an open PR', async () => {
+  // The one narrowing: resuming does not tear the branch down, it pushes
+  // more commits onto it — which is what updates the PR under review.
+  it('resumes sendMessage(resume: true) on a run with an open PR', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     const meta = await dispatchToFinished(orchestrator, store);
     orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
 
-    expect(() =>
-      orchestrator.sendMessage(meta.id, 'please fix x', { resume: true })
-    ).toThrow(OrchestratorConflictError);
+    const resumed = orchestrator.sendMessage(meta.id, 'please fix x', {
+      resume: true,
+    });
+    expect(resumed.id).not.toBe(meta.id);
+    expect(resumed.branch).toBe(meta.branch);
+  });
+
+  // Pins that the guard was narrowed, not removed: both destructive branch
+  // verbs share requireCleanableBranch and must still refuse.
+  it('409s deleteBranch once a run has an open PR', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const meta = await dispatchToFinished(orchestrator, store);
+    orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
+
+    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(
+      OrchestratorConflictError
+    );
+    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(/open PR/);
+  });
+
+  it('409s freeWorktreeDisk once a run has an open PR', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const meta = await dispatchToFinished(orchestrator, store);
+    orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
+
+    expect(() => orchestrator.freeWorktreeDisk(meta.branch)).toThrow(
+      OrchestratorConflictError
+    );
+    expect(() => orchestrator.freeWorktreeDisk(meta.branch)).toThrow(/open PR/);
   });
 });
 

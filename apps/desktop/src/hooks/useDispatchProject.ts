@@ -878,7 +878,7 @@ export function useDispatchProject(
       if (client === null || selectedRunId === null) {
         throw new Error('no run selected');
       }
-      return client.fetchReviewComments(selectedRunId);
+      return client.fetchReviewComments({ kind: 'run', runId: selectedRunId });
     },
     enabled: client !== null && selectedRunId !== null,
   });
@@ -2036,7 +2036,10 @@ export function useDispatchProject(
       if (client === null || selectedRunId === null) {
         throw new Error('dispatchd client not ready');
       }
-      const created = await client.addReviewComment(selectedRunId, input);
+      const created = await client.addReviewComment(
+        { kind: 'run', runId: selectedRunId },
+        input
+      );
       invalidateReview();
       return created;
     },
@@ -2064,7 +2067,11 @@ export function useDispatchProject(
   const handleResolveReviewComment = useCallback(
     async (commentId: string, resolved: boolean): Promise<void> => {
       if (client === null || selectedRunId === null) return;
-      await client.resolveReviewComment(selectedRunId, commentId, resolved);
+      await client.resolveReviewComment(
+        { kind: 'run', runId: selectedRunId },
+        commentId,
+        resolved
+      );
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]
@@ -2073,7 +2080,11 @@ export function useDispatchProject(
   const handleReplyReviewComment = useCallback(
     async (commentId: string, body: string): Promise<void> => {
       if (client === null || selectedRunId === null) return;
-      await client.replyReviewComment(selectedRunId, commentId, body);
+      await client.replyReviewComment(
+        { kind: 'run', runId: selectedRunId },
+        commentId,
+        body
+      );
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]
@@ -2082,10 +2093,16 @@ export function useDispatchProject(
   const handleSubmitReview = useCallback(
     async (
       verdict: import('@dispatch/client').ReviewVerdict,
-      body: string
+      body: string,
+      postToGitHub = false
     ): Promise<{ published: number; error?: string }> => {
       if (client === null || selectedRunId === null) return { published: 0 };
-      const res = await client.submitReview(selectedRunId, verdict, body);
+      const res = await client.submitReview(
+        selectedRunId,
+        verdict,
+        body,
+        postToGitHub
+      );
       invalidateReview();
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });

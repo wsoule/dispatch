@@ -9,6 +9,7 @@ import { EventBus } from '../src/events.js';
 import { makeFakeGhRunner } from '../src/fakeGh.js';
 import { Orchestrator } from '../src/orchestrator/orchestrator.js';
 import { PrManager } from '../src/orchestrator/pr.js';
+import { ReviewCommentStore } from '../src/reviewComments.js';
 import { initGitRepo } from './orchestrator/helpers.js';
 
 // DISPATCH_FAKE_GH is what demo mode and every screenshot run against, so the
@@ -45,8 +46,9 @@ function makePrManager(): PrManager {
     cache,
     events,
   });
+  const reviewComments = new ReviewCommentStore(repo, 'human:test');
   return new PrManager(
-    { rootDir: repo, orchestrator, store, cache, events },
+    { rootDir: repo, orchestrator, store, cache, events, reviewComments },
     true,
     makeFakeGhRunner()
   );
