@@ -65,6 +65,10 @@ export class BoardSyncer {
     // a stale checkout must never push the board backwards (see 53190d6).
     const staged: string[] = [];
     for (const doc of localStore.listSafe().docs) {
+      // A derived task exists only to anchor a local review of someone else's
+      // artifact, and its body is that artifact's own prose. Pushing it to
+      // trunk would put text nobody here wrote on every teammate's board.
+      if (doc.meta.derivedFrom !== undefined) continue;
       const sourceFile = localStore.taskFilePath(doc.meta.id);
       if (sourceFile === null) continue;
       let lastAccounted: string | undefined;
