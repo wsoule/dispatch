@@ -1,5 +1,5 @@
 import type { ReviewComment, ReviewVerdict } from '@dispatch/client';
-import { Bot, Check, MessageSquare, Undo2 } from 'lucide-react';
+import { Bot, Check, GitPullRequest, MessageSquare, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -13,8 +13,14 @@ interface ReviewVerdictBarProps {
   comments: ReviewComment[];
   onSubmit: (
     verdict: ReviewVerdict,
-    body: string
+    body: string,
+    postToGitHub: boolean
   ) => Promise<{ published: number; error?: string }>;
+  /** True when this run's work is on a pull request, which is the only case
+   * where posting the review to GitHub is possible at all. The checkbox is
+   * hidden rather than disabled otherwise: there is nothing the reviewer
+   * could do about a run that has no PR. */
+  canPostToGitHub?: boolean;
   /** Dispatches a review agent over this run's diff instead of a human reading it here. Omitted
    * where starting one doesn't make sense (a PR's review, say) — the button hides rather than
    * disabling, since there's nothing the omission leaves for the reviewer to do about it. */
@@ -62,9 +68,13 @@ export function ReviewVerdictBar({
   comments,
   onSubmit,
   onStartAiReview,
+  canPostToGitHub = false,
   extraWarnings = [],
 }: ReviewVerdictBarProps) {
   const [verdict, setVerdict] = useState<ReviewVerdict>('comment');
+  // Off by default, matching the API: submitting is about telling the agent,
+  // and mirroring that onto the PR is a separate, deliberate choice.
+  const [postToGitHub, setPostToGitHub] = useState(false);
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +118,11 @@ export function ReviewVerdictBar({
     setError(null);
     setSent(null);
     try {
-      const res = await onSubmit(verdict, summary.trim());
+      const res = await onSubmit(
+        verdict,
+        summary.trim(),
+        canPostToGitHub && postToGitHub
+      );
       if (res.error !== undefined) {
         // The comments published even though the verdict action failed — report both, so the
         // reviewer knows their writing survived and only the action needs retrying.
@@ -171,6 +185,25 @@ export function ReviewVerdictBar({
       </p>
     ) : null;
 
+  // Shown only for a run whose work is on a PR. The label has to carry the
+  // whole meaning: leaving it off is not "skip the review", it is "keep the
+  // review off GitHub" — the agent hears about it either way.
+  const githubCheckbox = !canPostToGitHub ? null : (
+    <label
+      title="Leaving this off still sends the review to the agent — only the pull request is left alone."
+      className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11.5px]"
+    >
+      <input
+        type="checkbox"
+        checked={postToGitHub}
+        onChange={(e) => setPostToGitHub(e.target.checked)}
+        className="accent-accent size-3 shrink-0"
+      />
+      <GitPullRequest className="size-3" />
+      Also post to GitHub
+    </label>
+  );
+
   const submitButton = (
     <button
       type="button"
@@ -225,6 +258,7 @@ export function ReviewVerdictBar({
         </div>
         <div className="flex items-center gap-3">
           <span className="dense-meta">{countText}</span>
+          {githubCheckbox}
           {warnings}
           <span className="flex-1" />
           {aiReviewStatus}
@@ -293,6 +327,16 @@ export function ReviewVerdictBar({
           );
         })}
       </div>
+
+      {githubCheckbox !== null && (
+        <div className="mt-2 flex flex-col gap-0.5">
+          {githubCheckbox}
+          <span className="text-muted-foreground text-[11px] leading-snug">
+            Off, the review still publishes and still goes back to the agent.
+            This only decides whether the pull request hears about it too.
+          </span>
+        </div>
+      )}
 
       {error !== null && (
         <p className="text-state-failed mt-2 text-[12px]">{error}</p>

@@ -1663,15 +1663,23 @@ describe('run review routes on a Dispatch-opened PR', () => {
     });
   }
 
+  // `postToGitHub` is left out of the body entirely when undefined, so a
+  // caller that omits it exercises the real default rather than an explicit
+  // false.
   function submitReview(
     runId: string,
     verdict: string,
-    body: string
+    body: string,
+    postToGitHub?: boolean
   ): Promise<Response> {
     return fetch(`${baseUrl}/api/runs/${runId}/review-submit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ verdict, body }),
+      body: JSON.stringify({
+        verdict,
+        body,
+        ...(postToGitHub === undefined ? {} : { postToGitHub }),
+      }),
     });
   }
 
@@ -1712,7 +1720,9 @@ describe('run review routes on a Dispatch-opened PR', () => {
   // state every reply/resolve below starts from.
   async function pushedComment(runId: string): Promise<ReviewComment> {
     expect((await addComment(runId, 'why one?')).status).toBe(201);
-    expect((await submitReview(runId, 'comment', 'one note')).status).toBe(200);
+    expect(
+      (await submitReview(runId, 'comment', 'one note', true)).status
+    ).toBe(200);
     const listed = (await json(
       await fetch(`${baseUrl}/api/runs/${runId}/comments`)
     )) as ReviewComment[];
@@ -1874,7 +1884,7 @@ describe('run review routes on a Dispatch-opened PR', () => {
     const runId = await runWithOpenPr();
     expect((await addComment(runId, 'why one?')).status).toBe(201);
 
-    const res = await submitReview(runId, 'comment', 'one note');
+    const res = await submitReview(runId, 'comment', 'one note', true);
     expect(res.status).toBe(200);
     expect((await json(res)).published).toBe(1);
 
@@ -1939,7 +1949,12 @@ describe('run review routes on a Dispatch-opened PR', () => {
     orchestrator.setRunPrUrl(runId, COMMENT_PR.url);
     expect((await addComment(runId, 'why one?')).status).toBe(201);
 
-    const res = await submitReview(runId, 'request-changes', 'please fix');
+    const res = await submitReview(
+      runId,
+      'request-changes',
+      'please fix',
+      true
+    );
     expect(res.status).toBe(200);
     expect(payloads).toHaveLength(1);
 
@@ -1974,12 +1989,131 @@ describe('run review routes on a Dispatch-opened PR', () => {
     const runId = await runWithOpenPr();
     expect((await addComment(runId, 'why one?')).status).toBe(201);
 
-    const res = await submitReview(runId, 'request-changes', 'please fix');
+    const res = await submitReview(
+      runId,
+      'request-changes',
+      'please fix',
+      true
+    );
     expect(res.status).toBe(409);
     const body = await json(res);
     expect(body.published).toBe(1);
     expect(body.error).toBeString();
     expect(payloads).toHaveLength(1);
+  });
+
+  // The default is the quiet one: publish locally, tell the agent, leave the
+  // PR alone. Reaching GitHub is something the reviewer opts into.
+  it('leaves GitHub untouched by default on a run-with-PR', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(pushStubs(), RESUMABLE, payloads);
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    const res = await submitReview(runId, 'comment', 'one note');
+    expect(res.status).toBe(200);
+    expect((await json(res)).published).toBe(1);
+    expect(payloads).toEqual([]);
+
+    const after = stored({ kind: 'pr', number: COMMENT_PR.number });
+    expect(after[0].pending).toBe(false);
+    expect(after[0].githubId).toBeUndefined();
+  });
+
+  it('pushes once and still sends back with postToGitHub: true', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(pushStubs(), RESUMABLE, payloads);
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    const res = await submitReview(
+      runId,
+      'request-changes',
+      'please fix',
+      true
+    );
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(payloads).toHaveLength(1);
+    expect(body.run.resumedFrom).toBe(runId);
+  });
+
+  // The marker's whole job: nothing pending and the same (verdict, body) as
+  // the last successful push means there is nothing new to say.
+  it('posts exactly one review when the same submit is retried', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(pushStubs(), FINISHES, payloads);
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    expect(
+      (await submitReview(runId, 'comment', 'one note', true)).status
+    ).toBe(200);
+    expect(payloads).toHaveLength(1);
+
+    const retry = await submitReview(runId, 'comment', 'one note', true);
+    expect(retry.status).toBe(200);
+    expect((await json(retry)).published).toBe(0);
+    expect(payloads).toHaveLength(1);
+  });
+
+  it('posts again when the note changed since the last push', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(pushStubs(), FINISHES, payloads);
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    expect(
+      (await submitReview(runId, 'comment', 'one note', true)).status
+    ).toBe(200);
+    expect(payloads).toHaveLength(1);
+
+    const second = await submitReview(
+      runId,
+      'comment',
+      'second thoughts',
+      true
+    );
+    expect(second.status).toBe(200);
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1]).toMatchObject({ body: 'second thoughts' });
+  });
+
+  // A summary with no line comments is a legitimate review. The blanket
+  // "nothing pending, do not push" rule the marker replaces silenced it.
+  it('posts a note-only submit with nothing pending', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(
+      { ...pushStubs(), commentsListResult: commentsListResultFor() },
+      FINISHES,
+      payloads
+    );
+    const runId = await runWithOpenPr();
+
+    const res = await submitReview(
+      runId,
+      'comment',
+      'looks good overall',
+      true
+    );
+    expect(res.status).toBe(200);
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({
+      event: 'COMMENT',
+      body: 'looks good overall',
+    });
+  });
+
+  it('400s postToGitHub: true on a run with no PR', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start({ listResult: listResultWithCommentPr() }, FINISHES, payloads);
+    const runId = await dispatchRun();
+    expect((await addComment(runId, 'local only')).status).toBe(201);
+
+    const res = await submitReview(runId, 'comment', 'one note', true);
+    expect(res.status).toBe(400);
+    expect(payloads).toEqual([]);
+    expect(stored({ kind: 'run', runId })[0].pending).toBe(true);
   });
 
   // The 409 above invites a retry, and the batch has already left: pushing
@@ -1992,11 +2126,16 @@ describe('run review routes on a Dispatch-opened PR', () => {
     expect((await addComment(runId, 'why one?')).status).toBe(201);
 
     expect(
-      (await submitReview(runId, 'request-changes', 'please fix')).status
+      (await submitReview(runId, 'request-changes', 'please fix', true)).status
     ).toBe(409);
     expect(payloads).toHaveLength(1);
 
-    const retry = await submitReview(runId, 'request-changes', 'please fix');
+    const retry = await submitReview(
+      runId,
+      'request-changes',
+      'please fix',
+      true
+    );
     expect(retry.status).toBe(409);
     expect((await json(retry)).published).toBe(0);
     expect(payloads).toHaveLength(1);
@@ -2025,7 +2164,12 @@ describe('run review routes on a Dispatch-opened PR', () => {
     orchestrator.setRunPrUrl(runId, COMMENT_PR.url);
     expect((await addComment(runId, 'why one?')).status).toBe(201);
 
-    const res = await submitReview(runId, 'request-changes', 'please fix');
+    const res = await submitReview(
+      runId,
+      'request-changes',
+      'please fix',
+      true
+    );
     expect(res.status).toBe(200);
     expect((await json(res)).published).toBe(1);
     expect(payloads).toEqual([]);

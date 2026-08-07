@@ -58,10 +58,13 @@ interface RunReviewViewProps {
   }) => Promise<void>;
   onResolveComment?: (commentId: string, resolved: boolean) => Promise<void>;
   onReplyComment?: (commentId: string, body: string) => Promise<void>;
-  /** Submits the staged review — publishes its comments, then acts on the verdict. */
+  /** Submits the staged review — publishes its comments, then acts on the
+   * verdict. `postToGitHub` also mirrors it onto this run's PR as one
+   * review; without it the review stays off GitHub. */
   onSubmitReview?: (
     verdict: import('@dispatch/client').ReviewVerdict,
-    body: string
+    body: string,
+    postToGitHub: boolean
   ) => Promise<{ published: number; error?: string }>;
 }
 
@@ -214,6 +217,7 @@ export function RunReviewView({
                 onResolve={onResolveComment}
                 onReply={onReplyComment}
                 onSubmit={onSubmitReview}
+                canPostToGitHub={hasOpenPr}
               />
             </div>
           )}

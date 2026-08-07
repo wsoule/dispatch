@@ -530,6 +530,7 @@ export function ReviewView({
           layout="bar"
           comments={reviewComments}
           onSubmit={data.handleSubmitReview}
+          canPostToGitHub={run?.prUrl !== undefined}
           onStartAiReview={handleStartAiReview}
           extraWarnings={verdictWarnings}
         />

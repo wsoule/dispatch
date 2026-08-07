@@ -1150,20 +1150,24 @@ async function pushRunReviewToPr(
   ctx: ApiContext,
   number: number,
   verdict: PrReviewEvent,
-  summary: string,
-  opts: { pendingBefore: number }
+  summary: string
 ): Promise<number> {
-  // Nothing pending means the batch has already left — the line comments are
-  // protected by the `pending` flip, but the review body is not, so pushing
-  // again would land a second review on the PR every time a submit whose
-  // send-back failed is retried. There is nothing new to send: do not post.
-  if (opts.pendingBefore === 0) return 0;
+  const target: ReviewTarget = { kind: 'pr', number };
   const body =
     summary === '' && verdict !== 'approve'
       ? 'See the line comments.'
       : summary;
+  // Nothing pending AND the same words as the last push is a retry of a
+  // submit GitHub already has — posting again would duplicate the review.
+  // Anything new (a pending comment, a changed verdict or note) still goes,
+  // which is what lets a note-only review reach the PR at all.
+  const last = ctx.reviewComments.lastPush(target);
+  const repeats =
+    last !== null && last.verdict === verdict && last.body === body;
+  if (repeats && ctx.reviewComments.pendingCount(target) === 0) return 0;
   try {
     const { pushed } = await ctx.prManager.pushPrReview(number, verdict, body);
+    ctx.reviewComments.recordPush(target, { verdict, body });
     return pushed;
   } catch (err) {
     // A closed or merged PR is not in `gh pr list`, so resolving it 404s
@@ -1187,6 +1191,12 @@ async function pushRunReviewToPr(
  *
  * Comments are published BEFORE the verdict is acted on, and the count is returned either way,
  * so a verdict action that fails cannot swallow the reviewer's writing.
+ *
+ * `postToGitHub` (default false) decides whether the batch also reaches the
+ * run's PR as one GitHub review. Off, the review is published locally and
+ * still travels back to the agent — the choice is about GitHub, not about
+ * whether the review happens. Asking for it on a run with no PR is a 400
+ * rather than a silent no-op.
  */
 async function submitReview(
   req: Request,
@@ -1195,7 +1205,11 @@ async function submitReview(
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { verdict?: unknown; body?: unknown };
+  const body = parsed.value as {
+    verdict?: unknown;
+    body?: unknown;
+    postToGitHub?: unknown;
+  };
   const verdict = body.verdict;
   if (
     verdict !== 'approve' &&
@@ -1209,6 +1223,14 @@ async function submitReview(
   }
   const summary = typeof body.body === 'string' ? body.body.trim() : '';
   const target = commentTargetForRun(ctx, runId);
+  const prNumber = target.kind === 'pr' ? target.number : null;
+  const postToGitHub = body.postToGitHub === true;
+  if (postToGitHub && prNumber === null) {
+    return errorResponse(
+      400,
+      'postToGitHub needs a run whose work is on a pull request'
+    );
+  }
 
   // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
   // run. The other two verdicts are meaningful on their own.
@@ -1220,14 +1242,13 @@ async function submitReview(
     );
   }
 
-  // On a run whose work is on a PR the batch goes to GitHub instead of being
-  // published locally: pushPrReview clears `pending` in the same step it
-  // assigns `githubId`, which publishPending alongside it would split apart.
+  // Only a reviewer who asked for GitHub gets the push path, where
+  // pushPrReview clears `pending` in the same step it assigns `githubId` —
+  // publishPending alongside it would split those apart. Everyone else
+  // publishes locally, PR or not, and the send-back below happens either way.
   const published =
-    target.kind === 'pr'
-      ? await pushRunReviewToPr(ctx, target.number, verdict, summary, {
-          pendingBefore,
-        })
+    postToGitHub && prNumber !== null
+      ? await pushRunReviewToPr(ctx, prNumber, verdict, summary)
       : ctx.reviewComments.publishPending(target);
   ctx.events.broadcast({ type: 'review.changed', runId });
 

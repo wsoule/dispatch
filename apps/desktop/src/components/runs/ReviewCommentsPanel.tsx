@@ -9,8 +9,12 @@ interface ReviewCommentsPanelProps {
   onReply: (commentId: string, body: string) => Promise<void>;
   onSubmit: (
     verdict: ReviewVerdict,
-    body: string
+    body: string,
+    postToGitHub: boolean
   ) => Promise<{ published: number; error?: string }>;
+  /** True when this run's work is on a PR — see ReviewVerdictBar, which owns
+   * the "Also post to GitHub" choice this enables. */
+  canPostToGitHub?: boolean;
   /** Scrolls the diff to a thread. Omitted when there is no diff to scroll. */
   onJumpTo?: (comment: ReviewComment) => void;
   /** Dispatches a review agent over this run's diff instead of a human reading it here. Omitted
@@ -31,6 +35,7 @@ export function ReviewCommentsPanel({
   onResolve,
   onReply,
   onSubmit,
+  canPostToGitHub,
   onJumpTo,
   onStartAiReview,
 }: ReviewCommentsPanelProps) {
@@ -46,6 +51,7 @@ export function ReviewCommentsPanel({
         layout="stacked"
         comments={comments}
         onSubmit={onSubmit}
+        canPostToGitHub={canPostToGitHub}
         onStartAiReview={onStartAiReview}
       />
     </div>
