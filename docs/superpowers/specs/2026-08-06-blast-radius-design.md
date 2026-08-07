@@ -84,14 +84,13 @@ scanner catches, while the scanner only understands `.ts`/`.tsx`. So `sources`
 is a list, not a single backend, and is `['scanner']` only when carto is absent
 or degraded.
 
-Each graph contributes distance differently, and `reach` reconciles them:
+**Both graphs already compute distance and then discard it.** `normalizeBlastRadius` strips carto's `hop_distance`, and `buildDepMap.dependents()` runs its own BFS over `reverseImports`, builds a `depth` map, sorts by it, then returns bare paths (`depmap.ts:288-307`) — the module header says as much: "who imports a file (*transitively*)". So `reach` traverses nothing. It exposes distances that already exist one layer down.
 
-- **Carto** supplies native `hop_distance` (1..N) per file.
-- **Scanner** supplies one-hop reverse-import edges; `reach` breadth-first
-  searches them to derive distance, with a visited set so cycles terminate.
-- **Union by shortest distance.** A file reachable at 2 hops through carto and 1
-  through the scanner is recorded at 1 — the same shortest-wins rule
-  `normalizeBlastRadius` already applies within carto's own multiple routes.
+- **Carto** supplies native `hop_distance` (1..N) via `normalizeBlastRadiusEntries`.
+- **Scanner** supplies transitive distance via a new `dependentsWithHops(file): BlastEntry[]` returning the `depth` entries its existing BFS already produces. `dependents()` becomes a projection over it, so its output — and therefore `ReviewRunner`'s prompt — is unchanged.
+- **Union by shortest distance.** A file reachable at 2 hops through carto and 1 through the scanner is recorded at 1 — the same shortest-wins rule `normalizeBlastRadius` already applies within carto's own multiple routes.
+
+A `reach` that breadth-first searched `dependents()` would be wrong: a single call already returns the whole closure, so every file would report `hops: 1` and `maxHops` would be a no-op. Consequently any stub used to test `reach` must implement `dependentsWithHops` — a one-hop `dependents` stub encodes the bug and then agrees with it, which is how this survived its first review.
 
 `reach` must **not** reuse `mergeRoundRobin`. That merge interleaves two lists
 by source so a scanner-only dependent survives `DEPENDENT_CAP` (20) when carto

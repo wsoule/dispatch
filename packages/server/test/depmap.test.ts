@@ -254,6 +254,9 @@ function fakeReader(
 function fakeDepMap(dependents: string[]): DepMap {
   return {
     dependents: () => dependents,
+    dependentsWithHops: () => {
+      throw new Error('unused');
+    },
     mirrors: () => [],
     reach: () => {
       throw new Error('unused');
