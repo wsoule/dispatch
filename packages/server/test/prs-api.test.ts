@@ -1684,20 +1684,26 @@ function reportsFinding(file: string, line: number): FakeExecutorScript {
 // otherwise start the real agent.
 function startWithCallLog(
   overrides: Partial<StubResults> = {},
-  script: FakeExecutorScript = { finish: { state: 'finished' } }
+  script: FakeExecutorScript = { finish: { state: 'finished' } },
+  // Bodies pushPrReview POSTed, for the end-to-end test that follows one
+  // finding from the agent all the way into that request's `comments[]`.
+  postedReviewPayloads: Record<string, unknown>[] = []
 ): Promise<string[][]> {
   const calls: string[][] = [];
-  const scripted = stubRunner({
-    listResult: listResultWithForkAndRepoPr(),
-    viewResult: bodyViewResult('Fixes a typo.'),
-    filesResult: filesResultFor('README.md'),
-    mergeBaseResult: {
-      ok: true,
-      stdout: `${runGitSync(root, ['rev-parse', 'HEAD']).trim()}\n`,
-      stderr: '',
+  const scripted = stubRunner(
+    {
+      listResult: listResultWithForkAndRepoPr(),
+      viewResult: bodyViewResult('Fixes a typo.'),
+      filesResult: filesResultFor('README.md'),
+      mergeBaseResult: {
+        ok: true,
+        stdout: `${runGitSync(root, ['rev-parse', 'HEAD']).trim()}\n`,
+        stderr: '',
+      },
+      ...overrides,
     },
-    ...overrides,
-  });
+    postedReviewPayloads
+  );
   return startServer({
     rootDir: root,
     port: 0,
@@ -1993,6 +1999,116 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     ).toBe(202);
     expect((await postReviewAgent(REPO_PR.number, {})).status).toBe(202);
     expect(tasks()).toHaveLength(2);
+  });
+});
+
+// Phase 4's whole chain in one pass, against stubs with no network: a PR
+// dispatch runs a review, its finding lands in the PR's comment store, and a
+// submit carries that finding's own bytes into the review POST GitHub gets.
+// Every earlier task proved one link; nothing proved they connect.
+describe('agent PR review findings reach GitHub', () => {
+  async function waitFor(check: () => boolean) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('waitFor timed out');
+  }
+
+  function stored(target: ReviewTarget): ReviewComment[] {
+    const path = reviewCommentsPath(root, target);
+    if (!existsSync(path)) return [];
+    return JSON.parse(readFileSync(path, 'utf8')) as ReviewComment[];
+  }
+
+  // What reportsFinding's severity/title/detail become once review.ts has
+  // rendered them into a comment body — the exact bytes that must survive
+  // every hop between the agent and GitHub.
+  const FINDING_BODY =
+    '**important: unchecked input**\n\nthe parsed value is trusted';
+
+  const TARGET: ReviewTarget = { kind: 'pr', number: FORK_PR.number };
+
+  // Drives dispatch → review run → finding → PR comment store → push, and
+  // hands back the review bodies the command seam captured. Both tests below
+  // need the whole chain; only their assertions differ.
+  async function reviewAndPush(): Promise<Record<string, unknown>[]> {
+    const posted: Record<string, unknown>[] = [];
+    await startWithCallLog(
+      {
+        filesResult: filesResultFor('README.md'),
+        pushReviewResult: { ok: true, stdout: '{}', stderr: '' },
+        // The pull pushPrReview makes right after its POST: GitHub now has
+        // the comment, and hands back the id that ends its local-only life.
+        commentsListResult: commentsListResultFor(
+          rawGitHubComment({
+            id: 777,
+            path: 'README.md',
+            line: 1,
+            body: FINDING_BODY,
+            diff_hunk: '@@ -0,0 +1 @@\n+# test repo',
+          })
+        ),
+      },
+      reportsFinding('README.md', 1),
+      posted
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    const dispatched = await postReviewAgent(FORK_PR.number, {
+      confirmFork: true,
+    });
+    expect(dispatched.status).toBe(202);
+
+    await waitFor(() => stored(TARGET).length > 0);
+    // The agent's finding really is what the store holds, before any push —
+    // so a payload mismatch below is the push losing it, not the run.
+    expect(stored(TARGET)[0].body).toBe(FINDING_BODY);
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${FORK_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'comment', body: 'agent review' }),
+      }
+    );
+    expect(res.status).toBe(200);
+    expect(((await json(res)) as { pushed: number }).pushed).toBe(1);
+    return posted;
+  }
+
+  it('puts the finding’s own text in the pushed comments[]', async () => {
+    const posted = await reviewAndPush();
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({
+      commit_id: FORK_PR.headRefOid,
+      event: 'COMMENT',
+      body: 'agent review',
+    });
+    // The load-bearing assertion of the whole phase: what the agent wrote is
+    // what GitHub would receive, anchored where the agent anchored it.
+    expect(posted[0].comments).toEqual([
+      { path: 'README.md', line: 1, side: 'RIGHT', body: FINDING_BODY },
+    ]);
+  });
+
+  // Phase 3's rule, re-checked now that a comment can originate from an agent
+  // rather than the composer: `pending` and `githubId` are assigned together,
+  // so a record carrying an id is never still a draft.
+  it('never leaves a comment pending once it carries a githubId', async () => {
+    await reviewAndPush();
+
+    const after = stored(TARGET);
+    expect(after).toHaveLength(1);
+    // Non-vacuous: the record genuinely acquired a GitHub identity, so the
+    // pair check below has something to be false about.
+    expect(after[0].githubId).toBe(777);
+    expect(after.filter((c) => c.pending && c.githubId !== undefined)).toEqual(
+      []
+    );
   });
 });
 
