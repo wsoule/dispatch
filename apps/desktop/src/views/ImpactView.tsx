@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { ImpactPanel } from '../components/impact/ImpactPanel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef } from '../lib/appNav';
-import { filterByPath, groupByHop } from '../lib/impactGroups';
+import { resolveAffectedFilesStatus } from '../lib/impactViewStatus';
 import {
   EmptyState,
   HintText,
@@ -78,7 +78,11 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
 
   const hasSubject = id.trim() !== '';
 
-  const { data: response } = useQuery({
+  const {
+    data: response,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ['impact', data.client?.baseUrl, kind, id],
     queryFn: () => {
       if (data.client === null) throw new Error('no API client');
@@ -89,11 +93,18 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
   });
 
   const entries = response?.reach.entries ?? NO_ENTRIES;
-  const groups = useMemo(
-    () => groupByHop(filterByPath(entries, filter)),
-    [entries, filter]
+  // Decided by a pure function (see impactViewStatus.ts) rather than inline
+  // here, specifically so a failed request can never be rendered as "no
+  // files affected" — `ImpactPanel` above already shows the real error;
+  // this panel must agree with it, not contradict it.
+  const status = useMemo(
+    () => resolveAffectedFilesStatus({ isError, error, entries, filter }),
+    [isError, error, entries, filter]
   );
-  const shownCount = groups.reduce((n, g) => n + g.paths.length, 0);
+  const shownCount =
+    status.kind === 'entries'
+      ? status.groups.reduce((n, g) => n + g.paths.length, 0)
+      : 0;
 
   function toggleHop(hops: number) {
     setCollapsedHops((prev) => {
@@ -196,57 +207,59 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
         <>
           <ImpactPanel client={data.client} subject={kind} id={id} />
 
-          <Panel>
-            <PanelHeader count={shownCount}>Affected files</PanelHeader>
-            <PanelRow className="flex-col items-stretch gap-1.5">
-              <Input
-                className="h-8 text-[12px]"
-                placeholder="Filter by path…"
-                aria-label="Filter affected files by path"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-              />
-              {entries.length > 0 && (
-                <HintText>
-                  {shownCount} of {entries.length} shown
-                </HintText>
-              )}
-            </PanelRow>
+          {/* Suppressed entirely on error rather than repeating it here:
+              `ImpactPanel` immediately above already renders the real
+              failure, and a second, differently-worded error box below it
+              would just invite the two to read as disagreeing. What this
+              panel must never do is fall back to an empty state — see
+              `resolveAffectedFilesStatus`. */}
+          {status.kind !== 'error' && (
+            <Panel>
+              <PanelHeader count={shownCount}>Affected files</PanelHeader>
+              <PanelRow className="flex-col items-stretch gap-1.5">
+                <Input
+                  className="h-8 text-[12px]"
+                  placeholder="Filter by path…"
+                  aria-label="Filter affected files by path"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                />
+                {entries.length > 0 && (
+                  <HintText>
+                    {shownCount} of {entries.length} shown
+                  </HintText>
+                )}
+              </PanelRow>
 
-            {groups.length === 0 ? (
-              <EmptyState
-                message={
-                  entries.length === 0
-                    ? 'No files affected.'
-                    : 'No files match that filter.'
-                }
-              />
-            ) : (
-              groups.map((group) => (
-                <PanelRow
-                  key={group.hops}
-                  className="flex-col items-stretch gap-1.5"
-                >
-                  <CollapseBar
-                    label={`Hop ${group.hops} · ${group.paths.length} file${
-                      group.paths.length === 1 ? '' : 's'
-                    }`}
-                    collapsed={collapsedHops.has(group.hops)}
-                    onToggle={() => toggleHop(group.hops)}
-                  />
-                  {!collapsedHops.has(group.hops) && (
-                    <ul className="flex flex-col gap-1 pl-1">
-                      {group.paths.map((path) => (
-                        <li key={path}>
-                          <PathCrumb path={path} />
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </PanelRow>
-              ))
-            )}
-          </Panel>
+              {status.kind === 'empty' ? (
+                <EmptyState message={status.message} />
+              ) : (
+                status.groups.map((group) => (
+                  <PanelRow
+                    key={group.hops}
+                    className="flex-col items-stretch gap-1.5"
+                  >
+                    <CollapseBar
+                      label={`Hop ${group.hops} · ${group.paths.length} file${
+                        group.paths.length === 1 ? '' : 's'
+                      }`}
+                      collapsed={collapsedHops.has(group.hops)}
+                      onToggle={() => toggleHop(group.hops)}
+                    />
+                    {!collapsedHops.has(group.hops) && (
+                      <ul className="flex flex-col gap-1 pl-1">
+                        {group.paths.map((path) => (
+                          <li key={path}>
+                            <PathCrumb path={path} />
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </PanelRow>
+                ))
+              )}
+            </Panel>
+          )}
         </>
       )}
     </div>
