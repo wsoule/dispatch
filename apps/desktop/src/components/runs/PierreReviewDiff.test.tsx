@@ -552,30 +552,77 @@ describe('isEditableDiffType', () => {
 });
 
 /**
- * The reviewer's real gesture: a drag across the code, which the browser reports as an ordinary
- * DOM text selection on the document. happy-dom lays nothing out, so `CodeView` renders no code
- * rows to drag over — the selected text is placed inside the diff's own container instead and
- * the `selectionchange` event a browser would fire is dispatched.
- *
- * Deliberately NOT Pierre's `onSelectedLinesChange`. That callback cannot fire for this gesture
- * at all (`enableLineSelection` defaults off, and a line selection only ever starts from the
- * line-number column), which is exactly why an earlier version of this feature rendered no bar
- * in a real browser while its tests were green.
+ * Where Pierre puts its rendered rows: inside the scroll container, which is itself inside the
+ * wrapper the action bar positions against. This mirrors the ancestor chain measured in a real
+ * browser on the review surface — `text → div → div → div.min-h-0.w-full → div.relative.flex` —
+ * so a test cannot pass by constructing a containment relationship the app does not have.
  */
-function selectText(text: string, host?: Element): void {
-  const target = host ?? document.querySelector('diffs-container');
-  if (target === null) throw new Error('no diff container to select inside');
-  const span = document.createElement('span');
-  span.appendChild(document.createTextNode(text));
-  target.appendChild(span);
+function rowHost(): Element {
+  const host = document.querySelector('.overflow-auto > div');
+  if (host === null) throw new Error('no rendered diff to select inside');
+  return host;
+}
+
+// One rendered diff row, shaped the way Pierre's `processLine` emits one: the row carries the
+// line number it drew and its type, and the code sits in a child element.
+function appendRow(
+  host: Element,
+  line: number,
+  text: string,
+  type = 'change-addition'
+): HTMLElement {
+  const el = document.createElement('div');
+  el.setAttribute('data-line', String(line));
+  el.setAttribute('data-line-type', type);
+  const code = document.createElement('span');
+  code.appendChild(document.createTextNode(text));
+  el.appendChild(code);
+  host.appendChild(el);
+  return el;
+}
+
+function selectBetween(first: Node, last: Node): void {
   const range = document.createRange();
-  range.selectNodeContents(span);
+  range.setStart(first, 0);
+  range.setEnd(last, (last.textContent ?? '').length);
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
   act(() => {
     document.dispatchEvent(new Event('selectionchange'));
   });
+}
+
+/**
+ * The reviewer's real gesture: a drag across rendered code, which the browser reports as an
+ * ordinary DOM text selection. happy-dom lays nothing out, so `CodeView` renders no rows to drag
+ * over and the rows are put where Pierre would put them first.
+ *
+ * Deliberately NOT Pierre's `onSelectedLinesChange`. That callback cannot fire for this gesture
+ * at all (`enableLineSelection` defaults off, and a line selection only ever starts from the
+ * line-number column), which is why an earlier version of this feature rendered no bar in a real
+ * browser while its tests were green.
+ */
+function selectRows(
+  rows: { line: number; text: string; type?: string }[]
+): void {
+  const host = rowHost();
+  const elements = rows.map((r) =>
+    appendRow(host, r.line, r.text, r.type ?? 'change-addition')
+  );
+  const first = elements.at(0)?.firstChild?.firstChild;
+  const last = elements.at(-1)?.firstChild?.firstChild;
+  if (first == null || last == null) throw new Error('no row text to select');
+  selectBetween(first, last);
+}
+
+/** A selection with no diff row above it: what a shadow-DOM surface hands back when the engine
+ * retargets the range to its host, and what a selection outside the diff looks like. */
+function selectLooseText(text: string, host?: Element): void {
+  const span = document.createElement('span');
+  span.appendChild(document.createTextNode(text));
+  (host ?? rowHost()).appendChild(span);
+  selectBetween(span.firstChild as Node, span.firstChild as Node);
 }
 
 function clearSelection(): void {
@@ -636,10 +683,10 @@ describe('PierreReviewDiff — the selection action bar', () => {
     expect(selectionBar()).toBeNull();
   });
 
-  it('appears once code in this file is selected', async () => {
+  it('appears once rendered code is selected', async () => {
     renderForSelection({ onAddToChat: () => {} });
 
-    selectText('const b = 2;');
+    selectRows([{ line: 12, text: '  sku: string;' }]);
     await settle();
 
     expect(selectionBar()).not.toBeNull();
@@ -647,7 +694,7 @@ describe('PierreReviewDiff — the selection action bar', () => {
 
   it('goes away when the selection is dropped', async () => {
     renderForSelection({ onAddToChat: () => {} });
-    selectText('const b = 2;');
+    selectRows([{ line: 12, text: '  sku: string;' }]);
     await settle();
     expect(selectionBar()).not.toBeNull();
 
@@ -663,18 +710,95 @@ describe('PierreReviewDiff — the selection action bar', () => {
     const outside = document.createElement('div');
     document.body.appendChild(outside);
 
-    selectText('const b = 2;', outside);
+    selectLooseText('  sku: string;', outside);
     await settle();
 
     expect(selectionBar()).toBeNull();
   });
 
-  // Text that is not in the file has no lines to name — a drag across the deleted side of a
-  // split diff, or one taken against contents that have since moved on.
-  it('stays away for text this file does not contain', async () => {
+  // The whole point of reading the rendered rows: arming the bar must not depend on anything
+  // that can fail. A run whose worktree has been cleaned up cannot serve its files, and the
+  // earlier version of this feature went dark on exactly that.
+  it('still names the lines when the file cannot be fetched at all', async () => {
+    const attached: Snippet[] = [];
+    render(
+      <PierreReviewDiff
+        client={fakeClient({
+          fetchRunFile: () => Promise.reject(new Error('worktree gone')),
+        })}
+        runId="r1"
+        meta={runMeta()}
+        patch={TWO_FILE_PATCH}
+        only="a.ts"
+        comments={[]}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+        onAddToChat={(snippet) => attached.push(snippet)}
+      />
+    );
+
+    selectRows([
+      { line: 12, text: '  sku: string;' },
+      { line: 13, text: '  score: number;' },
+    ]);
+    await settle();
+
+    expect(selectionBar()).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+    expect(attached[0]).toMatchObject({
+      file: 'a.ts',
+      startLine: 12,
+      endLine: 13,
+    });
+  });
+
+  // The rendered diff is the authority on which lines it drew. Searching the file for the text
+  // is only a fallback, and must never override rows that already said.
+  it('takes the lines from the rows, not from where the text sits in the file', async () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    // `fakeClient` serves this text on line 2; the row says the diff drew it on line 40.
+    selectRows([{ line: 40, text: 'const b = 2;' }]);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached[0]).toMatchObject({ startLine: 40, endLine: 40 });
+  });
+
+  // A deleted line's number belongs to the base file, and its text is not in the new one, so
+  // neither the rows nor the fallback can name lines for it.
+  it('stays away for a deletion-side row', async () => {
     renderForSelection({ onAddToChat: () => {} });
 
-    selectText('const gone = 1;');
+    selectRows([{ line: 4, text: 'const gone = 1;', type: 'change-deletion' }]);
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // What a shadow-DOM surface hands back when the engine retargets the range to its host: no
+  // row to read, so the file's own contents say where the text sits.
+  it('falls back to the file when the selection reaches no row', async () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    selectLooseText('const b = 2;');
+    await settle();
+
+    expect(selectionBar()).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+    expect(attached[0]).toMatchObject({
+      file: 'a.ts',
+      startLine: 2,
+      endLine: 2,
+    });
+  });
+
+  it('stays away when neither the rows nor the file can place the text', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    selectLooseText('const nowhere = 1;');
     await settle();
 
     expect(selectionBar()).toBeNull();
@@ -684,11 +808,11 @@ describe('PierreReviewDiff — the selection action bar', () => {
   // bar moves with the new one immediately, so a click there would attach the wrong code.
   it('drops the previous selection the moment a new one starts', async () => {
     renderForSelection({ onAddToChat: () => {} });
-    selectText('const b = 2;');
+    selectLooseText('const b = 2;');
     await settle();
     expect(selectionBar()).not.toBeNull();
 
-    selectText('const a = 0;');
+    selectLooseText('const a = 0;');
 
     expect(selectionBar()).toBeNull();
   });
@@ -696,7 +820,7 @@ describe('PierreReviewDiff — the selection action bar', () => {
   it('withholds Add to chat where there is no chat to add to', async () => {
     renderForSelection();
 
-    selectText('const b = 2;');
+    selectRows([{ line: 12, text: '  sku: string;' }]);
     await settle();
 
     expect(selectionBar()).not.toBeNull();
@@ -704,34 +828,17 @@ describe('PierreReviewDiff — the selection action bar', () => {
     expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
   });
 
-  it('hands the chat the selected code and the lines it sits on', async () => {
+  it('hands the chat the selected code and the lines it was drawn on', async () => {
     const attached: Snippet[] = [];
     renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
 
-    // Spans both lines of the file `fakeClient` serves, so the range is not the trivial one.
-    selectText('const a = 0;\nconst b = 2;');
+    selectRows([{ line: 12, text: '  sku: string;' }]);
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
 
     expect(attached).toEqual([
-      {
-        file: 'a.ts',
-        startLine: 1,
-        endLine: 2,
-        text: 'const a = 0;\nconst b = 2;',
-      },
+      { file: 'a.ts', startLine: 12, endLine: 12, text: '  sku: string;' },
     ]);
-  });
-
-  it('names the lines a selection part-way down the file sits on', async () => {
-    const attached: Snippet[] = [];
-    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
-
-    selectText('const b = 2;');
-    await settle();
-    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
-
-    expect(attached[0]).toMatchObject({ startLine: 2, endLine: 2 });
   });
 
   it('copies the selected code to the clipboard', async () => {
@@ -747,18 +854,21 @@ describe('PierreReviewDiff — the selection action bar', () => {
     });
     renderForSelection({ onAddToChat: () => {} });
 
-    selectText('const b = 2;');
+    selectRows([{ line: 12, text: '  sku: string;' }]);
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
-    expect(written).toEqual(['const b = 2;']);
+    expect(written).toEqual(['  sku: string;']);
   });
 
   // Comment is a second entry point to the composer the gutter "+" already opens, not a
   // parallel one — so it must produce the same composer annotation on the same range.
   it('opens the existing composer on the selected range', async () => {
     renderForSelection({ onAddToChat: () => {} });
-    selectText('const a = 0;\nconst b = 2;');
+    selectRows([
+      { line: 12, text: '  sku: string;' },
+      { line: 13, text: '  score: number;' },
+    ]);
     await settle();
 
     fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
@@ -770,7 +880,7 @@ describe('PierreReviewDiff — the selection action bar', () => {
     );
     expect(
       annotations.map((a) => a.metadata).filter((m) => m?.kind === 'composer')
-    ).toEqual([{ kind: 'composer', file: 'a.ts', startLine: 1 }]);
+    ).toEqual([{ kind: 'composer', file: 'a.ts', startLine: 12 }]);
   });
 });
 
@@ -832,34 +942,29 @@ describe('select code, then chat about it', () => {
       </QueryClientProvider>
     );
 
-    selectText('const a = 0;\nconst b = 2;');
+    selectRows([
+      { line: 12, text: '  sku: string;' },
+      { line: 13, text: '  score: number;' },
+    ]);
     await settle();
     expect(selectionBar()).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
 
-    // The dock opened itself and is holding the snippet as a chip.
-    await waitFor(() =>
-      expect(screen.queryByText('a.ts (1-2)')).not.toBeNull()
-    );
+    // The dock opened itself and is holding the snippet as a chip, named for the lines the
+    // rendered rows said the drag crossed.
+    expect(screen.queryByText('a.ts (12-13)')).not.toBeNull();
 
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'why is this needed?' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await settle();
 
-    await waitFor(() => expect(added.length).toBe(1));
-    expect(added[0]).toEqual({
+    expect(added[0]).toMatchObject({
       subject: 'run:r1',
       role: 'human',
       body: 'why is this needed?',
-      snippets: [
-        {
-          file: 'a.ts',
-          startLine: 1,
-          endLine: 2,
-          text: 'const a = 0;\nconst b = 2;',
-        },
-      ],
+      snippets: [{ file: 'a.ts', startLine: 12, endLine: 13 }],
       target: 'run-agent',
     });
   });

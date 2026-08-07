@@ -23,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DiffSurface, useParsedPatchFiles } from '../code/DiffSurface';
 import type { CodeSelection, SelectionAction } from '../code/SelectionActions';
 import { SelectionActions } from '../code/SelectionActions';
-import { useSelectedCodeText } from '../code/useSelectedCodeText';
+import { useSelectedCode } from '../code/useSelectedCode';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
 import { locateSnippetLines, snippetFromSelection } from '@/lib/conversation';
@@ -184,7 +184,7 @@ export function PierreReviewDiff({
   const containerRef = useRef<HTMLDivElement>(null);
   // The gesture the bar runs on. Not Pierre's line selection: that needs `enableLineSelection`
   // and only ever starts from the line-number column, so dragging across code never reaches it.
-  const selectedText = useSelectedCodeText(containerRef);
+  const selected = useSelectedCode(containerRef);
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
   // run's worktree, which is what makes unchanged-region expansion (and editing) possible at
   // all.
@@ -613,30 +613,41 @@ export function PierreReviewDiff({
   );
 
   /**
-   * Turns the reviewer's text selection into something the action bar can act on: the code is
-   * what the browser reports, and the lines are where that code sits in the file on disk.
+   * Turns the reviewer's text selection into something the action bar can act on.
    *
-   * Cleared first, on every change, rather than left standing while the lookup runs — the bar
-   * moves with the new selection immediately, so a stale value here would put the previous
-   * selection's code under a bar hovering over different lines.
+   * The rendered rows are asked first, and they answer synchronously: the diff on screen already
+   * knows which lines it drew, so nothing about arming the bar depends on a fetch succeeding, on
+   * a worktree still existing, or on the browser having joined the rows' text the same way the
+   * file stores it. Only when a range does not reach a row — a shadow-DOM selection the engine
+   * retargeted to its host — does this fall back to locating the text in the file's contents,
+   * and only then is `only` (the one file on screen) needed to know which file to read.
    *
-   * `only` is what names the file: this reads one file's contents, so a surface rendering the
-   * whole patch at once has no way to say which file the text came from and offers no bar.
+   * Cleared first on every change rather than left standing: the bar moves with the new
+   * selection immediately, so a stale value would sit under a bar hovering over other lines.
    */
   useEffect(() => {
     setCodeSelection(null);
-    if (selectedText === null || only === undefined) return;
+    if (selected === null) return;
+    if (selected.lines !== null) {
+      // The file is named by the row's own surface: with `only` set that is the file on screen,
+      // and without it there is a single patch whose rows all belong to files we cannot tell
+      // apart from a line number alone.
+      if (only === undefined) return;
+      setCodeSelection({ file: only, ...selected.lines, text: selected.text });
+      return;
+    }
+    if (only === undefined) return;
     let live = true;
     void ensureLoaded(only).then((result) => {
       if (!live || result === null) return;
-      const lines = locateSnippetLines(result.contents, selectedText);
+      const lines = locateSnippetLines(result.contents, selected.text);
       if (lines === null) return;
-      setCodeSelection({ file: only, ...lines, text: selectedText });
+      setCodeSelection({ file: only, ...lines, text: selected.text });
     });
     return () => {
       live = false;
     };
-  }, [selectedText, only, ensureLoaded]);
+  }, [selected, only, ensureLoaded]);
 
   // Supplied as data, so `SelectionActions` itself never learns what chat, copy or comment
   // mean. Each is withheld rather than shown dead where it has nowhere to go.
