@@ -5,6 +5,7 @@ import type {
   PrStatus,
 } from '@dispatch/client';
 import {
+  Bot,
   Check,
   CircleDot,
   ExternalLink,
@@ -138,6 +139,51 @@ interface PrReviewPanelProps {
    * would leave them staged, which is what "Comment" nowhere else means.
    */
   stagedNotes?: number;
+  /**
+   * Hands this PR to a review agent, which checks its head out and runs in
+   * that code. Absent where there is nothing to dispatch — a run's own PR
+   * panel reviews the run's worktree instead.
+   */
+  onAgentReview?: (confirmFork: boolean) => Promise<void>;
+  /**
+   * The login owning the head repository, set only when it is a fork. Its
+   * presence is what turns the review button into a confirmation first.
+   */
+  forkOwner?: string;
+}
+
+// The fork half of spec Decision 3: a fork PR's code is a stranger's, and
+// reviewing it runs that code here. Named owner, plain sentence, no jargon —
+// the user is agreeing to execution, not to a checkbox.
+function ForkConfirm({
+  owner,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  owner: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="border-state-waiting-edge bg-state-waiting-surface flex flex-col gap-2 rounded-md border p-2">
+      <p className="text-foreground text-[12px]">
+        This PR comes from a fork owned by{' '}
+        <span className="font-medium">{owner}</span>. Reviewing it checks that
+        code out and runs it on this machine.
+      </p>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="sm" disabled={busy} onClick={onConfirm}>
+          <Bot className="size-3.5" />
+          Run the review
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -155,10 +201,13 @@ export function PrReviewPanel({
   onReview,
   onComment,
   stagedNotes = 0,
+  onAgentReview,
+  forkOwner,
 }: PrReviewPanelProps) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [askingFork, setAskingFork] = useState(false);
 
   async function act(run: () => Promise<void>) {
     setBusy(true);
@@ -166,6 +215,23 @@ export function PrReviewPanel({
     try {
       await run();
       setDraft('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Dispatching is not a composer action, so it shares act()'s busy/error
+  // state but must not clear a draft the user is still writing. The server
+  // gates forks too — `confirmFork` only reports what the user answered.
+  async function dispatchAgentReview(confirmFork: boolean) {
+    if (onAgentReview === undefined) return;
+    setAskingFork(false);
+    setBusy(true);
+    setActionError(null);
+    try {
+      await onAgentReview(confirmFork);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -213,6 +279,29 @@ export function PrReviewPanel({
             </p>
           ) : (
             <div className="flex flex-col gap-2">
+              {onAgentReview !== undefined &&
+                (askingFork && forkOwner !== undefined ? (
+                  <ForkConfirm
+                    owner={forkOwner}
+                    busy={busy}
+                    onCancel={() => setAskingFork(false)}
+                    onConfirm={() => void dispatchAgentReview(true)}
+                  />
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    className="self-start"
+                    onClick={() => {
+                      if (forkOwner !== undefined) setAskingFork(true);
+                      else void dispatchAgentReview(false);
+                    }}
+                  >
+                    <Bot className="size-3.5" />
+                    Review with agent
+                  </Button>
+                ))}
               <Textarea
                 rows={2}
                 placeholder="Leave a review comment…"

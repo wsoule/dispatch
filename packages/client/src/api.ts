@@ -1423,6 +1423,15 @@ export interface ApiClient {
     body?: string
   ): Promise<PrDetail>;
   commentRepoPr(number: number, body: string): Promise<PrDetail>;
+  /**
+   * Hands a repo PR to a review agent, which checks the PR's head out and
+   * runs in it — executing that code on this machine. A fork PR 409s (the
+   * message names the head owner) until `confirmFork` says the user agreed.
+   */
+  startPrAgentReview(
+    number: number,
+    input?: { confirmFork?: boolean }
+  ): Promise<void>;
   // The notes/triage hub.
   // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
   // the splitting rule has exactly one implementation. `convertInbox` reports per-item results
@@ -1908,6 +1917,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/prs/${number}/comment`, {
         method: 'POST',
         ...jsonBody({ body }),
+      }),
+    startPrAgentReview: (number, input) =>
+      request(target, `/api/prs/${number}/review-agent`, {
+        method: 'POST',
+        ...jsonBody({ confirmFork: input?.confirmFork === true }),
       }),
     fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>

@@ -1582,6 +1582,123 @@ describe('POST /api/prs/:number/review-submit', () => {
   });
 });
 
+// A fork PR: its head branch lives in someone else's repo, so checking it
+// out and running an agent in it executes a stranger's code on this machine.
+const FORK_PR = {
+  number: 11,
+  title: 'Fix a typo from outside',
+  url: 'https://github.com/example/repo/pull/11',
+  headRefName: 'patch-1',
+  baseRefName: 'main',
+  headRefOid: 'f0rkbeef',
+  author: { login: 'outsider' },
+  isDraft: false,
+  updatedAt: '2026-08-07T00:00:00Z',
+  isCrossRepository: true,
+  headRepositoryOwner: { login: 'outsider-org' },
+};
+
+// Both PRs in one list so every gate test resolves against the same stub —
+// REPO_PR omits isCrossRepository entirely, which parses to false (same-repo).
+function listResultWithForkAndRepoPr(): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify([REPO_PR, FORK_PR]),
+    stderr: '',
+  };
+}
+
+// Starts a server whose PR seam records every argv, and returns the log.
+function startWithCallLog(): Promise<string[][]> {
+  const calls: string[][] = [];
+  const scripted = stubRunner({ listResult: listResultWithForkAndRepoPr() });
+  return startServer({
+    rootDir: root,
+    port: 0,
+    writeDaemonFile: false,
+    prCommandRunner: async (cwd, cmd) => {
+      calls.push(cmd);
+      return scripted(cwd, cmd);
+    },
+  }).then((h) => {
+    handle = h;
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    return calls;
+  });
+}
+
+function postReviewAgent(
+  number: number,
+  body: Record<string, unknown>
+): Promise<Response> {
+  return fetch(`${baseUrl}/api/prs/${number}/review-agent`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+// Spec Decision 3, and the whole point of the fork gate: a same-repo PR is
+// work the user already trusts, a fork PR is a stranger's code. The gate has
+// to refuse BEFORE the head is fetched — a 409 issued after the fetch has
+// already put that code on the machine.
+describe('POST /api/prs/:number/review-agent', () => {
+  it('409s a fork PR without confirmFork, naming the head owner', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(FORK_PR.number, {});
+    expect(res.status).toBe(409);
+    const body = await json(res);
+    expect(body.error).toContain('outsider-org');
+    expect(body.error).toContain('confirmFork');
+  });
+
+  it('creates nothing at all when it refuses a fork PR', async () => {
+    const calls = await startWithCallLog();
+    const before = calls.length;
+
+    const res = await postReviewAgent(FORK_PR.number, {});
+    expect(res.status).toBe(409);
+
+    // No ref: the only command the refused request may run is the `gh pr
+    // list` that resolves the number. Anything else is a side effect the
+    // gate was supposed to precede.
+    const during = calls.slice(before);
+    expect(during.map((c) => c.slice(0, 3))).toEqual([['gh', 'pr', 'list']]);
+    expect(during.some((c) => c[0] === 'git' && c[1] === 'fetch')).toBe(false);
+    // No task: a synthesized review task is the other thing a dispatch
+    // creates, and it must not exist either.
+    expect(new TaskStore(root).list()).toEqual([]);
+  });
+
+  // 501 is what sits past the gate until Task 5 wires the dispatch; both
+  // tests below assert the gate let the request through, not the eventual
+  // dispatch result. Task 5 replaces the status, never the `not.toBe(409)`.
+  it('lets a fork PR through once confirmFork is true', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).not.toBe(409);
+    expect(res.status).toBe(501);
+  });
+
+  it('needs no confirmation for a same-repo PR', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(REPO_PR.number, {});
+    expect(res.status).not.toBe(409);
+    expect(res.status).toBe(501);
+  });
+
+  it('404s a PR number that is not among the repo’s open PRs', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(999, { confirmFork: true });
+    expect(res.status).toBe(404);
+  });
+});
+
 // A PR Dispatch opened itself is BOTH targets (spec §Review): it resolves to
 // `pr` so a line comment reaches GitHub, and stays a `run` so the review can
 // still travel back to the agent. The ReviewQueue dedups such a PR to its

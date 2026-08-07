@@ -108,6 +108,17 @@ export function ReviewView({
 
   const repoPr = useRepoPrDetail(data.client, data.port, selectedPrNumber);
 
+  // The open-PR row, not the detail: `isCrossRepository`/`headRepositoryOwner`
+  // ride the one `GET /api/prs` call the queue already makes, so the fork gate
+  // costs nothing extra to render.
+  const selectedRepoPr = useMemo(
+    () =>
+      selectedPrNumber === null
+        ? undefined
+        : data.repoPrs?.find((pr) => pr.number === selectedPrNumber),
+    [data.repoPrs, selectedPrNumber]
+  );
+
   // A PR has no run behind it, so the run-scoped panels below (the case, its
   // findings, its decisions) must not inherit whichever run nav still holds.
   const run = isPrTarget ? undefined : data.runDetail?.meta;
@@ -273,6 +284,19 @@ export function ReviewView({
     });
   }, [data.client, run]);
 
+  // Hands the open PR to a review agent. `confirmFork` only reports what the
+  // user answered — the server refuses a fork without it either way, before
+  // it fetches anything.
+  const handleAgentPrReview = useCallback(
+    async (confirmFork: boolean) => {
+      if (data.client === null || selectedPrNumber === null) {
+        throw new Error('The task daemon is not ready yet.');
+      }
+      await data.client.startPrAgentReview(selectedPrNumber, { confirmFork });
+    },
+    [data.client, selectedPrNumber]
+  );
+
   // A run opens through nav (other surfaces jump to it), a PR through this
   // view's own state. Each drops the other, so both can never claim the screen.
   const handleSelectTarget = useCallback(
@@ -341,6 +365,12 @@ export function ReviewView({
       onReview={repoPr.handleReview}
       onComment={repoPr.handleComment}
       stagedNotes={stagedNoteCount}
+      onAgentReview={handleAgentPrReview}
+      forkOwner={
+        selectedRepoPr?.isCrossRepository === true
+          ? selectedRepoPr.headRepositoryOwner
+          : undefined
+      }
     />
   ) : run !== undefined && run.prUrl !== undefined ? (
     <PrReviewPanel
