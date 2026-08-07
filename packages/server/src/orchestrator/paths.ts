@@ -52,6 +52,17 @@ export function reviewCommentsPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.review.json`);
 }
 
+// Where a conversation lives, keyed by subject rather than by run: the Git page and a GitHub PR
+// have no run to key on. The subject is hashed because it contains `:` and, for a worktree, `/`
+// — neither of which belongs in a filename.
+export function conversationPath(rootDir: string, subject: string): string {
+  const key = createHash('sha256')
+    .update(subject, 'utf8')
+    .digest('hex')
+    .slice(0, 16);
+  return join(runsDir(rootDir), `${key}.conversation.json`);
+}
+
 // Where the merge queue's persisted state (queued/active entries plus
 // history) lives — see MergeQueue's persist()/hydrate() — so a daemon
 // restart reloads the queue instead of silently dropping it, the same way
