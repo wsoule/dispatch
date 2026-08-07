@@ -54,6 +54,7 @@ import { VerificationRunner } from './orchestrator/verify.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
 import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
+import { TrackedFilesCache } from './trackedFiles.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -388,13 +389,23 @@ export async function startServer(
       });
     },
   });
+  // Backs GET /api/impact's task-subject case; invalidated below off the
+  // same signal as depMapCache rather than a TTL.
+  const trackedFilesCache = new TrackedFilesCache(rootDir);
+  const handleSourceChange = createSourceChangeHandler({
+    rootDir,
+    mode: cartoMode,
+    cache: depMapCache,
+  });
   const sourceWatcher = watchSourceDirs(
     depMapSourceDirs(rootDir),
-    createSourceChangeHandler({
-      rootDir,
-      mode: cartoMode,
-      cache: depMapCache,
-    }),
+    () => {
+      // Shares depMapCache's watch, so its blind spot is the same one: a
+      // tracked file added/removed outside depMapSourceDirs(rootDir) won't
+      // invalidate this cache until some other change happens to fire it.
+      trackedFilesCache.invalidate();
+      handleSourceChange();
+    },
     isSkippedPath
   );
 
@@ -614,6 +625,7 @@ export async function startServer(
     verificationRunner,
     fixLoop,
     depMapCache,
+    trackedFilesCache,
     reviewComments,
     questions,
     scopeRequests,

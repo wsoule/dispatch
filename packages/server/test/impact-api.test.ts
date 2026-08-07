@@ -8,6 +8,10 @@ import { startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
+function json<T>(res: Response): Promise<T> {
+  return res.json() as Promise<T>;
+}
+
 function initDispatchGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-impact-api-'));
   runGitSync(dir, ['init', '-b', 'main']);
@@ -79,4 +83,44 @@ describe('GET /api/impact', () => {
     const res = await authedGet('/api/impact?subject=file');
     expect(res.status).toBe(400);
   });
+
+  it('a task with declared writes resolves seeds against tracked files', async () => {
+    const created = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'writes something', writes: ['*.ts'] }),
+    });
+    const { meta } = await json<{ meta: { id: string } }>(created);
+
+    const res = await authedGet(`/api/impact?subject=task&id=${meta.id}`);
+    expect(res.status).toBe(200);
+    const body = await json<{ reach: { entries: unknown[] } }>(res);
+    expect(Array.isArray(body.reach.entries)).toBe(true);
+  });
+
+  it(
+    'a broken git checkout surfaces a controlled error, not a 500 and ' +
+      'not a false-empty result',
+    async () => {
+      const created = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'writes something', writes: ['*.ts'] }),
+      });
+      const { meta } = await json<{ meta: { id: string } }>(created);
+
+      // Simulates the class of failure `git ls-files` can hit in production
+      // (a corrupt/missing index) — not reachable by mocking, since the
+      // route spawns a real `git` process against `rootDir`.
+      rmSync(join(root, '.git'), { recursive: true, force: true });
+
+      const res = await authedGet(`/api/impact?subject=task&id=${meta.id}`);
+      expect(res.status).toBe(502);
+      expect(res.status).not.toBe(500);
+      const body = await json<{ error: string; seeds?: unknown }>(res);
+      expect(typeof body.error).toBe('string');
+      // A stale/false "nothing is affected" would look like a seeds array.
+      expect(body.seeds).toBeUndefined();
+    }
+  );
 });
