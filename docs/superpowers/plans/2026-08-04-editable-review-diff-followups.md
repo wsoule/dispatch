@@ -8,6 +8,32 @@ tracked in.
 Nothing here blocks merge. The final whole-branch review closed every finding it
 raised and returned "ready with follow-ups".
 
+## Update: it has now been run in a browser, and one thing is broken
+
+Driven against a real daemon and a real run worktree. What works, end to end:
+the server layer (a reviewer edit writes, stages, and commits scoped to its own
+file with the `Dispatch-Reviewer-Edit` trailer, with an unrelated agent-staged
+file confirmed _not_ swept in), and editing a **modified** file — document
+rebuilt, keystrokes registered, commit landed.
+
+**What does not work: editing an added or deleted file.** Edit mode engages —
+the pencil turns into Save/Cancel and Pierre's editor factory is called — but no
+editable surface is ever created, so the reviewer cannot type. It is a bug in
+`@pierre/diffs@1.3.1`, diagnosed and written up for upstream in
+`docs/pierre-editable-diff-bug.md`: an added file is marked `isPartial: true`
+but excluded from `canHydrateDiff`, leaving it partial and permanently
+unhydratable, a state `attachEditor` has no branch for.
+
+Two changes were tried and reverted, because neither fixed it and neither was
+verified — both are still worth considering once upstream moves:
+
+- `useTokenTransformer: true` in the review diff's render options. Pierre's own
+  demo sets it, with a comment saying the editor requires it.
+- The contents loader should not return `oldFile: null` for an added file — that
+  shape is typed `FileDiffLoadedPureRenamedFile`, so it claims "pure rename".
+
+Until this is fixed, edit mode silently does nothing on added files.
+
 ## Nobody has run this in a browser
 
 Agents could not launch the app, a dev server, or Playwright in this environment
