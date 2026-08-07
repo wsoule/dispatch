@@ -79,6 +79,13 @@ class StubRunner {
     stdout: JSON.stringify({ state: 'OPEN' }),
     stderr: '',
   };
+  // `gh pr view --json body` — the PR description getPrBodyByUrl reads, a
+  // third distinct shape behind the same verb.
+  viewBodyResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({ body: 'PR body' }),
+    stderr: '',
+  };
   // The full `gh pr view --json number,…,reviews,comments` payload getPrDetail
   // reads (distinct from `viewResult`, the poller's `--json state` call).
   viewDetailResult: CommandResult = {
@@ -335,7 +342,9 @@ class StubRunner {
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
       // The poller reads only `--json state`; getPrDetail reads the full set.
       const jsonArg = cmd[cmd.indexOf('--json') + 1];
-      return jsonArg === 'state' ? this.viewResult : this.viewDetailResult;
+      if (jsonArg === 'state') return this.viewResult;
+      if (jsonArg === 'body') return this.viewBodyResult;
+      return this.viewDetailResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === '--version') {
       return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
@@ -1237,6 +1246,132 @@ describe('PrManager.fetchPrHead', () => {
 
     expect(result.ref).toBe('refs/dispatch/pr/9');
     expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(true);
+  });
+
+  // The route's gate resolves the PR, then this would resolve it again from
+  // a possibly newer snapshot — a window in which the PR gated on and the PR
+  // fetched need not be the same. `resolved` hands that snapshot back.
+  it('reuses a caller-resolved PR instead of listing again', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    const resolved = (await pr.listRepoPrs())[0];
+    const listedBefore = stub.calls.filter((c) => c.cmd[2] === 'list').length;
+
+    const result = await pr.fetchPrHead(9, { confirmFork: false, resolved });
+
+    expect(result.ref).toBe('refs/dispatch/pr/9');
+    expect(stub.calls.filter((c) => c.cmd[2] === 'list')).toHaveLength(
+      listedBefore
+    );
+  });
+
+  // The gate reads whichever RepoPr it was handed, so passing one in is not
+  // a way around it.
+  it('still refuses a fork handed in as a resolved PR', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = forkListResult();
+    const pr = new PrManager(harness, true, stub.run);
+    const resolved = (await pr.listRepoPrs())[0];
+
+    await expect(
+      pr.fetchPrHead(9, { confirmFork: false, resolved })
+    ).rejects.toThrow(/outsider-org/);
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(false);
+  });
+});
+
+const PR_9_URL = 'https://github.com/example/repo/pull/9';
+
+describe('PrManager.getPrBodyByUrl', () => {
+  it('reads the PR description with one `gh pr view --json body`', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewBodyResult = {
+      ok: true,
+      stdout: JSON.stringify({ body: 'Why this change.' }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    expect(await pr.getPrBodyByUrl(PR_9_URL)).toBe('Why this change.');
+    const viewCalls = stub.calls.filter((c) => c.cmd[2] === 'view');
+    expect(viewCalls).toHaveLength(1);
+    expect(viewCalls[0].cmd).toEqual([
+      'gh',
+      'pr',
+      'view',
+      PR_9_URL,
+      '--json',
+      'body',
+    ]);
+  });
+
+  // A PR with no description is normal, and gh reports it as JSON null —
+  // which must not reach the synthesized task as the text "null".
+  it('reads a null body as empty', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewBodyResult = {
+      ok: true,
+      stdout: JSON.stringify({ body: null }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    expect(await pr.getPrBodyByUrl(PR_9_URL)).toBe('');
+  });
+
+  it('throws OrchestratorConflictError carrying gh’s error text', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewBodyResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'gh: not authorized',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.getPrBodyByUrl(PR_9_URL)).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    await expect(pr.getPrBodyByUrl(PR_9_URL)).rejects.toThrow(/not authorized/);
+  });
+});
+
+describe('PrManager.listPrFilesByUrl', () => {
+  // The paths alone, without `gh pr diff`'s whole patch — the review
+  // dispatch only needs them for the synthesized task's `writes`.
+  it('lists the PR’s changed paths without fetching its patch', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.filesResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        { filename: 'src/a.ts', status: 'modified' },
+        { filename: 'src/b.ts', status: 'added' },
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    expect(await pr.listPrFilesByUrl(PR_9_URL)).toEqual([
+      { path: 'src/a.ts', status: 'M' },
+      { path: 'src/b.ts', status: 'A' },
+    ]);
+    expect(stub.calls.some((c) => c.cmd[2] === 'diff')).toBe(false);
+  });
+
+  it('throws OrchestratorConflictError on a failed files call', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.filesResult = { ok: false, stdout: '', stderr: 'gh api exploded' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.listPrFilesByUrl(PR_9_URL)).rejects.toThrow(
+      /gh api exploded/
+    );
   });
 });
 

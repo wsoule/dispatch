@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -280,6 +281,16 @@ export class TaskStore {
     const next: TaskDoc = { meta: { ...doc.meta, updated: now }, body };
     writeFileSync(file, serializeTaskFile(next));
     return next;
+  }
+
+  // Deletes a task file outright — the rollback half of create(), for a
+  // caller that synthesized a task for work which then failed to start.
+  // Not how a user retires a task: that is `archivedAt` on update().
+  remove(id: string): boolean {
+    const file = this.taskFilePath(id);
+    if (file === null) return false;
+    rmSync(file, { force: true });
+    return true;
   }
 
   taskFilePath(id: string): string | null {

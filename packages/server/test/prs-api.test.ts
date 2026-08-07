@@ -69,6 +69,11 @@ interface StubResults {
   // Dispatch-opened-PR describe at the bottom of this file needs.
   pushBranchResult?: CommandResult;
   createResult?: CommandResult;
+  // `git fetch --force origin pull/N/head:refs/dispatch/pr/N <base>` and the
+  // `git merge-base origin/<base> <ref>` after it — PrManager.fetchPrHead's
+  // two calls, the agent-review dispatch's only side effect on the repo.
+  fetchResult?: CommandResult;
+  mergeBaseResult?: CommandResult;
 }
 
 // Captures the JSON body pushPrReview writes to its scratch file, read at
@@ -102,6 +107,20 @@ function stubRunner(
         stdout: 'https://github.com/example/repo.git',
         stderr: '',
       });
+    }
+    if (cmd[0] === 'git' && cmd[1] === 'fetch') {
+      return Promise.resolve(
+        results.fetchResult ?? { ok: true, stdout: '', stderr: '' }
+      );
+    }
+    if (cmd[0] === 'git' && cmd[1] === 'merge-base') {
+      return Promise.resolve(
+        results.mergeBaseResult ?? {
+          ok: false,
+          stdout: '',
+          stderr: 'no mergeBaseResult stubbed',
+        }
+      );
     }
     if (cmd[0] === 'git' && cmd[1] === 'push') {
       return Promise.resolve(
@@ -262,6 +281,7 @@ const REPO_PR = {
   title: 'Bump dependency versions',
   url: 'https://github.com/example/repo/pull/7',
   headRefName: 'deps/bump-versions',
+  baseRefName: 'main',
   author: { login: 'dependabot' },
   isDraft: false,
   updatedAt: '2026-07-22T00:00:00Z',
@@ -1608,10 +1628,76 @@ function listResultWithForkAndRepoPr(): CommandResult {
   };
 }
 
-// Starts a server whose PR seam records every argv, and returns the log.
-function startWithCallLog(): Promise<string[][]> {
+// The PR body and changed-file list the dispatch reads before it fetches
+// anything — `gh pr view --json body` and `gh api .../pulls/N/files`.
+function bodyViewResult(body: string): CommandResult {
+  return { ok: true, stdout: JSON.stringify({ body }), stderr: '' };
+}
+
+function filesResultFor(...paths: string[]): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify(
+      paths.map((filename) => ({ filename, status: 'modified' }))
+    ),
+    stderr: '',
+  };
+}
+
+// The stub answers `git fetch` without touching the repo, so a dispatch test
+// creates the head ref itself — `git worktree add` resolves it for real.
+function createPrHeadRef(number: number): string {
+  const head = runGitSync(root, ['rev-parse', 'HEAD']).trim();
+  runGitSync(root, ['update-ref', `refs/dispatch/pr/${number}`, head]);
+  return head;
+}
+
+// A review run that reports one located finding. `readReviewOutput` falls back
+// to the last assistant entry holding JSON, so no findings file is needed.
+function reportsFinding(file: string, line: number): FakeExecutorScript {
+  return {
+    steps: [
+      {
+        entry: {
+          ts: '2026-08-07T00:00:00Z',
+          kind: 'assistant',
+          text: JSON.stringify({
+            findings: [
+              {
+                severity: 'important',
+                title: 'unchecked input',
+                detail: 'the parsed value is trusted',
+                file,
+                line,
+              },
+            ],
+          }),
+        },
+      },
+    ],
+    finish: { state: 'finished' },
+  };
+}
+
+// Starts a server whose PR seam records every argv, and returns the log. The
+// executor is always a fake: a review dispatch that got past the gate would
+// otherwise start the real agent.
+function startWithCallLog(
+  overrides: Partial<StubResults> = {},
+  script: FakeExecutorScript = { finish: { state: 'finished' } }
+): Promise<string[][]> {
   const calls: string[][] = [];
-  const scripted = stubRunner({ listResult: listResultWithForkAndRepoPr() });
+  const scripted = stubRunner({
+    listResult: listResultWithForkAndRepoPr(),
+    viewResult: bodyViewResult('Fixes a typo.'),
+    filesResult: filesResultFor('README.md'),
+    mergeBaseResult: {
+      ok: true,
+      stdout: `${runGitSync(root, ['rev-parse', 'HEAD']).trim()}\n`,
+      stderr: '',
+    },
+    ...overrides,
+  });
   return startServer({
     rootDir: root,
     port: 0,
@@ -1619,6 +1705,10 @@ function startWithCallLog(): Promise<string[][]> {
     prCommandRunner: async (cwd, cmd) => {
       calls.push(cmd);
       return scripted(cwd, cmd);
+    },
+    registerExecutors: (o) => {
+      orchestrator = o;
+      o.registerExecutor('claude', new FakeExecutor(script));
     },
   }).then((h) => {
     handle = h;
@@ -1672,23 +1762,24 @@ describe('POST /api/prs/:number/review-agent', () => {
     expect(new TaskStore(root).list()).toEqual([]);
   });
 
-  // 501 is what sits past the gate until Task 5 wires the dispatch; both
-  // tests below assert the gate let the request through, not the eventual
-  // dispatch result. Task 5 replaces the status, never the `not.toBe(409)`.
+  // Both tests below assert the gate let the request through, not what the
+  // dispatch then produced — the `not.toBe(409)` is the load-bearing half.
   it('lets a fork PR through once confirmFork is true', async () => {
     await startWithCallLog();
+    createPrHeadRef(FORK_PR.number);
 
     const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
     expect(res.status).not.toBe(409);
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(202);
   });
 
   it('needs no confirmation for a same-repo PR', async () => {
     await startWithCallLog();
+    createPrHeadRef(REPO_PR.number);
 
     const res = await postReviewAgent(REPO_PR.number, {});
     expect(res.status).not.toBe(409);
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(202);
   });
 
   it('404s a PR number that is not among the repo’s open PRs', async () => {
@@ -1696,6 +1787,141 @@ describe('POST /api/prs/:number/review-agent', () => {
 
     const res = await postReviewAgent(999, { confirmFork: true });
     expect(res.status).toBe(404);
+  });
+});
+
+// The dispatch itself: one route call turns a GitHub PR into a synthesized
+// task, a local ref, a worktree and a review run. Every test here asserts
+// what survives the call, not just its status code.
+describe('POST /api/prs/:number/review-agent dispatch', () => {
+  async function waitFor(check: () => boolean | Promise<boolean>) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('waitFor timed out');
+  }
+
+  function tasks() {
+    return new TaskStore(root).list();
+  }
+
+  function stored(target: ReviewTarget): ReviewComment[] {
+    const path = reviewCommentsPath(root, target);
+    if (!existsSync(path)) return [];
+    return JSON.parse(readFileSync(path, 'utf8')) as ReviewComment[];
+  }
+
+  it('synthesizes a task from the PR and dispatches a review of its head', async () => {
+    const calls = await startWithCallLog({
+      viewResult: bodyViewResult('Removes the stray semicolon.'),
+      filesResult: filesResultFor('src/a.ts', 'src/b.ts'),
+    });
+    createPrHeadRef(FORK_PR.number);
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(202);
+    const meta = await json(res);
+    expect(meta.kind).toBe('review');
+    expect(meta.baseBranch).toBe(`refs/dispatch/pr/${FORK_PR.number}`);
+
+    // The task carries the PR: its title, body, changed files and the label
+    // that marks it synthesized rather than authored.
+    const [task] = tasks();
+    expect(task.meta.title).toContain(`Review PR #${FORK_PR.number}`);
+    expect(task.meta.labels).toContain('github-pr');
+    expect(task.meta.writes).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(task.body).toContain('Removes the stray semicolon.');
+    expect(task.meta.id).toBe(meta.taskId);
+
+    // The user's answer reached the fetch, and it fetched the PR's head —
+    // not a branch name a caller supplied.
+    const fetched = calls.find((c) => c[0] === 'git' && c[1] === 'fetch');
+    expect(fetched).toContain(
+      `pull/${FORK_PR.number}/head:refs/dispatch/pr/${FORK_PR.number}`
+    );
+    // One `gh pr view` for the body, not one per queue row.
+    expect(calls.filter((c) => c[1] === 'pr' && c[2] === 'view')).toHaveLength(
+      1
+    );
+  });
+
+  it('files the review’s findings on the PR, not on a run', async () => {
+    await startWithCallLog(
+      { filesResult: filesResultFor('README.md') },
+      reportsFinding('README.md', 1)
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(202);
+    const meta = await json(res);
+
+    const target: ReviewTarget = { kind: 'pr', number: FORK_PR.number };
+    await waitFor(() => stored(target).length > 0);
+    expect(stored(target)[0].body).toContain('unchecked input');
+    // The review run is not the thing being reviewed, so its own comment
+    // file must stay empty — that is the run-target fallback firing.
+    expect(stored({ kind: 'run', runId: meta.id as string })).toHaveLength(0);
+  });
+
+  it('creates nothing when the PR body cannot be read', async () => {
+    const calls = await startWithCallLog({
+      viewResult: { ok: false, stdout: '', stderr: 'gh pr view exploded' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(calls.some((c) => c[0] === 'git' && c[1] === 'fetch')).toBe(false);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  it('creates nothing when the changed-file list cannot be read', async () => {
+    const calls = await startWithCallLog({
+      filesResult: { ok: false, stdout: '', stderr: 'gh api exploded' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(calls.some((c) => c[0] === 'git' && c[1] === 'fetch')).toBe(false);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  it('creates no task when the head cannot be fetched', async () => {
+    await startWithCallLog({
+      fetchResult: { ok: false, stdout: '', stderr: 'no such pull request' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  it('creates no task when the merge base cannot be resolved', async () => {
+    await startWithCallLog({
+      mergeBaseResult: { ok: false, stdout: '', stderr: 'no merge base' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  // The last step, and the only one with a task already on disk behind it:
+  // the head ref is never created here, so `git worktree add` fails and the
+  // synthesized task has to go away again rather than linger unreviewed.
+  it('removes the task it synthesized when the review cannot start', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(500);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
   });
 });
 

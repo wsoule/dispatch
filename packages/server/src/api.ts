@@ -83,6 +83,7 @@ import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
 import { forkConfirmMessage, parsePrUrl } from './orchestrator/pr.js';
+import { buildPrReviewTask } from './orchestrator/prReviewTask.js';
 import type {
   QuestionRegistry,
   RunQuestion,
@@ -2126,11 +2127,66 @@ async function startPrAgentReview(
   if (!parsed.ok) return parsed.response;
   const pr = await resolveRepoPrByNumber(ctx, numberParam);
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
-  const refused = forkGate(pr, parsed.value.confirmFork === true);
+  const confirmFork = parsed.value.confirmFork === true;
+  const refused = forkGate(pr, confirmFork);
   if (refused !== null) return refused;
-  // The dispatch itself — fetch the head, synthesize the task, start the
-  // review — lands next, and every step of it belongs below this gate.
-  return errorResponse(501, 'PR agent review dispatch is not wired up yet');
+  return jsonResponse(await dispatchPrAgentReview(ctx, pr, confirmFork), 202);
+}
+
+/**
+ * Turns a repo PR into a review run, in the order the steps become undoable.
+ *
+ * The two `gh` reads come first because they create nothing; the head ref
+ * next; the synthesized task only once the ref it will be reviewed at
+ * exists; the run last. A failure before the task therefore leaves nothing
+ * behind, and a failure after it takes the task with it (see
+ * rollbackSynthesizedTask) — no orphan task, no worktree without a task.
+ *
+ * The worktree stays behind fetchPrHead, which is where the fork gate is
+ * structural: a path that cut one from an already-fetched ref would skip it.
+ */
+async function dispatchPrAgentReview(
+  ctx: ApiContext,
+  pr: RepoPr,
+  confirmFork: boolean
+): Promise<RunMeta> {
+  const body = await ctx.prManager.getPrBodyByUrl(pr.url);
+  const files = await ctx.prManager.listPrFilesByUrl(pr.url);
+  // `resolved: pr` reuses the snapshot the gate above decided on, rather
+  // than a second `gh pr list` that could answer differently by now.
+  const { ref, base } = await ctx.prManager.fetchPrHead(pr.number, {
+    confirmFork,
+    resolved: pr,
+  });
+  const task = ctx.store.create(buildPrReviewTask({ ...pr, body }, files));
+  ctx.cache.rebuild(ctx.store);
+  try {
+    const meta = await ctx.reviewRunner.startReview({
+      taskId: task.meta.id,
+      base,
+      head: ref,
+      round: 0,
+      scope: 'full',
+      openFindings: ctx.findingStore.openFor(task.meta.id),
+      // Findings belong on the PR, not on a run: this review has no run to
+      // comment on — it reads the PR's head straight out of its own worktree.
+      target: { kind: 'pr', number: pr.number },
+    });
+    ctx.events.broadcast({ type: 'task.changed' });
+    return meta;
+  } catch (err) {
+    rollbackSynthesizedTask(ctx, task.meta.id);
+    throw err;
+  }
+}
+
+// A task whose review never started is debris: nothing links to it and
+// nobody would think to look for it. Kept only if a run already references
+// it — deleting it then would strand that run's taskId instead.
+function rollbackSynthesizedTask(ctx: ApiContext, taskId: string): void {
+  if (ctx.orchestrator.list().some((run) => run.taskId === taskId)) return;
+  ctx.store.remove(taskId);
+  ctx.cache.rebuild(ctx.store);
 }
 
 // Shared by every /api/prs/:number/comments* route below: the store never

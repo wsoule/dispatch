@@ -154,6 +154,20 @@ describe('update', () => {
     );
   });
 
+  // The rollback half of create(): a caller that synthesized a task for work
+  // which then failed to start takes it back off disk.
+  it('removes a task file, and reports an id it cannot resolve', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Fix login' }, '2026-07-13T18:00:00Z');
+
+    expect(store.remove(doc.meta.id)).toBe(true);
+    expect(store.get(doc.meta.id)).toBeNull();
+    expect(store.list()).toEqual([]);
+    // Removing it again is not an error, and neither is an unknown id.
+    expect(store.remove(doc.meta.id)).toBe(false);
+    expect(store.remove('t-nope00')).toBe(false);
+  });
+
   it('edits the Description and Acceptance Criteria body sections in place', () => {
     const store = TaskStore.init(root);
     const doc = store.create(

@@ -1023,6 +1023,9 @@ export class ReviewRunner {
       });
       posted += 1;
     }
+    // A PR-targeted review has no reviewed run, and this event's payload is
+    // a runId. The PR pane re-pulls its comments on mount and after every
+    // mutation instead (see useRepoPrDetail), so it stays the refetch side.
     if (posted > 0 && runId !== undefined)
       this.ctx.events.broadcast({ type: 'review.changed', runId });
   }
