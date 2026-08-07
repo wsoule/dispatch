@@ -1907,6 +1907,30 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     expect(stored({ kind: 'run', runId: meta.id as string })).toHaveLength(0);
   });
 
+  // Nothing else would ever close it: aux runs leave their task alone, so a
+  // synthesized task sits `todo` forever — permanently outstanding work that
+  // BoardSyncer pushes to trunk and LinearSync files as an issue.
+  it('retires the synthesized task once the review run ends', async () => {
+    await startWithCallLog(
+      { filesResult: filesResultFor('README.md') },
+      reportsFinding('README.md', 1)
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+    await waitFor(() => tasks()[0]?.meta.status === 'done');
+
+    const [task] = tasks();
+    expect(task.meta.archivedAt).not.toBeUndefined();
+    // The findings were filed before the task retired, not lost with it.
+    const filed = await json(
+      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/findings`)
+    );
+    expect(filed).toHaveLength(1);
+  });
+
   it('creates nothing when the PR body cannot be read', async () => {
     const calls = await startWithCallLog({
       viewResult: { ok: false, stdout: '', stderr: 'gh pr view exploded' },
