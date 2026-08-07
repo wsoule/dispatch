@@ -26,7 +26,7 @@ import { SelectionActions } from '../code/SelectionActions';
 import { useSelectedCode } from '../code/useSelectedCode';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
-import { locateSnippetLines, snippetFromSelection } from '@/lib/conversation';
+import { snippetFromSelection } from '@/lib/conversation';
 import { createReviewEditor } from '@/lib/pierreEditor';
 import type { Annotation } from '@/lib/reviewDiffItems';
 import {
@@ -613,41 +613,23 @@ export function PierreReviewDiff({
   );
 
   /**
-   * Turns the reviewer's text selection into something the action bar can act on.
+   * Turns the reviewer's selection into something the action bar can act on.
    *
-   * The rendered rows are asked first, and they answer synchronously: the diff on screen already
-   * knows which lines it drew, so nothing about arming the bar depends on a fetch succeeding, on
-   * a worktree still existing, or on the browser having joined the rows' text the same way the
-   * file stores it. Only when a range does not reach a row — a shadow-DOM selection the engine
-   * retargeted to its host — does this fall back to locating the text in the file's contents,
-   * and only then is `only` (the one file on screen) needed to know which file to read.
+   * The rendered rows are the only source: they say which lines the diff drew, synchronously,
+   * with no fetch to fail and no text to match. A selection that covers no row — the gutter, a
+   * file header, the deleted side alone — arms nothing, which is the rule that keeps the bar
+   * from appearing over code the reviewer never selected.
    *
-   * Cleared first on every change rather than left standing: the bar moves with the new
-   * selection immediately, so a stale value would sit under a bar hovering over other lines.
+   * `only` names the file, so a surface rendering the whole patch at once offers no bar: a line
+   * number alone cannot say which of its files it belongs to.
    */
   useEffect(() => {
-    setCodeSelection(null);
-    if (selected === null) return;
-    if (selected.lines !== null) {
-      // The file is named by the row's own surface: with `only` set that is the file on screen,
-      // and without it there is a single patch whose rows all belong to files we cannot tell
-      // apart from a line number alone.
-      if (only === undefined) return;
-      setCodeSelection({ file: only, ...selected.lines, text: selected.text });
+    if (selected === null || only === undefined) {
+      setCodeSelection(null);
       return;
     }
-    if (only === undefined) return;
-    let live = true;
-    void ensureLoaded(only).then((result) => {
-      if (!live || result === null) return;
-      const lines = locateSnippetLines(result.contents, selected.text);
-      if (lines === null) return;
-      setCodeSelection({ file: only, ...lines, text: selected.text });
-    });
-    return () => {
-      live = false;
-    };
-  }, [selected, only, ensureLoaded]);
+    setCodeSelection({ file: only, ...selected.lines, text: selected.text });
+  }, [selected, only]);
 
   // Supplied as data, so `SelectionActions` itself never learns what chat, copy or comment
   // mean. Each is withheld rather than shown dead where it has nowhere to go.

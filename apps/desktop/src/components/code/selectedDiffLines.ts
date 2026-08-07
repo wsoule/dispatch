@@ -30,23 +30,40 @@ function overlaps(range: Range, row: Element): boolean {
   );
 }
 
-// The subtree to look for rows in: the range's common ancestor, plus that ancestor itself when
-// the whole selection sits inside one row (`querySelectorAll` never returns its own root).
-function rowsUnder(range: Range): Element[] {
-  const ancestor = range.commonAncestorContainer;
-  const element =
-    ancestor instanceof Element ? ancestor : ancestor.parentElement;
-  if (element === null) return [];
-  const own = element.closest('[data-line]');
-  return [
-    ...(own === null ? [] : [own]),
-    ...Array.from(element.querySelectorAll('[data-line]')),
-  ];
+// Every tree under `root`, crossing into open shadow roots. Pierre renders each file into a
+// custom element with its own shadow root on some surfaces, and `querySelectorAll` stops at that
+// boundary — so a search that only looks at the light DOM finds no rows at all there.
+function treesUnder(root: ParentNode): ParentNode[] {
+  const trees = [root];
+  for (let index = 0; index < trees.length; index += 1) {
+    const tree = trees[index];
+    if (tree === undefined) continue;
+    for (const element of Array.from(tree.querySelectorAll('*'))) {
+      if (element.shadowRoot !== null) trees.push(element.shadowRoot);
+    }
+  }
+  return trees;
 }
 
 /**
- * The rendered rows a DOM range crosses, in document order, restricted to the side that is
- * actually in the code under review.
+ * Every rendered code row inside `container`, gutters excluded.
+ *
+ * The gutter exclusion is not belt-and-braces: gutter items carry `data-line-type` and
+ * `data-column-number` but deliberately no `data-line` (Pierre's `createGutterItem`), and they
+ * live in their own `[data-gutter]` subtree away from the code. Filtering on the attribute alone
+ * already skips them; saying so here keeps a future gutter that *does* carry `data-line` from
+ * quietly arming a bar over code the reviewer never selected.
+ */
+export function diffRowsIn(container: ParentNode): Element[] {
+  return treesUnder(container)
+    .flatMap((tree) => Array.from(tree.querySelectorAll('[data-line]')))
+    .filter((row) => row.closest('[data-gutter]') === null);
+}
+
+/**
+ * The rendered rows the selection crosses, in document order, restricted to the side that is
+ * actually in the code under review. `ranges` are tried in order — a shadow-DOM selection is
+ * reported differently by different engines, so the caller offers every reading it can get.
  *
  * Every row the range *crosses* is considered, not just the two it starts and ends on. Those two
  * boundaries are the least reliable part of a selection: a drag released in the gap between rows
@@ -58,10 +75,20 @@ function rowsUnder(range: Range): Element[] {
  * result means the selection was entirely on the deleted side, or reached no row at all — an
  * engine that retargets a shadow-DOM selection hands back the host.
  */
-export function diffRowsFromRange(range: Range): Element[] {
-  return rowsUnder(range).filter(
-    (row) => overlaps(range, row) && !isDeletionSide(row)
-  );
+export function rowsCoveredBy(ranges: Range[], rows: Element[]): Element[] {
+  for (const range of ranges) {
+    const covered = rows.filter((row) => {
+      try {
+        return overlaps(range, row) && !isDeletionSide(row);
+      } catch {
+        // Comparing boundary points across two trees throws. That is not a selection that
+        // covers this row, and it must not take the rest of the handler down with it.
+        return false;
+      }
+    });
+    if (covered.length > 0) return covered;
+  }
+  return [];
 }
 
 /**
