@@ -1,0 +1,19 @@
+{
+  "name": "@dispatch/demo",
+  "private": true,
+  "bin": {
+    "demo": "./src/cli.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "tsc": "tsc --noEmit",
+    "test": "bun test",
+    "demo": "bun src/cli.ts"
+  },
+  "dependencies": {
+    "@dispatch/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@dispatch/server": "workspace:*"
+  }
+}
