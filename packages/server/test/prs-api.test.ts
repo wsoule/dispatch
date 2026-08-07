@@ -1342,6 +1342,43 @@ describe('POST /api/prs/:number/review-submit', () => {
     expect(postedReviewPayloads[0].comments).toHaveLength(1);
   });
 
+  // The Pull requests tab submits through this route, and a resubmit here
+  // always carries a body — so nothing pending is not enough on its own to
+  // stop a second review landing on the real PR.
+  it('does not post a second review when the same submit is retried', async () => {
+    const postedReviewPayloads: Record<string, unknown>[] = [];
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner(
+        {
+          listResult: listResultWithCommentPr(),
+          pushReviewResult: { ok: true, stdout: '{}', stderr: '' },
+          commentsListResult: commentsListResultFor(),
+        },
+        postedReviewPayloads
+      ),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const submit = (): Promise<Response> =>
+      fetch(`${baseUrl}/api/prs/${COMMENT_PR.number}/review-submit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'comment', body: 'lgtm' }),
+      });
+
+    expect((await submit()).status).toBe(200);
+    expect(postedReviewPayloads).toHaveLength(1);
+
+    const retry = await submit();
+    expect(retry.status).toBe(200);
+    expect(((await json(retry)) as { pushed: number }).pushed).toBe(0);
+    expect(postedReviewPayloads).toHaveLength(1);
+  });
+
   // Route-level guard for pushPrReview's "a failed push must never lose
   // the reviewer's writing" invariant — unit-tested already
   // (pr.test.ts:1344, :1394), but not previously exercised through HTTP.
@@ -2102,6 +2139,54 @@ describe('run review routes on a Dispatch-opened PR', () => {
       event: 'COMMENT',
       body: 'looks good overall',
     });
+  });
+
+  // The default publishes locally, which clears `pending` — so a push that
+  // selected on `pending` would find nothing and send a review body pointing
+  // at line comments GitHub never received.
+  it('pushes line comments a default submit already published locally', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(pushStubs(), FINISHES, payloads);
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    expect((await submitReview(runId, 'comment', 'first pass')).status).toBe(
+      200
+    );
+    expect(payloads).toEqual([]);
+
+    const res = await submitReview(runId, 'comment', 'second pass', true);
+    expect(res.status).toBe(200);
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].comments).toEqual([
+      { path: 'src/a.ts', line: 3, side: 'RIGHT', body: 'why one?' },
+    ]);
+  });
+
+  // The POST lands, then the backfill pull fails. GitHub has the review and
+  // the comments already; a retry has to recognise that from disk, not from
+  // the return value of a call that threw.
+  it('does not post a second review when the pull after the push fails', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    await start(
+      {
+        ...pushStubs(),
+        commentsListResult: { ok: false, stdout: '', stderr: 'rate limited' },
+      },
+      FINISHES,
+      payloads
+    );
+    const runId = await runWithOpenPr();
+    expect((await addComment(runId, 'why one?')).status).toBe(201);
+
+    expect(
+      (await submitReview(runId, 'comment', 'one note', true)).status
+    ).toBe(409);
+    expect(payloads).toHaveLength(1);
+
+    const retry = await submitReview(runId, 'comment', 'one note', true);
+    expect(retry.status).toBe(200);
+    expect(payloads).toHaveLength(1);
   });
 
   it('400s postToGitHub: true on a run with no PR', async () => {

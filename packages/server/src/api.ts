@@ -889,11 +889,6 @@ async function linearStates(
   return result.ok ? jsonResponse(result.data) : linearErrorResponse(result);
 }
 
-// Which comment store a run's review verbs use. A run whose work lives on a
-// GitHub PR keeps its comments with the PR, so a note reaches the reviewer
-// there and still travels back to the agent. Anything written before the PR
-// was opened moves across on the first call, since the run's own file stops
-// being read the moment this starts answering `pr`.
 // A run's metadata, from the in-memory registry first (boot hydrates every
 // run on disk into it); getRun's transcript replay is the fallback, and
 // reads the whole file.
@@ -922,6 +917,11 @@ function sendReviewToAgent(
   );
 }
 
+// Which comment store a run's review verbs use. A run whose work lives on a
+// GitHub PR keeps its comments with the PR, so a note reaches the reviewer
+// there and still travels back to the agent. Anything written before the PR
+// was opened moves across on the first call, since the run's own file stops
+// being read the moment this starts answering `pr`.
 function commentTargetForRun(ctx: ApiContext, runId: string): ReviewTarget {
   const runTarget: ReviewTarget = { kind: 'run', runId };
   const meta = runMetaFor(ctx, runId);
@@ -1142,32 +1142,24 @@ async function replyReviewComment(
   }
 }
 
-// Sends a run-with-PR's pending batch to GitHub as one review instead of
-// publishing it locally, returning how many were pushed. GitHub rejects a
+// Sends a run-with-PR's not-yet-on-GitHub comments as one review instead of
+// publishing them locally, returning how many were pushed. GitHub rejects a
 // COMMENT/REQUEST_CHANGES review with an empty body, so a note-less submit
-// gets a stand-in rather than gh's raw 422.
+// gets a stand-in rather than gh's raw 422. The retry guard that stops an
+// identical resubmit duplicating the review lives inside pushPrReview, so
+// the PR-keyed route inherits it too.
 async function pushRunReviewToPr(
   ctx: ApiContext,
   number: number,
   verdict: PrReviewEvent,
   summary: string
 ): Promise<number> {
-  const target: ReviewTarget = { kind: 'pr', number };
   const body =
     summary === '' && verdict !== 'approve'
       ? 'See the line comments.'
       : summary;
-  // Nothing pending AND the same words as the last push is a retry of a
-  // submit GitHub already has — posting again would duplicate the review.
-  // Anything new (a pending comment, a changed verdict or note) still goes,
-  // which is what lets a note-only review reach the PR at all.
-  const last = ctx.reviewComments.lastPush(target);
-  const repeats =
-    last !== null && last.verdict === verdict && last.body === body;
-  if (repeats && ctx.reviewComments.pendingCount(target) === 0) return 0;
   try {
     const { pushed } = await ctx.prManager.pushPrReview(number, verdict, body);
-    ctx.reviewComments.recordPush(target, { verdict, body });
     return pushed;
   } catch (err) {
     // A closed or merged PR is not in `gh pr list`, so resolving it 404s
