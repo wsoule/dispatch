@@ -101,8 +101,9 @@ export function RunDiffView({
 }) {
   // Every file lives in one virtualized scroller now, so a tree click scrolls the surface to
   // that item rather than calling `scrollIntoView` on a per-file section that no longer exists.
-  // Tree paths and item ids are both the diff's file path, so an unknown id (a directory row)
-  // is a no-op.
+  // Tree paths and item ids are both the diff's file path. An id Pierre doesn't know is simply
+  // a no-op — a directory row, or a rename, whose server path (`old\tnew`, normalized to the
+  // destination) can differ from Pierre's own name for the file, exactly as before.
   const viewRef = useRef<CodeViewHandle<undefined>>(null);
   const handleFileFocus = useCallback((path: string) => {
     viewRef.current?.scrollTo({ type: 'item', id: path, align: 'start' });

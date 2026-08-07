@@ -1,13 +1,32 @@
 import type { FileDiffMetadata } from '@pierre/diffs';
+import type { CodeViewHandle } from '@pierre/diffs/react';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 import type { ReactNode } from 'react';
+import { createRef, isValidElement } from 'react';
+
+import {
+  DEFAULT_DIFF_DISPLAY_SETTINGS,
+  DIFF_DISPLAY_STORAGE_KEY,
+  serializeDiffDisplaySettings,
+} from '@/lib/diffDisplay';
+
+// The props of the `CodeView` element `DiffSurface` built, captured by the stub below.
+// happy-dom has no layout, so `CodeView` renders no code rows at all and nothing option-driven
+// shows up in the output — inspecting the element is the only way to pin what reached it.
+let codeViewProps: Record<string, unknown> | null = null;
 
 // `PierreWorkerPool` imports `@pierre/diffs/worker/worker.js?worker&url`, a
 // Vite-only specifier `bun test` cannot resolve — stubbed to a passthrough so
 // the component itself can be rendered, the same way `PierreReviewDiff.test.tsx` does.
+// `DiffSurface` renders exactly one child inside it: the `CodeView` element.
 void mock.module('@/components/runs/PierreWorkerPool', () => ({
-  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
+  PierreWorkerPool: ({ children }: { children: ReactNode }) => {
+    codeViewProps = isValidElement(children)
+      ? (children.props as Record<string, unknown>)
+      : null;
+    return children;
+  },
 }));
 
 const { DiffSurface } = await import('./DiffSurface');
@@ -134,5 +153,65 @@ describe('DiffSurface — which files it renders', () => {
 
     expect(seen).toEqual(['a.ts']);
     expect(renderedFiles()).toEqual(['a.ts']);
+  });
+});
+
+describe('DiffSurface — what reaches CodeView', () => {
+  afterEach(() => {
+    localStorage.removeItem(DIFF_DISPLAY_STORAGE_KEY);
+  });
+
+  // `RunDiffView`'s changed-files tree scrolls by calling `scrollTo` on this handle, so a
+  // dropped `ref` would silently kill the one caller-visible behaviour the move to a single
+  // scroller had to re-implement — with every other test here still green.
+  it('hands the live CodeView handle back through `viewRef`', () => {
+    const ref = createRef<CodeViewHandle<undefined>>();
+
+    render(<DiffSurface patch={TWO_FILE_PATCH} viewRef={ref} />);
+
+    expect(typeof ref.current?.scrollTo).toBe('function');
+  });
+
+  // Both surfaces read the reviewer's diff-display preferences through this one path now, so a
+  // regression here drops them everywhere at once.
+  it('passes the stored display settings, with the caller’s options merged over them', () => {
+    localStorage.setItem(
+      DIFF_DISPLAY_STORAGE_KEY,
+      serializeDiffDisplaySettings({
+        ...DEFAULT_DIFF_DISPLAY_SETTINGS,
+        showLineNumbers: false,
+        inlineHighlight: 'char',
+      })
+    );
+
+    render(
+      <DiffSurface patch={TWO_FILE_PATCH} options={{ diffStyle: 'unified' }} />
+    );
+
+    expect(codeViewProps?.options).toMatchObject({
+      // From the stored settings, via `toDiffRenderOptions`.
+      disableLineNumbers: true,
+      lineDiffType: 'char',
+      // The caller's own option wins over the stored `layout: 'split'`.
+      diffStyle: 'unified',
+    });
+  });
+
+  it('renders the CodeView element itself as the scroll container', () => {
+    const { container } = render(<DiffSurface patch={TWO_FILE_PATCH} />);
+
+    // The default has to keep `overflow-auto` on this exact element: `CodeView` reads its own
+    // `scrollTop` to pick the virtualized row window.
+    expect(container.firstElementChild?.className).toBe(
+      'min-h-0 w-full flex-1 overflow-auto'
+    );
+  });
+
+  it('lets a caller restyle that scroll container', () => {
+    const { container } = render(
+      <DiffSurface patch={TWO_FILE_PATCH} className="h-full overflow-auto" />
+    );
+
+    expect(container.firstElementChild?.className).toBe('h-full overflow-auto');
   });
 });
