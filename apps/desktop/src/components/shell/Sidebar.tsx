@@ -15,6 +15,7 @@ import {
   Play,
   Plus,
   Radar,
+  Waypoints,
 } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 
@@ -66,6 +67,10 @@ const PROJECT_VIEWS: {
   // Review owns the whole tail of the pipeline now — the queue of things
   // needing a look, and the merge queue that approving them feeds.
   { id: 'review', label: 'Review', icon: GitPullRequestArrow },
+  // Blast radius of a file, run, or task's declared writes — reached from
+  // here with nothing preselected, or from the "open in Impact" action on
+  // the Review case panel, task detail, and Git file pane.
+  { id: 'impact', label: 'Impact', icon: Waypoints },
 
   { id: 'branches', label: 'Git', icon: GitBranch, group: 'Git' },
 ];
