@@ -110,6 +110,16 @@ describe('conversation routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('400s a DELETE with an unrecognised subject', async () => {
+    const res = await apiFetch(
+      '/api/conversations/cm-abc?subject=session%3A1',
+      {
+        method: 'DELETE',
+      }
+    );
+    expect(res.status).toBe(400);
+  });
+
   it('deletes one message and leaves the rest', async () => {
     const a = await (
       await apiFetch('/api/conversations', {
