@@ -1,3 +1,5 @@
+import type { ImpactSubjectKind } from '@dispatch/client';
+
 // The whole app's navigation state, modeled as one pure reducer so routing decisions (what
 // the sidebar highlights, what the main pane renders, whether the task peek/run
 // split/command palette are open) are unit-testable without mounting React. App.tsx is the
@@ -17,7 +19,18 @@ export type ProjectView =
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */
   | 'draft'
+  /** The blast-radius browser — `impactSubject` says which file/run/task, or
+   * `null` for the picker with nothing preselected. */
+  | 'impact'
   | 'new-task';
+
+/** One file/run/task to show the blast radius of — what `ImpactView` fetches
+ * and what the three "open in Impact" entry points (Review case panel, task
+ * detail, Git file pane) hand it preselected. */
+export interface ImpactSubjectRef {
+  kind: ImpactSubjectKind;
+  id: string;
+}
 
 /** Global, not-project-scoped views living below the primary nav in the sidebar. */
 export type GlobalView = 'all-agents' | 'sessions' | 'settings';
@@ -38,6 +51,10 @@ export interface NavState {
   activeRunId: string | null;
   /** Draft id shown by the draft view, or `null` when none is selected. */
   activeDraftId: string | null;
+  /** The subject `ImpactView` is showing, or `null` for the picker with
+   * nothing preselected — set by `openImpact`, the three entry points' way
+   * of handing over "open in Impact" with a subject already chosen. */
+  impactSubject: ImpactSubjectRef | null;
   /** Which view to snap `projectView` back to once the AI composer dialog opens — a board
    * column's "+" returns to the board, rather than one fixed view. */
   newTaskReturnView: ProjectView;
@@ -62,6 +79,7 @@ interface NavEntry {
   globalView: GlobalView;
   activeRunId: string | null;
   activeDraftId: string | null;
+  impactSubject: ImpactSubjectRef | null;
 }
 
 export const initialNavState: NavState = {
@@ -72,6 +90,7 @@ export const initialNavState: NavState = {
   peekTaskId: null,
   activeRunId: null,
   activeDraftId: null,
+  impactSubject: null,
   newTaskReturnView: 'board',
   paletteOpen: false,
   history: [
@@ -81,6 +100,7 @@ export const initialNavState: NavState = {
       globalView: 'sessions',
       activeRunId: null,
       activeDraftId: null,
+      impactSubject: null,
     },
   ],
   historyIndex: 0,
@@ -98,7 +118,9 @@ function pushHistory(state: NavState, next: NavEntry): NavState {
     last.projectView === next.projectView &&
     last.globalView === next.globalView &&
     last.activeRunId === next.activeRunId &&
-    last.activeDraftId === next.activeDraftId
+    last.activeDraftId === next.activeDraftId &&
+    last.impactSubject?.kind === next.impactSubject?.kind &&
+    last.impactSubject?.id === next.impactSubject?.id
   ) {
     return state;
   }
@@ -116,6 +138,9 @@ export type NavAction =
   | { type: 'closeRun' }
   /** Routes to the draft review page for one draft — the drafts tray's row click. */
   | { type: 'openDraft'; draftId: string }
+  /** Routes to `ImpactView` with a subject preselected — the "open in Impact"
+   * action on the Review case panel, task detail, and Git file pane. */
+  | { type: 'openImpact'; subject: ImpactSubjectRef }
   /** Routes to `new-task`, remembering the view to come back to — App.tsx reads reaching this
    * state as "open the AI composer dialog". */
   | { type: 'openNewTask' }
@@ -143,6 +168,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         peekTaskId: null,
         activeRunId: null,
         activeDraftId: null,
+        impactSubject: null,
       };
     case 'setProjectView': {
       const activeRunId =
@@ -157,12 +183,18 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       // destination drops it rather than reopening a stale one on return.
       const activeDraftId =
         action.view === 'draft' ? state.activeDraftId : null;
+      // Same rule as the draft id: only Impact itself renders a preselected
+      // subject, so leaving it drops a stale one rather than reopening it
+      // the next time the nav item is clicked fresh.
+      const impactSubject =
+        action.view === 'impact' ? state.impactSubject : null;
       const next: NavState = {
         ...state,
         section: 'project',
         projectView: action.view,
         activeRunId,
         activeDraftId,
+        impactSubject,
       };
       return pushHistory(next, {
         section: 'project',
@@ -170,6 +202,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         globalView: state.globalView,
         activeRunId,
         activeDraftId,
+        impactSubject,
       });
     }
     case 'setGlobalView':
@@ -198,6 +231,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           globalView: state.globalView,
           activeRunId: action.runId,
           activeDraftId: state.activeDraftId,
+          impactSubject: state.impactSubject,
         }
       );
     case 'closeRun':
@@ -218,6 +252,27 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           globalView: state.globalView,
           activeRunId: state.activeRunId,
           activeDraftId: action.draftId,
+          impactSubject: state.impactSubject,
+        }
+      );
+    case 'openImpact':
+      // Opening a different subject is a destination in its own right, so
+      // back returns to the one you were looking at rather than skipping
+      // straight past the view — same rule `openRun`/`openDraft` follow.
+      return pushHistory(
+        {
+          ...state,
+          section: 'project',
+          projectView: 'impact',
+          impactSubject: action.subject,
+        },
+        {
+          section: 'project',
+          projectView: 'impact',
+          globalView: state.globalView,
+          activeRunId: state.activeRunId,
+          activeDraftId: state.activeDraftId,
+          impactSubject: action.subject,
         }
       );
     case 'back':
@@ -234,6 +289,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         globalView: entry.globalView,
         activeRunId: entry.activeRunId,
         activeDraftId: entry.activeDraftId,
+        impactSubject: entry.impactSubject,
         // Moving through history is navigation, not a modal action — anything
         // layered on top closes rather than following you to the new screen.
         peekTaskId: null,
