@@ -24,6 +24,7 @@ function deps(over: Partial<ImpactDeps> = {}): ImpactDeps {
         sources: ['scanner'],
         degraded: false,
         truncated: false,
+        unanalyzedSeeds: [],
       }),
     }),
     changedFilesForRun: () => null,
@@ -142,6 +143,7 @@ test('a path known to the graph only via a mirror claim still resolves', () => {
           sources: ['scanner'],
           degraded: false,
           truncated: false,
+          unanalyzedSeeds: [],
         }),
       }),
     })
@@ -177,6 +179,7 @@ test('reach is called with the resolved seeds, not an unrelated empty array', ()
             sources: ['scanner'],
             degraded: false,
             truncated: false,
+            unanalyzedSeeds: [],
           };
         },
       }),

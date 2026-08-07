@@ -523,6 +523,12 @@ export interface ReachResult {
   sources: ('carto' | 'scanner')[];
   degraded: boolean;
   truncated: boolean;
+  // Seeds none of `sources` could actually analyse (e.g. a `.jsonl` file
+  // under a scanner-only result) — a 0 count for these is "not analysed",
+  // not "nothing depends on it", and the UI must render the two
+  // differently. Always empty when carto contributed, since carto is
+  // multi-language and no fixed extension list describes what it covers.
+  unanalyzedSeeds: string[];
 }
 
 export const DEFAULT_REACH: ReachOptions = { maxHops: 5, maxFiles: 500 };
@@ -570,6 +576,13 @@ export function reachOver(
     sources: ['scanner'],
     degraded: false,
     truncated,
+    // A seed outside SOURCE_EXTENSIONS never appears in dependentsWithHops
+    // (the scanner never indexed it), so it silently reaches 0 — recorded
+    // here so a caller can tell "not analysed" apart from a real zero
+    // instead of re-deriving this list from its own extension check.
+    unanalyzedSeeds: [...seeds].filter(
+      (seed) => !SOURCE_EXTENSIONS.some((ext) => seed.endsWith(ext))
+    ),
   };
 }
 
@@ -697,6 +710,10 @@ export function createCartoDepMap(
         sources: ['carto', 'scanner'],
         degraded: false,
         truncated: scanner.truncated || cartoDroppedEntry,
+        // Carto is multi-language, so a seed's extension says nothing about
+        // whether carto could analyse it — unlike the scanner-only branch,
+        // trust carto rather than applying SOURCE_EXTENSIONS here.
+        unanalyzedSeeds: [],
       };
     },
   };

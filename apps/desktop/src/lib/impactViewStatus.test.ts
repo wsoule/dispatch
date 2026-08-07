@@ -160,6 +160,45 @@ test('a resolved response with no reason is still a real empty state', () => {
   expect(status).toEqual({ kind: 'empty', message: 'No files affected.' });
 });
 
+// This view must render the same honesty-checked zero wording ImpactPanel
+// does, rather than falling back to its own generic "No files affected." —
+// see summarizeImpact's zeroMessage in impactSummary.ts, which is where
+// that wording is actually decided.
+test('a supplied zeroMessage replaces the generic empty wording', () => {
+  const status = resolveAffectedFilesStatus({
+    isError: false,
+    error: null,
+    entries: [],
+    filter: '',
+    resolved: true,
+    zeroMessage:
+      "This file can't be analyzed by the active sources, so its impact is unknown — not zero.",
+  });
+  expect(status).toEqual({
+    kind: 'empty',
+    message:
+      "This file can't be analyzed by the active sources, so its impact is unknown — not zero.",
+  });
+});
+
+// A filtered-to-nothing result is a different fact from a zero-entry
+// result (the data exists, the filter just excludes it), so it must keep
+// its own wording even when a zeroMessage was supplied for the other case.
+test('a supplied zeroMessage does not leak into the filtered-to-nothing message', () => {
+  const status = resolveAffectedFilesStatus({
+    isError: false,
+    error: null,
+    entries,
+    filter: 'nope',
+    resolved: true,
+    zeroMessage: 'Impact unknown.',
+  });
+  expect(status).toEqual({
+    kind: 'empty',
+    message: 'No files match that filter.',
+  });
+});
+
 test('entries survive into grouped output when nothing failed', () => {
   const status = resolveAffectedFilesStatus({
     isError: false,

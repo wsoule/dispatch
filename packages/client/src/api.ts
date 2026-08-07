@@ -1042,6 +1042,10 @@ export interface ImpactReach {
   sources: ('carto' | 'scanner')[];
   degraded: boolean;
   truncated: boolean;
+  // Seeds none of `sources` could analyse (e.g. a non-.ts file under a
+  // scanner-only result) — a 0 count here means "not analysed", not "no
+  // dependents", and callers must render the two differently.
+  unanalyzedSeeds: string[];
 }
 
 // The body of `GET /api/impact`. `reason` is set only on the 200s a task

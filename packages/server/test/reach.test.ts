@@ -99,6 +99,37 @@ test('results are ordered by distance, never interleaved by source', () => {
   expect(hops).toEqual([...hops].sort((x, y) => x - y));
 });
 
+test('a seed outside SOURCE_EXTENSIONS is reported as unanalyzed, not a real zero', () => {
+  const map = scannerOf({});
+  const result = reachOver(map, ['.dispatch/ledger.jsonl'], {
+    maxHops: 5,
+    maxFiles: 500,
+  });
+  expect(result.entries).toEqual([]);
+  expect(result.count).toBe(0);
+  expect(result.unanalyzedSeeds).toEqual(['.dispatch/ledger.jsonl']);
+});
+
+test('a .ts seed with genuinely no dependents is NOT reported as unanalyzed', () => {
+  const map = scannerOf({ 'a.ts': [] });
+  const result = reachOver(map, ['a.ts'], { maxHops: 5, maxFiles: 500 });
+  expect(result.count).toBe(0);
+  expect(result.unanalyzedSeeds).toEqual([]);
+});
+
+test('a mixed seed set only flags the unanalyzable seed, not the whole set', () => {
+  const map = scannerOf({ 'a.ts': ['b.ts'] });
+  const result = reachOver(map, ['a.ts', 'notes.jsonl'], {
+    maxHops: 5,
+    maxFiles: 500,
+  });
+  // a.ts's real dependent still surfaces...
+  expect(result.entries).toEqual([{ path: 'b.ts', hops: 1 }]);
+  // ...while only the seed the scanner can't parse is flagged, so a
+  // reader can tell "one seed unanalyzed" apart from "nothing analyzed".
+  expect(result.unanalyzedSeeds).toEqual(['notes.jsonl']);
+});
+
 // Regression: dependentsWithHops must expose the hop distance the scanner's
 // own BFS already computes, not have reachOver re-derive it by walking
 // dependents() as if every edge were one hop. A stub can't catch this — only
