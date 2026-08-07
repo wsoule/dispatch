@@ -42,6 +42,7 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from './api/http.js';
+import { getImpact } from './api/impact.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
@@ -52,6 +53,7 @@ import {
 } from './api/scopeRequests.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
+import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
 import type { FindingStore } from './findings.js';
 import {
@@ -121,6 +123,9 @@ export interface ApiContext {
   reviewRunner: ReviewRunner;
   verificationRunner: VerificationRunner;
   fixLoop: FixLoop;
+  // Shared with ReviewRunner (see index.ts) so a burst of impact/review
+  // requests reuses one dependency scan instead of each paying for its own.
+  depMapCache: DepMapCache;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
   questions: QuestionRegistry;
@@ -3346,6 +3351,10 @@ export async function handleApi(
       if (segments.length === 1 && method === 'POST') {
         return await createLedgerEntry(req, ctx);
       }
+    }
+
+    if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
+      return getImpact(ctx, url);
     }
 
     if (segments[0] === 'plan') {

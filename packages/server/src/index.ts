@@ -613,6 +613,7 @@ export async function startServer(
     reviewRunner,
     verificationRunner,
     fixLoop,
+    depMapCache,
     reviewComments,
     questions,
     scopeRequests,
