@@ -1,4 +1,9 @@
-import type { GitLogEntry, GitStash, GitStatus } from '@dispatch/client';
+import type {
+  ApiClient,
+  GitLogEntry,
+  GitStash,
+  GitStatus,
+} from '@dispatch/client';
 import {
   AlertTriangle,
   Bot,
@@ -7,8 +12,11 @@ import {
   HardDriveDownload,
   Trash2,
   Undo2,
+  Waypoints,
 } from 'lucide-react';
 
+import type { ImpactSubjectRef } from '../../lib/appNav';
+import { ImpactPanel } from '../impact/ImpactPanel';
 import { GitDiffPane } from './GitDiffPane';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { formatBytes } from '@/lib/formatBytes';
@@ -31,6 +39,10 @@ interface GitRightPaneProps {
   /** Discard is only offered for unstaged/untracked/conflicted rows — a staged change has to
    * be unstaged first, same as the `d` keyboard shortcut's own guard. */
   onRequestDiscardFile: (row: GitFileRow) => void;
+  /** The dispatchd client, for the selected file's Impact panel. */
+  client: ApiClient | null;
+  /** Navigates to `ImpactView` with the selected file preselected. */
+  onOpenImpact: (subject: ImpactSubjectRef) => void;
 
   selectedCommit: GitLogEntry | undefined;
   commitDiff: string | undefined;
@@ -102,6 +114,14 @@ export function GitRightPane(props: GitRightPaneProps) {
         <div className="border-border flex items-center justify-between gap-2 border-b px-3 py-2">
           <span className="truncate font-mono text-[12px]">{row.path}</span>
           <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => props.onOpenImpact({ kind: 'file', id: row.path })}
+            >
+              <Waypoints className="size-3.5" />
+              Open in Impact
+            </Button>
             {row.section !== 'staged' && (
               <Button
                 variant="ghost"
@@ -123,6 +143,12 @@ export function GitRightPane(props: GitRightPaneProps) {
             </Button>
           </div>
         </div>
+        <ImpactPanel
+          client={props.client}
+          subject="file"
+          id={row.path}
+          className="m-3"
+        />
         <div className="min-h-0 flex-1 overflow-auto">
           {row.section === 'untracked' ? (
             <p className="text-muted-foreground p-4 text-[12px]">

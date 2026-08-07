@@ -19,7 +19,9 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 // file (transitively) and who claims, in a comment, to hand-mirror it.
 export interface DepMap {
   dependents(file: string): string[];
+  dependentsWithHops(file: string): BlastEntry[];
   mirrors(file: string): string[];
+  reach(files: string[], opts?: Partial<ReachOptions>): ReachResult;
 }
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx'];
@@ -283,9 +285,10 @@ export function buildDepMap(rootDir: string): DepMap {
   }
 
   return {
-    // BFS over the reverse-import index, sorted by hop distance then name —
-    // a high-fanout file's direct importers must survive a later cap.
-    dependents(file: string): string[] {
+    // BFS over the reverse-import index, recording hop distance to every
+    // transitive importer — sorted closest-first then by name, so a
+    // high-fanout file's direct importers survive a later cap.
+    dependentsWithHops(file: string): BlastEntry[] {
       const start = normalizeInputPath(file);
       const depth = new Map<string, number>([[start, 0]]);
       const queue = [start];
@@ -299,17 +302,21 @@ export function buildDepMap(rootDir: string): DepMap {
         }
       }
       depth.delete(start);
-      return [...depth.entries()]
-        .sort(([fa, da], [fb, db]) =>
-          da !== db ? da - db : fa < fb ? -1 : fa > fb ? 1 : 0
-        )
-        .map(([f]) => f);
+      return sortEntries(depth);
+    },
+    // Bare paths for callers (ReviewRunner's prompt) that don't need hop
+    // distance — a projection over dependentsWithHops, not a second BFS.
+    dependents(file: string): string[] {
+      return this.dependentsWithHops(file).map((e) => e.path);
     },
     // Direct only: a mirror comment is a first-person claim, not something
     // to chase transitively.
     mirrors(file: string): string[] {
       const start = normalizeInputPath(file);
       return [...(reverseMirrors.get(start) ?? [])].sort();
+    },
+    reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
+      return reachOver(this, files, { ...DEFAULT_REACH, ...opts });
     },
   };
 }
@@ -451,9 +458,27 @@ export function createSourceChangeHandler(
   };
 }
 
+export interface BlastEntry {
+  path: string;
+  hops: number;
+}
+
+// Closest first, then by path so output is stable. Shared by
+// normalizeBlastRadiusEntries and reachOver so both hop-distance results sort
+// identically — a second copy of this comparator is how ordering bugs creep in.
+export function sortEntries(closest: Map<string, number>): BlastEntry[] {
+  return [...closest.entries()]
+    .sort(([pa, ha], [pb, hb]) =>
+      ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
+    )
+    .map(([path, hops]) => ({ path, hops }));
+}
+
 // A path reachable via more than one route keeps only its closest hop, then
 // the result sorts by (hops, name) ascending to match buildDepMap's ordering.
-export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
+export function normalizeBlastRadiusEntries(
+  raw: CartoBlastRadius
+): BlastEntry[] {
   // path -> nearest hop distance seen for it, so a duplicate route can only
   // ever shrink the recorded distance, never add a second entry.
   const closest = new Map<string, number>();
@@ -477,11 +502,88 @@ export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
     const existing = closest.get(path);
     if (existing === undefined || hops < existing) closest.set(path, hops);
   }
-  return [...closest.entries()]
-    .sort(([pa, ha], [pb, hb]) =>
-      ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
-    )
-    .map(([path]) => path);
+  return sortEntries(closest);
+}
+
+// Prompt builders only need the path list; UI consumers that need hop
+// distance should use normalizeBlastRadiusEntries directly.
+export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
+  return normalizeBlastRadiusEntries(raw).map((e) => e.path);
+}
+
+export interface ReachOptions {
+  maxHops: number;
+  maxFiles: number;
+}
+
+export interface ReachResult {
+  entries: BlastEntry[]; // closest-first
+  count: number;
+  maxHops: number; // deepest hop actually reached
+  sources: ('carto' | 'scanner')[];
+  degraded: boolean;
+  truncated: boolean;
+  // Seeds none of `sources` could actually analyse (e.g. a `.jsonl` file
+  // under a scanner-only result) — a 0 count for these is "not analysed",
+  // not "nothing depends on it", and the UI must render the two
+  // differently. Always empty when carto contributed, since carto is
+  // multi-language and no fixed extension list describes what it covers.
+  unanalyzedSeeds: string[];
+}
+
+export const DEFAULT_REACH: ReachOptions = { maxHops: 5, maxFiles: 500 };
+
+// Merges each seed's already-computed transitive closure (dependentsWithHops
+// already ran the BFS; this does not re-walk the graph), keeping the
+// shortest hop per path across every seed. Seeds are excluded from their own
+// result — a file is not its own blast radius. Shared by every DepMap
+// implementation so the cap and truncation rules only exist in one place.
+export function reachOver(
+  map: DepMap,
+  files: string[],
+  opts: ReachOptions
+): ReachResult {
+  const seeds = new Set(files);
+  const closest = new Map<string, number>();
+  for (const seed of seeds) {
+    for (const { path, hops } of map.dependentsWithHops(seed)) {
+      if (seeds.has(path)) continue;
+      const existing = closest.get(path);
+      if (existing === undefined || hops < existing) closest.set(path, hops);
+    }
+  }
+
+  // The hop cap drops anything farther than the budget allows.
+  let truncated = false;
+  for (const [path, hops] of closest) {
+    if (hops > opts.maxHops) {
+      closest.delete(path);
+      truncated = true;
+    }
+  }
+
+  let entries = sortEntries(closest);
+  // The file cap then keeps only the closest opts.maxFiles entries.
+  if (entries.length > opts.maxFiles) {
+    entries = entries.slice(0, opts.maxFiles);
+    truncated = true;
+  }
+
+  return {
+    entries,
+    count: entries.length,
+    maxHops: entries.length === 0 ? 0 : Math.max(...entries.map((e) => e.hops)),
+    sources: ['scanner'],
+    degraded: false,
+    truncated,
+    // A seed outside SOURCE_EXTENSIONS never appears in dependentsWithHops
+    // (the scanner never indexed it), so it silently reaches 0 — recorded
+    // here so a caller can tell "not analysed" apart from a real zero
+    // instead of re-deriving this list from its own extension check.
+    unanalyzedSeeds: [...seeds].filter(
+      (seed) => !SOURCE_EXTENSIONS.some((ext) => seed.endsWith(ext))
+    ),
+  };
 }
 
 /** Why a CartoDepMap stopped using carto, for the caller to surface once. */
@@ -547,8 +649,72 @@ export function createCartoDepMap(
       }
       return mergeRoundRobin([cartoDependents, fallback.dependents(file)]);
     },
+    // No carto equivalent yet (Task 3 owns unioning carto's own hop data),
+    // so reach() over this map is honestly scanner-only until then.
+    dependentsWithHops(file: string): BlastEntry[] {
+      return fallback.dependentsWithHops(file);
+    },
     mirrors(file: string): string[] {
       return fallback.mirrors(file);
+    },
+    // Unlike dependents(), this merges by shortest hop rather than
+    // round-robin-interleaving by source: the result feeds a UI that labels
+    // the numbers "hops", so it must be a real distance ranking. Carto's
+    // blast radius is already transitive, so its entries are merged directly
+    // rather than walked again through dependentsWithHops (which would
+    // collapse them to one hop).
+    reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
+      const options = { ...DEFAULT_REACH, ...opts };
+      const scanner = reachOver(fallback, files, options);
+      if (degraded) return { ...scanner, degraded: true };
+
+      const seeds = new Set(files);
+      const closest = new Map<string, number>();
+      for (const entry of scanner.entries) closest.set(entry.path, entry.hops);
+
+      // Tracks whether this branch itself dropped an entry, either past the
+      // hop budget or because the file cap was already full when a genuinely
+      // new path arrived. Neither case is covered by scanner.truncated.
+      let cartoDroppedEntry = false;
+      for (const file of files) {
+        let entries: BlastEntry[];
+        try {
+          entries = normalizeBlastRadiusEntries(
+            reader.blastRadius(normalizeInputPath(file))
+          );
+        } catch (err) {
+          degraded = true;
+          onDegrade?.({ file, detail: (err as Error).message });
+          return { ...scanner, degraded: true };
+        }
+        for (const entry of entries) {
+          if (seeds.has(entry.path)) continue;
+          if (entry.hops > options.maxHops) {
+            cartoDroppedEntry = true;
+            continue;
+          }
+          const existing = closest.get(entry.path);
+          if (existing !== undefined && existing <= entry.hops) continue;
+          if (existing === undefined && closest.size >= options.maxFiles) {
+            cartoDroppedEntry = true;
+            continue;
+          }
+          closest.set(entry.path, entry.hops);
+        }
+      }
+
+      return {
+        entries: sortEntries(closest),
+        count: closest.size,
+        maxHops: closest.size === 0 ? 0 : Math.max(...closest.values()),
+        sources: ['carto', 'scanner'],
+        degraded: false,
+        truncated: scanner.truncated || cartoDroppedEntry,
+        // Carto is multi-language, so a seed's extension says nothing about
+        // whether carto could analyse it — unlike the scanner-only branch,
+        // trust carto rather than applying SOURCE_EXTENSIONS here.
+        unanalyzedSeeds: [],
+      };
     },
   };
 }
