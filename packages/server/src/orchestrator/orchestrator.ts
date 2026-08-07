@@ -337,6 +337,14 @@ export class Orchestrator {
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
     }
+    // A derived task's body is text from outside this repo (a PR description),
+    // and an execute run follows its body with write access in a worktree off
+    // trunk. Aux runs — the reviews these tasks exist for — are unaffected.
+    if (task.meta.derivedFrom !== undefined) {
+      throw new OrchestratorClientError(
+        `task ${taskId} was derived from ${task.meta.derivedFrom} and cannot be executed`
+      );
+    }
     const live = this.registry.liveRunForTask(taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(

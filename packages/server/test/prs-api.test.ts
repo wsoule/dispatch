@@ -1844,6 +1844,7 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     const [task] = tasks();
     expect(task.meta.title).toContain(`Review PR #${FORK_PR.number}`);
     expect(task.meta.labels).toContain('github-pr');
+    expect(task.meta.derivedFrom).toBe(`github-pr:${FORK_PR.number}`);
     expect(task.meta.writes).toEqual(['src/a.ts', 'src/b.ts']);
     expect(task.body).toContain('Removes the stray semicolon.');
     expect(task.meta.id).toBe(meta.taskId);
@@ -1858,6 +1859,29 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     expect(calls.filter((c) => c[1] === 'pr' && c[2] === 'view')).toHaveLength(
       1
     );
+  });
+
+  // The synthesized task lands on the board looking like any other todo. Its
+  // body is the PR author's prose, so handing it to an execute agent would run
+  // a stranger's instructions in a worktree with write access.
+  it('refuses to dispatch an execute run for the synthesized task', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+    createPrHeadRef(FORK_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+    const [task] = tasks();
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'claude' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toMatch(/derived from github-pr/);
+    // Still only the review run — no execute run was provisioned.
+    expect(orchestrator.list().map((r) => r.kind)).toEqual(['review']);
   });
 
   it('files the review’s findings on the PR, not on a run', async () => {

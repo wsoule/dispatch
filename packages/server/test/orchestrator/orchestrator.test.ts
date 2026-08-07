@@ -128,6 +128,51 @@ describe('Orchestrator.dispatch full lifecycle', () => {
   });
 });
 
+// A derived task's body is a stranger's prose (a PR description), and an
+// execute run acts on its body with write access off trunk. dispatch() is the
+// one door every execute run comes through, so the refusal lives there.
+describe('Orchestrator.dispatch on a derived task', () => {
+  it('refuses to execute a task synthesized from someone else’s artifact', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({
+      title: 'Review PR #7: Bump deps',
+      derivedFrom: 'github-pr:7',
+    });
+
+    await expect(orchestrator.dispatch(task.meta.id, 'fake')).rejects.toThrow(
+      OrchestratorClientError
+    );
+    // Refused before anything existed: no run, and the task untouched.
+    expect(orchestrator.list()).toEqual([]);
+    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+  });
+
+  it('still lets an aux run start against the same task', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({
+      title: 'Review PR #7: Bump deps',
+      derivedFrom: 'github-pr:7',
+    });
+
+    const meta = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      head: 'HEAD',
+      executor: 'fake',
+      buildPrompt: () => 'review it',
+    });
+    expect(meta.kind).toBe('review');
+  });
+});
+
 describe('Orchestrator approval round-trip', () => {
   it('pauses at awaiting-approval and resumes once approved', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
