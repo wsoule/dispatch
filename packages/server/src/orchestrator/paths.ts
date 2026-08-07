@@ -60,6 +60,17 @@ export function reviewCommentsPath(
   return join(runsDir(rootDir), `${reviewTargetSlug(target)}.review.json`);
 }
 
+// What the last review pushed to GitHub for this target said — the sibling
+// of the comment file above, so it survives a daemon restart the same way.
+// Only a PR target is ever recorded, so moveAll's run-to-PR migration has
+// no marker to strand.
+export function reviewPushMarkerPath(
+  rootDir: string,
+  target: ReviewTarget
+): string {
+  return join(runsDir(rootDir), `${reviewTargetSlug(target)}.review-push.json`);
+}
+
 // Where the merge queue's persisted state (queued/active entries plus
 // history) lives — see MergeQueue's persist()/hydrate() — so a daemon
 // restart reloads the queue instead of silently dropping it, the same way

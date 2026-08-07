@@ -1463,11 +1463,17 @@ export interface ApiClient {
   /** Publishes a run's pending comments and acts on the verdict. Returns
    * how many were published. Run-keyed only — a PR target's equivalent is
    * pushPrReview below, which submits straight to GitHub instead of
-   * resuming an agent or enqueuing a merge. */
+   * resuming an agent or enqueuing a merge.
+   *
+   * `postToGitHub` (default false) also pushes the batch to the run's PR as
+   * one GitHub review. Left off, the review still publishes and still goes
+   * back to the agent — only the PR is untouched. True on a run with no PR
+   * is a 400. */
   submitReview(
     runId: string,
     verdict: ReviewVerdict,
-    body: string
+    body: string,
+    postToGitHub?: boolean
   ): Promise<{ verdict: ReviewVerdict; published: number; error?: string }>;
   /** Submits a PR target's pending comments as one GitHub review. Hits
    * .../review-submit, not reviewRepoPr's .../review — that path already
@@ -1945,10 +1951,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchLinearLinks: () => request(target, '/api/linear/links'),
     importLinearIssues: () =>
       request(target, '/api/linear/import', { method: 'POST' }),
-    submitReview: (runId, verdict, body) =>
+    submitReview: (runId, verdict, body, postToGitHub = false) =>
       request(target, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {
         method: 'POST',
-        body: JSON.stringify({ verdict, body }),
+        body: JSON.stringify({ verdict, body, postToGitHub }),
       }),
     pushPrReview: (number, verdict, body) =>
       request(target, `/api/prs/${number}/review-submit`, {

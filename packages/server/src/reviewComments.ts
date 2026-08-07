@@ -2,7 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import { reviewCommentsPath } from './orchestrator/paths.js';
+import {
+  reviewCommentsPath,
+  reviewPushMarkerPath,
+} from './orchestrator/paths.js';
 import type { ReviewTarget } from './reviewTarget.js';
 
 /**
@@ -73,6 +76,16 @@ export interface ReviewReply {
   created: string;
   /** GitHub comment id, when this reply was posted to or pulled from GitHub. */
   githubId?: number;
+}
+
+/**
+ * The verdict and body of the last review pushed to GitHub for one target.
+ * Compared against a fresh submit to tell a genuine second review from a
+ * retry of one that already landed — see `ReviewCommentStore.lastPush`.
+ */
+export interface ReviewPushMarker {
+  verdict: string;
+  body: string;
 }
 
 export interface AddCommentInput {
@@ -280,6 +293,42 @@ export class ReviewCommentStore {
   /** How many comments are staged but unsent — the number the review bar counts down. */
   pendingCount(target: ReviewTarget): number {
     return this.list(target).filter((c) => c.pending).length;
+  }
+
+  /**
+   * What the last review successfully pushed to GitHub for this target said.
+   *
+   * A submit that repeats it with nothing left pending is a retry, not a new
+   * review: the line comments are already protected by their `pending` flip,
+   * but the review body is not, so without this a retried submit would land
+   * a second review on the PR. `null` when nothing has been pushed yet.
+   */
+  lastPush(target: ReviewTarget): ReviewPushMarker | null {
+    const path = reviewPushMarkerPath(this.rootDir, target);
+    if (!existsSync(path)) return null;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      const marker = parsed as Partial<ReviewPushMarker> | null;
+      if (
+        marker === null ||
+        typeof marker.verdict !== 'string' ||
+        typeof marker.body !== 'string'
+      ) {
+        return null;
+      }
+      return { verdict: marker.verdict, body: marker.body };
+    } catch {
+      // Same degradation as `list`: an unreadable marker means "nothing
+      // pushed yet", which pushes again rather than staying silent.
+      return null;
+    }
+  }
+
+  /** Records a push, so the next identical submit can recognise its retry. */
+  recordPush(target: ReviewTarget, marker: ReviewPushMarker): void {
+    const path = reviewPushMarkerPath(this.rootDir, target);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`);
   }
 }
 

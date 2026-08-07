@@ -2052,10 +2052,16 @@ export function useDispatchProject(
   const handleSubmitReview = useCallback(
     async (
       verdict: import('@dispatch/client').ReviewVerdict,
-      body: string
+      body: string,
+      postToGitHub = false
     ): Promise<{ published: number; error?: string }> => {
       if (client === null || selectedRunId === null) return { published: 0 };
-      const res = await client.submitReview(selectedRunId, verdict, body);
+      const res = await client.submitReview(
+        selectedRunId,
+        verdict,
+        body,
+        postToGitHub
+      );
       invalidateReview();
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: mergeQueueQueryKey });
