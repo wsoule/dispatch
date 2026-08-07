@@ -95,19 +95,42 @@ export class ConversationStore {
     return conversationPath(this.rootDir, subject);
   }
 
-  list(subject: SubjectRef): ChatMessage[] {
+  /**
+   * The stored messages, plus how many entries were dropped as malformed. The write paths need
+   * that count: they persist this filtered list, so a bad entry that merely read as absent
+   * before is deleted for good on the next write.
+   */
+  private read(subject: SubjectRef): {
+    messages: ChatMessage[];
+    dropped: number;
+  } {
     const path = this.file(subject);
-    if (!existsSync(path)) return [];
+    if (!existsSync(path)) return { messages: [], dropped: 0 };
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!Array.isArray(parsed)) return { messages: [], dropped: 0 };
       // Filtered, not cast: a hand-edited or half-written file otherwise reaches the UI as a
       // message with missing fields, which renders as `undefined` rather than failing loudly.
-      return Array.isArray(parsed) ? parsed.filter(isChatMessage) : [];
+      const messages = parsed.filter(isChatMessage);
+      return { messages, dropped: parsed.length - messages.length };
     } catch {
       // A corrupt file degrades to "no conversation" rather than taking the daemon down, the
       // same way every other per-run artifact here behaves.
-      return [];
+      return { messages: [], dropped: 0 };
     }
+  }
+
+  list(subject: SubjectRef): ChatMessage[] {
+    return this.read(subject).messages;
+  }
+
+  // Reading past a malformed entry is recoverable; writing without it is not, so the one write
+  // that discards it says so rather than deleting the reviewer's data silently.
+  private reportDropped(subject: SubjectRef, dropped: number): void {
+    if (dropped === 0) return;
+    console.error(
+      `dispatchd: dropping ${dropped} malformed message(s) from ${subject} — they are removed from the stored conversation by this write`
+    );
   }
 
   private write(subject: SubjectRef, messages: ChatMessage[]): void {
@@ -129,16 +152,19 @@ export class ConversationStore {
       ...(input.target !== undefined ? { target: input.target } : {}),
       created: now,
     };
-    const all = this.list(subject);
-    all.push(message);
-    this.write(subject, all);
+    const { messages, dropped } = this.read(subject);
+    this.reportDropped(subject, dropped);
+    messages.push(message);
+    this.write(subject, messages);
     return message;
   }
 
   remove(subject: SubjectRef, messageId: string): void {
+    const { messages, dropped } = this.read(subject);
+    this.reportDropped(subject, dropped);
     this.write(
       subject,
-      this.list(subject).filter((m) => m.id !== messageId)
+      messages.filter((m) => m.id !== messageId)
     );
   }
 }

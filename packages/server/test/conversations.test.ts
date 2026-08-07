@@ -50,6 +50,20 @@ describe('isSnippet', () => {
     ).toBe(true);
   });
 
+  // Pierre renders a file-level annotation on `lineNumber: 0` (`types.d.ts:404`), so a snippet
+  // can legitimately start at 0 — tightening this to `>= 1` would silently reject those.
+  test('accepts line 0, which is Pierre’s file-level annotation line', () => {
+    expect(
+      isSnippet({ file: 'a.ts', startLine: 0, endLine: 0, text: 'x' })
+    ).toBe(true);
+  });
+
+  test('rejects a negative line, which no diff ever draws', () => {
+    expect(
+      isSnippet({ file: 'a.ts', startLine: -1, endLine: 2, text: 'x' })
+    ).toBe(false);
+  });
+
   test('rejects the shapes that render as `undefined (undefined-undefined)`', () => {
     expect(isSnippet({ file: 'a.ts', text: 'x' })).toBe(false);
     expect(isSnippet({ startLine: 1, endLine: 2, text: 'x' })).toBe(false);
@@ -115,6 +129,53 @@ describe('ConversationStore', () => {
     const all = new ConversationStore(dir).list('run:r-1');
 
     expect(all.map((m) => m.body)).toEqual(['kept']);
+  });
+
+  // The filtering is defensible; doing it silently is not — `add`/`remove` write the filtered
+  // list back, so the malformed entry is gone from disk for good after the next message.
+  test('reports the entries a write permanently drops', () => {
+    const dir = root();
+    const store = new ConversationStore(dir);
+    store.add('run:r-1', { role: 'human', body: 'kept', snippets: [] });
+    const path = conversationPath(dir, 'run:r-1');
+    const stored = JSON.parse(readFileSync(path, 'utf8')) as unknown[];
+    writeFileSync(
+      path,
+      JSON.stringify([...stored, { id: 'cm-bad', role: 'human' }])
+    );
+
+    const said: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      said.push(args.map(String).join(' '));
+    };
+    try {
+      store.add('run:r-1', { role: 'human', body: 'next', snippets: [] });
+    } finally {
+      console.error = original;
+    }
+
+    expect(said.join('\n')).toContain('dropping 1 malformed message(s)');
+    expect(said.join('\n')).toContain('run:r-1');
+  });
+
+  test('says nothing when a write drops nothing', () => {
+    const dir = root();
+    const store = new ConversationStore(dir);
+    store.add('run:r-1', { role: 'human', body: 'kept', snippets: [] });
+
+    const said: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      said.push(args.map(String).join(' '));
+    };
+    try {
+      store.add('run:r-1', { role: 'human', body: 'next', snippets: [] });
+    } finally {
+      console.error = original;
+    }
+
+    expect(said).toEqual([]);
   });
 
   test('adds and reads back across instances', () => {
