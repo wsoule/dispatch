@@ -854,6 +854,8 @@ export interface ReviewComment {
   anchorText: string;
   author: string;
   body: string;
+  /** Replacement text for `startLine..line`, when the reviewer wrote one. */
+  suggestion?: string;
   resolved: boolean;
   created: string;
   replies: ReviewReply[];
@@ -1446,6 +1448,23 @@ export interface ApiClient {
     error: string | null;
   }>;
 
+  /** One side of a file in a run's worktree. `sha` is the precondition for applyRunEdit. */
+  fetchRunFile(
+    runId: string,
+    path: string,
+    side: 'old' | 'new'
+  ): Promise<{ contents: string; sha: string }>;
+  /** Writes a reviewer's edit into the run's worktree and commits it on the run branch. */
+  applyRunEdit(
+    runId: string,
+    input: { file: string; contents: string; baseSha: string }
+  ): Promise<{ commit: string }>;
+  /** Commits a comment's suggestion. Fails if the comment's anchor line has drifted. */
+  applySuggestion(
+    runId: string,
+    commentId: string
+  ): Promise<{ commit: string }>;
+
   // Line-level review comments, keyed by ReviewTarget so the same four calls
   // work against a run's diff or a GitHub PR — see reviewTargetPath, which
   // picks the /api/runs/:id/… or /api/prs/:number/… URL per target.kind.
@@ -1458,6 +1477,8 @@ export interface ApiClient {
       startLine?: number;
       anchorText: string;
       body: string;
+      /** Replacement text for the commented lines. Omit for a prose-only comment. */
+      suggestion?: string;
       /** Defaults to true — a comment is staged until the review is submitted. */
       pending?: boolean;
     }
@@ -1917,6 +1938,22 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     clusterInbox: () =>
       request(target, '/api/inbox/cluster', { method: 'POST' }),
+    fetchRunFile: (runId, path, side) =>
+      request(
+        target,
+        `/api/runs/${encodeURIComponent(runId)}/file?path=${encodeURIComponent(path)}&side=${side}`
+      ),
+    applyRunEdit: (runId, input) =>
+      request(target, `/api/runs/${encodeURIComponent(runId)}/edits`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    applySuggestion: (runId, commentId) =>
+      request(
+        target,
+        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}/apply`,
+        { method: 'POST' }
+      ),
     fetchReviewComments: (reviewTarget) =>
       request(target, `${reviewTargetPath(reviewTarget)}/comments`),
     addReviewComment: (reviewTarget, input) =>

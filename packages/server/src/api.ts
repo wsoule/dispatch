@@ -21,7 +21,8 @@ import type {
   VerifyConfig,
 } from '@dispatch/core';
 import type { ActorContext, TaskDoc } from '@dispatch/core';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { amendTask } from './api/amendments.js';
 import {
@@ -61,8 +62,10 @@ import {
   INVALID_REMOTE_ERROR,
   INVALID_STASH_INDEX_ERROR,
   PATH_ESCAPE_ERROR,
+  resolveWorktreeFilePath,
 } from './git/commands.js';
-import type { GitOutcome, GitRepo } from './git/commands.js';
+import type { GitOutcome } from './git/commands.js';
+import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
@@ -97,7 +100,9 @@ import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import {
   formatCommentsForAgent,
+  resolveAnchor,
   ReviewCommentStore,
+  spliceSuggestion,
 } from './reviewComments.js';
 import type { AddCommentInput, ReviewComment } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
@@ -899,6 +904,273 @@ function runMetaFor(ctx: ApiContext, runId: string): RunMeta | undefined {
   );
 }
 
+/** Content hash used as the edit precondition — see readRunFile / applyRunEdit. */
+export function sha256Hex(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/**
+ * GET /api/runs/:id/file — one side of a file in the run's worktree.
+ *
+ * Backs the diff renderer's `loadDiffFiles`: a patch alone only carries its own
+ * hunks, so expansion and edit mode both need the file's real contents.
+ */
+async function readRunFile(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const url = new URL(req.url);
+  const path = url.searchParams.get('path');
+  const side = url.searchParams.get('side') ?? 'new';
+  if (path === null || path === '')
+    return errorResponse(400, 'path is required');
+  if (side !== 'old' && side !== 'new') {
+    return errorResponse(400, `invalid side: ${side} (expected old|new)`);
+  }
+  const detail = ctx.orchestrator.getRun(runId);
+  if (detail === null) return errorResponse(404, `run not found: ${runId}`);
+  const meta = detail.meta;
+  if (!existsSync(meta.worktreePath)) {
+    return errorResponse(409, 'worktree-missing');
+  }
+  if (side === 'old') {
+    // No strict leaf check on this branch: it never touches the filesystem, and
+    // `git show` reads a symlink as an ordinary blob rather than following it,
+    // so an in-repo symlink is legitimate content here. GitRepo's own pathspec
+    // guard still covers an escaping path.
+    const shown = await new GitRepo(meta.worktreePath).show(
+      meta.baseBranch,
+      path
+    );
+    if (!shown.ok) return errorResponse(404, shown.stderr);
+    return jsonResponse({
+      contents: shown.contents,
+      sha: sha256Hex(shown.contents),
+    });
+  }
+  // Resolves every parent symlink, and rejects the leaf if it is itself a
+  // symlink, so neither a symlinked directory nor a symlinked file inside the
+  // worktree can be used to read a file the caller has no business seeing
+  // (fs.readFileSync below follows a symlink leaf even though git never
+  // does — see resolveWorktreeFilePath).
+  const onDisk = resolveWorktreeFilePath(meta.worktreePath, path);
+  if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
+  if (!existsSync(onDisk)) return errorResponse(404, `no such file: ${path}`);
+  const contents = readFileSync(onDisk, 'utf8');
+  return jsonResponse({ contents, sha: sha256Hex(contents) });
+}
+
+/** Trailer marking a commit a human made while reviewing, so an audit export can
+ *  separate reviewer corrections from agent work without parsing the subject. */
+const REVIEWER_EDIT_TRAILER = 'Dispatch-Reviewer-Edit';
+
+/**
+ * Writes `contents` to `onDisk` and commits just that path with `subject` plus the
+ * reviewer-edit trailer — scoped to `file` so the commit never carries whatever
+ * else the agent left staged, which is what the trailer exists to keep separable.
+ *
+ * Any failure after the write restores both the file and its previous index entry
+ * (not a reset to HEAD, which would drop an agent's staged version), so a rejected
+ * commit can't leave a half-applied write for the next attempt to trip over.
+ *
+ * Shared by applyRunEdit and applySuggestion, which differ only in how the new
+ * contents were produced.
+ */
+async function writeAndCommit(
+  ctx: ApiContext,
+  meta: RunMeta,
+  onDisk: string,
+  file: string,
+  contents: string,
+  previous: string,
+  subject: string,
+  runId: string
+): Promise<Response> {
+  const repo = new GitRepo(meta.worktreePath);
+  // Captured before anything is staged, so the failure path below can put the
+  // index back to exactly this rather than to HEAD.
+  const indexBefore = await repo.indexEntry(file);
+  if (!indexBefore.ok) {
+    return errorResponse(
+      indexBefore.stderr === PATH_ESCAPE_ERROR ? 400 : 500,
+      indexBefore.stderr
+    );
+  }
+  // The path was already proven to resolve inside the worktree by the caller,
+  // so this write can't land outside it; `stage`'s own escape check below is
+  // just defense in depth (and still catches a pathspec git itself refuses).
+  writeFileSync(onDisk, contents);
+  const staged = await repo.stage([file]);
+  if (!staged.ok) {
+    writeFileSync(onDisk, previous);
+    return errorResponse(
+      staged.stderr === PATH_ESCAPE_ERROR ? 400 : 500,
+      staged.stderr
+    );
+  }
+  const committed = await repo.commit({
+    message: `${subject}\n\n${REVIEWER_EDIT_TRAILER}: ${runId}`,
+    paths: [file],
+  });
+  if (!committed.ok) {
+    writeFileSync(onDisk, previous);
+    await repo.restoreIndexEntry(file, indexBefore.entry);
+    return errorResponse(500, committed.stderr);
+  }
+
+  ctx.events.broadcast({ type: 'review.changed', runId });
+  return jsonResponse({ commit: committed.sha });
+}
+
+/**
+ * POST /api/runs/:id/edits — write one file into the run's worktree and commit it.
+ *
+ * Every rejection below is a 409 with a machine-readable `error`, because each
+ * one has a different fix and the UI shows a different sentence for each.
+ */
+async function applyRunEdit(
+  req: Request,
+  ctx: ApiContext,
+  runId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    file?: unknown;
+    contents?: unknown;
+    baseSha?: unknown;
+  };
+  if (typeof body.file !== 'string' || body.file === '') {
+    return errorResponse(400, 'file is required');
+  }
+  if (typeof body.contents !== 'string') {
+    return errorResponse(400, 'contents is required');
+  }
+  if (typeof body.baseSha !== 'string' || body.baseSha === '') {
+    return errorResponse(400, 'baseSha is required');
+  }
+
+  const detail = ctx.orchestrator.getRun(runId);
+  if (detail === null) return errorResponse(404, `run not found: ${runId}`);
+  const meta = detail.meta;
+  if (!existsSync(meta.worktreePath))
+    return errorResponse(409, 'worktree-missing');
+  if (meta.reviewedAt !== undefined) return errorResponse(409, 'run-reviewed');
+
+  // Resolves every parent symlink and rejects a symlink leaf, so neither a
+  // symlinked directory nor a symlinked file inside the worktree can
+  // redirect this write — fs.writeFileSync follows a symlink leaf even
+  // though git never does (see resolveWorktreeFilePath). This has to happen
+  // before anything below touches disk, and it needs the run's real
+  // worktree root, so it can't run any earlier than this.
+  const onDisk = resolveWorktreeFilePath(meta.worktreePath, body.file);
+  if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
+
+  // A resumed run shares this exact directory (see orchestrator requestChanges),
+  // so "is anything live here" is a real race, not a hypothetical one.
+  const busy = ctx.orchestrator
+    .list()
+    .some(
+      (r) =>
+        r.worktreePath === meta.worktreePath &&
+        !TERMINAL_RUN_STATES.has(r.state)
+    );
+  if (busy) return errorResponse(409, 'worktree-busy');
+
+  const current = existsSync(onDisk) ? readFileSync(onDisk, 'utf8') : '';
+  if (sha256Hex(current) !== body.baseSha)
+    return errorResponse(409, 'stale-base');
+  if (body.contents === '' && current !== '') {
+    return errorResponse(409, 'empty-contents');
+  }
+
+  return await writeAndCommit(
+    ctx,
+    meta,
+    onDisk,
+    body.file,
+    body.contents,
+    current,
+    `review: edit ${body.file}`,
+    runId
+  );
+}
+
+/**
+ * POST /api/runs/:id/comments/:commentId/apply — commit a comment's suggestion
+ * verbatim onto the run branch.
+ *
+ * Proceeds only when `resolveAnchor` still says the comment's line is exactly
+ * where it was recorded — a moved or outdated anchor means the recorded line
+ * range no longer names the code the reviewer meant, so splicing by line
+ * number would silently edit the wrong lines. Does not resolve the thread:
+ * applying a fix and deciding the conversation is over are different actions.
+ */
+async function applySuggestion(
+  req: Request,
+  ctx: ApiContext,
+  runId: string,
+  commentId: string
+): Promise<Response> {
+  const detail = ctx.orchestrator.getRun(runId);
+  if (detail === null) return errorResponse(404, `run not found: ${runId}`);
+  const meta = detail.meta;
+  if (!existsSync(meta.worktreePath))
+    return errorResponse(409, 'worktree-missing');
+  if (meta.reviewedAt !== undefined) return errorResponse(409, 'run-reviewed');
+
+  // Through `commentTargetForRun`, so a run whose comments have moved onto its
+  // PR store still finds the suggestion — the run's own file stops being read
+  // the moment a PR is open.
+  const comment = ctx.reviewComments
+    .list(commentTargetForRun(ctx, runId))
+    .find((c) => c.id === commentId);
+  if (comment === undefined) {
+    return errorResponse(404, `review comment not found: ${commentId}`);
+  }
+  // Absent or empty is a caller error, not a state conflict — there is
+  // nothing recorded to apply, regardless of what the file on disk says.
+  if (comment.suggestion === undefined || comment.suggestion === '') {
+    return errorResponse(400, 'comment has no suggestion');
+  }
+
+  const onDisk = resolveWorktreeFilePath(meta.worktreePath, comment.file);
+  if (onDisk === null) return errorResponse(400, PATH_ESCAPE_ERROR);
+
+  // Same race as applyRunEdit: a resumed run can share this worktree, and a
+  // suggestion must not be a side door around that guard.
+  const busy = ctx.orchestrator
+    .list()
+    .some(
+      (r) =>
+        r.worktreePath === meta.worktreePath &&
+        !TERMINAL_RUN_STATES.has(r.state)
+    );
+  if (busy) return errorResponse(409, 'worktree-busy');
+
+  const current = existsSync(onDisk) ? readFileSync(onDisk, 'utf8') : '';
+  const fileLines = current.split('\n');
+  const anchor = resolveAnchor(comment, fileLines);
+  if (anchor.kind !== 'exact') {
+    return errorResponse(409, 'anchor-drifted');
+  }
+
+  const nextLines = spliceSuggestion(fileLines, comment, comment.suggestion);
+  const contents = nextLines.join('\n');
+
+  return await writeAndCommit(
+    ctx,
+    meta,
+    onDisk,
+    comment.file,
+    contents,
+    current,
+    `review: apply suggestion on ${comment.file}`,
+    runId
+  );
+}
+
 // Sends the review back to the agent wherever the agent is. A run is
 // reviewed AFTER it finishes, so the normal case is terminal — and only
 // `{ resume: true }` re-dispatches one; without it sendMessage refuses with
@@ -961,6 +1233,7 @@ async function parseAddCommentInput(
     startLine?: unknown;
     anchorText?: unknown;
     body?: unknown;
+    suggestion?: unknown;
     pending?: unknown;
   };
   if (typeof body.file !== 'string' || body.file === '') {
@@ -995,6 +1268,12 @@ async function parseAddCommentInput(
           : undefined,
       anchorText: typeof body.anchorText === 'string' ? body.anchorText : '',
       body: body.body.trim(),
+      // Not trimmed, unlike `body`: a suggestion is code, so its leading
+      // indentation is part of what gets written back.
+      suggestion:
+        typeof body.suggestion === 'string' && body.suggestion !== ''
+          ? body.suggestion
+          : undefined,
       pending: body.pending !== false,
     },
   };
@@ -3216,6 +3495,16 @@ export async function handleApi(
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
       }
+      if (segments.length === 3 && segments[2] === 'file' && method === 'GET') {
+        return await readRunFile(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'edits' &&
+        method === 'POST'
+      ) {
+        return await applyRunEdit(req, ctx, segments[1]);
+      }
       if (
         segments.length === 3 &&
         segments[2] === 'evidence' &&
@@ -3274,6 +3563,14 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await replyReviewComment(req, ctx, segments[1], segments[3]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'comments' &&
+        segments[4] === 'apply' &&
+        method === 'POST'
+      ) {
+        return await applySuggestion(req, ctx, segments[1], segments[3]);
       }
       if (
         segments.length === 3 &&

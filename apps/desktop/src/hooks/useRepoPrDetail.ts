@@ -26,13 +26,15 @@ export interface RepoPrDetailData {
   /** Why the comment sync failed. An empty thread list must not read as
    *  "nobody has commented" when the pull never landed. */
   reviewCommentsError: string | null;
+  /** Resolves with the created comment, mirroring useDispatchProject's run-side
+   *  handler — `PierreReviewDiff`'s composer needs the new record back. */
   handleAddReviewComment: (input: {
     file: string;
     line: number;
     startLine?: number;
     anchorText: string;
     body: string;
-  }) => Promise<void>;
+  }) => Promise<ReviewComment>;
   handleResolveReviewComment: (
     commentId: string,
     resolved: boolean
@@ -196,10 +198,18 @@ export function useRepoPrDetail(
       startLine?: number;
       anchorText: string;
       body: string;
-    }): Promise<void> => {
-      if (client === null || number === null) return;
-      await client.addReviewComment({ kind: 'pr', number }, input);
+    }): Promise<ReviewComment> => {
+      // Throws rather than resolving with nothing when there is nothing to
+      // write to: the composer treats a resolved call as "saved".
+      if (client === null || number === null) {
+        throw new Error('dispatchd client not ready');
+      }
+      const created = await client.addReviewComment(
+        { kind: 'pr', number },
+        input
+      );
       reloadComments();
+      return created;
     },
     [client, number, reloadComments]
   );
