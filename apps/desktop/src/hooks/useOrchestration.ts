@@ -81,13 +81,18 @@ export function useTaskFindings(
  * synthesized server-side and no client ever holds its id. Keyed under the
  * same 'findings' root, so `finding.changed` — which carries no id and
  * invalidates the whole root — refreshes this the moment a review ends.
+ *
+ * `error` is returned, not swallowed: the panel renders an empty list as
+ * nothing at all (an empty set means no review ran, and saying otherwise
+ * would read as a clean bill of health), so a failed fetch would otherwise
+ * be indistinguishable from the one state that is deliberately silent.
  */
 export function usePrFindings(
   client: ApiClient | null,
   port: number | undefined,
   number: number | null
 ) {
-  const { data } = useQuery({
+  const { data, error } = useQuery({
     queryKey: [
       ORCHESTRATION_QUERY_ROOT,
       'findings',
@@ -103,7 +108,10 @@ export function usePrFindings(
     enabled: client !== null && number !== null,
     retry: false,
   });
-  return data ?? [];
+  return {
+    findings: data ?? [],
+    error: error instanceof Error ? error.message : null,
+  };
 }
 
 /** A task's fix-loop state: `null` means no loop opened; `error` means the

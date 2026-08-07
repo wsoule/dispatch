@@ -139,7 +139,22 @@ function ConversationRow({ item }: { item: PrConversationItem }) {
  * anchor as a comment, and a PR has no run behind it whose findings panel
  * would otherwise catch them.
  */
-function AgentFindings({ findings }: { findings: Finding[] }) {
+function AgentFindings({
+  findings,
+  error,
+}: {
+  findings: Finding[];
+  error: string | null;
+}) {
+  // A failed fetch must not fall through to the silent case below: an empty
+  // panel would read as "no review has run" when the truth is "unknown".
+  if (error !== null) {
+    return (
+      <p className="text-destructive text-[12px]">
+        Couldn&rsquo;t load the agent&rsquo;s findings: {error}
+      </p>
+    );
+  }
   const open = findings.filter((f) => f.verdict === 'open');
   // Never a "no findings" line: an empty list means no review has run, and
   // saying otherwise would read as a clean bill of health.
@@ -199,6 +214,8 @@ interface PrReviewPanelProps {
    * a run's own PR panel has — its findings show in the run's case panel.
    */
   findings?: Finding[];
+  /** Why the findings fetch failed, so an empty list is not read as "none". */
+  findingsError?: string | null;
 }
 
 // The fork half of spec Decision 3: a fork PR's code is a stranger's, and
@@ -253,6 +270,7 @@ export function PrReviewPanel({
   onAgentReview,
   forkOwner,
   findings = [],
+  findingsError = null,
 }: PrReviewPanelProps) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -325,7 +343,7 @@ export function PrReviewPanel({
         <>
           <PrStatusHeader status={detail.status} />
 
-          <AgentFindings findings={findings} />
+          <AgentFindings findings={findings} error={findingsError} />
 
           {detail.conversation.length > 0 && (
             <div className="flex flex-col gap-1.5">

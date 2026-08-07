@@ -189,7 +189,10 @@ describe('PrReviewPanel agent findings', () => {
     } as Finding;
   }
 
-  function renderWithFindings(findings: Finding[]) {
+  function renderWithFindings(
+    findings: Finding[],
+    findingsError: string | null = null
+  ) {
     render(
       <PrReviewPanel
         detail={DETAIL}
@@ -199,6 +202,7 @@ describe('PrReviewPanel agent findings', () => {
         onComment={() => Promise.resolve()}
         onAgentReview={() => Promise.resolve(DISPATCHED)}
         findings={findings}
+        findingsError={findingsError}
       />
     );
   }
@@ -221,6 +225,16 @@ describe('PrReviewPanel agent findings', () => {
   test('says nothing when no review has run', () => {
     renderWithFindings([]);
     expect(screen.queryAllByText(/what the agent found/i).length).toBe(0);
+  });
+
+  // The silent case above is exactly what a failed fetch must NOT look like:
+  // "we could not ask" and "nobody has looked" are different answers.
+  test('reports a failed fetch instead of rendering the silent case', () => {
+    renderWithFindings([], 'daemon unreachable');
+    expect(
+      screen.getByText(/couldn’t load the agent’s findings/i)
+    ).toBeDefined();
+    expect(screen.getByText(/daemon unreachable/)).toBeDefined();
   });
 });
 
