@@ -81,7 +81,7 @@ import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
-import type { PrManager, PrReviewEvent } from './orchestrator/pr.js';
+import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
 import { parsePrUrl } from './orchestrator/pr.js';
 import type {
   QuestionRegistry,
@@ -2024,14 +2024,14 @@ async function commentPr(
 }
 
 // Resolves a PR number to its RepoPr entry via listRepoPrs() — shared by the
-// three /api/prs/:number/* handlers below. Returns `null` (caller 404s) when
+// /api/prs/:number/* handlers below. Returns `null` (caller 404s) when
 // the number isn't among the repo's currently-open PRs, so this can never be
 // used to review/comment on an arbitrary PR url a client supplies directly;
 // listRepoPrs() itself is what 409s when the project lacks pr capability.
 async function resolveRepoPrByNumber(
   ctx: ApiContext,
   numberParam: string
-): Promise<{ number: number; url: string; title: string } | null> {
+): Promise<RepoPr | null> {
   const number = Number(numberParam);
   const prs = await ctx.prManager.listRepoPrs();
   const pr = prs.find((p) => p.number === number);
@@ -2098,6 +2098,38 @@ async function commentRepoPr(
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
   const detail = await ctx.prManager.commentPrByUrl(pr.url, body.body);
   return jsonResponse(detail);
+}
+
+// The fork gate (spec Decision 3): an agent review checks the PR's head out
+// and runs an agent in it, executing that code here. Same-repo is work the
+// user already trusts; a fork is a stranger's. Null means proceed.
+function forkGate(pr: RepoPr, confirmFork: boolean): Response | null {
+  if (!pr.isCrossRepository || confirmFork) return null;
+  return errorResponse(
+    409,
+    `PR #${pr.number} comes from a fork owned by ${pr.headRepositoryOwner}. ` +
+      'Reviewing it checks that code out and runs it on this machine. ' +
+      'Re-send with confirmFork: true to allow it.'
+  );
+}
+
+// POST /api/prs/:number/review-agent — hand a repo PR to a review agent.
+// The gate is the first thing past resolution deliberately: when it refuses,
+// no ref, worktree, task or run exists yet, so there is nothing to undo.
+async function startPrAgentReview(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const refused = forkGate(pr, parsed.value.confirmFork === true);
+  if (refused !== null) return refused;
+  // The dispatch itself — fetch the head, synthesize the task, start the
+  // review — lands next, and every step of it belongs below this gate.
+  return errorResponse(501, 'PR agent review dispatch is not wired up yet');
 }
 
 // Shared by every /api/prs/:number/comments* route below: the store never
@@ -3736,6 +3768,16 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await commentRepoPr(req, ctx, segments[1]);
+      }
+      // POST /api/prs/:number/review-agent — hand the PR to a review agent.
+      // The only entry point for that dispatch, so its fork gate (spec
+      // Decision 3) is the only door in: see startPrAgentReview.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review-agent' &&
+        method === 'POST'
+      ) {
+        return await startPrAgentReview(req, ctx, segments[1]);
       }
       // GET/POST /api/prs/:number/comments, PATCH .../comments/:commentId,
       // POST .../comments/:commentId/reply — the line-comment mirror's
