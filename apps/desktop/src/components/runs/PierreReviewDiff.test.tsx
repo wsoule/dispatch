@@ -9,6 +9,7 @@ import {
   buildItems,
   decideEditSave,
   editErrorMessage,
+  isEditableDiffType,
   resolveEditFailure,
 } from '@/lib/reviewDiffItems';
 
@@ -459,5 +460,21 @@ describe('decideEditSave — what a finished edit session should do', () => {
         session: undefined,
       })
     ).toEqual({ post: false, reason: 'no-session' });
+  });
+});
+
+describe('isEditableDiffType', () => {
+  // Pierre marks an added/deleted diff `isPartial` but excludes it from `canHydrateDiff`, so it
+  // never leaves the partial state and the editor never attaches — see
+  // docs/pierre-editable-diff-bug.md. A pencil there would be an affordance that does nothing.
+  it('refuses an added or deleted file', () => {
+    expect(isEditableDiffType('new')).toBe(false);
+    expect(isEditableDiffType('deleted')).toBe(false);
+  });
+
+  it('allows the types the editor can actually attach to', () => {
+    expect(isEditableDiffType('change')).toBe(true);
+    expect(isEditableDiffType('rename-changed')).toBe(true);
+    expect(isEditableDiffType('rename-pure')).toBe(true);
   });
 });

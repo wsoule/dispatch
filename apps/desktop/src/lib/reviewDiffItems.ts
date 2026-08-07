@@ -6,6 +6,18 @@ import type {
   FileDiffMetadata,
 } from '@pierre/diffs';
 
+/**
+ * Whether an edit session can attach to a diff of this type.
+ *
+ * `new` and `deleted` are excluded because Pierre cannot edit them: it marks such a diff
+ * `isPartial` but leaves it out of `canHydrateDiff`, so the diff stays partial forever and the
+ * editor attaches without ever producing an editable surface (see
+ * docs/pierre-editable-diff-bug.md). A pencil there would be an affordance that does nothing.
+ */
+export function isEditableDiffType(type: FileDiffMetadata['type']): boolean {
+  return type !== 'new' && type !== 'deleted';
+}
+
 /** What each annotation carries, so `PierreReviewDiff`'s `renderAnnotation` knows what to draw. */
 export type Annotation =
   | { kind: 'threads'; file: string; comments: ReviewComment[] }
