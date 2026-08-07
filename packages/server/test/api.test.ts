@@ -593,6 +593,21 @@ describe('error paths', () => {
     expect(after.meta.archivedAt).toBeUndefined();
   });
 
+  // `derivedFrom` is what refuses an execute dispatch and keeps a task off
+  // both syncers. A client cannot claim it — and a non-string would write
+  // frontmatter that no later parse could read.
+  it('400s creating a task that claims to be derived', async () => {
+    const before = taskFileNames(root);
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'X', derivedFrom: 'github-pr:7' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toContain('invalid derivedFrom');
+    expect(taskFileNames(root)).toEqual(before);
+  });
+
   it('400s patching a task with an invalid priority, and leaves the file untouched', async () => {
     const created = await json(
       await fetch(`${baseUrl}/api/tasks`, {
