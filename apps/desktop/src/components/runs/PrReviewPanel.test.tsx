@@ -46,13 +46,23 @@ function setup(stagedNotes: number) {
   return { reviews, comments };
 }
 
+// A second PR in the same panel — what the review queue does when the user
+// switches rows without unmounting the surface.
+const OTHER_DETAIL: PrDetail = {
+  ...DETAIL,
+  status: { ...DETAIL.status, number: 8 },
+};
+
 // The fork gate's UI half (spec Decision 3). Handing a PR to a review agent
 // runs that PR's code here, so a fork has to say whose code it is first.
-function setupAgentReview(forkOwner?: string) {
-  const confirms: boolean[] = [];
-  render(
+function agentPanel(
+  detail: PrDetail,
+  forkOwner: string | undefined,
+  confirms: boolean[]
+) {
+  return (
     <PrReviewPanel
-      detail={DETAIL}
+      detail={detail}
       loading={false}
       error={null}
       onReview={() => Promise.resolve()}
@@ -64,35 +74,57 @@ function setupAgentReview(forkOwner?: string) {
       }}
     />
   );
+}
+
+function setupAgentReview(forkOwner?: string) {
+  const confirms: boolean[] = [];
+  const { rerender } = render(agentPanel(DETAIL, forkOwner, confirms));
   fireEvent.click(screen.getByRole('button', { name: /review with agent/i }));
-  return confirms;
+  return {
+    confirms,
+    switchPr: (owner: string) =>
+      rerender(agentPanel(OTHER_DETAIL, owner, confirms)),
+  };
 }
 
 describe('PrReviewPanel agent review', () => {
   test('a same-repo PR dispatches on the first click', async () => {
-    const confirms = setupAgentReview(undefined);
+    const { confirms } = setupAgentReview(undefined);
     await waitFor(() => expect(confirms).toEqual([false]));
     expect(screen.queryByText(/on this machine/i)).toBeNull();
   });
 
   test('a fork PR asks first, naming the head owner', () => {
-    const confirms = setupAgentReview('outsider-org');
+    const { confirms } = setupAgentReview('outsider-org');
     expect(confirms).toEqual([]);
     expect(screen.getByText(/outsider-org/)).toBeDefined();
     expect(screen.getByText(/on this machine/i)).toBeDefined();
   });
 
   test('a fork PR dispatches with confirmFork once confirmed', async () => {
-    const confirms = setupAgentReview('outsider-org');
+    const { confirms } = setupAgentReview('outsider-org');
     fireEvent.click(screen.getByRole('button', { name: /run the review/i }));
     await waitFor(() => expect(confirms).toEqual([true]));
   });
 
   test('cancelling a fork confirm dispatches nothing', () => {
-    const confirms = setupAgentReview('outsider-org');
+    const { confirms } = setupAgentReview('outsider-org');
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     expect(confirms).toEqual([]);
     expect(screen.queryByText(/on this machine/i)).toBeNull();
+  });
+
+  // A confirm is agreement to run ONE PR's code. Carried across a switch, the
+  // next click would dispatch a PR whose prompt the user never opened.
+  test('switching to another PR retracts an open fork confirm', () => {
+    const { confirms, switchPr } = setupAgentReview('outsider-org');
+    switchPr('other-org');
+    // Counted, not `queryByText(...).toBeNull()`: a failure there prints the
+    // matched DOM node, and its React fibers serialize unboundedly.
+    expect(screen.queryAllByText(/on this machine/i).length).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: /review with agent/i }));
+    expect(screen.getByText(/other-org/)).toBeDefined();
+    expect(confirms).toEqual([]);
   });
 });
 

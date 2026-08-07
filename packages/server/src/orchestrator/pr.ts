@@ -284,6 +284,17 @@ export interface RepoPr {
   changedFiles: number;
 }
 
+// The one wording for a refused fork review — shared by fetchPrHead's throw
+// and api.ts's 409, so the same sentence reaches the user wherever the gate
+// happens to fire.
+export function forkConfirmMessage(number: number, owner: string): string {
+  return (
+    `PR #${number} comes from a fork owned by ${owner}. Reviewing it ` +
+    'checks that code out and runs it on this machine. Re-send with ' +
+    'confirmFork: true to allow it.'
+  );
+}
+
 // Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
 // parts, so the line-comment REST call (which gh's `pr view --json` can't
 // return) can address the right repo/PR. Returns null for anything that isn't
@@ -838,8 +849,20 @@ export class PrManager {
   // Phase 4: fetches a PR's head into a local ref a review worktree can be
   // cut from (works for forks, unlike `gh pr checkout`) and resolves the
   // merge base against the PR's base branch — the pair startReview() needs.
-  async fetchPrHead(number: number): Promise<{ ref: string; base: string }> {
+  //
+  // `confirmFork` is required, not optional: this is the point where a
+  // stranger's code lands on the machine, so every caller has to state the
+  // user's answer rather than inherit a permissive default (spec Decision 3).
+  async fetchPrHead(
+    number: number,
+    opts: { confirmFork: boolean }
+  ): Promise<{ ref: string; base: string }> {
     const pr = await this.resolvePrForComments(number);
+    if (pr.isCrossRepository && !opts.confirmFork) {
+      throw new OrchestratorConflictError(
+        forkConfirmMessage(number, pr.headRepositoryOwner)
+      );
+    }
     // Fully qualified, not a bare branch name: an unqualified dest DWIMs to
     // refs/heads/, which would permanently add a branch to Dispatch's own
     // branch UI per review and let `--force` clobber a same-named one.

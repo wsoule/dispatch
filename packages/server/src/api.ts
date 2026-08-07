@@ -82,7 +82,7 @@ import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
-import { parsePrUrl } from './orchestrator/pr.js';
+import { forkConfirmMessage, parsePrUrl } from './orchestrator/pr.js';
 import type {
   QuestionRegistry,
   RunQuestion,
@@ -2103,13 +2103,14 @@ async function commentRepoPr(
 // The fork gate (spec Decision 3): an agent review checks the PR's head out
 // and runs an agent in it, executing that code here. Same-repo is work the
 // user already trusts; a fork is a stranger's. Null means proceed.
+//
+// PrManager.fetchPrHead refuses the same PR on its own — this is the message
+// layer, refusing one `gh` call earlier so nothing downstream even resolves.
 function forkGate(pr: RepoPr, confirmFork: boolean): Response | null {
   if (!pr.isCrossRepository || confirmFork) return null;
   return errorResponse(
     409,
-    `PR #${pr.number} comes from a fork owned by ${pr.headRepositoryOwner}. ` +
-      'Reviewing it checks that code out and runs it on this machine. ' +
-      'Re-send with confirmFork: true to allow it.'
+    forkConfirmMessage(pr.number, pr.headRepositoryOwner)
   );
 }
 

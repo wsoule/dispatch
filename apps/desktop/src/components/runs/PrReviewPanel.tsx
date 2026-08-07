@@ -207,7 +207,12 @@ export function PrReviewPanel({
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [askingFork, setAskingFork] = useState(false);
+  // Which PR the fork confirm was opened for, not a bare flag: this panel is
+  // reused as the queue switches rows, and agreeing to run one PR's code must
+  // never carry over to the next.
+  const [askedForPr, setAskedForPr] = useState<number | null>(null);
+  const prNumber = detail?.status.number ?? null;
+  const askingFork = askedForPr !== null && askedForPr === prNumber;
 
   async function act(run: () => Promise<void>) {
     setBusy(true);
@@ -227,7 +232,7 @@ export function PrReviewPanel({
   // gates forks too — `confirmFork` only reports what the user answered.
   async function dispatchAgentReview(confirmFork: boolean) {
     if (onAgentReview === undefined) return;
-    setAskingFork(false);
+    setAskedForPr(null);
     setBusy(true);
     setActionError(null);
     try {
@@ -284,7 +289,7 @@ export function PrReviewPanel({
                   <ForkConfirm
                     owner={forkOwner}
                     busy={busy}
-                    onCancel={() => setAskingFork(false)}
+                    onCancel={() => setAskedForPr(null)}
                     onConfirm={() => void dispatchAgentReview(true)}
                   />
                 ) : (
@@ -294,7 +299,7 @@ export function PrReviewPanel({
                     disabled={busy}
                     className="self-start"
                     onClick={() => {
-                      if (forkOwner !== undefined) setAskingFork(true);
+                      if (forkOwner !== undefined) setAskedForPr(prNumber);
                       else void dispatchAgentReview(false);
                     }}
                   >
