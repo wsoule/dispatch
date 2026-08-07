@@ -1,4 +1,9 @@
-import type { DiffResult, MergeQueueSnapshot, RunMeta } from '@dispatch/client';
+import type {
+  ApiClient,
+  DiffResult,
+  MergeQueueSnapshot,
+  RunMeta,
+} from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
 import {
@@ -20,6 +25,9 @@ import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
 
 interface RunReviewViewProps {
+  /** Feeds `PierreReviewDiff`'s contents loader — omitted only by call sites that predate it,
+   * which keep rendering without hunk expansion rather than failing to compile. */
+  client?: ApiClient | null;
   meta: RunMeta;
   diff: DiffResult | undefined;
   diffLoading: boolean;
@@ -50,14 +58,20 @@ interface RunReviewViewProps {
   /** Line-level review comments on this run, and the actions over them. Optional so the older
    * call sites that never had them keep compiling with the panel hidden. */
   reviewComments?: import('@dispatch/client').ReviewComment[];
+  /** Resolves with the created comment — see `PierreReviewDiff`'s `onAdd` for why. */
   onAddComment?: (input: {
     file: string;
     line: number;
+    startLine?: number;
     anchorText: string;
     body: string;
-  }) => Promise<void>;
+    /** Replacement text for the commented lines. Omitted for a prose-only comment. */
+    suggestion?: string;
+  }) => Promise<import('@dispatch/client').ReviewComment>;
   onResolveComment?: (commentId: string, resolved: boolean) => Promise<void>;
   onReplyComment?: (commentId: string, body: string) => Promise<void>;
+  /** Commits a comment's suggestion onto the run branch — see `PierreReviewDiff`'s `onApply`. */
+  onApplySuggestion?: (commentId: string) => Promise<void>;
   /** Submits the staged review — publishes its comments, then acts on the verdict. */
   onSubmitReview?: (
     verdict: import('@dispatch/client').ReviewVerdict,
@@ -74,6 +88,7 @@ interface RunReviewViewProps {
  * under the first.
  */
 export function RunReviewView({
+  client,
   meta,
   diff,
   diffLoading,
@@ -93,6 +108,7 @@ export function RunReviewView({
   onAddComment,
   onResolveComment,
   onReplyComment,
+  onApplySuggestion,
   onSubmitReview,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
@@ -190,11 +206,15 @@ export function RunReviewView({
           onReplyComment !== undefined &&
           diff !== undefined ? (
             <PierreReviewDiff
+              client={client}
+              runId={meta.id}
+              meta={meta}
               patch={diff.patch}
               comments={reviewComments ?? []}
               onAdd={onAddComment}
               onResolve={onResolveComment}
               onReply={onReplyComment}
+              onApply={onApplySuggestion}
             />
           ) : (
             <RunDiffView
