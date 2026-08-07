@@ -112,6 +112,54 @@ test('an untracked-but-present file is still a valid subject', () => {
   expect(result.ok).toBe(true);
 });
 
+// A staged `git rm` (or any deletion) removes a path from both `git
+// ls-files` and disk, but the dependency graph can still remember it —
+// either because something still imports it, or a mirror comment still
+// claims it. Both are "we know about this path" signals distinct from a
+// typo, which the graph has never heard of either way.
+test('a path known to the graph via a dependent, but neither tracked nor on disk, still resolves', () => {
+  const result = computeImpact(
+    { kind: 'file', path: 'src/db.ts' },
+    deps({ trackedFiles: () => [], fileExists: () => false })
+  );
+  expect(result.ok).toBe(true);
+});
+
+test('a path known to the graph only via a mirror claim still resolves', () => {
+  const result = computeImpact(
+    { kind: 'file', path: 'src/mirror-target.ts' },
+    deps({
+      trackedFiles: () => [],
+      fileExists: () => false,
+      depMap: () => ({
+        ...depMap,
+        dependents: () => [],
+        mirrors: (f) => (f === 'src/mirror-target.ts' ? ['src/copy.ts'] : []),
+        reach: () => ({
+          entries: [],
+          count: 0,
+          maxHops: 0,
+          sources: ['scanner'],
+          degraded: false,
+          truncated: false,
+        }),
+      }),
+    })
+  );
+  expect(result.ok).toBe(true);
+});
+
+// The typo case must keep 404ing: nothing in the graph references it either
+// as a dependent target or a mirror claim, so it's not a known-but-vanished
+// path — it never existed.
+test('a genuine typo the graph has never heard of is still not-found', () => {
+  const result = computeImpact(
+    { kind: 'file', path: 'src/totally/made/up.ts' },
+    deps({ trackedFiles: () => [], fileExists: () => false })
+  );
+  expect(result).toEqual({ ok: false, reason: 'not-found' });
+});
+
 test('reach is called with the resolved seeds, not an unrelated empty array', () => {
   const calls: string[][] = [];
   const result = computeImpact(

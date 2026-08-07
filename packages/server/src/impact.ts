@@ -42,6 +42,14 @@ function seedFromPath(rootDir: string, path: string): string | null {
   return rel.split(sep).join('/');
 }
 
+// True when the graph still references a path that is neither tracked nor
+// on disk — something still imports it, or a mirror comment still claims
+// it. Either is evidence the path is a real (if currently vanished) file,
+// not a typo the graph has never encountered.
+function isKnownToDepMap(depMap: DepMap, seed: string): boolean {
+  return depMap.dependents(seed).length > 0 || depMap.mirrors(seed).length > 0;
+}
+
 // Turns a file, run, or task subject into the seed file set a reach query
 // walks. Each subject kind resolves its seeds through a different injected
 // collaborator (ImpactDeps) rather than reaching for the daemon's globals
@@ -55,11 +63,23 @@ export function computeImpact(
     case 'file': {
       const seed = seedFromPath(deps.rootDir, subject.path);
       if (seed === null) return { ok: false, reason: 'outside-root' };
-      // A path that is neither tracked nor present on disk is a typo, not a
-      // file with an empty blast radius — tracked-but-deleted and
-      // untracked-but-present are both legitimate, so either check passing
-      // is enough.
-      if (!deps.trackedFiles().includes(seed) && !deps.fileExists(seed)) {
+      // A path that is neither tracked nor present on disk is usually a
+      // typo, not a file with an empty blast radius — tracked-but-deleted
+      // and untracked-but-present are both legitimate, so either check
+      // passing is enough. But `git ls-files` reads the index and
+      // `fileExists` reads disk, so a `git rm`'d path (removed from both)
+      // fails both checks even though it is exactly the case a reviewer
+      // most wants reach for. The dependency graph can still know it: a
+      // scan that ran while the file existed (or carto's own index) keeps
+      // recording it as long as something still imports it or a mirror
+      // comment still claims it. That is a real "we know this path", not a
+      // guess — a genuine typo has never appeared in the graph either way,
+      // so it still 404s.
+      if (
+        !deps.trackedFiles().includes(seed) &&
+        !deps.fileExists(seed) &&
+        !isKnownToDepMap(deps.depMap(), seed)
+      ) {
         return { ok: false, reason: 'not-found' };
       }
       seeds = [seed];
