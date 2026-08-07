@@ -3,6 +3,7 @@ import type { ReachResult } from '../depmap.js';
 import type { ImpactSubject } from '../impact.js';
 import { computeImpact } from '../impact.js';
 import { OrchestratorNotFoundError } from '../orchestrator/types.js';
+import { TrackedFilesError } from '../trackedFiles.js';
 import { errorResponse, jsonResponse } from './http.js';
 
 const SUBJECT_KINDS: readonly string[] = ['file', 'run', 'task'];
@@ -16,10 +17,8 @@ const EMPTY_REACH: ReachResult = {
   truncated: false,
 };
 
-// The files a run's diff touched — computeImpact's seed set for a run
-// subject. `null` (not `orchestrator.diff`'s thrown error) is what tells
-// computeImpact the run id is unknown, since a live/snapshotted worktree
-// isn't guaranteed for a run that never had a reviewable diff.
+// The files a run's diff touched; null (not a thrown error) signals an
+// unknown run to computeImpact.
 function changedFilesForRun(ctx: ApiContext, runId: string): string[] | null {
   try {
     return ctx.orchestrator.diff(runId).files.map((file) => file.path);
@@ -35,29 +34,9 @@ function writesForTask(ctx: ApiContext, taskId: string): string[] | null {
   return task === null ? null : task.meta.writes;
 }
 
-// Every path git tracks in the repo, repo-relative — the universe a task's
-// declared write globs are matched against.
-function trackedFiles(rootDir: string): string[] {
-  const result = Bun.spawnSync(['git', 'ls-files', '-z'], {
-    cwd: rootDir,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `git ls-files failed: ${result.stderr.toString('utf8').trim()}`
-    );
-  }
-  return result.stdout
-    .toString('utf8')
-    .split('\0')
-    .filter((path) => path !== '');
-}
-
 // GET /api/impact?subject=file|run|task&id=<value> — the blast radius of a
-// file, a run's diff, or a task's declared writes, walked over the shared
-// DepMapCache so a burst of requests reuses one scan.
-export function getImpact(ctx: ApiContext, url: URL): Response {
+// file, a run's diff, or a task's declared writes.
+export async function getImpact(ctx: ApiContext, url: URL): Promise<Response> {
   const kind = url.searchParams.get('subject');
   if (kind === null || !SUBJECT_KINDS.includes(kind)) {
     return errorResponse(
@@ -77,12 +56,29 @@ export function getImpact(ctx: ApiContext, url: URL): Response {
         ? { kind: 'run', runId: id }
         : { kind: 'task', taskId: id };
 
+  // Only a task with declared writes ever reaches computeImpact's
+  // trackedFiles() call; peeking at the same writes avoids a wasted spawn.
+  let trackedFilesValue: string[] = [];
+  if (subject.kind === 'task') {
+    const writes = writesForTask(ctx, subject.taskId);
+    if (writes !== null && writes.length > 0) {
+      try {
+        trackedFilesValue = await ctx.trackedFilesCache.get();
+      } catch (err) {
+        if (err instanceof TrackedFilesError) {
+          return errorResponse(502, err.message);
+        }
+        throw err;
+      }
+    }
+  }
+
   const result = computeImpact(subject, {
     rootDir: ctx.rootDir,
     depMap: () => ctx.depMapCache.get(),
     changedFilesForRun: (runId) => changedFilesForRun(ctx, runId),
     writesForTask: (taskId) => writesForTask(ctx, taskId),
-    trackedFiles: () => trackedFiles(ctx.rootDir),
+    trackedFiles: () => trackedFilesValue,
   });
 
   if (result.ok) {
