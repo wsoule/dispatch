@@ -26,6 +26,7 @@ function repoPr(overrides: Partial<RepoPr> = {}): RepoPr {
     title: 'Someone else PR',
     url: 'https://github.com/example/repo/pull/9',
     headRefName: 'feature/x',
+    baseRefName: 'main',
     author: 'teammate',
     isDraft: false,
     updatedAt: '2026-08-02T00:00:00Z',

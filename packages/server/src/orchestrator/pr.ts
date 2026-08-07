@@ -841,14 +841,19 @@ export class PrManager {
   async fetchPrHead(number: number): Promise<{ ref: string; base: string }> {
     const pr = await this.resolvePrForComments(number);
     const ref = `dispatch-pr-${number}`;
-    // Force: re-reviewing after new commits (or a force-push) must update
-    // this ref, not fail on a non-fast-forward.
+    // Force: a re-review after new commits (or a force-push) must update
+    // `ref`, not fail on a non-fast-forward. The base branch rides the
+    // same fetch with no explicit dest, so it lands on `origin/<base>` —
+    // mergeQueue.ts's `fetchBase` does the same for a PR run, since the
+    // bare local branch is only as fresh as the user's last pull and a
+    // merge-base against it can silently widen the diff below.
     const fetch = await this.run(this.ctx.rootDir, [
       'git',
       'fetch',
       '--force',
       'origin',
       `pull/${number}/head:${ref}`,
+      pr.baseRefName,
     ]);
     if (!fetch.ok) {
       throw new OrchestratorConflictError(
@@ -858,7 +863,7 @@ export class PrManager {
     const mergeBase = await this.run(this.ctx.rootDir, [
       'git',
       'merge-base',
-      pr.baseRefName,
+      `origin/${pr.baseRefName}`,
       ref,
     ]);
     if (!mergeBase.ok) {

@@ -1094,16 +1094,25 @@ describe('PrManager.fetchPrHead', () => {
     const fetchCall = stub.calls.find(
       (c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch'
     )?.cmd;
+    // The base branch (stub.listResult's PR #9 fixture: baseRefName 'main')
+    // rides the same fetch, with no explicit dest, so `origin/main` is
+    // refreshed too — see the merge-base test below for why that matters.
     expect(fetchCall).toEqual([
       'git',
       'fetch',
       '--force',
       'origin',
       'pull/9/head:dispatch-pr-9',
+      'main',
     ]);
   });
 
-  it("resolves the merge base against the PR's base branch and returns it", async () => {
+  // Regression: the merge base must be resolved against `origin/<base>`,
+  // never the bare local branch name. A bare `main` is only as fresh as
+  // whatever the user last pulled — reviewing against a stale merge base
+  // silently widens the diff to every commit the real base picked up
+  // since, and the agent posts findings on lines the PR never touched.
+  it('resolves the merge base against origin/<base>, not the bare branch name', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
     stub.mergeBaseResult = { ok: true, stdout: 'deadbeef1234\n', stderr: '' };
@@ -1119,7 +1128,7 @@ describe('PrManager.fetchPrHead', () => {
     expect(mergeBaseCall).toEqual([
       'git',
       'merge-base',
-      'main',
+      'origin/main',
       'dispatch-pr-9',
     ]);
   });
@@ -1168,12 +1177,12 @@ describe('PrManager.fetchPrHead', () => {
     stub.mergeBaseResult = {
       ok: false,
       stdout: '',
-      stderr: 'fatal: not a valid object name main',
+      stderr: 'fatal: not a valid object name origin/main',
     };
     const pr = new PrManager(harness, true, stub.run);
 
     await expect(pr.fetchPrHead(9)).rejects.toThrow(
-      /not a valid object name main/
+      /not a valid object name origin\/main/
     );
   });
 
