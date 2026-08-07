@@ -54,6 +54,9 @@ export interface CreateInput {
   writes?: string[];
   risk?: TaskRisk;
   model?: string | null;
+  // What this task was synthesized from (see TaskMeta.derivedFrom). Set only
+  // by the code that synthesizes one; a person creating a task never passes it.
+  derivedFrom?: string;
 }
 
 export interface UpdatePatch {
@@ -155,6 +158,9 @@ export class TaskStore {
       risk: input.risk ?? 'routine',
       model: input.model ?? null,
       exercised: false,
+      ...(input.derivedFrom === undefined
+        ? {}
+        : { derivedFrom: input.derivedFrom }),
     };
     // The initial description is caller-supplied, so it's escaped the same
     // way setSection escapes a later edit to the same section.
