@@ -292,7 +292,9 @@ export function ReviewView({
       if (data.client === null || selectedPrNumber === null) {
         throw new Error('The task daemon is not ready yet.');
       }
-      await data.client.startPrAgentReview(selectedPrNumber, { confirmFork });
+      return await data.client.startPrAgentReview(selectedPrNumber, {
+        confirmFork,
+      });
     },
     [data.client, selectedPrNumber]
   );

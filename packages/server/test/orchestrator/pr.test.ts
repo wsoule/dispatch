@@ -1266,6 +1266,20 @@ describe('PrManager.fetchPrHead', () => {
     );
   });
 
+  // Every step below the resolve reads `pr`, so a mismatched pair would gate
+  // on one PR and fetch another's head.
+  it('refuses a resolved PR whose number is not the one asked for', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    const resolved = (await pr.listRepoPrs())[0];
+
+    await expect(
+      pr.fetchPrHead(10, { confirmFork: false, resolved })
+    ).rejects.toThrow(/does not match requested PR #10/);
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(false);
+  });
+
   // The gate reads whichever RepoPr it was handed, so passing one in is not
   // a way around it.
   it('still refuses a fork handed in as a resolved PR', async () => {

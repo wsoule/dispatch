@@ -1,4 +1,4 @@
-import type { CreateInput } from '@dispatch/core';
+import type { CreateInput, TaskMeta } from '@dispatch/core';
 
 import type { RepoPr } from './pr.js';
 
@@ -43,12 +43,31 @@ export function buildPrReviewTask(
   const body = pr.body.trim();
   const description = body === '' ? NO_DESCRIPTION : body;
   return {
-    title: `Review PR #${pr.number}: ${collapseWhitespace(pr.title)}`,
+    title: `${titlePrefix(pr.number)}${collapseWhitespace(pr.title)}`,
     description: `${description}\n\n---\n\nGitHub PR: ${pr.url}`,
     writes: files.map((file) => escapeGlobPath(file.path)),
     risk: 'elevated',
     labels: [PR_REVIEW_LABEL],
   };
+}
+
+// The one place a PR review task's title is shaped, so isPrReviewTaskFor
+// below reads back exactly what this wrote.
+function titlePrefix(number: number): string {
+  return `Review PR #${number}: `;
+}
+
+// Recognizes a task synthesized for one specific PR. The label alone matches
+// every PR's task, so the number is read back off the title prefix — which
+// is why that prefix has a single definition above.
+export function isPrReviewTaskFor(
+  meta: Pick<TaskMeta, 'title' | 'labels'>,
+  number: number
+): boolean {
+  return (
+    meta.labels.includes(PR_REVIEW_LABEL) &&
+    meta.title.startsWith(titlePrefix(number))
+  );
 }
 
 // Collapses runs of whitespace (including embedded newlines) to a single

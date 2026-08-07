@@ -890,6 +890,10 @@ export class PrManager {
   // `confirmFork` is required, not optional: this is the point where a
   // stranger's code lands on the machine, so every caller has to state the
   // user's answer rather than inherit a permissive default (spec Decision 3).
+  //
+  // With `resolved`, fork-ness is read off the caller's RepoPr instead of a
+  // fresh list — so it has to be one this repo really returned, never a
+  // synthesized stand-in.
   async fetchPrHead(
     number: number,
     opts: { confirmFork: boolean; resolved?: RepoPr }
@@ -898,6 +902,13 @@ export class PrManager {
     // RepoPr hands that same snapshot back instead of paying for — and
     // deciding against — a second `gh pr list` taken moments later.
     const pr = opts.resolved ?? (await this.resolvePrForComments(number));
+    // Everything below reads `pr`, so a mismatched pair would gate on one PR
+    // and fetch another's head. Refuse rather than silently pick one.
+    if (pr.number !== number) {
+      throw new OrchestratorClientError(
+        `resolved PR #${pr.number} does not match requested PR #${number}`
+      );
+    }
     if (pr.isCrossRepository && !opts.confirmFork) {
       throw new OrchestratorConflictError(
         forkConfirmMessage(pr.number, pr.headRepositoryOwner)
