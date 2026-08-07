@@ -18,6 +18,13 @@ export interface DemoTask {
   criteria: string[];
   /** How many days before BASE this task was created; `updated` is one day closer. */
   daysAgo: number;
+  /**
+   * Glob patterns (Bun.Glob syntax, matched against `git ls-files` paths
+   * relative to the storefront root) resolving this task's Impact-view blast
+   * radius. Empty on purpose for exactly one task — see the comment on
+   * `t-9b2d14` below — so the "declares no writes" state stays demonstrable.
+   */
+  writes: string[];
 }
 
 // A one-off credit on a task's `## Activity` section, so attribution reads
@@ -54,6 +61,7 @@ export const TASKS: DemoTask[] = [
       'Replace the two-step checkout with a single page, and move cart state off the client.',
     criteria: [],
     daysAgo: 9,
+    writes: ['src/checkout/**', 'src/cart/**'],
   },
   {
     id: 'e-77b3e1',
@@ -69,6 +77,7 @@ export const TASKS: DemoTask[] = [
       'Exact SKU matches should beat fuzzy ones, and the index should not take 40 minutes to rebuild.',
     criteria: [],
     daysAgo: 7,
+    writes: ['src/search/**'],
   },
   {
     id: 't-9b2d14',
@@ -84,6 +93,11 @@ export const TASKS: DemoTask[] = [
       'Wire the address field to the places API so people stop mistyping postcodes.',
     criteria: [],
     daysAgo: 6,
+    // Deliberately bare: nothing in the storefront template touches address
+    // input yet (it's an unstarted backlog item), so an empty `writes` here
+    // is the honest answer — this is the task that keeps the Impact view's
+    // "declares no writes" state demonstrable.
+    writes: [],
   },
   {
     id: 't-6c40de',
@@ -102,6 +116,7 @@ export const TASKS: DemoTask[] = [
       'No cart data in localStorage',
     ],
     daysAgo: 5,
+    writes: ['src/cart/CartProvider.ts', 'test/cart.test.ts'],
   },
   {
     id: 't-3f8a21',
@@ -117,6 +132,7 @@ export const TASKS: DemoTask[] = [
       'The client currently decides whether a code is valid. Move the check behind the API.',
     criteria: ['Codes are verified server-side', 'Expired codes return 422'],
     daysAgo: 4,
+    writes: ['src/checkout/discount.ts', 'test/discount.test.ts'],
   },
   {
     id: 't-2e91aa',
@@ -131,6 +147,7 @@ export const TASKS: DemoTask[] = [
     description: 'Cart lives in React state today, so a refresh loses it.',
     criteria: [],
     daysAgo: 3,
+    writes: ['src/cart/CartProvider.ts'],
   },
   {
     id: 't-58cc03',
@@ -146,6 +163,7 @@ export const TASKS: DemoTask[] = [
       'Searching a full SKU returns fuzzy matches first, which is never what anyone wants.',
     criteria: [],
     daysAgo: 2,
+    writes: ['src/search/rank.ts'],
   },
   {
     id: 't-1d77e5',
@@ -164,6 +182,7 @@ export const TASKS: DemoTask[] = [
     description: 'Rebuilds are slow and cold starts hit the database hard.',
     criteria: [],
     daysAgo: 3,
+    writes: ['src/search/index.ts', 'src/db/client.ts'],
   },
   {
     id: 't-8ac410',
@@ -178,6 +197,7 @@ export const TASKS: DemoTask[] = [
     description: 'One client can currently issue unbounded queries.',
     criteria: [],
     daysAgo: 3,
+    writes: ['src/server/routes.ts'],
   },
   {
     id: 't-71ff03',
@@ -192,6 +212,7 @@ export const TASKS: DemoTask[] = [
     description: 'The load balancer needs something cheap to poll.',
     criteria: [],
     daysAgo: 8,
+    writes: ['src/server/routes.ts'],
   },
   {
     id: 't-0c9b88',
@@ -207,6 +228,7 @@ export const TASKS: DemoTask[] = [
       'Hyphens were being stripped before tokenisation, so "AB-1200" matched nothing.',
     criteria: [],
     daysAgo: 6,
+    writes: ['src/search/tokenize.ts', 'test/search.test.ts'],
   },
   {
     id: 't-4e01af',
@@ -221,6 +243,7 @@ export const TASKS: DemoTask[] = [
     description: 'No visibility into which queries are the slow ones.',
     criteria: [],
     daysAgo: 7,
+    writes: ['src/db/client.ts'],
   },
 ];
 
@@ -265,6 +288,7 @@ function frontmatter(task: DemoTask): string {
     `created: ${created}`,
     `updated: ${updated}`,
     'external: null',
+    `writes: [${task.writes.join(', ')}]`,
     '---',
     '',
     '',
