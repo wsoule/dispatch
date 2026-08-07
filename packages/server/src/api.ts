@@ -305,6 +305,12 @@ function validateTaskFields(
     'acceptanceCriteria'
   );
   if (acceptanceError) return acceptanceError;
+  // Rejected outright rather than validated: `derivedFrom` says the server
+  // synthesized this task from an external artifact (see TaskMeta), which no
+  // request can make true of a task a client is asking it to write.
+  if (value.derivedFrom !== undefined) {
+    return 'invalid derivedFrom: only the server sets it, when it synthesizes a task';
+  }
   return null;
 }
 
