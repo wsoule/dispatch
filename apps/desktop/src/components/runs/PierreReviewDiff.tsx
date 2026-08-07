@@ -739,8 +739,8 @@ export function PierreReviewDiff({
         }
       />
       <SelectionActions
-        containerRef={containerRef}
         selection={codeSelection}
+        anchor={selected?.anchor ?? null}
         actions={selectionActions}
       />
     </div>

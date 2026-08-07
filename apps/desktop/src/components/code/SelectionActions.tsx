@@ -1,6 +1,6 @@
-import type { ReactNode, RefObject } from 'react';
+import type { ReactNode } from 'react';
 
-import { useShadowSelectionRect } from './useShadowSelectionRect';
+import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 
 /** A selected span of code in a diff: which file, which lines, and the text itself. This is a
@@ -10,6 +10,24 @@ export interface CodeSelection {
   startLine: number;
   endLine: number;
   text: string;
+}
+
+/**
+ * Where to put the bar, in the coordinate space of whatever element it is rendered inside.
+ *
+ * Measured from the rendered rows the selection crosses rather than from the selection itself: a
+ * `Range` spanning a shadow boundary is exactly what made the earlier positioning both
+ * untestable and, in the app, silently absent, while an element's own
+ * `getBoundingClientRect()` behaves the same either side of a shadow root.
+ */
+export interface SelectionAnchor {
+  /** Top of the first crossed row — the bar hangs above this. */
+  top: number;
+  /** Bottom of the last crossed row — where the bar drops to when there is no room above. */
+  bottom: number;
+  left: number;
+  /** Of the container, so the bar can be kept from running off its right edge. */
+  width: number;
 }
 
 /** One control on the floating action bar. The caller supplies the full action — label, icon,
@@ -22,43 +40,54 @@ export interface SelectionAction {
 }
 
 interface SelectionActionsProps {
-  containerRef: RefObject<HTMLElement | null>;
   selection: CodeSelection | null;
+  /** `null` renders the bar unpositioned rather than not at all — a visible control in the wrong
+   * place is still reachable, an absent one is not. */
+  anchor: SelectionAnchor | null;
   actions: SelectionAction[];
 }
 
+// The bar is one row of small buttons; these are what it takes up before it renders, which is
+// the only moment its placement can be decided from. Approximate on purpose: they decide
+// above-vs-below and how far left to pull the bar, and being a few pixels out costs nothing,
+// while measuring would mean rendering it somewhere wrong first.
+const BAR_HEIGHT = 40;
+const BAR_WIDTH = 260;
+
 /**
  * Floating action bar shown over a code selection. Deliberately diff-agnostic: it takes its
- * actions as data from the caller and knows nothing about chat, comments, runs, or Pierre — that
- * knowledge lives entirely in `useShadowSelectionRect` and in whatever `onInvoke` callbacks the
- * caller passes in. That split is what lets this render in a test with no server, no run, and no
- * Pierre.
+ * actions and its position as data from the caller and knows nothing about chat, comments, runs,
+ * or Pierre. That split is what lets this render in a test with no server, no run, and no Pierre.
+ *
+ * Placement follows the same shape as Pierre's own editor widget: prefer above the selection,
+ * drop below it when there is no room, and never let it run off the side.
  */
 export function SelectionActions({
-  containerRef,
   selection,
+  anchor,
   actions,
 }: SelectionActionsProps) {
-  const rect = useShadowSelectionRect(containerRef);
-
   if (selection === null) return null;
 
-  // `rect` is null under happy-dom (no layout) and, defensively, whenever the shadow-DOM
-  // geometry can't be resolved. The bar still renders — just unpositioned — rather than
-  // disappearing, since a caller-visible action bar is more useful than none.
+  // Above the first row unless it would be clipped by the top of the container, in which case
+  // below the last row — the same preference/fallback the editor's own widget uses.
+  const placeAbove = anchor !== null && anchor.top >= BAR_HEIGHT;
   const style =
-    rect === null
+    anchor === null
       ? undefined
       : {
-          top: rect.top,
-          left: rect.left,
+          top: placeAbove ? anchor.top : anchor.bottom,
+          left: Math.max(0, Math.min(anchor.left, anchor.width - BAR_WIDTH)),
         };
 
   return (
     <div
       role="toolbar"
       aria-label="Selection actions"
-      className="bg-popover absolute z-50 flex -translate-y-full gap-1 rounded-md border p-1 shadow-md"
+      className={cn(
+        'bg-popover absolute z-50 flex gap-1 rounded-md border p-1 shadow-md',
+        placeAbove && '-translate-y-full'
+      )}
       style={style}
     >
       {actions.map((action) => (
