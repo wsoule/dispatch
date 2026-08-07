@@ -1,4 +1,9 @@
-import type { PrDetail, PrReviewEvent, RunMeta } from '@dispatch/client';
+import type {
+  Finding,
+  PrDetail,
+  PrReviewEvent,
+  RunMeta,
+} from '@dispatch/client';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
@@ -159,6 +164,63 @@ describe('PrReviewPanel agent review', () => {
     fireEvent.click(screen.getByRole('button', { name: /review with agent/i }));
     expect(screen.getByText(/other-org/)).toBeDefined();
     expect(confirms).toEqual([]);
+  });
+});
+
+// A located finding also lands as a line comment on the diff. An unlocated
+// one — "this whole approach is wrong" — has nowhere to anchor, and a PR has
+// no run findings panel behind it, so this section is the only place it
+// reaches the user.
+describe('PrReviewPanel agent findings', () => {
+  function finding(over: Partial<Finding>): Finding {
+    return {
+      id: 'f-1',
+      taskId: 't-abc123',
+      runId: 'r-review1',
+      severity: 'critical',
+      title: 'the whole approach leaks the token',
+      detail: 'no single line is wrong; the design is',
+      file: null,
+      line: null,
+      round: 0,
+      verdict: 'open',
+      created: '2026-08-07T00:00:00Z',
+      ...over,
+    } as Finding;
+  }
+
+  function renderWithFindings(findings: Finding[]) {
+    render(
+      <PrReviewPanel
+        detail={DETAIL}
+        loading={false}
+        error={null}
+        onReview={() => Promise.resolve()}
+        onComment={() => Promise.resolve()}
+        onAgentReview={() => Promise.resolve(DISPATCHED)}
+        findings={findings}
+      />
+    );
+  }
+
+  test('shows an unlocated finding the diff could never carry', () => {
+    renderWithFindings([finding({})]);
+    expect(screen.getByText(/leaks the token/)).toBeDefined();
+    expect(screen.getByText(/the design is/)).toBeDefined();
+  });
+
+  test('names the file and line of a located one', () => {
+    renderWithFindings([
+      finding({ id: 'f-2', file: 'src/a.ts', line: 12, title: 'off by one' }),
+    ]);
+    expect(screen.getByText('src/a.ts:12')).toBeDefined();
+  });
+
+  // An empty list means no review has run. Rendering nothing at all is right;
+  // a clean bill of health would be a lie.
+  test('says nothing when no review has run', () => {
+    renderWithFindings([]);
+    expect(screen.queryAllByText(/what the agent found/i).length).toBe(0);
   });
 });
 
