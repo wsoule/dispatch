@@ -45,6 +45,7 @@
     "*.patch",
     "README",
     ".dispatch",
-    ".mcp.json"
+    ".mcp.json",
+    "packages/demo/storefront-src"
   ]
 }

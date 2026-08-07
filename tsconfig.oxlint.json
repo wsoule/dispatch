@@ -13,6 +13,7 @@
     "**/.source/**",
     "**/.vinxi/**",
     "**/.output/**",
-    "**/.vercel/**"
+    "**/.vercel/**",
+    "packages/demo/storefront-src/**"
   ]
 }
