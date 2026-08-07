@@ -100,7 +100,11 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
   // this panel must agree with it, not contradict it. `resolved` is false
   // both while the query is still in flight and when it is disabled (no
   // API client yet), so neither case renders as a false "No files
-  // affected." — see the terminal-false-empty bug this replaced.
+  // affected." — see the terminal-false-empty bug this replaced. `reason`
+  // is threaded through the same way: a `no-declared-writes` or
+  // `writes-match-nothing` response already gets its own sentence from
+  // `ImpactPanel` above, so this panel must not also print "No files
+  // affected." underneath it.
   const status = useMemo(
     () =>
       resolveAffectedFilesStatus({
@@ -109,6 +113,7 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
         entries,
         filter,
         resolved: response !== undefined,
+        reason: response?.reason,
       }),
     [isError, error, entries, filter, response]
   );
@@ -218,13 +223,15 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
         <>
           <ImpactPanel client={data.client} subject={kind} id={id} />
 
-          {/* Suppressed entirely on error rather than repeating it here:
-              `ImpactPanel` immediately above already renders the real
-              failure, and a second, differently-worded error box below it
-              would just invite the two to read as disagreeing. What this
-              panel must never do is fall back to an empty state — see
+          {/* Suppressed entirely on error, and on a reason-carrying 200
+              (`no-declared-writes` / `writes-match-nothing`), rather than
+              repeating either here: `ImpactPanel` immediately above already
+              renders the real failure or the real reason, and a second,
+              differently-worded box below it would just invite the two to
+              read as disagreeing. What this panel must never do is fall
+              back to "No files affected." for either case — see
               `resolveAffectedFilesStatus`. */}
-          {status.kind !== 'error' && (
+          {status.kind !== 'error' && status.kind !== 'suppressed' && (
             <Panel>
               <PanelHeader count={shownCount}>Affected files</PanelHeader>
               <PanelRow className="flex-col items-stretch gap-1.5">
