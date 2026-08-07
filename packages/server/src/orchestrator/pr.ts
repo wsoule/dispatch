@@ -736,6 +736,17 @@ export class PrManager {
         `gh pr diff failed: ${commandErrorText(patch)}`
       );
     }
+    return { patch: patch.stdout, files: await this.listPrFilesByUrl(url) };
+  }
+
+  // The `/files` half of getPrDiffByUrl on its own — what a PR's changed
+  // paths are without paying for its whole patch, which the agent-review
+  // dispatch (which only needs the paths, as the task's `writes`) would.
+  async listPrFilesByUrl(url: string): Promise<DiffResult['files']> {
+    const location = parsePrUrl(url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${url}`);
+    }
     const listed = await this.run(this.ctx.rootDir, [
       'gh',
       'api',
@@ -760,7 +771,7 @@ export class PrManager {
     // text "[object Object]" as a file path, which would render as a
     // real-looking but garbage row in the diff UI. A malformed entry throws
     // instead, matching this function's existing fail-loudly posture.
-    const files = raw.map((item) => {
+    return raw.map((item) => {
       const filename = item.filename;
       if (typeof filename !== 'string') {
         throw new OrchestratorConflictError(
@@ -776,7 +787,33 @@ export class PrManager {
             : 'M',
       };
     });
-    return { patch: patch.stdout, files };
+  }
+
+  // A PR's description text. Deliberately not on RepoPr: `gh pr list` can
+  // return it, but carrying every open PR's full body to render 50 queue
+  // rows costs far more than one `gh pr view` at the one action that needs it.
+  async getPrBodyByUrl(url: string): Promise<string> {
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'pr',
+      'view',
+      url,
+      '--json',
+      'body',
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr view --json body failed: ${commandErrorText(result)}`
+      );
+    }
+    try {
+      const parsed = JSON.parse(result.stdout) as { body?: unknown };
+      return typeof parsed.body === 'string' ? parsed.body : '';
+    } catch {
+      throw new OrchestratorConflictError(
+        'gh pr view --json body returned invalid JSON'
+      );
+    }
   }
 
   // POST /api/runs/:id/pr/review. Submits a GitHub review on the run's PR —
@@ -855,30 +892,33 @@ export class PrManager {
   // user's answer rather than inherit a permissive default (spec Decision 3).
   async fetchPrHead(
     number: number,
-    opts: { confirmFork: boolean }
+    opts: { confirmFork: boolean; resolved?: RepoPr }
   ): Promise<{ ref: string; base: string }> {
-    const pr = await this.resolvePrForComments(number);
+    // `resolved` closes a TOCTOU window: a caller that already gated on a
+    // RepoPr hands that same snapshot back instead of paying for — and
+    // deciding against — a second `gh pr list` taken moments later.
+    const pr = opts.resolved ?? (await this.resolvePrForComments(number));
     if (pr.isCrossRepository && !opts.confirmFork) {
       throw new OrchestratorConflictError(
-        forkConfirmMessage(number, pr.headRepositoryOwner)
+        forkConfirmMessage(pr.number, pr.headRepositoryOwner)
       );
     }
     // Fully qualified, not a bare branch name: an unqualified dest DWIMs to
     // refs/heads/, which would permanently add a branch to Dispatch's own
     // branch UI per review and let `--force` clobber a same-named one.
-    const ref = `refs/dispatch/pr/${number}`;
+    const ref = `refs/dispatch/pr/${pr.number}`;
     // Force: a re-review after new commits must update `ref`, not fail.
     const fetch = await this.run(this.ctx.rootDir, [
       'git',
       'fetch',
       '--force',
       'origin',
-      `pull/${number}/head:${ref}`,
+      `pull/${pr.number}/head:${ref}`,
       pr.baseRefName,
     ]);
     if (!fetch.ok) {
       throw new OrchestratorConflictError(
-        `git fetch pull/${number}/head failed: ${commandErrorText(fetch)}`
+        `git fetch pull/${pr.number}/head failed: ${commandErrorText(fetch)}`
       );
     }
     // origin/<base>, not the bare branch: refreshed by the fetch above,
