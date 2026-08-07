@@ -839,6 +839,35 @@ describe('PierreReviewDiff — arming the action bar from the gutter', () => {
     expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
   });
+
+  // Comment is the most common review action and arming the bar already cost it a click, so it
+  // gets the shortest travel from the gutter affordance. Order is behaviour here, not styling.
+  it('puts Comment first, then Add to chat, then Copy', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    clickGutter(2);
+
+    const bar = selectionBar();
+    if (bar === null) throw new Error('the bar was not armed');
+    expect(
+      Array.from(bar.querySelectorAll('button')).map((b) => b.textContent)
+    ).toEqual(['Comment', 'Add to chat', 'Copy']);
+  });
+
+  // A GitHub PR target passes neither `onAdd` nor `onAddToChat`. The affordance used to be gated
+  // on `onAdd`, which took Copy down with commenting on exactly the surface where the reviewer
+  // cannot comment — so the gate is on the bar having anything to offer at all.
+  it('still arms with Copy alone where nothing can be commented on', () => {
+    renderForSelection({ withComposer: false });
+
+    clickGutter(2);
+
+    const bar = selectionBar();
+    if (bar === null) throw new Error('the bar was not armed');
+    expect(
+      Array.from(bar.querySelectorAll('button')).map((b) => b.textContent)
+    ).toEqual(['Copy']);
+  });
 });
 
 describe('PierreReviewDiff — a dragged line range arms the whole range', () => {
