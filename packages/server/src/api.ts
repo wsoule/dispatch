@@ -946,11 +946,9 @@ type ParsedBody<T> = { ok: true; value: T } | { ok: false; response: Response };
 // was about. Without it a comment silently drifts onto unrelated lines as
 // the agent (or a fresh push to the PR) moves things around.
 //
-// `allowPublished` is false on the PR route only. A PR comment reaches
-// GitHub through pushPrReview, which pushes what is `pending` — so a record
-// created with `pending: false` could never be pushed, and its Reply and
-// Resolve would 409 forever. The run route has no such push step and keeps
-// accepting it.
+// `allowPublished` is false on the PR route only: a comment created straight
+// to `pending: false` skips the staged-then-submitted flow the PR path is
+// built around. The run route has no push step and keeps accepting it.
 async function parseAddCommentInput(
   req: Request,
   allowPublished = true
@@ -1234,9 +1232,9 @@ async function submitReview(
     );
   }
 
-  // Only a reviewer who asked for GitHub gets the push path, where
-  // pushPrReview clears `pending` in the same step it assigns `githubId` —
-  // publishPending alongside it would split those apart. Everyone else
+  // Only a reviewer who asked for GitHub gets the push path. The two are
+  // exclusive on purpose: pushPrReview owns which comments have reached
+  // GitHub, and publishPending alongside it would obscure that. Everyone else
   // publishes locally, PR or not, and the send-back below happens either way.
   const published =
     postToGitHub && prNumber !== null
