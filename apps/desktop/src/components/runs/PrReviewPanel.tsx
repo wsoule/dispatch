@@ -133,7 +133,7 @@ function ConversationRow({ item }: { item: PrConversationItem }) {
 /**
  * What agent reviews of this PR found, open findings only.
  *
- * A located finding is also a line comment on the diff, and appears here too —
+ * A located finding is also a line comment on the diff, and shows here too —
  * this section is the whole verdict in one place. The findings that need it
  * are the unlocated ones ("this approach is wrong"): they have nowhere to
  * anchor as a comment, and a PR has no run behind it whose findings panel
