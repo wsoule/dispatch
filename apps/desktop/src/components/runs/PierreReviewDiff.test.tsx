@@ -616,6 +616,39 @@ function selectRows(
   selectBetween(first, last);
 }
 
+/**
+ * Split view — the default layout — as Pierre renders it: two `[data-code]` columns, deletions
+ * first, then additions (`DiffHunksRenderer.renderFullAST`). The drag runs from the deleted
+ * column down into the additions column, which is what a wide drag across a split diff produces
+ * and what a human hit when this feature shipped with the bar refusing anything that touched a
+ * deleted line.
+ */
+function selectAcrossSplitColumns(): void {
+  const pre = document.createElement('pre');
+  const deletions = document.createElement('code');
+  deletions.setAttribute('data-code', '');
+  deletions.setAttribute('data-deletions', '');
+  const additions = document.createElement('code');
+  additions.setAttribute('data-code', '');
+  additions.setAttribute('data-additions', '');
+  pre.append(deletions, additions);
+  rowHost().appendChild(pre);
+
+  const deleted = appendRow(deletions, 4, 'const old = 1;', 'change-deletion');
+  appendRow(deletions, 5, 'const older = 0;', 'change-deletion');
+  // A context line sits in both columns with a different number in each; only the additions
+  // column's number is a line in the code under review.
+  appendRow(deletions, 6, '  shared();', 'context');
+  appendRow(additions, 7, '  shared();', 'context');
+  appendRow(additions, 8, 'const fresh = 2;');
+  const lastAdded = appendRow(additions, 9, 'const newer = 3;');
+
+  selectBetween(
+    deleted.firstChild?.firstChild as Node,
+    lastAdded.firstChild?.firstChild as Node
+  );
+}
+
 /** A selection with no diff row above it: what a shadow-DOM surface hands back when the engine
  * retargets the range to its host, and what a selection outside the diff looks like. */
 function selectLooseText(text: string, host?: Element): void {
@@ -749,6 +782,28 @@ describe('PierreReviewDiff — the selection action bar', () => {
       file: 'a.ts',
       startLine: 12,
       endLine: 13,
+    });
+  });
+
+  // Split is the default layout, and its two columns are separate subtrees, so a drag down the
+  // additions column routinely begins or ends in the deleted one. Refusing those selections
+  // suppressed the bar for essentially every multi-line drag in the default view — which is the
+  // failure a human saw on screen.
+  it('arms in split view and names only the additions-side lines', async () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    selectAcrossSplitColumns();
+    await settle();
+
+    expect(selectionBar()).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+    expect(attached[0]).toMatchObject({
+      file: 'a.ts',
+      // 7 is the context line's additions-side number, not the 6 the deleted column shows for
+      // the same line; 4 and 5 are deletions and are not lines here at all.
+      startLine: 7,
+      endLine: 9,
     });
   });
 
