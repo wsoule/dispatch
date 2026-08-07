@@ -8,6 +8,12 @@ import type { ImpactReach } from '@dispatch/client';
 // in sync by reading the server source as text at test time, the same
 // mechanism packages/client/test/server-parity.test.ts already uses for
 // IMPACT_SUBJECT_KINDS.
+//
+// The "coverage" sentence below relates two differently-computed sets, so
+// treat it as an approximation, not an exact ratio: `ReviewRunner` caps a
+// round-robin union of dependents with no hop limit, while `reach` caps at
+// DEFAULT_REACH's 5 hops / 500 files merged by shortest hop. They can
+// disagree on which files count at all, not just how many.
 export const DEFAULT_REVIEW_CAP = 20;
 
 /** What `ImpactPanel` renders: numbers plus wording that has already been
@@ -63,9 +69,12 @@ export function summarizeImpact(
     ? `${reach.count}+ file${reach.count === 1 ? '' : 's'} (capped)`
     : `${reach.count} file${reach.count === 1 ? '' : 's'} · ${reach.maxHops} hop${reach.maxHops === 1 ? '' : 's'}`;
 
+  // A truncated reach's count is itself a lower bound, so the denominator
+  // must carry the same `+` the headline label does — otherwise a capped
+  // "500+ files" reads next to an exact-looking "of 500" underneath it.
   const coverage =
     reach.count > reviewCap
-      ? `review scope covered ${reviewCap} of ${reach.count}`
+      ? `review scope covered ${reviewCap} of ${reach.count}${reach.truncated ? '+' : ''}`
       : null;
 
   return {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -54,7 +54,10 @@ function authedGet(path: string): Promise<Response> {
 }
 
 describe('GET /api/impact', () => {
-  it('returns reach for a file subject', async () => {
+  it('returns reach for a file subject that exists on disk', async () => {
+    mkdirSync(join(root, 'src', 'db'), { recursive: true });
+    writeFileSync(join(root, 'src', 'db', 'client.ts'), 'export {};\n');
+
     const res = await authedGet('/api/impact?subject=file&id=src/db/client.ts');
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -62,6 +65,11 @@ describe('GET /api/impact', () => {
     };
     expect(Array.isArray(body.reach.entries)).toBe(true);
     expect(body.reach.sources).toContain('scanner');
+  });
+
+  it('a file subject that does not exist and is not tracked is a 404, not a false-empty result', async () => {
+    const res = await authedGet('/api/impact?subject=file&id=src/db/clint.ts');
+    expect(res.status).toBe(404);
   });
 
   it('an unknown subject kind is a 400', async () => {
@@ -99,7 +107,7 @@ describe('GET /api/impact', () => {
   });
 
   it(
-    'a broken git checkout surfaces a controlled error, not a 500 and ' +
+    'a broken git checkout surfaces a controlled error, not a 502 and ' +
       'not a false-empty result',
     async () => {
       const created = await fetch(`${baseUrl}/api/tasks`, {
@@ -115,8 +123,10 @@ describe('GET /api/impact', () => {
       rmSync(join(root, '.git'), { recursive: true, force: true });
 
       const res = await authedGet(`/api/impact?subject=task&id=${meta.id}`);
-      expect(res.status).toBe(502);
-      expect(res.status).not.toBe(500);
+      // 500, not 502: there is no upstream here, just the daemon's own repo,
+      // and a corrupt .git will not self-heal on retry like a 502 implies.
+      expect(res.status).toBe(500);
+      expect(res.status).not.toBe(502);
       const body = await json<{ error: string; seeds?: unknown }>(res);
       expect(typeof body.error).toBe('string');
       // A stale/false "nothing is affected" would look like a seeds array.

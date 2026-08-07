@@ -48,6 +48,14 @@ test('coverage appears only when the review cap actually bit', () => {
   );
 });
 
+test('a truncated result carries the + into its coverage denominator too', () => {
+  // Reproduces the reported bug: "500+ files (capped)" above "review scope
+  // covered 20 of 500" reads as an exact denominator on a truncated result.
+  const s = summarizeImpact({ ...base, count: 500, truncated: true }, 20);
+  expect(s.label).toContain('500+');
+  expect(s.coverage).toBe('review scope covered 20 of 500+');
+});
+
 test('an empty reach has no coverage line and reads as zero', () => {
   const s = summarizeImpact({ ...base, entries: [], count: 0, maxHops: 0 }, 20);
   expect(s.total).toBe(0);
