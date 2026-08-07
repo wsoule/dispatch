@@ -4,19 +4,18 @@ import type {
   ReviewComment,
   RunMeta,
 } from '@dispatch/client';
-import type { CodeViewItem, FileContents } from '@pierre/diffs';
-import { processPatch } from '@pierre/diffs';
+import type {
+  CodeViewItem,
+  FileContents,
+  FileDiffMetadata,
+} from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
-import { CodeView, EditProvider } from '@pierre/diffs/react';
 import { MessageSquarePlus, Pencil, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ErrorBoundary } from '../shell/ErrorBoundary';
-import { PierreWorkerPool } from './PierreWorkerPool';
+import { DiffSurface, useParsedPatchFiles } from '../code/DiffSurface';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
-import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
-import { toDiffRenderOptions } from '@/lib/diffDisplay';
 import { createReviewEditor } from '@/lib/pierreEditor';
 import type { Annotation } from '@/lib/reviewDiffItems';
 import {
@@ -158,7 +157,6 @@ export function PierreReviewDiff({
   // apart from the ones that must not (see `decideEditSave`).
   const saveRequestRef = useRef<string | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
-  const [diffDisplay] = useDiffDisplaySettings();
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
   // run's worktree, which is what makes unchanged-region expansion (and editing) possible at
   // all.
@@ -166,10 +164,9 @@ export function PierreReviewDiff({
     client ?? null,
     runId
   );
-  const diffOptions = useMemo(
-    () => ({ ...toDiffRenderOptions(diffDisplay), loadDiffFiles }),
-    [diffDisplay, loadDiffFiles]
-  );
+  // Merged over the reviewer's own display settings by `DiffSurface`; only the loader is
+  // review-specific.
+  const diffOptions = useMemo(() => ({ loadDiffFiles }), [loadDiffFiles]);
 
   // The one place a suggestion actually gets applied — shared by every `ReviewThread`'s own
   // Apply button AND the composer's `Apply now`, so there is exactly one call site to keep the
@@ -194,18 +191,12 @@ export function PierreReviewDiff({
     [onApply, invalidate]
   );
 
-  const files = useMemo(() => {
-    try {
-      const parsed = processPatch(patch, 'review');
-      return only === undefined
-        ? parsed.files
-        : parsed.files.filter((f) => f.name === only);
-    } catch {
-      // A patch Pierre cannot parse should cost the diff, not the whole review surface — the
-      // comment panel beside it still works.
-      return [];
-    }
-  }, [patch, only]);
+  // Parsed here rather than left to `DiffSurface` because the file list is read outside
+  // item-building too — the pencil gate and the stale-`editing` effect below both need it — and
+  // handing the result back down keeps that one parse shared. `'review'` namespaces the worker
+  // pool's render cache for this patch.
+  const parsed = useParsedPatchFiles(patch, only, 'review');
+  const files = parsed.files;
 
   // Edit mode at all requires a run that's done and not yet reviewed — mirrors how
   // `RunReviewView` hides its PR action when the project can't open one: hidden outright
@@ -218,10 +209,14 @@ export function PierreReviewDiff({
     isTerminalRunState(meta.state) &&
     meta.reviewedAt === undefined;
 
-  const items = useMemo(
-    () =>
+  // A callback rather than an array: `DiffSurface` owns the parse and calls this with the files
+  // it produced. Memoized on exactly the review state `buildItems` reads, because `DiffSurface`
+  // keys its own item memo on this function's identity — a fresh one each render would rebuild
+  // every item of a large diff on every keystroke in a composer.
+  const items = useCallback(
+    (parsedFiles: FileDiffMetadata[]) =>
       buildItems({
-        files,
+        files: parsedFiles,
         comments,
         findings,
         composing,
@@ -229,7 +224,7 @@ export function PierreReviewDiff({
         editing,
         loaded,
       }),
-    [files, comments, findings, composing, viewed, editing, loaded]
+    [comments, findings, composing, viewed, editing, loaded]
   );
 
   const renderAnnotation = useCallback(
@@ -590,61 +585,38 @@ export function PierreReviewDiff({
     });
   }, [scrollTo]);
 
-  if (files.length === 0) {
-    return (
-      <p className="text-muted-foreground p-4 text-[12.5px]">
-        No changes to show.
-      </p>
-    );
-  }
-
   return (
-    <ErrorBoundary>
-      <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
-        {/* `EditProvider` has to be an ancestor of `CodeView` — it's how `CodeView` resolves the
-            editor factory an `edit: true` item needs. `createReviewEditor` is the one place
-            those options are decided, shared with every other editable surface. */}
-        <EditProvider createEditor={createReviewEditor}>
-          <CodeView<Annotation>
-            ref={viewRef}
-            items={items}
-            options={diffOptions}
-            onSelectedLinesChange={(sel) =>
-              setSelection(
-                sel === null
-                  ? null
-                  : {
-                      start: sel.range.start,
-                      end: sel.range.end,
-                      side: sel.range.side,
-                    }
-              )
-            }
-            renderAnnotation={renderAnnotation}
-            renderHeaderMetadata={renderHeaderMetadata}
-            onItemEditComplete={handleEditComplete}
-            // No `onAdd` means no destination for a comment, so the hover "+"
-            // that starts one is not offered at all.
-            renderGutterUtility={
-              onAdd === undefined ? undefined : renderGutterUtility
-            }
-            // `CodeView` attaches its own scroll listener to this exact element and reads its
-            // own `scrollTop` to decide which virtualized rows to render — an ancestor owning
-            // the `overflow-auto` instead leaves this element's `scrollTop` permanently 0, so
-            // the window of rendered rows never advances past the first screenful. This element
-            // must be the actual scroll container.
-            //
-            // `flex-1` rather than `size-full`/`h-full`: the caller (`ReviewView`) makes this
-            // element's parent a flex column, so this sizes directly off that container's own
-            // resolved height. A percentage height here would instead have to resolve through
-            // that flex column's own height, which itself was only ever a stretch-resolved grid
-            // cell — a chain some engines collapse to zero rather than a real pixel value, which
-            // reads as this pane rendering only its (non-virtualized) file header and nothing
-            // else. `flex-1` sizes off the immediate container directly, with no such chain.
-            className="min-h-0 w-full flex-1 overflow-auto"
-          />
-        </EditProvider>
-      </PierreWorkerPool>
-    </ErrorBoundary>
+    // Everything shell-shaped — the worker pool, the crash boundary, the display settings, the
+    // empty/parse-error states, the scroll container — belongs to `DiffSurface`; what stays here
+    // is only what "review" means on top of a diff. `createReviewEditor` is the one place the
+    // editor's options are decided, shared with every other editable surface.
+    <DiffSurface<Annotation>
+      patch={patch}
+      parsed={parsed}
+      only={only}
+      items={items}
+      options={diffOptions}
+      viewRef={viewRef}
+      createEditor={createReviewEditor}
+      onItemEditComplete={handleEditComplete}
+      onSelectedLinesChange={(sel) =>
+        setSelection(
+          sel === null
+            ? null
+            : {
+                start: sel.range.start,
+                end: sel.range.end,
+                side: sel.range.side,
+              }
+        )
+      }
+      renderAnnotation={renderAnnotation}
+      renderHeaderMetadata={renderHeaderMetadata}
+      // No `onAdd` means no destination for a comment, so the hover "+" that starts one is not
+      // offered at all.
+      renderGutterUtility={
+        onAdd === undefined ? undefined : renderGutterUtility
+      }
+    />
   );
 }
