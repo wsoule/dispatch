@@ -2136,10 +2136,55 @@ function liveReviewRunForPr(ctx: ApiContext, number: number): RunMeta | null {
   return live ?? null;
 }
 
+// PRs whose review dispatch is in flight, keyed `<rootDir>\0<number>`.
+// liveReviewRunForPr can only see runs that already exist, and five awaits
+// (two `gh` reads, the fetch, the merge-base, the worktree cut) separate that
+// check from the first one — a double click lands both requests inside that
+// window. Module scope because the window belongs to the process, not to a
+// request; the rootDir prefix keeps two daemons in one process apart.
+const prReviewDispatchesInFlight = new Set<string>();
+
+function prDispatchKey(ctx: ApiContext, number: number): string {
+  return `${ctx.rootDir}\0${number}`;
+}
+
+// Takes the PR's dispatch slot, or reports that someone else holds it. Purely
+// synchronous, which is what makes it a claim rather than a second check.
+function claimPrReviewDispatch(ctx: ApiContext, number: number): boolean {
+  const key = prDispatchKey(ctx, number);
+  if (prReviewDispatchesInFlight.has(key)) return false;
+  prReviewDispatchesInFlight.add(key);
+  return true;
+}
+
 // POST /api/prs/:number/review-agent — hand a repo PR to a review agent.
-// The gate is the first thing past resolution deliberately: when it refuses,
-// no ref, worktree, task or run exists yet, so there is nothing to undo.
+// The claim is taken before the first await and released once the dispatch
+// has either produced a run or rolled itself back, so a failed dispatch never
+// locks the PR out of being reviewed again.
 async function startPrAgentReview(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  // A number that cannot name a PR 404s below having created nothing, so
+  // there is no dispatch to claim — and every such request would collide on
+  // one key if there were.
+  if (number === null) return await runPrAgentReview(req, ctx, numberParam);
+  if (!claimPrReviewDispatch(ctx, number)) {
+    return errorResponse(409, `PR #${number} is already being reviewed`);
+  }
+  try {
+    return await runPrAgentReview(req, ctx, numberParam);
+  } finally {
+    prReviewDispatchesInFlight.delete(prDispatchKey(ctx, number));
+  }
+}
+
+// The dispatch itself, with this PR's slot already claimed. The fork gate is
+// the first thing past resolution deliberately: when it refuses, no ref,
+// worktree, task or run exists yet, so there is nothing to undo.
+async function runPrAgentReview(
   req: Request,
   ctx: ApiContext,
   numberParam: string

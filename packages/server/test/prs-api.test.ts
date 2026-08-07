@@ -1687,7 +1687,10 @@ function startWithCallLog(
   script: FakeExecutorScript = { finish: { state: 'finished' } },
   // Bodies pushPrReview POSTed, for the end-to-end test that follows one
   // finding from the agent all the way into that request's `comments[]`.
-  postedReviewPayloads: Record<string, unknown>[] = []
+  postedReviewPayloads: Record<string, unknown>[] = [],
+  // Awaited before each command answers, so a test can hold one request
+  // inside a specific `await` while it drives a second one.
+  onCommand: (cmd: string[]) => Promise<void> = () => Promise.resolve()
 ): Promise<string[][]> {
   const calls: string[][] = [];
   const scripted = stubRunner(
@@ -1710,6 +1713,7 @@ function startWithCallLog(
     writeDaemonFile: false,
     prCommandRunner: async (cwd, cmd) => {
       calls.push(cmd);
+      await onCommand(cmd);
       return scripted(cwd, cmd);
     },
     registerExecutors: (o) => {
@@ -2010,6 +2014,58 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     // And it refused before creating anything: still one task, one run.
     expect(tasks()).toHaveLength(1);
     expect(orchestrator.list()).toHaveLength(1);
+  });
+
+  // The live-run check above only sees runs that exist. Between it and the
+  // run there are five awaits (`gh pr view`, `gh api …/files`, `git fetch`,
+  // `git merge-base`, the worktree cut), and a double click lands both
+  // requests inside that window — where neither can see the other.
+  it('refuses a second review dispatched concurrently with the first', async () => {
+    // Holds the first request inside its `gh pr view` await — the first of
+    // the five it makes before any task or run exists — until released.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let inWindow = () => {};
+    const reached = new Promise<void>((resolve) => {
+      inWindow = resolve;
+    });
+    let firstView = true;
+    await startWithCallLog({}, STAYS_LIVE, [], async (cmd) => {
+      if (cmd[1] !== 'pr' || cmd[2] !== 'view' || !firstView) return;
+      firstView = false;
+      inWindow();
+      await held;
+    });
+    createPrHeadRef(FORK_PR.number);
+
+    const first = postReviewAgent(FORK_PR.number, { confirmFork: true });
+    await reached;
+    const second = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    release();
+
+    expect((await first).status).toBe(202);
+    expect(second.status).toBe(409);
+    // One review, one task: two would file both sets of findings on the same
+    // PR and post every line comment to GitHub twice.
+    expect(tasks()).toHaveLength(1);
+    expect(orchestrator.list()).toHaveLength(1);
+  });
+
+  // The claim is released when the dispatch finishes, not held for the run's
+  // life — a failed dispatch must not lock the PR out of ever being reviewed.
+  it('lets a review start again after a failed dispatch', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+
+    // No head ref yet, so `git worktree add` fails and the dispatch rolls back.
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(409);
+    createPrHeadRef(FORK_PR.number);
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
   });
 
   // The guard is per PR, not a global "one review at a time" lock.
