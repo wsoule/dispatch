@@ -3,6 +3,7 @@ import type {
   Finding,
   ReviewComment,
   RunMeta,
+  Snippet,
 } from '@dispatch/client';
 import type {
   CodeViewItem,
@@ -10,12 +11,21 @@ import type {
   FileDiffMetadata,
 } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
-import { MessageSquarePlus, Pencil, TriangleAlert } from 'lucide-react';
+import {
+  Copy,
+  MessageSquarePlus,
+  MessagesSquare,
+  Pencil,
+  TriangleAlert,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DiffSurface, useParsedPatchFiles } from '../code/DiffSurface';
+import type { CodeSelection, SelectionAction } from '../code/SelectionActions';
+import { SelectionActions } from '../code/SelectionActions';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
+import { snippetFromSelection, snippetText } from '@/lib/conversation';
 import { createReviewEditor } from '@/lib/pierreEditor';
 import type { Annotation } from '@/lib/reviewDiffItems';
 import {
@@ -77,6 +87,12 @@ interface PierreReviewDiffProps {
    * calling a method) so the jump is declarative and survives the view remounting.
    */
   scrollTo?: { file: string; line: number; nonce: number } | null;
+  /**
+   * Where a selected range goes when the reviewer attaches it to a chat. Omitted where there is
+   * no chat on screen (a GitHub PR), which withholds that action rather than leaving it dead —
+   * the same rule `onAdd` already follows for the gutter "+".
+   */
+  onAddToChat?: (snippet: Snippet) => void;
 }
 
 /**
@@ -105,6 +121,7 @@ export function PierreReviewDiff({
   only,
   findings,
   scrollTo,
+  onAddToChat,
 }: PierreReviewDiffProps) {
   // Where a composer is currently open, keyed the same way annotations are.
   const [composing, setComposing] = useState<{
@@ -127,12 +144,17 @@ export function PierreReviewDiff({
     Map<string, ApplySuggestionOutcome>
   >(new Map());
   // The live line selection. Pierre owns the drag; this only reads it, so that clicking the
-  // gutter + on a selected range comments on the whole range rather than the one line hovered.
+  // gutter + on a selected range comments on the whole range rather than the one line hovered,
+  // and so the floating action bar has a range to act on.
   const [selection, setSelection] = useState<{
+    file: string;
     start: number;
     end: number;
     side?: string;
   } | null>(null);
+  // The selected lines' code, once the file's new side has loaded. `null` keeps the action bar
+  // away entirely: an attachment with no text would say nothing about the code it names.
+  const [selectionCode, setSelectionCode] = useState<string | null>(null);
   // The one file currently in edit mode, or the one whose load is in flight from a pencil
   // click — only ever one of each, see `buildItems`'s doc comment for why.
   const [editing, setEditing] = useState<string | null>(null);
@@ -157,6 +179,8 @@ export function PierreReviewDiff({
   // apart from the ones that must not (see `decideEditSave`).
   const saveRequestRef = useRef<string | null>(null);
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
+  // The positioning frame for the floating selection bar, which is absolutely placed inside it.
+  const containerRef = useRef<HTMLDivElement>(null);
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
   // run's worktree, which is what makes unchanged-region expansion (and editing) possible at
   // all.
@@ -334,6 +358,26 @@ export function PierreReviewDiff({
     ]
   );
 
+  // Opens the line-comment composer on `file`, optionally over a range. One function because
+  // there are now two ways in — the gutter "+" and the selection bar's Comment — and both must
+  // seed the suggestion editor from the same contents fetch rather than growing a second path.
+  const openComposer = useCallback(
+    (file: string, line: number, startLine?: number) => {
+      setComposing({
+        file,
+        line,
+        ...(startLine === undefined ? {} : { startLine }),
+      });
+      // Cleared first so a previous compose's contents can't briefly seed this one's
+      // suggestion editor while the new fetch is in flight.
+      setComposerContents(null);
+      void ensureLoaded(file).then((result) => {
+        setComposerContents(result?.contents ?? null);
+      });
+    },
+    [ensureLoaded]
+  );
+
   const renderGutterUtility = useCallback(
     (
       getHoveredLine: () => { lineNumber?: number; side?: string } | undefined,
@@ -359,19 +403,11 @@ export function PierreReviewDiff({
               selection.side !== 'deletions' &&
               line >= Math.min(selection.start, selection.end) &&
               line <= Math.max(selection.start, selection.end);
-            setComposing({
-              file: item.id,
-              line: inRange ? Math.max(selection.start, selection.end) : line,
-              ...(inRange
-                ? { startLine: Math.min(selection.start, selection.end) }
-                : {}),
-            });
-            // Cleared first so a previous compose's contents can't briefly seed this one's
-            // suggestion editor while the new fetch is in flight.
-            setComposerContents(null);
-            void ensureLoaded(item.id).then((result) => {
-              setComposerContents(result?.contents ?? null);
-            });
+            openComposer(
+              item.id,
+              inRange ? Math.max(selection.start, selection.end) : line,
+              inRange ? Math.min(selection.start, selection.end) : undefined
+            );
           }}
           className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center"
         >
@@ -379,7 +415,7 @@ export function PierreReviewDiff({
         </button>
       );
     },
-    [selection, editing, ensureLoaded]
+    [selection, editing, openComposer]
   );
 
   // Begins an edit session for `file`, gated on its contents actually being in hand — see
@@ -572,6 +608,101 @@ export function PierreReviewDiff({
     ]
   );
 
+  // Records a new selection and drops the code the last one resolved to, in one batch — an
+  // unbatched clear would leave one frame where the bar showed the new line numbers over the
+  // previous selection's text, and a click in that frame would attach the wrong code.
+  const handleSelectedLinesChange = useCallback(
+    (
+      sel: {
+        id: string;
+        range: { start: number; end: number; side?: string };
+      } | null
+    ) => {
+      setSelectionCode(null);
+      setSelection(
+        sel === null
+          ? null
+          : {
+              file: sel.id,
+              start: sel.range.start,
+              end: sel.range.end,
+              side: sel.range.side,
+            }
+      );
+    },
+    []
+  );
+
+  // Reads the selected lines out of the file's new side. A deletions-side range is skipped
+  // outright: that text is not in the new file, so there is nothing here to quote.
+  useEffect(() => {
+    if (selection === null || selection.side === 'deletions') {
+      setSelectionCode(null);
+      return;
+    }
+    let live = true;
+    const start = Math.min(selection.start, selection.end);
+    const end = Math.max(selection.start, selection.end);
+    void ensureLoaded(selection.file).then((result) => {
+      if (!live) return;
+      setSelectionCode(
+        result === null ? null : snippetText(result.contents, start, end)
+      );
+    });
+    return () => {
+      live = false;
+    };
+  }, [selection, ensureLoaded]);
+
+  // What the action bar acts on. Held back until the code is in hand so no action can produce
+  // an attachment (or a copy) that names lines but carries none of them.
+  const codeSelection = useMemo<CodeSelection | null>(() => {
+    if (selection === null || selectionCode === null) return null;
+    return {
+      file: selection.file,
+      startLine: Math.min(selection.start, selection.end),
+      endLine: Math.max(selection.start, selection.end),
+      text: selectionCode,
+    };
+  }, [selection, selectionCode]);
+
+  // Supplied as data, so `SelectionActions` itself never learns what chat, copy or comment
+  // mean. Each is withheld rather than shown dead where it has nowhere to go.
+  const selectionActions = useMemo<SelectionAction[]>(() => {
+    const actions: SelectionAction[] = [];
+    if (onAddToChat !== undefined) {
+      actions.push({
+        id: 'chat',
+        label: 'Add to chat',
+        icon: <MessagesSquare className="size-3" />,
+        onInvoke: (sel) => onAddToChat(snippetFromSelection(sel)),
+      });
+    }
+    actions.push({
+      id: 'copy',
+      label: 'Copy',
+      icon: <Copy className="size-3" />,
+      onInvoke: (sel) => {
+        // Absent outside a secure context; a failed copy is not worth taking the review down.
+        void navigator.clipboard?.writeText(sel.text).catch(() => undefined);
+      },
+    });
+    if (onAdd !== undefined) {
+      actions.push({
+        id: 'comment',
+        label: 'Comment',
+        icon: <MessageSquarePlus className="size-3" />,
+        onInvoke: (sel) =>
+          openComposer(
+            sel.file,
+            sel.endLine,
+            sel.startLine === sel.endLine ? undefined : sel.startLine
+          ),
+      });
+    }
+    return actions;
+  }, [onAddToChat, onAdd, openComposer]);
+
   // Declarative jump: the effect fires when `scrollTo` changes identity, so clicking the same
   // thread twice still scrolls (the caller bumps `nonce`).
   useEffect(() => {
@@ -586,37 +717,39 @@ export function PierreReviewDiff({
   }, [scrollTo]);
 
   return (
-    // Everything shell-shaped — the worker pool, the crash boundary, the display settings, the
-    // empty/parse-error states, the scroll container — belongs to `DiffSurface`; what stays here
-    // is only what "review" means on top of a diff. `createReviewEditor` is the one place the
-    // editor's options are decided, shared with every other editable surface.
-    <DiffSurface<Annotation>
-      patch={patch}
-      parsed={parsed}
-      only={only}
-      items={items}
-      options={diffOptions}
-      viewRef={viewRef}
-      createEditor={createReviewEditor}
-      onItemEditComplete={handleEditComplete}
-      onSelectedLinesChange={(sel) =>
-        setSelection(
-          sel === null
-            ? null
-            : {
-                start: sel.range.start,
-                end: sel.range.end,
-                side: sel.range.side,
-              }
-        )
-      }
-      renderAnnotation={renderAnnotation}
-      renderHeaderMetadata={renderHeaderMetadata}
-      // No `onAdd` means no destination for a comment, so the hover "+" that starts one is not
-      // offered at all.
-      renderGutterUtility={
-        onAdd === undefined ? undefined : renderGutterUtility
-      }
-    />
+    // A flex column, not a plain box: the bar is positioned against this element, and
+    // `DiffSurface`'s scroll container sizes itself off a parent that resolves its own height.
+    <div
+      ref={containerRef}
+      className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col"
+    >
+      {/* Everything shell-shaped — the worker pool, the crash boundary, the display settings,
+          the empty/parse-error states, the scroll container — belongs to `DiffSurface`; what
+          stays here is only what "review" means on top of a diff. `createReviewEditor` is the
+          one place the editor's options are decided, shared with every other editable surface. */}
+      <DiffSurface<Annotation>
+        patch={patch}
+        parsed={parsed}
+        only={only}
+        items={items}
+        options={diffOptions}
+        viewRef={viewRef}
+        createEditor={createReviewEditor}
+        onItemEditComplete={handleEditComplete}
+        onSelectedLinesChange={handleSelectedLinesChange}
+        renderAnnotation={renderAnnotation}
+        renderHeaderMetadata={renderHeaderMetadata}
+        // No `onAdd` means no destination for a comment, so the hover "+" that starts one is not
+        // offered at all.
+        renderGutterUtility={
+          onAdd === undefined ? undefined : renderGutterUtility
+        }
+      />
+      <SelectionActions
+        containerRef={containerRef}
+        selection={codeSelection}
+        actions={selectionActions}
+      />
+    </div>
   );
 }
