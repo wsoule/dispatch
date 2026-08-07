@@ -1,5 +1,15 @@
 import type { ImpactReach } from '@dispatch/client';
 
+// `ReviewRunner`'s DEPENDENT_CAP (packages/server/src/orchestrator/review.ts)
+// — the number of dependents the review agent actually saw before its
+// prompt was built. Hand-copied rather than imported, since apps/desktop
+// talks to the server over HTTP only and does not depend on
+// packages/server at runtime; server-parity.test.ts asserts the copy stays
+// in sync by reading the server source as text at test time, the same
+// mechanism packages/client/test/server-parity.test.ts already uses for
+// IMPACT_SUBJECT_KINDS.
+export const DEFAULT_REVIEW_CAP = 20;
+
 /** What `ImpactPanel` renders: numbers plus wording that has already been
  *  checked against the honesty rules (truncation, source coverage, degraded
  *  carto), so the component itself never has to reason about them. */
@@ -39,11 +49,9 @@ function describeSources(
  *  as a plain scanner result) are covered by tests without a DOM.
  *
  *  `reviewCap` is the limit `ReviewRunner` applies before it hands dependents
- *  to the review agent (`DEPENDENT_CAP` in
- *  packages/server/src/orchestrator/review.ts) — passed in rather than
- *  imported, since apps/desktop cannot depend on packages/server. `coverage`
- *  is only set once that cap actually trims what the agent saw; stating it
- *  below the real count would claim a limit that never bit. */
+ *  to the review agent — callers default it to `DEFAULT_REVIEW_CAP` above.
+ *  `coverage` is only set once that cap actually trims what the agent saw;
+ *  stating it below the real count would claim a limit that never bit. */
 export function summarizeImpact(
   reach: ImpactReach,
   reviewCap: number
