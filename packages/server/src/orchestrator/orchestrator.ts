@@ -153,6 +153,23 @@ function branchEntryStatus(meta: RunMeta | undefined): BranchEntryStatus {
 }
 
 /**
+ * Refuses to start an execute run on a task Dispatch synthesized from someone
+ * else's artifact (see TaskMeta.derivedFrom).
+ *
+ * Such a task's body is text from outside this repo — a PR description — and
+ * an execute agent acts on it with write access in a worktree off trunk. Both
+ * doors an execute run can come through call this: dispatch() for a board
+ * dispatch, and dispatchAuxRun() for the fix loop's fresh implementer. Review
+ * and verify runs, which are what these tasks exist for, are unaffected.
+ */
+function refuseExecuteOnDerivedTask(task: TaskDoc): void {
+  if (task.meta.derivedFrom === undefined) return;
+  throw new OrchestratorClientError(
+    `task ${task.meta.id} was derived from ${task.meta.derivedFrom} and cannot be executed`
+  );
+}
+
+/**
  * Coordinates the full lifecycle of orchestrator runs for one dispatch
  * project: provisioning a git worktree, starting an Executor, recording its
  * NormalizedEntry stream + state transitions to a per-run transcript, and
@@ -337,14 +354,7 @@ export class Orchestrator {
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
     }
-    // A derived task's body is text from outside this repo (a PR description),
-    // and an execute run follows its body with write access in a worktree off
-    // trunk. Aux runs — the reviews these tasks exist for — are unaffected.
-    if (task.meta.derivedFrom !== undefined) {
-      throw new OrchestratorClientError(
-        `task ${taskId} was derived from ${task.meta.derivedFrom} and cannot be executed`
-      );
-    }
+    refuseExecuteOnDerivedTask(task);
     const live = this.registry.liveRunForTask(taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(
@@ -429,8 +439,10 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
-  // Starts a non-execute run against `head` on its own throwaway branch, and
-  // leaves the task alone. `buildPrompt` runs once the worktree exists.
+  // Starts a run against `head` on its own throwaway branch, and leaves the
+  // task alone. `buildPrompt` runs once the worktree exists. Mostly non-execute
+  // kinds, but FixLoop dispatches a fresh implementer through here too — which
+  // is why the derived-task refusal below is not only on dispatch().
   dispatchAuxRun(opts: {
     taskId: string;
     kind: RunKind;
@@ -443,6 +455,7 @@ export class Orchestrator {
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${opts.taskId}`);
     }
+    if (opts.kind === 'execute') refuseExecuteOnDerivedTask(task);
     const live = this.registry.liveRunForTask(opts.taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(
