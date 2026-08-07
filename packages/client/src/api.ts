@@ -1433,6 +1433,12 @@ export interface ApiClient {
     number: number,
     input?: { confirmFork?: boolean }
   ): Promise<RunMeta>;
+  /**
+   * What agent reviews of this PR found. A located finding is also a line
+   * comment on the diff; an unlocated one ("this approach is wrong") has
+   * nowhere to anchor, so this is the only surface it reaches.
+   */
+  fetchPrFindings(number: number): Promise<Finding[]>;
   // The notes/triage hub.
   // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
   // the splitting rule has exactly one implementation. `convertInbox` reports per-item results
@@ -1924,6 +1930,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ confirmFork: input?.confirmFork === true }),
       }),
+    fetchPrFindings: (number) => request(target, `/api/prs/${number}/findings`),
     fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>
       request(target, '/api/inbox', {

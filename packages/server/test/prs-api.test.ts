@@ -1652,6 +1652,33 @@ function createPrHeadRef(number: number): string {
   return head;
 }
 
+// A review run reporting a critical finding with nowhere to anchor — "this
+// approach is wrong" — which is exactly what a line comment cannot carry.
+function reportsUnlocatedFinding(): FakeExecutorScript {
+  return {
+    steps: [
+      {
+        entry: {
+          ts: '2026-08-07T00:00:00Z',
+          kind: 'assistant',
+          text: JSON.stringify({
+            findings: [
+              {
+                severity: 'critical',
+                title: 'the whole approach leaks the token',
+                detail: 'no single line is wrong; the design is',
+                file: null,
+                line: null,
+              },
+            ],
+          }),
+        },
+      },
+    ],
+    finish: { state: 'finished' },
+  };
+}
+
 // A review run that reports one located finding. `readReviewOutput` falls back
 // to the last assistant entry holding JSON, so no findings file is needed.
 function reportsFinding(file: string, line: number): FakeExecutorScript {
@@ -1905,6 +1932,44 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     // The review run is not the thing being reviewed, so its own comment
     // file must stay empty — that is the run-target fallback firing.
     expect(stored({ kind: 'run', runId: meta.id as string })).toHaveLength(0);
+  });
+
+  // A finding with no file/line has nowhere to hang as a line comment, and a
+  // PR target has no run findings panel behind it — so without this route the
+  // agent's most serious verdicts reach no surface at all.
+  it('serves an unlocated finding that could never be a line comment', async () => {
+    await startWithCallLog(
+      { filesResult: filesResultFor('README.md') },
+      reportsUnlocatedFinding()
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+
+    const url = `${baseUrl}/api/prs/${FORK_PR.number}/findings`;
+    await waitFor(async () => (await json(await fetch(url))).length > 0);
+    const findings = await json(await fetch(url));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toContain('leaks the token');
+    expect(findings[0].file).toBeNull();
+    // Non-vacuous: this is the finding the comment store cannot hold.
+    expect(stored({ kind: 'pr', number: FORK_PR.number })).toEqual([]);
+  });
+
+  it('serves an empty findings list for a PR no agent has reviewed', async () => {
+    await startWithCallLog();
+
+    const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/findings`);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual([]);
+  });
+
+  it('404s findings for a PR number the repo does not have', async () => {
+    await startWithCallLog();
+
+    expect((await fetch(`${baseUrl}/api/prs/999/findings`)).status).toBe(404);
   });
 
   // Nothing else would ever close it: aux runs leave their task alone, so a

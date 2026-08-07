@@ -2136,6 +2136,30 @@ function liveReviewRunForPr(ctx: ApiContext, number: number): RunMeta | null {
   return live ?? null;
 }
 
+/**
+ * GET /api/prs/:number/findings — what agent reviews of this PR found.
+ *
+ * A located finding also becomes a line comment on the diff, but an unlocated
+ * one (`file`/`line` null — "this approach is wrong") has nowhere to hang, and
+ * a PR target has no run behind it to open a findings panel on. This route is
+ * the only surface those reach.
+ *
+ * Every review of a PR mints a fresh task, so findings for the same PR are
+ * gathered across all of them, newest review last.
+ */
+async function listPrFindings(
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const findings = ctx.store
+    .list()
+    .filter((doc) => isPrReviewTaskFor(doc.meta, pr.number))
+    .flatMap((doc) => ctx.findingStore.list({ taskId: doc.meta.id }));
+  return jsonResponse(findings);
+}
+
 // PRs whose review dispatch is in flight, keyed `<rootDir>\0<number>`.
 // liveReviewRunForPr can only see runs that already exist, and five awaits
 // (two `gh` reads, the fetch, the merge-base, the worktree cut) separate that
@@ -3924,6 +3948,15 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await startPrAgentReview(req, ctx, segments[1]);
+      }
+      // GET /api/prs/:number/findings — what an agent review of this PR found,
+      // including the unlocated findings no line comment could carry.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'findings' &&
+        method === 'GET'
+      ) {
+        return await listPrFindings(ctx, segments[1]);
       }
       // GET/POST /api/prs/:number/comments, PATCH .../comments/:commentId,
       // POST .../comments/:commentId/reply — the line-comment mirror's

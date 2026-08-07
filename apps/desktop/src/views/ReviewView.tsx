@@ -15,6 +15,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { repoPrsKey } from '../hooks/useDispatchProject';
 import {
   useEpicLedger,
+  usePrFindings,
   useProjectLedger,
   useTaskFindings,
 } from '../hooks/useOrchestration';
@@ -226,6 +227,9 @@ export function ReviewView({
   // What the agent review found. `useTaskFindings` already returns `data ?? []`, so this is
   // always an array — an empty one means no review has run, never "clean".
   const { findings } = useTaskFindings(data.client, data.port, run?.taskId);
+  // A PR review's task is synthesized server-side and no client holds its id,
+  // so its findings come back keyed by PR number instead.
+  const prFindings = usePrFindings(data.client, data.port, selectedPrNumber);
   const findingsByFile = useMemo(
     () => openFindingsByFile(findings),
     [findings]
@@ -368,6 +372,7 @@ export function ReviewView({
       onComment={repoPr.handleComment}
       stagedNotes={stagedNoteCount}
       onAgentReview={handleAgentPrReview}
+      findings={prFindings}
       forkOwner={
         selectedRepoPr?.isCrossRepository === true
           ? selectedRepoPr.headRepositoryOwner

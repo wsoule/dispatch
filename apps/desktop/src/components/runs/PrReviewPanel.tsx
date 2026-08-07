@@ -1,4 +1,5 @@
 import type {
+  Finding,
   PrConversationItem,
   PrDetail,
   PrReviewEvent,
@@ -13,6 +14,7 @@ import {
   GitMerge,
   GitPullRequest,
   MessageSquare,
+  TriangleAlert,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -128,6 +130,47 @@ function ConversationRow({ item }: { item: PrConversationItem }) {
   );
 }
 
+/**
+ * What agent reviews of this PR found, open findings only.
+ *
+ * A located finding is also a line comment on the diff, and appears here too —
+ * this section is the whole verdict in one place. The findings that need it
+ * are the unlocated ones ("this approach is wrong"): they have nowhere to
+ * anchor as a comment, and a PR has no run behind it whose findings panel
+ * would otherwise catch them.
+ */
+function AgentFindings({ findings }: { findings: Finding[] }) {
+  const open = findings.filter((f) => f.verdict === 'open');
+  // Never a "no findings" line: an empty list means no review has run, and
+  // saying otherwise would read as a clean bill of health.
+  if (open.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        What the agent found
+      </div>
+      {open.map((f) => (
+        <div key={f.id} className="text-[12.5px]">
+          <div className="flex items-baseline gap-1.5">
+            <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
+            <span className="dense-meta shrink-0">{f.severity}</span>
+            <span className="min-w-0 flex-1">{f.title}</span>
+            {f.file !== null && (
+              <span className="dense-meta shrink-0 font-mono">
+                {f.file}
+                {f.line !== null && `:${f.line}`}
+              </span>
+            )}
+          </div>
+          <p className="text-muted-foreground pl-4.5 text-[11px] leading-snug">
+            {f.detail}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface PrReviewPanelProps {
   detail: PrDetail | undefined;
   loading: boolean;
@@ -151,6 +194,11 @@ interface PrReviewPanelProps {
    * presence is what turns the review button into a confirmation first.
    */
   forkOwner?: string;
+  /**
+   * Findings agent reviews of this PR raised. Defaults to none, which is what
+   * a run's own PR panel has — its findings show in the run's case panel.
+   */
+  findings?: Finding[];
 }
 
 // The fork half of spec Decision 3: a fork PR's code is a stranger's, and
@@ -204,6 +252,7 @@ export function PrReviewPanel({
   stagedNotes = 0,
   onAgentReview,
   forkOwner,
+  findings = [],
 }: PrReviewPanelProps) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -275,6 +324,8 @@ export function PrReviewPanel({
       ) : detail === undefined ? null : (
         <>
           <PrStatusHeader status={detail.status} />
+
+          <AgentFindings findings={findings} />
 
           {detail.conversation.length > 0 && (
             <div className="flex flex-col gap-1.5">
