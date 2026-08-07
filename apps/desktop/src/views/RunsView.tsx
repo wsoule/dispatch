@@ -484,6 +484,7 @@ export function RunsView({
                     <DiffEmptyState message="This run has no changes to review." />
                   ) : (
                     <RunReviewView
+                      client={data.client}
                       meta={data.runDetail.meta}
                       diff={data.diff}
                       diffLoading={data.diffLoading}
@@ -509,6 +510,7 @@ export function RunsView({
                       onAddComment={data.handleAddReviewComment}
                       onResolveComment={data.handleResolveReviewComment}
                       onReplyComment={data.handleReplyReviewComment}
+                      onApplySuggestion={data.handleApplySuggestion}
                       onSubmitReview={data.handleSubmitReview}
                     />
                   )}

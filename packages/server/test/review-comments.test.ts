@@ -8,6 +8,7 @@ import {
   formatCommentsForAgent,
   resolveAnchor,
   ReviewCommentStore,
+  spliceSuggestion,
 } from '../src/reviewComments';
 
 // ReviewCommentStore writes beside the run transcript under DISPATCH_HOME, not
@@ -373,5 +374,64 @@ describe('range comments', () => {
     ]);
     expect(out).toContain('Line 3:');
     expect(out).not.toContain('Lines 3-3');
+  });
+});
+
+describe('suggestions', () => {
+  test('round-trips a suggestion through the store', () => {
+    const store = new ReviewCommentStore(root(), 'human:tester');
+
+    const added = store.add('r-1', {
+      file: 'src/a.ts',
+      line: 3,
+      anchorText: '  const x = 1;',
+      body: 'typo',
+      suggestion: '  const x = 2;',
+      pending: false,
+    });
+
+    expect(added.suggestion).toBe('  const x = 2;');
+    expect(store.list('r-1')[0]?.suggestion).toBe('  const x = 2;');
+  });
+
+  test('renders a suggestion as a fenced block the agent can apply verbatim', () => {
+    const text = formatCommentsForAgent([
+      comment({ suggestion: '  const x = 2;' }),
+    ]);
+
+    expect(text).toContain('```suggestion');
+    expect(text).toContain('  const x = 2;');
+  });
+
+  test('leaves a comment without a suggestion exactly as it was', () => {
+    expect(formatCommentsForAgent([comment()])).not.toContain('```suggestion');
+  });
+});
+
+describe('spliceSuggestion', () => {
+  test('replaces a single line', () => {
+    expect(spliceSuggestion(['a', 'b', 'c'], { line: 2 }, 'B')).toEqual([
+      'a',
+      'B',
+      'c',
+    ]);
+  });
+
+  // A suggestion may be longer or shorter than what it replaces, which is why
+  // this splices rather than assigning line by line.
+  test('replaces a range with however many lines the suggestion has', () => {
+    expect(
+      spliceSuggestion(
+        ['a', 'b', 'c', 'd'],
+        { line: 3, startLine: 2 },
+        'X\nY\nZ'
+      )
+    ).toEqual(['a', 'X', 'Y', 'Z', 'd']);
+  });
+
+  test('replaces a range with fewer lines than it spanned', () => {
+    expect(
+      spliceSuggestion(['a', 'b', 'c', 'd'], { line: 3, startLine: 2 }, 'BC')
+    ).toEqual(['a', 'BC', 'd']);
   });
 });

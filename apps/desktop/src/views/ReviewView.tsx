@@ -451,6 +451,13 @@ export function ReviewView({
                 commentCount={commentsByFile.get(selected) ?? 0}
               />
               <PierreReviewDiff
+                client={data.client}
+                // `undefined` for a PR target: there is no run worktree to load a PR's file
+                // contents from, so the diff renders without hunk expansion, same as before.
+                runId={run?.id}
+                // Same PR-target exception as `runId` — `meta` undefined hides edit mode
+                // outright, matching there being no worktree to write an edit into.
+                meta={run}
                 patch={diff.patch}
                 only={selected}
                 comments={reviewComments}
@@ -462,6 +469,7 @@ export function ReviewView({
                 onAdd={isPrTarget ? undefined : data.handleAddReviewComment}
                 onResolve={data.handleResolveReviewComment}
                 onReply={data.handleReplyReviewComment}
+                onApply={isPrTarget ? undefined : data.handleApplySuggestion}
               />
             </>
           )}

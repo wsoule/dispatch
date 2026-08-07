@@ -12,6 +12,7 @@ import type {
   PlanProposal,
   PlanRecord,
   RepoPr,
+  ReviewComment,
   RunDetail,
   RunMeta,
   RunQuestion,
@@ -261,13 +262,23 @@ export interface DispatchProjectData {
 
   /** Line-level review comments on the selected run's diff. */
   reviewComments: import('@dispatch/client').ReviewComment[];
+  /**
+   * Resolves with the created comment, not just `void` — the composer's `Apply now` action
+   * needs the new comment's id back so it can immediately apply its suggestion through the
+   * same path the thread's own Apply button uses.
+   */
   handleAddReviewComment: (input: {
     file: string;
     line: number;
     startLine?: number;
     anchorText: string;
     body: string;
-  }) => Promise<void>;
+    /** Replacement text for the commented lines. Omitted for a prose-only comment. */
+    suggestion?: string;
+  }) => Promise<ReviewComment>;
+  /** Commits a comment's suggestion onto the run branch. Fails with a 409 `anchor-drifted`
+   * `ApiError` if the code named by the comment's line range has moved since it was written. */
+  handleApplySuggestion: (commentId: string) => Promise<void>;
   /** Submits the staged review: publishes its comments, then acts on the verdict. */
   handleSubmitReview: (
     verdict: import('@dispatch/client').ReviewVerdict,
@@ -1115,6 +1126,10 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
           } else if (event.type === 'review.changed') {
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
+            // The server broadcasts this same event for a reviewer's inline edit and an
+            // applied suggestion — both commit straight onto the run branch, so the diff
+            // itself (not just its comment thread) is now stale too.
+            void queryClient.invalidateQueries({ queryKey: runDiffQueryKey });
           } else if (event.type === 'inbox.changed') {
             void queryClient.invalidateQueries({ queryKey: inboxQueryKey });
           } else if (event.type === 'git.changed') {
@@ -1293,6 +1308,7 @@ export function useDispatchProject(
     draftsQueryKey,
     inboxQueryKey,
     reviewQueryKey,
+    runDiffQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
     branchesQueryKey,
@@ -2012,9 +2028,34 @@ export function useDispatchProject(
       startLine?: number;
       anchorText: string;
       body: string;
-    }): Promise<void> => {
-      if (client === null || selectedRunId === null) return;
-      await client.addReviewComment(selectedRunId, input);
+      /** Replacement text for the commented lines. Omitted for a prose-only comment. */
+      suggestion?: string;
+    }): Promise<ReviewComment> => {
+      // Mirrors `handleEnrichTask`'s guard: this must resolve with a real comment or throw,
+      // never resolve with nothing — `Apply now` awaits this to get the id it applies next.
+      if (client === null || selectedRunId === null) {
+        throw new Error('dispatchd client not ready');
+      }
+      const created = await client.addReviewComment(selectedRunId, input);
+      invalidateReview();
+      return created;
+    },
+    [client, selectedRunId, invalidateReview]
+  );
+
+  // Commits a comment's suggestion onto the run branch. The server broadcasts `review.changed`
+  // on success, which the socket handler above already turns into a `runDiffQueryKey`
+  // invalidation — this call adds the same immediate `reviewQueryKey` refresh the other review
+  // actions here give themselves, rather than waiting on that round trip.
+  const handleApplySuggestion = useCallback(
+    async (commentId: string): Promise<void> => {
+      // Same rule as `handleAddReviewComment`: resolve only when the POST really happened, or
+      // throw. Resolving with nothing would let the thread render a landed "Applied" — and
+      // evict the file cache — for a request that was never sent.
+      if (client === null || selectedRunId === null) {
+        throw new Error('dispatchd client not ready');
+      }
+      await client.applySuggestion(selectedRunId, commentId);
       invalidateReview();
     },
     [client, selectedRunId, invalidateReview]
@@ -2310,6 +2351,7 @@ export function useDispatchProject(
     handleClusterInbox,
     reviewComments: reviewComments ?? [],
     handleAddReviewComment,
+    handleApplySuggestion,
     handleResolveReviewComment,
     handleReplyReviewComment,
     handleSendBack,
