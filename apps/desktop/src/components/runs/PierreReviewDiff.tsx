@@ -103,13 +103,10 @@ interface PierreReviewDiffProps {
 }
 
 /**
- * The clicked gutter affordance's box, in the coordinate space of the frame the bar is placed
- * inside. Taken from the button's own `getBoundingClientRect()` rather than from a `Range`: an
- * element's box reads the same either side of a shadow root, and a `Range`'s does not — which is
- * what left the bar invisible when this was driven by a text selection.
+ * The clicked affordance's box in `frame`'s coordinate space. Taken from the element's own rect
+ * rather than a `Range`, which reads differently either side of a shadow root.
  *
- * `null` when there is no frame to measure against; the bar then renders unpositioned rather than
- * not at all.
+ * `null` with no frame to measure against: the bar then renders unpositioned, not absent.
  */
 function anchorFrom(
   button: Element,
@@ -135,12 +132,9 @@ function anchorFrom(
  * GitHub-style inline threads need. Using it means the diff keeps syntax highlighting,
  * virtualisation, hunk expansion and the worker pool, none of which a hand-rolled renderer had.
  *
- * `renderGutterUtility` supplies the hover affordance on each line, and clicking it arms the
- * floating action bar for that line — Add to chat, Copy, Comment. One affordance rather than
- * two: an earlier attempt armed the bar from a text selection over the code instead, which
- * never worked in a browser because a `Range` across Pierre's shadow roots cannot be read
- * reliably. Everything on this path — the hovered line, the button's own box, the line text —
- * is synchronous and needs neither a `Range` nor a fetch.
+ * `renderGutterUtility` supplies the hover affordance on each line; clicking it arms the floating
+ * action bar for that line. Every input the bar needs — the hovered line, the button's box, the
+ * line text — is read synchronously, with no `Range` and no fetch that could fail.
  */
 export function PierreReviewDiff({
   client,
@@ -179,8 +173,11 @@ export function PierreReviewDiff({
     Map<string, ApplySuggestionOutcome>
   >(new Map());
   // The live line selection. Pierre owns the drag; this only reads it, so that clicking the
-  // gutter + on a selected range comments on the whole range rather than the one line hovered.
+  // gutter affordance on a selected range arms the whole range rather than the one line hovered.
+  // `file` is part of it because one `CodeView` renders every file of a patch: a range is only
+  // this line's range if it was dragged in this line's file.
   const [selection, setSelection] = useState<{
+    file: string;
     start: number;
     end: number;
     side?: string;
@@ -439,10 +436,13 @@ export function PierreReviewDiff({
             // to change, so a comment anchored to it would point at nothing and its text is not
             // in the file under review.
             if (line === undefined || hovered?.side === 'deletions') return;
-            // If the reviewer dragged a range that contains this line, arm the whole range —
-            // that is what the selection was for. Otherwise it is a single line.
+            // If the reviewer dragged a range in this file that contains this line, arm the whole
+            // range — that is what the selection was for. Otherwise it is a single line. The
+            // file check is load-bearing on a surface rendering the whole patch: line numbers
+            // alone would let a range dragged in one file arm a range in another.
             const inRange =
               selection !== null &&
+              selection.file === item.id &&
               selection.side !== 'deletions' &&
               line >= Math.min(selection.start, selection.end) &&
               line <= Math.max(selection.start, selection.end);
@@ -777,6 +777,7 @@ export function PierreReviewDiff({
             sel === null
               ? null
               : {
+                  file: sel.id,
                   start: sel.range.start,
                   end: sel.range.end,
                   side: sel.range.side,
