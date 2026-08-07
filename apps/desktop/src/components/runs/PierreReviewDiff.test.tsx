@@ -1,10 +1,20 @@
 import { ApiError } from '@dispatch/client';
-import type { ApiClient, RunMeta } from '@dispatch/client';
-import type { FileDiffMetadata } from '@pierre/diffs';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ApiClient, RunMeta, Snippet } from '@dispatch/client';
+import type { CodeViewItem, FileDiffMetadata } from '@pierre/diffs';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it, mock } from 'bun:test';
-import type { ReactNode } from 'react';
+import { isValidElement, type ReactNode, useCallback, useRef } from 'react';
 
+import type { ReviewChatHandle } from './ReviewChatPanel';
+import { ReviewChatPanel } from './ReviewChatPanel';
+import type { Annotation } from '@/lib/reviewDiffItems';
 import {
   buildItems,
   decideEditSave,
@@ -13,11 +23,21 @@ import {
   resolveEditFailure,
 } from '@/lib/reviewDiffItems';
 
+// The props of the `CodeView` element the diff built, captured below. happy-dom has no layout,
+// so `CodeView` renders no rows at all: neither the line selection nor the annotations it
+// produces can be driven through the DOM, and this element is the only way to reach them.
+let codeViewProps: Record<string, unknown> | null = null;
+
 // `PierreWorkerPool` imports `@pierre/diffs/worker/worker.js?worker&url`, a
 // Vite-only specifier `bun test` cannot resolve — stubbed to a passthrough so
 // the component itself can be rendered. Nothing else in the suite imports it.
 void mock.module('@/components/runs/PierreWorkerPool', () => ({
-  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
+  PierreWorkerPool: ({ children }: { children: ReactNode }) => {
+    codeViewProps = isValidElement(children)
+      ? (children.props as Record<string, unknown>)
+      : null;
+    return children;
+  },
 }));
 
 // Pierre's editor measures text through a 2d canvas context and throws outright
@@ -528,5 +548,280 @@ describe('isEditableDiffType', () => {
     expect(isEditableDiffType('change')).toBe(true);
     expect(isEditableDiffType('rename-changed')).toBe(true);
     expect(isEditableDiffType('rename-pure')).toBe(true);
+  });
+});
+
+// Pierre owns the drag that produces a line selection and there are no rows to drag under
+// happy-dom, so the selection is delivered the way `CodeView` itself would deliver it.
+function selectLines(
+  id: string,
+  start: number,
+  end: number,
+  side: 'additions' | 'deletions' = 'additions'
+): void {
+  const onSelectedLinesChange = codeViewProps?.onSelectedLinesChange as (
+    selection: {
+      id: string;
+      range: { start: number; end: number; side: string };
+    } | null
+  ) => void;
+  act(() => onSelectedLinesChange({ id, range: { start, end, side } }));
+}
+
+function renderForSelection(
+  props: {
+    onAddToChat?: (snippet: Snippet) => void;
+    withComposer?: boolean;
+  } = {}
+) {
+  return render(
+    <PierreReviewDiff
+      client={fakeClient()}
+      runId="r1"
+      meta={runMeta()}
+      patch={TWO_FILE_PATCH}
+      only="a.ts"
+      comments={[]}
+      onResolve={() => Promise.resolve()}
+      onReply={() => Promise.resolve()}
+      {...(props.withComposer === false
+        ? {}
+        : { onAdd: () => Promise.reject(new Error('not used here')) })}
+      {...(props.onAddToChat === undefined
+        ? {}
+        : { onAddToChat: props.onAddToChat })}
+    />
+  );
+}
+
+function selectionBar(): HTMLElement | null {
+  return screen.queryByRole('toolbar', { name: 'Selection actions' });
+}
+
+/**
+ * Settles the already-resolved contents fetch a selection kicks off, then flushes React.
+ *
+ * Deliberately not `waitFor`: its polling runs on a timer, and in a full-suite run Pierre's
+ * shared render queue starves those for seconds at a time, which surfaces as a hang rather
+ * than a slow assertion.
+ */
+async function settle(): Promise<void> {
+  await act(async () => {
+    // Several hops, not one: each `await` here drains exactly one microtask of the chain.
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  });
+}
+
+describe('PierreReviewDiff — the selection action bar', () => {
+  it('offers nothing until lines are actually selected', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('appears once a range is selected', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    selectLines('a.ts', 1, 2);
+    await settle();
+
+    expect(selectionBar()).not.toBeNull();
+  });
+
+  it('goes away when the selection is dropped', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    selectLines('a.ts', 1, 2);
+    await settle();
+
+    const onSelectedLinesChange = codeViewProps?.onSelectedLinesChange as (
+      selection: null
+    ) => void;
+    act(() => onSelectedLinesChange(null));
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // The snippet's text is read off the new side of the file, which a deleted line is not in —
+  // the same reason the gutter "+" refuses that side.
+  it('stays away for a deletions-side selection', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    selectLines('a.ts', 1, 2, 'deletions');
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // Selecting a second range must not leave the bar acting on the first one's code for a
+  // frame — that click would attach text from lines the reviewer is no longer pointing at.
+  it('drops the previous selection’s code the moment a new range is picked', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    selectLines('a.ts', 1, 2);
+    await settle();
+    expect(selectionBar()).not.toBeNull();
+
+    selectLines('a.ts', 2, 2);
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('withholds Add to chat where there is no chat to add to', async () => {
+    renderForSelection();
+
+    selectLines('a.ts', 1, 2);
+    await settle();
+
+    expect(selectionBar()).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
+  });
+
+  it('hands the chat the selected lines and the code they hold', async () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    selectLines('a.ts', 1, 2);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      {
+        file: 'a.ts',
+        startLine: 1,
+        endLine: 2,
+        // Read from the file's new side, exactly as `fakeClient` serves it.
+        text: 'const a = 0;\nconst b = 2;',
+      },
+    ]);
+  });
+
+  it('copies the selected code to the clipboard', async () => {
+    const written: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          written.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+    renderForSelection({ onAddToChat: () => {} });
+
+    selectLines('a.ts', 1, 2);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect(written).toEqual(['const a = 0;\nconst b = 2;']);
+  });
+
+  // Comment is a second entry point to the composer the gutter "+" already opens, not a
+  // parallel one — so it must produce the same composer annotation on the same range.
+  it('opens the existing composer on the selected range', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    selectLines('a.ts', 1, 2);
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settle();
+
+    const items = codeViewProps?.items as CodeViewItem<Annotation>[];
+    const annotations = items.flatMap((item) =>
+      'annotations' in item ? (item.annotations ?? []) : []
+    );
+    expect(
+      annotations.map((a) => a.metadata).filter((m) => m?.kind === 'composer')
+    ).toEqual([{ kind: 'composer', file: 'a.ts', startLine: 1 }]);
+  });
+});
+
+// The gesture end to end, wired exactly the way `ReviewView` wires it: the diff owns the
+// selection, the dock owns the pending attachments, and neither module in between
+// (`SelectionActions`, `SnippetComposer`) knows a run exists. This is the only test that holds
+// the two halves together.
+describe('select code, then chat about it', () => {
+  function Wiring({ client }: { client: ApiClient }) {
+    const chatRef = useRef<ReviewChatHandle>(null);
+    const handleAddToChat = useCallback((snippet: Snippet) => {
+      chatRef.current?.attach(snippet);
+    }, []);
+    return (
+      <>
+        <PierreReviewDiff
+          client={client}
+          runId="r1"
+          meta={runMeta()}
+          patch={TWO_FILE_PATCH}
+          only="a.ts"
+          comments={[]}
+          onResolve={() => Promise.resolve()}
+          onReply={() => Promise.resolve()}
+          onAddToChat={handleAddToChat}
+        />
+        <ReviewChatPanel
+          ref={chatRef}
+          client={client}
+          runId="r1"
+          canResumeAgent
+        />
+      </>
+    );
+  }
+
+  it('carries the selected lines all the way into a stored message', async () => {
+    const added: Parameters<ApiClient['addChatMessage']>[0][] = [];
+    const client = fakeClient({
+      baseUrl: 'http://127.0.0.1:4321',
+      fetchConversation: () => Promise.resolve([]),
+      addChatMessage: (input: Parameters<ApiClient['addChatMessage']>[0]) => {
+        added.push(input);
+        return Promise.resolve({
+          id: 'cm-1',
+          role: 'human' as const,
+          body: input.body,
+          snippets: input.snippets,
+          created: '2026-08-06T00:00:00.000Z',
+        });
+      },
+    } as Partial<ApiClient>);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Wiring client={client} />
+      </QueryClientProvider>
+    );
+
+    selectLines('a.ts', 1, 2);
+    await waitFor(() => expect(selectionBar()).not.toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    // The dock opened itself and is holding the snippet as a chip.
+    await waitFor(() =>
+      expect(screen.queryByText('a.ts (1-2)')).not.toBeNull()
+    );
+
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'why is this needed?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(added.length).toBe(1));
+    expect(added[0]).toEqual({
+      subject: 'run:r1',
+      role: 'human',
+      body: 'why is this needed?',
+      snippets: [
+        {
+          file: 'a.ts',
+          startLine: 1,
+          endLine: 2,
+          text: 'const a = 0;\nconst b = 2;',
+        },
+      ],
+      target: 'run-agent',
+    });
   });
 });
