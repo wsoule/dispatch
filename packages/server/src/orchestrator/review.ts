@@ -98,6 +98,9 @@ export interface StartReviewOptions {
   // The execute run whose evidence this review should render. Omitted runs
   // an empty evidence section rather than guessing which run diff maps to.
   runId?: string;
+  // Where findings should be filed as comments. Omitted falls back to the
+  // reviewed run, matching every caller that predates PR-targeted reviews.
+  target?: ReviewTarget;
 }
 
 export interface ReviewPromptInput {
@@ -792,6 +795,12 @@ interface PendingReview {
   reviewedRunId?: string;
   /** The revision the review was of — what a comment's anchor is read from. */
   head: string;
+  /**
+   * Where findings should be filed as comments. Absent for every caller that
+   * predates PR-targeted reviews — those fall back to `{kind: 'run', ...}`
+   * built from `reviewedRunId` at filing time.
+   */
+  target?: ReviewTarget;
 }
 
 // Review as its own dispatched unit of work, producing `Finding` records rather
@@ -843,6 +852,7 @@ export class ReviewRunner {
           round: opts.round,
           reviewedRunId: opts.runId,
           head: opts.head,
+          target: opts.target,
         });
         const reviewed =
           opts.runId !== undefined
@@ -990,8 +1000,12 @@ export class ReviewRunner {
     author: string
   ): void {
     const runId = pending.reviewedRunId;
-    if (runId === undefined) return;
-    const target: ReviewTarget = { kind: 'run', runId };
+    // An explicit target (e.g. a PR) wins; otherwise fall back to the run
+    // being reviewed, matching every caller that predates PR targets.
+    const target: ReviewTarget | undefined =
+      pending.target ??
+      (runId !== undefined ? { kind: 'run', runId } : undefined);
+    if (target === undefined) return;
 
     let posted = 0;
     for (const finding of findings) {
@@ -1009,7 +1023,7 @@ export class ReviewRunner {
       });
       posted += 1;
     }
-    if (posted > 0)
+    if (posted > 0 && runId !== undefined)
       this.ctx.events.broadcast({ type: 'review.changed', runId });
   }
 }
