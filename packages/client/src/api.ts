@@ -361,6 +361,8 @@ export interface RepoPr {
   title: string;
   url: string;
   headRefName: string;
+  /** The branch this PR targets — the merge-base anchor for its review. */
+  baseRefName: string;
   author: string;
   isDraft: boolean;
   updatedAt: string;

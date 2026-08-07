@@ -265,6 +265,8 @@ export interface RepoPr {
   title: string;
   url: string;
   headRefName: string;
+  /** The branch this PR targets — the merge-base anchor for its review. */
+  baseRefName: string;
   author: string;
   isDraft: boolean;
   updatedAt: string;
@@ -468,9 +470,9 @@ export class PrManager {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
-        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
-        'statusCheckRollup,additions,deletions,changedFiles',
+      'number,title,url,headRefName,baseRefName,headRefOid,author,isDraft,' +
+        'updatedAt,isCrossRepository,headRepositoryOwner,reviewDecision,' +
+        'mergeable,statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -492,6 +494,7 @@ export class PrManager {
       title: ghString(item.title),
       url: ghString(item.url),
       headRefName: ghString(item.headRefName),
+      baseRefName: ghString(item.baseRefName),
       author: authorLogin(item.author),
       isDraft: item.isDraft === true,
       updatedAt: ghString(item.updatedAt),
@@ -832,13 +835,47 @@ export class PrManager {
     return this.getPrDetailByUrl(url);
   }
 
-  // Resolves a bare PR number — the form syncPrComments/pushPrReview take,
-  // straight from a route param — to the RepoPr entry both need: the url
-  // (for owner/repo) and headRefOid (the review's commit_id). Mirrors
-  // api.ts's own resolveRepoPrByNumber; duplicated rather than shared
-  // because these two methods, unlike every other PrManager entry point,
-  // are given a number instead of a url and have to do this resolution
-  // themselves.
+  // Phase 4: fetches a PR's head into a local ref a review worktree can be
+  // cut from (works for forks, unlike `gh pr checkout`) and resolves the
+  // merge base against the PR's base branch — the pair startReview() needs.
+  async fetchPrHead(number: number): Promise<{ ref: string; base: string }> {
+    const pr = await this.resolvePrForComments(number);
+    const ref = `dispatch-pr-${number}`;
+    // Force: re-reviewing after new commits (or a force-push) must update
+    // this ref, not fail on a non-fast-forward.
+    const fetch = await this.run(this.ctx.rootDir, [
+      'git',
+      'fetch',
+      '--force',
+      'origin',
+      `pull/${number}/head:${ref}`,
+    ]);
+    if (!fetch.ok) {
+      throw new OrchestratorConflictError(
+        `git fetch pull/${number}/head failed: ${commandErrorText(fetch)}`
+      );
+    }
+    const mergeBase = await this.run(this.ctx.rootDir, [
+      'git',
+      'merge-base',
+      pr.baseRefName,
+      ref,
+    ]);
+    if (!mergeBase.ok) {
+      throw new OrchestratorConflictError(
+        `git merge-base failed: ${commandErrorText(mergeBase)}`
+      );
+    }
+    return { ref, base: mergeBase.stdout.trim() };
+  }
+
+  // Resolves a bare PR number — the form syncPrComments/pushPrReview/
+  // fetchPrHead take, straight from a route param — to the RepoPr entry
+  // callers need: url (owner/repo), headRefOid (commit_id) and baseRefName
+  // (fetchPrHead's merge-base anchor). Mirrors api.ts's own
+  // resolveRepoPrByNumber; duplicated rather than shared because these
+  // methods, unlike every other PrManager entry point, are given a number
+  // instead of a url and have to do this resolution themselves.
   private async resolvePrForComments(number: number): Promise<RepoPr> {
     requirePrNumber(number);
     const prs = await this.listRepoPrs();
