@@ -524,9 +524,17 @@ export class Orchestrator {
 
   // Frees a finished non-execute run's throwaway worktree. Commits first (aux
   // agents can edit), and spares the branch if it holds commits the base lacks.
+  //
+  // A derived task's run is the exception on both counts — see
+  // cleanupDerivedAuxRun.
   cleanupAuxRun(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined || runKind(meta) === 'execute') return;
+    const task = this.ctx.store.get(meta.taskId);
+    if (task !== null && task.meta.derivedFrom !== undefined) {
+      this.cleanupDerivedAuxRun(runId, meta, task.meta.derivedFrom);
+      return;
+    }
     if (this.worktrees.isWorktreeDirty(meta.worktreePath)) {
       this.bestEffort(`auto-commit of aux run ${runId}`, () => {
         this.autoCommitIfDirty(meta.worktreePath, runId);
@@ -552,6 +560,44 @@ export class Orchestrator {
       return;
     }
     this.worktrees.remove(meta.worktreePath, meta.branch, runId);
+  }
+
+  /**
+   * Cleanup for a run against a derived task — today, a review of a GitHub PR
+   * whose head was fetched into `refs/dispatch/pr/<n>`.
+   *
+   * Both departures from cleanupAuxRun above are deliberate. There is no
+   * auto-commit and no kept branch: a review's output is its findings and its
+   * output file, never a commit, so a stray file the agent left behind would
+   * otherwise become a permanent local branch holding a fork's code — exactly
+   * what fetching into a fully-qualified ref was chosen to avoid.
+   *
+   * And the task retires here. Nothing else would ever close it: aux runs
+   * leave their task alone by design, so it would sit `todo` forever, which
+   * both syncers read as outstanding work to mirror out to the team.
+   */
+  private cleanupDerivedAuxRun(
+    runId: string,
+    meta: RunMeta,
+    derivedFrom: string
+  ): void {
+    this.worktrees.remove(meta.worktreePath, meta.branch, runId);
+    this.bestEffort(`retiring derived task ${meta.taskId}`, () => {
+      const now = new Date().toISOString();
+      this.ctx.store.update(
+        meta.taskId,
+        {
+          status: 'done',
+          archivedAt: now,
+          appendActivity: `${now} [run ${runId}] review of ${derivedFrom} finished; task retired`,
+          // Mechanical cleanup, not an action anyone asked for by name.
+          activityActor: 'none',
+        },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    });
   }
 
   /**

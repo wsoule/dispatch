@@ -132,6 +132,77 @@ describe('aux run cleanup keeps work that was never merged', () => {
   });
 });
 
+// The counterpart to the two above: a review of someone else's artifact has
+// no output that belongs on a branch, and its anchor task has no life after
+// the review. Both are read off the task's `derivedFrom`.
+describe('aux run cleanup on a derived task', () => {
+  // A review run parked at its approval gate, against a task synthesized from
+  // a PR — the shape POST /api/prs/:number/review-agent produces.
+  async function derivedReviewRun(
+    orchestrator: Orchestrator,
+    store: TaskStore
+  ) {
+    const task = store.create({
+      title: 'Review PR #7: Bump deps',
+      derivedFrom: 'github-pr:7',
+    });
+    const meta = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      executor: 'fake',
+      head: 'main',
+      buildPrompt: () => 'go review',
+    });
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
+    );
+    return { task, meta };
+  }
+
+  it('discards the branch even when the review agent left files behind', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { meta } = await derivedReviewRun(orchestrator, store);
+    // The very edit that makes a verify run's branch worth keeping. A review
+    // of a fork's head must not turn it into a permanent local branch
+    // carrying that fork's code.
+    writeFileSync(join(meta.worktreePath, 'stray.ts'), 'export const x = 1;\n');
+
+    await orchestrator.cancel(meta.id);
+    orchestrator.cleanupAuxRun(meta.id);
+
+    expect(existsSync(meta.worktreePath)).toBe(false);
+    expect(runGitSync(repo, ['branch', '--list', meta.branch]).trim()).toBe('');
+  });
+
+  it('retires the derived task once its review run is cleaned up', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { task, meta } = await derivedReviewRun(orchestrator, store);
+    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+
+    await orchestrator.cancel(meta.id);
+    orchestrator.cleanupAuxRun(meta.id);
+
+    // Done and archived: the board must not keep a permanently outstanding
+    // PR-derived row, and both syncers skip an archived doc.
+    const retired = store.get(task.meta.id)!;
+    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.archivedAt).not.toBeUndefined();
+  });
+
+  it('leaves an authored task alone when its aux run is cleaned up', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const aux = await auxRunWithEdit(orchestrator, store);
+    const taskId = orchestrator.getRun(aux.runId)!.meta.taskId;
+
+    await orchestrator.cancel(aux.runId);
+    orchestrator.cleanupAuxRun(aux.runId);
+
+    const after = store.get(taskId)!;
+    expect(after.meta.status).not.toBe('done');
+    expect(after.meta.archivedAt).toBeUndefined();
+  });
+});
+
 describe('the boot-time orphan sweep refuses to act on an empty keep-set', () => {
   it('keeps every worktree when no transcript could be enumerated', () => {
     const { orchestrator } = makeOrchestrator();
