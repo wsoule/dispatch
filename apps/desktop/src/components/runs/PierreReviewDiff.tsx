@@ -15,6 +15,7 @@ import {
   Copy,
   MessageSquarePlus,
   MessagesSquare,
+  MoreHorizontal,
   Pencil,
   TriangleAlert,
 } from 'lucide-react';
@@ -59,8 +60,8 @@ interface PierreReviewDiffProps {
   comments: ReviewComment[];
   /**
    * Where a new line comment goes. Omit it when there is nowhere to put one
-   * (a GitHub PR) and the gutter affordance is withheld rather than left dead — which takes the
-   * action bar with it, since that affordance is the only thing that arms it.
+   * (a GitHub PR) and the action bar's Comment is withheld rather than left dead. The gutter
+   * affordance itself stays: it still arms the bar for Copy and Add to chat.
    *
    * Resolves with the created comment, not `void` — the composer's `Apply now` action needs
    * the new comment's id back to apply its suggestion immediately, through the same path the
@@ -466,7 +467,9 @@ export function PierreReviewDiff({
           }}
           className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center"
         >
-          <MessageSquarePlus className="size-3" />
+          {/* Neutral on purpose: this arms a bar of several actions, so an icon promising a
+              comment would misdescribe it on any surface that cannot take one. */}
+          <MoreHorizontal className="size-3" />
         </button>
       );
     },
@@ -683,8 +686,24 @@ export function PierreReviewDiff({
 
   // Supplied as data, so `SelectionActions` itself never learns what chat, copy or comment
   // mean. Each is withheld rather than shown dead where it has nowhere to go.
+  //
+  // Comment leads deliberately: it is the most common review action and arming the bar already
+  // cost it a click, so it gets the shortest pointer travel from the gutter affordance.
   const selectionActions = useMemo<SelectionAction[]>(() => {
     const actions: SelectionAction[] = [];
+    if (onAdd !== undefined) {
+      actions.push({
+        id: 'comment',
+        label: 'Comment',
+        icon: <MessageSquarePlus className="size-3" />,
+        onInvoke: (sel) =>
+          openComposer(
+            sel.file,
+            sel.endLine,
+            sel.startLine === sel.endLine ? undefined : sel.startLine
+          ),
+      });
+    }
     if (onAddToChat !== undefined) {
       actions.push({
         id: 'chat',
@@ -702,19 +721,6 @@ export function PierreReviewDiff({
         void navigator.clipboard?.writeText(sel.text).catch(() => undefined);
       },
     });
-    if (onAdd !== undefined) {
-      actions.push({
-        id: 'comment',
-        label: 'Comment',
-        icon: <MessageSquarePlus className="size-3" />,
-        onInvoke: (sel) =>
-          openComposer(
-            sel.file,
-            sel.endLine,
-            sel.startLine === sel.endLine ? undefined : sel.startLine
-          ),
-      });
-    }
     return actions;
   }, [onAddToChat, onAdd, openComposer]);
 
@@ -779,10 +785,11 @@ export function PierreReviewDiff({
         }
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
-        // No `onAdd` means no destination for a comment, so the hover affordance is not offered
-        // at all — and with it goes the action bar, since nothing else arms one.
+        // Gated on the bar having anything to offer, not on `onAdd`: this affordance is the only
+        // thing that arms the bar, so tying it to comments alone would take Copy and Add to chat
+        // down with them on a surface that cannot take a comment.
         renderGutterUtility={
-          onAdd === undefined ? undefined : renderGutterUtility
+          selectionActions.length === 0 ? undefined : renderGutterUtility
         }
       />
       <SelectionActions

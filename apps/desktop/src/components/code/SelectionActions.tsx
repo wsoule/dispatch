@@ -15,15 +15,15 @@ export interface CodeSelection {
 /**
  * Where to put the bar, in the coordinate space of whatever element it is rendered inside.
  *
- * Measured from the rendered rows the selection crosses rather than from the selection itself: a
+ * Measured from the box of the element the reviewer acted on rather than from a `Range`: a
  * `Range` spanning a shadow boundary is exactly what made the earlier positioning both
  * untestable and, in the app, silently absent, while an element's own
  * `getBoundingClientRect()` behaves the same either side of a shadow root.
  */
 export interface SelectionAnchor {
-  /** Top of the first crossed row — the bar hangs above this. */
+  /** Top of that box — the bar hangs above this. */
   top: number;
-  /** Bottom of the last crossed row — where the bar drops to when there is no room above. */
+  /** Bottom of that box — where the bar drops to when there is no room above. */
   bottom: number;
   left: number;
   /** Of the container, so the bar can be kept from running off its right edge. */
