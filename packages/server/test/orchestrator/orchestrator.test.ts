@@ -129,9 +129,10 @@ describe('Orchestrator.dispatch full lifecycle', () => {
 });
 
 // A derived task's body is a stranger's prose (a PR description), and an
-// execute run acts on its body with write access off trunk. dispatch() is the
-// one door every execute run comes through, so the refusal lives there.
-describe('Orchestrator.dispatch on a derived task', () => {
+// execute run acts on its body with write access off trunk. An execute run has
+// two doors — dispatch() for a board dispatch, dispatchAuxRun({kind:'execute'})
+// for the fix loop's fresh implementer — and both are covered below.
+describe('Orchestrator execute runs on a derived task', () => {
   it('refuses to execute a task synthesized from someone else’s artifact', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
@@ -151,7 +152,37 @@ describe('Orchestrator.dispatch on a derived task', () => {
     expect(store.get(task.meta.id)!.meta.status).toBe('todo');
   });
 
-  it('still lets an aux run start against the same task', async () => {
+  // The other door. FixLoop's fresh-implementer step goes through
+  // dispatchAuxRun with kind 'execute', which is not dispatch() and would
+  // otherwise slip past the refusal above.
+  it('refuses an execute-kind aux run on the same task', () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({
+      title: 'Review PR #7: Bump deps',
+      derivedFrom: 'github-pr:7',
+    });
+
+    // Thrown, not rejected: dispatchAuxRun's guards run synchronously (it is
+    // the caller's own `await` that turns this into a rejection).
+    expect(() =>
+      orchestrator.dispatchAuxRun({
+        taskId: task.meta.id,
+        kind: 'execute',
+        head: 'HEAD',
+        executor: 'fake',
+        buildPrompt: () => 'go fix it',
+      })
+    ).toThrow(OrchestratorClientError);
+    // Refused before the worktree: an execute run's branch would also escape
+    // cleanupDerivedAuxRun, which only handles non-execute kinds.
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  it('still lets a review run start against the same task', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
     orchestrator.registerExecutor(
       'fake',

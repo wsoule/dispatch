@@ -442,6 +442,44 @@ describe('POST /api/tasks/:id/fix-loop/advance', () => {
     const res = await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`);
     expect(res.status).toBe(404);
   });
+
+  // The fix loop dispatches `kind: 'execute'` through dispatchAuxRun, not
+  // through dispatch(). A task synthesized from a PR always has open findings
+  // — filing them is the point of the review — so without a refusal on the aux
+  // path this route puts a write-access agent in a worktree cut from a
+  // caller-supplied base, on the one task that must never be executed.
+  it('refuses to open a loop on a task derived from an external artifact', async () => {
+    const derived = new TaskStore(root).create({
+      title: 'Review PR #7: Bump deps',
+      writes: ['src.ts'],
+      derivedFrom: 'github-pr:7',
+    });
+    await fetch(`${baseUrl}/api/findings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        taskId: derived.meta.id,
+        severity: 'important',
+        title: 'something to fix',
+        detail: 'so the loop has work to dispatch',
+        file: 'src.ts',
+        line: 1,
+      }),
+    });
+
+    const res = await fetch(
+      `${baseUrl}/api/tasks/${derived.meta.id}/fix-loop/advance`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ baseSha }),
+      }
+    );
+    expect(res.status).not.toBe(200);
+    // No run at all: the refusal precedes the worktree, so nothing was cut
+    // from the PR head and no branch was left behind.
+    expect(await listRuns()).toEqual([]);
+  });
 });
 
 describe('the fix loop', () => {
