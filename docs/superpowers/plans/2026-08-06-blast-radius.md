@@ -399,11 +399,36 @@ import {
   type DepMap,
 } from '../src/depmap.js';
 
-// A scanner-shaped DepMap whose reach() runs the real shared walk, so these
-// tests exercise the union rather than a stubbed traversal.
+// A scanner-shaped DepMap built from a ONE-HOP adjacency list. It derives
+// transitive distance itself, because the real DepMap's dependentsWithHops
+// returns the whole closure with distances — a stub that returned one-hop
+// entries would not be a valid DepMap. Mirror the equivalent helper already in
+// packages/server/test/reach.test.ts rather than inventing a second shape.
 function scannerOf(graph: Record<string, string[]>): DepMap {
   const map: DepMap = {
-    dependents: (file) => graph[file] ?? [],
+    dependentsWithHops(file) {
+      const depth = new Map<string, number>();
+      let frontier = [file];
+      let hops = 0;
+      while (frontier.length > 0) {
+        hops++;
+        const next: string[] = [];
+        for (const current of frontier) {
+          for (const importer of graph[current] ?? []) {
+            if (importer === file || depth.has(importer)) continue;
+            depth.set(importer, hops);
+            next.push(importer);
+          }
+        }
+        frontier = next;
+      }
+      return [...depth.entries()]
+        .sort(([pa, ha], [pb, hb]) =>
+          ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
+        )
+        .map(([path, h]) => ({ path, hops: h }));
+    },
+    dependents: (file) => map.dependentsWithHops(file).map((e) => e.path),
     mirrors: () => [],
     reach: (files, opts) =>
       reachOver(map, files, { ...DEFAULT_REACH, ...opts }),
@@ -508,7 +533,9 @@ reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
 }
 ```
 
-Export `sortEntries` from `depmap.ts` so both implementations share it rather than each keeping a copy.
+`sortEntries` is already exported from `depmap.ts` — use it rather than writing a second comparator, which is how ordering bugs get introduced.
+
+Leave `createCartoDepMap`'s `dependentsWithHops` delegating to `fallback.dependentsWithHops` (scanner only). It is what `reachOver` walks to produce the scanner half; carto's contribution is merged in `reach` itself, above. Do not add carto entries to `dependentsWithHops` — that would double-count them and would also change what `dependents()` returns, which feeds `ReviewRunner`'s prompt.
 
 - [ ] **Step 4: Run test to verify it passes**
 
