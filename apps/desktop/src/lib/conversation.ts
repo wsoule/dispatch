@@ -15,17 +15,28 @@ export function subjectForRun(runId: string): string {
   return `run:${runId}`;
 }
 
-/** The code on lines `startLine`..`endLine` (1-based, inclusive) of `contents` — what a snippet
- * carries so the message still says what it was about after the branch moves. */
-export function snippetText(
+/**
+ * Which lines of `contents` the reviewer's selected `text` covers, or `null` when that text is
+ * not in this file at all — a selection that crossed the deleted side of a split diff, or one
+ * taken against contents that have since moved on.
+ *
+ * Matching the text is how a plain DOM selection becomes a line range: the browser reports what
+ * was selected, never where Pierre drew it, so the file itself is the only thing that can say
+ * which lines those were. Two identical spans cannot be told apart from the text alone, so the
+ * first wins — the snippet carries the exact code either way.
+ */
+export function locateSnippetLines(
   contents: string,
-  startLine: number,
-  endLine: number
-): string {
-  const lines = contents.split('\n');
-  return lines
-    .slice(Math.max(0, startLine - 1), Math.max(0, endLine))
-    .join('\n');
+  text: string
+): { startLine: number; endLine: number } | null {
+  if (text === '') return null;
+  const index = contents.indexOf(text);
+  if (index === -1) return null;
+  const startLine = contents.slice(0, index).split('\n').length;
+  // A drag ending past the end of a row takes that row's newline with it; the newline belongs
+  // to the last selected line, not to the untouched line after it.
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+  return { startLine, endLine: startLine + body.split('\n').length - 1 };
 }
 
 /**
