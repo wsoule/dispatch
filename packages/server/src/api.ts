@@ -2215,8 +2215,12 @@ function routableDispatchError(err: unknown): Error {
     err instanceof TaskParseError ||
     err instanceof ConfigError;
   if (mapped) return err;
+  // A thrown non-Error has no `.message`, and reading it off `null` throws
+  // inside this catch — escaping to Bun's handler as the CORS-less 500 the
+  // mapping above exists to prevent.
+  const detail = err instanceof Error ? err.message : String(err);
   return new OrchestratorConflictError(
-    `could not start the PR review: ${(err as Error).message}`
+    `could not start the PR review: ${detail}`
   );
 }
 
