@@ -168,9 +168,9 @@ describe('PrReviewPanel agent review', () => {
 });
 
 // A located finding also lands as a line comment on the diff. An unlocated
-// one — "this whole approach is wrong" — has nowhere to anchor, and a PR has
-// no run findings panel behind it, so this section is the only place it
-// reaches the user.
+// one — "this whole approach is wrong" — has nowhere to anchor, and a PR
+// has no run findings panel behind it, so this is the only place it reaches
+// the user.
 describe('PrReviewPanel agent findings', () => {
   function finding(over: Partial<Finding>): Finding {
     return {

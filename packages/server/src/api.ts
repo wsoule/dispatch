@@ -2146,7 +2146,8 @@ function liveReviewRunForPr(ctx: ApiContext, number: number): RunMeta | null {
  * GET /api/prs/:number/findings — what agent reviews of this PR found.
  *
  * A located finding also becomes a line comment on the diff, but an unlocated
- * one (`file`/`line` null — "this approach is wrong") has nowhere to hang, and
+ * one (`file`/`line` null — "this approach is wrong") has nowhere to hang,
+ * and
  * a PR target has no run behind it to open a findings panel on. This route is
  * the only surface those reach.
  *
@@ -3955,8 +3956,8 @@ export async function handleApi(
       ) {
         return await startPrAgentReview(req, ctx, segments[1]);
       }
-      // GET /api/prs/:number/findings — what an agent review of this PR found,
-      // including the unlocated findings no line comment could carry.
+      // GET /api/prs/:number/findings — what an agent review of this PR
+      // found, including the unlocated ones no line comment could carry.
       if (
         segments.length === 3 &&
         segments[2] === 'findings' &&

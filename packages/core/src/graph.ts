@@ -47,7 +47,7 @@ function filterAndSortByReadiness(
     tasks
       .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
       // A derived task holds prose nobody here wrote (TaskMeta.derivedFrom): it
-      // anchors a review of someone else's artifact, never work to hand an agent.
+      // anchors a review of another's artifact, never work to hand an agent.
       .filter((t) => t.meta.derivedFrom === undefined)
       .filter((t) =>
         t.meta.blockedBy.every((dep) => {
