@@ -23,9 +23,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DiffSurface, useParsedPatchFiles } from '../code/DiffSurface';
 import type { CodeSelection, SelectionAction } from '../code/SelectionActions';
 import { SelectionActions } from '../code/SelectionActions';
+import { useSelectedCodeText } from '../code/useSelectedCodeText';
 import { ReviewComposer, ReviewThread } from './ReviewThread';
 import { useRunFileLoader } from '@/hooks/useRunFileContents';
-import { snippetFromSelection, snippetText } from '@/lib/conversation';
+import { locateSnippetLines, snippetFromSelection } from '@/lib/conversation';
 import { createReviewEditor } from '@/lib/pierreEditor';
 import type { Annotation } from '@/lib/reviewDiffItems';
 import {
@@ -144,17 +145,17 @@ export function PierreReviewDiff({
     Map<string, ApplySuggestionOutcome>
   >(new Map());
   // The live line selection. Pierre owns the drag; this only reads it, so that clicking the
-  // gutter + on a selected range comments on the whole range rather than the one line hovered,
-  // and so the floating action bar has a range to act on.
+  // gutter + on a selected range comments on the whole range rather than the one line hovered.
   const [selection, setSelection] = useState<{
-    file: string;
     start: number;
     end: number;
     side?: string;
   } | null>(null);
-  // The selected lines' code, once the file's new side has loaded. `null` keeps the action bar
-  // away entirely: an attachment with no text would say nothing about the code it names.
-  const [selectionCode, setSelectionCode] = useState<string | null>(null);
+  // What the floating action bar acts on: the reviewer's text selection, resolved to the lines
+  // it covers. `null` is "nothing to act on" and keeps the bar off screen entirely.
+  const [codeSelection, setCodeSelection] = useState<CodeSelection | null>(
+    null
+  );
   // The one file currently in edit mode, or the one whose load is in flight from a pencil
   // click — only ever one of each, see `buildItems`'s doc comment for why.
   const [editing, setEditing] = useState<string | null>(null);
@@ -181,6 +182,9 @@ export function PierreReviewDiff({
   const viewRef = useRef<CodeViewHandle<Annotation> | null>(null);
   // The positioning frame for the floating selection bar, which is absolutely placed inside it.
   const containerRef = useRef<HTMLDivElement>(null);
+  // The gesture the bar runs on. Not Pierre's line selection: that needs `enableLineSelection`
+  // and only ever starts from the line-number column, so dragging across code never reaches it.
+  const selectedText = useSelectedCodeText(containerRef);
   // A patch's hunks alone don't carry the rest of the file — this loader fetches it from the
   // run's worktree, which is what makes unchanged-region expansion (and editing) possible at
   // all.
@@ -608,63 +612,31 @@ export function PierreReviewDiff({
     ]
   );
 
-  // Records a new selection and drops the code the last one resolved to, in one batch — an
-  // unbatched clear would leave one frame where the bar showed the new line numbers over the
-  // previous selection's text, and a click in that frame would attach the wrong code.
-  const handleSelectedLinesChange = useCallback(
-    (
-      sel: {
-        id: string;
-        range: { start: number; end: number; side?: string };
-      } | null
-    ) => {
-      setSelectionCode(null);
-      setSelection(
-        sel === null
-          ? null
-          : {
-              file: sel.id,
-              start: sel.range.start,
-              end: sel.range.end,
-              side: sel.range.side,
-            }
-      );
-    },
-    []
-  );
-
-  // Reads the selected lines out of the file's new side. A deletions-side range is skipped
-  // outright: that text is not in the new file, so there is nothing here to quote.
+  /**
+   * Turns the reviewer's text selection into something the action bar can act on: the code is
+   * what the browser reports, and the lines are where that code sits in the file on disk.
+   *
+   * Cleared first, on every change, rather than left standing while the lookup runs — the bar
+   * moves with the new selection immediately, so a stale value here would put the previous
+   * selection's code under a bar hovering over different lines.
+   *
+   * `only` is what names the file: this reads one file's contents, so a surface rendering the
+   * whole patch at once has no way to say which file the text came from and offers no bar.
+   */
   useEffect(() => {
-    if (selection === null || selection.side === 'deletions') {
-      setSelectionCode(null);
-      return;
-    }
+    setCodeSelection(null);
+    if (selectedText === null || only === undefined) return;
     let live = true;
-    const start = Math.min(selection.start, selection.end);
-    const end = Math.max(selection.start, selection.end);
-    void ensureLoaded(selection.file).then((result) => {
-      if (!live) return;
-      setSelectionCode(
-        result === null ? null : snippetText(result.contents, start, end)
-      );
+    void ensureLoaded(only).then((result) => {
+      if (!live || result === null) return;
+      const lines = locateSnippetLines(result.contents, selectedText);
+      if (lines === null) return;
+      setCodeSelection({ file: only, ...lines, text: selectedText });
     });
     return () => {
       live = false;
     };
-  }, [selection, ensureLoaded]);
-
-  // What the action bar acts on. Held back until the code is in hand so no action can produce
-  // an attachment (or a copy) that names lines but carries none of them.
-  const codeSelection = useMemo<CodeSelection | null>(() => {
-    if (selection === null || selectionCode === null) return null;
-    return {
-      file: selection.file,
-      startLine: Math.min(selection.start, selection.end),
-      endLine: Math.max(selection.start, selection.end),
-      text: selectionCode,
-    };
-  }, [selection, selectionCode]);
+  }, [selectedText, only, ensureLoaded]);
 
   // Supplied as data, so `SelectionActions` itself never learns what chat, copy or comment
   // mean. Each is withheld rather than shown dead where it has nowhere to go.
@@ -736,7 +708,17 @@ export function PierreReviewDiff({
         viewRef={viewRef}
         createEditor={createReviewEditor}
         onItemEditComplete={handleEditComplete}
-        onSelectedLinesChange={handleSelectedLinesChange}
+        onSelectedLinesChange={(sel) =>
+          setSelection(
+            sel === null
+              ? null
+              : {
+                  start: sel.range.start,
+                  end: sel.range.end,
+                  side: sel.range.side,
+                }
+          )
+        }
         renderAnnotation={renderAnnotation}
         renderHeaderMetadata={renderHeaderMetadata}
         // No `onAdd` means no destination for a comment, so the hover "+" that starts one is not

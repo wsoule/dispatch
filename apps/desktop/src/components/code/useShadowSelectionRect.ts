@@ -4,7 +4,10 @@ import { type RefObject, useEffect, useState } from 'react';
 // has layout, i.e. escapes however many `#shadow-root`s the node is nested in. Pierre renders
 // diff content inside shadow DOM, so a selection anchored deep inside it needs this walk before
 // its geometry means anything relative to the page.
-function outermostHost(node: Node): Element | null {
+//
+// Exported because "is this selection inside my container?" needs the same walk: an engine that
+// does not retarget hands back a node whose `contains` check would otherwise fail.
+export function outermostHost(node: Node): Element | null {
   let current: Node = node;
   let host: Element | null =
     current instanceof Element ? current : current.parentElement;

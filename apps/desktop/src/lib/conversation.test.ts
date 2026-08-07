@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  locateSnippetLines,
   snippetFromSelection,
   snippetLabel,
-  snippetText,
   subjectForRun,
 } from './conversation';
 
@@ -26,26 +26,6 @@ describe('snippetLabel', () => {
 describe('subjectForRun', () => {
   it('namespaces a run id', () => {
     expect(subjectForRun('r-abc')).toBe('run:r-abc');
-  });
-});
-
-describe('snippetText', () => {
-  it('takes the lines inclusively, 1-based', () => {
-    expect(snippetText(CONTENTS, 2, 3)).toBe('const b = 1;\nconst c = 2;');
-  });
-
-  it('takes a single line', () => {
-    expect(snippetText(CONTENTS, 1, 1)).toBe('const a = 0;');
-  });
-
-  // A line number below 1 would make `slice` count from the END of the file, which would
-  // attach text from somewhere else entirely rather than nothing.
-  it('never counts back from the end of the file', () => {
-    expect(snippetText(CONTENTS, 0, 1)).toBe('const a = 0;');
-  });
-
-  it('stops at the last line when the range runs past it', () => {
-    expect(snippetText(CONTENTS, 3, 99)).toBe('const c = 2;\n');
   });
 });
 
@@ -76,5 +56,57 @@ describe('snippetFromSelection', () => {
         text: 'x',
       })
     ).toMatchObject({ startLine: 3, endLine: 9 });
+  });
+});
+
+describe('locateSnippetLines', () => {
+  it('finds a single selected line', () => {
+    expect(locateSnippetLines(CONTENTS, 'const b = 1;')).toEqual({
+      startLine: 2,
+      endLine: 2,
+    });
+  });
+
+  it('finds a selection spanning rows', () => {
+    expect(locateSnippetLines(CONTENTS, 'const b = 1;\nconst c = 2;')).toEqual({
+      startLine: 2,
+      endLine: 3,
+    });
+  });
+
+  // A drag that starts and ends mid-line still belongs to the lines it crosses.
+  it('takes the lines a partial selection crosses', () => {
+    expect(locateSnippetLines(CONTENTS, 'b = 1;\nconst c')).toEqual({
+      startLine: 2,
+      endLine: 3,
+    });
+  });
+
+  // Ending a drag past the end of a row includes its newline; the line after it was not
+  // selected and must not be named.
+  it('does not count a trailing newline as another line', () => {
+    expect(locateSnippetLines(CONTENTS, 'const b = 1;\n')).toEqual({
+      startLine: 2,
+      endLine: 2,
+    });
+  });
+
+  // No match is the honest answer for a selection that crossed the deleted side of a split
+  // diff, or one taken while the file on disk had already moved on.
+  it('reports nothing when the text is not in this file', () => {
+    expect(locateSnippetLines(CONTENTS, 'const zzz = 9;')).toBeNull();
+  });
+
+  it('reports nothing for an empty selection', () => {
+    expect(locateSnippetLines(CONTENTS, '')).toBeNull();
+  });
+
+  // Two identical spans cannot be told apart from the text alone; the first is the answer, and
+  // the snippet still carries the exact code either way.
+  it('takes the first of several identical spans', () => {
+    expect(locateSnippetLines('a\nx\nb\nx\n', 'x')).toEqual({
+      startLine: 2,
+      endLine: 2,
+    });
   });
 });

@@ -551,21 +551,38 @@ describe('isEditableDiffType', () => {
   });
 });
 
-// Pierre owns the drag that produces a line selection and there are no rows to drag under
-// happy-dom, so the selection is delivered the way `CodeView` itself would deliver it.
-function selectLines(
-  id: string,
-  start: number,
-  end: number,
-  side: 'additions' | 'deletions' = 'additions'
-): void {
-  const onSelectedLinesChange = codeViewProps?.onSelectedLinesChange as (
-    selection: {
-      id: string;
-      range: { start: number; end: number; side: string };
-    } | null
-  ) => void;
-  act(() => onSelectedLinesChange({ id, range: { start, end, side } }));
+/**
+ * The reviewer's real gesture: a drag across the code, which the browser reports as an ordinary
+ * DOM text selection on the document. happy-dom lays nothing out, so `CodeView` renders no code
+ * rows to drag over — the selected text is placed inside the diff's own container instead and
+ * the `selectionchange` event a browser would fire is dispatched.
+ *
+ * Deliberately NOT Pierre's `onSelectedLinesChange`. That callback cannot fire for this gesture
+ * at all (`enableLineSelection` defaults off, and a line selection only ever starts from the
+ * line-number column), which is exactly why an earlier version of this feature rendered no bar
+ * in a real browser while its tests were green.
+ */
+function selectText(text: string, host?: Element): void {
+  const target = host ?? document.querySelector('diffs-container');
+  if (target === null) throw new Error('no diff container to select inside');
+  const span = document.createElement('span');
+  span.appendChild(document.createTextNode(text));
+  target.appendChild(span);
+  const range = document.createRange();
+  range.selectNodeContents(span);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  act(() => {
+    document.dispatchEvent(new Event('selectionchange'));
+  });
+}
+
+function clearSelection(): void {
+  window.getSelection()?.removeAllRanges();
+  act(() => {
+    document.dispatchEvent(new Event('selectionchange'));
+  });
 }
 
 function renderForSelection(
@@ -613,16 +630,16 @@ async function settle(): Promise<void> {
 }
 
 describe('PierreReviewDiff — the selection action bar', () => {
-  it('offers nothing until lines are actually selected', () => {
+  it('offers nothing until code is actually selected', () => {
     renderForSelection({ onAddToChat: () => {} });
 
     expect(selectionBar()).toBeNull();
   });
 
-  it('appears once a range is selected', async () => {
+  it('appears once code in this file is selected', async () => {
     renderForSelection({ onAddToChat: () => {} });
 
-    selectLines('a.ts', 1, 2);
+    selectText('const b = 2;');
     await settle();
 
     expect(selectionBar()).not.toBeNull();
@@ -630,38 +647,48 @@ describe('PierreReviewDiff — the selection action bar', () => {
 
   it('goes away when the selection is dropped', async () => {
     renderForSelection({ onAddToChat: () => {} });
-    selectLines('a.ts', 1, 2);
-    await settle();
-
-    const onSelectedLinesChange = codeViewProps?.onSelectedLinesChange as (
-      selection: null
-    ) => void;
-    act(() => onSelectedLinesChange(null));
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // The snippet's text is read off the new side of the file, which a deleted line is not in —
-  // the same reason the gutter "+" refuses that side.
-  it('stays away for a deletions-side selection', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-
-    selectLines('a.ts', 1, 2, 'deletions');
-    await settle();
-
-    expect(selectionBar()).toBeNull();
-  });
-
-  // Selecting a second range must not leave the bar acting on the first one's code for a
-  // frame — that click would attach text from lines the reviewer is no longer pointing at.
-  it('drops the previous selection’s code the moment a new range is picked', async () => {
-    renderForSelection({ onAddToChat: () => {} });
-    selectLines('a.ts', 1, 2);
+    selectText('const b = 2;');
     await settle();
     expect(selectionBar()).not.toBeNull();
 
-    selectLines('a.ts', 2, 2);
+    clearSelection();
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // A selection in the chat dock, or in a comment thread, is not a selection in the diff.
+  it('ignores a selection outside the diff', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    const outside = document.createElement('div');
+    document.body.appendChild(outside);
+
+    selectText('const b = 2;', outside);
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // Text that is not in the file has no lines to name — a drag across the deleted side of a
+  // split diff, or one taken against contents that have since moved on.
+  it('stays away for text this file does not contain', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    selectText('const gone = 1;');
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // Selecting again must not leave the bar acting on the previous selection for a frame: the
+  // bar moves with the new one immediately, so a click there would attach the wrong code.
+  it('drops the previous selection the moment a new one starts', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    selectText('const b = 2;');
+    await settle();
+    expect(selectionBar()).not.toBeNull();
+
+    selectText('const a = 0;');
 
     expect(selectionBar()).toBeNull();
   });
@@ -669,7 +696,7 @@ describe('PierreReviewDiff — the selection action bar', () => {
   it('withholds Add to chat where there is no chat to add to', async () => {
     renderForSelection();
 
-    selectLines('a.ts', 1, 2);
+    selectText('const b = 2;');
     await settle();
 
     expect(selectionBar()).not.toBeNull();
@@ -677,11 +704,12 @@ describe('PierreReviewDiff — the selection action bar', () => {
     expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
   });
 
-  it('hands the chat the selected lines and the code they hold', async () => {
+  it('hands the chat the selected code and the lines it sits on', async () => {
     const attached: Snippet[] = [];
     renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
 
-    selectLines('a.ts', 1, 2);
+    // Spans both lines of the file `fakeClient` serves, so the range is not the trivial one.
+    selectText('const a = 0;\nconst b = 2;');
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
 
@@ -690,10 +718,20 @@ describe('PierreReviewDiff — the selection action bar', () => {
         file: 'a.ts',
         startLine: 1,
         endLine: 2,
-        // Read from the file's new side, exactly as `fakeClient` serves it.
         text: 'const a = 0;\nconst b = 2;',
       },
     ]);
+  });
+
+  it('names the lines a selection part-way down the file sits on', async () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    selectText('const b = 2;');
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached[0]).toMatchObject({ startLine: 2, endLine: 2 });
   });
 
   it('copies the selected code to the clipboard', async () => {
@@ -709,18 +747,18 @@ describe('PierreReviewDiff — the selection action bar', () => {
     });
     renderForSelection({ onAddToChat: () => {} });
 
-    selectLines('a.ts', 1, 2);
+    selectText('const b = 2;');
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
-    expect(written).toEqual(['const a = 0;\nconst b = 2;']);
+    expect(written).toEqual(['const b = 2;']);
   });
 
   // Comment is a second entry point to the composer the gutter "+" already opens, not a
   // parallel one — so it must produce the same composer annotation on the same range.
   it('opens the existing composer on the selected range', async () => {
     renderForSelection({ onAddToChat: () => {} });
-    selectLines('a.ts', 1, 2);
+    selectText('const a = 0;\nconst b = 2;');
     await settle();
 
     fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
@@ -794,8 +832,9 @@ describe('select code, then chat about it', () => {
       </QueryClientProvider>
     );
 
-    selectLines('a.ts', 1, 2);
-    await waitFor(() => expect(selectionBar()).not.toBeNull());
+    selectText('const a = 0;\nconst b = 2;');
+    await settle();
+    expect(selectionBar()).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
 
     // The dock opened itself and is holding the snippet as a chip.
