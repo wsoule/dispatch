@@ -644,8 +644,52 @@ export function createCartoDepMap(
     mirrors(file: string): string[] {
       return fallback.mirrors(file);
     },
+    // Unlike dependents(), this merges by shortest hop rather than
+    // round-robin-interleaving by source: the result feeds a UI that labels
+    // the numbers "hops", so it must be a real distance ranking. Carto's
+    // blast radius is already transitive, so its entries are merged directly
+    // rather than walked again through dependentsWithHops (which would
+    // collapse them to one hop).
     reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
-      return reachOver(this, files, { ...DEFAULT_REACH, ...opts });
+      const options = { ...DEFAULT_REACH, ...opts };
+      const scanner = reachOver(fallback, files, options);
+      if (degraded) return { ...scanner, degraded: true };
+
+      const seeds = new Set(files);
+      const closest = new Map<string, number>();
+      for (const entry of scanner.entries) closest.set(entry.path, entry.hops);
+
+      for (const file of files) {
+        let entries: BlastEntry[];
+        try {
+          entries = normalizeBlastRadiusEntries(
+            reader.blastRadius(normalizeInputPath(file))
+          );
+        } catch (err) {
+          degraded = true;
+          onDegrade?.({ file, detail: (err as Error).message });
+          return { ...scanner, degraded: true };
+        }
+        for (const entry of entries) {
+          if (seeds.has(entry.path) || entry.hops > options.maxHops) continue;
+          const existing = closest.get(entry.path);
+          if (existing !== undefined && existing <= entry.hops) continue;
+          if (existing === undefined && closest.size >= options.maxFiles) {
+            continue;
+          }
+          closest.set(entry.path, entry.hops);
+        }
+      }
+
+      const capped = closest.size >= options.maxFiles;
+      return {
+        entries: sortEntries(closest),
+        count: closest.size,
+        maxHops: closest.size === 0 ? 0 : Math.max(...closest.values()),
+        sources: ['carto', 'scanner'],
+        degraded: false,
+        truncated: scanner.truncated || capped,
+      };
     },
   };
 }
