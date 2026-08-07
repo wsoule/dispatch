@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 
-import { diffRowsFromRange, linesFromRows } from './selectedDiffLines';
+import { diffRowsIn, linesFromRows, rowsCoveredBy } from './selectedDiffLines';
 
-// The two steps a selection goes through, together: which rows it crossed, and what lines those
-// are. The caller keeps the rows to position the action bar off them, which is why they are
-// separate functions.
+// The steps a selection goes through, together: which rows exist, which of them it crossed, and
+// what lines those are. They are separate functions because the caller keeps the rows to
+// position the action bar off them.
 function diffLinesFromRange(range: Range) {
-  return linesFromRows(diffRowsFromRange(range));
+  return linesFromRows(rowsCoveredBy([range], diffRowsIn(document)));
 }
 
 // A rendered diff row, shaped the way Pierre's `processLine` emits one: the row carries the line

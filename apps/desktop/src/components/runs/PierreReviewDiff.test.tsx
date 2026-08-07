@@ -566,7 +566,7 @@ function rowHost(): Element {
 // One rendered diff row, shaped the way Pierre's `processLine` emits one: the row carries the
 // line number it drew and its type, and the code sits in a child element.
 function appendRow(
-  host: Element,
+  host: Element | ShadowRoot,
   line: number,
   text: string,
   type = 'change-addition'
@@ -577,6 +577,20 @@ function appendRow(
   const code = document.createElement('span');
   code.appendChild(document.createTextNode(text));
   el.appendChild(code);
+  host.appendChild(el);
+  return el;
+}
+
+// One line-number cell, shaped the way Pierre's `createGutterItem` emits it: a line *number*,
+// but no `data-line`, because a gutter cell is not a row of code.
+function appendGutterItem(host: Element, line: number): HTMLElement {
+  const el = document.createElement('div');
+  el.setAttribute('data-column-number', String(line));
+  el.setAttribute('data-line-type', 'change-addition');
+  el.setAttribute('data-line-index', String(line - 1));
+  const label = document.createElement('span');
+  label.appendChild(document.createTextNode(String(line)));
+  el.appendChild(label);
   host.appendChild(el);
   return el;
 }
@@ -916,28 +930,79 @@ describe('PierreReviewDiff — the selection action bar', () => {
     expect(selectionBar()).toBeNull();
   });
 
-  // What a shadow-DOM surface hands back when the engine retargets the range to its host: no
-  // row to read, so the file's own contents say where the text sits.
-  it('falls back to the file when the selection reaches no row', async () => {
+  // The failure the user hit: a drag on the line-number gutter armed the bar while a drag on the
+  // code did not. Gutter items carry `data-column-number` and `data-line-type` but deliberately
+  // no `data-line` (Pierre's `createGutterItem`), so they are not rows — and there is no longer
+  // any second path that can arm the bar from text alone.
+  it('arms nothing from a drag down the line-number gutter', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    addRows([{ line: 12, text: '  sku: string;' }]);
+    const gutter = document.createElement('div');
+    gutter.setAttribute('data-gutter', '');
+    rowHost().appendChild(gutter);
+    const first = appendGutterItem(gutter, 12);
+    const last = appendGutterItem(gutter, 13);
+
+    selectBetween(
+      first.firstChild?.firstChild as Node,
+      last.firstChild?.firstChild as Node
+    );
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // Even a gutter row that somehow carried `data-line` must not count: it is not code, and the
+  // reviewer selected none.
+  it('ignores a `data-line` that sits inside the gutter', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    const gutter = document.createElement('div');
+    gutter.setAttribute('data-gutter', '');
+    rowHost().appendChild(gutter);
+    const row = appendRow(gutter, 12, '12');
+
+    selectBetween(
+      row.firstChild?.firstChild as Node,
+      row.firstChild?.firstChild as Node
+    );
+    await settle();
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // Pierre renders each file into its own shadow root on some surfaces, and an engine that
+  // retargets the selection reports the host rather than the row. The real boundaries are
+  // recovered through the shadow root's own selection.
+  it('reads rows that live inside a shadow root', async () => {
     const attached: Snippet[] = [];
     renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+    const host = document.createElement('div');
+    host.appendChild(document.createTextNode('retargeted'));
+    rowHost().appendChild(host);
+    const shadow = host.attachShadow({ mode: 'open' });
+    const inner = appendRow(shadow, 21, '  hidden(): void;');
 
-    selectLooseText('const b = 2;');
+    const innerRange = document.createRange();
+    innerRange.selectNodeContents(inner.firstChild as Node);
+    (
+      shadow as ShadowRoot & { getSelection?: () => Selection | null }
+    ).getSelection = () =>
+      ({ rangeCount: 1, getRangeAt: () => innerRange }) as unknown as Selection;
+
+    // What the document reports is the host, which says nothing about which row was selected.
+    selectBetween(host.firstChild as Node, host.firstChild as Node);
     await settle();
 
     expect(selectionBar()).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
-    expect(attached[0]).toMatchObject({
-      file: 'a.ts',
-      startLine: 2,
-      endLine: 2,
-    });
+    expect(attached[0]).toMatchObject({ startLine: 21, endLine: 21 });
   });
 
-  it('stays away when neither the rows nor the file can place the text', async () => {
+  it('stays away when the selection covers no code row at all', async () => {
     renderForSelection({ onAddToChat: () => {} });
 
-    selectLooseText('const nowhere = 1;');
+    // Text inside the diff but not in a row — a file header, a hunk label, stray chrome.
+    selectLooseText('src/a.ts');
     await settle();
 
     expect(selectionBar()).toBeNull();
@@ -947,11 +1012,13 @@ describe('PierreReviewDiff — the selection action bar', () => {
   // bar moves with the new one immediately, so a click there would attach the wrong code.
   it('drops the previous selection the moment a new one starts', async () => {
     renderForSelection({ onAddToChat: () => {} });
-    selectLooseText('const b = 2;');
+    selectRows([{ line: 12, text: '  sku: string;' }]);
     await settle();
     expect(selectionBar()).not.toBeNull();
 
-    selectLooseText('const a = 0;');
+    // A selection that covers no row replaces it with nothing, rather than leaving the bar
+    // hanging over lines that are no longer selected.
+    selectLooseText('src/a.ts');
 
     expect(selectionBar()).toBeNull();
   });

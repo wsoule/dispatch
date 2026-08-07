@@ -1,22 +1,15 @@
 import { type RefObject, useEffect, useState } from 'react';
 
 import type { SelectedLines } from './selectedDiffLines';
-import { diffRowsFromRange, linesFromRows } from './selectedDiffLines';
+import { diffRowsIn, linesFromRows, rowsCoveredBy } from './selectedDiffLines';
 import type { SelectionAnchor } from './SelectionActions';
 
 /** What the reviewer has selected in a diff: the code itself, the lines it was drawn on, and
  * where those lines are on screen. */
 export interface SelectedCode {
   text: string;
-  /**
-   * The lines the rendered rows say this is, or `null` when the range never reached a row — an
-   * engine that retargets a shadow-DOM selection to its host, or a selection made entirely on
-   * the deleted side, whose numbers are not lines in the new file. The caller decides what to do
-   * without them.
-   */
-  lines: SelectedLines | null;
-  /** Where to hang the action bar, or `null` for the same reasons `lines` is. */
-  anchor: SelectionAnchor | null;
+  lines: SelectedLines;
+  anchor: SelectionAnchor;
 }
 
 // Walks a node up through shadow-root boundaries to the outermost host element. Pierre renders
@@ -73,6 +66,52 @@ function anchorFromRows(
   };
 }
 
+// Chrome's newer, spec'd way of reading a selection that lives inside shadow DOM. Not in
+// lib.dom yet, so it is described here rather than asserted away.
+interface ComposedSelection {
+  getComposedRanges?(options: { shadowRoots: ShadowRoot[] }): StaticRange[];
+}
+
+/**
+ * Every reading of the selection worth trying, best first.
+ *
+ * A selection made inside an open shadow root is reported differently depending on the engine:
+ * some hand back the real nodes, others retarget the range to the host element, where it says
+ * nothing about which row was selected. `getComposedRanges` (and the older
+ * `ShadowRoot.getSelection`) are how the real boundaries are recovered; both are feature-detected
+ * because neither is universal, and the plain range is tried first since it is the answer
+ * wherever the code is rendered into light DOM.
+ */
+function selectionRanges(
+  selection: Selection,
+  container: HTMLElement
+): Range[] {
+  const ranges = [selection.getRangeAt(0)];
+  const shadowRoots = Array.from(container.querySelectorAll('*'))
+    .map((element) => element.shadowRoot)
+    .filter((root): root is ShadowRoot => root !== null);
+  if (shadowRoots.length === 0) return ranges;
+
+  const composed = (
+    selection as Selection & ComposedSelection
+  ).getComposedRanges?.({
+    shadowRoots,
+  });
+  for (const staticRange of composed ?? []) {
+    const range = document.createRange();
+    range.setStart(staticRange.startContainer, staticRange.startOffset);
+    range.setEnd(staticRange.endContainer, staticRange.endOffset);
+    ranges.push(range);
+  }
+  for (const root of shadowRoots) {
+    const inner = (
+      root as ShadowRoot & { getSelection?(): Selection | null }
+    ).getSelection?.();
+    if (inner != null && inner.rangeCount > 0) ranges.push(inner.getRangeAt(0));
+  }
+  return ranges;
+}
+
 function sameSelection(
   a: SelectedCode | null,
   b: SelectedCode | null
@@ -80,10 +119,10 @@ function sameSelection(
   if (a === null || b === null) return a === b;
   return (
     a.text === b.text &&
-    a.lines?.startLine === b.lines?.startLine &&
-    a.lines?.endLine === b.lines?.endLine &&
-    a.anchor?.top === b.anchor?.top &&
-    a.anchor?.left === b.anchor?.left
+    a.lines.startLine === b.lines.startLine &&
+    a.lines.endLine === b.lines.endLine &&
+    a.anchor.top === b.anchor.top &&
+    a.anchor.left === b.anchor.left
   );
 }
 
@@ -131,12 +170,20 @@ export function useSelectedCode(
         setSelected(null);
         return;
       }
-      const rows = diffRowsFromRange(range);
-      const next: SelectedCode = {
-        text,
-        lines: linesFromRows(rows),
-        anchor: anchorFromRows(rows, container),
-      };
+      // Rows or nothing. A selection that covers no code row — the line-number gutter, the
+      // file header, a stray drag over chrome — has no code to attach and must not arm the bar,
+      // however much text it contains.
+      const rows = rowsCoveredBy(
+        selectionRanges(selection, container),
+        diffRowsIn(container)
+      );
+      const lines = linesFromRows(rows);
+      const anchor = anchorFromRows(rows, container);
+      if (lines === null || anchor === null) {
+        setSelected(null);
+        return;
+      }
+      const next: SelectedCode = { text, lines, anchor };
       setSelected((prev) => (sameSelection(prev, next) ? prev : next));
     }
 
