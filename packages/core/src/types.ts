@@ -47,6 +47,11 @@ export interface TaskMeta {
   // Set once a verify run has actually exercised this task's work and every
   // check passed. Distinct from a review's findings, which only read the diff.
   exercised: boolean;
+  // What Dispatch synthesized this task from, e.g. `github-pr:41`; absent on
+  // every task a person wrote. A derived task exists only to anchor a review
+  // of someone else's artifact, so it is never dispatchable, never synced
+  // outward, and retires itself once that review ends.
+  derivedFrom?: string;
 }
 
 export interface TaskDoc {

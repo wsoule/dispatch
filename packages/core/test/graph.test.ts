@@ -36,6 +36,21 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
   };
 }
 
+// A task Dispatch synthesized from someone else's artifact carries prose
+// nobody here wrote. It exists to anchor a review, never to be worked.
+describe('derived tasks are never ready or dispatchable', () => {
+  it('excludes a derived task from both lists', () => {
+    const derived = make({ id: 't-e00000', derivedFrom: 'github-pr:7' });
+    const authored = make({ id: 't-f00000' });
+    expect(readyTasks([derived, authored]).map((t) => t.meta.id)).toEqual([
+      't-f00000',
+    ]);
+    expect(
+      dispatchableTasks([derived, authored]).map((t) => t.meta.id)
+    ).toEqual(['t-f00000']);
+  });
+});
+
 describe('readyTasks', () => {
   it('includes todo tasks whose blockers are done/cancelled, excludes others', () => {
     const done = make({ id: 't-d00000', status: 'done' });

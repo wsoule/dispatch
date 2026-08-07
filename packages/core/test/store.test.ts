@@ -65,6 +65,17 @@ describe('create/get', () => {
     expect(getSection(doc.body, 'Description')).toBe(description);
     expect(getSection(doc.body, 'Activity')).toBe('');
   });
+
+  it('persists derivedFrom, and leaves an authored task without it', () => {
+    const store = TaskStore.init(root);
+    const derived = store.create({
+      title: 'Review PR #7',
+      derivedFrom: 'github-pr:7',
+    });
+    expect(store.get(derived.meta.id)!.meta.derivedFrom).toBe('github-pr:7');
+    const authored = store.create({ title: 'Fix login' });
+    expect(store.get(authored.meta.id)!.meta.derivedFrom).toBeUndefined();
+  });
 });
 
 describe('taskFilePath id-prefix guard', () => {

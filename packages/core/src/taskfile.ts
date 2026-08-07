@@ -74,6 +74,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw.exercised != null && typeof raw.exercised !== 'boolean') {
     throw new TaskParseError(`invalid exercised: expected a boolean`, file);
   }
+  if (raw['derived-from'] != null && typeof raw['derived-from'] !== 'string') {
+    throw new TaskParseError(`invalid derived-from: expected a string`, file);
+  }
   if (raw.risk != null && !TASK_RISKS.includes(raw.risk as TaskRisk)) {
     throw new TaskParseError(`invalid risk: ${describeValue(raw.risk)}`, file);
   }
@@ -114,6 +117,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     model: raw.model ?? null,
     exercised: (raw.exercised as boolean | undefined) ?? false,
     ...(raw['archived-at'] == null ? {} : { archivedAt: raw['archived-at'] }),
+    ...(raw['derived-from'] == null
+      ? {}
+      : { derivedFrom: String(raw['derived-from']) }),
   };
   return { meta, body: content.slice(m[0].length) };
 }
@@ -146,6 +152,9 @@ export function serializeTaskFile(doc: TaskDoc): string {
       ? {}
       : { 'archived-at': meta.archivedAt }),
     ...(meta.exercised ? { exercised: true } : {}),
+    ...(meta.derivedFrom === undefined
+      ? {}
+      : { 'derived-from': meta.derivedFrom }),
   };
   return `---\n${YAML.stringify(fm).trimEnd()}\n---\n${doc.body}`;
 }
