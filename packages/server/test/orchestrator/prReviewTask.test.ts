@@ -99,6 +99,33 @@ describe('buildPrReviewTask', () => {
     expect(input.title).not.toContain('\n');
   });
 
+  it('escapes bracket paths so writes matches only that literal file', () => {
+    // Next.js dynamic route — a real, common path shape that is also
+    // valid Bun.Glob character-class syntax if left unescaped.
+    const input = buildPrReviewTask(makePr(), [{ path: 'app/[id]/route.ts' }]);
+    const glob = new Bun.Glob(input.writes![0]);
+    expect(glob.match('app/[id]/route.ts')).toBe(true);
+    // An unescaped `[id]` is a one-character class matching either
+    // i or d — this must NOT match either single-letter variant.
+    expect(glob.match('app/i/route.ts')).toBe(false);
+    expect(glob.match('app/d/route.ts')).toBe(false);
+  });
+
+  it('escapes star paths so writes matches only that literal file', () => {
+    const input = buildPrReviewTask(makePr(), [{ path: 'src/*star*.ts' }]);
+    const glob = new Bun.Glob(input.writes![0]);
+    expect(glob.match('src/*star*.ts')).toBe(true);
+    // An unescaped `*` matches any run of characters in its place.
+    expect(glob.match('src/xxxstarxxx.ts')).toBe(false);
+  });
+
+  it('leaves an ordinary metacharacter-free path unchanged', () => {
+    const input = buildPrReviewTask(makePr(), [{ path: 'src/retry.ts' }]);
+    const glob = new Bun.Glob(input.writes![0]);
+    expect(glob.match('src/retry.ts')).toBe(true);
+    expect(input.writes![0]).toBe('src/retry.ts');
+  });
+
   it('is pure: called twice with the same input, returns equal output', () => {
     const pr = makePr();
     const files = [{ path: 'src/retry.ts' }];
