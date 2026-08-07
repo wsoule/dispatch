@@ -927,23 +927,46 @@ export class PrManager {
 
   // POST /api/prs/:number/review-submit (Task 6) — not .../review, which
   // already exists as reviewRepoPr's one-shot `gh pr review` verdict; this
-  // is the push half of the comment mirror instead. Submits every pending
-  // comment on a PR target as one GitHub review: every pending comment
-  // rides one `comments[]` array on a single request, since looping per
-  // comment would make GitHub render N separate reviews instead of one.
+  // is the push half of the comment mirror instead. Submits every comment
+  // GitHub does not have yet as one review: they all ride one `comments[]`
+  // array on a single request, since looping per comment would make GitHub
+  // render N separate reviews instead of one.
+  //
+  // Selection is "no `githubId` yet", not "pending": a run submitted with
+  // the GitHub box unticked publishes its comments locally, clearing
+  // `pending` while leaving them unknown to the PR. Selecting on `pending`
+  // would strand them there for good. `githubId` is never assigned here —
+  // only the pull below can — so this never breaks the store's rule that a
+  // comment carrying one is not pending.
   async pushPrReview(
     number: number,
     verdict: PrReviewEvent,
     body: string
   ): Promise<{ pushed: number }> {
+    const target: ReviewTarget = { kind: 'pr', number };
+    const all = this.ctx.reviewComments.list(target);
+    const last = this.ctx.reviewComments.lastPush(target);
+    const alreadySent = new Set(last?.commentIds ?? []);
+    const unsent = all.filter(
+      (c) => c.githubId === undefined && !alreadySent.has(c.id)
+    );
+    // The same words with nothing new to carry is a retry of a review GitHub
+    // already accepted. Checked before the `gh pr list` below so a retry
+    // costs nothing and cannot 404 on a PR that has since been merged.
+    if (
+      last !== null &&
+      last.verdict === verdict &&
+      last.body === body &&
+      unsent.length === 0
+    ) {
+      return { pushed: 0 };
+    }
+
     const pr = await this.resolvePrForComments(number);
     const location = parsePrUrl(pr.url);
     if (location === null) {
       throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);
     }
-    const target: ReviewTarget = { kind: 'pr', number };
-    const all = this.ctx.reviewComments.list(target);
-    const pending = all.filter((c) => c.pending);
 
     const event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' =
       verdict === 'approve'
@@ -959,7 +982,7 @@ export class PrManager {
       commit_id: pr.headRefOid,
       event,
       body,
-      comments: pending.map((c) => ({
+      comments: unsent.map((c) => ({
         path: c.file,
         line: c.line,
         side: 'RIGHT' as const,
@@ -998,11 +1021,25 @@ export class PrManager {
       rmSync(scratchDir, { recursive: true, force: true });
     }
 
-    if (pending.length === 0) {
+    // Recorded the instant GitHub accepts the review, not once this method
+    // returns: everything below can throw, and a marker written only on the
+    // happy path would let an identical retry land a second review.
+    // Ids from an earlier push whose own pull failed are carried forward, so
+    // one stranded batch cannot be re-posted by the batch after it.
+    const stillStranded = all
+      .filter((c) => c.githubId === undefined && alreadySent.has(c.id))
+      .map((c) => c.id);
+    this.ctx.reviewComments.recordPush(target, {
+      verdict,
+      body,
+      commentIds: [...stillStranded, ...unsent.map((c) => c.id)],
+    });
+
+    if (unsent.length === 0) {
       return { pushed: 0 };
     }
 
-    const pushedIds = new Set(pending.map((c) => c.id));
+    const pushedIds = new Set(unsent.map((c) => c.id));
     // Record that this batch has left, in its own write, before the pull
     // below can fail. GitHub has the comments now and there is no way to
     // delete them, so a record still marked `pending` would be posted a
@@ -1022,7 +1059,7 @@ export class PrManager {
       string,
       { replies: ReviewReply[]; resolved: boolean }
     >();
-    for (const c of pending) {
+    for (const c of unsent) {
       localExtras.set(`${c.file} ${c.body}`, {
         replies: c.replies,
         resolved: c.resolved,
@@ -1034,7 +1071,7 @@ export class PrManager {
     // text is still on disk, rather than deleted with nothing to replace
     // it — which reordering "delete, write, then pull" would risk.
     const remote = await this.pullRemoteComments(location);
-    // Re-read rather than reuse `all`/`pending`: this.run above awaited two
+    // Re-read rather than reuse `all`/`unsent`: this.run above awaited two
     // network round trips (the POST and this pull), wide open for a
     // concurrent add() to land a fresh pending comment. Filtering by this
     // batch's own ids (not a blanket !pending) keeps that comment instead
@@ -1063,7 +1100,7 @@ export class PrManager {
       return { ...c, replies: extra.replies, resolved: extra.resolved };
     });
     this.ctx.reviewComments.replaceAll(target, merged);
-    return { pushed: pending.length };
+    return { pushed: unsent.length };
   }
 
   // POST /api/prs/:number/comments/:id/reply (Task 5). Replies via REST's

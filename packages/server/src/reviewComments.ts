@@ -79,13 +79,20 @@ export interface ReviewReply {
 }
 
 /**
- * The verdict and body of the last review pushed to GitHub for one target.
+ * What the last review pushed to GitHub for one target carried.
  * Compared against a fresh submit to tell a genuine second review from a
  * retry of one that already landed — see `ReviewCommentStore.lastPush`.
  */
 export interface ReviewPushMarker {
   verdict: string;
   body: string;
+  /**
+   * Ids of the comments that push put on GitHub which the store has not yet
+   * matched to a `githubId` — the window where the POST succeeded and the
+   * pull that assigns those ids did not. Without it those records read as
+   * never-sent and the next push would post them a second time.
+   */
+  commentIds: string[];
 }
 
 export interface AddCommentInput {
@@ -296,12 +303,13 @@ export class ReviewCommentStore {
   }
 
   /**
-   * What the last review successfully pushed to GitHub for this target said.
+   * What the last review successfully pushed to GitHub for this target
+   * carried.
    *
-   * A submit that repeats it with nothing left pending is a retry, not a new
-   * review: the line comments are already protected by their `pending` flip,
-   * but the review body is not, so without this a retried submit would land
-   * a second review on the PR. `null` when nothing has been pushed yet.
+   * A submit that repeats it with nothing new to send is a retry, not a new
+   * review, and posting it again would duplicate the review on the PR —
+   * nothing on GitHub's side deduplicates one. `null` when nothing has been
+   * pushed yet.
    */
   lastPush(target: ReviewTarget): ReviewPushMarker | null {
     const path = reviewPushMarkerPath(this.rootDir, target);
@@ -316,7 +324,12 @@ export class ReviewCommentStore {
       ) {
         return null;
       }
-      return { verdict: marker.verdict, body: marker.body };
+      // A marker written before `commentIds` existed reads as "no ids known",
+      // which pushes those records again rather than silently dropping them.
+      const ids = Array.isArray(marker.commentIds)
+        ? marker.commentIds.filter((id): id is string => typeof id === 'string')
+        : [];
+      return { verdict: marker.verdict, body: marker.body, commentIds: ids };
     } catch {
       // Same degradation as `list`: an unreadable marker means "nothing
       // pushed yet", which pushes again rather than staying silent.
