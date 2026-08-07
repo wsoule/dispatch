@@ -1088,7 +1088,7 @@ describe('PrManager.fetchPrHead', () => {
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
 
-    const result = await pr.fetchPrHead(9);
+    const result = await pr.fetchPrHead(9, { confirmFork: false });
 
     expect(result.ref).toBe('refs/dispatch/pr/9');
     const fetchCall = stub.calls.find(
@@ -1117,7 +1117,7 @@ describe('PrManager.fetchPrHead', () => {
     stub.mergeBaseResult = { ok: true, stdout: 'deadbeef1234\n', stderr: '' };
     const pr = new PrManager(harness, true, stub.run);
 
-    const result = await pr.fetchPrHead(9);
+    const result = await pr.fetchPrHead(9, { confirmFork: false });
 
     expect(result.base).toBe('deadbeef1234');
     const mergeBaseCall = stub.calls.find(
@@ -1142,8 +1142,10 @@ describe('PrManager.fetchPrHead', () => {
     };
     const pr = new PrManager(harness, true, stub.run);
 
-    await expect(pr.fetchPrHead(9)).rejects.toThrow(OrchestratorConflictError);
-    await expect(pr.fetchPrHead(9)).rejects.toThrow(
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
       /couldn't find remote ref pull\/9\/head/
     );
   });
@@ -1159,8 +1161,8 @@ describe('PrManager.fetchPrHead', () => {
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
 
-    await pr.fetchPrHead(9);
-    const second = await pr.fetchPrHead(9);
+    await pr.fetchPrHead(9, { confirmFork: false });
+    const second = await pr.fetchPrHead(9, { confirmFork: false });
 
     expect(second.ref).toBe('refs/dispatch/pr/9');
     const fetchCalls = stub.calls.filter(
@@ -1180,7 +1182,7 @@ describe('PrManager.fetchPrHead', () => {
     };
     const pr = new PrManager(harness, true, stub.run);
 
-    await expect(pr.fetchPrHead(9)).rejects.toThrow(
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
       /not a valid object name origin\/main/
     );
   });
@@ -1190,9 +1192,51 @@ describe('PrManager.fetchPrHead', () => {
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
 
-    await expect(pr.fetchPrHead(404)).rejects.toThrow(
+    await expect(pr.fetchPrHead(404, { confirmFork: false })).rejects.toThrow(
       OrchestratorNotFoundError
     );
+  });
+
+  // StubRunner's default PR #9 is same-repo; this makes it a fork, which is
+  // the only difference the gate below reads.
+  function forkListResult(): CommandResult {
+    const pr = JSON.parse(new StubRunner().listResult.stdout)[0] as Record<
+      string,
+      unknown
+    >;
+    pr.isCrossRepository = true;
+    pr.headRepositoryOwner = { login: 'outsider-org' };
+    return { ok: true, stdout: JSON.stringify([pr]), stderr: '' };
+  }
+
+  // The fork gate lives here, not only at the HTTP layer: `confirmFork` is a
+  // required argument, so a future caller has to answer it rather than
+  // inherit a permissive default. Nothing may reach the fetch without it.
+  it('refuses a fork PR without confirmFork, and fetches nothing', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = forkListResult();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      /outsider-org/
+    );
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(false);
+  });
+
+  it('fetches a fork PR head once confirmFork is true', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = forkListResult();
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.fetchPrHead(9, { confirmFork: true });
+
+    expect(result.ref).toBe('refs/dispatch/pr/9');
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(true);
   });
 });
 
