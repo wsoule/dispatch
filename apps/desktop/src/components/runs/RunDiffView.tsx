@@ -1,15 +1,11 @@
 import type { DiffFile, DiffResult } from '@dispatch/client';
-import { FileDiff } from '@pierre/diffs/react';
+import type { CodeViewHandle } from '@pierre/diffs/react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { CircleAlert, FileX } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
-import { splitPatchFiles } from '../../lib/patchFiles';
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
-import { ErrorBoundary } from '../shell/ErrorBoundary';
-import { PierreWorkerPool } from './PierreWorkerPool';
-import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
-import { toDiffRenderOptions } from '@/lib/diffDisplay';
+import { DiffSurface } from '../code/DiffSurface';
 import { Skeleton } from '@/ui/skeleton';
 
 // The changed-files tree for a run's diff, git-status decorated (added/modified/deleted/
@@ -88,13 +84,11 @@ function ChangedFilesTree({
 }
 
 /**
- * The shared unified-diff view: one @pierre/diffs `FileDiff` per changed file beside a
- * git-status-decorated @pierre/trees changed-files tree. The run patch is multi-file, and
- * `PatchDiff` is single-file by contract (it throws on patches with more than one file diff),
- * so the patch is split up front with `splitPatchFiles` and rendered as a vertical stack —
- * clicking a file in the tree scrolls its diff into view. Used by both the run Review surface
- * and the Pull Requests view so the code renders identically wherever it's shown. Purely
- * presentational — the `diff`/loading/error are owned by the caller.
+ * The shared unified-diff view: the whole run patch in one `DiffSurface` beside a
+ * git-status-decorated @pierre/trees changed-files tree — clicking a file in the tree scrolls
+ * its diff into view within that one scroller. Used by both the run Review surface and the Pull
+ * Requests view so the code renders identically wherever it's shown. Purely presentational —
+ * the `diff`/loading/error are owned by the caller.
  */
 export function RunDiffView({
   diff,
@@ -105,29 +99,14 @@ export function RunDiffView({
   diffLoading: boolean;
   diffError: string | null;
 }) {
-  const patch = diff?.patch;
-  // Parsed once per patch: either the per-file diff metadata or an inline-able
-  // error. `null` while there's nothing to parse (no diff yet, or empty patch).
-  const parsed = useMemo(
-    () =>
-      patch === undefined || patch.trim() === ''
-        ? null
-        : splitPatchFiles(patch),
-    [patch]
-  );
-
-  // Maps each file's normalized path to its rendered diff section so a tree
-  // click can scroll the right section into view. Ref callbacks keep the map
-  // in sync as sections mount/unmount across diff refetches.
-  const fileSectionRefs = useRef(new Map<string, HTMLDivElement>());
+  // Every file lives in one virtualized scroller now, so a tree click scrolls the surface to
+  // that item rather than calling `scrollIntoView` on a per-file section that no longer exists.
+  // Tree paths and item ids are both the diff's file path, so an unknown id (a directory row)
+  // is a no-op.
+  const viewRef = useRef<CodeViewHandle<undefined>>(null);
   const handleFileFocus = useCallback((path: string) => {
-    fileSectionRefs.current.get(path)?.scrollIntoView({ block: 'start' });
+    viewRef.current?.scrollTo({ type: 'item', id: path, align: 'start' });
   }, []);
-  const [diffDisplay] = useDiffDisplaySettings();
-  const diffOptions = useMemo(
-    () => toDiffRenderOptions(diffDisplay),
-    [diffDisplay]
-  );
 
   if (diffLoading) {
     return (
@@ -163,45 +142,14 @@ export function RunDiffView({
           <ChangedFilesTree files={diff.files} onFileFocus={handleFileFocus} />
         )}
       </div>
-      <div className="border-border min-h-0 overflow-auto rounded-md border">
-        {parsed === null ? (
-          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-            <FileX className="size-4" />
-            <p className="text-[12px]">No changes to show for this run.</p>
-          </div>
-        ) : parsed.error !== null ? (
-          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-            <CircleAlert className="size-5" />
-            <p className="text-[13px]">
-              Couldn&rsquo;t load the diff: {parsed.error}
-            </p>
-          </div>
-        ) : (
-          <PierreWorkerPool lineDiffType={diffOptions.lineDiffType}>
-            <div className="flex flex-col">
-              {parsed.files.map((file) => {
-                const path = normalizeDiffFilePath(file.name);
-                return (
-                  <div
-                    key={path}
-                    ref={(node) => {
-                      if (node === null) {
-                        fileSectionRefs.current.delete(path);
-                      } else {
-                        fileSectionRefs.current.set(path, node);
-                      }
-                    }}
-                  >
-                    {/* Per-file boundary so one bad file can't blank the rest. */}
-                    <ErrorBoundary label={`the diff for ${path}`}>
-                      <FileDiff fileDiff={file} options={diffOptions} />
-                    </ErrorBoundary>
-                  </div>
-                );
-              })}
-            </div>
-          </PierreWorkerPool>
-        )}
+      {/* A flex column, not `overflow-auto`: the scroller has to be `CodeView` itself, and
+          `flex-1` sizes it off this column directly rather than through a percentage. */}
+      <div className="border-border flex min-h-0 flex-col overflow-hidden rounded-md border">
+        <DiffSurface
+          patch={diff.patch}
+          emptyLabel="No changes to show for this run."
+          viewRef={viewRef}
+        />
       </div>
     </div>
   );

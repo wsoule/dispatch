@@ -14,10 +14,10 @@ export interface SplitPatchResult {
 
 // Splits a raw multi-file git/unified patch (what dispatchd's
 // `GET /api/runs/:id/diff` returns as `patch`) into one FileDiffMetadata per
-// changed file, so the review pane can render a `<FileDiff>` per file.
-// @pierre/diffs' `PatchDiff` component is single-file by contract — it throws
-// whenever a patch contains more than one file — so multi-file patches must
-// be parsed up front with `parsePatchFiles` and rendered file by file.
+// changed file, which is what `DiffSurface` turns into one `CodeView` item per
+// file. The whole patch cannot simply be handed to a component: @pierre/diffs'
+// `PatchDiff` is single-file by contract — it throws whenever a patch contains
+// more than one file — so it must be parsed up front with `parsePatchFiles`.
 // Never throws: parser failures and empty parses come back as an error
 // result the caller can render as an inline message.
 export function splitPatchFiles(patch: string): SplitPatchResult {
