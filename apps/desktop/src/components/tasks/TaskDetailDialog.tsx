@@ -45,6 +45,7 @@ import {
   useTaskFindings,
   useTaskVerification,
 } from '../../hooks/useOrchestration';
+import type { ImpactSubjectRef } from '../../lib/appNav';
 import { isFakeExecutorDevToolEnabled } from '../../lib/devTools';
 import {
   countOpenFindings,
@@ -75,6 +76,7 @@ import {
   summarizeVerification,
   verificationCheckDetail,
 } from '../../lib/verificationSummary';
+import { ImpactPanel } from '../impact/ImpactPanel';
 import { PlanQuestionsForm } from '../plans/PlanQuestionsForm';
 import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
@@ -765,6 +767,9 @@ interface TaskDetailDialogProps {
    * Omitted (the palette/board's older call sites) hides the rail's title links, rendering
    * them as plain text instead. */
   onOpenTask?: (taskId: string) => void;
+  /** Navigates to `ImpactView` with this task preselected — the Impact section's "open in
+   * Impact" action. Optional, like `onOpenTask`, so older call sites keep compiling. */
+  onOpenImpact?: (subject: ImpactSubjectRef) => void;
   /** Issue UUID -> display identifier/URL, for turning `doc.meta.external` into a real chip. */
   linearLinks: Record<string, LinearIssueLink>;
   /** Whether Linear is connected with a team chosen — gates the "Push to Linear" action. */
@@ -812,6 +817,7 @@ export function TaskDetailDialog({
   onAnswerEnrich,
   onOpenRun,
   onOpenTask,
+  onOpenImpact,
   linearLinks,
   linearConfigured,
   onPushToLinear,
@@ -1404,6 +1410,28 @@ export function TaskDetailDialog({
                   result={verification}
                   error={verificationError}
                 />
+
+                <MainSection title="Impact">
+                  <div className="flex flex-col items-start gap-2">
+                    <ImpactPanel
+                      client={client}
+                      subject="task"
+                      id={doc.meta.id}
+                    />
+                    {onOpenImpact !== undefined && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() =>
+                          onOpenImpact({ kind: 'task', id: doc.meta.id })
+                        }
+                      >
+                        <Waypoints className="size-3.5" />
+                        Open in Impact
+                      </Button>
+                    )}
+                  </div>
+                </MainSection>
 
                 <MainSection title="Activity">
                   {activityEntries.length === 0 ? (

@@ -175,3 +175,21 @@ describe('request() declares content-type on every state-changing request', () =
     }
   });
 });
+
+describe('getImpact', () => {
+  it('targets /api/impact with subject and id as query parameters', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').getImpact(
+        'file',
+        'packages/core/src/index.ts'
+      );
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/impact?subject=file&id=packages%2Fcore%2Fsrc%2Findex.ts'
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+});

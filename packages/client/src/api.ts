@@ -1043,6 +1043,53 @@ export interface LinearViewer {
   email: string;
 }
 
+// Mirrors ImpactSubject in packages/server/src/impact.ts — what a blast-radius
+// query was asked about.
+export type ImpactSubject =
+  | { kind: 'file'; path: string }
+  | { kind: 'run'; runId: string }
+  | { kind: 'task'; taskId: string };
+
+// Mirrors SUBJECT_KINDS in packages/server/src/api/impact.ts — the `subject`
+// query param GET /api/impact accepts. Checked against the server source in
+// server-parity.test.ts.
+export const IMPACT_SUBJECT_KINDS = ['file', 'run', 'task'] as const;
+export type ImpactSubjectKind = (typeof IMPACT_SUBJECT_KINDS)[number];
+
+// Mirrors BlastEntry in packages/server/src/depmap.ts — one file reachable
+// from the subject's seed set, at its closest hop distance.
+export interface ImpactEntry {
+  path: string;
+  hops: number;
+}
+
+// Mirrors ReachResult in packages/server/src/depmap.ts — the blast radius
+// computed over a subject's seed file set.
+export interface ImpactReach {
+  entries: ImpactEntry[];
+  count: number;
+  maxHops: number;
+  sources: ('carto' | 'scanner')[];
+  degraded: boolean;
+  truncated: boolean;
+  // Seeds none of `sources` could analyse (e.g. a non-.ts file under a
+  // scanner-only result) — a 0 count here means "not analysed", not "no
+  // dependents", and callers must render the two differently.
+  unanalyzedSeeds: string[];
+}
+
+// The body of `GET /api/impact`. `reason` is set only on the 200s a task
+// subject can get back with an empty reach that is still a real answer, not
+// an error: `no-declared-writes` (nothing declared) or `writes-match-nothing`
+// (declared writes matched no tracked file) — see getImpact in
+// packages/server/src/api/impact.ts.
+export interface ImpactResponse {
+  subject: ImpactSubject;
+  seeds: string[];
+  reach: ImpactReach;
+  reason?: string;
+}
+
 /** Thrown by `request()` on a non-2xx response. `message` is unchanged from
  *  a plain `Error`; `status` is additive, for telling e.g. 404 from 500. */
 export class ApiError extends Error {
@@ -1695,6 +1742,9 @@ export interface ApiClient {
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
   fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
   createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  // The blast radius of a file, a run's diff, or a task's declared writes —
+  // `GET /api/impact?subject=<kind>&id=<id>`.
+  getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   wsUrl(): string;
   connectEvents(
@@ -2193,6 +2243,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     },
     createLedgerEntry: (input) =>
       request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
+    getImpact: (subject, id) =>
+      request(
+        target,
+        `/api/impact?${new URLSearchParams({ subject, id }).toString()}`
+      ),
     wsUrl: () => wsUrl(baseUrl, target.token),
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, { token: target.token, ...options }),

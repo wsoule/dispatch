@@ -50,6 +50,7 @@ import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { DraftView } from './views/DraftView';
 import { GetStartedView } from './views/GetStartedView';
+import { ImpactView } from './views/ImpactView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { ReviewView } from './views/ReviewView';
@@ -741,6 +742,24 @@ function App() {
                       onSelectRun={(runId) =>
                         dispatchNav({ type: 'openRun', runId })
                       }
+                      onOpenImpact={(subject) =>
+                        dispatchNav({ type: 'openImpact', subject })
+                      }
+                    />
+                  )}
+                  {navState.projectView === 'impact' && (
+                    // Keyed by the preselected subject so arriving with a new
+                    // one (a different "open in Impact" click) resets the
+                    // view's local picker/filter state instead of reusing
+                    // whatever was left over from the last subject.
+                    <ImpactView
+                      key={
+                        navState.impactSubject === null
+                          ? 'impact-empty'
+                          : `${navState.impactSubject.kind}:${navState.impactSubject.id}`
+                      }
+                      data={data}
+                      initialSubject={navState.impactSubject}
                     />
                   )}
                   {navState.projectView === 'board' && (
@@ -773,6 +792,9 @@ function App() {
                         dispatchNav({ type: 'openRun', runId });
                         selectProjectView('runs');
                       }}
+                      onOpenImpact={(subject) =>
+                        dispatchNav({ type: 'openImpact', subject })
+                      }
                     />
                   )}
                   {navState.projectView === 'brain-dump' && (
@@ -890,6 +912,10 @@ function App() {
               dispatchNav({ type: 'openRun', runId });
             }}
             onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
+            onOpenImpact={(subject) => {
+              dispatchNav({ type: 'closePeek' });
+              dispatchNav({ type: 'openImpact', subject });
+            }}
             linearLinks={data.linearLinks}
             linearConfigured={isLinearConfigured(data.linearStatus)}
             onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}

@@ -767,7 +767,14 @@ class ScriptedReviewer implements Executor {
 
 // A DepMap with no edges — the default for tests that don't care about
 // dependency scope, so they don't have to scan a real workspace.
-const EMPTY_DEP_MAP: DepMap = { dependents: () => [], mirrors: () => [] };
+const EMPTY_DEP_MAP: DepMap = {
+  dependents: () => [],
+  dependentsWithHops: () => [],
+  mirrors: () => [],
+  reach: () => {
+    throw new Error('unused');
+  },
+};
 
 // Fixed git identity so ReviewRunner's actorContext resolves deterministically
 // (handle 'test', from the local part of the email) across every test.
@@ -1172,7 +1179,15 @@ describe('ReviewRunner', () => {
     const manyDependents = Array.from({ length: 25 }, (_, i) => `dep${i}.ts`);
     const fakeDepMap: DepMap = {
       dependents: (file) => (file === 'src.ts' ? manyDependents : []),
+      dependentsWithHops: (file) =>
+        (file === 'src.ts' ? manyDependents : []).map((path) => ({
+          path,
+          hops: 1,
+        })),
       mirrors: (file) => (file === 'src.ts' ? ['mirror.ts'] : []),
+      reach: () => {
+        throw new Error('unused');
+      },
     };
     const reviewer = new ScriptedReviewer('{"findings": []}');
     const { runner, store } = setupReview(reviewer, {
@@ -1200,14 +1215,19 @@ describe('ReviewRunner', () => {
 
   it("spreads the cap across every changed file, so a low-fanout file's dependents survive a high-fanout sibling", async () => {
     const manyDependents = Array.from({ length: 25 }, (_, i) => `dep${i}.ts`);
+    const dependentsOf = (file: string): string[] => {
+      if (file === 'high.ts') return manyDependents;
+      if (file === 'low.ts') return ['low-consumer-a.ts', 'low-consumer-b.ts'];
+      return [];
+    };
     const fakeDepMap: DepMap = {
-      dependents: (file) => {
-        if (file === 'high.ts') return manyDependents;
-        if (file === 'low.ts')
-          return ['low-consumer-a.ts', 'low-consumer-b.ts'];
-        return [];
-      },
+      dependents: dependentsOf,
+      dependentsWithHops: (file) =>
+        dependentsOf(file).map((path) => ({ path, hops: 1 })),
       mirrors: () => [],
+      reach: () => {
+        throw new Error('unused');
+      },
     };
     const reviewer = new ScriptedReviewer('{"findings": []}');
     const { runner, store } = setupReview(reviewer, {

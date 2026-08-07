@@ -20,6 +20,7 @@ import {
   useTaskFindings,
 } from '../hooks/useOrchestration';
 import { useRepoPrDetail } from '../hooks/useRepoPrDetail';
+import type { ImpactSubjectRef } from '../lib/appNav';
 import { findingWarnings, partitionFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { openFindingsByFile } from '../lib/reviewAttention';
@@ -39,6 +40,9 @@ interface ReviewViewProps {
   /** Which run is open. Null shows the queue, which is the screen's real home. */
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
+  /** Navigates to `ImpactView` with the open run preselected — the case
+   *  panel's "open in Impact" action. */
+  onOpenImpact: (subject: ImpactSubjectRef) => void;
 }
 
 // How often the open-PR list is re-fetched while this page is on screen.
@@ -69,6 +73,7 @@ export function ReviewView({
   onBack,
   selectedRunId,
   onSelectRun,
+  onOpenImpact,
 }: ReviewViewProps) {
   const queryClient = useQueryClient();
   const queue = useMemo(
@@ -487,6 +492,9 @@ export function ReviewView({
                 findings={findings}
                 decisions={decisions}
                 onStartAiReview={handleStartAiReview}
+                client={data.client}
+                runId={selectedRunId ?? undefined}
+                onOpenImpact={onOpenImpact}
               />
             </>
           )}

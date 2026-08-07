@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.options.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["storefront-src/**"]
+}
