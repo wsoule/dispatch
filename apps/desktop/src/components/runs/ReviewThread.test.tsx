@@ -30,8 +30,8 @@ describe('ReviewThread — the Apply affordance', () => {
       <ReviewThread
         comment={comment()}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => Promise.resolve()}
       />
     );
@@ -43,8 +43,8 @@ describe('ReviewThread — the Apply affordance', () => {
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
       />
     );
     expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
@@ -56,8 +56,8 @@ describe('ReviewThread — the Apply affordance', () => {
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => {
           applied = true;
           return Promise.resolve();
@@ -73,8 +73,8 @@ describe('ReviewThread — the Apply affordance', () => {
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => Promise.reject(new ApiError('anchor-drifted', 409))}
       />
     );
@@ -96,8 +96,8 @@ describe('ReviewThread — the Apply affordance', () => {
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => Promise.reject(new ApiError('worktree-busy', 409))}
       />
     );
@@ -126,8 +126,8 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => Promise.resolve()}
         initialApplyError={{
           message: 'The code here has changed…',
@@ -146,8 +146,8 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => Promise.resolve()}
         initialApplyError={{
           message: 'An agent is working in this worktree…',
@@ -165,8 +165,8 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => Promise.resolve()}
       />
     );
@@ -187,8 +187,8 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
     const props = {
       comment: comment({ suggestion: 'const b = 2;' }),
       anchor: 'exact' as const,
-      onResolve: () => {},
-      onReply: () => {},
+      onResolve: () => Promise.resolve(),
+      onReply: () => Promise.resolve(),
       onApply: () => Promise.resolve(),
     };
     const { rerender } = render(<ReviewThread {...props} />);
@@ -222,8 +222,8 @@ describe('ReviewThread — seeding Apply state from a failed `Apply now`', () =>
     const props = {
       comment: comment({ suggestion: 'const b = 2;' }),
       anchor: 'exact' as const,
-      onResolve: () => {},
-      onReply: () => {},
+      onResolve: () => Promise.resolve(),
+      onReply: () => Promise.resolve(),
       onApply: () => Promise.resolve(),
     };
     const { rerender } = render(<ReviewThread {...props} />);
@@ -259,8 +259,8 @@ describe('ReviewThread — a landed apply says so', () => {
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => Promise.resolve()}
       />
     );
@@ -281,8 +281,8 @@ describe('ReviewThread — a landed apply says so', () => {
       <ReviewThread
         comment={comment({ suggestion: 'const b = 2;' })}
         anchor="exact"
-        onResolve={() => {}}
-        onReply={() => {}}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
         onApply={() => {
           calls += 1;
           return Promise.resolve();
@@ -309,8 +309,9 @@ describe('ReviewThread — the existing thread behaviour', () => {
         anchor="exact"
         onResolve={(r) => {
           resolved = r;
+          return Promise.resolve();
         }}
-        onReply={() => {}}
+        onReply={() => Promise.resolve()}
       />
     );
     fireEvent.click(screen.getByRole('button', { name: 'resolve' }));
@@ -323,9 +324,10 @@ describe('ReviewThread — the existing thread behaviour', () => {
       <ReviewThread
         comment={comment()}
         anchor="exact"
-        onResolve={() => {}}
+        onResolve={() => Promise.resolve()}
         onReply={(body) => {
           replyBody = body;
+          return Promise.resolve();
         }}
       />
     );
@@ -575,5 +577,216 @@ describe('ReviewComposer — `Apply now`', () => {
   it('offers no Apply now button when there is nowhere to apply into', () => {
     renderComposer({ fileContents: 'a\nb\nc\n' });
     expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull();
+  });
+});
+
+// A comment GitHub already knows about, both ids read back — the only state
+// in which the reply box and the resolve button are offered on a PR.
+function onGitHub(over: Partial<ReviewComment> = {}): ReviewComment {
+  return comment({
+    pending: false,
+    githubId: 555,
+    githubThreadId: 'PRRT_1',
+    ...over,
+  });
+}
+
+const ok = () => Promise.resolve();
+const boom = () =>
+  Promise.reject(new Error('comment has not been pushed to GitHub yet: c1'));
+
+describe('ReviewThread — the GitHub destination', () => {
+  // A staged PR draft has no GitHub comment id and no review thread, so both
+  // server calls 409 by construction. Offering the controls anyway is how a
+  // typed reply used to be swallowed.
+  it('a staged GitHub draft offers neither reply nor resolve', () => {
+    render(
+      <ReviewThread
+        comment={comment({ pending: true })}
+        anchor="exact"
+        destination="github"
+        onResolve={ok}
+        onReply={ok}
+      />
+    );
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: /resolve/i })).toBeNull();
+    expect(screen.getByText(/reaches github when you submit/i)).toBeDefined();
+  });
+
+  it('a published GitHub comment keeps both controls', () => {
+    render(
+      <ReviewThread
+        comment={onGitHub()}
+        anchor="exact"
+        destination="github"
+        onResolve={ok}
+        onReply={ok}
+      />
+    );
+
+    expect(screen.getByPlaceholderText(/posts to this thread/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /resolve/i })).toBeDefined();
+  });
+
+  // Review finding: `pending` was standing in for "on GitHub". A comment
+  // that has been pushed but whose ids were never read back (a failed or
+  // truncated thread sync) is not pending, so both controls were offered
+  // and both 409ed. They gate on the ids themselves now.
+  it('a pushed comment with no ids read back yet offers neither control', () => {
+    render(
+      <ReviewThread
+        comment={comment({ pending: false })}
+        anchor="exact"
+        destination="github"
+        onResolve={ok}
+        onReply={ok}
+      />
+    );
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: /resolve/i })).toBeNull();
+    expect(screen.getByText(/not linked to its github thread/i)).toBeDefined();
+  });
+
+  // The two ids gate different verbs, so a comment GitHub knows about but
+  // whose thread node is unknown can still be replied to.
+  it('a comment with an id but no thread id can reply, not resolve', () => {
+    render(
+      <ReviewThread
+        comment={comment({ pending: false, githubId: 555 })}
+        anchor="exact"
+        destination="github"
+        onResolve={ok}
+        onReply={ok}
+      />
+    );
+
+    expect(screen.getByPlaceholderText(/posts to this thread/i)).toBeDefined();
+    expect(screen.queryByRole('button', { name: /resolve/i })).toBeNull();
+  });
+
+  // The run path stages every comment the same way, but its store takes both
+  // verbs locally, so `pending` must not gate anything there.
+  it('a pending run draft is untouched — both controls stay', () => {
+    render(
+      <ReviewThread
+        comment={comment({ pending: true })}
+        anchor="exact"
+        onResolve={ok}
+        onReply={ok}
+      />
+    );
+
+    expect(screen.getByPlaceholderText(/the agent reads this/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /resolve/i })).toBeDefined();
+  });
+
+  it('a failed reply keeps the text and says what went wrong', async () => {
+    render(
+      <ReviewThread
+        comment={onGitHub()}
+        anchor="exact"
+        destination="github"
+        onResolve={ok}
+        onReply={boom}
+      />
+    );
+
+    const input = screen.getByRole<HTMLInputElement>('textbox');
+    fireEvent.change(input, { target: { value: 'Still broken on retry.' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
+    expect(screen.getByRole('alert').textContent).toContain(
+      'has not been pushed to GitHub yet'
+    );
+    expect(screen.getByRole<HTMLInputElement>('textbox').value).toBe(
+      'Still broken on retry.'
+    );
+  });
+
+  it('a sent reply clears the box', async () => {
+    render(
+      <ReviewThread
+        comment={onGitHub()}
+        anchor="exact"
+        destination="github"
+        onResolve={ok}
+        onReply={ok}
+      />
+    );
+
+    const input = screen.getByRole<HTMLInputElement>('textbox');
+    fireEvent.change(input, { target: { value: 'Agreed.' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(screen.getByRole<HTMLInputElement>('textbox').value).toBe('')
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a failed resolve is reported rather than dropped', async () => {
+    render(
+      <ReviewThread
+        comment={onGitHub()}
+        anchor="exact"
+        destination="github"
+        onResolve={boom}
+        onReply={ok}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /resolve/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
+  });
+});
+
+describe('ReviewComposer — a rejected save', () => {
+  // The composer used to close on submit regardless of what the write did,
+  // so a rejected POST discarded the note with no trace of it anywhere.
+  it('a failed submit keeps the composed note on screen', async () => {
+    let closed = false;
+    renderComposer({
+      destination: 'github',
+      onSubmit: boom,
+      onCancel: () => {
+        closed = true;
+      },
+      onSaved: () => {
+        closed = true;
+      },
+    });
+
+    const box = screen.getByRole<HTMLTextAreaElement>('textbox');
+    fireEvent.change(box, { target: { value: 'Guard this branch.' } });
+    fireEvent.click(screen.getByRole('button', { name: /add comment/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox').value).toBe(
+      'Guard this branch.'
+    );
+    expect(closed).toBe(false);
+  });
+
+  it('a successful submit hands the trimmed body up once', async () => {
+    const bodies: string[] = [];
+    renderComposer({
+      destination: 'github',
+      onSubmit: (body) => {
+        bodies.push(body);
+        return Promise.resolve(comment());
+      },
+    });
+
+    const box = screen.getByRole<HTMLTextAreaElement>('textbox');
+    fireEvent.change(box, { target: { value: '  Guard this branch.  ' } });
+    fireEvent.click(screen.getByRole('button', { name: /add comment/i }));
+
+    await waitFor(() => expect(bodies).toEqual(['Guard this branch.']));
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

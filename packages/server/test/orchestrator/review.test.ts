@@ -970,9 +970,11 @@ describe('ReviewRunner', () => {
     await waitFor(
       () => orchestrator.getRun(reviewMeta.id)?.meta.state === 'finished'
     );
-    await waitFor(() => reviewComments.list(implRun.id).length === 1);
+    await waitFor(
+      () => reviewComments.list({ kind: 'run', runId: implRun.id }).length === 1
+    );
 
-    const [comment] = reviewComments.list(implRun.id);
+    const [comment] = reviewComments.list({ kind: 'run', runId: implRun.id });
     expect(comment.file).toBe('src.ts');
     expect(comment.line).toBe(1);
     expect(comment.author).toBe('agent:test/claude');

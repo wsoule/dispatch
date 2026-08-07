@@ -1,5 +1,6 @@
 export {
   ApiError,
+  canPostReviewToPr,
   connectEvents,
   createApiClient,
   httpToWs,
@@ -78,6 +79,7 @@ export type {
   RepoPr,
   ReviewComment,
   ReviewReply,
+  ReviewTarget,
   ReviewVerdict,
   RunClaim,
   RunDetail,

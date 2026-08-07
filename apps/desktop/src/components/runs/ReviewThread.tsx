@@ -14,12 +14,48 @@ import {
 } from '@/lib/suggestionRange';
 import { cn } from '@/lib/utils';
 
+/**
+ * Where a note written here ends up: back to the agent on a run's own diff, or
+ * onto the pull request on GitHub. Only the wording differs — the two paths
+ * are otherwise identical — but telling a reviewer the wrong one is the exact
+ * misrepresentation the PR composer was held back for.
+ */
+export type ReviewDestination = 'agent' | 'github';
+
+const REPLY_PLACEHOLDER: Record<ReviewDestination, string> = {
+  agent: 'Reply — the agent reads this when you send the work back',
+  github: 'Reply — posts to this thread on GitHub',
+};
+
+const COMPOSER_PLACEHOLDER: Record<ReviewDestination, string> = {
+  agent: 'What should change? This goes back with the work.',
+  github: 'What should change? This publishes with your review.',
+};
+
+// The third reply state, shown in place of the input on a staged GitHub
+// draft. There is no thread on GitHub to reply into until a verdict
+// publishes the note, so the box is withheld rather than left to fail.
+const STAGED_REPLY_NOTE =
+  'Staged — this note reaches GitHub when you submit your review. ' +
+  'Replying and resolving open up then.';
+
+// Shown when a note is on GitHub but Dispatch has not read its ids back yet
+// (a thread sync that failed, or a PR past the 100-thread page). Replying
+// would 409, so the box waits for the next refresh instead of failing.
+const UNLINKED_REPLY_NOTE =
+  'Not linked to its GitHub thread yet — reopen this review to pick it up.';
+
+// Fallback for a composer save that rejected with something that is not an
+// Error, which carries no message worth showing.
+const SAVE_FAILED = 'Could not save this comment.';
+
 interface ReviewThreadProps {
   comment: ReviewComment;
   /** How the anchor has fared since the comment was written. */
   anchor: 'exact' | 'moved' | 'outdated';
-  onResolve: (resolved: boolean) => void;
-  onReply: (body: string) => void;
+  onResolve: (resolved: boolean) => Promise<void>;
+  onReply: (body: string) => Promise<void>;
+  destination?: ReviewDestination;
   /** Commits this comment's suggestion onto the run branch. Omitted where there is nowhere to
    * apply it into (no run in scope, same as `PierreReviewDiff`'s `onAdd`) — the Apply button is
    * withheld entirely rather than shown disabled, since there is nothing the reviewer could do
@@ -61,10 +97,13 @@ export function ReviewThread({
   anchor,
   onResolve,
   onReply,
+  destination = 'agent',
   onApply,
   initialApplyError,
 }: ReviewThreadProps) {
   const [reply, setReply] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [applyState, setApplyState] = useState<ApplyState>(() =>
     initialApplyError === undefined
       ? { status: 'idle' }
@@ -74,6 +113,17 @@ export function ReviewThread({
           disabled: initialApplyError.disable,
         }
   );
+
+  // Both GitHub verbs need an id the server has actually seen: replying
+  // needs the comment's `githubId`, resolving needs the thread's node id.
+  // Gating on those rather than on `pending` also covers a pushed note
+  // whose ids have not been read back yet, which used to 409 on click.
+  const isGitHub = destination === 'github';
+  const canReply = !isGitHub || comment.githubId !== undefined;
+  const canResolve = !isGitHub || comment.githubThreadId !== undefined;
+  // Staged says "submit your review"; anything else missing its ids is a
+  // sync gap, and saying the wrong one is its own small lie.
+  const replyNote = comment.pending ? STAGED_REPLY_NOTE : UNLINKED_REPLY_NOTE;
 
   // `initialApplyError` can arrive after this thread has mounted — `Apply now`'s apply step
   // races the refetch its own save kicks off — and a lazy initializer only runs once, so this
@@ -93,6 +143,32 @@ export function ReviewThread({
         : current
     );
   }, [initialApplyError]);
+
+  // Clears the box only once the reply has actually landed: clearing it on
+  // keypress destroyed the reviewer's text whenever the write failed.
+  async function sendReply() {
+    const body = reply.trim();
+    if (body === '' || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onReply(body);
+      setReply('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleResolved() {
+    setError(null);
+    try {
+      await onResolve(!comment.resolved);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   // Fires the apply and turns any rejection into the sentence + disable decision
   // `resolveApplySuggestionFailure` makes — see its own doc comment for why only
@@ -133,25 +209,27 @@ export function ReviewThread({
           </span>
         )}
         <span className="flex-1" />
-        <button
-          type="button"
-          onClick={() => onResolve(!comment.resolved)}
-          className={cn(
-            'text-[11px]',
-            comment.resolved
-              ? 'text-state-review'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          {comment.resolved ? (
-            <span className="inline-flex items-center gap-1">
-              <Check className="size-3" />
-              resolved
-            </span>
-          ) : (
-            'resolve'
-          )}
-        </button>
+        {canResolve && (
+          <button
+            type="button"
+            onClick={() => void toggleResolved()}
+            className={cn(
+              'text-[11px]',
+              comment.resolved
+                ? 'text-state-review'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {comment.resolved ? (
+              <span className="inline-flex items-center gap-1">
+                <Check className="size-3" />
+                resolved
+              </span>
+            ) : (
+              'resolve'
+            )}
+          </button>
+        )}
       </div>
 
       <p className="mt-1.5 text-[12.5px] leading-relaxed">{comment.body}</p>
@@ -198,22 +276,30 @@ export function ReviewThread({
         </div>
       ))}
 
-      {!comment.resolved && (
-        <div className="mt-2 flex gap-2">
-          <input
-            value={reply}
-            onChange={(e) => setReply(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && reply.trim() !== '') {
-                onReply(reply.trim());
-                setReply('');
-              }
-            }}
-            placeholder="Reply — the agent reads this when you send the work back"
-            className="shadow-hairline min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] outline-none"
-          />
-        </div>
+      {error !== null && (
+        <p role="alert" className="text-destructive mt-1.5 text-[11.5px]">
+          {error}
+        </p>
       )}
+
+      {!comment.resolved &&
+        (!canReply ? (
+          <p className="text-muted-foreground mt-2 text-[11.5px]">
+            {replyNote}
+          </p>
+        ) : (
+          <div className="mt-2 flex gap-2">
+            <input
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void sendReply();
+              }}
+              placeholder={REPLY_PLACEHOLDER[destination]}
+              className="shadow-hairline min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] outline-none"
+            />
+          </div>
+        ))}
     </div>
   );
 }
@@ -246,6 +332,7 @@ interface ComposerProps {
    * comment (or the composer) hostage, so this fires on the save alone. */
   onSaved: () => void;
   onCancel: () => void;
+  destination?: ReviewDestination;
   /** Applies a just-created comment's suggestion — the exact same bound function
    * `PierreReviewDiff` wires to every `ReviewThread`'s Apply button (its `invalidate` call
    * included), reused here rather than duplicated. Omitted wherever that is (no run to apply
@@ -280,11 +367,13 @@ export function ReviewComposer({
   onSubmit,
   onSaved,
   onCancel,
+  destination = 'agent',
   onApply,
   onApplyNowFailed,
 }: ComposerProps) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const start = startLine ?? line;
   const seed = useMemo(
     () =>
@@ -322,15 +411,18 @@ export function ReviewComposer({
 
   // Saves the comment. Both buttons reach here; `Apply now` chains an apply attempt onto it
   // (see `handleApplyNow` below). A save failure leaves the composer open with the draft
-  // intact — `onSaved` is only called once `onSubmit` actually resolves.
+  // intact and the reason beneath it — `onSaved` is only called once `onSubmit` resolves.
   const handleSuggest = () => {
     const trimmed = body.trim();
     if (trimmed === '' || busy) return;
     setBusy(true);
+    setError(null);
     onSubmit(trimmed, suggestion, anchorText)
       .then(() => onSaved())
-      .catch(() => {
-        // Nothing was created — the draft stays in the box for the reviewer to retry.
+      .catch((err: unknown) => {
+        // Nothing was created — the draft stays in the box for the reviewer to
+        // retry, with what went wrong shown rather than swallowed.
+        setError(err instanceof Error ? err.message : SAVE_FAILED);
       })
       .finally(() => setBusy(false));
   };
@@ -345,14 +437,16 @@ export function ReviewComposer({
     if (trimmed === '' || busy || onApply === undefined) return;
     if (suggestion === undefined) return;
     setBusy(true);
+    setError(null);
     submitAndApplyNow(
       () => onSubmit(trimmed, suggestion, anchorText),
       onApply,
       (commentId, outcome) => onApplyNowFailed?.(commentId, outcome)
     )
       .then(() => onSaved())
-      .catch(() => {
+      .catch((err: unknown) => {
         // The save itself failed — same as `handleSuggest`, nothing was created to apply.
+        setError(err instanceof Error ? err.message : SAVE_FAILED);
       })
       .finally(() => setBusy(false));
   };
@@ -374,7 +468,7 @@ export function ReviewComposer({
             handleSuggest();
           }
         }}
-        placeholder="What should change? This goes back with the work."
+        placeholder={COMPOSER_PLACEHOLDER[destination]}
         className="mt-1.5 min-h-[52px] w-full resize-y bg-transparent text-[12.5px] outline-none"
       />
       {suggestionItem !== null && (
@@ -391,6 +485,11 @@ export function ReviewComposer({
             className="text-[12px]"
           />
         </div>
+      )}
+      {error !== null && (
+        <p role="alert" className="text-destructive text-[11.5px]">
+          {error}
+        </p>
       )}
       <div className="mt-1.5 flex gap-2">
         <button
