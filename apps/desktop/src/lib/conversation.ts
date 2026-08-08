@@ -1,0 +1,27 @@
+import type { Snippet } from '@dispatch/client';
+
+import type { CodeSelection } from '../components/code/SelectionActions';
+
+/** How a snippet reads on its chip. A one-line range shows one number, not `7-7`. */
+export function snippetLabel(snippet: Snippet): string {
+  const range =
+    snippet.startLine === snippet.endLine
+      ? `${snippet.startLine}`
+      : `${snippet.startLine}-${snippet.endLine}`;
+  return `${snippet.file} (${range})`;
+}
+
+/**
+ * The one place a selection becomes an attachment. They are deliberately different types — a
+ * `CodeSelection` is a live UI gesture, a `Snippet` is what gets persisted — so this conversion
+ * lives in the wiring layer and neither the selection bar nor the composer has to know the
+ * other exists.
+ */
+export function snippetFromSelection(selection: CodeSelection): Snippet {
+  return {
+    file: selection.file,
+    startLine: Math.min(selection.startLine, selection.endLine),
+    endLine: Math.max(selection.startLine, selection.endLine),
+    text: selection.text,
+  };
+}

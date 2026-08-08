@@ -48,7 +48,7 @@ function SyncLineDiffType({
 }
 
 /**
- * Wraps RunDiffView's per-file `FileDiff` stack in the worker pool
+ * Wraps a diff surface's `CodeView` in the worker pool
  * @pierre/diffs uses to tokenize/highlight file contents off the main
  * thread. Scoped to just the review view rather than the whole app — the
  * pool (and its Shiki highlighter) only needs to exist while a run's diff

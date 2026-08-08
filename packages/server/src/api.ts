@@ -54,6 +54,8 @@ import {
 } from './api/scopeRequests.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
+import type { ConversationStore } from './conversations.js';
+import { isSnippet, isSubjectRef } from './conversations.js';
 import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
 import type { FindingStore } from './findings.js';
@@ -146,6 +148,7 @@ export interface ApiContext {
   trackedFilesCache: TrackedFilesCache;
   inboxClusterer?: InboxClusterer;
   reviewComments: ReviewCommentStore;
+  conversations: ConversationStore;
   questions: QuestionRegistry;
   scopeRequests: ScopeRequestRegistry;
   linearSync: LinearSync;
@@ -1188,6 +1191,75 @@ async function applySuggestion(
     `review: apply suggestion on ${comment.file}`,
     runId
   );
+}
+
+// GET /api/conversations?subject=… — every message on that subject.
+function listConversation(req: Request, ctx: ApiContext): Response {
+  const subject = new URL(req.url).searchParams.get('subject');
+  if (!isSubjectRef(subject)) {
+    return errorResponse(400, 'subject must be run:…, worktree:… or pr:…');
+  }
+  return jsonResponse(ctx.conversations.list(subject));
+}
+
+/**
+ * POST /api/conversations — append a message.
+ *
+ * The subject travels in the body rather than the path because a worktree subject contains
+ * slashes, which no single path segment can carry without double-encoding.
+ */
+async function addChatMessage(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as {
+    subject?: unknown;
+    role?: unknown;
+    body?: unknown;
+    snippets?: unknown;
+    target?: unknown;
+  };
+  if (!isSubjectRef(body.subject)) {
+    return errorResponse(400, 'subject must be run:…, worktree:… or pr:…');
+  }
+  if (body.role !== 'human' && body.role !== 'agent') {
+    return errorResponse(400, 'role must be human or agent');
+  }
+  if (typeof body.body !== 'string' || body.body.trim() === '') {
+    return errorResponse(400, 'body is required');
+  }
+  // Rejected rather than stored: a snippet missing a field is not recoverable later, and it
+  // reaches the reviewer's chat as `undefined (undefined-undefined)` on a chip.
+  const snippets = body.snippets ?? [];
+  if (!Array.isArray(snippets) || !snippets.every(isSnippet)) {
+    return errorResponse(
+      400,
+      'snippets must each carry file, text and integer startLine/endLine'
+    );
+  }
+  const message = ctx.conversations.add(body.subject, {
+    role: body.role,
+    body: body.body.trim(),
+    snippets,
+    target: typeof body.target === 'string' ? body.target : undefined,
+  });
+  return jsonResponse(message, 201);
+}
+
+// DELETE /api/conversations/:messageId?subject=…
+function deleteChatMessage(
+  req: Request,
+  ctx: ApiContext,
+  messageId: string
+): Response {
+  const subject = new URL(req.url).searchParams.get('subject');
+  if (!isSubjectRef(subject)) {
+    return errorResponse(400, 'subject must be run:…, worktree:… or pr:…');
+  }
+  ctx.conversations.remove(subject, messageId);
+  return new Response(null, { status: 204 });
 }
 
 // Sends the review back to the agent wherever the agent is. A run is
@@ -3905,6 +3977,18 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await decideScopeRequest(req, ctx, segments[1], segments[3]);
+      }
+    }
+
+    if (segments[0] === 'conversations') {
+      if (segments.length === 1 && method === 'GET') {
+        return listConversation(req, ctx);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await addChatMessage(req, ctx);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        return deleteChatMessage(req, ctx, segments[1]);
       }
     }
 
