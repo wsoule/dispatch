@@ -2311,20 +2311,49 @@ export class Orchestrator {
   // Retires the derived task of every review run this boot found terminal:
   // ReviewRunner.ingest keys off an in-memory map a restart loses, so the
   // durable `derivedFrom` drives this sweep instead. Returns what it retired.
+  //
+  // Per-run bestEffort, like the transcript loop above: one unretirable run
+  // must not take down the rest of the sweep, nor the archive reconcile and
+  // crash surveys reconcileOnBoot() runs after it.
   private retireLostDerivedRuns(runs: RunMeta[]): Set<string> {
     const retired = new Set<string>();
     for (const meta of runs) {
       if (!TERMINAL_RUN_STATES.has(meta.state)) continue;
       if (runKind(meta) === 'execute') continue;
-      const task = this.ctx.store.get(meta.taskId);
-      if (task === null || task.meta.derivedFrom === undefined) continue;
-      // Already retired by the process that ran the review — skipping keeps a
-      // boot from re-archiving (and re-noting) every derived task there is.
-      if (task.meta.archivedAt !== undefined) continue;
-      this.cleanupAuxRun(meta.id);
-      retired.add(meta.id);
+      this.bestEffort(`retiring lost derived run ${meta.id}`, () => {
+        // cache.get, not store.get: an indexed lookup that parses nothing (so
+        // a half-written task file is simply absent, not a throw) and pays no
+        // readdir per run. It carries archived rows, which store.get's
+        // frontmatter and this method's guard below both need.
+        const task = this.ctx.cache.get(meta.taskId);
+        if (task === null || task.meta.derivedFrom === undefined) return;
+        // Already retired by the process that ran the review — skipping keeps
+        // a boot from re-archiving (and re-noting) every derived task there is.
+        if (task.meta.archivedAt !== undefined) return;
+        this.cleanupAuxRun(meta.id);
+        this.noteLostReviewFindings(meta);
+        retired.add(meta.id);
+      });
     }
     return retired;
+  }
+
+  // A second Activity line for a review only boot retired. cleanupAuxRun's own
+  // note reads like a review that ran its course; this one did not — nothing
+  // ingested its findings, and findings.json outlives the discarded worktree.
+  private noteLostReviewFindings(meta: RunMeta): void {
+    const now = new Date().toISOString();
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        appendActivity: `${now} [run ${meta.id}] the daemon restarted mid-review; its findings were never ingested`,
+        // Mechanical cleanup, not an action anyone asked for by name.
+        activityActor: 'none',
+      },
+      now
+    );
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
   }
 
   private requireRun(runId: string): RunMeta {
