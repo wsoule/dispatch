@@ -396,6 +396,10 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                         selected={selectedIds.has(doc.meta.id)}
                         onToggleSelect={() => toggleSelected(doc.meta.id)}
                         archived={group.archived === true}
+                        needsAttention={
+                          group.archived !== true &&
+                          data.attentionByTaskId.has(doc.meta.id)
+                        }
                       />
                     ))}
                   </div>
@@ -485,6 +489,9 @@ interface TaskListRowProps {
   /** True for a row in the trailing "Archived" group — purely visual; the status
    *  move itself is gated in `useDispatchProject`. */
   archived?: boolean;
+  /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) —
+   * washes the row with the amber "waiting" surface so it stands out while scanning. */
+  needsAttention?: boolean;
 }
 
 /** A single ~36px dense row: priority · id · status · title (+ epic breadcrumb, + stack badge)
@@ -508,6 +515,7 @@ function TaskListRow({
   selected,
   onToggleSelect,
   archived = false,
+  needsAttention = false,
 }: TaskListRowProps) {
   const visibleLabels = doc.meta.labels.slice(0, MAX_VISIBLE_LABELS);
   const hiddenLabelCount = doc.meta.labels.length - visibleLabels.length;
@@ -524,7 +532,9 @@ function TaskListRow({
           ? 'bg-accent/20'
           : focused
             ? 'bg-accent/50'
-            : 'hover:bg-accent/30'
+            : needsAttention
+              ? 'bg-state-waiting-surface hover:bg-accent/30'
+              : 'hover:bg-accent/30'
       } ${archived ? 'opacity-55 saturate-50' : ''}`}
     >
       {/* Hidden until you hover or select something, so an unused affordance does not add a
