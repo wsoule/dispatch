@@ -358,3 +358,135 @@ describe('draft page navigation', () => {
     expect(state.activeDraftId).toBe('d-1');
   });
 });
+
+describe('openTask', () => {
+  test('routes to the task view, seeds tab and run, closes the peek', () => {
+    const peeked = navReducer(initialNavState, {
+      type: 'openPeek',
+      taskId: 't-1',
+    });
+    const state = navReducer(peeked, {
+      type: 'openTask',
+      taskId: 't-1',
+      tab: 'chat',
+      runId: 'r-9',
+    });
+    expect(state.projectView).toBe('task');
+    expect(state.activeTaskId).toBe('t-1');
+    expect(state.taskTab).toBe('chat');
+    expect(state.activeRunId).toBe('r-9');
+    expect(state.peekTaskId).toBeNull();
+  });
+
+  test('defaults tab to details and run to null', () => {
+    const state = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    expect(state.taskTab).toBe('details');
+    expect(state.activeRunId).toBeNull();
+  });
+
+  test('pushes history so back returns to the previous view', () => {
+    const onBoard = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'board',
+    });
+    const opened = navReducer(onBoard, { type: 'openTask', taskId: 't-1' });
+    const back = navReducer(opened, { type: 'back' });
+    expect(back.projectView).toBe('board');
+    const forward = navReducer(back, { type: 'forward' });
+    expect(forward.projectView).toBe('task');
+    expect(forward.activeTaskId).toBe('t-1');
+    expect(forward.taskTab).toBe('details');
+  });
+
+  test('re-opening the identical task/tab/run is not a new destination', () => {
+    const once = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+      runId: 'r-1',
+    });
+    const twice = navReducer(once, {
+      type: 'openTask',
+      taskId: 't-1',
+      runId: 'r-1',
+    });
+    expect(twice.history.length).toBe(once.history.length);
+  });
+});
+
+describe('setTaskTab', () => {
+  test('switches the tab without a history entry', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    const switched = navReducer(opened, { type: 'setTaskTab', tab: 'diff' });
+    expect(switched.taskTab).toBe('diff');
+    expect(switched.history.length).toBe(opened.history.length);
+  });
+
+  test('is a no-op off the task view', () => {
+    const state = navReducer(initialNavState, {
+      type: 'setTaskTab',
+      tab: 'diff',
+    });
+    expect(state).toBe(initialNavState);
+  });
+});
+
+describe('task view teardown', () => {
+  test('setProjectView away from task clears activeTaskId, keeps run for runs', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+      runId: 'r-1',
+    });
+    const toRuns = navReducer(opened, {
+      type: 'setProjectView',
+      view: 'runs',
+    });
+    expect(toRuns.activeTaskId).toBeNull();
+    expect(toRuns.activeRunId).toBe('r-1');
+    const toBoard = navReducer(opened, {
+      type: 'setProjectView',
+      view: 'board',
+    });
+    expect(toBoard.activeRunId).toBeNull();
+  });
+
+  test('selectProject clears activeTaskId', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    const switched = navReducer(opened, {
+      type: 'selectProject',
+      projectId: 'p-2',
+    });
+    expect(switched.activeTaskId).toBeNull();
+    expect(switched.projectView).toBe('overview');
+  });
+
+  test('escape on the task view acts as back', () => {
+    const onBoard = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'board',
+    });
+    const opened = navReducer(onBoard, { type: 'openTask', taskId: 't-1' });
+    const escaped = navReducer(opened, { type: 'escape' });
+    expect(escaped.projectView).toBe('board');
+  });
+
+  test('escape still prefers the palette and the peek over the task view', () => {
+    const opened = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    const withPeek = navReducer(opened, { type: 'openPeek', taskId: 't-2' });
+    const escaped = navReducer(withPeek, { type: 'escape' });
+    expect(escaped.peekTaskId).toBeNull();
+    expect(escaped.projectView).toBe('task');
+  });
+});
