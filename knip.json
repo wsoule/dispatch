@@ -20,6 +20,12 @@
       // so nothing under it is ever imported. Mirrors the `apps/site/public/**`
       // exclusion .oxlintrc.json already carries.
       "ignore": ["public/**"]
+    },
+    "packages/demo": {
+      // storefront-src is a template copied into the generated demo repo
+      // (see src/paths.ts's `template`), so nothing in this workspace ever
+      // imports it. Unreferenced here is the point, not dead code.
+      "ignore": ["storefront-src/**"]
     }
   },
 
@@ -29,7 +35,9 @@
   // dependencies that no static analysis can see.
   "ignoreDependencies": ["@dispatch/mcp", "@dispatch/server"],
 
-  // Spawned by ensure-daemon-race.test.ts to inspect and clean up stray daemon
-  // processes. System binaries, not anything this repo can declare.
-  "ignoreBinaries": ["pgrep", "pkill"]
+  // pgrep/pkill are spawned by ensure-daemon-race.test.ts to inspect and clean
+  // up stray daemon processes. carto is probed by the demo's preflight and is
+  // deliberately optional — it degrades to a built-in scanner when absent.
+  // System binaries, not anything this repo can declare.
+  "ignoreBinaries": ["pgrep", "pkill", "carto"]
 }
