@@ -36,7 +36,24 @@ export interface TaskMeta {
   // "tests pass." Defaults to true — the extra pass is cheap next to reviewing (or merging) a
   // half-checked diff, so tasks opt out of it rather than into it.
   selfReview: boolean;
-  /** Paths or globs the planner expects this task to modify. */
+  /**
+   * Paths or globs the planner expects this task to modify.
+   *
+   * One field, three readings — know which one you are adding to:
+   * - **glob**: scanDestructiveWrites / matchesDeclaredWrites /
+   *   undeclaredWrites (orchestrator/review.ts) run entries through Bun.Glob.
+   * - **literal path**: entriesOverlap (conflicts.ts) compares entries for
+   *   equality, with `dir/**` as the one glob form it understands. It is not
+   *   a glob matcher: `src/*.ts` will not match `src/foo.ts` there.
+   * - **regex subject**: sharedSurfaceWrites (review.ts) tests each entry
+   *   against SHARED_SURFACE_PATTERNS as a plain string.
+   *
+   * A synthesized PR review task escapes glob metacharacters into its
+   * entries (escapeGlobPath, server's orchestrator/prReviewTask.ts) because
+   * a real path may contain them and the glob readers would misread it.
+   * conflicts.ts unescapes before comparing so both spellings of one path
+   * still conflict; a new reader has to decide the same question.
+   */
   writes: string[];
   /** Drives review depth and model tier. */
   risk: TaskRisk;
