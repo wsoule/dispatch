@@ -2237,6 +2237,9 @@ export class Orchestrator {
     // Runs THIS call just force-failed (not one replayed already-terminal)
     // — the actual crash victims, worth surveying below.
     const crashedRunIds: string[] = [];
+    // Every run hydrated below, terminal or not — the input to the derived
+    // task sweep, which cannot read `pending` because a restart lost it.
+    const bootRuns: RunMeta[] = [];
     if (existsSync(dir)) {
       for (const file of readdirSync(dir)) {
         if (!file.endsWith('.jsonl')) continue;
@@ -2256,6 +2259,7 @@ export class Orchestrator {
             crashedRunIds.push(meta.id);
           }
           this.registry.create(meta);
+          bootRuns.push(meta);
           keepPaths.add(meta.worktreePath);
           keepRunIds.add(meta.id);
         } catch (err) {
@@ -2291,12 +2295,36 @@ export class Orchestrator {
       }
     }
     this.worktrees.pruneOrphans(worktreesDir(this.ctx.rootDir), keepPaths);
+    // Reviews whose daemon restarted mid-flight: nothing in this process is
+    // listening for them, so boot has to be the one that retires them.
+    const retiredRunIds = this.retireLostDerivedRuns(bootRuns);
     this.reconcileArchives();
     // Deferred, not awaited — reconcileOnBoot() stays synchronous, so each
-    // crashed run's worktree is surveyed and upgraded in the background.
+    // crashed run's worktree is surveyed and upgraded in the background. A
+    // retired review's worktree is already gone, and deliberately discarded.
     for (const runId of crashedRunIds) {
+      if (retiredRunIds.has(runId)) continue;
       this.scheduleSurvey(runId);
     }
+  }
+
+  // Retires the derived task of every review run this boot found terminal:
+  // ReviewRunner.ingest keys off an in-memory map a restart loses, so the
+  // durable `derivedFrom` drives this sweep instead. Returns what it retired.
+  private retireLostDerivedRuns(runs: RunMeta[]): Set<string> {
+    const retired = new Set<string>();
+    for (const meta of runs) {
+      if (!TERMINAL_RUN_STATES.has(meta.state)) continue;
+      if (runKind(meta) === 'execute') continue;
+      const task = this.ctx.store.get(meta.taskId);
+      if (task === null || task.meta.derivedFrom === undefined) continue;
+      // Already retired by the process that ran the review — skipping keeps a
+      // boot from re-archiving (and re-noting) every derived task there is.
+      if (task.meta.archivedAt !== undefined) continue;
+      this.cleanupAuxRun(meta.id);
+      retired.add(meta.id);
+    }
+    return retired;
   }
 
   private requireRun(runId: string): RunMeta {

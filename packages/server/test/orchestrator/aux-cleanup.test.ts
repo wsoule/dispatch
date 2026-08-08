@@ -65,6 +65,19 @@ function makeOrchestrator(): { orchestrator: Orchestrator; store: TaskStore } {
   return { orchestrator, store };
 }
 
+// A second Orchestrator over the same repo and store — a restarted daemon,
+// whose registry and ReviewRunner.pending both start empty.
+function rebootOrchestrator(store: TaskStore): Orchestrator {
+  const cache = new TaskCache();
+  cache.rebuild(store);
+  return new Orchestrator({
+    rootDir: repo,
+    store,
+    cache,
+    events: new EventBus(),
+  });
+}
+
 // A verify run parked at its approval gate, with the kind of edit a verify
 // agent leaves behind after getting the app to build.
 async function auxRunWithEdit(
@@ -135,30 +148,27 @@ describe('aux run cleanup keeps work that was never merged', () => {
 // The counterpart to the two above: a review of someone else's artifact has
 // no output that belongs on a branch, and its anchor task has no life after
 // the review. Both are read off the task's `derivedFrom`.
-describe('aux run cleanup on a derived task', () => {
-  // A review run parked at its approval gate, against a task synthesized from
-  // a PR — the shape POST /api/prs/:number/review-agent produces.
-  async function derivedReviewRun(
-    orchestrator: Orchestrator,
-    store: TaskStore
-  ) {
-    const task = store.create({
-      title: 'Review PR #7: Bump deps',
-      derivedFrom: 'github-pr:7',
-    });
-    const meta = await orchestrator.dispatchAuxRun({
-      taskId: task.meta.id,
-      kind: 'review',
-      executor: 'fake',
-      head: 'main',
-      buildPrompt: () => 'go review',
-    });
-    await waitFor(
-      () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
-    );
-    return { task, meta };
-  }
+// A review run parked at its approval gate, against a task synthesized from
+// a PR — the shape POST /api/prs/:number/review-agent produces.
+async function derivedReviewRun(orchestrator: Orchestrator, store: TaskStore) {
+  const task = store.create({
+    title: 'Review PR #7: Bump deps',
+    derivedFrom: 'github-pr:7',
+  });
+  const meta = await orchestrator.dispatchAuxRun({
+    taskId: task.meta.id,
+    kind: 'review',
+    executor: 'fake',
+    head: 'main',
+    buildPrompt: () => 'go review',
+  });
+  await waitFor(
+    () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
+  );
+  return { task, meta };
+}
 
+describe('aux run cleanup on a derived task', () => {
   it('discards the branch even when the review agent left files behind', async () => {
     const { orchestrator, store } = makeOrchestrator();
     const { meta } = await derivedReviewRun(orchestrator, store);
@@ -200,6 +210,72 @@ describe('aux run cleanup on a derived task', () => {
     const after = store.get(taskId)!;
     expect(after.meta.status).not.toBe('done');
     expect(after.meta.archivedAt).toBeUndefined();
+  });
+});
+
+// ReviewRunner.pending is in-memory, so a daemon that restarts mid-review has
+// nobody left listening when the run goes terminal. Boot reconciliation has to
+// retire the derived task itself, off the task's durable `derivedFrom`.
+describe('a restarted daemon retires the review it lost', () => {
+  it('retires a review run the crash left running', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { task, meta } = await derivedReviewRun(orchestrator, store);
+
+    const second = rebootOrchestrator(store);
+    second.reconcileOnBoot();
+
+    const retired = store.get(task.meta.id)!;
+    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.archivedAt).not.toBeUndefined();
+    expect(existsSync(meta.worktreePath)).toBe(false);
+    expect(runGitSync(repo, ['branch', '--list', meta.branch]).trim()).toBe('');
+  });
+
+  it('retires a review run that was already terminal on disk', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { task, meta } = await derivedReviewRun(orchestrator, store);
+    // Terminal before the restart, with no cleanup: the crash landed between
+    // the run finishing and its ingest.
+    await orchestrator.cancel(meta.id);
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+
+    const second = rebootOrchestrator(store);
+    second.reconcileOnBoot();
+
+    const retired = store.get(task.meta.id)!;
+    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.archivedAt).not.toBeUndefined();
+    expect(existsSync(meta.worktreePath)).toBe(false);
+  });
+
+  it('leaves a review it already retired alone on the next boot', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { task, meta } = await derivedReviewRun(orchestrator, store);
+    await orchestrator.cancel(meta.id);
+    orchestrator.cleanupAuxRun(meta.id);
+    const once = store.get(task.meta.id)!;
+    expect(once.meta.archivedAt).not.toBeUndefined();
+
+    rebootOrchestrator(store).reconcileOnBoot();
+
+    const twice = store.get(task.meta.id)!;
+    expect(twice.meta.archivedAt).toBe(once.meta.archivedAt);
+    expect(twice.body).toBe(once.body);
+  });
+
+  it('keeps an authored aux run’s branch across a restart', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const aux = await auxRunWithEdit(orchestrator, store);
+    const taskId = orchestrator.getRun(aux.runId)!.meta.taskId;
+
+    rebootOrchestrator(store).reconcileOnBoot();
+
+    // Phase 4's deliberate arrangement: unmerged work survives a reboot, and
+    // the human's own task is never retired out from under them.
+    expect(runGitSync(repo, ['branch', '--list', aux.branch]).trim()).not.toBe(
+      ''
+    );
+    expect(store.get(taskId)!.meta.status).not.toBe('done');
   });
 });
 
