@@ -83,8 +83,12 @@ import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
-import type { PrManager, PrReviewEvent } from './orchestrator/pr.js';
-import { parsePrUrl } from './orchestrator/pr.js';
+import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
+import { forkConfirmMessage, parsePrUrl } from './orchestrator/pr.js';
+import {
+  buildPrReviewTask,
+  isPrReviewTaskFor,
+} from './orchestrator/prReviewTask.js';
 import type {
   QuestionRegistry,
   RunQuestion,
@@ -310,6 +314,12 @@ function validateTaskFields(
     'acceptanceCriteria'
   );
   if (acceptanceError) return acceptanceError;
+  // Rejected outright rather than validated: `derivedFrom` says the server
+  // synthesized this task from an external artifact (see TaskMeta), which no
+  // request can make true of a task a client is asking it to write.
+  if (value.derivedFrom !== undefined) {
+    return 'invalid derivedFrom: only the server sets it, when it synthesizes a task';
+  }
   return null;
 }
 
@@ -2033,14 +2043,14 @@ async function commentPr(
 }
 
 // Resolves a PR number to its RepoPr entry via listRepoPrs() — shared by the
-// three /api/prs/:number/* handlers below. Returns `null` (caller 404s) when
+// /api/prs/:number/* handlers below. Returns `null` (caller 404s) when
 // the number isn't among the repo's currently-open PRs, so this can never be
 // used to review/comment on an arbitrary PR url a client supplies directly;
 // listRepoPrs() itself is what 409s when the project lacks pr capability.
 async function resolveRepoPrByNumber(
   ctx: ApiContext,
   numberParam: string
-): Promise<{ number: number; url: string; title: string } | null> {
+): Promise<RepoPr | null> {
   const number = Number(numberParam);
   const prs = await ctx.prManager.listRepoPrs();
   const pr = prs.find((p) => p.number === number);
@@ -2107,6 +2117,209 @@ async function commentRepoPr(
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
   const detail = await ctx.prManager.commentPrByUrl(pr.url, body.body);
   return jsonResponse(detail);
+}
+
+// The fork gate (spec Decision 3): an agent review checks the PR's head out
+// and runs an agent in it, executing that code here. Same-repo is work the
+// user already trusts; a fork is a stranger's. Null means proceed.
+//
+// PrManager.fetchPrHead refuses the same PR on its own — this is the message
+// layer, refusing one `gh` call earlier so nothing downstream even resolves.
+function forkGate(pr: RepoPr, confirmFork: boolean): Response | null {
+  if (!pr.isCrossRepository || confirmFork) return null;
+  return errorResponse(
+    409,
+    forkConfirmMessage(pr.number, pr.headRepositoryOwner)
+  );
+}
+
+// The review run already reviewing this PR, if one is still going. Every
+// dispatch mints a fresh task, so dispatchAuxRun's per-task live-run guard
+// can never fire for these — this is the guard that can.
+function liveReviewRunForPr(ctx: ApiContext, number: number): RunMeta | null {
+  const taskIds = new Set(
+    ctx.store
+      .list()
+      .filter((doc) => isPrReviewTaskFor(doc.meta, number))
+      .map((doc) => doc.meta.id)
+  );
+  const live = ctx.orchestrator
+    .list()
+    .find(
+      (run) => taskIds.has(run.taskId) && !TERMINAL_RUN_STATES.has(run.state)
+    );
+  return live ?? null;
+}
+
+/**
+ * GET /api/prs/:number/findings — what agent reviews of this PR found.
+ *
+ * A located finding also becomes a line comment on the diff, but an unlocated
+ * one (`file`/`line` null — "this approach is wrong") has nowhere to hang, and
+ * a PR target has no run behind it to open a findings panel on. This route is
+ * the only surface those reach.
+ *
+ * Every review of a PR mints a fresh task, so findings for the same PR are
+ * gathered across all of them, newest review last.
+ *
+ * Purely local: the task store and the finding store, no `gh`. The number is
+ * validated rather than resolved against the repo's open PRs on purpose —
+ * the panel refetches this on every mount and focus, and a subprocess per
+ * refetch would buy nothing but a 404 for a number the caller read off a PR
+ * it is already displaying.
+ */
+function listPrFindings(ctx: ApiContext, numberParam: string): Response {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  const findings = ctx.store
+    .list()
+    .filter((doc) => isPrReviewTaskFor(doc.meta, number))
+    .flatMap((doc) => ctx.findingStore.list({ taskId: doc.meta.id }));
+  return jsonResponse(findings);
+}
+
+// PRs whose review dispatch is in flight, keyed `<rootDir>\0<number>`.
+// liveReviewRunForPr can only see runs that already exist, and five awaits
+// (two `gh` reads, the fetch, the merge-base, the worktree cut) separate that
+// check from the first one — a double click lands both requests inside that
+// window. Module scope because the window belongs to the process, not to a
+// request; the rootDir prefix keeps two daemons in one process apart.
+const prReviewDispatchesInFlight = new Set<string>();
+
+function prDispatchKey(ctx: ApiContext, number: number): string {
+  return `${ctx.rootDir}\0${number}`;
+}
+
+// Takes the PR's dispatch slot, or reports that someone else holds it. Purely
+// synchronous, which is what makes it a claim rather than a second check.
+function claimPrReviewDispatch(ctx: ApiContext, number: number): boolean {
+  const key = prDispatchKey(ctx, number);
+  if (prReviewDispatchesInFlight.has(key)) return false;
+  prReviewDispatchesInFlight.add(key);
+  return true;
+}
+
+// POST /api/prs/:number/review-agent — hand a repo PR to a review agent.
+// The claim is taken before the first await and released once the dispatch
+// has either produced a run or rolled itself back, so a failed dispatch never
+// locks the PR out of being reviewed again.
+async function startPrAgentReview(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  // A number that cannot name a PR 404s below having created nothing, so
+  // there is no dispatch to claim — and every such request would collide on
+  // one key if there were.
+  if (number === null) return await runPrAgentReview(req, ctx, numberParam);
+  if (!claimPrReviewDispatch(ctx, number)) {
+    return errorResponse(409, `PR #${number} is already being reviewed`);
+  }
+  try {
+    return await runPrAgentReview(req, ctx, numberParam);
+  } finally {
+    prReviewDispatchesInFlight.delete(prDispatchKey(ctx, number));
+  }
+}
+
+// The dispatch itself, with this PR's slot already claimed. The fork gate is
+// the first thing past resolution deliberately: when it refuses, no ref,
+// worktree, task or run exists yet, so there is nothing to undo.
+async function runPrAgentReview(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const confirmFork = parsed.value.confirmFork === true;
+  const refused = forkGate(pr, confirmFork);
+  if (refused !== null) return refused;
+  // Two reviews of one PR file both sets of findings on the same PR, and a
+  // later submit would post every line comment to GitHub twice.
+  const live = liveReviewRunForPr(ctx, pr.number);
+  if (live !== null) {
+    return errorResponse(
+      409,
+      `PR #${pr.number} is already being reviewed by run ${live.id}`
+    );
+  }
+  return jsonResponse(await dispatchPrAgentReview(ctx, pr, confirmFork), 202);
+}
+
+// Turns a repo PR into a review run, ordered so a failure leaves nothing
+// half-created: the two `gh` reads create nothing, the ref precedes the task,
+// and a review that fails to start takes its task with it.
+async function dispatchPrAgentReview(
+  ctx: ApiContext,
+  pr: RepoPr,
+  confirmFork: boolean
+): Promise<RunMeta> {
+  const body = await ctx.prManager.getPrBodyByUrl(pr.url);
+  const files = await ctx.prManager.listPrFilesByUrl(pr.url);
+  // `resolved: pr` reuses the snapshot the gate decided on — no second `gh
+  // pr list`, no window between the two. fetchPrHead reads fork-ness off
+  // that RepoPr rather than deriving it, so it must be the real one.
+  const { ref, base } = await ctx.prManager.fetchPrHead(pr.number, {
+    confirmFork,
+    resolved: pr,
+  });
+  const task = ctx.store.create(buildPrReviewTask({ ...pr, body }, files));
+  try {
+    ctx.cache.rebuild(ctx.store);
+    // The worktree is cut here, behind fetchPrHead: any path that cut one
+    // from an already-fetched ref would slip past the fork gate entirely.
+    const meta = await ctx.reviewRunner.startReview({
+      taskId: task.meta.id,
+      base,
+      head: ref,
+      round: 0,
+      scope: 'full',
+      openFindings: ctx.findingStore.openFor(task.meta.id),
+      // Findings belong on the PR, not on a run: this review has no run to
+      // comment on — it reads the PR's head straight out of its own worktree.
+      target: { kind: 'pr', number: pr.number },
+    });
+    ctx.events.broadcast({ type: 'task.changed' });
+    return meta;
+  } catch (err) {
+    rollbackSynthesizedTask(ctx, task.meta.id);
+    throw routableDispatchError(err);
+  }
+}
+
+// WorktreeManager.add throws a bare Error, which api.ts's typed mapping does
+// not route — the 500 it becomes carries no CORS headers, so the webview sees
+// only a network failure. Re-raise anything unmapped as the 409 it really is.
+function routableDispatchError(err: unknown): Error {
+  const mapped =
+    err instanceof OrchestratorNotFoundError ||
+    err instanceof OrchestratorConflictError ||
+    err instanceof OrchestratorClientError ||
+    err instanceof TaskParseError ||
+    err instanceof ConfigError;
+  if (mapped) return err;
+  // A thrown non-Error has no `.message`, and reading it off `null` throws
+  // inside this catch — escaping to Bun's handler as the CORS-less 500 the
+  // mapping above exists to prevent.
+  const detail = err instanceof Error ? err.message : String(err);
+  return new OrchestratorConflictError(
+    `could not start the PR review: ${detail}`
+  );
+}
+
+// A task whose review never started is debris: nothing links to it and
+// nobody would think to look for it. Kept only if a run already references
+// it — deleting it then would strand that run's taskId instead.
+function rollbackSynthesizedTask(ctx: ApiContext, taskId: string): void {
+  if (ctx.orchestrator.list().some((run) => run.taskId === taskId)) return;
+  ctx.store.remove(taskId);
+  ctx.cache.rebuild(ctx.store);
 }
 
 // Shared by every /api/prs/:number/comments* route below: the store never
@@ -3745,6 +3958,25 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await commentRepoPr(req, ctx, segments[1]);
+      }
+      // POST /api/prs/:number/review-agent — hand the PR to a review agent.
+      // The only entry point for that dispatch, so its fork gate (spec
+      // Decision 3) is the only door in: see startPrAgentReview.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'review-agent' &&
+        method === 'POST'
+      ) {
+        return await startPrAgentReview(req, ctx, segments[1]);
+      }
+      // GET /api/prs/:number/findings — what an agent review of this PR
+      // found, including the unlocated ones no line comment could carry.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'findings' &&
+        method === 'GET'
+      ) {
+        return listPrFindings(ctx, segments[1]);
       }
       // GET/POST /api/prs/:number/comments, PATCH .../comments/:commentId,
       // POST .../comments/:commentId/reply — the line-comment mirror's

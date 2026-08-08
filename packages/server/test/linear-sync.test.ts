@@ -430,6 +430,35 @@ describe('LinearSync.push', () => {
     expect(summary.createdIssues).toBe(1);
     expect(store.get(doc.meta.id)?.meta.external).toBe('linear:issue-1');
   });
+
+  // A derived task's description is a stranger's PR body. Auto-creating an
+  // issue for it puts that prose in front of a whole team's tracker.
+  it('never creates an issue for a task derived from an external artifact', async () => {
+    seedState({ bootstrappedAt: '2020-01-01T00:00:00.000Z' });
+    store.create({
+      title: 'Review PR #7: Bump deps',
+      derivedFrom: 'github-pr:7',
+    });
+    // Non-vacuous: an authored task in the same pass does go out.
+    store.create({ title: 'Local work' });
+
+    const summary = await makeSync().syncOnce();
+
+    expect(summary.createdIssues).toBe(1);
+    expect(fake.created.map((c) => c.title)).toEqual(['Local work']);
+  });
+
+  it('refuses even an explicit push of a derived task', async () => {
+    const doc = store.create({
+      title: 'Review PR #7: Bump deps',
+      derivedFrom: 'github-pr:7',
+    });
+    const summary = await makeSync().syncOnce([doc.meta.id]);
+
+    expect(summary.createdIssues).toBe(0);
+    expect(fake.created).toHaveLength(0);
+    expect(store.get(doc.meta.id)?.meta.external).toBeNull();
+  });
 });
 
 describe('LinearSync direction', () => {

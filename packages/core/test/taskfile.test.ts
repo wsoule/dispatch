@@ -320,6 +320,39 @@ describe('selfReview / self-review frontmatter', () => {
     expect(parseTaskFile(text).meta.exercised).toBe(true);
   });
 
+  it('round-trips derived-from and omits the key when unset', () => {
+    expect(
+      parseTaskFile(serializeTaskFile(doc)).meta.derivedFrom
+    ).toBeUndefined();
+    expect(serializeTaskFile(doc)).not.toContain('derived-from');
+    const derived: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, derivedFrom: 'github-pr:7' },
+    };
+    const text = serializeTaskFile(derived);
+    expect(text).toContain('derived-from: github-pr:7');
+    expect(parseTaskFile(text).meta.derivedFrom).toBe('github-pr:7');
+  });
+
+  it('throws on non-string derived-from', () => {
+    const text = [
+      '---',
+      'id: t-aaaaaa',
+      'title: Minimal',
+      'status: todo',
+      'kind: task',
+      'created: 2026-07-13T00:00:00Z',
+      'updated: 2026-07-13T00:00:00Z',
+      'derived-from: 42',
+      '---',
+      'body',
+    ].join('\n');
+    expect(() => parseTaskFile(text)).toThrow(TaskParseError);
+    expect(() => parseTaskFile(text)).toThrow(
+      /invalid derived-from: expected a string/
+    );
+  });
+
   it('throws on non-boolean self-review', () => {
     const text = [
       '---',

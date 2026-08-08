@@ -153,6 +153,23 @@ function branchEntryStatus(meta: RunMeta | undefined): BranchEntryStatus {
 }
 
 /**
+ * Refuses to start an execute run on a task Dispatch synthesized from someone
+ * else's artifact (see TaskMeta.derivedFrom).
+ *
+ * Such a task's body is text from outside this repo — a PR description — and
+ * an execute agent acts on it with write access in a worktree off trunk. Both
+ * doors an execute run can come through call this: dispatch() for a board
+ * dispatch, and dispatchAuxRun() for the fix loop's fresh implementer. Review
+ * and verify runs, which are what these tasks exist for, are unaffected.
+ */
+function refuseExecuteOnDerivedTask(task: TaskDoc): void {
+  if (task.meta.derivedFrom === undefined) return;
+  throw new OrchestratorClientError(
+    `task ${task.meta.id} was derived from ${task.meta.derivedFrom} and cannot be executed`
+  );
+}
+
+/**
  * Coordinates the full lifecycle of orchestrator runs for one dispatch
  * project: provisioning a git worktree, starting an Executor, recording its
  * NormalizedEntry stream + state transitions to a per-run transcript, and
@@ -337,6 +354,7 @@ export class Orchestrator {
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
     }
+    refuseExecuteOnDerivedTask(task);
     const live = this.registry.liveRunForTask(taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(
@@ -421,8 +439,10 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
-  // Starts a non-execute run against `head` on its own throwaway branch, and
-  // leaves the task alone. `buildPrompt` runs once the worktree exists.
+  // Starts a run against `head` on its own throwaway branch, and leaves the
+  // task alone. `buildPrompt` runs once the worktree exists. Mostly non-execute
+  // kinds, but FixLoop dispatches a fresh implementer through here too — which
+  // is why the derived-task refusal below is not only on dispatch().
   dispatchAuxRun(opts: {
     taskId: string;
     kind: RunKind;
@@ -435,6 +455,7 @@ export class Orchestrator {
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${opts.taskId}`);
     }
+    if (opts.kind === 'execute') refuseExecuteOnDerivedTask(task);
     const live = this.registry.liveRunForTask(opts.taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(
@@ -516,9 +537,17 @@ export class Orchestrator {
 
   // Frees a finished non-execute run's throwaway worktree. Commits first (aux
   // agents can edit), and spares the branch if it holds commits the base lacks.
+  //
+  // A derived task's run is the exception on both counts — see
+  // cleanupDerivedAuxRun.
   cleanupAuxRun(runId: string): void {
     const meta = this.registry.get(runId);
     if (meta === undefined || runKind(meta) === 'execute') return;
+    const task = this.ctx.store.get(meta.taskId);
+    if (task !== null && task.meta.derivedFrom !== undefined) {
+      this.cleanupDerivedAuxRun(runId, meta, task.meta.derivedFrom);
+      return;
+    }
     if (this.worktrees.isWorktreeDirty(meta.worktreePath)) {
       this.bestEffort(`auto-commit of aux run ${runId}`, () => {
         this.autoCommitIfDirty(meta.worktreePath, runId);
@@ -544,6 +573,44 @@ export class Orchestrator {
       return;
     }
     this.worktrees.remove(meta.worktreePath, meta.branch, runId);
+  }
+
+  /**
+   * Cleanup for a run against a derived task — today, a review of a GitHub PR
+   * whose head was fetched into `refs/dispatch/pr/<n>`.
+   *
+   * Both departures from cleanupAuxRun above are deliberate. There is no
+   * auto-commit and no kept branch: a review's output is its findings and its
+   * output file, never a commit, so a stray file the agent left behind would
+   * otherwise become a permanent local branch holding a fork's code — exactly
+   * what fetching into a fully-qualified ref was chosen to avoid.
+   *
+   * And the task retires here. Nothing else would ever close it: aux runs
+   * leave their task alone by design, so it would sit `todo` forever, which
+   * both syncers read as outstanding work to mirror out to the team.
+   */
+  private cleanupDerivedAuxRun(
+    runId: string,
+    meta: RunMeta,
+    derivedFrom: string
+  ): void {
+    this.worktrees.remove(meta.worktreePath, meta.branch, runId);
+    this.bestEffort(`retiring derived task ${meta.taskId}`, () => {
+      const now = new Date().toISOString();
+      this.ctx.store.update(
+        meta.taskId,
+        {
+          status: 'done',
+          archivedAt: now,
+          appendActivity: `${now} [run ${runId}] review of ${derivedFrom} finished; task retired`,
+          // Mechanical cleanup, not an action anyone asked for by name.
+          activityActor: 'none',
+        },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    });
   }
 
   /**

@@ -262,8 +262,16 @@ record rather than just `githubId`.
 fork PR shows a confirmation naming `headRepositoryOwner` before any worktree is
 created, because from that point on the PR's code is on the machine.
 
-The head is fetched with `git fetch origin pull/N/head:dispatch-pr-N`, which
-works for forks as well as same-repo branches.
+The head is fetched with `git fetch origin pull/N/head:refs/dispatch/pr/N`,
+which works for forks as well as same-repo branches. The destination is a
+fully-qualified ref, not a bare branch name (`dispatch-pr-N`): an unqualified
+destination DWIMs to `refs/heads/`, which would permanently add a branch to
+Dispatch's own branch UI on every review, let `--force` clobber a same-named
+user branch, and make git refuse the fetch outright if that branch name is
+checked out anywhere. `base` is the merge base of the fetched head against
+`origin/<PR base branch>` — not the bare local base branch, which is only as
+fresh as the user's last pull and would silently widen the reviewed diff to
+whatever the real base picked up since.
 
 A task is synthesized from the PR: title and body from the PR itself, `writes`
 derived from its changed files (already fetched in Phase 2), and a default risk.

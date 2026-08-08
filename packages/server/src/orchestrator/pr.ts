@@ -265,6 +265,8 @@ export interface RepoPr {
   title: string;
   url: string;
   headRefName: string;
+  /** The branch this PR targets — the merge-base anchor for its review. */
+  baseRefName: string;
   author: string;
   isDraft: boolean;
   updatedAt: string;
@@ -280,6 +282,17 @@ export interface RepoPr {
   additions: number;
   deletions: number;
   changedFiles: number;
+}
+
+// The one wording for a refused fork review — shared by fetchPrHead's throw
+// and api.ts's 409, so the same sentence reaches the user wherever the gate
+// happens to fire.
+export function forkConfirmMessage(number: number, owner: string): string {
+  return (
+    `PR #${number} comes from a fork owned by ${owner}. Reviewing it ` +
+    'checks that code out and runs it on this machine. Re-send with ' +
+    'confirmFork: true to allow it.'
+  );
 }
 
 // Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
@@ -468,9 +481,9 @@ export class PrManager {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
-        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
-        'statusCheckRollup,additions,deletions,changedFiles',
+      'number,title,url,headRefName,baseRefName,headRefOid,author,isDraft,' +
+        'updatedAt,isCrossRepository,headRepositoryOwner,reviewDecision,' +
+        'mergeable,statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -492,6 +505,7 @@ export class PrManager {
       title: ghString(item.title),
       url: ghString(item.url),
       headRefName: ghString(item.headRefName),
+      baseRefName: ghString(item.baseRefName),
       author: authorLogin(item.author),
       isDraft: item.isDraft === true,
       updatedAt: ghString(item.updatedAt),
@@ -722,6 +736,17 @@ export class PrManager {
         `gh pr diff failed: ${commandErrorText(patch)}`
       );
     }
+    return { patch: patch.stdout, files: await this.listPrFilesByUrl(url) };
+  }
+
+  // The `/files` half of getPrDiffByUrl on its own — what a PR's changed
+  // paths are without paying for its whole patch, which the agent-review
+  // dispatch (which only needs the paths, as the task's `writes`) would.
+  async listPrFilesByUrl(url: string): Promise<DiffResult['files']> {
+    const location = parsePrUrl(url);
+    if (location === null) {
+      throw new OrchestratorConflictError(`unrecognizable PR url: ${url}`);
+    }
     const listed = await this.run(this.ctx.rootDir, [
       'gh',
       'api',
@@ -746,7 +771,7 @@ export class PrManager {
     // text "[object Object]" as a file path, which would render as a
     // real-looking but garbage row in the diff UI. A malformed entry throws
     // instead, matching this function's existing fail-loudly posture.
-    const files = raw.map((item) => {
+    return raw.map((item) => {
       const filename = item.filename;
       if (typeof filename !== 'string') {
         throw new OrchestratorConflictError(
@@ -762,7 +787,33 @@ export class PrManager {
             : 'M',
       };
     });
-    return { patch: patch.stdout, files };
+  }
+
+  // A PR's description text. Deliberately not on RepoPr: `gh pr list` can
+  // return it, but carrying every open PR's full body to render 50 queue
+  // rows costs far more than one `gh pr view` at the one action that needs it.
+  async getPrBodyByUrl(url: string): Promise<string> {
+    const result = await this.run(this.ctx.rootDir, [
+      'gh',
+      'pr',
+      'view',
+      url,
+      '--json',
+      'body',
+    ]);
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr view --json body failed: ${commandErrorText(result)}`
+      );
+    }
+    try {
+      const parsed = JSON.parse(result.stdout) as { body?: unknown };
+      return typeof parsed.body === 'string' ? parsed.body : '';
+    } catch {
+      throw new OrchestratorConflictError(
+        'gh pr view --json body returned invalid JSON'
+      );
+    }
   }
 
   // POST /api/runs/:id/pr/review. Submits a GitHub review on the run's PR —
@@ -832,13 +883,78 @@ export class PrManager {
     return this.getPrDetailByUrl(url);
   }
 
-  // Resolves a bare PR number — the form syncPrComments/pushPrReview take,
-  // straight from a route param — to the RepoPr entry both need: the url
-  // (for owner/repo) and headRefOid (the review's commit_id). Mirrors
-  // api.ts's own resolveRepoPrByNumber; duplicated rather than shared
-  // because these two methods, unlike every other PrManager entry point,
-  // are given a number instead of a url and have to do this resolution
-  // themselves.
+  // Phase 4: fetches a PR's head into a local ref a review worktree can be
+  // cut from (works for forks, unlike `gh pr checkout`) and resolves the
+  // merge base against the PR's base branch — the pair startReview() needs.
+  //
+  // `confirmFork` is required, not optional: this is the point where a
+  // stranger's code lands on the machine, so every caller has to state the
+  // user's answer rather than inherit a permissive default (spec Decision 3).
+  //
+  // With `resolved`, fork-ness is read off the caller's RepoPr instead of a
+  // fresh list — so it has to be one this repo really returned, never a
+  // synthesized stand-in.
+  async fetchPrHead(
+    number: number,
+    opts: { confirmFork: boolean; resolved?: RepoPr }
+  ): Promise<{ ref: string; base: string }> {
+    // `resolved` closes a TOCTOU window: a caller that already gated on a
+    // RepoPr hands that same snapshot back instead of paying for — and
+    // deciding against — a second `gh pr list` taken moments later.
+    const pr = opts.resolved ?? (await this.resolvePrForComments(number));
+    // Everything below reads `pr`, so a mismatched pair would gate on one PR
+    // and fetch another's head. Refuse rather than silently pick one.
+    if (pr.number !== number) {
+      throw new OrchestratorClientError(
+        `resolved PR #${pr.number} does not match requested PR #${number}`
+      );
+    }
+    if (pr.isCrossRepository && !opts.confirmFork) {
+      throw new OrchestratorConflictError(
+        forkConfirmMessage(pr.number, pr.headRepositoryOwner)
+      );
+    }
+    // Fully qualified, not a bare branch name: an unqualified dest DWIMs to
+    // refs/heads/, which would permanently add a branch to Dispatch's own
+    // branch UI per review and let `--force` clobber a same-named one.
+    const ref = `refs/dispatch/pr/${pr.number}`;
+    // Force: a re-review after new commits must update `ref`, not fail.
+    const fetch = await this.run(this.ctx.rootDir, [
+      'git',
+      'fetch',
+      '--force',
+      'origin',
+      `pull/${pr.number}/head:${ref}`,
+      pr.baseRefName,
+    ]);
+    if (!fetch.ok) {
+      throw new OrchestratorConflictError(
+        `git fetch pull/${pr.number}/head failed: ${commandErrorText(fetch)}`
+      );
+    }
+    // origin/<base>, not the bare branch: refreshed by the fetch above,
+    // so a stale local branch can't silently widen the diff below.
+    const mergeBase = await this.run(this.ctx.rootDir, [
+      'git',
+      'merge-base',
+      `origin/${pr.baseRefName}`,
+      ref,
+    ]);
+    if (!mergeBase.ok) {
+      throw new OrchestratorConflictError(
+        `git merge-base failed: ${commandErrorText(mergeBase)}`
+      );
+    }
+    return { ref, base: mergeBase.stdout.trim() };
+  }
+
+  // Resolves a bare PR number — the form syncPrComments/pushPrReview/
+  // fetchPrHead take, straight from a route param — to the RepoPr entry
+  // callers need: url (owner/repo), headRefOid (commit_id) and baseRefName
+  // (fetchPrHead's merge-base anchor). Mirrors api.ts's own
+  // resolveRepoPrByNumber; duplicated rather than shared because these
+  // methods, unlike every other PrManager entry point, are given a number
+  // instead of a url and have to do this resolution themselves.
   private async resolvePrForComments(number: number): Promise<RepoPr> {
     requirePrNumber(number);
     const prs = await this.listRepoPrs();

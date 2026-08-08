@@ -43,21 +43,26 @@ function filterAndSortByReadiness(
   isSatisfied: (t: TaskDoc) => boolean
 ): TaskDoc[] {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
-  return tasks
-    .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
-    .filter((t) =>
-      t.meta.blockedBy.every((dep) => {
-        const d = byId.get(dep);
-        return d === undefined || isSatisfied(d);
+  return (
+    tasks
+      .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
+      // A derived task holds prose nobody here wrote (TaskMeta.derivedFrom): it
+      // anchors a review of another's artifact, never work to hand an agent.
+      .filter((t) => t.meta.derivedFrom === undefined)
+      .filter((t) =>
+        t.meta.blockedBy.every((dep) => {
+          const d = byId.get(dep);
+          return d === undefined || isSatisfied(d);
+        })
+      )
+      .sort((a, b) => {
+        const byPriority =
+          PRIORITY_ORDER[a.meta.priority] - PRIORITY_ORDER[b.meta.priority];
+        return byPriority !== 0
+          ? byPriority
+          : a.meta.created.localeCompare(b.meta.created);
       })
-    )
-    .sort((a, b) => {
-      const byPriority =
-        PRIORITY_ORDER[a.meta.priority] - PRIORITY_ORDER[b.meta.priority];
-      return byPriority !== 0
-        ? byPriority
-        : a.meta.created.localeCompare(b.meta.created);
-    });
+  );
 }
 
 /**
