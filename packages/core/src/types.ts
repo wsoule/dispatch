@@ -45,8 +45,8 @@ export interface TaskMeta {
    * - **literal path**: entriesOverlap (conflicts.ts) compares entries for
    *   equality, with `dir/**` as the one glob form it understands. It is not
    *   a glob matcher: `src/*.ts` will not match `src/foo.ts` there.
-   * - **regex subject**: sharedSurfaceWrites (review.ts) tests each entry
-   *   against SHARED_SURFACE_PATTERNS as a plain string.
+   * - **regex subject**: sharedSurfaceWrites (orchestrator/review.ts) tests
+   *   each entry against SHARED_SURFACE_PATTERNS as a plain string.
    *
    * A synthesized PR review task escapes glob metacharacters into its
    * entries (escapeGlobPath, server's orchestrator/prReviewTask.ts) because

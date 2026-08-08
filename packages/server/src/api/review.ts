@@ -13,8 +13,8 @@ const SCOPES: readonly string[] = ['full', 'fix'];
 // `refs/heads/<name>`, so `dispatch/pr/7` lands on the same ref as the fully
 // qualified spelling and both have to be refused.
 const PR_HEAD_REF_SPELLINGS: readonly string[] = [
-  PR_HEAD_REF_PREFIX,
-  PR_HEAD_REF_PREFIX.slice('refs/'.length),
+  PR_HEAD_REF_PREFIX.toLowerCase(),
+  PR_HEAD_REF_PREFIX.slice('refs/'.length).toLowerCase(),
 ];
 
 /**
@@ -23,9 +23,12 @@ const PR_HEAD_REF_SPELLINGS: readonly string[] = [
  * calls ReviewRunner.startReview directly rather than through this route —
  * so nothing legitimate arriving here needs it, while a caller naming one
  * would cut a worktree from a fork's code without passing the gate.
+ *
+ * Compared case-insensitively: a loose ref is a file, so on a case-insensitive
+ * volume (macOS's default) `refs/Dispatch/pr/7` resolves to the same ref.
  */
 function namesPrHeadRef(head: string): boolean {
-  const ref = head.trim();
+  const ref = head.trim().toLowerCase();
   return PR_HEAD_REF_SPELLINGS.some((prefix) => ref.startsWith(prefix));
 }
 
@@ -46,6 +49,10 @@ export async function startTaskReview(
     extraRisks?: unknown;
     runId?: unknown;
   };
+  // `base` deliberately gets no PR-head check. A PR review run's baseBranch
+  // *is* that ref (orchestrator.ts `baseBranch: opts.head`), and ReviewView
+  // sends it back as `base` to review the reviewer — refusing it breaks that.
+  // Reading a diff is also weaker than `head`, which gets checked out.
   if (typeof body.base !== 'string' || body.base.trim() === '') {
     return errorResponse(400, 'invalid base: base is required');
   }

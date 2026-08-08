@@ -30,30 +30,41 @@ function pathUnderDir(path: string, dir: string): boolean {
   return path === dir || path.startsWith(`${dir}/`);
 }
 
-// Whether two entries can ever name the same file: globs overlap if either
-// directory contains the other; a glob and a path overlap if it's under it.
+// One entry reduced to what comparison needs: whether it is a directory glob,
+// and the unescaped path it turns on — the glob's directory, or the file
+// itself. Computed once per entry rather than once per pair, since the
+// scheduler compares whole write-sets against each other.
+interface Entry {
+  glob: boolean;
+  key: string;
+}
+
 // Glob-ness is read off the raw entry, before any unescaping: an escaped
 // literal `dir/\*\*` unescapes to `dir/**`, and treating that as a directory
 // glob would widen a one-file claim into a whole-subtree one.
-function entriesOverlap(a: string, b: string): boolean {
-  const aGlob = a.endsWith(GLOB_SUFFIX);
-  const bGlob = b.endsWith(GLOB_SUFFIX);
-  if (aGlob && bGlob) {
-    const dirA = unescapeGlobPath(globDir(a));
-    const dirB = unescapeGlobPath(globDir(b));
-    return pathUnderDir(dirA, dirB) || pathUnderDir(dirB, dirA);
+function toEntry(raw: string): Entry {
+  const glob = raw.endsWith(GLOB_SUFFIX);
+  return { glob, key: unescapeGlobPath(glob ? globDir(raw) : raw) };
+}
+
+// Whether two entries can ever name the same file: globs overlap if either
+// directory contains the other; a glob and a path overlap if it's under it.
+function entriesOverlap(a: Entry, b: Entry): boolean {
+  if (a.glob && b.glob) {
+    return pathUnderDir(a.key, b.key) || pathUnderDir(b.key, a.key);
   }
-  const pathA = unescapeGlobPath(a);
-  const pathB = unescapeGlobPath(b);
-  if (aGlob) return pathUnderDir(pathB, unescapeGlobPath(globDir(a)));
-  if (bGlob) return pathUnderDir(pathA, unescapeGlobPath(globDir(b)));
-  return pathA === pathB;
+  if (a.glob) return pathUnderDir(b.key, a.key);
+  if (b.glob) return pathUnderDir(a.key, b.key);
+  return a.key === b.key;
 }
 
 /** Two tasks conflict when their write-sets intersect; empty means unknown. */
 export function tasksConflict(a: string[], b: string[]): boolean {
   if (a.length === 0 || b.length === 0) return true;
-  return a.some((pa) => b.some((pb) => entriesOverlap(pa, pb)));
+  const entriesB = b.map(toEntry);
+  return a
+    .map(toEntry)
+    .some((ea) => entriesB.some((eb) => entriesOverlap(ea, eb)));
 }
 
 // Like tasksConflict, but an empty claim means "hasn't touched anything

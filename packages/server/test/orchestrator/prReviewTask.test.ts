@@ -1,3 +1,4 @@
+import { tasksConflict } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import type { RepoPr } from '../../src/orchestrator/pr.js';
@@ -233,5 +234,23 @@ describe('prNumberFromOrigin', () => {
   it('refuses a number that does not mint the same string back', () => {
     expect(prNumberFromOrigin('github-pr:007')).toBeNull();
     expect(prNumberFromOrigin('github-pr:99999999999999999999')).toBeNull();
+  });
+});
+
+// escapeGlobPath (here) and GLOB_ESCAPE (core's conflicts.ts) spell the same
+// character set twice, because core cannot depend on the server. This is the
+// only place that can see both: if the two drift, a synthesized writes entry
+// stops equalling the plain path a human declared and the conflict — two
+// tasks scheduled onto one file — goes undetected.
+describe('glob escaping round-trips through conflict detection', () => {
+  it('conflicts an escaped writes entry with its plain twin', () => {
+    const path = 'app/[id]/(g)/a+b@c!d{e}f|g?h*i\\j.ts';
+    const writes = buildPrReviewTask(makePr(), [{ path }]).writes ?? [];
+
+    // An empty writes-set conflicts with everything, so pin it non-empty or
+    // the assertion below passes for the wrong reason.
+    expect(writes).toHaveLength(1);
+    expect(writes).not.toEqual([path]);
+    expect(tasksConflict(writes, [path])).toBe(true);
   });
 });
