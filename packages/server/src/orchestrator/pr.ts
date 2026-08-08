@@ -295,11 +295,18 @@ export function forkConfirmMessage(number: number, owner: string): string {
   );
 }
 
-// Where a PR's head is parked for review. Fully qualified deliberately (see
-// fetchPrHead), and defined once so the fetch that creates the ref and the
-// delete below can never name different ones.
+/**
+ * The namespace a PR's head is parked in for review. Fully qualified
+ * deliberately (see fetchPrHead), and the single owner of the name: the
+ * fetch that creates the ref, the delete that retires it, and the API
+ * layer's refusal to review one by name (api/review.ts) all read it here.
+ */
+export const PR_HEAD_REF_PREFIX = 'refs/dispatch/pr/';
+
+// Where a PR's head is parked for review, named once so the fetch that
+// creates the ref and the delete below can never disagree.
 function prHeadRef(number: number): string {
-  return `refs/dispatch/pr/${number}`;
+  return `${PR_HEAD_REF_PREFIX}${number}`;
 }
 
 /**
