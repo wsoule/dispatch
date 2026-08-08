@@ -65,6 +65,17 @@ describe('create/get', () => {
     expect(getSection(doc.body, 'Description')).toBe(description);
     expect(getSection(doc.body, 'Activity')).toBe('');
   });
+
+  it('persists derivedFrom, and leaves an authored task without it', () => {
+    const store = TaskStore.init(root);
+    const derived = store.create({
+      title: 'Review PR #7',
+      derivedFrom: 'github-pr:7',
+    });
+    expect(store.get(derived.meta.id)!.meta.derivedFrom).toBe('github-pr:7');
+    const authored = store.create({ title: 'Fix login' });
+    expect(store.get(authored.meta.id)!.meta.derivedFrom).toBeUndefined();
+  });
 });
 
 describe('taskFilePath id-prefix guard', () => {
@@ -152,6 +163,20 @@ describe('update', () => {
     expect(() => store.update('t-nope00', { status: 'done' })).toThrow(
       /task not found/
     );
+  });
+
+  // The rollback half of create(): a caller that synthesized a task for work
+  // which then failed to start takes it back off disk.
+  it('removes a task file, and reports an id it cannot resolve', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Fix login' }, '2026-07-13T18:00:00Z');
+
+    expect(store.remove(doc.meta.id)).toBe(true);
+    expect(store.get(doc.meta.id)).toBeNull();
+    expect(store.list()).toEqual([]);
+    // Removing it again is not an error, and neither is an unknown id.
+    expect(store.remove(doc.meta.id)).toBe(false);
+    expect(store.remove('t-nope00')).toBe(false);
   });
 
   it('edits the Description and Acceptance Criteria body sections in place', () => {

@@ -1,16 +1,20 @@
 import type {
+  Finding,
   PrConversationItem,
   PrDetail,
   PrReviewEvent,
   PrStatus,
+  RunMeta,
 } from '@dispatch/client';
 import {
+  Bot,
   Check,
   CircleDot,
   ExternalLink,
   GitMerge,
   GitPullRequest,
   MessageSquare,
+  TriangleAlert,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -126,6 +130,62 @@ function ConversationRow({ item }: { item: PrConversationItem }) {
   );
 }
 
+/**
+ * What agent reviews of this PR found, open findings only.
+ *
+ * A located finding is also a line comment on the diff, and shows here too —
+ * this section is the whole verdict in one place. The findings that need it
+ * are the unlocated ones ("this approach is wrong"): they have nowhere to
+ * anchor as a comment, and a PR has no run behind it whose findings panel
+ * would otherwise catch them.
+ */
+function AgentFindings({
+  findings,
+  error,
+}: {
+  findings: Finding[];
+  error: string | null;
+}) {
+  // A failed fetch must not fall through to the silent case below: an empty
+  // panel would read as "no review has run" when the truth is "unknown".
+  if (error !== null) {
+    return (
+      <p className="text-destructive text-[12px]">
+        Couldn&rsquo;t load the agent&rsquo;s findings: {error}
+      </p>
+    );
+  }
+  const open = findings.filter((f) => f.verdict === 'open');
+  // Never a "no findings" line: an empty list means no review has run, and
+  // saying otherwise would read as a clean bill of health.
+  if (open.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        What the agent found
+      </div>
+      {open.map((f) => (
+        <div key={f.id} className="text-[12.5px]">
+          <div className="flex items-baseline gap-1.5">
+            <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
+            <span className="dense-meta shrink-0">{f.severity}</span>
+            <span className="min-w-0 flex-1">{f.title}</span>
+            {f.file !== null && (
+              <span className="dense-meta shrink-0 font-mono">
+                {f.file}
+                {f.line !== null && `:${f.line}`}
+              </span>
+            )}
+          </div>
+          <p className="text-muted-foreground pl-4.5 text-[11px] leading-snug">
+            {f.detail}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface PrReviewPanelProps {
   detail: PrDetail | undefined;
   loading: boolean;
@@ -138,6 +198,58 @@ interface PrReviewPanelProps {
    * would leave them staged, which is what "Comment" nowhere else means.
    */
   stagedNotes?: number;
+  /**
+   * Hands this PR to a review agent, which checks its head out and runs in
+   * that code. Absent where there is nothing to dispatch — a run's own PR
+   * panel reviews the run's worktree instead.
+   */
+  onAgentReview?: (confirmFork: boolean) => Promise<RunMeta>;
+  /**
+   * The login owning the head repository, set only when it is a fork. Its
+   * presence is what turns the review button into a confirmation first.
+   */
+  forkOwner?: string;
+  /**
+   * Findings agent reviews of this PR raised. Defaults to none, which is what
+   * a run's own PR panel has — its findings show in the run's case panel.
+   */
+  findings?: Finding[];
+  /** Why the findings fetch failed, so an empty list is not read as "none". */
+  findingsError?: string | null;
+}
+
+// The fork half of spec Decision 3: a fork PR's code is a stranger's, and
+// reviewing it runs that code here. Named owner, plain sentence, no jargon —
+// the user is agreeing to execution, not to a checkbox.
+function ForkConfirm({
+  owner,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  owner: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="border-state-waiting-edge bg-state-waiting-surface flex flex-col gap-2 rounded-md border p-2">
+      <p className="text-foreground text-[12px]">
+        This PR comes from a fork owned by{' '}
+        <span className="font-medium">{owner}</span>. Reviewing it checks that
+        code out and runs it on this machine.
+      </p>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="sm" disabled={busy} onClick={onConfirm}>
+          <Bot className="size-3.5" />
+          Run the review
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -155,10 +267,30 @@ export function PrReviewPanel({
   onReview,
   onComment,
   stagedNotes = 0,
+  onAgentReview,
+  forkOwner,
+  findings = [],
+  findingsError = null,
 }: PrReviewPanelProps) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Which PR the fork confirm was opened for, not a bare flag: this panel is
+  // reused as the queue switches rows, and agreeing to run one PR's code must
+  // never carry over to the next.
+  const [askedForPr, setAskedForPr] = useState<number | null>(null);
+  // Same reasoning for the dispatched-run notice: it belongs to the PR it was
+  // dispatched for, and must not read as this PR's once the queue moves on.
+  const [dispatched, setDispatched] = useState<{
+    prNumber: number;
+    runId: string;
+  } | null>(null);
+  const prNumber = detail?.status.number ?? null;
+  const askingFork = askedForPr !== null && askedForPr === prNumber;
+  const dispatchedRunId =
+    dispatched !== null && dispatched.prNumber === prNumber
+      ? dispatched.runId
+      : null;
 
   async function act(run: () => Promise<void>) {
     setBusy(true);
@@ -166,6 +298,26 @@ export function PrReviewPanel({
     try {
       await run();
       setDraft('');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Dispatching is not a composer action, so it shares act()'s busy/error
+  // state but must not clear a draft the user is still writing. The server
+  // gates forks too — `confirmFork` only reports what the user answered.
+  async function dispatchAgentReview(confirmFork: boolean) {
+    if (onAgentReview === undefined) return;
+    setAskedForPr(null);
+    setBusy(true);
+    setActionError(null);
+    try {
+      const meta = await onAgentReview(confirmFork);
+      // Saying which run started is what stops a second click: without it the
+      // pane looks identical before and after a successful dispatch.
+      if (prNumber !== null) setDispatched({ prNumber, runId: meta.id });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -191,6 +343,8 @@ export function PrReviewPanel({
         <>
           <PrStatusHeader status={detail.status} />
 
+          <AgentFindings findings={findings} error={findingsError} />
+
           {detail.conversation.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
@@ -213,6 +367,34 @@ export function PrReviewPanel({
             </p>
           ) : (
             <div className="flex flex-col gap-2">
+              {dispatchedRunId !== null && (
+                <p className="text-muted-foreground text-[12px]">
+                  Review dispatched &mdash; run {dispatchedRunId}.
+                </p>
+              )}
+              {onAgentReview !== undefined &&
+                (askingFork && forkOwner !== undefined ? (
+                  <ForkConfirm
+                    owner={forkOwner}
+                    busy={busy}
+                    onCancel={() => setAskedForPr(null)}
+                    onConfirm={() => void dispatchAgentReview(true)}
+                  />
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    className="self-start"
+                    onClick={() => {
+                      if (forkOwner !== undefined) setAskedForPr(prNumber);
+                      else void dispatchAgentReview(false);
+                    }}
+                  >
+                    <Bot className="size-3.5" />
+                    Review with agent
+                  </Button>
+                ))}
               <Textarea
                 rows={2}
                 placeholder="Leave a review comment…"

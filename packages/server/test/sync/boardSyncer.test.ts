@@ -77,6 +77,31 @@ describe('BoardSyncer.syncOnce', () => {
     cleanupClone(b);
   });
 
+  // A derived task's body is a stranger's PR description. Mirroring it puts
+  // that prose on trunk, where every teammate's board pulls it down.
+  it('never mirrors a task derived from an external artifact', async () => {
+    const { origin, a, b } = twoClones();
+    const storeA = new TaskStore(a);
+    const derived = storeA.create({
+      title: 'Review PR #7: Bump deps',
+      derivedFrom: 'github-pr:7',
+    });
+    const authored = storeA.create({ title: 'Write the launch email' });
+
+    const result = await syncerFor(a).syncOnce();
+    // Non-vacuous: the authored task beside it did go out.
+    expect(result.pushed).toBe(1);
+
+    const worktreeA = SyncWorktree.open(a, run);
+    const remote = new TaskStore(worktreeA?.path ?? '');
+    expect(remote.get(authored.meta.id)).not.toBeNull();
+    expect(remote.get(derived.meta.id)).toBeNull();
+
+    rmSync(origin, { recursive: true, force: true });
+    cleanupClone(a);
+    cleanupClone(b);
+  });
+
   it('does not push a task file whose updated moved backwards', async () => {
     const { origin, a, b } = twoClones();
     const storeA = new TaskStore(a);

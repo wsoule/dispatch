@@ -69,6 +69,11 @@ interface StubResults {
   // Dispatch-opened-PR describe at the bottom of this file needs.
   pushBranchResult?: CommandResult;
   createResult?: CommandResult;
+  // `git fetch --force origin pull/N/head:refs/dispatch/pr/N <base>` and the
+  // `git merge-base origin/<base> <ref>` after it — PrManager.fetchPrHead's
+  // two calls, the agent-review dispatch's only side effect on the repo.
+  fetchResult?: CommandResult;
+  mergeBaseResult?: CommandResult;
 }
 
 // Captures the JSON body pushPrReview writes to its scratch file, read at
@@ -102,6 +107,20 @@ function stubRunner(
         stdout: 'https://github.com/example/repo.git',
         stderr: '',
       });
+    }
+    if (cmd[0] === 'git' && cmd[1] === 'fetch') {
+      return Promise.resolve(
+        results.fetchResult ?? { ok: true, stdout: '', stderr: '' }
+      );
+    }
+    if (cmd[0] === 'git' && cmd[1] === 'merge-base') {
+      return Promise.resolve(
+        results.mergeBaseResult ?? {
+          ok: false,
+          stdout: '',
+          stderr: 'no mergeBaseResult stubbed',
+        }
+      );
     }
     if (cmd[0] === 'git' && cmd[1] === 'push') {
       return Promise.resolve(
@@ -262,6 +281,7 @@ const REPO_PR = {
   title: 'Bump dependency versions',
   url: 'https://github.com/example/repo/pull/7',
   headRefName: 'deps/bump-versions',
+  baseRefName: 'main',
   author: { login: 'dependabot' },
   isDraft: false,
   updatedAt: '2026-07-22T00:00:00Z',
@@ -424,6 +444,7 @@ describe('GET /api/prs', () => {
               title: 'A repo PR',
               url: 'https://github.com/example/repo/pull/3',
               headRefName: 'some-branch',
+              baseRefName: 'main',
               headRefOid: 'deadbeef',
               author: { login: 'someone' },
               isDraft: false,
@@ -458,6 +479,7 @@ describe('GET /api/prs', () => {
         title: 'A repo PR',
         url: 'https://github.com/example/repo/pull/3',
         headRefName: 'some-branch',
+        baseRefName: 'main',
         headRefOid: 'deadbeef',
         author: 'someone',
         isDraft: false,
@@ -1577,6 +1599,700 @@ describe('POST /api/prs/:number/review-submit', () => {
       }
     );
     expect(res.status).toBe(409);
+  });
+});
+
+// A fork PR: its head branch lives in someone else's repo, so checking it
+// out and running an agent in it executes a stranger's code on this machine.
+const FORK_PR = {
+  number: 11,
+  title: 'Fix a typo from outside',
+  url: 'https://github.com/example/repo/pull/11',
+  headRefName: 'patch-1',
+  baseRefName: 'main',
+  headRefOid: 'f0rkbeef',
+  author: { login: 'outsider' },
+  isDraft: false,
+  updatedAt: '2026-08-07T00:00:00Z',
+  isCrossRepository: true,
+  headRepositoryOwner: { login: 'outsider-org' },
+};
+
+// Both PRs in one list so every gate test resolves against the same stub —
+// REPO_PR omits isCrossRepository entirely, which parses to false (same-repo).
+function listResultWithForkAndRepoPr(): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify([REPO_PR, FORK_PR]),
+    stderr: '',
+  };
+}
+
+// The PR body and changed-file list the dispatch reads before it fetches
+// anything — `gh pr view --json body` and `gh api .../pulls/N/files`.
+function bodyViewResult(body: string): CommandResult {
+  return { ok: true, stdout: JSON.stringify({ body }), stderr: '' };
+}
+
+function filesResultFor(...paths: string[]): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify(
+      paths.map((filename) => ({ filename, status: 'modified' }))
+    ),
+    stderr: '',
+  };
+}
+
+// The stub answers `git fetch` without touching the repo, so a dispatch test
+// creates the head ref itself — `git worktree add` resolves it for real.
+function createPrHeadRef(number: number): string {
+  const head = runGitSync(root, ['rev-parse', 'HEAD']).trim();
+  runGitSync(root, ['update-ref', `refs/dispatch/pr/${number}`, head]);
+  return head;
+}
+
+// A review run reporting a critical finding with nowhere to anchor — "this
+// approach is wrong" — which is exactly what a line comment cannot carry.
+function reportsUnlocatedFinding(): FakeExecutorScript {
+  return {
+    steps: [
+      {
+        entry: {
+          ts: '2026-08-07T00:00:00Z',
+          kind: 'assistant',
+          text: JSON.stringify({
+            findings: [
+              {
+                severity: 'critical',
+                title: 'the whole approach leaks the token',
+                detail: 'no single line is wrong; the design is',
+                file: null,
+                line: null,
+              },
+            ],
+          }),
+        },
+      },
+    ],
+    finish: { state: 'finished' },
+  };
+}
+
+// A review run that reports one located finding. `readReviewOutput` falls back
+// to the last assistant entry holding JSON, so no findings file is needed.
+function reportsFinding(file: string, line: number): FakeExecutorScript {
+  return {
+    steps: [
+      {
+        entry: {
+          ts: '2026-08-07T00:00:00Z',
+          kind: 'assistant',
+          text: JSON.stringify({
+            findings: [
+              {
+                severity: 'important',
+                title: 'unchecked input',
+                detail: 'the parsed value is trusted',
+                file,
+                line,
+              },
+            ],
+          }),
+        },
+      },
+    ],
+    finish: { state: 'finished' },
+  };
+}
+
+// Starts a server whose PR seam records every argv, and returns the log. The
+// executor is always a fake: a review dispatch that got past the gate would
+// otherwise start the real agent.
+function startWithCallLog(
+  overrides: Partial<StubResults> = {},
+  script: FakeExecutorScript = { finish: { state: 'finished' } },
+  // Bodies pushPrReview POSTed, for the end-to-end test that follows one
+  // finding from the agent all the way into that request's `comments[]`.
+  postedReviewPayloads: Record<string, unknown>[] = [],
+  // Awaited before each command answers, so a test can hold one request
+  // inside a specific `await` while it drives a second one.
+  onCommand: (cmd: string[]) => Promise<void> = () => Promise.resolve()
+): Promise<string[][]> {
+  const calls: string[][] = [];
+  const scripted = stubRunner(
+    {
+      listResult: listResultWithForkAndRepoPr(),
+      viewResult: bodyViewResult('Fixes a typo.'),
+      filesResult: filesResultFor('README.md'),
+      mergeBaseResult: {
+        ok: true,
+        stdout: `${runGitSync(root, ['rev-parse', 'HEAD']).trim()}\n`,
+        stderr: '',
+      },
+      ...overrides,
+    },
+    postedReviewPayloads
+  );
+  return startServer({
+    rootDir: root,
+    port: 0,
+    writeDaemonFile: false,
+    prCommandRunner: async (cwd, cmd) => {
+      calls.push(cmd);
+      await onCommand(cmd);
+      return scripted(cwd, cmd);
+    },
+    registerExecutors: (o) => {
+      orchestrator = o;
+      o.registerExecutor('claude', new FakeExecutor(script));
+    },
+  }).then((h) => {
+    handle = h;
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    return calls;
+  });
+}
+
+function postReviewAgent(
+  number: number,
+  body: Record<string, unknown>
+): Promise<Response> {
+  return fetch(`${baseUrl}/api/prs/${number}/review-agent`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+// Spec Decision 3, and the whole point of the fork gate: a same-repo PR is
+// work the user already trusts, a fork PR is a stranger's code. The gate has
+// to refuse BEFORE the head is fetched — a 409 issued after the fetch has
+// already put that code on the machine.
+describe('POST /api/prs/:number/review-agent', () => {
+  it('409s a fork PR without confirmFork, naming the head owner', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(FORK_PR.number, {});
+    expect(res.status).toBe(409);
+    const body = await json(res);
+    expect(body.error).toContain('outsider-org');
+    expect(body.error).toContain('confirmFork');
+  });
+
+  it('creates nothing at all when it refuses a fork PR', async () => {
+    const calls = await startWithCallLog();
+    const before = calls.length;
+
+    const res = await postReviewAgent(FORK_PR.number, {});
+    expect(res.status).toBe(409);
+
+    // No ref: the only command the refused request may run is the `gh pr
+    // list` that resolves the number. Anything else is a side effect the
+    // gate was supposed to precede.
+    const during = calls.slice(before);
+    expect(during.map((c) => c.slice(0, 3))).toEqual([['gh', 'pr', 'list']]);
+    expect(during.some((c) => c[0] === 'git' && c[1] === 'fetch')).toBe(false);
+    // No task: a synthesized review task is the other thing a dispatch
+    // creates, and it must not exist either.
+    expect(new TaskStore(root).list()).toEqual([]);
+  });
+
+  // Both tests below assert the gate let the request through, not what the
+  // dispatch then produced — the `not.toBe(409)` is the load-bearing half.
+  it('lets a fork PR through once confirmFork is true', async () => {
+    await startWithCallLog();
+    createPrHeadRef(FORK_PR.number);
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).not.toBe(409);
+    expect(res.status).toBe(202);
+  });
+
+  it('needs no confirmation for a same-repo PR', async () => {
+    await startWithCallLog();
+    createPrHeadRef(REPO_PR.number);
+
+    const res = await postReviewAgent(REPO_PR.number, {});
+    expect(res.status).not.toBe(409);
+    expect(res.status).toBe(202);
+  });
+
+  it('404s a PR number that is not among the repo’s open PRs', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(999, { confirmFork: true });
+    expect(res.status).toBe(404);
+  });
+});
+
+// The dispatch itself: one route call turns a GitHub PR into a synthesized
+// task, a local ref, a worktree and a review run. Every test here asserts
+// what survives the call, not just its status code.
+describe('POST /api/prs/:number/review-agent dispatch', () => {
+  async function waitFor(check: () => boolean | Promise<boolean>) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('waitFor timed out');
+  }
+
+  function tasks() {
+    return new TaskStore(root).list();
+  }
+
+  function stored(target: ReviewTarget): ReviewComment[] {
+    const path = reviewCommentsPath(root, target);
+    if (!existsSync(path)) return [];
+    return JSON.parse(readFileSync(path, 'utf8')) as ReviewComment[];
+  }
+
+  // A review run parked at an approval nobody answers — non-terminal for as
+  // long as a test needs, with no timer still ticking after teardown.
+  const STAYS_LIVE: FakeExecutorScript = {
+    steps: [{ approval: { requestId: 'gate', toolName: 'noop', input: {} } }],
+    finish: { state: 'finished' },
+  };
+
+  it('synthesizes a task from the PR and dispatches a review of its head', async () => {
+    const calls = await startWithCallLog({
+      viewResult: bodyViewResult('Removes the stray semicolon.'),
+      filesResult: filesResultFor('src/a.ts', 'src/b.ts'),
+    });
+    createPrHeadRef(FORK_PR.number);
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(202);
+    const meta = await json(res);
+    expect(meta.kind).toBe('review');
+    expect(meta.baseBranch).toBe(`refs/dispatch/pr/${FORK_PR.number}`);
+
+    // The task carries the PR: its title, body, changed files and the label
+    // that marks it synthesized rather than authored.
+    const [task] = tasks();
+    expect(task.meta.title).toContain(`Review PR #${FORK_PR.number}`);
+    expect(task.meta.labels).toContain('github-pr');
+    expect(task.meta.derivedFrom).toBe(`github-pr:${FORK_PR.number}`);
+    expect(task.meta.writes).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(task.body).toContain('Removes the stray semicolon.');
+    expect(task.meta.id).toBe(meta.taskId);
+
+    // The user's answer reached the fetch, and it fetched the PR's head —
+    // not a branch name a caller supplied.
+    const fetched = calls.find((c) => c[0] === 'git' && c[1] === 'fetch');
+    expect(fetched).toContain(
+      `pull/${FORK_PR.number}/head:refs/dispatch/pr/${FORK_PR.number}`
+    );
+    // One `gh pr view` for the body, not one per queue row.
+    expect(calls.filter((c) => c[1] === 'pr' && c[2] === 'view')).toHaveLength(
+      1
+    );
+  });
+
+  // The synthesized task lands on the board looking like any other todo. Its
+  // body is the PR author's prose, so handing it to an execute agent would run
+  // a stranger's instructions in a worktree with write access.
+  it('refuses to dispatch an execute run for the synthesized task', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+    createPrHeadRef(FORK_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+    const [task] = tasks();
+
+    const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ executor: 'claude' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toMatch(/derived from github-pr/);
+    // Still only the review run — no execute run was provisioned.
+    expect(orchestrator.list().map((r) => r.kind)).toEqual(['review']);
+  });
+
+  it('files the review’s findings on the PR, not on a run', async () => {
+    await startWithCallLog(
+      { filesResult: filesResultFor('README.md') },
+      reportsFinding('README.md', 1)
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(202);
+    const meta = await json(res);
+
+    const target: ReviewTarget = { kind: 'pr', number: FORK_PR.number };
+    await waitFor(() => stored(target).length > 0);
+    expect(stored(target)[0].body).toContain('unchecked input');
+    // The review run is not the thing being reviewed, so its own comment
+    // file must stay empty — that is the run-target fallback firing.
+    expect(stored({ kind: 'run', runId: meta.id as string })).toHaveLength(0);
+  });
+
+  // A finding with no file/line has nowhere to hang as a line comment, and a
+  // PR target has no run findings panel behind it — so without this route the
+  // agent's most serious verdicts reach no surface at all.
+  it('serves an unlocated finding that could never be a line comment', async () => {
+    await startWithCallLog(
+      { filesResult: filesResultFor('README.md') },
+      reportsUnlocatedFinding()
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+
+    const url = `${baseUrl}/api/prs/${FORK_PR.number}/findings`;
+    await waitFor(async () => (await json(await fetch(url))).length > 0);
+    const findings = await json(await fetch(url));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toContain('leaks the token');
+    expect(findings[0].file).toBeNull();
+    // Non-vacuous: this is the finding the comment store cannot hold.
+    expect(stored({ kind: 'pr', number: FORK_PR.number })).toEqual([]);
+  });
+
+  it('serves an empty findings list for a PR no agent has reviewed', async () => {
+    await startWithCallLog();
+
+    const res = await fetch(`${baseUrl}/api/prs/${REPO_PR.number}/findings`);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual([]);
+  });
+
+  // Local-only by design: the panel refetches this on every mount and focus,
+  // and resolving the number against `gh pr list` would spend a subprocess per
+  // refetch to 404 a number the caller read off a PR it is already showing.
+  it('runs no gh command to serve findings', async () => {
+    const calls = await startWithCallLog();
+    const before = calls.length;
+
+    const res = await fetch(`${baseUrl}/api/prs/999/findings`);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual([]);
+    expect(calls.slice(before)).toEqual([]);
+  });
+
+  it('400s findings for a PR number that is not a number', async () => {
+    await startWithCallLog();
+
+    const res = await fetch(`${baseUrl}/api/prs/abc/findings`);
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toContain('invalid PR number');
+  });
+
+  // Nothing else would ever close it: aux runs leave their task alone, so a
+  // synthesized task sits `todo` forever — permanently outstanding work that
+  // BoardSyncer pushes to trunk and LinearSync files as an issue.
+  it('retires the synthesized task once the review run ends', async () => {
+    await startWithCallLog(
+      { filesResult: filesResultFor('README.md') },
+      reportsFinding('README.md', 1)
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+    await waitFor(() => tasks()[0]?.meta.status === 'done');
+
+    const [task] = tasks();
+    expect(task.meta.archivedAt).not.toBeUndefined();
+    // The findings were filed before the task retired, not lost with it.
+    const filed = await json(
+      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/findings`)
+    );
+    expect(filed).toHaveLength(1);
+  });
+
+  it('creates nothing when the PR body cannot be read', async () => {
+    const calls = await startWithCallLog({
+      viewResult: { ok: false, stdout: '', stderr: 'gh pr view exploded' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(calls.some((c) => c[0] === 'git' && c[1] === 'fetch')).toBe(false);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  it('creates nothing when the changed-file list cannot be read', async () => {
+    const calls = await startWithCallLog({
+      filesResult: { ok: false, stdout: '', stderr: 'gh api exploded' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(calls.some((c) => c[0] === 'git' && c[1] === 'fetch')).toBe(false);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  it('creates no task when the head cannot be fetched', async () => {
+    await startWithCallLog({
+      fetchResult: { ok: false, stdout: '', stderr: 'no such pull request' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  it('creates no task when the merge base cannot be resolved', async () => {
+    await startWithCallLog({
+      mergeBaseResult: { ok: false, stdout: '', stderr: 'no merge base' },
+    });
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).toBe(409);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  // The last step, and the only one with a task already on disk behind it:
+  // the head ref is never created here, so `git worktree add` fails and the
+  // synthesized task has to go away again rather than linger unreviewed.
+  it('removes the task it synthesized when the review cannot start', async () => {
+    await startWithCallLog();
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    // 409, not a 500: WorktreeManager throws a bare Error, and the 500 that
+    // becomes carries no CORS headers — the webview would see only a network
+    // failure with no way to tell what, if anything, was created.
+    expect(res.status).toBe(409);
+    const body = await json(res);
+    expect(body.error).toMatch(/could not start the PR review/);
+    expect(body.error).toMatch(/worktree add/);
+    expect(tasks()).toEqual([]);
+    expect(orchestrator.list()).toEqual([]);
+  });
+
+  // The other half of the rollback: once a run exists, deleting the task
+  // would strand that run's taskId, so the task stays. Induced for real —
+  // the worktree cut succeeds (the ref exists) and buildPrompt then fails on
+  // a base that is not a commit, which is exactly dispatchAuxRun's own
+  // buildPrompt catch.
+  it('keeps the task when a run already references it', async () => {
+    await startWithCallLog({
+      mergeBaseResult: {
+        ok: true,
+        stdout: '0000000000000000000000000000000000000000\n',
+        stderr: '',
+      },
+    });
+    createPrHeadRef(FORK_PR.number);
+
+    const res = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(res.status).not.toBe(202);
+
+    const surviving = tasks();
+    expect(surviving).toHaveLength(1);
+    const runs = orchestrator.list();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].taskId).toBe(surviving[0].meta.id);
+    expect(runs[0].state).toBe('failed');
+  });
+
+  // Every dispatch mints a fresh task, so dispatchAuxRun's per-task live-run
+  // guard can never fire here. Without a PR-level one, a double click files
+  // two runs' findings on the same PR — and the eventual submit posts every
+  // line comment to GitHub twice.
+  it('refuses a second review while one is still running', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+    createPrHeadRef(FORK_PR.number);
+
+    const first = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(first.status).toBe(202);
+    const second = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    expect(second.status).toBe(409);
+    expect((await json(second)).error).toMatch(/already being reviewed/);
+
+    // And it refused before creating anything: still one task, one run.
+    expect(tasks()).toHaveLength(1);
+    expect(orchestrator.list()).toHaveLength(1);
+  });
+
+  // The live-run check above only sees runs that exist. Between it and the
+  // run there are five awaits (`gh pr view`, `gh api …/files`, `git fetch`,
+  // `git merge-base`, the worktree cut), and a double click lands both
+  // requests inside that window — where neither can see the other.
+  it('refuses a second review dispatched concurrently with the first', async () => {
+    // Holds the first request inside its `gh pr view` await — the first of
+    // the five it makes before any task or run exists — until released.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let inWindow = () => {};
+    const reached = new Promise<void>((resolve) => {
+      inWindow = resolve;
+    });
+    let firstView = true;
+    await startWithCallLog({}, STAYS_LIVE, [], async (cmd) => {
+      if (cmd[1] !== 'pr' || cmd[2] !== 'view' || !firstView) return;
+      firstView = false;
+      inWindow();
+      await held;
+    });
+    createPrHeadRef(FORK_PR.number);
+
+    const first = postReviewAgent(FORK_PR.number, { confirmFork: true });
+    await reached;
+    const second = await postReviewAgent(FORK_PR.number, { confirmFork: true });
+    release();
+
+    expect((await first).status).toBe(202);
+    expect(second.status).toBe(409);
+    // One review, one task: two would file both sets of findings on the same
+    // PR and post every line comment to GitHub twice.
+    expect(tasks()).toHaveLength(1);
+    expect(orchestrator.list()).toHaveLength(1);
+  });
+
+  // The claim is released when the dispatch finishes, not held for the run's
+  // life — a failed dispatch must not lock the PR out of ever being reviewed.
+  it('lets a review start again after a failed dispatch', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+
+    // No head ref yet, so `git worktree add` fails and the dispatch rolls back.
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(409);
+    createPrHeadRef(FORK_PR.number);
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+  });
+
+  // The guard is per PR, not a global "one review at a time" lock.
+  it('allows a review of a different PR while one is running', async () => {
+    await startWithCallLog({}, STAYS_LIVE);
+    createPrHeadRef(FORK_PR.number);
+    createPrHeadRef(REPO_PR.number);
+
+    expect(
+      (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
+    ).toBe(202);
+    expect((await postReviewAgent(REPO_PR.number, {})).status).toBe(202);
+    expect(tasks()).toHaveLength(2);
+  });
+});
+
+// Phase 4's whole chain in one pass, against stubs with no network: a PR
+// dispatch runs a review, its finding lands in the PR's comment store, and a
+// submit carries that finding's own bytes into the review POST GitHub gets.
+// Every earlier task proved one link; nothing proved they connect.
+describe('agent PR review findings reach GitHub', () => {
+  async function waitFor(check: () => boolean) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('waitFor timed out');
+  }
+
+  function stored(target: ReviewTarget): ReviewComment[] {
+    const path = reviewCommentsPath(root, target);
+    if (!existsSync(path)) return [];
+    return JSON.parse(readFileSync(path, 'utf8')) as ReviewComment[];
+  }
+
+  // What reportsFinding's severity/title/detail become once review.ts has
+  // rendered them into a comment body — the exact bytes that must survive
+  // every hop between the agent and GitHub.
+  const FINDING_BODY =
+    '**important: unchecked input**\n\nthe parsed value is trusted';
+
+  const TARGET: ReviewTarget = { kind: 'pr', number: FORK_PR.number };
+
+  // Drives dispatch → review run → finding → PR comment store → push, and
+  // hands back the review bodies the command seam captured. Both tests below
+  // need the whole chain; only their assertions differ.
+  async function reviewAndPush(): Promise<Record<string, unknown>[]> {
+    const posted: Record<string, unknown>[] = [];
+    await startWithCallLog(
+      {
+        filesResult: filesResultFor('README.md'),
+        pushReviewResult: { ok: true, stdout: '{}', stderr: '' },
+        // The pull pushPrReview makes right after its POST: GitHub now has
+        // the comment, and hands back the id that ends its local-only life.
+        commentsListResult: commentsListResultFor(
+          rawGitHubComment({
+            id: 777,
+            path: 'README.md',
+            line: 1,
+            body: FINDING_BODY,
+            diff_hunk: '@@ -0,0 +1 @@\n+# test repo',
+          })
+        ),
+      },
+      reportsFinding('README.md', 1),
+      posted
+    );
+    createPrHeadRef(FORK_PR.number);
+
+    const dispatched = await postReviewAgent(FORK_PR.number, {
+      confirmFork: true,
+    });
+    expect(dispatched.status).toBe(202);
+
+    await waitFor(() => stored(TARGET).length > 0);
+    // The agent's finding really is what the store holds, before any push —
+    // so a payload mismatch below is the push losing it, not the run.
+    expect(stored(TARGET)[0].body).toBe(FINDING_BODY);
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${FORK_PR.number}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'comment', body: 'agent review' }),
+      }
+    );
+    expect(res.status).toBe(200);
+    expect(((await json(res)) as { pushed: number }).pushed).toBe(1);
+    return posted;
+  }
+
+  it('puts the finding’s own text in the pushed comments[]', async () => {
+    const posted = await reviewAndPush();
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({
+      commit_id: FORK_PR.headRefOid,
+      event: 'COMMENT',
+      body: 'agent review',
+    });
+    // The load-bearing assertion of the whole phase: what the agent wrote is
+    // what GitHub would receive, anchored where the agent anchored it.
+    expect(posted[0].comments).toEqual([
+      { path: 'README.md', line: 1, side: 'RIGHT', body: FINDING_BODY },
+    ]);
+  });
+
+  // Phase 3's rule, re-checked now that a comment can originate from an agent
+  // rather than the composer: `pending` and `githubId` are assigned together,
+  // so a record carrying an id is never still a draft.
+  it('never leaves a comment pending once it carries a githubId', async () => {
+    await reviewAndPush();
+
+    const after = stored(TARGET);
+    expect(after).toHaveLength(1);
+    // Non-vacuous: the record genuinely acquired a GitHub identity, so the
+    // pair check below has something to be false about.
+    expect(after[0].githubId).toBe(777);
+    expect(after.filter((c) => c.pending && c.githubId !== undefined)).toEqual(
+      []
+    );
   });
 });
 

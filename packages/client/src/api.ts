@@ -361,6 +361,8 @@ export interface RepoPr {
   title: string;
   url: string;
   headRefName: string;
+  /** The branch this PR targets — the merge-base anchor for its review. */
+  baseRefName: string;
   author: string;
   isDraft: boolean;
   updatedAt: string;
@@ -1468,6 +1470,22 @@ export interface ApiClient {
     body?: string
   ): Promise<PrDetail>;
   commentRepoPr(number: number, body: string): Promise<PrDetail>;
+  /**
+   * Hands a repo PR to a review agent, which checks the PR's head out and
+   * runs in it — executing that code on this machine. A fork PR 409s (the
+   * message names the head owner) until `confirmFork` says the user agreed.
+   * Resolves with the review run it started, so a caller can confirm it.
+   */
+  startPrAgentReview(
+    number: number,
+    input?: { confirmFork?: boolean }
+  ): Promise<RunMeta>;
+  /**
+   * What agent reviews of this PR found. A located finding is also a line
+   * comment on the diff; an unlocated one ("this approach is wrong") has
+   * nowhere to anchor, so this is the only surface it reaches.
+   */
+  fetchPrFindings(number: number): Promise<Finding[]>;
   // The notes/triage hub.
   // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
   // the splitting rule has exactly one implementation. `convertInbox` reports per-item results
@@ -1957,6 +1975,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ body }),
       }),
+    startPrAgentReview: (number, input) =>
+      request(target, `/api/prs/${number}/review-agent`, {
+        method: 'POST',
+        ...jsonBody({ confirmFork: input?.confirmFork === true }),
+      }),
+    fetchPrFindings: (number) => request(target, `/api/prs/${number}/findings`),
     fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>
       request(target, '/api/inbox', {

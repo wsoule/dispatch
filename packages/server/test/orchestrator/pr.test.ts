@@ -79,6 +79,13 @@ class StubRunner {
     stdout: JSON.stringify({ state: 'OPEN' }),
     stderr: '',
   };
+  // `gh pr view --json body` — the PR description getPrBodyByUrl reads, a
+  // third distinct shape behind the same verb.
+  viewBodyResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({ body: 'PR body' }),
+    stderr: '',
+  };
   // The full `gh pr view --json number,…,reviews,comments` payload getPrDetail
   // reads (distinct from `viewResult`, the poller's `--json state` call).
   viewDetailResult: CommandResult = {
@@ -205,6 +212,7 @@ class StubRunner {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        baseRefName: 'main',
         headRefOid: '',
         author: { login: 'teammate' },
         isDraft: true,
@@ -221,12 +229,25 @@ class StubRunner {
     ]),
     stderr: '',
   };
+  // `git fetch`/`git merge-base` results fetchPrHead reads — distinct from
+  // every `gh` stub above, matched on `cmd[0] === 'git'` so they never
+  // collide with the `gh api`/`gh pr` branches.
+  fetchResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  mergeBaseResult: CommandResult = {
+    ok: true,
+    stdout: 'mergebasesha1234\n',
+    stderr: '',
+  };
   delayMs = 0;
 
   run = async (cwd: string, cmd: string[]): Promise<CommandResult> => {
     this.calls.push({ cwd, cmd });
     if (this.delayMs > 0) await sleep(this.delayMs);
     if (cmd[0] === 'git' && cmd[1] === 'push') return this.pushResult;
+    if (cmd[0] === 'git' && cmd[1] === 'fetch') return this.fetchResult;
+    if (cmd[0] === 'git' && cmd[1] === 'merge-base') {
+      return this.mergeBaseResult;
+    }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'create') {
       return this.createResult;
     }
@@ -321,7 +342,9 @@ class StubRunner {
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
       // The poller reads only `--json state`; getPrDetail reads the full set.
       const jsonArg = cmd[cmd.indexOf('--json') + 1];
-      return jsonArg === 'state' ? this.viewResult : this.viewDetailResult;
+      if (jsonArg === 'state') return this.viewResult;
+      if (jsonArg === 'body') return this.viewBodyResult;
+      return this.viewDetailResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === '--version') {
       return { ok: true, stdout: 'gh version 2.0.0', stderr: '' };
@@ -844,6 +867,7 @@ describe('PrManager.listRepoPrs', () => {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        baseRefName: 'main',
         author: 'teammate',
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
@@ -871,9 +895,9 @@ describe('PrManager.listRepoPrs', () => {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,headRefOid,author,isDraft,updatedAt,' +
-        'isCrossRepository,headRepositoryOwner,reviewDecision,mergeable,' +
-        'statusCheckRollup,additions,deletions,changedFiles',
+      'number,title,url,headRefName,baseRefName,headRefOid,author,isDraft,' +
+        'updatedAt,isCrossRepository,headRepositoryOwner,reviewDecision,' +
+        'mergeable,statusCheckRollup,additions,deletions,changedFiles',
       '--state',
       'open',
       '--limit',
@@ -1064,6 +1088,307 @@ describe('PrManager.getPrDiffByUrl', () => {
   });
 });
 
+// Phase 4 Task 2: fetchPrHead checks a PR's head into a local ref a review
+// worktree can be cut from, plus the merge base startReview() needs. All of
+// it goes through StubRunner's `run`, so no test here touches a real remote.
+describe('PrManager.fetchPrHead', () => {
+  it('fetches pull/<n>/head into refs/dispatch/pr/<n> and returns that ref', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.fetchPrHead(9, { confirmFork: false });
+
+    expect(result.ref).toBe('refs/dispatch/pr/9');
+    const fetchCall = stub.calls.find(
+      (c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch'
+    )?.cmd;
+    // Fully qualified, not `dispatch-pr-9`: an unqualified dest would DWIM
+    // to refs/heads/ and permanently add a branch per review. The base
+    // branch (fixture: baseRefName 'main') rides the same fetch, with no
+    // explicit dest, so `origin/main` is refreshed too.
+    expect(fetchCall).toEqual([
+      'git',
+      'fetch',
+      '--force',
+      'origin',
+      'pull/9/head:refs/dispatch/pr/9',
+      'main',
+    ]);
+  });
+
+  // Regression: merge base must resolve against `origin/<base>`, never the
+  // bare local branch — a stale local `main` silently widens the diff to
+  // commits the PR never touched, and findings land on the wrong lines.
+  it('resolves the merge base against origin/<base>, not the bare branch name', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.mergeBaseResult = { ok: true, stdout: 'deadbeef1234\n', stderr: '' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.fetchPrHead(9, { confirmFork: false });
+
+    expect(result.base).toBe('deadbeef1234');
+    const mergeBaseCall = stub.calls.find(
+      (c) => c.cmd[0] === 'git' && c.cmd[1] === 'merge-base'
+    )?.cmd;
+    // stub.listResult's PR #9 fixture carries baseRefName: 'main'.
+    expect(mergeBaseCall).toEqual([
+      'git',
+      'merge-base',
+      'origin/main',
+      'refs/dispatch/pr/9',
+    ]);
+  });
+
+  it('throws OrchestratorConflictError carrying the git error text on a failed fetch', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.fetchResult = {
+      ok: false,
+      stdout: '',
+      stderr: "fatal: couldn't find remote ref pull/9/head",
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      /couldn't find remote ref pull\/9\/head/
+    );
+  });
+
+  // Regression: a plain (non-forced) refspec fetch is rejected by real git
+  // on a non-fast-forward update — reviewing the same PR again after new
+  // commits (or a force-push) is the normal case, not an edge case. Asserted
+  // via the argv itself (proven against real git in review, not against this
+  // stub, which would answer ok:true either way) so removing `--force` fails
+  // this test even though the stub can't reproduce the rejection.
+  it('re-fetches an existing ref by forcing the update, not failing', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await pr.fetchPrHead(9, { confirmFork: false });
+    const second = await pr.fetchPrHead(9, { confirmFork: false });
+
+    expect(second.ref).toBe('refs/dispatch/pr/9');
+    const fetchCalls = stub.calls.filter(
+      (c) => c.cmd[0] === 'git' && c.cmd[1] === 'fetch'
+    );
+    expect(fetchCalls).toHaveLength(2);
+    expect(fetchCalls.every((c) => c.cmd.includes('--force'))).toBe(true);
+  });
+
+  it('throws OrchestratorConflictError carrying the git error text on a failed merge-base', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.mergeBaseResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'fatal: not a valid object name origin/main',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      /not a valid object name origin\/main/
+    );
+  });
+
+  it('404s a PR number the repo does not currently have open', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(404, { confirmFork: false })).rejects.toThrow(
+      OrchestratorNotFoundError
+    );
+  });
+
+  // StubRunner's default PR #9 is same-repo; this makes it a fork, which is
+  // the only difference the gate below reads.
+  function forkListResult(): CommandResult {
+    const pr = JSON.parse(new StubRunner().listResult.stdout)[0] as Record<
+      string,
+      unknown
+    >;
+    pr.isCrossRepository = true;
+    pr.headRepositoryOwner = { login: 'outsider-org' };
+    return { ok: true, stdout: JSON.stringify([pr]), stderr: '' };
+  }
+
+  // The fork gate lives here, not only at the HTTP layer: `confirmFork` is a
+  // required argument, so a future caller has to answer it rather than
+  // inherit a permissive default. Nothing may reach the fetch without it.
+  it('refuses a fork PR without confirmFork, and fetches nothing', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = forkListResult();
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    await expect(pr.fetchPrHead(9, { confirmFork: false })).rejects.toThrow(
+      /outsider-org/
+    );
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(false);
+  });
+
+  it('fetches a fork PR head once confirmFork is true', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = forkListResult();
+    const pr = new PrManager(harness, true, stub.run);
+
+    const result = await pr.fetchPrHead(9, { confirmFork: true });
+
+    expect(result.ref).toBe('refs/dispatch/pr/9');
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(true);
+  });
+
+  // The route's gate resolves the PR, then this would resolve it again from
+  // a possibly newer snapshot — a window in which the PR gated on and the PR
+  // fetched need not be the same. `resolved` hands that snapshot back.
+  it('reuses a caller-resolved PR instead of listing again', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    const resolved = (await pr.listRepoPrs())[0];
+    const listedBefore = stub.calls.filter((c) => c.cmd[2] === 'list').length;
+
+    const result = await pr.fetchPrHead(9, { confirmFork: false, resolved });
+
+    expect(result.ref).toBe('refs/dispatch/pr/9');
+    expect(stub.calls.filter((c) => c.cmd[2] === 'list')).toHaveLength(
+      listedBefore
+    );
+  });
+
+  // Every step below the resolve reads `pr`, so a mismatched pair would gate
+  // on one PR and fetch another's head.
+  it('refuses a resolved PR whose number is not the one asked for', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    const resolved = (await pr.listRepoPrs())[0];
+
+    await expect(
+      pr.fetchPrHead(10, { confirmFork: false, resolved })
+    ).rejects.toThrow(/does not match requested PR #10/);
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(false);
+  });
+
+  // The gate reads whichever RepoPr it was handed, so passing one in is not
+  // a way around it.
+  it('still refuses a fork handed in as a resolved PR', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.listResult = forkListResult();
+    const pr = new PrManager(harness, true, stub.run);
+    const resolved = (await pr.listRepoPrs())[0];
+
+    await expect(
+      pr.fetchPrHead(9, { confirmFork: false, resolved })
+    ).rejects.toThrow(/outsider-org/);
+    expect(stub.calls.some((c) => c.cmd[1] === 'fetch')).toBe(false);
+  });
+});
+
+const PR_9_URL = 'https://github.com/example/repo/pull/9';
+
+describe('PrManager.getPrBodyByUrl', () => {
+  it('reads the PR description with one `gh pr view --json body`', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewBodyResult = {
+      ok: true,
+      stdout: JSON.stringify({ body: 'Why this change.' }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    expect(await pr.getPrBodyByUrl(PR_9_URL)).toBe('Why this change.');
+    const viewCalls = stub.calls.filter((c) => c.cmd[2] === 'view');
+    expect(viewCalls).toHaveLength(1);
+    expect(viewCalls[0].cmd).toEqual([
+      'gh',
+      'pr',
+      'view',
+      PR_9_URL,
+      '--json',
+      'body',
+    ]);
+  });
+
+  // A PR with no description is normal, and gh reports it as JSON null —
+  // which must not reach the synthesized task as the text "null".
+  it('reads a null body as empty', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewBodyResult = {
+      ok: true,
+      stdout: JSON.stringify({ body: null }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    expect(await pr.getPrBodyByUrl(PR_9_URL)).toBe('');
+  });
+
+  it('throws OrchestratorConflictError carrying gh’s error text', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewBodyResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'gh: not authorized',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.getPrBodyByUrl(PR_9_URL)).rejects.toThrow(
+      OrchestratorConflictError
+    );
+    await expect(pr.getPrBodyByUrl(PR_9_URL)).rejects.toThrow(/not authorized/);
+  });
+});
+
+describe('PrManager.listPrFilesByUrl', () => {
+  // The paths alone, without `gh pr diff`'s whole patch — the review
+  // dispatch only needs them for the synthesized task's `writes`.
+  it('lists the PR’s changed paths without fetching its patch', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.filesResult = {
+      ok: true,
+      stdout: JSON.stringify([
+        { filename: 'src/a.ts', status: 'modified' },
+        { filename: 'src/b.ts', status: 'added' },
+      ]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    expect(await pr.listPrFilesByUrl(PR_9_URL)).toEqual([
+      { path: 'src/a.ts', status: 'M' },
+      { path: 'src/b.ts', status: 'A' },
+    ]);
+    expect(stub.calls.some((c) => c.cmd[2] === 'diff')).toBe(false);
+  });
+
+  it('throws OrchestratorConflictError on a failed files call', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.filesResult = { ok: false, stdout: '', stderr: 'gh api exploded' };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.listPrFilesByUrl(PR_9_URL)).rejects.toThrow(
+      /gh api exploded/
+    );
+  });
+});
+
 // A ReviewTarget for PR #9 — matches StubRunner's default listResult entry
 // (number 9, url .../pull/9), so most tests below resolve without needing
 // to override the list stub just to pick a number.
@@ -1080,6 +1405,7 @@ function listResultWithHeadRefOid(sha: string): CommandResult {
         title: 'Repo PR from someone else',
         url: 'https://github.com/example/repo/pull/9',
         headRefName: 'feature/someone-else',
+        baseRefName: 'main',
         headRefOid: sha,
         author: { login: 'teammate' },
         isDraft: true,

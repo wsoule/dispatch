@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -53,6 +54,9 @@ export interface CreateInput {
   writes?: string[];
   risk?: TaskRisk;
   model?: string | null;
+  // What this task was synthesized from (see TaskMeta.derivedFrom). Set only
+  // by the code that synthesizes one; a person creating a task never passes it.
+  derivedFrom?: string;
 }
 
 export interface UpdatePatch {
@@ -154,6 +158,9 @@ export class TaskStore {
       risk: input.risk ?? 'routine',
       model: input.model ?? null,
       exercised: false,
+      ...(input.derivedFrom === undefined
+        ? {}
+        : { derivedFrom: input.derivedFrom }),
     };
     // The initial description is caller-supplied, so it's escaped the same
     // way setSection escapes a later edit to the same section.
@@ -280,6 +287,16 @@ export class TaskStore {
     const next: TaskDoc = { meta: { ...doc.meta, updated: now }, body };
     writeFileSync(file, serializeTaskFile(next));
     return next;
+  }
+
+  // Deletes a task file outright — the rollback half of create(), for a
+  // caller that synthesized a task for work which then failed to start.
+  // Not how a user retires a task: that is `archivedAt` on update().
+  remove(id: string): boolean {
+    const file = this.taskFilePath(id);
+    if (file === null) return false;
+    rmSync(file, { force: true });
+    return true;
   }
 
   taskFilePath(id: string): string | null {

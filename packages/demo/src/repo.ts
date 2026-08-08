@@ -22,7 +22,7 @@ export interface BranchFix {
 // Hand-kept mirror of packages/server/src/orchestrator/worktree.ts's
 // DiffResult/DiffFile — see runs.ts's own "hand-kept mirrors" comment for why
 // this package can't import @dispatch/server's types directly.
-export interface DiffFile {
+interface DiffFile {
   path: string;
   status: string;
 }

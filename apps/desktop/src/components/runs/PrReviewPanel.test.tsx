@@ -1,4 +1,9 @@
-import type { PrDetail, PrReviewEvent } from '@dispatch/client';
+import type {
+  Finding,
+  PrDetail,
+  PrReviewEvent,
+  RunMeta,
+} from '@dispatch/client';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
@@ -45,6 +50,193 @@ function setup(stagedNotes: number) {
   fireEvent.click(screen.getByRole('button', { name: /^comment$/i }));
   return { reviews, comments };
 }
+
+// A second PR in the same panel — what the review queue does when the user
+// switches rows without unmounting the surface.
+const OTHER_DETAIL: PrDetail = {
+  ...DETAIL,
+  status: { ...DETAIL.status, number: 8 },
+};
+
+// The run POST /api/prs/:number/review-agent answers with — the panel reports
+// its id back, which is what tells the user the click did something.
+const DISPATCHED: RunMeta = {
+  id: 'r-review1',
+  taskId: 't-abc123',
+  taskTitle: 'Review PR #7: Mirror review comments',
+  executor: 'claude',
+  state: 'running',
+  branch: 'dispatch/review-t-abc123',
+  baseBranch: 'refs/dispatch/pr/7',
+  worktreePath: '/tmp/wt',
+  createdAt: '2026-08-07T00:00:00Z',
+  updatedAt: '2026-08-07T00:00:00Z',
+};
+
+// The fork gate's UI half (spec Decision 3). Handing a PR to a review agent
+// runs that PR's code here, so a fork has to say whose code it is first.
+function agentPanel(
+  detail: PrDetail,
+  forkOwner: string | undefined,
+  confirms: boolean[]
+) {
+  return (
+    <PrReviewPanel
+      detail={detail}
+      loading={false}
+      error={null}
+      onReview={() => Promise.resolve()}
+      onComment={() => Promise.resolve()}
+      forkOwner={forkOwner}
+      onAgentReview={(confirmFork) => {
+        confirms.push(confirmFork);
+        return Promise.resolve(DISPATCHED);
+      }}
+    />
+  );
+}
+
+function setupAgentReview(forkOwner?: string) {
+  const confirms: boolean[] = [];
+  const { rerender } = render(agentPanel(DETAIL, forkOwner, confirms));
+  fireEvent.click(screen.getByRole('button', { name: /review with agent/i }));
+  return {
+    confirms,
+    switchPr: (owner: string) =>
+      rerender(agentPanel(OTHER_DETAIL, owner, confirms)),
+  };
+}
+
+describe('PrReviewPanel agent review', () => {
+  test('a same-repo PR dispatches on the first click', async () => {
+    const { confirms } = setupAgentReview(undefined);
+    await waitFor(() => expect(confirms).toEqual([false]));
+    expect(screen.queryByText(/on this machine/i)).toBeNull();
+  });
+
+  test('a fork PR asks first, naming the head owner', () => {
+    const { confirms } = setupAgentReview('outsider-org');
+    expect(confirms).toEqual([]);
+    expect(screen.getByText(/outsider-org/)).toBeDefined();
+    expect(screen.getByText(/on this machine/i)).toBeDefined();
+  });
+
+  test('a fork PR dispatches with confirmFork once confirmed', async () => {
+    const { confirms } = setupAgentReview('outsider-org');
+    fireEvent.click(screen.getByRole('button', { name: /run the review/i }));
+    await waitFor(() => expect(confirms).toEqual([true]));
+  });
+
+  test('cancelling a fork confirm dispatches nothing', () => {
+    const { confirms } = setupAgentReview('outsider-org');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(confirms).toEqual([]);
+    expect(screen.queryByText(/on this machine/i)).toBeNull();
+  });
+
+  // A user who clicks and sees nothing change clicks again — and a second
+  // review of the same PR ends up posting every line comment to GitHub twice.
+  test('a dispatched review names the run it started', async () => {
+    setupAgentReview(undefined);
+    await waitFor(() =>
+      expect(screen.getAllByText(/run r-review1/i).length).toBe(1)
+    );
+  });
+
+  // The notice belongs to the PR it was dispatched for, same as the confirm.
+  test('switching to another PR drops the dispatched notice', async () => {
+    const { switchPr } = setupAgentReview(undefined);
+    await waitFor(() =>
+      expect(screen.getAllByText(/run r-review1/i).length).toBe(1)
+    );
+    switchPr('other-org');
+    expect(screen.queryAllByText(/run r-review1/i).length).toBe(0);
+  });
+
+  // A confirm is agreement to run ONE PR's code. Carried across a switch, the
+  // next click would dispatch a PR whose prompt the user never opened.
+  test('switching to another PR retracts an open fork confirm', () => {
+    const { confirms, switchPr } = setupAgentReview('outsider-org');
+    switchPr('other-org');
+    // Counted, not `queryByText(...).toBeNull()`: a failure there prints the
+    // matched DOM node, and its React fibers serialize unboundedly.
+    expect(screen.queryAllByText(/on this machine/i).length).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: /review with agent/i }));
+    expect(screen.getByText(/other-org/)).toBeDefined();
+    expect(confirms).toEqual([]);
+  });
+});
+
+// A located finding also lands as a line comment on the diff. An unlocated
+// one — "this whole approach is wrong" — has nowhere to anchor, and a PR
+// has no run findings panel behind it, so this is the only place it reaches
+// the user.
+describe('PrReviewPanel agent findings', () => {
+  function finding(over: Partial<Finding>): Finding {
+    return {
+      id: 'f-1',
+      taskId: 't-abc123',
+      runId: 'r-review1',
+      severity: 'critical',
+      title: 'the whole approach leaks the token',
+      detail: 'no single line is wrong; the design is',
+      file: null,
+      line: null,
+      round: 0,
+      verdict: 'open',
+      created: '2026-08-07T00:00:00Z',
+      ...over,
+    } as Finding;
+  }
+
+  function renderWithFindings(
+    findings: Finding[],
+    findingsError: string | null = null
+  ) {
+    render(
+      <PrReviewPanel
+        detail={DETAIL}
+        loading={false}
+        error={null}
+        onReview={() => Promise.resolve()}
+        onComment={() => Promise.resolve()}
+        onAgentReview={() => Promise.resolve(DISPATCHED)}
+        findings={findings}
+        findingsError={findingsError}
+      />
+    );
+  }
+
+  test('shows an unlocated finding the diff could never carry', () => {
+    renderWithFindings([finding({})]);
+    expect(screen.getByText(/leaks the token/)).toBeDefined();
+    expect(screen.getByText(/the design is/)).toBeDefined();
+  });
+
+  test('names the file and line of a located one', () => {
+    renderWithFindings([
+      finding({ id: 'f-2', file: 'src/a.ts', line: 12, title: 'off by one' }),
+    ]);
+    expect(screen.getByText('src/a.ts:12')).toBeDefined();
+  });
+
+  // An empty list means no review has run. Rendering nothing at all is right;
+  // a clean bill of health would be a lie.
+  test('says nothing when no review has run', () => {
+    renderWithFindings([]);
+    expect(screen.queryAllByText(/what the agent found/i).length).toBe(0);
+  });
+
+  // The silent case above is exactly what a failed fetch must NOT look like:
+  // "we could not ask" and "nobody has looked" are different answers.
+  test('reports a failed fetch instead of rendering the silent case', () => {
+    renderWithFindings([], 'daemon unreachable');
+    expect(
+      screen.getByText(/couldn’t load the agent’s findings/i)
+    ).toBeDefined();
+    expect(screen.getByText(/daemon unreachable/)).toBeDefined();
+  });
+});
 
 describe('PrReviewPanel', () => {
   // On GitHub, Comment is how you submit review notes without a verdict. A

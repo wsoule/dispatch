@@ -15,6 +15,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { repoPrsKey } from '../hooks/useDispatchProject';
 import {
   useEpicLedger,
+  usePrFindings,
   useProjectLedger,
   useTaskFindings,
 } from '../hooks/useOrchestration';
@@ -112,6 +113,17 @@ export function ReviewView({
   }, [data.repoPrs, selectedPrNumber]);
 
   const repoPr = useRepoPrDetail(data.client, data.port, selectedPrNumber);
+
+  // The open-PR row, not the detail: `isCrossRepository`/`headRepositoryOwner`
+  // ride the one `GET /api/prs` call the queue already makes, so the fork gate
+  // costs nothing extra to render.
+  const selectedRepoPr = useMemo(
+    () =>
+      selectedPrNumber === null
+        ? undefined
+        : data.repoPrs?.find((pr) => pr.number === selectedPrNumber),
+    [data.repoPrs, selectedPrNumber]
+  );
 
   // A PR has no run behind it, so the run-scoped panels below (the case, its
   // findings, its decisions) must not inherit whichever run nav still holds.
@@ -220,6 +232,13 @@ export function ReviewView({
   // What the agent review found. `useTaskFindings` already returns `data ?? []`, so this is
   // always an array — an empty one means no review has run, never "clean".
   const { findings } = useTaskFindings(data.client, data.port, run?.taskId);
+  // A PR review's task is synthesized server-side and no client holds its id,
+  // so its findings come back keyed by PR number instead.
+  const { findings: prFindings, error: prFindingsError } = usePrFindings(
+    data.client,
+    data.port,
+    selectedPrNumber
+  );
   const findingsByFile = useMemo(
     () => openFindingsByFile(findings),
     [findings]
@@ -277,6 +296,21 @@ export function ReviewView({
       runId: run.id,
     });
   }, [data.client, run]);
+
+  // Hands the open PR to a review agent. `confirmFork` only reports what the
+  // user answered — the server refuses a fork without it either way, before
+  // it fetches anything.
+  const handleAgentPrReview = useCallback(
+    async (confirmFork: boolean) => {
+      if (data.client === null || selectedPrNumber === null) {
+        throw new Error('The task daemon is not ready yet.');
+      }
+      return await data.client.startPrAgentReview(selectedPrNumber, {
+        confirmFork,
+      });
+    },
+    [data.client, selectedPrNumber]
+  );
 
   // A run opens through nav (other surfaces jump to it), a PR through this
   // view's own state. Each drops the other, so both can never claim the screen.
@@ -346,6 +380,14 @@ export function ReviewView({
       onReview={repoPr.handleReview}
       onComment={repoPr.handleComment}
       stagedNotes={stagedNoteCount}
+      onAgentReview={handleAgentPrReview}
+      findings={prFindings}
+      findingsError={prFindingsError}
+      forkOwner={
+        selectedRepoPr?.isCrossRepository === true
+          ? selectedRepoPr.headRepositoryOwner
+          : undefined
+      }
     />
   ) : run !== undefined && run.prUrl !== undefined ? (
     <PrReviewPanel

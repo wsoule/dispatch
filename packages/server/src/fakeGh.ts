@@ -206,6 +206,7 @@ export function makeFakeGhRunner(): CommandRunner {
           title: pr.title,
           url: pr.url,
           headRefName: pr.headRefName,
+          baseRefName: 'main',
           headRefOid: `fakesha${pr.number}`,
           author: { login: pr.author },
           isDraft: pr.isDraft,
