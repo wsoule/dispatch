@@ -1,3 +1,4 @@
+import type { TaskDoc } from '@dispatch/core/browser';
 import { useQuery } from '@tanstack/react-query';
 import type { Update } from '@tauri-apps/plugin-updater';
 import { Plus, TriangleAlert } from 'lucide-react';
@@ -23,6 +24,7 @@ import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
+import type { TaskDetailPanelProps } from './components/tasks/detail';
 import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
@@ -58,6 +60,7 @@ import { ReviewView } from './views/ReviewView';
 import { RunsView } from './views/RunsView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
+import { TaskView } from './views/TaskView';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import {
@@ -405,6 +408,15 @@ function App() {
         ) ?? null)
       : null;
 
+  // The task the full task view is showing, resolved the same way as `selectedDoc` — `null`
+  // once a task has been deleted/archived out from under an open view.
+  const activeTaskDoc =
+    navState.activeTaskId !== null
+      ? (data.tasksIncludingArchived.find(
+          (t) => t.meta.id === navState.activeTaskId
+        ) ?? null)
+      : null;
+
   // Local consts so narrowing survives the closure (TaskDetailPanel has no `data` prop).
   // Raw `sendPlanMessage`, not the `data.` wrapper, which answers a different plan slot.
   const enrichPlanRecord = data.enrichPlanRecord;
@@ -415,6 +427,44 @@ function App() {
           await enrichClient.sendPlanMessage(enrichPlanRecord.id, message);
         }
       : undefined;
+
+  // The shared `TaskDetailPanel` prop bundle for one task, used by both the peek dialog and
+  // the full task view so the two mounts render identically. Callers only invoke this once
+  // `data.config` has loaded (both call sites already gate on that), so a still-loading
+  // config is a caller bug rather than a state this needs to render around.
+  const buildTaskPanelProps = (doc: TaskDoc): TaskDetailPanelProps => {
+    if (data.config === null) {
+      throw new Error('buildTaskPanelProps requires a loaded project config');
+    }
+    return {
+      doc,
+      statuses: data.config.statuses,
+      ready: data.readyIds.has(doc.meta.id),
+      run: data.latestRunByTaskId.get(doc.meta.id),
+      runs: data.runs.filter((r) => r.taskId === doc.meta.id),
+      epics: data.epics,
+      tasks: data.tasksIncludingArchived,
+      latestRunByTaskId: data.latestRunByTaskId,
+      onUpdate: data.handleUpdate,
+      onMoveStatus: data.moveTaskStatus,
+      onDispatch: data.handleDispatch,
+      onEnrich: data.handleEnrichTask,
+      // The slot is app-level so a draft survives closing the peek; only hand it over when
+      // it belongs to the task being shown.
+      enrichPlan:
+        data.enrichTaskId === doc.meta.id ? data.enrichPlanRecord : undefined,
+      onDismissEnrich: data.handleDismissEnrich,
+      onAnswerEnrich,
+      onOpenSession: (runId) => openTaskView(doc.meta.id, 'chat', runId),
+      onOpenTask: (taskId) => dispatchNav({ type: 'openPeek', taskId }),
+      linearLinks: data.linearLinks,
+      linearConfigured: isLinearConfigured(data.linearStatus),
+      onPushToLinear: (taskId) => data.handleSyncLinear([taskId]),
+      client: data.client,
+      port: data.port,
+      fixLoopEscalation: data.config.fixLoop.escalation,
+    };
+  };
 
   // The draft the draft view is showing, resolved from nav state — `null` when the id
   // points at a draft that has since been dismissed or evicted.
@@ -924,41 +974,36 @@ function App() {
           // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
           <TaskPeekDialog
             key={selectedDoc.meta.id}
-            doc={selectedDoc}
-            statuses={data.config.statuses}
-            ready={data.readyIds.has(selectedDoc.meta.id)}
-            run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
-            runs={data.runs.filter((r) => r.taskId === selectedDoc.meta.id)}
-            epics={data.epics}
-            tasks={data.tasksIncludingArchived}
-            latestRunByTaskId={data.latestRunByTaskId}
+            {...buildTaskPanelProps(selectedDoc)}
             onClose={() => dispatchNav({ type: 'closePeek' })}
-            onUpdate={data.handleUpdate}
-            onMoveStatus={data.moveTaskStatus}
-            onDispatch={data.handleDispatch}
-            onEnrich={data.handleEnrichTask}
-            // The slot is app-level so a draft survives closing the peek; only hand it over
-            // when it belongs to the task being shown.
-            enrichPlan={
-              data.enrichTaskId === selectedDoc.meta.id
-                ? data.enrichPlanRecord
-                : undefined
-            }
-            onDismissEnrich={data.handleDismissEnrich}
-            onAnswerEnrich={onAnswerEnrich}
-            onOpenSession={(runId) =>
-              openTaskView(selectedDoc.meta.id, 'chat', runId)
-            }
-            onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
-            linearLinks={data.linearLinks}
-            linearConfigured={isLinearConfigured(data.linearStatus)}
-            onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}
-            client={data.client}
-            port={data.port}
-            fixLoopEscalation={data.config.fixLoop.escalation}
             onExpand={() => openTaskView(selectedDoc.meta.id)}
           />
         )}
+
+        {navState.projectView === 'task' &&
+          navState.activeTaskId !== null &&
+          data.config !== null && (
+            <TaskView
+              key={navState.activeTaskId}
+              data={data}
+              taskId={navState.activeTaskId}
+              tab={navState.taskTab}
+              activeRunId={navState.activeRunId}
+              onSetTab={(tab) => dispatchNav({ type: 'setTaskTab', tab })}
+              onSelectRun={(runId) =>
+                openTaskView(navState.activeTaskId, navState.taskTab, runId)
+              }
+              onBack={() => dispatchNav({ type: 'back' })}
+              // `undefined` when the task has gone away (deleted/archived out from under an
+              // open view) — TaskView's own lookup finds the same absence and renders its
+              // "no longer available" state before ever touching this prop.
+              panelProps={
+                activeTaskDoc !== null
+                  ? buildTaskPanelProps(activeTaskDoc)
+                  : undefined
+              }
+            />
+          )}
 
         {showCreate && data.config !== null && (
           <CreateTaskModal
