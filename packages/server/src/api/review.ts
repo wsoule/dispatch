@@ -1,12 +1,33 @@
 import { describeValue } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
+import { PR_HEAD_REF_PREFIX } from '../orchestrator/pr.js';
 import type { ReviewScope } from '../orchestrator/review.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // Declared as `readonly string[]` so a membership check against an
 // unvalidated `unknown` never needs an `as` cast.
 const SCOPES: readonly string[] = ['full', 'fix'];
+
+// Git resolves an unqualified `<name>` through `refs/<name>` before
+// `refs/heads/<name>`, so `dispatch/pr/7` lands on the same ref as the fully
+// qualified spelling and both have to be refused.
+const PR_HEAD_REF_SPELLINGS: readonly string[] = [
+  PR_HEAD_REF_PREFIX,
+  PR_HEAD_REF_PREFIX.slice('refs/'.length),
+];
+
+/**
+ * Whether `head` names a ref in the PR head namespace. That namespace is
+ * only ever populated behind the fork confirmation gate, and the gated path
+ * calls ReviewRunner.startReview directly rather than through this route —
+ * so nothing legitimate arriving here needs it, while a caller naming one
+ * would cut a worktree from a fork's code without passing the gate.
+ */
+function namesPrHeadRef(head: string): boolean {
+  const ref = head.trim();
+  return PR_HEAD_REF_SPELLINGS.some((prefix) => ref.startsWith(prefix));
+}
 
 // POST /api/tasks/:id/review — dispatch a review run over base..head. Open
 // findings come from the store, never from the caller.
@@ -30,6 +51,14 @@ export async function startTaskReview(
   }
   if (typeof body.head !== 'string' || body.head.trim() === '') {
     return errorResponse(400, 'invalid head: head is required');
+  }
+  if (namesPrHeadRef(body.head)) {
+    return errorResponse(
+      400,
+      `invalid head: ${PR_HEAD_REF_PREFIX}<n> holds a pull request's head,` +
+        ' which is reachable only behind the fork confirmation gate —' +
+        ' review a PR through POST /api/prs/:number/review-agent'
+    );
   }
   if (body.scope !== undefined && !SCOPES.includes(body.scope as string)) {
     return errorResponse(
