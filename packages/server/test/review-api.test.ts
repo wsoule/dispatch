@@ -205,6 +205,10 @@ describe('POST /api/tasks/:id/review', () => {
       // `refs/heads/<name>`, so this reaches the very same ref.
       'dispatch/pr/7',
       'refs/dispatch/pr/7^{commit}',
+      // A loose ref is a file, so on a case-insensitive volume (macOS's
+      // default) these resolve to the ref created as `refs/dispatch/pr/7`.
+      'refs/Dispatch/pr/7',
+      'Dispatch/PR/7',
     ]) {
       const res = await startReview({ base, head: bad });
       expect(res.status).toBe(400);
