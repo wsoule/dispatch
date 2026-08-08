@@ -65,7 +65,7 @@ export function conflictIn(cwd: string, file: string): void {
 
 // Task files are named `<id>-<slug>.md` (see board.ts's writeTasks); a caller
 // only knows the id, so resolve the actual filename before editing it.
-function findTaskFile(cwd: string, taskId: string): string {
+export function findTaskFile(cwd: string, taskId: string): string {
   const dir = join(cwd, '.dispatch', 'tasks');
   const file = readdirSync(dir).find((f) => f.startsWith(`${taskId}-`));
   if (file === undefined) {
@@ -96,7 +96,7 @@ const NEW_TASK_PARENT = 'e-4a19c2';
 // Builds a valid task file's contents for `addTask`: the same frontmatter
 // shape board.ts's writeTasks uses, so the file reads like the rest of the
 // seeded board rather than a stripped-down stub.
-function newTaskContents(id: string): string {
+function newTaskContents(id: string, handle: string): string {
   const now = new Date().toISOString();
   return [
     '---',
@@ -109,7 +109,7 @@ function newTaskContents(id: string): string {
     'blocked-by: []',
     'labels: []',
     'priority: medium',
-    `assignee: human:${TEAMMATE.handle}`,
+    `assignee: human:${handle}`,
     `created: ${now}`,
     `updated: ${now}`,
     'external: null',
@@ -123,9 +123,12 @@ function newTaskContents(id: string): string {
 }
 
 /** Writes a new task file into `cwd`'s board, commits, and pushes; returns the new task's id. */
-export function addTaskIn(cwd: string): string {
+export function addTaskIn(
+  cwd: string,
+  handle: string = TEAMMATE.handle
+): string {
   const id = `t-${randomBytes(3).toString('hex')}`;
-  const contents = newTaskContents(id);
+  const contents = newTaskContents(id, handle);
   const dir = join(cwd, '.dispatch', 'tasks');
   mkdirSync(dir, { recursive: true });
   const relFile = join(

@@ -244,12 +244,19 @@ export function assertNoCredentialsStaged(root: string): void {
 }
 
 /** Copies the template into `root`, commits main, then lays down one branch per in-review fix. */
-export function buildRepo(opts: { root: string; push: boolean }): void {
-  const { root, push } = opts;
+export function buildRepo(opts: {
+  root: string;
+  push: boolean;
+  /** Git URL/path pushed to as `origin`; the local demo's GitHub remote by default. */
+  remote?: string;
+  /** Source tree copied into the new repo; the storefront template by default. */
+  template?: string;
+}): void {
+  const { root, push, remote = DEMO.remote, template = DEMO.template } = opts;
   assertSafeToDelete(root);
   rmSync(root, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
-  cpSync(DEMO.template, root, {
+  cpSync(template, root, {
     recursive: true,
     filter: skipInstallArtifacts,
   });
@@ -269,7 +276,7 @@ export function buildRepo(opts: { root: string; push: boolean }): void {
   }
 
   if (push) {
-    git(root, 'remote', 'add', 'origin', DEMO.remote);
+    git(root, 'remote', 'add', 'origin', remote);
     git(root, 'push', '-q', '--force', '--all', 'origin');
   }
 }
