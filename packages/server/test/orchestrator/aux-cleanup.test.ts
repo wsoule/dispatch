@@ -439,6 +439,27 @@ describe('a restarted daemon retires the review it lost', () => {
     expect(store.get(intact.task.meta.id)!.meta.status).toBe('done');
   });
 
+  // The test above never reaches the sweep's error containment: the cache is
+  // built from the already-broken file, so the lookup simply misses. Breaking
+  // it after the rebuild is what puts a throw *past* the lookup — here from
+  // cleanupAuxRun's own store.get, which still parses the file eagerly.
+  it('contains a task that breaks after the boot cache was built', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { task, meta } = await derivedReviewRun(orchestrator, store);
+
+    const second = rebootOrchestrator(store);
+    writeFileSync(store.taskFilePath(task.meta.id)!, 'not a task file\n');
+
+    expect(() => {
+      second.reconcileOnBoot();
+    }).not.toThrow();
+
+    // Non-vacuous, and the two assertions only hold together: the retirement
+    // aborted partway (worktree still there), and the throw that aborted it
+    // did not escape. Without the containment this test throws TaskParseError.
+    expect(existsSync(meta.worktreePath)).toBe(true);
+  });
+
   it('keeps an authored aux run’s branch across a restart', async () => {
     const { orchestrator, store } = makeOrchestrator();
     const aux = await auxRunWithEdit(orchestrator, store);

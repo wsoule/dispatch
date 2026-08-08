@@ -2386,8 +2386,10 @@ export class Orchestrator {
         // a boot from re-archiving (and re-noting) every derived task there is.
         if (task.meta.archivedAt !== undefined) return;
         this.cleanupAuxRun(meta.id);
-        this.noteLostReviewFindings(meta);
+        // Recorded before the note, which can throw: the worktree is already
+        // gone, so a crash survey scheduled against it would only fail.
         retired.add(meta.id);
+        this.noteLostReviewFindings(meta);
       });
     }
     return retired;
