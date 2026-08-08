@@ -25,6 +25,7 @@ import {
   depMapSourceDirs,
   isSkippedPath,
   normalizeBlastRadius,
+  normalizeBlastRadiusEntries,
 } from '../src/depmap.js';
 
 let root: string;
@@ -253,7 +254,13 @@ function fakeReader(
 function fakeDepMap(dependents: string[]): DepMap {
   return {
     dependents: () => dependents,
+    dependentsWithHops: () => {
+      throw new Error('unused');
+    },
     mirrors: () => [],
+    reach: () => {
+      throw new Error('unused');
+    },
   };
 }
 
@@ -449,6 +456,45 @@ describe('createCartoDepMap', () => {
     );
     // Sorted at hop 1's position (alphabetically first there), not hop 5's.
     expect(files[0]).toBe('apps/desktop/src/main.tsx');
+  });
+
+  it("normalizeBlastRadiusEntries keeps each file's hop distance", () => {
+    const entries = normalizeBlastRadiusEntries({
+      count: 3,
+      hops: 2,
+      files: [
+        { file: 'b.ts', hop_distance: 2 },
+        { file: 'a.ts', hop_distance: 1 },
+      ],
+    });
+    expect(entries).toEqual([
+      { path: 'a.ts', hops: 1 },
+      { path: 'b.ts', hops: 2 },
+    ]);
+  });
+
+  it('normalizeBlastRadiusEntries keeps the shortest route to a file', () => {
+    const entries = normalizeBlastRadiusEntries({
+      count: 2,
+      hops: 3,
+      files: [
+        { file: 'a.ts', hop_distance: 3 },
+        { file: 'a.ts', hop_distance: 1 },
+      ],
+    });
+    expect(entries).toEqual([{ path: 'a.ts', hops: 1 }]);
+  });
+
+  it('normalizeBlastRadius still returns bare paths, closest first', () => {
+    const paths = normalizeBlastRadius({
+      count: 2,
+      hops: 2,
+      files: [
+        { file: 'b.ts', hop_distance: 2 },
+        { file: 'a.ts', hop_distance: 1 },
+      ],
+    });
+    expect(paths).toEqual(['a.ts', 'b.ts']);
   });
 });
 

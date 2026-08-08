@@ -1,5 +1,5 @@
 import type { ReviewComment, ReviewVerdict } from '@dispatch/client';
-import { Bot, Check, MessageSquare, Undo2 } from 'lucide-react';
+import { Bot, Check, GitPullRequest, MessageSquare, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -13,8 +13,14 @@ interface ReviewVerdictBarProps {
   comments: ReviewComment[];
   onSubmit: (
     verdict: ReviewVerdict,
-    body: string
+    body: string,
+    postToGitHub: boolean
   ) => Promise<{ published: number; error?: string }>;
+  /** True when this run's work is on a pull request, which is the only case
+   * where posting the review to GitHub is possible at all. The checkbox is
+   * hidden rather than disabled otherwise: there is nothing the reviewer
+   * could do about a run that has no PR. */
+  canPostToGitHub?: boolean;
   /** Dispatches a review agent over this run's diff instead of a human reading it here. Omitted
    * where starting one doesn't make sense (a PR's review, say) — the button hides rather than
    * disabling, since there's nothing the omission leaves for the reviewer to do about it. */
@@ -62,9 +68,13 @@ export function ReviewVerdictBar({
   comments,
   onSubmit,
   onStartAiReview,
+  canPostToGitHub = false,
   extraWarnings = [],
 }: ReviewVerdictBarProps) {
   const [verdict, setVerdict] = useState<ReviewVerdict>('comment');
+  // Off by default, matching the API: submitting is about telling the agent,
+  // and mirroring that onto the PR is a separate, deliberate choice.
+  const [postToGitHub, setPostToGitHub] = useState(false);
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +118,11 @@ export function ReviewVerdictBar({
     setError(null);
     setSent(null);
     try {
-      const res = await onSubmit(verdict, summary.trim());
+      const res = await onSubmit(
+        verdict,
+        summary.trim(),
+        canPostToGitHub && postToGitHub
+      );
       if (res.error !== undefined) {
         // The comments published even though the verdict action failed — report both, so the
         // reviewer knows their writing survived and only the action needs retrying.
@@ -171,6 +185,27 @@ export function ReviewVerdictBar({
       </p>
     ) : null;
 
+  // Shown only for a run whose work is on a PR. The explanation sits inside
+  // the label, in both layouts: leaving the box off is not "skip the review",
+  // it is "keep the review off GitHub", and a hover `title` says that to
+  // nobody using a keyboard or a screen reader.
+  const githubCheckbox = !canPostToGitHub ? null : (
+    <label className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px]">
+      <input
+        type="checkbox"
+        checked={postToGitHub}
+        onChange={(e) => setPostToGitHub(e.target.checked)}
+        className="accent-accent size-3 shrink-0"
+      />
+      <GitPullRequest className="size-3 shrink-0" />
+      Also post to GitHub
+      <span className="text-muted-foreground text-[11px] leading-snug">
+        Off, the review still goes back to the agent — only the pull request is
+        left alone.
+      </span>
+    </label>
+  );
+
   const submitButton = (
     <button
       type="button"
@@ -223,8 +258,11 @@ export function ReviewVerdictBar({
           {aiReviewButton}
           {submitButton}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="dense-meta">{countText}</span>
+        {/* Wraps: the GitHub label carries a full sentence, which on a narrow
+            window would otherwise squeeze the status text beside it. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="dense-meta shrink-0">{countText}</span>
+          {githubCheckbox}
           {warnings}
           <span className="flex-1" />
           {aiReviewStatus}
@@ -293,6 +331,8 @@ export function ReviewVerdictBar({
           );
         })}
       </div>
+
+      {githubCheckbox !== null && <div className="mt-2">{githubCheckbox}</div>}
 
       {error !== null && (
         <p className="text-state-failed mt-2 text-[12px]">{error}</p>

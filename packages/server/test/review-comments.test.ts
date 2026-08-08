@@ -10,6 +10,8 @@ import {
   ReviewCommentStore,
   spliceSuggestion,
 } from '../src/reviewComments';
+import type { ReviewTarget } from '../src/reviewTarget.js';
+import { reviewTargetSlug } from '../src/reviewTarget.js';
 
 // ReviewCommentStore writes beside the run transcript under DISPATCH_HOME, not
 // under the root it is handed — left unset that is the developer's real home.
@@ -29,6 +31,12 @@ afterEach(() => {
 
 function root(): string {
   return mkdtempSync(join(tmpdir(), 'dispatch-review-'));
+}
+
+// Most tests below only care about run-keyed storage, not the pr case — this
+// shortens every call site back down to what it looked like before targets.
+function run(runId: string): ReviewTarget {
+  return { kind: 'run', runId };
 }
 
 function comment(over: Partial<ReviewComment> = {}): ReviewComment {
@@ -112,16 +120,39 @@ describe('resolveAnchor', () => {
   });
 });
 
+describe('reviewTargetSlug', () => {
+  test('a run target keeps its existing on-disk filename', () => {
+    expect(reviewTargetSlug({ kind: 'run', runId: 'r-abc' })).toBe('r-abc');
+  });
+
+  test('a pr target gets its own slug that cannot collide with a run id', () => {
+    expect(reviewTargetSlug({ kind: 'pr', number: 9 })).toBe('pr-9');
+  });
+});
+
 describe('ReviewCommentStore', () => {
+  test('a pr target stores and lists its own comments', () => {
+    const store = new ReviewCommentStore(root(), '');
+    const target = { kind: 'pr', number: 9 } as const;
+    store.add(target, {
+      file: 'src/a.ts',
+      line: 3,
+      anchorText: 'const x = 1;',
+      body: 'why one?',
+    });
+    expect(store.list(target)).toHaveLength(1);
+    expect(store.list({ kind: 'run', runId: 'r-abc' })).toHaveLength(0);
+  });
+
   test('adds and reads back across instances', () => {
     const dir = root();
-    new ReviewCommentStore(dir, '').add('r-1', {
+    new ReviewCommentStore(dir, '').add(run('r-1'), {
       file: 'src/a.ts',
       line: 3,
       anchorText: 'x',
       body: 'look at this',
     });
-    const all = new ReviewCommentStore(dir, '').list('r-1');
+    const all = new ReviewCommentStore(dir, '').list(run('r-1'));
     expect(all).toHaveLength(1);
     expect(all[0]?.body).toBe('look at this');
     expect(all[0]?.resolved).toBe(false);
@@ -130,69 +161,129 @@ describe('ReviewCommentStore', () => {
   test('comments are scoped per run', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'one' });
-    expect(store.list('r-2')).toEqual([]);
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'one' });
+    expect(store.list(run('r-2'))).toEqual([]);
   });
 
   test('replies append in order and stay on the thread', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    const c = store.add('r-1', {
+    const c = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
       body: 'first',
     });
-    store.reply('r-1', c.id, 'second');
-    store.reply('r-1', c.id, 'third');
-    const replies = store.list('r-1')[0]?.replies ?? [];
+    store.reply(run('r-1'), c.id, 'second');
+    store.reply(run('r-1'), c.id, 'third');
+    const replies = store.list(run('r-1'))[0]?.replies ?? [];
     expect(replies.map((r) => r.body)).toEqual(['second', 'third']);
   });
 
   test('resolve toggles both ways and persists', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    const c = store.add('r-1', {
+    const c = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
       body: 'b',
     });
-    store.setResolved('r-1', c.id, true);
-    expect(store.list('r-1')[0]?.resolved).toBe(true);
-    store.setResolved('r-1', c.id, false);
-    expect(store.list('r-1')[0]?.resolved).toBe(false);
+    store.setResolved(run('r-1'), c.id, true);
+    expect(store.list(run('r-1'))[0]?.resolved).toBe(true);
+    store.setResolved(run('r-1'), c.id, false);
+    expect(store.list(run('r-1'))[0]?.resolved).toBe(false);
   });
 
   test('replying to a missing comment throws rather than silently doing nothing', () => {
     expect(() =>
-      new ReviewCommentStore(root(), '').reply('r-1', 'rc-nope', 'x')
+      new ReviewCommentStore(root(), '').reply(run('r-1'), 'rc-nope', 'x')
     ).toThrow(/not found/);
   });
 
   test('remove drops just that comment', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    const a = store.add('r-1', {
+    const a = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
       body: 'a',
     });
-    store.add('r-1', { file: 'a', line: 2, anchorText: 'y', body: 'b' });
-    store.remove('r-1', a.id);
-    expect(store.list('r-1').map((c) => c.body)).toEqual(['b']);
+    store.add(run('r-1'), { file: 'a', line: 2, anchorText: 'y', body: 'b' });
+    store.remove(run('r-1'), a.id);
+    expect(store.list(run('r-1')).map((c) => c.body)).toEqual(['b']);
   });
 
   test('a run with no comments reads as empty, not an error', () => {
-    expect(new ReviewCommentStore(root(), '').list('r-never')).toEqual([]);
+    expect(new ReviewCommentStore(root(), '').list(run('r-never'))).toEqual([]);
+  });
+});
+
+// moveAll is how a run whose work moved onto a PR keeps the comments it
+// already had: once that run's comments resolve to the PR target, anything
+// left behind in the run's own file is invisible to every surface.
+describe('ReviewCommentStore.moveAll', () => {
+  const pr = { kind: 'pr', number: 9 } as const;
+
+  test('moves a run’s comments onto the pr target and empties the run', () => {
+    const store = new ReviewCommentStore(root(), '');
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'one' });
+    store.add(run('r-1'), { file: 'a', line: 2, anchorText: 'y', body: 'two' });
+    store.moveAll(run('r-1'), pr);
+    expect(store.list(pr).map((c) => c.body)).toEqual(['one', 'two']);
+    expect(store.list(run('r-1'))).toEqual([]);
+  });
+
+  test('appends after what the pr target already had', () => {
+    const store = new ReviewCommentStore(root(), '');
+    store.add(pr, { file: 'a', line: 1, anchorText: 'x', body: 'from github' });
+    store.add(run('r-1'), {
+      file: 'a',
+      line: 2,
+      anchorText: 'y',
+      body: 'mine',
+    });
+    store.moveAll(run('r-1'), pr);
+    expect(store.list(pr).map((c) => c.body)).toEqual(['from github', 'mine']);
+  });
+
+  // Every run comment route calls this, so a second call must not duplicate
+  // what the first one already moved.
+  test('is a no-op the second time, and when there was nothing to move', () => {
+    const store = new ReviewCommentStore(root(), '');
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'one' });
+    store.moveAll(run('r-1'), pr);
+    store.moveAll(run('r-1'), pr);
+    store.moveAll(run('r-2'), pr);
+    expect(store.list(pr)).toHaveLength(1);
+  });
+
+  // The two writes are not atomic: if emptying the source fails, the same
+  // records sit in both files. Moving again must converge rather than append
+  // a second copy on every request that resolves the run to its PR.
+  test('does not re-append what the destination already has', () => {
+    const store = new ReviewCommentStore(root(), '');
+    const kept = store.add(run('r-1'), {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'one',
+    });
+    store.moveAll(run('r-1'), pr);
+    // As if `write(from, [])` had thrown after the destination write landed.
+    store.replaceAll(run('r-1'), [kept]);
+
+    store.moveAll(run('r-1'), pr);
+    expect(store.list(pr).map((c) => c.id)).toEqual([kept.id]);
+    expect(store.list(run('r-1'))).toEqual([]);
   });
 });
 
 describe('ReviewCommentStore attribution', () => {
   test('an added comment defaults to the store’s configured author', () => {
     const store = new ReviewCommentStore(root(), 'human:wyat');
-    const c = store.add('r-1', {
+    const c = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
@@ -203,7 +294,7 @@ describe('ReviewCommentStore attribution', () => {
 
   test('an explicit author overrides the store default', () => {
     const store = new ReviewCommentStore(root(), 'human:wyat');
-    const c = store.add('r-1', {
+    const c = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
@@ -215,13 +306,13 @@ describe('ReviewCommentStore attribution', () => {
 
   test('a reply defaults to the store’s configured author', () => {
     const store = new ReviewCommentStore(root(), 'human:wyat');
-    const c = store.add('r-1', {
+    const c = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
       body: 'b',
     });
-    const replied = store.reply('r-1', c.id, 'reply text');
+    const replied = store.reply(run('r-1'), c.id, 'reply text');
     expect(replied.replies[0]?.author).toBe('human:wyat');
   });
 });
@@ -272,7 +363,7 @@ describe('pending review batching', () => {
   test('a new comment is pending by default', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    const c = store.add('r-1', {
+    const c = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
@@ -283,7 +374,7 @@ describe('pending review batching', () => {
 
   test('pending can be opted out of, for a reply-style immediate note', () => {
     const store = new ReviewCommentStore(root(), '');
-    const c = store.add('r-1', {
+    const c = store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
@@ -296,51 +387,58 @@ describe('pending review batching', () => {
   // The whole point of staging: the agent hears about a review once, when it is submitted.
   test('a pending comment never reaches the agent', () => {
     const store = new ReviewCommentStore(root(), '');
-    store.add('r-1', {
+    store.add(run('r-1'), {
       file: 'a',
       line: 1,
       anchorText: 'x',
       body: 'do not send me yet',
     });
-    expect(formatCommentsForAgent(store.list('r-1'))).toBe('');
+    expect(formatCommentsForAgent(store.list(run('r-1')))).toBe('');
   });
 
   test('publishing releases them, and then they do reach the agent', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'now send' });
-    expect(store.publishPending('r-1')).toBe(1);
-    expect(formatCommentsForAgent(store.list('r-1'))).toContain('now send');
+    store.add(run('r-1'), {
+      file: 'a',
+      line: 1,
+      anchorText: 'x',
+      body: 'now send',
+    });
+    expect(store.publishPending(run('r-1'))).toBe(1);
+    expect(formatCommentsForAgent(store.list(run('r-1')))).toContain(
+      'now send'
+    );
   });
 
   test('publishing twice releases nothing the second time', () => {
     const store = new ReviewCommentStore(root(), '');
-    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
-    expect(store.publishPending('r-1')).toBe(1);
-    expect(store.publishPending('r-1')).toBe(0);
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'b' });
+    expect(store.publishPending(run('r-1'))).toBe(1);
+    expect(store.publishPending(run('r-1'))).toBe(0);
   });
 
   test('pendingCount is what the review bar counts down', () => {
     const store = new ReviewCommentStore(root(), '');
-    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'one' });
-    store.add('r-1', { file: 'a', line: 2, anchorText: 'y', body: 'two' });
-    store.add('r-1', {
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'one' });
+    store.add(run('r-1'), { file: 'a', line: 2, anchorText: 'y', body: 'two' });
+    store.add(run('r-1'), {
       file: 'a',
       line: 3,
       anchorText: 'z',
       body: 'already sent',
       pending: false,
     });
-    expect(store.pendingCount('r-1')).toBe(2);
+    expect(store.pendingCount(run('r-1'))).toBe(2);
   });
 
   test('publishing one run does not touch another', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    store.add('r-1', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
-    store.add('r-2', { file: 'a', line: 1, anchorText: 'x', body: 'b' });
-    store.publishPending('r-1');
-    expect(store.pendingCount('r-2')).toBe(1);
+    store.add(run('r-1'), { file: 'a', line: 1, anchorText: 'x', body: 'b' });
+    store.add(run('r-2'), { file: 'a', line: 1, anchorText: 'x', body: 'b' });
+    store.publishPending(run('r-1'));
+    expect(store.pendingCount(run('r-2'))).toBe(1);
   });
 });
 
@@ -348,14 +446,14 @@ describe('range comments', () => {
   test('a range is stored and round-trips', () => {
     const dir = root();
     const store = new ReviewCommentStore(dir, '');
-    store.add('r-1', {
+    store.add(run('r-1'), {
       file: 'a',
       line: 12,
       startLine: 8,
       anchorText: 'x',
       body: 'this whole block',
     });
-    expect(new ReviewCommentStore(dir, '').list('r-1')[0]).toMatchObject({
+    expect(new ReviewCommentStore(dir, '').list(run('r-1'))[0]).toMatchObject({
       line: 12,
       startLine: 8,
     });
@@ -381,7 +479,7 @@ describe('suggestions', () => {
   test('round-trips a suggestion through the store', () => {
     const store = new ReviewCommentStore(root(), 'human:tester');
 
-    const added = store.add('r-1', {
+    const added = store.add(run('r-1'), {
       file: 'src/a.ts',
       line: 3,
       anchorText: '  const x = 1;',
@@ -391,7 +489,7 @@ describe('suggestions', () => {
     });
 
     expect(added.suggestion).toBe('  const x = 2;');
-    expect(store.list('r-1')[0]?.suggestion).toBe('  const x = 2;');
+    expect(store.list(run('r-1'))[0]?.suggestion).toBe('  const x = 2;');
   });
 
   test('renders a suggestion as a fenced block the agent can apply verbatim', () => {

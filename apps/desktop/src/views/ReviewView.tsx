@@ -1,4 +1,5 @@
-import type { ReviewComment, Snippet } from '@dispatch/client';
+import type { Snippet } from '@dispatch/client';
+import { canPostReviewToPr } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Check } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -21,6 +22,7 @@ import {
   useTaskFindings,
 } from '../hooks/useOrchestration';
 import { useRepoPrDetail } from '../hooks/useRepoPrDetail';
+import type { ImpactSubjectRef } from '../lib/appNav';
 import { findingWarnings, partitionFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
 import { openFindingsByFile } from '../lib/reviewAttention';
@@ -41,14 +43,13 @@ interface ReviewViewProps {
   /** Which run is open. Null shows the queue, which is the screen's real home. */
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
+  /** Navigates to `ImpactView` with the open run preselected — the case
+   *  panel's "open in Impact" action. */
+  onOpenImpact: (subject: ImpactSubjectRef) => void;
 }
 
 // How often the open-PR list is re-fetched while this page is on screen.
 const REPO_PRS_POLL_MS = 60_000;
-
-// One shared empty list, so a PR target's comment props keep a stable identity
-// across renders rather than invalidating the memos below on every one.
-const NO_COMMENTS: ReviewComment[] = [];
 
 /**
  * Reviewing one run's work — or one pull request's — full-page.
@@ -63,18 +64,19 @@ const NO_COMMENTS: ReviewComment[] = [];
  * scroll is unreviewable, and "which have I actually read" is the question a reviewer is really
  * tracking.
  *
- * A PR gets that same frame, its diff fetched from GitHub rather than read
- * out of a worktree. What it does not get is the line-comment composer: those
- * have no mirror back to GitHub yet, so one here would file them on local disk
- * under a false promise. A PR is reviewed from the panel in the right rail,
- * which posts straight to GitHub — and which therefore opens by default on a
- * PR (its own `review` panel key), since it is the only place to approve one.
+ * A PR gets that same frame, its diff fetched from GitHub rather than read out
+ * of a worktree, and the same line-comment composer: a note written on a PR is
+ * staged locally and then published to GitHub as part of one review when the
+ * rail's panel submits a verdict. That panel opens by default on a PR (its own
+ * `review` panel key), since it is the only place to approve one and the only
+ * place from which a staged note reaches GitHub.
  */
 export function ReviewView({
   data,
   onBack,
   selectedRunId,
   onSelectRun,
+  onOpenImpact,
 }: ReviewViewProps) {
   const queryClient = useQueryClient();
   const queue = useMemo(
@@ -128,9 +130,27 @@ export function ReviewView({
   // is identical either way, which is the whole point of the unified surface.
   const diff = isPrTarget ? repoPr.prDiff : data.diff;
 
-  // Local review comments belong to the open *run*; a PR's live on GitHub and
-  // are shown in the PR panel instead, so this target has none of its own.
-  const reviewComments = isPrTarget ? NO_COMMENTS : data.reviewComments;
+  // Same shape either way — a run's threads come off its local store, a PR's
+  // off the GitHub mirror — so every consumer below is target-agnostic.
+  const reviewComments = isPrTarget
+    ? repoPr.reviewComments
+    : data.reviewComments;
+
+  // Writes follow the open target too: the run handlers are
+  // useDispatchProject's, keyed by the run nav holds; the PR handlers are
+  // useRepoPrDetail's, which hit /api/prs/:number/comments instead.
+  const handleAddComment = isPrTarget
+    ? repoPr.handleAddReviewComment
+    : data.handleAddReviewComment;
+  const handleResolveComment = isPrTarget
+    ? repoPr.handleResolveReviewComment
+    : data.handleResolveReviewComment;
+  const handleReplyComment = isPrTarget
+    ? repoPr.handleReplyReviewComment
+    : data.handleReplyReviewComment;
+  // What the composer and thread copy should say a note does: reach the agent
+  // when the review is submitted, or publish onto the PR on GitHub.
+  const destination = isPrTarget ? 'github' : 'agent';
 
   const paths = useMemo(
     () => (diff?.files ?? []).map((f) => normalizeDiffFilePath(f.path)),
@@ -190,6 +210,14 @@ export function ReviewView({
   useEffect(() => {
     if (selected !== null && !paths.includes(selected)) setSelected(null);
   }, [paths, selected]);
+
+  // Notes written here but not yet on GitHub. Every verdict button publishes
+  // them, Comment included — so the panel needs the count to know whether
+  // Comment is a review submit or a plain conversation comment.
+  const stagedNoteCount = useMemo(
+    () => (isPrTarget ? reviewComments.filter((c) => c.pending).length : 0),
+    [isPrTarget, reviewComments]
+  );
 
   const commentsByFile = useMemo(() => {
     const map = new Map<string, number>();
@@ -328,6 +356,7 @@ export function ReviewView({
       error={repoPr.prDetailError}
       onReview={repoPr.handleReview}
       onComment={repoPr.handleComment}
+      stagedNotes={stagedNoteCount}
     />
   ) : run !== undefined && run.prUrl !== undefined ? (
     <PrReviewPanel
@@ -432,6 +461,9 @@ export function ReviewView({
                 findings={findings}
                 decisions={decisions}
                 onStartAiReview={handleStartAiReview}
+                client={data.client}
+                runId={selectedRunId ?? undefined}
+                onOpenImpact={onOpenImpact}
               />
             </>
           )}
@@ -474,15 +506,17 @@ export function ReviewView({
                 findings={findingsByFile.get(selected) ?? []}
                 viewed={viewed}
                 scrollTo={jumpTo}
-                // Off for a PR: a line comment written here would be saved to
-                // local disk and never reach GitHub, which is worse than none.
-                onAdd={isPrTarget ? undefined : data.handleAddReviewComment}
-                onResolve={data.handleResolveReviewComment}
-                onReply={data.handleReplyReviewComment}
+                onAdd={handleAddComment}
+                onResolve={handleResolveComment}
+                onReply={handleReplyComment}
+                // Suggestions are committed onto the run's own branch, so a PR
+                // target has no worktree to apply into — the Apply affordance
+                // is withheld there rather than shown dead.
                 onApply={isPrTarget ? undefined : data.handleApplySuggestion}
                 // Off for a PR for the same reason as `onAdd`: the dock below is a run's
                 // conversation, and a PR has no run to hold one.
                 onAddToChat={isPrTarget ? undefined : handleAddToChat}
+                destination={destination}
               />
             </>
           )}
@@ -503,15 +537,33 @@ export function ReviewView({
         {railOpen && (
           <div className="flex min-h-0 w-72 shrink-0 flex-col gap-3 overflow-y-auto">
             {prPanel}
-            {!isPrTarget && (
-              <ReviewThreadIndex
-                comments={reviewComments}
-                onResolve={data.handleResolveReviewComment}
-                onReply={data.handleReplyReviewComment}
-                onJumpTo={(c) =>
-                  setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
-                }
-              />
+            {/* An empty thread list must not read as "nobody commented" when
+                the GitHub pull is what failed. */}
+            {isPrTarget && repoPr.reviewCommentsError !== null && (
+              <p className="text-destructive text-[12.5px]">
+                Couldn&rsquo;t load this pull request&rsquo;s threads:{' '}
+                {repoPr.reviewCommentsError}
+              </p>
+            )}
+            <ReviewThreadIndex
+              comments={reviewComments}
+              onResolve={handleResolveComment}
+              onReply={handleReplyComment}
+              onJumpTo={(c) =>
+                setJumpTo({ file: c.file, line: c.line, nonce: Date.now() })
+              }
+              destination={destination}
+            />
+            {/* Says plainly what this list is and is not: notes here are
+                staged until a verdict publishes them, and a reply written on
+                github.com never comes back into a thread (the mirror drops
+                in-reply payloads) — it lands in the conversation above. */}
+            {isPrTarget && (
+              <p className="text-muted-foreground text-[11.5px]">
+                Notes stay staged until you comment, approve or request changes
+                above, then publish to GitHub as one review. Replies written on
+                github.com show in the conversation, not in these threads.
+              </p>
             )}
           </div>
         )}
@@ -524,6 +576,7 @@ export function ReviewView({
           layout="bar"
           comments={reviewComments}
           onSubmit={data.handleSubmitReview}
+          canPostToGitHub={canPostReviewToPr(run?.prUrl)}
           onStartAiReview={handleStartAiReview}
           extraWarnings={verdictWarnings}
         />
