@@ -23,12 +23,12 @@ import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
-import { TaskDetailDialog } from './components/tasks/TaskDetailDialog';
+import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { withActionFeedback } from './lib/actionFeedback';
-import type { GlobalView, ProjectView } from './lib/appNav';
+import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { deriveFeedState } from './lib/feedState';
 import type { InboxTarget } from './lib/inbox';
@@ -345,6 +345,17 @@ function App() {
     [rawData, toasts]
   );
 
+  // Opens the full task view; unspecified runId resolves to the task's latest
+  // run so Chat/Diff have something to show immediately.
+  const openTaskView = useCallback(
+    (taskId: string, tab: TaskTab = 'details', runId?: string) => {
+      const resolved =
+        runId ?? rawData.latestRunByTaskId.get(taskId)?.id ?? null;
+      dispatchNav({ type: 'openTask', taskId, tab, runId: resolved });
+    },
+    [rawData.latestRunByTaskId]
+  );
+
   // Every non-terminal run for this project — the "Agents" view's list and the sidebar's live
   // badge both read from this single project's own run list now, not a cross-project fan-out
   // of N daemons (the old `useAllAgents`, removed with this pivot).
@@ -394,7 +405,7 @@ function App() {
         ) ?? null)
       : null;
 
-  // Local consts so narrowing survives the closure (TaskDetailDialog has no `data` prop).
+  // Local consts so narrowing survives the closure (TaskDetailPanel has no `data` prop).
   // Raw `sendPlanMessage`, not the `data.` wrapper, which answers a different plan slot.
   const enrichPlanRecord = data.enrichPlanRecord;
   const enrichClient = data.client;
@@ -910,8 +921,8 @@ function App() {
         </SidebarProvider>
 
         {selectedDoc !== null && data.config !== null && (
-          // Remount dialog per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
-          <TaskDetailDialog
+          // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
+          <TaskPeekDialog
             key={selectedDoc.meta.id}
             doc={selectedDoc}
             statuses={data.config.statuses}
@@ -926,7 +937,7 @@ function App() {
             onMoveStatus={data.moveTaskStatus}
             onDispatch={data.handleDispatch}
             onEnrich={data.handleEnrichTask}
-            // The slot is app-level so a draft survives closing the dialog; only hand it over
+            // The slot is app-level so a draft survives closing the peek; only hand it over
             // when it belongs to the task being shown.
             enrichPlan={
               data.enrichTaskId === selectedDoc.meta.id
@@ -935,22 +946,17 @@ function App() {
             }
             onDismissEnrich={data.handleDismissEnrich}
             onAnswerEnrich={onAnswerEnrich}
-            onOpenRun={(runId) => {
-              dispatchNav({ type: 'closePeek' });
-              selectProjectView('runs');
-              dispatchNav({ type: 'openRun', runId });
-            }}
+            onOpenSession={(runId) =>
+              openTaskView(selectedDoc.meta.id, 'chat', runId)
+            }
             onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
-            onOpenImpact={(subject) => {
-              dispatchNav({ type: 'closePeek' });
-              dispatchNav({ type: 'openImpact', subject });
-            }}
             linearLinks={data.linearLinks}
             linearConfigured={isLinearConfigured(data.linearStatus)}
             onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}
             client={data.client}
             port={data.port}
             fixLoopEscalation={data.config.fixLoop.escalation}
+            onExpand={() => openTaskView(selectedDoc.meta.id)}
           />
         )}
 
