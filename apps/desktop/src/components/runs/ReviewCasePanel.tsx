@@ -1,15 +1,25 @@
-import type { Finding } from '@dispatch/client';
+import type { ApiClient, Finding } from '@dispatch/client';
 import type {
   CommandEvidence,
   LedgerEntry,
   MutationEvidence,
 } from '@dispatch/core/browser';
-import { Bot, Check, ChevronRight, Flag, TriangleAlert, X } from 'lucide-react';
+import {
+  Bot,
+  Check,
+  ChevronRight,
+  Flag,
+  TriangleAlert,
+  Waypoints,
+  X,
+} from 'lucide-react';
 import { useState } from 'react';
 
+import type { ImpactSubjectRef } from '../../lib/appNav';
 import type { CheckGroup } from '../../lib/findings';
 import { partitionFindings } from '../../lib/findings';
 import { isDeadGuard } from '../../lib/reviewCase';
+import { ImpactPanel } from '../impact/ImpactPanel';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
@@ -24,6 +34,14 @@ interface ReviewCasePanelProps {
   decisions: LedgerEntry[];
   onStartAiReview?: () => Promise<void>;
   aiReviewBusy?: boolean;
+  /** The dispatchd client and this run's id — both required to embed the
+   *  blast-radius panel. Omitted (as in this component's own tests) hides
+   *  the Impact section entirely rather than rendering it half-wired. */
+  client?: ApiClient | null;
+  runId?: string;
+  /** Navigates to the full `ImpactView`, this run preselected. Optional so
+   *  older/test call sites keep compiling with the button hidden. */
+  onOpenImpact?: (subject: ImpactSubjectRef) => void;
 }
 
 /**
@@ -41,6 +59,9 @@ export function ReviewCasePanel({
   decisions,
   onStartAiReview,
   aiReviewBusy = false,
+  client,
+  runId,
+  onOpenImpact,
 }: ReviewCasePanelProps) {
   const { judgment, checks } = partitionFindings(findings);
   const openCount = judgment.reduce((n, g) => n + g.findings.length, 0);
@@ -78,6 +99,28 @@ export function ReviewCasePanel({
           </div>
         )}
       </section>
+
+      {/* Only ever mounted when a real run is behind this panel — the caller
+          (ReviewView) always has both; this component's own tests exercise
+          `empty` without them, which just hides the section. */}
+      {client !== undefined && runId !== undefined && (
+        <section>
+          <SectionLabel rule>Impact</SectionLabel>
+          <div className="mt-2 flex flex-col items-start gap-2">
+            <ImpactPanel client={client} subject="run" id={runId} />
+            {onOpenImpact && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => onOpenImpact({ kind: 'run', id: runId })}
+              >
+                <Waypoints className="size-3.5" />
+                Open in Impact
+              </Button>
+            )}
+          </div>
+        </section>
+      )}
 
       {mutations.length > 0 && (
         <section>

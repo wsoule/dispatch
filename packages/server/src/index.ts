@@ -55,6 +55,7 @@ import { VerificationRunner } from './orchestrator/verify.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
 import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
+import { TrackedFilesCache } from './trackedFiles.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -389,13 +390,23 @@ export async function startServer(
       });
     },
   });
+  // Backs GET /api/impact's task-subject case; invalidated below off the
+  // same signal as depMapCache rather than a TTL.
+  const trackedFilesCache = new TrackedFilesCache(rootDir);
+  const handleSourceChange = createSourceChangeHandler({
+    rootDir,
+    mode: cartoMode,
+    cache: depMapCache,
+  });
   const sourceWatcher = watchSourceDirs(
     depMapSourceDirs(rootDir),
-    createSourceChangeHandler({
-      rootDir,
-      mode: cartoMode,
-      cache: depMapCache,
-    }),
+    () => {
+      // Shares depMapCache's watch, so its blind spot is the same one: a
+      // tracked file added/removed outside depMapSourceDirs(rootDir) won't
+      // invalidate this cache until some other change happens to fire it.
+      trackedFilesCache.invalidate();
+      handleSourceChange();
+    },
     isSkippedPath
   );
 
@@ -494,8 +505,21 @@ export async function startServer(
   // dispatchd is running, and re-shelling-out to `gh --version` on every
   // health check or review action would be wasted work.
   const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
+  // Built ahead of both PrManager (syncPrComments/pushPrReview read and
+  // write a PR target's comments) and ReviewRunner below, which shares this
+  // same instance — a review run's comments and a human's land in the same
+  // per-target file rather than two stores fighting over one file.
+  const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
   const prManager = new PrManager(
-    { rootDir, store, cache, events, orchestrator, actorContext },
+    {
+      rootDir,
+      store,
+      cache,
+      events,
+      orchestrator,
+      actorContext,
+      reviewComments,
+    },
     prCapability,
     opts.prCommandRunner
   );
@@ -550,9 +574,7 @@ export async function startServer(
   // Review dispatched as its own run kind. Built at boot because it subscribes
   // to the terminal hook that ingests a review's findings.
   const findingStore = new FindingStore(rootDir);
-  // Shared with the API rather than constructed twice: a review run's comments
-  // and a human's land in the same per-run file.
-  const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
+  // reviewComments is built above, alongside PrManager, which needs it too.
   // The working chat about code, separate from reviewComments — see ConversationStore's doc
   // comment for why the two aren't collapsed.
   const conversations = new ConversationStore(rootDir);
@@ -617,6 +639,8 @@ export async function startServer(
     reviewRunner,
     verificationRunner,
     fixLoop,
+    depMapCache,
+    trackedFilesCache,
     reviewComments,
     conversations,
     questions,

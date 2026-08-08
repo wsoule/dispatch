@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { PlanRecord } from '../src/api';
-import { PATCHABLE_FINDING_VERDICTS, PLAN_ROLES } from '../src/api';
+import {
+  IMPACT_SUBJECT_KINDS,
+  PATCHABLE_FINDING_VERDICTS,
+  PLAN_ROLES,
+} from '../src/api';
 
 // api.ts's types are hand-copied from dispatchd, which this package cannot
 // import, so these read the server source as text and fail on drift.
@@ -52,5 +56,14 @@ describe('client types mirror dispatchd', () => {
       role: 'enrich',
     };
     expect(record.role).toBe('enrich');
+  });
+
+  it('IMPACT_SUBJECT_KINDS accepts exactly the subjects GET /api/impact does', () => {
+    const found = literals(
+      serverSource('api', 'impact.ts'),
+      /const SUBJECT_KINDS[^=]*=\s*\[([^\]]*)\]/
+    );
+    expect(found).not.toBeNull();
+    expect(found).toEqual([...IMPACT_SUBJECT_KINDS]);
   });
 });

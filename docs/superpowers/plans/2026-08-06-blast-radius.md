@@ -1,43 +1,70 @@
 # Blast Radius Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Expose the dependency reach Dispatch already computes — given a file, a run, or a task, show which files are affected and how far away each one is.
+**Goal:** Expose the dependency reach Dispatch already computes — given a file,
+a run, or a task, show which files are affected and how far away each one is.
 
-**Architecture:** Three layers. `depmap.ts` gains `reach()`, a transitive walk that preserves hop distance and unions carto's blast radius with a BFS over the scanner's reverse-import graph, taking the shortest distance per file. `impact.ts` resolves any of three subject kinds to a file set and calls `reach()` once. A route, a client binding, and two desktop surfaces render one `ReachResult`.
+**Architecture:** Three layers. `depmap.ts` gains `reach()`, a transitive walk
+that preserves hop distance and unions carto's blast radius with a BFS over the
+scanner's reverse-import graph, taking the shortest distance per file.
+`impact.ts` resolves any of three subject kinds to a file set and calls
+`reach()` once. A route, a client binding, and two desktop surfaces render one
+`ReachResult`.
 
-**Tech Stack:** Bun, TypeScript, React, shadcn/ui (`new-york`, base `neutral`, `lucide` icons), Tailwind via the repo's `chrome/` token layer.
+**Tech Stack:** Bun, TypeScript, React, shadcn/ui (`new-york`, base `neutral`,
+`lucide` icons), Tailwind via the repo's `chrome/` token layer.
 
 ## Global Constraints
 
-- Bun only. Never `npm`, `pnpm`, or `npx`. Adding a shadcn primitive uses `bunx shadcn@latest add <name>`.
-- Dependencies go in the root `workspaces.catalog`, never a package's own `package.json`. Workspace-internal deps use `"@dispatch/core": "workspace:*"`.
-- `bunfig.toml` sets `minimumReleaseAge=7d`; a dependency published this week will not install.
+- Bun only. Never `npm`, `pnpm`, or `npx`. Adding a shadcn primitive uses
+  `bunx shadcn@latest add <name>`.
+- Dependencies go in the root `workspaces.catalog`, never a package's own
+  `package.json`. Workspace-internal deps use `"@dispatch/core": "workspace:*"`.
+- `bunfig.toml` sets `minimumReleaseAge=7d`; a dependency published this week
+  will not install.
 - `export AGENT=1` before running tests.
 - Preserve trailing newlines at end of files.
 - Comments: 1-2 lines, function-level, concrete. No incident narratives.
-- `ReviewRunner`'s prompt must stay byte-identical. `normalizeBlastRadius(raw): string[]` keeps its exact signature and output.
-- `scripts/check-chrome-utilities.ts` fails the build on raw Tailwind palette hues. Colour comes from tokens via `chrome/`.
-- Never add a lint-disable comment or narrow a lint rule in config to make a finding go away. Fix it for real.
-- Verification after code changes: `bun run format` and `bun run lint` from the root, plus the changed package's `tsc` and focused tests.
+- `ReviewRunner`'s prompt must stay byte-identical.
+  `normalizeBlastRadius(raw): string[]` keeps its exact signature and output.
+- `scripts/check-chrome-utilities.ts` fails the build on raw Tailwind palette
+  hues. Colour comes from tokens via `chrome/`.
+- Never add a lint-disable comment or narrow a lint rule in config to make a
+  finding go away. Fix it for real.
+- Verification after code changes: `bun run format` and `bun run lint` from the
+  root, plus the changed package's `tsc` and focused tests.
 
 ## Delivery
 
-Work happens in a fresh worktree off `main` at `../dispatch-worktrees/blast-radius`, NOT in `feat/demo-environment` (open PR). A fresh worktree needs `bun install && bun run build` from its root before `tsc` or tests resolve `@dispatch/*`.
+Work happens in a fresh worktree off `main` at
+`../dispatch-worktrees/blast-radius`, NOT in `feat/demo-environment` (open PR).
+A fresh worktree needs `bun install && bun run build` from its root before `tsc`
+or tests resolve `@dispatch/*`.
 
 ---
 
 ### Task 1: Preserve hop distance through normalization
 
-The smallest possible first change, and the one everything else needs. Carto already reports `hop_distance` per file; `normalizeBlastRadius` uses it to sort and dedupe, then throws it away.
+The smallest possible first change, and the one everything else needs. Carto
+already reports `hop_distance` per file; `normalizeBlastRadius` uses it to sort
+and dedupe, then throws it away.
 
 **Files:**
+
 - Modify: `packages/server/src/depmap.ts:456-486`
 - Test: `packages/server/test/depmap.test.ts`
 
 **Interfaces:**
-- Consumes: `CartoBlastRadius` from `@dispatch/core` — `{ count: number; hops: number; files: unknown[] }`
-- Produces: `normalizeBlastRadiusEntries(raw: CartoBlastRadius): BlastEntry[]` where `interface BlastEntry { path: string; hops: number }`, and `normalizeBlastRadius(raw): string[]` unchanged
+
+- Consumes: `CartoBlastRadius` from `@dispatch/core` —
+  `{ count: number; hops: number; files: unknown[] }`
+- Produces: `normalizeBlastRadiusEntries(raw: CartoBlastRadius): BlastEntry[]`
+  where `interface BlastEntry { path: string; hops: number }`, and
+  `normalizeBlastRadius(raw): string[]` unchanged
 
 - [ ] **Step 1: Write the failing test**
 
@@ -45,7 +72,7 @@ The smallest possible first change, and the one everything else needs. Carto alr
 // packages/server/test/depmap.test.ts — add to the existing file
 import { normalizeBlastRadiusEntries } from '../src/depmap.js';
 
-test('normalizeBlastRadiusEntries keeps each file\'s hop distance', () => {
+test("normalizeBlastRadiusEntries keeps each file's hop distance", () => {
   const entries = normalizeBlastRadiusEntries({
     count: 3,
     hops: 2,
@@ -87,12 +114,16 @@ test('normalizeBlastRadius still returns bare paths, closest first', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/server && bun test test/depmap.test.ts`
-Expected: FAIL — `normalizeBlastRadiusEntries` is not exported
+Run: `cd packages/server && bun test test/depmap.test.ts` Expected: FAIL —
+`normalizeBlastRadiusEntries` is not exported
 
 - [ ] **Step 3: Split the function**
 
-Replace the body of `normalizeBlastRadius` (`depmap.ts:456-486`) with an entries function plus a one-line map. Keep every existing behaviour: string entries fall back to `raw.hops`; object entries accept `file`/`path` and `hop_distance`/`hops`; non-string paths are skipped; shortest route wins; ties sort by path.
+Replace the body of `normalizeBlastRadius` (`depmap.ts:456-486`) with an entries
+function plus a one-line map. Keep every existing behaviour: string entries fall
+back to `raw.hops`; object entries accept `file`/`path` and
+`hop_distance`/`hops`; non-string paths are skipped; shortest route wins; ties
+sort by path.
 
 ```ts
 export interface BlastEntry {
@@ -139,13 +170,14 @@ export function normalizeBlastRadius(raw: CartoBlastRadius): string[] {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/server && bun test test/depmap.test.ts`
-Expected: PASS
+Run: `cd packages/server && bun test test/depmap.test.ts` Expected: PASS
 
 - [ ] **Step 5: Prove ReviewRunner is unaffected**
 
-Run: `cd packages/server && bun test test/orchestrator/review.test.ts test/carto-integration.test.ts`
-Expected: PASS, unchanged. These exercise the review prompt; a diff in their output means the refactor changed behaviour.
+Run:
+`cd packages/server && bun test test/orchestrator/review.test.ts test/carto-integration.test.ts`
+Expected: PASS, unchanged. These exercise the review prompt; a diff in their
+output means the refactor changed behaviour.
 
 - [ ] **Step 6: Commit**
 
@@ -158,13 +190,17 @@ git commit -m "refactor(server): keep hop distance when normalizing blast radius
 
 ### Task 2: `reach()` — the transitive walk
 
-The core of the feature, and where subtle wrongness hides. Two graphs contribute distance differently and must be reconciled by shortest hop.
+The core of the feature, and where subtle wrongness hides. Two graphs contribute
+distance differently and must be reconciled by shortest hop.
 
 **Files:**
-- Modify: `packages/server/src/depmap.ts` (the `DepMap` interface, `buildDepMap`, `createCartoDepMap`)
+
+- Modify: `packages/server/src/depmap.ts` (the `DepMap` interface,
+  `buildDepMap`, `createCartoDepMap`)
 - Test: `packages/server/test/reach.test.ts`
 
 **Interfaces:**
+
 - Consumes: `BlastEntry`, `normalizeBlastRadiusEntries` from Task 1
 - Produces:
 
@@ -274,12 +310,14 @@ test('results are ordered by distance, never interleaved by source', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/server && bun test test/reach.test.ts`
-Expected: FAIL — `reachOver` is not exported
+Run: `cd packages/server && bun test test/reach.test.ts` Expected: FAIL —
+`reachOver` is not exported
 
 - [ ] **Step 3: Implement the shared walk**
 
-Add `reachOver` to `depmap.ts` as a standalone function so both `DepMap` implementations share one traversal, and wire `reach` on the object `buildDepMap` returns.
+Add `reachOver` to `depmap.ts` as a standalone function so both `DepMap`
+implementations share one traversal, and wire `reach` on the object
+`buildDepMap` returns.
 
 ```ts
 export interface ReachOptions {
@@ -352,7 +390,8 @@ function sortEntries(closest: Map<string, number>): BlastEntry[] {
 }
 ```
 
-Then add `reach` to the `DepMap` interface and to the object returned by `buildDepMap`:
+Then add `reach` to the `DepMap` interface and to the object returned by
+`buildDepMap`:
 
 ```ts
 reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
@@ -362,8 +401,7 @@ reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/server && bun test test/reach.test.ts`
-Expected: PASS, 8 tests
+Run: `cd packages/server && bun test test/reach.test.ts` Expected: PASS, 8 tests
 
 - [ ] **Step 5: Commit**
 
@@ -376,14 +414,20 @@ git commit -m "feat(server): add a transitive reach walk with hop distance"
 
 ### Task 3: Union carto's distances with the scanner's
 
-`createCartoDepMap.dependents()` round-robin merges carto and scanner results because neither dominates — but that merge deliberately does not order by distance. `reach` needs a different reconciliation: shortest hop wins.
+`createCartoDepMap.dependents()` round-robin merges carto and scanner results
+because neither dominates — but that merge deliberately does not order by
+distance. `reach` needs a different reconciliation: shortest hop wins.
 
 **Files:**
+
 - Modify: `packages/server/src/depmap.ts` (`createCartoDepMap`)
 - Test: `packages/server/test/reach-carto.test.ts`
 
 **Interfaces:**
-- Consumes: `reachOver`, `ReachResult`, `DEFAULT_REACH` from Task 2; `normalizeBlastRadiusEntries` from Task 1; `CartoReader` from `@dispatch/core` — `{ blastRadius(file: string): CartoBlastRadius }`
+
+- Consumes: `reachOver`, `ReachResult`, `DEFAULT_REACH` from Task 2;
+  `normalizeBlastRadiusEntries` from Task 1; `CartoReader` from `@dispatch/core`
+  — `{ blastRadius(file: string): CartoBlastRadius }`
 - Produces: a `reach` implementation on the object `createCartoDepMap` returns
 
 - [ ] **Step 1: Write the failing test**
@@ -399,11 +443,36 @@ import {
   type DepMap,
 } from '../src/depmap.js';
 
-// A scanner-shaped DepMap whose reach() runs the real shared walk, so these
-// tests exercise the union rather than a stubbed traversal.
+// A scanner-shaped DepMap built from a ONE-HOP adjacency list. It derives
+// transitive distance itself, because the real DepMap's dependentsWithHops
+// returns the whole closure with distances — a stub that returned one-hop
+// entries would not be a valid DepMap. Mirror the equivalent helper already in
+// packages/server/test/reach.test.ts rather than inventing a second shape.
 function scannerOf(graph: Record<string, string[]>): DepMap {
   const map: DepMap = {
-    dependents: (file) => graph[file] ?? [],
+    dependentsWithHops(file) {
+      const depth = new Map<string, number>();
+      let frontier = [file];
+      let hops = 0;
+      while (frontier.length > 0) {
+        hops++;
+        const next: string[] = [];
+        for (const current of frontier) {
+          for (const importer of graph[current] ?? []) {
+            if (importer === file || depth.has(importer)) continue;
+            depth.set(importer, hops);
+            next.push(importer);
+          }
+        }
+        frontier = next;
+      }
+      return [...depth.entries()]
+        .sort(([pa, ha], [pb, hb]) =>
+          ha !== hb ? ha - hb : pa < pb ? -1 : pa > pb ? 1 : 0
+        )
+        .map(([path, h]) => ({ path, hops: h }));
+    },
+    dependents: (file) => map.dependentsWithHops(file).map((e) => e.path),
     mirrors: () => [],
     reach: (files, opts) =>
       reachOver(map, files, { ...DEFAULT_REACH, ...opts }),
@@ -422,7 +491,11 @@ function readerOf(answers: Record<string, CartoBlastRadius>) {
 test('a file both graphs reach is recorded at the shorter distance', () => {
   const scanner = scannerOf({ 'a.ts': ['near.ts'] });
   const reader = readerOf({
-    'a.ts': { count: 1, hops: 2, files: [{ file: 'near.ts', hop_distance: 2 }] },
+    'a.ts': {
+      count: 1,
+      hops: 2,
+      files: [{ file: 'near.ts', hop_distance: 2 }],
+    },
   });
   const map = createCartoDepMap('/repo', reader, scanner);
   const result = map.reach(['a.ts']);
@@ -455,16 +528,20 @@ test('a throwing reader degrades to the scanner and says so', () => {
 });
 ```
 
-`createCartoDepMap`'s fourth argument is the optional `onDegrade` callback; these tests omit it, which is why the degradation case asserts on the returned `degraded` flag rather than on a spy.
+`createCartoDepMap`'s fourth argument is the optional `onDegrade` callback;
+these tests omit it, which is why the degradation case asserts on the returned
+`degraded` flag rather than on a spy.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/server && bun test test/reach-carto.test.ts`
-Expected: FAIL — the object from `createCartoDepMap` has no `reach`
+Run: `cd packages/server && bun test test/reach-carto.test.ts` Expected: FAIL —
+the object from `createCartoDepMap` has no `reach`
 
 - [ ] **Step 3: Implement the union**
 
-Add `reach` to the object `createCartoDepMap` returns. It runs the scanner BFS via `reachOver` against `fallback`, collects carto's entries for each seed, and merges by shortest hop.
+Add `reach` to the object `createCartoDepMap` returns. It runs the scanner BFS
+via `reachOver` against `fallback`, collects carto's entries for each seed, and
+merges by shortest hop.
 
 ```ts
 reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
@@ -508,17 +585,28 @@ reach(files: string[], opts?: Partial<ReachOptions>): ReachResult {
 }
 ```
 
-Export `sortEntries` from `depmap.ts` so both implementations share it rather than each keeping a copy.
+`sortEntries` is already exported from `depmap.ts` — use it rather than writing
+a second comparator, which is how ordering bugs get introduced.
+
+Leave `createCartoDepMap`'s `dependentsWithHops` delegating to
+`fallback.dependentsWithHops` (scanner only). It is what `reachOver` walks to
+produce the scanner half; carto's contribution is merged in `reach` itself,
+above. Do not add carto entries to `dependentsWithHops` — that would
+double-count them and would also change what `dependents()` returns, which feeds
+`ReviewRunner`'s prompt.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/server && bun test test/reach-carto.test.ts test/reach.test.ts`
+Run:
+`cd packages/server && bun test test/reach-carto.test.ts test/reach.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: Confirm `dependents()` is untouched**
 
-Run: `cd packages/server && bun test test/depmap.test.ts test/carto-integration.test.ts test/orchestrator/review.test.ts`
-Expected: PASS. `reach` is additive; `dependents()` must still round-robin merge.
+Run:
+`cd packages/server && bun test test/depmap.test.ts test/carto-integration.test.ts test/orchestrator/review.test.ts`
+Expected: PASS. `reach` is additive; `dependents()` must still round-robin
+merge.
 
 - [ ] **Step 6: Commit**
 
@@ -531,13 +619,16 @@ git commit -m "feat(server): union carto and scanner reach by shortest distance"
 
 ### Task 4: Subject resolution
 
-Turns a file, a run, or a task into the file set `reach` walks. This is the only layer that differs between the three subjects.
+Turns a file, a run, or a task into the file set `reach` walks. This is the only
+layer that differs between the three subjects.
 
 **Files:**
+
 - Create: `packages/server/src/impact.ts`
 - Test: `packages/server/test/impact.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DepMap`, `ReachResult`, `DEFAULT_REACH` from Tasks 2-3
 - Produces:
 
@@ -609,7 +700,10 @@ test('a file subject seeds itself', () => {
 });
 
 test('a path escaping the repo root is rejected before touching the graph', () => {
-  const result = computeImpact({ kind: 'file', path: '../../etc/passwd' }, deps());
+  const result = computeImpact(
+    { kind: 'file', path: '../../etc/passwd' },
+    deps()
+  );
   expect(result).toEqual({ ok: false, reason: 'outside-root' });
 });
 
@@ -633,7 +727,8 @@ test('a task subject expands its declared write globs against tracked files', ()
     deps({ writesForTask: () => ['src/*.ts'] })
   );
   expect(result.ok).toBe(true);
-  if (result.ok) expect(result.seeds.sort()).toEqual(['src/api.ts', 'src/db.ts']);
+  if (result.ok)
+    expect(result.seeds.sort()).toEqual(['src/api.ts', 'src/db.ts']);
 });
 
 test('a task with no declared writes says so rather than guessing', () => {
@@ -647,24 +742,31 @@ test('a task with no declared writes says so rather than guessing', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/server && bun test test/impact.test.ts`
-Expected: FAIL — cannot resolve `../src/impact.js`
+Run: `cd packages/server && bun test test/impact.test.ts` Expected: FAIL —
+cannot resolve `../src/impact.js`
 
 - [ ] **Step 3: Implement resolution**
 
 Write `packages/server/src/impact.ts`. It must:
 
-1. For `file`: resolve the path against `rootDir` and reject anything escaping it (`outside-root`) before any graph call.
+1. For `file`: resolve the path against `rootDir` and reject anything escaping
+   it (`outside-root`) before any graph call.
 2. For `run`: call `changedFilesForRun`; `null` means `not-found`.
-3. For `task`: call `writesForTask`; `null` means `not-found`, `[]` means `no-declared-writes`. Expand the globs against `trackedFiles()`.
-4. Call `depMap().reach(seeds)` once and return `{ ok: true, subject, seeds, reach }`.
+3. For `task`: call `writesForTask`; `null` means `not-found`, `[]` means
+   `no-declared-writes`. Expand the globs against `trackedFiles()`.
+4. Call `depMap().reach(seeds)` once and return
+   `{ ok: true, subject, seeds, reach }`.
 
-For glob matching, reuse the matcher the undeclared-write findings already use rather than adding a second one — find it by searching for where declared writes are checked against a diff (`grep -rn "writes" packages/server/src` and follow it). If it is not exported, export it; do not reimplement glob semantics, or the two will disagree about what a task declared.
+For glob matching, reuse the matcher the undeclared-write findings already use
+rather than adding a second one — find it by searching for where declared writes
+are checked against a diff (`grep -rn "writes" packages/server/src` and follow
+it). If it is not exported, export it; do not reimplement glob semantics, or the
+two will disagree about what a task declared.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/server && bun test test/impact.test.ts`
-Expected: PASS, 6 tests
+Run: `cd packages/server && bun test test/impact.test.ts` Expected: PASS, 6
+tests
 
 - [ ] **Step 5: Commit**
 
@@ -678,17 +780,23 @@ git commit -m "feat(server): resolve file, run and task subjects to a reach quer
 ### Task 5: The HTTP route
 
 **Files:**
+
 - Create: `packages/server/src/api/impact.ts`
-- Modify: the router (find it: `grep -rn "api/findings" packages/server/src/api.ts packages/server/src/index.ts`)
+- Modify: the router (find it:
+  `grep -rn "api/findings" packages/server/src/api.ts packages/server/src/index.ts`)
 - Test: `packages/server/test/impact-api.test.ts`
 
 **Interfaces:**
+
 - Consumes: `computeImpact`, `ImpactSubject`, `ImpactResult` from Task 4
-- Produces: `GET /api/impact?subject=file|run|task&id=<value>` returning `ReachResult` plus `{ subject, seeds }` on 200
+- Produces: `GET /api/impact?subject=file|run|task&id=<value>` returning
+  `ReachResult` plus `{ subject, seeds }` on 200
 
 - [ ] **Step 1: Write the failing test**
 
-Follow the existing pattern in `packages/server/test/findings-api.test.ts` for harness setup and auth — read it first and mirror it, including `test/testAuth.ts`.
+Follow the existing pattern in `packages/server/test/findings-api.test.ts` for
+harness setup and auth — read it first and mirror it, including
+`test/testAuth.ts`.
 
 ```ts
 // packages/server/test/impact-api.test.ts
@@ -723,17 +831,21 @@ test('a missing id is a 400', async () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd packages/server && bun test test/impact-api.test.ts`
-Expected: FAIL — 404 on every case, the route does not exist
+Run: `cd packages/server && bun test test/impact-api.test.ts` Expected: FAIL —
+404 on every case, the route does not exist
 
 - [ ] **Step 3: Implement the route**
 
-Map `ImpactResult`'s reasons to statuses: `not-found` → 404, `outside-root` → 400, `no-declared-writes` → 200 with an empty reach and the reason echoed (a task with nothing declared is a real answer, not an error). Wire `changedFilesForRun`, `writesForTask`, and `trackedFiles` from the daemon's existing accessors; reuse `DepMapCache.get` for `depMap`.
+Map `ImpactResult`'s reasons to statuses: `not-found` → 404, `outside-root` →
+400, `no-declared-writes` → 200 with an empty reach and the reason echoed (a
+task with nothing declared is a real answer, not an error). Wire
+`changedFilesForRun`, `writesForTask`, and `trackedFiles` from the daemon's
+existing accessors; reuse `DepMapCache.get` for `depMap`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd packages/server && bun test test/impact-api.test.ts`
-Expected: PASS, 5 tests
+Run: `cd packages/server && bun test test/impact-api.test.ts` Expected: PASS, 5
+tests
 
 - [ ] **Step 5: Commit**
 
@@ -747,34 +859,41 @@ git commit -m "feat(server): add GET /api/impact"
 ### Task 6: Client binding
 
 **Files:**
+
 - Modify: `packages/client/src/api.ts`
 - Test: `packages/client/test/server-parity.test.ts` (existing — extend it)
 
 **Interfaces:**
+
 - Consumes: the route from Task 5
-- Produces: `getImpact(subject: 'file' | 'run' | 'task', id: string): Promise<ImpactResponse>`
+- Produces:
+  `getImpact(subject: 'file' | 'run' | 'task', id: string): Promise<ImpactResponse>`
 
 - [ ] **Step 1: Read the existing parity test**
 
-`packages/client/test/server-parity.test.ts` exists to catch client/server drift. Read it and follow its pattern exactly — it is the reason a route rename cannot silently break the desktop app.
+`packages/client/test/server-parity.test.ts` exists to catch client/server
+drift. Read it and follow its pattern exactly — it is the reason a route rename
+cannot silently break the desktop app.
 
 - [ ] **Step 2: Write the failing test**
 
-Add a case asserting `getImpact` targets `/api/impact` with the subject and id as query parameters, matching however the existing tests assert URL shape.
+Add a case asserting `getImpact` targets `/api/impact` with the subject and id
+as query parameters, matching however the existing tests assert URL shape.
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd packages/client && bun test`
-Expected: FAIL — `getImpact` is not a function
+Run: `cd packages/client && bun test` Expected: FAIL — `getImpact` is not a
+function
 
 - [ ] **Step 4: Implement the binding**
 
-Follow the surrounding methods' conventions for auth headers and error handling. Every write declares a content type in this codebase; this is a read, so match the existing GET methods.
+Follow the surrounding methods' conventions for auth headers and error handling.
+Every write declares a content type in this codebase; this is a read, so match
+the existing GET methods.
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd packages/client && bun test`
-Expected: PASS
+Run: `cd packages/client && bun test` Expected: PASS
 
 - [ ] **Step 6: Commit**
 
@@ -788,13 +907,17 @@ git commit -m "feat(client): mirror GET /api/impact"
 ### Task 7: `ImpactPanel` — the compact surface
 
 **Files:**
+
 - Create: `apps/desktop/src/lib/impactSummary.ts`
 - Create: `apps/desktop/src/lib/impactSummary.test.ts`
 - Create: `apps/desktop/src/components/impact/ImpactPanel.tsx`
 
 **Interfaces:**
+
 - Consumes: `getImpact` from Task 6; `ReachResult` from the server types
-- Produces: `summarizeImpact(reach: ReachResult, reviewCap: number): ImpactSummary` and `<ImpactPanel subject={...} id={...} />`
+- Produces:
+  `summarizeImpact(reach: ReachResult, reviewCap: number): ImpactSummary` and
+  `<ImpactPanel subject={...} id={...} />`
 
 ```ts
 export interface ImpactSummary {
@@ -847,7 +970,10 @@ test('a scanner-only result states what it walks', () => {
 });
 
 test('a degraded result is not presented as a plain scanner result', () => {
-  const s = summarizeImpact({ ...base, sources: ['scanner'], degraded: true }, 20);
+  const s = summarizeImpact(
+    { ...base, sources: ['scanner'], degraded: true },
+    20
+  );
   expect(s.sourceLabel).toContain('unavailable');
 });
 
@@ -867,27 +993,36 @@ test('an empty reach has no coverage line and reads as zero', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/desktop && bun test src/lib/impactSummary.test.ts`
-Expected: FAIL — cannot resolve `./impactSummary.js`
+Run: `cd apps/desktop && bun test src/lib/impactSummary.test.ts` Expected: FAIL
+— cannot resolve `./impactSummary.js`
 
 - [ ] **Step 3: Implement the summary**
 
-Pure functions only — no React, no fetch. This is the file the tests cover; the component stays thin so its logic is testable without a DOM.
+Pure functions only — no React, no fetch. This is the file the tests cover; the
+component stays thin so its logic is testable without a DOM.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/desktop && bun test src/lib/impactSummary.test.ts`
-Expected: PASS, 6 tests
+Run: `cd apps/desktop && bun test src/lib/impactSummary.test.ts` Expected: PASS,
+6 tests
 
 - [ ] **Step 5: Build the panel from existing primitives**
 
-`ImpactPanel.tsx` composes: `chrome/Panel` for the shell, `ui/badge` for the source label and the capped marker, `ui/tooltip` for the scanner caveat, `ui/skeleton` while loading, and `chrome/CollapseBar` if the panel offers expansion. Use `chrome/EmptyState` for the zero case.
+`ImpactPanel.tsx` composes: `chrome/Panel` for the shell, `ui/badge` for the
+source label and the capped marker, `ui/tooltip` for the scanner caveat,
+`ui/skeleton` while loading, and `chrome/CollapseBar` if the panel offers
+expansion. Use `chrome/EmptyState` for the zero case.
 
-Do NOT hand-roll a primitive that exists. Do NOT use raw Tailwind palette hues — `scripts/check-chrome-utilities.ts` fails the build on them, and colour comes from tokens via `chrome/`. Compose the direct-vs-downstream bar from `chrome`; only run `bunx shadcn@latest add progress` if composition proves worse, and note the reason in your report.
+Do NOT hand-roll a primitive that exists. Do NOT use raw Tailwind palette hues —
+`scripts/check-chrome-utilities.ts` fails the build on them, and colour comes
+from tokens via `chrome/`. Compose the direct-vs-downstream bar from `chrome`;
+only run `bunx shadcn@latest add progress` if composition proves worse, and note
+the reason in your report.
 
 - [ ] **Step 6: Verify the guard and the build**
 
-Run from the repo root: `bun run lint && bun ws desktop tsc && bun test scripts/check-chrome-utilities.test.ts`
+Run from the repo root:
+`bun run lint && bun ws desktop tsc && bun test scripts/check-chrome-utilities.test.ts`
 Expected: clean
 
 - [ ] **Step 7: Commit**
@@ -902,15 +1037,21 @@ git commit -m "feat(desktop): add the compact blast-radius panel"
 ### Task 8: `ImpactView` — the full surface, and its entry points
 
 **Files:**
+
 - Create: `apps/desktop/src/views/ImpactView.tsx`
 - Create: `apps/desktop/src/lib/impactGroups.ts`
 - Create: `apps/desktop/src/lib/impactGroups.test.ts`
 - Modify: `apps/desktop/src/components/shell/Sidebar.tsx` (add the nav item)
-- Modify: `apps/desktop/src/components/runs/ReviewCasePanel.tsx`, the task detail dialog, and the Git file pane (embed `ImpactPanel`)
+- Modify: `apps/desktop/src/components/runs/ReviewCasePanel.tsx`, the task
+  detail dialog, and the Git file pane (embed `ImpactPanel`)
 
 **Interfaces:**
-- Consumes: `summarizeImpact`, `ImpactPanel` from Task 7; `getImpact` from Task 6
-- Produces: `groupByHop(entries: BlastEntry[]): HopGroup[]` where `interface HopGroup { hops: number; paths: string[] }`, and the `ImpactView` route
+
+- Consumes: `summarizeImpact`, `ImpactPanel` from Task 7; `getImpact` from Task
+  6
+- Produces: `groupByHop(entries: BlastEntry[]): HopGroup[]` where
+  `interface HopGroup { hops: number; paths: string[] }`, and the `ImpactView`
+  route
 
 - [ ] **Step 1: Write the failing test**
 
@@ -948,8 +1089,8 @@ test('an empty filter returns everything rather than nothing', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/desktop && bun test src/lib/impactGroups.test.ts`
-Expected: FAIL — cannot resolve `./impactGroups.js`
+Run: `cd apps/desktop && bun test src/lib/impactGroups.test.ts` Expected: FAIL —
+cannot resolve `./impactGroups.js`
 
 - [ ] **Step 3: Implement grouping and filtering**
 
@@ -957,18 +1098,24 @@ Pure functions, no React.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/desktop && bun test src/lib/impactGroups.test.ts`
-Expected: PASS, 4 tests
+Run: `cd apps/desktop && bun test src/lib/impactGroups.test.ts` Expected: PASS,
+4 tests
 
 - [ ] **Step 5: Build the view**
 
-`ImpactView.tsx` composes `chrome/ViewHeader`, `ui/select` for the subject picker, `ui/input` for the path filter, `chrome/CollapseBar` per hop group, `chrome/PathCrumb` for each path, and `chrome/EmptyState` for the zero case. It renders the same `ReachResult` `ImpactPanel` does — do not add a second fetch shape.
+`ImpactView.tsx` composes `chrome/ViewHeader`, `ui/select` for the subject
+picker, `ui/input` for the path filter, `chrome/CollapseBar` per hop group,
+`chrome/PathCrumb` for each path, and `chrome/EmptyState` for the zero case. It
+renders the same `ReachResult` `ImpactPanel` does — do not add a second fetch
+shape.
 
 Add the nav item to `Sidebar.tsx` following the existing items' pattern exactly.
 
 - [ ] **Step 6: Wire the three entry points**
 
-Embed `ImpactPanel` in the Review case panel, the task detail dialog, and the Git file pane, each passing its own subject. Each panel offers "open in Impact", which navigates to the view with that subject preselected.
+Embed `ImpactPanel` in the Review case panel, the task detail dialog, and the
+Git file pane, each passing its own subject. Each panel offers "open in Impact",
+which navigates to the view with that subject preselected.
 
 - [ ] **Step 7: Full verification**
 
@@ -978,7 +1125,9 @@ Run from the repo root:
 bun run format && bun run lint && bun run tsc && bun run test
 ```
 
-Expected: clean. Note that two timing tests (`sync/scheduler`, the watcher) are known to fail only under full-suite load — re-run those alone before blaming this change.
+Expected: clean. Note that two timing tests (`sync/scheduler`, the watcher) are
+known to fail only under full-suite load — re-run those alone before blaming
+this change.
 
 - [ ] **Step 8: Commit**
 
@@ -1004,14 +1153,14 @@ Checked against the spec:
 - shadcn primitives and the chrome guard → Tasks 7 and 8
 
 Two items deliberately deferred into their tasks rather than pinned here,
-because both require reading current source and a wrong guess produces a
-subtly incorrect result: the declared-writes glob matcher to reuse (Task 4,
-Step 3) and the daemon accessors for run changed-files and tracked files
-(Task 5, Step 3). Both steps name what to search for.
+because both require reading current source and a wrong guess produces a subtly
+incorrect result: the declared-writes glob matcher to reuse (Task 4, Step 3) and
+the daemon accessors for run changed-files and tracked files (Task 5, Step 3).
+Both steps name what to search for.
 
 One risk worth stating: Task 3's union is the only place two graphs with
 different semantics are reconciled. Its three tests cover shorter-wins,
 carto-only survival, and degradation — but a real carto container is exercised
 only by the existing `carto-integration.test.ts`, which is skipped when no
-binary is present. `preflight` reports carto is not currently installed, so
-that path will not run locally until it is.
+binary is present. `preflight` reports carto is not currently installed, so that
+path will not run locally until it is.

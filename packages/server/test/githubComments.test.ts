@@ -1,0 +1,398 @@
+import { expect, test } from 'bun:test';
+
+import {
+  attachGitHubReplies,
+  mapGitHubComment,
+  mergeComments,
+  partitionGitHubComments,
+} from '../src/githubComments.js';
+import type { ReviewComment } from '../src/reviewComments.js';
+
+const base = {
+  id: 101,
+  node_id: 'PRRC_abc',
+  path: 'src/a.ts',
+  line: 12,
+  original_line: 9,
+  start_line: null,
+  diff_hunk: '@@ -1,3 +1,4 @@\n context\n+const x = 1;',
+  body: 'why one?',
+  user: { login: 'teammate' },
+  created_at: '2026-08-01T00:00:00Z',
+  updated_at: '2026-08-02T00:00:00Z',
+  side: 'RIGHT',
+  subject_type: 'line',
+};
+
+test('strips the diff prefix from the anchor line', () => {
+  // The whole mirror rests on this: GitHub's diff_hunk keeps the +/-/space
+  // marker, and an anchor that keeps it can never equal a real file line.
+  expect(mapGitHubComment(base)?.anchorText).toBe('const x = 1;');
+});
+
+test('carries the GitHub ids needed to match it on the next pull', () => {
+  const c = mapGitHubComment(base);
+  expect(c?.githubId).toBe(101);
+  expect(c?.githubUpdatedAt).toBe('2026-08-02T00:00:00Z');
+  expect(c?.origin).toBe('github');
+  expect(c?.pending).toBe(false);
+});
+
+test('falls back to original_line when the comment has gone outdated', () => {
+  expect(mapGitHubComment({ ...base, line: null })?.line).toBe(9);
+});
+
+test('a LEFT-side comment is stored with no usable anchor', () => {
+  // The local model only has new-side line numbers, so inventing one would
+  // point the reader at unrelated code. An empty anchor reads as outdated.
+  expect(mapGitHubComment({ ...base, side: 'LEFT' })?.anchorText).toBe('');
+});
+
+test('a file-level comment gets line 0 rather than a fake line', () => {
+  const c = mapGitHubComment({
+    ...base,
+    subject_type: 'file',
+    line: null,
+    original_line: null,
+  });
+  expect(c?.line).toBe(0);
+  // Same rule as the LEFT-side case above: a file comment has no diff line
+  // to anchor to, so it must come back empty rather than a guessed value.
+  expect(c?.anchorText).toBe('');
+});
+
+test('a payload with no path is dropped rather than stored half-formed', () => {
+  expect(mapGitHubComment({ ...base, path: undefined })).toBeNull();
+});
+
+test('a reply payload is dropped rather than duplicated as a top-level thread', () => {
+  // GET .../comments returns replies alongside their parent, carrying the
+  // same path/line/diff_hunk. PrManager.replyToComment already nests a
+  // locally posted reply under its parent; reverting the in_reply_to_id
+  // check here would make this same reply reappear as a second, standalone
+  // comment anchored at the same file and line on the very next pull.
+  expect(mapGitHubComment({ ...base, in_reply_to_id: 101 })).toBeNull();
+});
+
+// Builds a minimal, valid ReviewComment for mergeComments tests, with
+// overrides for the fields each rule actually turns on.
+function comment(overrides: Partial<ReviewComment> = {}): ReviewComment {
+  return {
+    id: 'rc-000',
+    file: 'src/a.ts',
+    line: 5,
+    anchorText: 'const x = 1;',
+    author: 'someone',
+    body: 'a comment',
+    resolved: false,
+    pending: false,
+    created: '2026-08-01T00:00:00Z',
+    replies: [],
+    ...overrides,
+  };
+}
+
+test('rule 1: a comment on both sides is matched by githubId, not by text', () => {
+  const local = comment({
+    id: 'rc-local',
+    line: 5,
+    githubId: 42,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'old wording entirely',
+    resolved: true,
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    line: 99,
+    githubId: 42,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'completely different wording',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  // Matching on line or body would see no overlap (different line, no
+  // shared text) and produce a drop-plus-insert instead of one update.
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.githubId).toBe(42);
+  expect(merged[0]?.body).toBe('completely different wording');
+  // Resolution is local-only; a newer remote body must not reset it.
+  expect(merged[0]?.resolved).toBe(true);
+});
+
+test('rule 2: a local pending comment is never touched by a pull', () => {
+  const pendingLocal = comment({
+    id: 'rc-pending',
+    pending: true,
+    body: 'still drafting',
+  });
+  const merged = mergeComments([pendingLocal], []);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]).toEqual(pendingLocal);
+});
+
+test('rule 3: a newer remote body wins over the stored one', () => {
+  const local = comment({
+    id: 'rc-local',
+    githubId: 7,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 7,
+    githubUpdatedAt: '2026-08-03T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.body).toBe('edited on github');
+  expect(merged[0]?.githubUpdatedAt).toBe('2026-08-03T00:00:00Z');
+});
+
+test('rule 3b: a remote body no newer than githubUpdatedAt does not clobber', () => {
+  const local = comment({
+    id: 'rc-local',
+    githubId: 8,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'kept as-is',
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 8,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'stale payload text',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.body).toBe('kept as-is');
+});
+
+test('a remote-win keeps locally-written replies', () => {
+  // mapGitHubComment always hands back replies: [] (this codebase never
+  // pulls GitHub's reply threads into ReviewComment.replies), so a naive
+  // remote-wins-the-whole-record merge would silently wipe out replies a
+  // reviewer wrote locally against this comment.
+  const local = comment({
+    id: 'rc-local',
+    githubId: 20,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+    replies: [
+      {
+        id: 'rr-1',
+        author: 'me',
+        body: 'a reply',
+        created: '2026-08-01T00:00:00Z',
+      },
+    ],
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 20,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.body).toBe('edited on github');
+  expect(merged[0]?.replies).toEqual(local.replies);
+});
+
+test('a remote-win keeps the local id stable', () => {
+  // mapGitHubComment assigns a fresh random id to every remote record, so
+  // taking the remote record wholesale on a win would swap the id callers
+  // already hold (ReviewCommentStore keys reply/setResolved/remove off it).
+  const local = comment({
+    id: 'rc-stable',
+    githubId: 21,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+  });
+  const remote = comment({
+    id: 'rc-freshly-random',
+    githubId: 21,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.id).toBe('rc-stable');
+});
+
+test('rule 4: a comment with a githubId absent from the pull was deleted upstream', () => {
+  const local = comment({
+    id: 'rc-local',
+    githubId: 11,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'will vanish',
+  });
+  const merged = mergeComments([local], []);
+  expect(merged).toHaveLength(0);
+});
+
+test('rule 5: a published local comment with no githubId survives, to be pushed', () => {
+  const published = comment({
+    id: 'rc-published',
+    pending: false,
+    body: 'ready to push',
+  });
+  const merged = mergeComments([published], []);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]).toEqual(published);
+});
+
+test('a remote-win keeps the locally-known review thread id', () => {
+  // REST (what mapGitHubComment/remote are built from) has no concept of a
+  // thread's GraphQL node id — only syncReviewThreads sets githubThreadId —
+  // so a remote body winning must not wipe it out.
+  const local = comment({
+    id: 'rc-local',
+    githubId: 30,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    body: 'stored version',
+    githubThreadId: 'PRRT_kwDOAB3',
+  });
+  const remote = comment({
+    id: 'rc-remote',
+    githubId: 30,
+    githubUpdatedAt: '2026-08-02T00:00:00Z',
+    body: 'edited on github',
+    origin: 'github',
+  });
+  const merged = mergeComments([local], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.githubThreadId).toBe('PRRT_kwDOAB3');
+});
+
+test('rule 6: a remote-only comment is inserted', () => {
+  const remote = comment({
+    id: 'rc-gh',
+    githubId: 55,
+    githubUpdatedAt: '2026-08-01T00:00:00Z',
+    origin: 'github',
+  });
+  const merged = mergeComments([], [remote]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0]?.githubId).toBe(55);
+  expect(merged[0]?.origin).toBe('github');
+});
+
+// A raw reply payload: structurally a root comment (same path/line/
+// diff_hunk) plus in_reply_to_id, per the brief's verified payload facts.
+function rawReply(
+  over: Partial<Record<string, unknown>> = {}
+): Record<string, unknown> {
+  return {
+    id: 201,
+    in_reply_to_id: 101,
+    path: 'src/a.ts',
+    line: 12,
+    diff_hunk: '@@ -1,3 +1,4 @@\n context\n+const x = 1;',
+    body: 'agreed',
+    user: { login: 'teammate' },
+    created_at: '2026-08-01T01:00:00Z',
+    ...over,
+  };
+}
+
+test('partitionGitHubComments splits a reply from a root by in_reply_to_id', () => {
+  const { roots, replies } = partitionGitHubComments([base, rawReply()]);
+  expect(roots).toEqual([base]);
+  expect(replies).toEqual([rawReply()]);
+});
+
+test('partitionGitHubComments treats in_reply_to_id: null as a root, not a reply', () => {
+  // A root's real-world in_reply_to_id is null, not absent — a truthiness
+  // check would misclassify it as a reply.
+  const { roots, replies } = partitionGitHubComments([
+    { ...base, in_reply_to_id: null },
+  ]);
+  expect(roots).toHaveLength(1);
+  expect(replies).toHaveLength(0);
+});
+
+test('attachGitHubReplies attaches a reply to its parent by githubId', () => {
+  const parent: ReviewComment = comment({ id: 'rc-parent', githubId: 101 });
+  const attached = attachGitHubReplies([parent], [rawReply()]);
+  expect(attached).toHaveLength(1);
+  expect(attached[0]?.replies).toHaveLength(1);
+  expect(attached[0]?.replies[0]).toMatchObject({
+    githubId: 201,
+    author: 'teammate',
+    body: 'agreed',
+    created: '2026-08-01T01:00:00Z',
+  });
+});
+
+test('attachGitHubReplies updates a Dispatch-posted reply in place, not a duplicate', () => {
+  const parent: ReviewComment = comment({
+    id: 'rc-parent',
+    githubId: 101,
+    replies: [
+      {
+        id: 'rr-local',
+        author: 'me',
+        body: 'agreed',
+        created: '2026-08-01T00:30:00Z',
+        githubId: 201,
+      },
+    ],
+  });
+  const attached = attachGitHubReplies(
+    [parent],
+    [rawReply({ body: 'agreed (edited)' })]
+  );
+  expect(attached[0]?.replies).toHaveLength(1);
+  // The local reply's own id is stable — callers key store operations off it.
+  expect(attached[0]?.replies[0]?.id).toBe('rr-local');
+  expect(attached[0]?.replies[0]?.body).toBe('agreed (edited)');
+});
+
+test('attachGitHubReplies never drops a local reply with no githubId', () => {
+  const parent: ReviewComment = comment({
+    id: 'rc-parent',
+    githubId: 101,
+    replies: [
+      {
+        id: 'rr-draft',
+        author: 'me',
+        body: 'not posted yet',
+        created: '2026-08-01T00:45:00Z',
+      },
+    ],
+  });
+  const attached = attachGitHubReplies([parent], [rawReply()]);
+  expect(attached[0]?.replies).toContainEqual(parent.replies[0]);
+  expect(attached[0]?.replies).toHaveLength(2);
+});
+
+test('attachGitHubReplies drops a reply whose parent is absent', () => {
+  const other: ReviewComment = comment({ id: 'rc-other', githubId: 999 });
+  const attached = attachGitHubReplies([other], [rawReply()]);
+  expect(attached).toHaveLength(1);
+  expect(attached[0]?.replies).toHaveLength(0);
+});
+
+test('attachGitHubReplies orders replies oldest-first', () => {
+  const parent: ReviewComment = comment({ id: 'rc-parent', githubId: 101 });
+  const attached = attachGitHubReplies(
+    [parent],
+    [
+      rawReply({
+        id: 301,
+        body: 'later',
+        created_at: '2026-08-02T00:00:00Z',
+      }),
+      rawReply({
+        id: 201,
+        body: 'earlier',
+        created_at: '2026-08-01T00:00:00Z',
+      }),
+    ]
+  );
+  expect(attached[0]?.replies.map((r) => r.body)).toEqual(['earlier', 'later']);
+});

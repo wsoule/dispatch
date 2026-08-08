@@ -19,6 +19,7 @@ import type { EventBus } from '../events.js';
 import type { FindingStore } from '../findings.js';
 import type { LedgerStore } from '../ledger.js';
 import type { ReviewCommentStore } from '../reviewComments.js';
+import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
 import { reviewDir, reviewOutputPath, reviewPackagePath } from './paths.js';
 import { untrustedBlock, untrustedFenced, untrustedInline } from './prompt.js';
@@ -182,15 +183,22 @@ export function scanDestructiveWrites(
   return hits;
 }
 
+// True when `file` matches at least one declared `writes` glob. The single
+// source of truth for what a task's declared writes cover — undeclaredWrites
+// below and blast-radius task resolution (impact.ts) both call this rather
+// than each running their own Bun.Glob match, so they can't drift apart on
+// what counts as "declared".
+export function matchesDeclaredWrites(writes: string[], file: string): boolean {
+  return writes.some((pattern) => new Bun.Glob(pattern).match(file));
+}
+
 // Changed files no declared `writes` glob covers — a planner declaration the
 // diff outgrew, surfaced rather than trusted.
 export function undeclaredWrites(
   writes: string[],
   changed: string[]
 ): string[] {
-  return changed.filter(
-    (file) => !writes.some((pattern) => new Bun.Glob(pattern).match(file))
-  );
+  return changed.filter((file) => !matchesDeclaredWrites(writes, file));
 }
 
 // One batched title holding no path: the paths live in the finding's `files`,
@@ -990,6 +998,7 @@ export class ReviewRunner {
   ): void {
     const runId = pending.reviewedRunId;
     if (runId === undefined) return;
+    const target: ReviewTarget = { kind: 'run', runId };
 
     let posted = 0;
     for (const finding of findings) {
@@ -997,7 +1006,7 @@ export class ReviewRunner {
       // findings panel rather than being anchored to a guessed line.
       const { file, line } = finding;
       if (file === null || line === null) continue;
-      this.ctx.reviewComments.add(runId, {
+      this.ctx.reviewComments.add(target, {
         file,
         line,
         anchorText: readLineAt(this.ctx.rootDir, pending.head, file, line),

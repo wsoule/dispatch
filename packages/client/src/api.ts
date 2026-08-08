@@ -845,7 +845,18 @@ export interface ReviewReply {
   author: string;
   body: string;
   created: string;
+  /** GitHub comment id, when this reply was posted to or pulled from GitHub. */
+  githubId?: number;
 }
+
+/**
+ * What a review is looking at: a local run's diff, or a GitHub pull request.
+ * Mirrors packages/server/src/reviewTarget.ts; the desktop re-exports this
+ * one rather than declaring a third copy.
+ */
+export type ReviewTarget =
+  | { kind: 'run'; runId: string }
+  | { kind: 'pr'; number: number };
 
 /** How a submitted review lands: approve queues the merge, request-changes resumes the agent
  * with the review attached, comment publishes the notes and changes nothing. */
@@ -867,6 +878,21 @@ export interface ReviewComment {
   resolved: boolean;
   created: string;
   replies: ReviewReply[];
+  /**
+   * GitHub's own comment id, set once the comment exists on the PR. This —
+   * not `pending` — is what says whether GitHub can be talked to about this
+   * comment: replying needs an id GitHub already knows.
+   */
+  githubId?: number;
+  /** GitHub comment update timestamp, when synced from GitHub. */
+  githubUpdatedAt?: string;
+  /**
+   * GraphQL node id of the comment's GitHub review thread. Resolution lives
+   * on the thread, so resolving is only offered once this is known.
+   */
+  githubThreadId?: string;
+  /** Which side of the mirror wrote this record first. */
+  origin?: 'local' | 'github';
 }
 
 /** One model-proposed grouping of related captures, ready to become an epic. */
@@ -1034,6 +1060,53 @@ export interface LinearViewer {
   email: string;
 }
 
+// Mirrors ImpactSubject in packages/server/src/impact.ts — what a blast-radius
+// query was asked about.
+export type ImpactSubject =
+  | { kind: 'file'; path: string }
+  | { kind: 'run'; runId: string }
+  | { kind: 'task'; taskId: string };
+
+// Mirrors SUBJECT_KINDS in packages/server/src/api/impact.ts — the `subject`
+// query param GET /api/impact accepts. Checked against the server source in
+// server-parity.test.ts.
+export const IMPACT_SUBJECT_KINDS = ['file', 'run', 'task'] as const;
+export type ImpactSubjectKind = (typeof IMPACT_SUBJECT_KINDS)[number];
+
+// Mirrors BlastEntry in packages/server/src/depmap.ts — one file reachable
+// from the subject's seed set, at its closest hop distance.
+export interface ImpactEntry {
+  path: string;
+  hops: number;
+}
+
+// Mirrors ReachResult in packages/server/src/depmap.ts — the blast radius
+// computed over a subject's seed file set.
+export interface ImpactReach {
+  entries: ImpactEntry[];
+  count: number;
+  maxHops: number;
+  sources: ('carto' | 'scanner')[];
+  degraded: boolean;
+  truncated: boolean;
+  // Seeds none of `sources` could analyse (e.g. a non-.ts file under a
+  // scanner-only result) — a 0 count here means "not analysed", not "no
+  // dependents", and callers must render the two differently.
+  unanalyzedSeeds: string[];
+}
+
+// The body of `GET /api/impact`. `reason` is set only on the 200s a task
+// subject can get back with an empty reach that is still a real answer, not
+// an error: `no-declared-writes` (nothing declared) or `writes-match-nothing`
+// (declared writes matched no tracked file) — see getImpact in
+// packages/server/src/api/impact.ts.
+export interface ImpactResponse {
+  subject: ImpactSubject;
+  seeds: string[];
+  reach: ImpactReach;
+  reason?: string;
+}
+
 /** Thrown by `request()` on a non-2xx response. `message` is unchanged from
  *  a plain `Error`; `status` is additive, for telling e.g. 404 from 500. */
 export class ApiError extends Error {
@@ -1124,6 +1197,16 @@ function jsonBody(value: unknown): RequestInit {
   };
 }
 
+// The base path a ReviewTarget's comment routes hang off — /api/runs/:id
+// or /api/prs/:number, matching the server's own run- vs PR-keyed split.
+// Shared by every fetch/add/resolve/reply call below so a target's routing
+// lives in exactly one place.
+function reviewTargetPath(reviewTarget: ReviewTarget): string {
+  return reviewTarget.kind === 'run'
+    ? `/api/runs/${encodeURIComponent(reviewTarget.runId)}`
+    : `/api/prs/${reviewTarget.number}`;
+}
+
 // Pure helper (no fetch involved) so the query-string shape is unit
 // testable without a network layer: `?` + params when any filter is set, ''
 // otherwise, in the same status/kind/parent order the server accepts.
@@ -1134,6 +1217,18 @@ export function taskQueryString(filter: TaskFilter = {}): string {
   if (filter.parent !== undefined) params.set('parent', filter.parent);
   if (filter.archived === true) params.set('archived', '1');
   return params.size > 0 ? `?${params.toString()}` : '';
+}
+
+/**
+ * Whether a run's `prUrl` is one `submitReview({ postToGitHub: true })` can
+ * actually reach. The server resolves the PR by parsing the url and 400s
+ * anything it cannot, so a UI keyed on "has a prUrl" alone would offer a
+ * choice that always fails. Kept in step with `parsePrUrl` in
+ * packages/server/src/orchestrator/pr.ts.
+ */
+export function canPostReviewToPr(prUrl: string | undefined): boolean {
+  if (prUrl === undefined) return false;
+  return /github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(prUrl);
 }
 
 // Pure helper (no DOM involved): swaps an http(s) origin for its ws(s)
@@ -1436,11 +1531,12 @@ export interface ApiClient {
     commentId: string
   ): Promise<{ commit: string }>;
 
-  // Line-level review comments on a run's diff, and the send-back that carries the unresolved
-  // ones to the agent.
-  fetchReviewComments(runId: string): Promise<ReviewComment[]>;
+  // Line-level review comments, keyed by ReviewTarget so the same four calls
+  // work against a run's diff or a GitHub PR — see reviewTargetPath, which
+  // picks the /api/runs/:id/… or /api/prs/:number/… URL per target.kind.
+  fetchReviewComments(target: ReviewTarget): Promise<ReviewComment[]>;
   addReviewComment(
-    runId: string,
+    target: ReviewTarget,
     input: {
       file: string;
       line: number;
@@ -1453,22 +1549,40 @@ export interface ApiClient {
       pending?: boolean;
     }
   ): Promise<ReviewComment>;
-  /** Publishes the pending comments and acts on the verdict. Returns how many were published. */
-  submitReview(
-    runId: string,
-    verdict: ReviewVerdict,
-    body: string
-  ): Promise<{ verdict: ReviewVerdict; published: number; error?: string }>;
   resolveReviewComment(
-    runId: string,
+    target: ReviewTarget,
     commentId: string,
     resolved: boolean
   ): Promise<ReviewComment>;
   replyReviewComment(
-    runId: string,
+    target: ReviewTarget,
     commentId: string,
     body: string
   ): Promise<ReviewComment>;
+  /** Publishes a run's pending comments and acts on the verdict. Returns
+   * how many were published. Run-keyed only — a PR target's equivalent is
+   * pushPrReview below, which submits straight to GitHub instead of
+   * resuming an agent or enqueuing a merge.
+   *
+   * `postToGitHub` (default false) also pushes the batch to the run's PR as
+   * one GitHub review. Left off, the review still publishes and still goes
+   * back to the agent — only the PR is untouched. True on a run with no PR
+   * is a 400. */
+  submitReview(
+    runId: string,
+    verdict: ReviewVerdict,
+    body: string,
+    postToGitHub?: boolean
+  ): Promise<{ verdict: ReviewVerdict; published: number; error?: string }>;
+  /** Submits a PR target's pending comments as one GitHub review. Hits
+   * .../review-submit, not reviewRepoPr's .../review — that path already
+   * exists as a one-shot `gh pr review` verdict, so reusing it here would
+   * fire both for one submit action. */
+  pushPrReview(
+    number: number,
+    verdict: ReviewVerdict,
+    body: string
+  ): Promise<{ pushed: number }>;
   /** Resumes the agent on the same branch with the note and every unresolved thread attached. */
   sendBackRun(runId: string, note: string): Promise<RunMeta>;
   /** Hides a run from the default Runs list, or brings it back. Nothing is deleted. */
@@ -1638,6 +1752,9 @@ export interface ApiClient {
     snippets: Snippet[];
     target?: string;
   }): Promise<ChatMessage>;
+  // The blast radius of a file, a run's diff, or a task's declared writes —
+  // `GET /api/impact?subject=<kind>&id=<id>`.
+  getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   wsUrl(): string;
   connectEvents(
@@ -1915,23 +2032,23 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}/apply`,
         { method: 'POST' }
       ),
-    fetchReviewComments: (runId) =>
-      request(target, `/api/runs/${encodeURIComponent(runId)}/comments`),
-    addReviewComment: (runId, input) =>
-      request(target, `/api/runs/${encodeURIComponent(runId)}/comments`, {
+    fetchReviewComments: (reviewTarget) =>
+      request(target, `${reviewTargetPath(reviewTarget)}/comments`),
+    addReviewComment: (reviewTarget, input) =>
+      request(target, `${reviewTargetPath(reviewTarget)}/comments`, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
-    resolveReviewComment: (runId, commentId, resolved) =>
+    resolveReviewComment: (reviewTarget, commentId, resolved) =>
       request(
         target,
-        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}`,
+        `${reviewTargetPath(reviewTarget)}/comments/${encodeURIComponent(commentId)}`,
         { method: 'PATCH', body: JSON.stringify({ resolved }) }
       ),
-    replyReviewComment: (runId, commentId, body) =>
+    replyReviewComment: (reviewTarget, commentId, body) =>
       request(
         target,
-        `/api/runs/${encodeURIComponent(runId)}/comments/${encodeURIComponent(commentId)}/reply`,
+        `${reviewTargetPath(reviewTarget)}/comments/${encodeURIComponent(commentId)}/reply`,
         { method: 'POST', body: JSON.stringify({ body }) }
       ),
     updateConfig: (patch) =>
@@ -1961,8 +2078,13 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchLinearLinks: () => request(target, '/api/linear/links'),
     importLinearIssues: () =>
       request(target, '/api/linear/import', { method: 'POST' }),
-    submitReview: (runId, verdict, body) =>
+    submitReview: (runId, verdict, body, postToGitHub = false) =>
       request(target, `/api/runs/${encodeURIComponent(runId)}/review-submit`, {
+        method: 'POST',
+        body: JSON.stringify({ verdict, body, postToGitHub }),
+      }),
+    pushPrReview: (number, verdict, body) =>
+      request(target, `/api/prs/${number}/review-submit`, {
         method: 'POST',
         body: JSON.stringify({ verdict, body }),
       }),
@@ -2135,6 +2257,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(input),
       }),
+    getImpact: (subject, id) =>
+      request(
+        target,
+        `/api/impact?${new URLSearchParams({ subject, id }).toString()}`
+      ),
     wsUrl: () => wsUrl(baseUrl, target.token),
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, { token: target.token, ...options }),

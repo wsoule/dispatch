@@ -22,6 +22,7 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useGit } from '../hooks/useGit';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
+import type { ImpactSubjectRef } from '../lib/appNav';
 import type { BranchRowVM } from '../lib/gitBranchRows';
 import {
   buildBranchRows,
@@ -65,6 +66,9 @@ import { Input } from '@/ui/input';
 interface BranchesViewProps {
   data: DispatchProjectData;
   onOpenRun: (runId: string) => void;
+  /** Navigates to `ImpactView` with the selected file preselected — the
+   *  Git file pane's "open in Impact" action. */
+  onOpenImpact: (subject: ImpactSubjectRef) => void;
 }
 
 const PANEL_LABEL: Record<GitPanelId, string> = {
@@ -93,7 +97,11 @@ type PendingConfirm =
 
 /** The Git page: a lazygit-style multi-panel workspace plus agent-focused affordances plain
  * git doesn't have. Every keyboard shortcut also has a visible button/menu equivalent. */
-export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
+export function BranchesView({
+  data,
+  onOpenRun,
+  onOpenImpact,
+}: BranchesViewProps) {
   const [panelState, setPanelState] = useState(INITIAL_GIT_PANEL_SELECTION);
   const [branchFilter, setBranchFilter] = useState<GitFilter>('all');
   const [textFilter, setTextFilter] = useState('');
@@ -781,6 +789,8 @@ export function BranchesView({ data, onOpenRun }: BranchesViewProps) {
               if (selectedFileRow !== undefined) toggleStage(selectedFileRow);
             }}
             onRequestDiscardFile={requestDiscardFile}
+            client={data.client}
+            onOpenImpact={onOpenImpact}
             selectedCommit={selectedCommit}
             commitDiff={commitDiff}
             commitDiffLoading={commitDiffLoading}

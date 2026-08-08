@@ -5,6 +5,7 @@ import type {
   RunMeta,
   Snippet,
 } from '@dispatch/client';
+import { canPostReviewToPr } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
 import {
@@ -75,10 +76,13 @@ interface RunReviewViewProps {
   onReplyComment?: (commentId: string, body: string) => Promise<void>;
   /** Commits a comment's suggestion onto the run branch — see `PierreReviewDiff`'s `onApply`. */
   onApplySuggestion?: (commentId: string) => Promise<void>;
-  /** Submits the staged review — publishes its comments, then acts on the verdict. */
+  /** Submits the staged review — publishes its comments, then acts on the
+   * verdict. `postToGitHub` also mirrors it onto this run's PR as one
+   * review; without it the review stays off GitHub. */
   onSubmitReview?: (
     verdict: import('@dispatch/client').ReviewVerdict,
-    body: string
+    body: string,
+    postToGitHub: boolean
   ) => Promise<{ published: number; error?: string }>;
 }
 
@@ -260,6 +264,7 @@ export function RunReviewView({
                 onResolve={onResolveComment}
                 onReply={onReplyComment}
                 onSubmit={onSubmitReview}
+                canPostToGitHub={canPostReviewToPr(meta.prUrl)}
               />
             </div>
           )}
