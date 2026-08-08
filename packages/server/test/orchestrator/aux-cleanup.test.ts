@@ -150,10 +150,14 @@ describe('aux run cleanup keeps work that was never merged', () => {
 // the review. Both are read off the task's `derivedFrom`.
 // A review run parked at its approval gate, against a task synthesized from
 // a PR — the shape POST /api/prs/:number/review-agent produces.
-async function derivedReviewRun(orchestrator: Orchestrator, store: TaskStore) {
+async function derivedReviewRun(
+  orchestrator: Orchestrator,
+  store: TaskStore,
+  number = 7
+) {
   const task = store.create({
-    title: 'Review PR #7: Bump deps',
-    derivedFrom: 'github-pr:7',
+    title: `Review PR #${number}: Bump deps`,
+    derivedFrom: `github-pr:${number}`,
   });
   const meta = await orchestrator.dispatchAuxRun({
     taskId: task.meta.id,
@@ -261,6 +265,48 @@ describe('a restarted daemon retires the review it lost', () => {
     const twice = store.get(task.meta.id)!;
     expect(twice.meta.archivedAt).toBe(once.meta.archivedAt);
     expect(twice.body).toBe(once.body);
+  });
+
+  // Boot retires the task but never ingests the review's findings — and
+  // findings.json outlives the worktree. A note that reads like a completed
+  // review would present unread output as "reviewed, nothing found".
+  it('says a boot-retired review never had its findings ingested', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { task } = await derivedReviewRun(orchestrator, store);
+
+    rebootOrchestrator(store).reconcileOnBoot();
+
+    expect(store.get(task.meta.id)!.body).toContain('never ingested');
+  });
+
+  it('says no such thing when the review was retired normally', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const { task, meta } = await derivedReviewRun(orchestrator, store);
+
+    await orchestrator.cancel(meta.id);
+    orchestrator.cleanupAuxRun(meta.id);
+
+    expect(store.get(task.meta.id)!.body).not.toContain('never ingested');
+  });
+
+  // The shape a merge-conflicted or half-edited task file takes. One of them
+  // must not abort the sweep — nor the archive reconcile and crash surveys
+  // that run after it.
+  it('keeps sweeping past a task file that no longer parses', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const broken = await derivedReviewRun(orchestrator, store, 7);
+    const intact = await derivedReviewRun(orchestrator, store, 8);
+    writeFileSync(
+      store.taskFilePath(broken.task.meta.id)!,
+      'this is not a task file\n'
+    );
+
+    const second = rebootOrchestrator(store);
+    expect(() => {
+      second.reconcileOnBoot();
+    }).not.toThrow();
+
+    expect(store.get(intact.task.meta.id)!.meta.status).toBe('done');
   });
 
   it('keeps an authored aux run’s branch across a restart', async () => {
