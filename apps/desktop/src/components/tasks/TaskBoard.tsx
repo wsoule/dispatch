@@ -22,6 +22,7 @@ import {
   groupTasksByStatus,
 } from '../../lib/boardGrouping';
 import { colorForEpic } from '../../lib/projectColor';
+import type { TaskAttention } from '../../lib/taskAttention';
 import { statusLabel } from '../../lib/taskDisplay';
 import { EpicCardTile } from './EpicCardTile';
 import { StatusIcon } from './StatusIcon';
@@ -37,6 +38,10 @@ interface TaskBoardProps {
   liveRunStateByTaskId: Map<string, RunState>;
   /** Each task's latest run, if any — feeds the card's merge-ladder dot. */
   latestRunByTaskId: Map<string, RunMeta>;
+  /** Tasks whose latest run needs a human right now (see `deriveTaskAttentionById`) —
+   * tints those cards amber. Optional so a board rendered without live run data (there
+   * isn't one today) simply shows no highlights. */
+  attentionByTaskId?: ReadonlyMap<string, TaskAttention>;
   /** Epic dispatch progress per epic id, once fetched. */
   epicProgressById: Map<string, EpicProgress>;
   /** Default concurrency for a fresh epic dispatch session (config's `orchestrator.epicConcurrency`). */
@@ -163,6 +168,7 @@ export function TaskBoard({
   blockedIds,
   liveRunStateByTaskId,
   latestRunByTaskId,
+  attentionByTaskId,
   epicProgressById,
   epicConcurrencyDefault,
   epics,
@@ -318,6 +324,9 @@ export function TaskBoard({
                                 : undefined
                             }
                             archived={archivedTaskIds.has(doc.meta.id)}
+                            needsAttention={
+                              attentionByTaskId?.has(doc.meta.id) === true
+                            }
                           />
                         ))}
                       </DroppableColumn>
@@ -412,6 +421,9 @@ export function TaskBoard({
                           onFocus={() => onCardFocus?.(doc.meta.id)}
                           drag={drag}
                           archived={archivedTaskIds.has(doc.meta.id)}
+                          needsAttention={
+                            attentionByTaskId?.has(doc.meta.id) === true
+                          }
                         />
                       )
                     }

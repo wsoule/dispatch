@@ -50,6 +50,8 @@ import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
 import { resolveExecuteModel } from '../lib/models';
 import { notify } from '../lib/notifications';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
+import type { TaskAttention } from '../lib/taskAttention';
+import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
@@ -193,6 +195,9 @@ export interface DispatchProjectData {
   epicProgressById: Map<string, EpicProgress>;
   liveRunStateByTaskId: Map<string, RunState>;
   latestRunByTaskId: Map<string, RunMeta>;
+  /** Tasks whose latest run needs a human right now (waiting on approval/question, failed,
+   * or finished-but-unreviewed) — drives the attention tint on Board cards and List rows. */
+  attentionByTaskId: Map<string, TaskAttention>;
   // Task 6: the merge queue's live snapshot (pending/active entries + a capped
   // history) — `null` until the query has ever resolved, so callers can show
   // an empty/loading state without treating "no entries yet" as an error.
@@ -1387,6 +1392,16 @@ export function useDispatchProject(
     return map;
   }, [runs]);
 
+  const attentionByTaskId = useMemo(
+    () =>
+      deriveTaskAttentionById(
+        latestRunByTaskId,
+        openQuestions,
+        mergeQueue ?? null
+      ),
+    [latestRunByTaskId, openQuestions, mergeQueue]
+  );
+
   const handleUpdate = useCallback(
     async (id: string, patch: UpdatePatch): Promise<void> => {
       if (client === null) return;
@@ -2281,6 +2296,7 @@ export function useDispatchProject(
     epicProgressById,
     liveRunStateByTaskId,
     latestRunByTaskId,
+    attentionByTaskId,
     mergeQueue: mergeQueue ?? null,
     repoPrs: repoPrs ?? null,
 
