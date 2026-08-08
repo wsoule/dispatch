@@ -9,3 +9,5 @@ export { FindingsPanel } from './FindingsPanel';
 export { FixLoopSection } from './FixLoopSection';
 export { VerificationSection } from './VerificationSection';
 export { LedgerSection } from './LedgerSection';
+export { TaskDetailPanel } from './TaskDetailPanel';
+export type { TaskDetailPanelProps } from './TaskDetailPanel';
