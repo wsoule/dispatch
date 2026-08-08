@@ -432,6 +432,9 @@ export async function startServer(
     ledgerStore,
     actorContext,
     digestCache,
+    // Shares PrManager/MergeQueue/GitRepo's command-runner seam
+    // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
+    commandRunner: opts.prCommandRunner,
   });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);

@@ -113,6 +113,12 @@ function stubRunner(
         results.fetchResult ?? { ok: true, stdout: '', stderr: '' }
       );
     }
+    // The head-ref delete a retiring PR review schedules. Answered here so the
+    // call log records it (see the retirement test below) rather than falling
+    // through to the unhandled-command failure at the bottom.
+    if (cmd[0] === 'git' && cmd[1] === 'update-ref') {
+      return Promise.resolve({ ok: true, stdout: '', stderr: '' });
+    }
     if (cmd[0] === 'git' && cmd[1] === 'merge-base') {
       return Promise.resolve(
         results.mergeBaseResult ?? {
@@ -1991,7 +1997,7 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
   // synthesized task sits `todo` forever — permanently outstanding work that
   // BoardSyncer pushes to trunk and LinearSync files as an issue.
   it('retires the synthesized task once the review run ends', async () => {
-    await startWithCallLog(
+    const calls = await startWithCallLog(
       { filesResult: filesResultFor('README.md') },
       reportsFinding('README.md', 1)
     );
@@ -2004,6 +2010,16 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
 
     const [task] = tasks();
     expect(task.meta.archivedAt).not.toBeUndefined();
+    // The ref fetchPrHead parked the head at goes with the review — through
+    // the same seam, from a daemon wired the way production wires one.
+    await waitFor(() =>
+      calls.some(
+        (cmd) =>
+          cmd[0] === 'git' &&
+          cmd[1] === 'update-ref' &&
+          cmd[3] === `refs/dispatch/pr/${FORK_PR.number}`
+      )
+    );
     // The findings were filed before the task retired, not lost with it.
     const filed = await json(
       await fetch(`${baseUrl}/api/tasks/${task.meta.id}/findings`)

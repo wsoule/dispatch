@@ -15,6 +15,11 @@ import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { runsDir, worktreesDir } from '../../src/orchestrator/paths.js';
+import type {
+  CommandResult,
+  CommandRunner,
+} from '../../src/orchestrator/pr.js';
+import { defaultCommandRunner } from '../../src/orchestrator/pr.js';
 import { WorktreeManager } from '../../src/orchestrator/worktree.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
@@ -44,7 +49,31 @@ async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
   throw new Error('waitFor timed out');
 }
 
-function makeOrchestrator(): { orchestrator: Orchestrator; store: TaskStore } {
+// Records every argv the orchestrator hands to git and answers with one
+// canned result — the same CommandRunner seam PrManager and MergeQueue take.
+function recordingRunner(
+  result: CommandResult = { ok: true, stdout: '', stderr: '' }
+): { calls: string[][]; run: CommandRunner } {
+  const calls: string[][] = [];
+  return {
+    calls,
+    run: (_cwd, cmd) => {
+      calls.push(cmd);
+      return Promise.resolve(result);
+    },
+  };
+}
+
+// Both factories below default to a stub rather than the real runner, so a
+// test that is not about the ref delete never leaves a `git update-ref` still
+// running against a repo afterEach has already deleted. The one test that
+// wants real git passes `defaultCommandRunner` itself.
+function makeOrchestrator(
+  commandRunner: CommandRunner = recordingRunner().run
+): {
+  orchestrator: Orchestrator;
+  store: TaskStore;
+} {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
   cache.rebuild(store);
@@ -54,6 +83,7 @@ function makeOrchestrator(): { orchestrator: Orchestrator; store: TaskStore } {
     store,
     cache,
     events,
+    commandRunner,
   });
   orchestrator.registerExecutor(
     'fake',
@@ -67,7 +97,10 @@ function makeOrchestrator(): { orchestrator: Orchestrator; store: TaskStore } {
 
 // A second Orchestrator over the same repo and store — a restarted daemon,
 // whose registry and ReviewRunner.pending both start empty.
-function rebootOrchestrator(store: TaskStore): Orchestrator {
+function rebootOrchestrator(
+  store: TaskStore,
+  commandRunner: CommandRunner = recordingRunner().run
+): Orchestrator {
   const cache = new TaskCache();
   cache.rebuild(store);
   return new Orchestrator({
@@ -75,6 +108,7 @@ function rebootOrchestrator(store: TaskStore): Orchestrator {
     store,
     cache,
     events: new EventBus(),
+    commandRunner,
   });
 }
 
@@ -214,6 +248,102 @@ describe('aux run cleanup on a derived task', () => {
     const after = store.get(taskId)!;
     expect(after.meta.status).not.toBe('done');
     expect(after.meta.archivedAt).toBeUndefined();
+  });
+});
+
+// Every `refs/dispatch/pr/*` this repo currently holds.
+function prHeadRefs(): string[] {
+  return runGitSync(repo, [
+    'for-each-ref',
+    '--format=%(refname)',
+    'refs/dispatch/pr/',
+  ])
+    .split('\n')
+    .filter((line) => line !== '');
+}
+
+// fetchPrHead parks a PR's head at `refs/dispatch/pr/<n>` and nothing used to
+// remove it, so every review left one behind forever — each a standing
+// start-point for a worktree cut without passing the fork gate.
+describe('a retiring PR review takes its head ref with it', () => {
+  // Real git, not a stub: the point of this one is that the argv actually
+  // removes the ref, not merely that something was run.
+  it('deletes the ref the review was cut from', async () => {
+    const { orchestrator, store } = makeOrchestrator(defaultCommandRunner);
+    const { meta } = await derivedReviewRun(orchestrator, store);
+    runGitSync(repo, ['update-ref', 'refs/dispatch/pr/7', 'main']);
+    expect(prHeadRefs()).toEqual(['refs/dispatch/pr/7']);
+
+    await orchestrator.cancel(meta.id);
+    orchestrator.cleanupAuxRun(meta.id);
+    await orchestrator.prRefDeleteSettled(meta.id);
+
+    expect(prHeadRefs()).toEqual([]);
+  });
+
+  it('retires the task anyway when the delete fails', async () => {
+    const { calls, run } = recordingRunner({
+      ok: false,
+      stdout: '',
+      stderr: 'update-ref exploded',
+    });
+    const { orchestrator, store } = makeOrchestrator(run);
+    const { task, meta } = await derivedReviewRun(orchestrator, store);
+    runGitSync(repo, ['update-ref', 'refs/dispatch/pr/7', 'main']);
+
+    await orchestrator.cancel(meta.id);
+    orchestrator.cleanupAuxRun(meta.id);
+    await orchestrator.prRefDeleteSettled(meta.id);
+
+    const retired = store.get(task.meta.id)!;
+    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.archivedAt).not.toBeUndefined();
+    // Non-vacuous: the delete really was attempted, and really did fail.
+    expect(calls).toEqual([['git', 'update-ref', '-d', 'refs/dispatch/pr/7']]);
+    expect(prHeadRefs()).toEqual(['refs/dispatch/pr/7']);
+  });
+
+  it('deletes the ref of a review boot had to retire', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    await derivedReviewRun(orchestrator, store);
+    runGitSync(repo, ['update-ref', 'refs/dispatch/pr/7', 'main']);
+
+    const { calls, run } = recordingRunner();
+    const second = rebootOrchestrator(store, run);
+    second.reconcileOnBoot();
+    await Promise.all(
+      second.list().map((meta) => second.prRefDeleteSettled(meta.id))
+    );
+
+    expect(calls).toEqual([['git', 'update-ref', '-d', 'refs/dispatch/pr/7']]);
+  });
+
+  // A `derivedFrom` that is not a PR review origin names no ref at all —
+  // guessing one from it is how an unrelated ref gets deleted.
+  it('deletes nothing for a derived task that is not a PR review', async () => {
+    const { calls, run } = recordingRunner();
+    const { orchestrator, store } = makeOrchestrator(run);
+    const task = store.create({
+      title: 'Review ENG-4',
+      derivedFrom: 'linear-issue:ENG-4',
+    });
+    const meta = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      executor: 'fake',
+      head: 'main',
+      buildPrompt: () => 'go review',
+    });
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
+    );
+
+    await orchestrator.cancel(meta.id);
+    orchestrator.cleanupAuxRun(meta.id);
+    await orchestrator.prRefDeleteSettled(meta.id);
+
+    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(calls).toEqual([]);
   });
 });
 

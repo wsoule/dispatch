@@ -40,11 +40,14 @@ import {
   worktreePath,
   worktreesDir,
 } from './paths.js';
+import type { CommandRunner } from './pr.js';
+import { defaultCommandRunner, deletePrHeadRef } from './pr.js';
 import {
   buildTaskPrompt,
   renderSurveySection,
   untrustedInline,
 } from './prompt.js';
+import { prNumberFromOrigin } from './prReviewTask.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
 import type { RunDetail } from './transcript.js';
@@ -106,6 +109,11 @@ export interface OrchestratorContext {
   // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
+  // How the orchestrator shells out for the one git call it makes itself:
+  // deleting a retired PR review's head ref (see cleanupDerivedAuxRun). Same
+  // seam PrManager/MergeQueue/GitRepo share, so a test stubs git rather than
+  // running it; index.ts hands all four the same runner.
+  commandRunner?: CommandRunner;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -184,6 +192,9 @@ export class Orchestrator {
   private readonly registry = new RunRegistry();
   // In-flight scheduled surveys, keyed by run — see surveySettled().
   private readonly scheduledSurveys = new Map<string, Promise<void>>();
+  // In-flight PR-head-ref deletes, keyed by run — see prRefDeleteSettled().
+  private readonly prRefDeletes = new Map<string, Promise<void>>();
+  private readonly runCommand: CommandRunner;
   private readonly worktrees: WorktreeManager;
   // Only ever used on the multi-blocker dispatch path (see resolveBase):
   // constructing it is inert — it shells out to jj lazily, per call — so an
@@ -232,6 +243,7 @@ export class Orchestrator {
     this.claimsRefreshCooldownMs =
       ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
     this.stopEscalationMs = ctx.stopEscalationMs ?? STOP_ESCALATION_MS;
+    this.runCommand = ctx.commandRunner ?? defaultCommandRunner;
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -588,6 +600,8 @@ export class Orchestrator {
    * And the task retires here. Nothing else would ever close it: aux runs
    * leave their task alone by design, so it would sit `todo` forever, which
    * both syncers read as outstanding work to mirror out to the team.
+   *
+   * The fetched ref goes too — see schedulePrRefDelete.
    */
   private cleanupDerivedAuxRun(
     runId: string,
@@ -595,6 +609,11 @@ export class Orchestrator {
     derivedFrom: string
   ): void {
     this.worktrees.remove(meta.worktreePath, meta.branch, runId);
+    // Only a PR review names a ref; another artifact type could reach this
+    // method later, and reading a ref name out of its `derivedFrom` is how an
+    // unrelated ref gets deleted. prNumberFromOrigin returns null instead.
+    const prNumber = prNumberFromOrigin(derivedFrom);
+    if (prNumber !== null) this.schedulePrRefDelete(runId, prNumber);
     this.bestEffort(`retiring derived task ${meta.taskId}`, () => {
       const now = new Date().toISOString();
       this.ctx.store.update(
@@ -611,6 +630,42 @@ export class Orchestrator {
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed' });
     });
+  }
+
+  /**
+   * Fire-and-forget delete of a retired review's `refs/dispatch/pr/<n>`.
+   *
+   * Scheduled rather than awaited because every caller of cleanupAuxRun is
+   * synchronous — the review terminal hook, the verify hook, and boot
+   * reconciliation — while the CommandRunner seam every git call must go
+   * through is async. Awaiting would push the same unawaited promise up into
+   * those callers, which have no error containment of their own; here the
+   * rejection is caught and logged, exactly as scheduleSurvey does.
+   *
+   * A leftover ref is untidy; an unretired task is worse — so a failure never
+   * reaches the retirement above, which has already happened either way. The
+   * promise is kept so prRefDeleteSettled can be waited on.
+   */
+  private schedulePrRefDelete(runId: string, number: number): void {
+    const done = deletePrHeadRef(this.runCommand, this.ctx.rootDir, number)
+      .catch((err: unknown) => {
+        console.error(
+          `dispatchd: deleting the head ref of PR #${number} for run ${runId} failed: ${(err as Error).message}`
+        );
+      })
+      .finally(() => {
+        if (this.prRefDeletes.get(runId) === done) {
+          this.prRefDeletes.delete(runId);
+        }
+      });
+    this.prRefDeletes.set(runId, done);
+  }
+
+  // Resolves once a retired review's ref delete has settled, so a caller can
+  // wait on it instead of guessing at how long it takes. Mirrors
+  // surveySettled(); resolves immediately for a run that scheduled none.
+  prRefDeleteSettled(runId: string): Promise<void> {
+    return this.prRefDeletes.get(runId) ?? Promise.resolve();
   }
 
   /**
