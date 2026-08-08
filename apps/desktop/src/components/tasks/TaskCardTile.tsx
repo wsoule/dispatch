@@ -71,6 +71,10 @@ interface TaskCardTileProps {
    * drops the drag affordance; `TaskBoard` also disables the drag itself and the underlying
    * `moveTaskStatus` call is gated centrally in `useDispatchProject`, so this is purely visual. */
   archived?: boolean;
+  /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) — tints
+   * the card's border and background with the amber "waiting" tokens so it stands out on a
+   * dense board without breaking the uniform card anatomy. */
+  needsAttention?: boolean;
 }
 
 // Only shows the first few label pills before collapsing the rest into a "+N" — Linear's own
@@ -101,6 +105,7 @@ export function TaskCardTile({
   onFocus,
   drag,
   archived = false,
+  needsAttention = false,
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -141,6 +146,11 @@ export function TaskCardTile({
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
         'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
         drag?.isDragging === true && 'opacity-40',
+        // The tint replaces both the resting and hover surfaces — flashing back to the
+        // neutral card color on hover would read as the highlight switching off.
+        needsAttention &&
+          !archived &&
+          'border-state-waiting-edge bg-state-waiting-surface hover:border-state-waiting-edge hover:bg-state-waiting-surface',
         archived && 'cursor-default opacity-55 saturate-50 hover:bg-card'
       )}
       onClick={onClick}
