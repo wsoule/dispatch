@@ -295,6 +295,41 @@ export function forkConfirmMessage(number: number, owner: string): string {
   );
 }
 
+// Where a PR's head is parked for review. Fully qualified deliberately (see
+// fetchPrHead), and defined once so the fetch that creates the ref and the
+// delete below can never name different ones.
+function prHeadRef(number: number): string {
+  return `refs/dispatch/pr/${number}`;
+}
+
+/**
+ * Removes the ref fetchPrHead created, once the review it was fetched for is
+ * over. Nothing else ever deleted these, so they accumulated forever — and
+ * each one is a standing start-point a worktree could be cut from without
+ * passing the fork gate.
+ *
+ * A free function rather than a PrManager method: the orchestrator retires a
+ * review long after the request that built a PrManager is gone, so it takes
+ * the same injected CommandRunner instead of the manager. requirePrNumber
+ * keeps the target inside `refs/dispatch/pr/` whatever the caller passes.
+ */
+export async function deletePrHeadRef(
+  run: CommandRunner,
+  rootDir: string,
+  number: number
+): Promise<void> {
+  requirePrNumber(number);
+  const ref = prHeadRef(number);
+  // `update-ref -d` without an old value succeeds on a ref that is already
+  // gone, so retiring one review twice is not an error.
+  const result = await run(rootDir, ['git', 'update-ref', '-d', ref]);
+  if (!result.ok) {
+    throw new OrchestratorConflictError(
+      `git update-ref -d ${ref} failed: ${commandErrorText(result)}`
+    );
+  }
+}
+
 // Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
 // parts, so the line-comment REST call (which gh's `pr view --json` can't
 // return) can address the right repo/PR. Returns null for anything that isn't
@@ -917,7 +952,7 @@ export class PrManager {
     // Fully qualified, not a bare branch name: an unqualified dest DWIMs to
     // refs/heads/, which would permanently add a branch to Dispatch's own
     // branch UI per review and let `--force` clobber a same-named one.
-    const ref = `refs/dispatch/pr/${pr.number}`;
+    const ref = prHeadRef(pr.number);
     // Force: a re-review after new commits must update `ref`, not fail.
     const fetch = await this.run(this.ctx.rootDir, [
       'git',

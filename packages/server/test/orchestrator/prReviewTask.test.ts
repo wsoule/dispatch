@@ -5,6 +5,7 @@ import {
   buildPrReviewTask,
   isPrReviewTaskFor,
   PR_REVIEW_LABEL,
+  prNumberFromOrigin,
   prReviewOrigin,
 } from '../../src/orchestrator/prReviewTask.js';
 
@@ -204,5 +205,33 @@ describe('isPrReviewTaskFor', () => {
   // Another artifact type could land here later; only a PR origin counts.
   it('does not match a task derived from something else', () => {
     expect(isPrReviewTaskFor({ derivedFrom: 'linear-issue:7' }, 7)).toBe(false);
+  });
+});
+
+// The inverse of prReviewOrigin, used to name the `refs/dispatch/pr/<n>` a
+// retiring review should delete. Wrong answers here delete the wrong ref, so
+// the round trip is what it promises — never a best-effort parse.
+describe('prNumberFromOrigin', () => {
+  it('reads back the number prReviewOrigin minted', () => {
+    expect(prNumberFromOrigin(prReviewOrigin(12))).toBe(12);
+    expect(prNumberFromOrigin(prReviewOrigin(1))).toBe(1);
+  });
+
+  it('returns null for an origin no PR review ever minted', () => {
+    expect(prNumberFromOrigin('linear-issue:7')).toBeNull();
+    expect(prNumberFromOrigin('github-pr')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:abc')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:1.5')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:-3')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:7 ')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:7/../../heads/main')).toBeNull();
+  });
+
+  // A padded or oversized number parses to something prReviewOrigin would
+  // never have written — so it names a ref this code never created.
+  it('refuses a number that does not mint the same string back', () => {
+    expect(prNumberFromOrigin('github-pr:007')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:99999999999999999999')).toBeNull();
   });
 });
