@@ -1,10 +1,20 @@
 import { ApiError } from '@dispatch/client';
-import type { ApiClient, RunMeta } from '@dispatch/client';
-import type { FileDiffMetadata } from '@pierre/diffs';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ApiClient, RunMeta, Snippet } from '@dispatch/client';
+import type { CodeViewItem, FileDiffMetadata } from '@pierre/diffs';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it, mock } from 'bun:test';
-import type { ReactNode } from 'react';
+import { isValidElement, type ReactNode, useCallback, useRef } from 'react';
 
+import type { ReviewChatHandle } from './ReviewChatPanel';
+import { ReviewChatPanel } from './ReviewChatPanel';
+import type { Annotation } from '@/lib/reviewDiffItems';
 import {
   buildItems,
   decideEditSave,
@@ -13,11 +23,21 @@ import {
   resolveEditFailure,
 } from '@/lib/reviewDiffItems';
 
+// The props of the `CodeView` element the diff built, captured below. happy-dom has no layout,
+// so `CodeView` renders no rows at all: neither the line selection nor the annotations it
+// produces can be driven through the DOM, and this element is the only way to reach them.
+let codeViewProps: Record<string, unknown> | null = null;
+
 // `PierreWorkerPool` imports `@pierre/diffs/worker/worker.js?worker&url`, a
 // Vite-only specifier `bun test` cannot resolve — stubbed to a passthrough so
 // the component itself can be rendered. Nothing else in the suite imports it.
 void mock.module('@/components/runs/PierreWorkerPool', () => ({
-  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
+  PierreWorkerPool: ({ children }: { children: ReactNode }) => {
+    codeViewProps = isValidElement(children)
+      ? (children.props as Record<string, unknown>)
+      : null;
+    return children;
+  },
 }));
 
 // Pierre's editor measures text through a 2d canvas context and throws outright
@@ -397,6 +417,58 @@ describe('PierreReviewDiff — switching files while an editor is open', () => {
   });
 });
 
+const ADDED_FILE_PATCH = `diff --git a/new.ts b/new.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/new.ts
+@@ -0,0 +1,2 @@
++const a = 0;
++const b = 1;
+`;
+
+describe('PierreReviewDiff — the pencil gate reads the parsed file’s type', () => {
+  // The diff's shell (parse, worker pool, states) moved to `DiffSurface`, but this gate still
+  // needs the parsed file list: Pierre can't attach an editor to an added file, so its pencil
+  // has to be withheld rather than shown doing nothing.
+  it('withholds the pencil on an added file', () => {
+    render(
+      <PierreReviewDiff
+        client={fakeClient()}
+        runId="r1"
+        meta={runMeta()}
+        patch={ADDED_FILE_PATCH}
+        comments={[]}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+      />
+    );
+
+    // Guards the assertion below against passing vacuously: a patch that failed to parse would
+    // render a message instead of the diff, and show no pencil for that reason.
+    expect(
+      screen.queryByText(/No changes to show|Couldn’t load the diff/)
+    ).toBe(null);
+    expect(screen.queryByRole('button', { name: 'Edit this file' })).toBeNull();
+  });
+
+  it('still offers it on a changed file', () => {
+    renderDiff({ only: 'a.ts' });
+
+    expect(
+      screen.queryByRole('button', { name: 'Edit this file' })
+    ).not.toBeNull();
+  });
+});
+
+describe('PierreReviewDiff — nothing to render', () => {
+  it('says so when `only` names a file the patch does not contain', () => {
+    renderDiff({ only: 'gone.ts' });
+
+    expect(screen.queryByText('No changes to show.')).not.toBeNull();
+  });
+});
+
 describe('decideEditSave — what a finished edit session should do', () => {
   const session = { baseSha: 'sha1', contents: 'const a = 0;\n' };
 
@@ -476,5 +548,592 @@ describe('isEditableDiffType', () => {
     expect(isEditableDiffType('change')).toBe(true);
     expect(isEditableDiffType('rename-changed')).toBe(true);
     expect(isEditableDiffType('rename-pure')).toBe(true);
+  });
+});
+
+/** What Pierre hands `renderGutterUtility`: a way to read the hovered line, and the file. */
+type GutterRenderer = (
+  getHoveredLine: () => { lineNumber?: number; side?: string } | undefined,
+  item: { id: string }
+) => ReactNode;
+
+// happy-dom lays nothing out, so every rect is zero unless a test says otherwise. Stubbing the
+// clicked button's own box is what makes placement assertable at all — the bar is measured from
+// that element, never from a selection.
+function stubRect(
+  el: Element,
+  rect: { top: number; left: number; bottom: number; width: number }
+): void {
+  el.getBoundingClientRect = () =>
+    ({
+      ...rect,
+      right: rect.left + rect.width,
+      height: rect.bottom - rect.top,
+      x: rect.left,
+      y: rect.top,
+      toJSON: () => ({}),
+    }) as DOMRect;
+}
+
+/** The element the bar is positioned inside: the wrapper `PierreReviewDiff` renders. */
+function positioningFrame(): HTMLElement {
+  const frame = document.querySelector<HTMLElement>('.relative');
+  if (frame === null) throw new Error('no positioning frame rendered');
+  return frame;
+}
+
+/**
+ * The reviewer's real gesture: hover a line, click its gutter affordance.
+ *
+ * happy-dom renders no code rows and therefore no gutter, so the affordance is asked for exactly
+ * the way Pierre asks for it — `renderGutterUtility(getHoveredLine, item)` — then mounted and
+ * clicked for real. Everything under test after that point is the component's own: reading the
+ * hovered line, deciding single-line vs range, measuring the button's box, and pulling the line
+ * text out of the parsed patch.
+ */
+function gutterAffordance(
+  line: number,
+  options: { side?: string; file?: string } = {}
+): HTMLElement {
+  const renderGutter = codeViewProps?.renderGutterUtility as
+    | GutterRenderer
+    | undefined;
+  if (renderGutter === undefined) {
+    throw new Error('the diff offered no gutter affordance to click');
+  }
+  const node = renderGutter(
+    () => ({ lineNumber: line, side: options.side ?? 'additions' }),
+    { id: options.file ?? 'a.ts' }
+  );
+  if (node === null || node === undefined) {
+    throw new Error('the gutter affordance was withheld for this line');
+  }
+  // Its own container, queried directly: `CodeView` also renders one of these for its own
+  // (unhovered) gutter, so a document-wide query would not say which button was clicked.
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  render(node, { container: host });
+  const button = host.querySelector('button');
+  if (button === null) throw new Error('the affordance rendered no button');
+  return button;
+}
+
+function clickGutter(
+  line: number,
+  options: {
+    side?: string;
+    file?: string;
+    rect?: { top: number; left: number; bottom: number; width: number };
+  } = {}
+): void {
+  const button = gutterAffordance(line, options);
+  if (options.rect !== undefined) stubRect(button, options.rect);
+  fireEvent.click(button);
+}
+
+/**
+ * Pierre's own line-selection callback, which only fires because `enableLineSelection` is on.
+ *
+ * `file` is variable on purpose: one `CodeView` renders every file of a patch, so it names which
+ * file the drag happened in and a helper that hardcoded it could never surface a discarded id.
+ */
+function dragLineNumbers(
+  start: number,
+  end: number,
+  options: { side?: 'additions' | 'deletions'; file?: string } = {}
+): void {
+  const onSelectedLinesChange = codeViewProps?.onSelectedLinesChange as
+    | ((
+        sel: {
+          id: string;
+          range: { start: number; end: number; side: string };
+        } | null
+      ) => void)
+    | undefined;
+  if (onSelectedLinesChange === undefined) {
+    throw new Error('the diff is not listening for line selections');
+  }
+  act(() => {
+    onSelectedLinesChange({
+      id: options.file ?? 'a.ts',
+      range: { start, end, side: options.side ?? 'additions' },
+    });
+  });
+}
+
+function renderForSelection(
+  props: {
+    onAddToChat?: (snippet: Snippet) => void;
+    withComposer?: boolean;
+  } = {}
+) {
+  return render(
+    <PierreReviewDiff
+      client={fakeClient()}
+      runId="r1"
+      meta={runMeta()}
+      patch={TWO_FILE_PATCH}
+      only="a.ts"
+      comments={[]}
+      onResolve={() => Promise.resolve()}
+      onReply={() => Promise.resolve()}
+      {...(props.withComposer === false
+        ? {}
+        : { onAdd: () => Promise.reject(new Error('not used here')) })}
+      {...(props.onAddToChat === undefined
+        ? {}
+        : { onAddToChat: props.onAddToChat })}
+    />
+  );
+}
+
+/**
+ * The whole patch in one scroller, with no `only` — how `RunReviewView` renders this. Every file
+ * shares one `CodeView`, so a line number on its own does not say which file it belongs to.
+ */
+function renderWholePatch(onAddToChat: (snippet: Snippet) => void) {
+  return render(
+    <PierreReviewDiff
+      client={fakeClient()}
+      runId="r1"
+      meta={runMeta()}
+      patch={TWO_FILE_PATCH}
+      comments={[]}
+      onAdd={() => Promise.reject(new Error('not used here'))}
+      onResolve={() => Promise.resolve()}
+      onReply={() => Promise.resolve()}
+      onAddToChat={onAddToChat}
+    />
+  );
+}
+
+function selectionBar(): HTMLElement | null {
+  return screen.queryByRole('toolbar', { name: 'Selection actions' });
+}
+
+/**
+ * Settles the already-resolved contents fetch the composer kicks off, then flushes React.
+ *
+ * Deliberately not `waitFor`: its polling runs on a timer, and in a full-suite run Pierre's
+ * shared render queue starves those for seconds at a time, which surfaces as a hang rather
+ * than a slow assertion.
+ */
+async function settle(): Promise<void> {
+  await act(async () => {
+    // Several hops, not one: each `await` here drains exactly one microtask of the chain.
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  });
+}
+
+describe('PierreReviewDiff — arming the action bar from the gutter', () => {
+  it('offers nothing until the gutter affordance is clicked', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    expect(selectionBar()).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull();
+  });
+
+  it('arms the bar for the clicked line', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    expect(selectionBar()).toBeNull();
+
+    clickGutter(2);
+
+    expect(selectionBar()).not.toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Add to chat' })
+    ).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Comment' })).not.toBeNull();
+  });
+
+  // A deleted line's number belongs to the base file and its text is not in the new one, so
+  // there is nothing for chat, copy or a comment to point at.
+  it('arms nothing from the deletions side', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    clickGutter(2, { side: 'deletions' });
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('arms nothing when the hovered line cannot be read', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    const renderGutter = codeViewProps?.renderGutterUtility as GutterRenderer;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    render(
+      renderGutter(() => undefined, { id: 'a.ts' }),
+      { container: host }
+    );
+
+    fireEvent.click(host.querySelector('button') as HTMLElement);
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('hands the chat the armed line, its number and its text from the patch', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
+    ]);
+  });
+
+  it('clears the bar once an action is invoked', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    clickGutter(2);
+    expect(selectionBar()).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  // `ReviewView` swaps `only` without remounting, so a bar armed on the file being left would
+  // otherwise stay on screen over the file arriving — pointing at lines that are no longer drawn.
+  it('clears the bar when the surface switches to another file', () => {
+    const { rerender } = renderForSelection({ onAddToChat: () => {} });
+    clickGutter(2);
+    expect(selectionBar()).not.toBeNull();
+
+    rerender(
+      <PierreReviewDiff
+        client={fakeClient()}
+        runId="r1"
+        meta={runMeta()}
+        patch={TWO_FILE_PATCH}
+        only="b.ts"
+        comments={[]}
+        onAdd={() => Promise.reject(new Error('not used here'))}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+        onAddToChat={() => {}}
+      />
+    );
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('clears the bar on Escape', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    clickGutter(2);
+    expect(selectionBar()).not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+
+    expect(selectionBar()).toBeNull();
+  });
+
+  it('copies the armed line to the clipboard', () => {
+    const written: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          written.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+    renderForSelection({ onAddToChat: () => {} });
+
+    clickGutter(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect(written).toEqual(['const a = 0;']);
+  });
+
+  // Commenting is now one click further than it was — the gutter arms the bar, the bar opens the
+  // composer — and this is the test that says the second click still reaches the same composer.
+  it('opens the composer on the armed line', async () => {
+    renderForSelection({ onAddToChat: () => {} });
+    clickGutter(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settle();
+
+    const items = codeViewProps?.items as CodeViewItem<Annotation>[];
+    const annotations = items.flatMap((item) =>
+      'annotations' in item ? (item.annotations ?? []) : []
+    );
+    expect(
+      annotations.map((a) => a.metadata).filter((m) => m?.kind === 'composer')
+    ).toEqual([{ kind: 'composer', file: 'a.ts' }]);
+  });
+
+  // A patch carries only the lines its hunks cover, and some file types carry none at all. An
+  // empty snippet is recoverable; a bar that never appears is the failure this gesture replaced.
+  it('still arms when the patch does not carry the line’s text', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    clickGutter(40);
+
+    expect(selectionBar()).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 40, endLine: 40, text: '' },
+    ]);
+  });
+
+  it('withholds Add to chat where there is no chat to add to', () => {
+    renderForSelection();
+
+    clickGutter(2);
+
+    expect(selectionBar()).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeNull();
+  });
+
+  // Comment is the most common review action and arming the bar already cost it a click, so it
+  // gets the shortest travel from the gutter affordance. Order is behaviour here, not styling.
+  it('puts Comment first, then Add to chat, then Copy', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    clickGutter(2);
+
+    const bar = selectionBar();
+    if (bar === null) throw new Error('the bar was not armed');
+    expect(
+      Array.from(bar.querySelectorAll('button')).map((b) => b.textContent)
+    ).toEqual(['Comment', 'Add to chat', 'Copy']);
+  });
+
+  // A GitHub PR target passes neither `onAdd` nor `onAddToChat`. The affordance used to be gated
+  // on `onAdd`, which took Copy down with commenting on exactly the surface where the reviewer
+  // cannot comment — so the gate is on the bar having anything to offer at all.
+  it('still arms with Copy alone where nothing can be commented on', () => {
+    renderForSelection({ withComposer: false });
+
+    clickGutter(2);
+
+    const bar = selectionBar();
+    if (bar === null) throw new Error('the bar was not armed');
+    expect(
+      Array.from(bar.querySelectorAll('button')).map((b) => b.textContent)
+    ).toEqual(['Copy']);
+  });
+});
+
+describe('PierreReviewDiff — a dragged line range arms the whole range', () => {
+  // `onSelectedLinesChange` only ever fires because the review surface turns Pierre's line
+  // selection on; without this option the range branch below is unreachable dead code.
+  it('turns on Pierre’s line selection', () => {
+    renderForSelection({ onAddToChat: () => {} });
+
+    const options = codeViewProps?.options as
+      | { enableLineSelection?: boolean }
+      | undefined;
+    expect(options?.enableLineSelection).toBe(true);
+  });
+
+  it('arms the dragged range when the clicked line is inside it', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    dragLineNumbers(1, 2);
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      {
+        file: 'a.ts',
+        startLine: 1,
+        endLine: 2,
+        text: 'const a = 0;\nconst b = 2;',
+      },
+    ]);
+  });
+
+  it('arms only the clicked line when it sits outside the dragged range', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    dragLineNumbers(1, 1);
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
+    ]);
+  });
+
+  // One `CodeView` renders every file of a patch, so a range dragged in `b.ts` is live state
+  // while the reviewer clicks the gutter in `a.ts`. Comparing line numbers alone armed `a.ts`
+  // with `b.ts`'s range — a comment or a chat snippet on the wrong lines.
+  it('ignores a range dragged in a different file', () => {
+    const attached: Snippet[] = [];
+    renderWholePatch((snippet) => attached.push(snippet));
+
+    dragLineNumbers(1, 2, { file: 'b.ts' });
+    clickGutter(2, { file: 'a.ts' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
+    ]);
+  });
+
+  // The control for the test above: the file check must reject a foreign range, not every range.
+  it('still arms the range when the drag was in the clicked file', () => {
+    const attached: Snippet[] = [];
+    renderWholePatch((snippet) => attached.push(snippet));
+
+    dragLineNumbers(1, 2, { file: 'b.ts' });
+    clickGutter(2, { file: 'b.ts' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      {
+        file: 'b.ts',
+        startLine: 1,
+        endLine: 2,
+        text: 'const c = 0;\nconst d = 2;',
+      },
+    ]);
+  });
+
+  // A range dragged down the deleted column names base-file lines, which say nothing about the
+  // code under review — the click falls back to the one line it is actually on.
+  it('ignores a dragged range on the deletions side', () => {
+    const attached: Snippet[] = [];
+    renderForSelection({ onAddToChat: (snippet) => attached.push(snippet) });
+
+    dragLineNumbers(1, 2, { side: 'deletions' });
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    expect(attached).toEqual([
+      { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
+    ]);
+  });
+});
+
+describe('PierreReviewDiff — where the bar hangs', () => {
+  // Placement comes from the clicked button's own box. A `Range` spanning a shadow boundary is
+  // what made the previous positioning both untestable and, on screen, invisible; an element's
+  // own box reads the same either side of a shadow root.
+  it('hangs the bar above the clicked affordance', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    stubRect(positioningFrame(), {
+      top: 100,
+      left: 50,
+      bottom: 800,
+      width: 900,
+    });
+
+    clickGutter(2, { rect: { top: 400, left: 90, bottom: 420, width: 16 } });
+
+    // Both boxes are viewport-absolute, so the bar's offsets are their difference.
+    expect(selectionBar()?.style.top).toBe('300px');
+    expect(selectionBar()?.style.left).toBe('40px');
+    expect(selectionBar()?.className).toContain('-translate-y-full');
+  });
+
+  it('drops the bar below the line when it is against the top of the pane', () => {
+    renderForSelection({ onAddToChat: () => {} });
+    stubRect(positioningFrame(), {
+      top: 100,
+      left: 50,
+      bottom: 800,
+      width: 900,
+    });
+
+    clickGutter(1, { rect: { top: 110, left: 90, bottom: 130, width: 16 } });
+
+    // 10px of room above is not enough for the bar, so it goes under the line instead.
+    expect(selectionBar()?.style.top).toBe('30px');
+    expect(selectionBar()?.className).not.toContain('-translate-y-full');
+  });
+});
+
+// The gesture end to end, wired exactly the way `ReviewView` wires it: the diff owns the armed
+// line, the dock owns the pending attachments, and neither module in between
+// (`SelectionActions`, `SnippetComposer`) knows a run exists. This is the only test that holds
+// the two halves together.
+describe('arm a line, then chat about it', () => {
+  function Wiring({ client }: { client: ApiClient }) {
+    const chatRef = useRef<ReviewChatHandle>(null);
+    const handleAddToChat = useCallback((snippet: Snippet) => {
+      chatRef.current?.attach(snippet);
+    }, []);
+    return (
+      <>
+        <PierreReviewDiff
+          client={client}
+          runId="r1"
+          meta={runMeta()}
+          patch={TWO_FILE_PATCH}
+          only="a.ts"
+          comments={[]}
+          onAdd={() => Promise.reject(new Error('not used here'))}
+          onResolve={() => Promise.resolve()}
+          onReply={() => Promise.resolve()}
+          onAddToChat={handleAddToChat}
+        />
+        <ReviewChatPanel
+          ref={chatRef}
+          client={client}
+          runId="r1"
+          canResumeAgent
+        />
+      </>
+    );
+  }
+
+  it('carries the armed lines all the way into a stored message', async () => {
+    const added: Parameters<ApiClient['addChatMessage']>[0][] = [];
+    const client = fakeClient({
+      baseUrl: 'http://127.0.0.1:4321',
+      fetchConversation: () => Promise.resolve([]),
+      addChatMessage: (input: Parameters<ApiClient['addChatMessage']>[0]) => {
+        added.push(input);
+        return Promise.resolve({
+          id: 'cm-1',
+          role: 'human' as const,
+          body: input.body,
+          snippets: input.snippets,
+          created: '2026-08-06T00:00:00.000Z',
+        });
+      },
+    } as Partial<ApiClient>);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Wiring client={client} />
+      </QueryClientProvider>
+    );
+
+    dragLineNumbers(1, 2);
+    clickGutter(2);
+    expect(selectionBar()).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }));
+
+    // The dock opened itself and is holding the snippet as a chip, named for the lines armed.
+    expect(screen.queryByText('a.ts (1-2)')).not.toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'why is this needed?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await settle();
+
+    expect(added[0]).toMatchObject({
+      subject: 'run:r1',
+      role: 'human',
+      body: 'why is this needed?',
+      snippets: [{ file: 'a.ts', startLine: 1, endLine: 2 }],
+      target: 'run-agent',
+    });
   });
 });
