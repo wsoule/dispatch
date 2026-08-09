@@ -31,6 +31,7 @@ function repoPr(overrides: Partial<RepoPr> = {}): RepoPr {
     isDraft: false,
     updatedAt: '2026-08-02T00:00:00Z',
     headRefOid: 'abc123',
+    state: 'OPEN',
     isCrossRepository: false,
     headRepositoryOwner: 'example',
     reviewDecision: null,

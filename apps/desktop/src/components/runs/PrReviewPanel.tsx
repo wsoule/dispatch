@@ -325,7 +325,11 @@ export function PrReviewPanel({
     }
   }
 
-  const isMerged = detail?.status.state === 'MERGED';
+  // GitHub takes a review only while the PR is open, and the server refuses
+  // the batch before the POST once it is not — so the composer goes away and
+  // says which, rather than staying live and answering with an error.
+  const state = detail?.status.state;
+  const isOpen = state === undefined || state === 'OPEN';
   const needsBody = draft.trim() === '';
 
   return (
@@ -360,11 +364,28 @@ export function PrReviewPanel({
             <p className="text-destructive text-[12px]">{actionError}</p>
           )}
 
-          {isMerged ? (
-            <p className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
-              <GitMerge className="size-3.5" />
-              This PR is merged.
-            </p>
+          {!isOpen ? (
+            <div className="text-muted-foreground flex flex-col gap-1 text-[12px]">
+              <p className="flex items-center gap-1.5">
+                {state === 'MERGED' ? (
+                  <GitMerge className="size-3.5" />
+                ) : (
+                  <X className="size-3.5" />
+                )}
+                This PR is {state === 'MERGED' ? 'merged' : 'closed'}.
+              </p>
+              {/* The whole point of showing the state here: notes staged
+                  against a PR that has since closed cannot be published, and
+                  a dead Comment button would never say so. */}
+              {stagedNotes > 0 && (
+                <p>
+                  {`GitHub does not accept reviews on a pull request that is ` +
+                    `no longer open, so your ${stagedNotes} staged ` +
+                    `note${stagedNotes === 1 ? '' : 's'} cannot be sent. ` +
+                    'They stay saved here, and on the diff.'}
+                </p>
+              )}
+            </div>
           ) : (
             <div className="flex flex-col gap-2">
               {dispatchedRunId !== null && (

@@ -24,6 +24,7 @@ function makePr(overrides: Partial<RepoPr & { body: string }> = {}) {
     isDraft: false,
     updatedAt: '2026-08-01T00:00:00Z',
     headRefOid: 'deadbeef',
+    state: 'OPEN' as const,
     isCrossRepository: false,
     headRepositoryOwner: 'acme',
     reviewDecision: null,
