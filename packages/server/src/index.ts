@@ -18,6 +18,7 @@ import {
 } from './api.js';
 import type { ApiContext, DaemonTokens } from './api.js';
 import { TaskCache } from './cache.js';
+import { ConversationStore } from './conversations.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
 import {
   createSourceChangeHandler,
@@ -577,6 +578,9 @@ export async function startServer(
   // to the terminal hook that ingests a review's findings.
   const findingStore = new FindingStore(rootDir);
   // reviewComments is built above, alongside PrManager, which needs it too.
+  // The working chat about code, separate from reviewComments — see ConversationStore's doc
+  // comment for why the two aren't collapsed.
+  const conversations = new ConversationStore(rootDir);
   const reviewRunner = new ReviewRunner({
     rootDir,
     store,
@@ -641,6 +645,7 @@ export async function startServer(
     depMapCache,
     trackedFilesCache,
     reviewComments,
+    conversations,
     questions,
     scopeRequests,
     linearSync,

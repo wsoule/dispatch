@@ -825,6 +825,25 @@ export interface InboxConvertResult {
   error?: string;
 }
 
+// Mirrors Snippet/ChatMessage in packages/server/src/conversations.ts.
+export interface Snippet {
+  file: string;
+  startLine: number;
+  endLine: number;
+  /** The code as it read when attached, so the message survives the branch moving. */
+  text: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'human' | 'agent';
+  body: string;
+  snippets: Snippet[];
+  /** Which target a human message was sent to; absent on an agent reply. */
+  target?: string;
+  created: string;
+}
+
 // Mirrors ReviewComment/ReviewReply in packages/server/src/reviewComments.ts. `anchorText` is
 // what the line said when the comment was written — the only way to tell later whether it still
 // points at the code it was about.
@@ -1747,6 +1766,15 @@ export interface ApiClient {
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
   fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
   createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  /** Every message on a subject. `subject` is `run:…`, `worktree:…` or `pr:…`. */
+  fetchConversation(subject: string): Promise<ChatMessage[]>;
+  addChatMessage(input: {
+    subject: string;
+    role: 'human' | 'agent';
+    body: string;
+    snippets: Snippet[];
+    target?: string;
+  }): Promise<ChatMessage>;
   // The blast radius of a file, a run's diff, or a task's declared writes —
   // `GET /api/impact?subject=<kind>&id=<id>`.
   getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
@@ -2248,6 +2276,16 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     },
     createLedgerEntry: (input) =>
       request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
+    fetchConversation: (subject) =>
+      request(
+        target,
+        `/api/conversations?subject=${encodeURIComponent(subject)}`
+      ),
+    addChatMessage: (input) =>
+      request(target, '/api/conversations', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
     getImpact: (subject, id) =>
       request(
         target,

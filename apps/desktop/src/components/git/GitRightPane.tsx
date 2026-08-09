@@ -149,7 +149,9 @@ export function GitRightPane(props: GitRightPaneProps) {
           id={row.path}
           className="m-3"
         />
-        <div className="min-h-0 flex-1 overflow-auto">
+        {/* A flex column so `GitDiffPane`'s `CodeView` can size itself off this with `flex-1`
+            rather than a percentage — see `DiffSurface`'s `className`. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
           {row.section === 'untracked' ? (
             <p className="text-muted-foreground p-4 text-[12px]">
               New, untracked file — stage it to see its contents in a diff.
@@ -197,7 +199,8 @@ export function GitRightPane(props: GitRightPaneProps) {
             </div>
           </div>
         )}
-        <div className="min-h-0 flex-1 overflow-auto">
+        {/* Flex column for the same reason as the file pane's above. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
           <GitDiffPane
             patch={props.commitDiff}
             loading={props.commitDiffLoading}
