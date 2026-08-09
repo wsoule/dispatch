@@ -260,6 +260,25 @@ export class WorktreeManager {
     return runGit(this.mainRepoDir, ['remote', 'get-url', 'origin']).ok;
   }
 
+  /**
+   * Every ref whose tip has `commitish` as an ancestor — the question "what
+   * in this repo vouches for this commit?". `null` when git cannot resolve
+   * `commitish` at all, which is a caller's bad input rather than an answer.
+   *
+   * Callers use it to tell a commit the repo's own branches reach from one
+   * only a fetched pull request head reaches. A SHA names the same tree as
+   * the ref pointing at it, so a string rule over ref names cannot.
+   */
+  refsContaining(commitish: string): string[] | null {
+    const result = runGit(this.mainRepoDir, [
+      'for-each-ref',
+      `--contains=${commitish}`,
+      '--format=%(refname)',
+    ]);
+    if (!result.ok) return null;
+    return result.stdout.split('\n').filter((line) => line.trim() !== '');
+  }
+
   // False when origin/<base> doesn't exist locally — unpushed is the safe answer.
   isOnOriginBase(commit: string, base: string): boolean {
     return runGit(this.mainRepoDir, [
