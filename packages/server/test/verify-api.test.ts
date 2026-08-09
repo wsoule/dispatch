@@ -98,6 +98,36 @@ function startVerify(body: unknown): Promise<Response> {
 }
 
 describe('POST /api/tasks/:id/verify', () => {
+  // The stronger half of the door /api/tasks/:id/review shuts: a verify run
+  // does not merely read a fork's code, it runs the project's verify recipe
+  // — the fork's own scripts and tests — inside that worktree.
+  it('400s a head that names a PR head ref, qualified or not', async () => {
+    appendFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'verify:\n  command: bun run dev\n'
+    );
+    runGitSync(root, ['update-ref', 'refs/dispatch/pr/7', head]);
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    for (const bad of [
+      'refs/dispatch/pr/7',
+      'dispatch/pr/7',
+      'Dispatch/PR/7',
+    ]) {
+      const res = await startVerify({ head: bad });
+      expect(res.status).toBe(400);
+      const body = await json<{ error: string }>(res);
+      expect(body.error).toContain('invalid head');
+      expect(body.error).toContain('fork');
+    }
+  });
+
   it('200s a skip when the project has no verify config', async () => {
     handle = await startServer({
       rootDir: root,

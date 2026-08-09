@@ -297,6 +297,10 @@ const REPO_PR_FIELDS =
   'updatedAt,state,isCrossRepository,headRepositoryOwner,reviewDecision,' +
   'mergeable,statusCheckRollup,additions,deletions,changedFiles';
 
+// Declared as a readonly array so a membership check against an unvalidated
+// `unknown` payload needs no cast — see findRepoPr's fallback.
+const PR_STATES: readonly RepoPr['state'][] = ['OPEN', 'CLOSED', 'MERGED'];
+
 // Maps one `gh pr list`/`gh pr view --json REPO_PR_FIELDS` payload to a
 // RepoPr. Shared by both verbs so the fallback reads every field — fork-ness
 // above all — off GitHub's own answer rather than a hand-built stand-in.
@@ -326,7 +330,8 @@ function toRepoPr(item: Record<string, unknown>): RepoPr {
 // The one wording for a review GitHub will not take because the PR is no
 // longer open. Names the state and says the staged notes are still on disk,
 // so the user reads a reason instead of the reviews endpoint's bare 404.
-function closedPrReviewMessage(pr: RepoPr, staged: number): string {
+// Shared with api.ts's by-number review route, the other door to the same POST.
+export function closedPrReviewMessage(pr: RepoPr, staged: number): string {
   const word = pr.state === 'MERGED' ? 'merged' : 'closed';
   const kept =
     staged === 0
@@ -644,6 +649,15 @@ export class PrManager {
       throw new OrchestratorConflictError(
         `gh pr view #${number} did not report isCrossRepository; ` +
           'refusing to guess whether this PR comes from a fork'
+      );
+    }
+    // toRepoPr defaults a missing `state` to OPEN, which is sound for the
+    // list above (it asks for open PRs only) but not here, where the answer
+    // is the whole reason to make this call.
+    if (!PR_STATES.includes(raw.state as RepoPr['state'])) {
+      throw new OrchestratorConflictError(
+        `gh pr view #${number} reported no usable state ` +
+          `(${String(raw.state)})`
       );
     }
     return toRepoPr(raw);

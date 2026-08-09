@@ -84,7 +84,11 @@ import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
-import { forkConfirmMessage, parsePrUrl } from './orchestrator/pr.js';
+import {
+  closedPrReviewMessage,
+  forkConfirmMessage,
+  parsePrUrl,
+} from './orchestrator/pr.js';
 import {
   buildPrReviewTask,
   isPrReviewTaskFor,
@@ -2099,6 +2103,12 @@ async function reviewRepoPr(
   }
   const pr = await resolveRepoPrByNumber(ctx, numberParam);
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  // The same refusal pushPrReview makes: this is the other door to the same
+  // GitHub POST, and resolveRepoPrByNumber now finds closed PRs — so without
+  // this a merged PR reaches GitHub and answers with gh's raw error.
+  if (pr.state !== 'OPEN') {
+    return errorResponse(409, closedPrReviewMessage(pr, 0));
+  }
   const detail = await ctx.prManager.reviewPrByUrl(pr.url, body.event, text);
   return jsonResponse(detail);
 }
