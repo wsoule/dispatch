@@ -1,11 +1,14 @@
+import type { Snippet } from '@dispatch/client';
 import { canPostReviewToPr } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Check } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
 import { PrReviewPanel } from '../components/runs/PrReviewPanel';
 import { ReviewCasePanel } from '../components/runs/ReviewCasePanel';
+import type { ReviewChatHandle } from '../components/runs/ReviewChatPanel';
+import { ReviewChatPanel } from '../components/runs/ReviewChatPanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { buildReviewQueue, ReviewQueue } from '../components/runs/ReviewQueue';
 import { ReviewThreadIndex } from '../components/runs/ReviewThreadIndex';
@@ -30,6 +33,7 @@ import type { ReviewTarget } from '../lib/reviewTarget';
 import { reviewTargetKey } from '../lib/reviewTarget';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
+import { isTerminalRunState } from '@/lib/runState';
 import { cn } from '@/lib/utils';
 import { MetaText } from '@/ui/chrome';
 import { StateDot } from '@/ui/chrome/StateDot';
@@ -198,6 +202,13 @@ export function ReviewView({
     line: number;
     nonce: number;
   } | null>(null);
+
+  // The chat dock under the diff. A handle rather than state lifted to this page: the pending
+  // attachments belong to the dock, and all this page has to do is deliver the selection.
+  const chatRef = useRef<ReviewChatHandle>(null);
+  const handleAddToChat = useCallback((snippet: Snippet) => {
+    chatRef.current?.attach(snippet);
+  }, []);
 
   // Re-read when the target changes, so opening a different review does not
   // inherit the last one's ticks.
@@ -548,9 +559,24 @@ export function ReviewView({
                 // target has no worktree to apply into — the Apply affordance
                 // is withheld there rather than shown dead.
                 onApply={isPrTarget ? undefined : data.handleApplySuggestion}
+                // Off for a PR for the same reason as `onAdd`: the dock below is a run's
+                // conversation, and a PR has no run to hold one.
+                onAddToChat={isPrTarget ? undefined : handleAddToChat}
                 destination={destination}
               />
             </>
+          )}
+          {/* Beneath the diff, not in the right rail — that rail is the thread index, and the
+              two would be competing for the same column. */}
+          {run !== undefined && (
+            <ReviewChatPanel
+              ref={chatRef}
+              client={data.client}
+              runId={run.id}
+              canResumeAgent={
+                isTerminalRunState(run.state) && run.reviewedAt === undefined
+              }
+            />
           )}
         </div>
 
