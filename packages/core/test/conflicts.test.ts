@@ -32,6 +32,39 @@ describe('tasksConflict', () => {
   it('is true when both write-sets are empty', () => {
     expect(tasksConflict([], [])).toBe(true);
   });
+
+  // A synthesized PR review task escapes glob metacharacters into its
+  // `writes` (escapeGlobPath, server's prReviewTask.ts) so the Bun.Glob
+  // readers match. Left unnormalized here, the escaped spelling never
+  // equals the path a human declared and the pair schedules concurrently.
+  it('is true for an escaped path and its unescaped twin', () => {
+    expect(
+      tasksConflict(['app/\\[id\\]/route.ts'], ['app/[id]/route.ts'])
+    ).toBe(true);
+  });
+
+  it('is false for escaped paths that name different files', () => {
+    expect(
+      tasksConflict(['app/\\[id\\]/route.ts'], ['app/\\[slug\\]/route.ts'])
+    ).toBe(false);
+    expect(
+      tasksConflict(['app/\\[id\\]/route.ts'], ['app/[slug]/route.ts'])
+    ).toBe(false);
+  });
+
+  it('is true when a glob with an escaped directory covers a path', () => {
+    expect(tasksConflict(['dir\\[a\\]/**'], ['dir[a]/file.ts'])).toBe(true);
+  });
+
+  // The trap: `dir/\*\*` is one escaped literal file, not a directory glob.
+  // Unescaping before the `/**` suffix check would reinterpret it as one and
+  // silently widen a single-file claim into a whole-subtree one.
+  it('does not read an escaped literal `**` as a directory glob', () => {
+    expect(tasksConflict(['dir/\\*\\*'], ['dir/sub/file.ts'])).toBe(false);
+    expect(tasksConflict(['dir/\\*\\*'], ['dir/other.ts'])).toBe(false);
+    expect(tasksConflict(['dir/\\*\\*'], ['dir/\\*\\*'])).toBe(true);
+    expect(tasksConflict(['dir/\\*\\*'], ['dir/**'])).toBe(true);
+  });
 });
 
 describe('claimConflictsWithWrites', () => {

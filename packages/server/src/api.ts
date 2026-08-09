@@ -86,7 +86,11 @@ import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
-import { forkConfirmMessage, parsePrUrl } from './orchestrator/pr.js';
+import {
+  closedPrReviewMessage,
+  forkConfirmMessage,
+  parsePrUrl,
+} from './orchestrator/pr.js';
 import {
   buildPrReviewTask,
   isPrReviewTaskFor,
@@ -2114,19 +2118,22 @@ async function commentPr(
   return jsonResponse(detail);
 }
 
-// Resolves a PR number to its RepoPr entry via listRepoPrs() — shared by the
-// /api/prs/:number/* handlers below. Returns `null` (caller 404s) when
-// the number isn't among the repo's currently-open PRs, so this can never be
-// used to review/comment on an arbitrary PR url a client supplies directly;
-// listRepoPrs() itself is what 409s when the project lacks pr capability.
+// Resolves a PR number to its RepoPr entry via PrManager.findRepoPr() —
+// shared by the /api/prs/:number/* handlers below. Returns `null` (caller
+// 404s) when the repo has no such PR, so this can never be used to
+// review/comment on an arbitrary PR url a client supplies directly: the
+// input is a validated number `gh` resolves against this repo's own remote.
+// listRepoPrs() inside it is what 409s when the project lacks pr capability.
+//
+// Closed and merged PRs resolve too (findRepoPr's `gh pr view` fallback):
+// the review surface has to load a merged PR in order to say it is merged.
 async function resolveRepoPrByNumber(
   ctx: ApiContext,
   numberParam: string
 ): Promise<RepoPr | null> {
-  const number = Number(numberParam);
-  const prs = await ctx.prManager.listRepoPrs();
-  const pr = prs.find((p) => p.number === number);
-  return pr ?? null;
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) return null;
+  return await ctx.prManager.findRepoPr(number);
 }
 
 // GET /api/prs/:number/detail — the in-app detail view for a repo PR
@@ -2168,6 +2175,12 @@ async function reviewRepoPr(
   }
   const pr = await resolveRepoPrByNumber(ctx, numberParam);
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  // The same refusal pushPrReview makes: this is the other door to the same
+  // GitHub POST, and resolveRepoPrByNumber now finds closed PRs — so without
+  // this a merged PR reaches GitHub and answers with gh's raw error.
+  if (pr.state !== 'OPEN') {
+    return errorResponse(409, closedPrReviewMessage(pr, 0));
+  }
   const detail = await ctx.prManager.reviewPrByUrl(pr.url, body.event, text);
   return jsonResponse(detail);
 }

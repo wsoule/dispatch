@@ -20,8 +20,29 @@ const NO_DESCRIPTION = '_No description provided._';
 
 // The `derivedFrom` value for a PR review task. One definition, so what
 // buildPrReviewTask writes is exactly what isPrReviewTaskFor reads back.
+const PR_REVIEW_ORIGIN_PREFIX = 'github-pr:';
+
 export function prReviewOrigin(number: number): string {
-  return `github-pr:${number}`;
+  return `${PR_REVIEW_ORIGIN_PREFIX}${number}`;
+}
+
+/**
+ * The inverse of prReviewOrigin: the PR a `derivedFrom` names, or null when
+ * it names something else. Lives here so the format keeps one owner — the
+ * caller that deletes a review's `refs/dispatch/pr/<n>` must not re-derive
+ * it with a regex of its own.
+ *
+ * Round-trips through prReviewOrigin rather than trusting the parse, so only
+ * a string that function could itself have written is ever accepted:
+ * `github-pr:007` and a number too large to survive Number() name refs
+ * Dispatch never created, and come back null like any other stranger.
+ */
+export function prNumberFromOrigin(origin: string): number | null {
+  if (!origin.startsWith(PR_REVIEW_ORIGIN_PREFIX)) return null;
+  const digits = origin.slice(PR_REVIEW_ORIGIN_PREFIX.length);
+  if (!/^\d+$/.test(digits)) return null;
+  const number = Number(digits);
+  return prReviewOrigin(number) === origin ? number : null;
 }
 
 // Fence label and lead-in for the PR's own description. A fork PR's body is
