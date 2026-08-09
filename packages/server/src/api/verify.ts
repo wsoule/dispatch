@@ -18,7 +18,7 @@ export async function startTaskVerification(
   // The stronger half of the same door the review route shuts: a verify run
   // does not just read a fork's code, it runs the project's verify recipe
   // inside that worktree — the fork's own scripts and tests.
-  const refusedHead = refusePrHeadRef(body.head);
+  const refusedHead = refusePrHeadRef(body.head, ctx);
   if (refusedHead !== null) return refusedHead;
   const result = await ctx.verificationRunner.startVerification({
     taskId,
