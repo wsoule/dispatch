@@ -253,3 +253,56 @@ describe('PrReviewPanel', () => {
     expect(reviews).toEqual([]);
   });
 });
+
+// Task 4: GitHub takes a review only while the PR is open, and the server
+// refuses the batch before the POST once it is not. A reviewer holding
+// staged notes has to read that here, not in an error under a live button.
+describe('PrReviewPanel on a PR that is no longer open', () => {
+  function closedPanel(state: 'CLOSED' | 'MERGED', stagedNotes: number): void {
+    render(
+      <PrReviewPanel
+        detail={{ ...DETAIL, status: { ...DETAIL.status, state } }}
+        loading={false}
+        error={null}
+        stagedNotes={stagedNotes}
+        onReview={() => Promise.resolve()}
+        onComment={() => Promise.resolve()}
+        onAgentReview={() => Promise.resolve(DISPATCHED)}
+      />
+    );
+  }
+
+  test.each(['CLOSED', 'MERGED'] as const)(
+    'says the PR is %s and withholds every action',
+    (state) => {
+      closedPanel(state, 0);
+      expect(
+        screen.getByText(`This PR is ${state.toLowerCase()}.`)
+      ).toBeDefined();
+      expect(screen.queryByRole('textbox')).toBeNull();
+      expect(screen.queryByRole('button', { name: /approve/i })).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: /review with agent/i })
+      ).toBeNull();
+    }
+  );
+
+  test('names the staged notes that can no longer be sent', () => {
+    closedPanel('MERGED', 2);
+    expect(
+      screen.getByText(/your 2 staged notes cannot be sent/i)
+    ).toBeDefined();
+  });
+
+  test('counts a single staged note in the singular', () => {
+    closedPanel('CLOSED', 1);
+    expect(
+      screen.getByText(/your 1 staged note cannot be sent/i)
+    ).toBeDefined();
+  });
+
+  test('says nothing about staged notes when there are none', () => {
+    closedPanel('MERGED', 0);
+    expect(screen.queryByText(/staged note/i)).toBeNull();
+  });
+});

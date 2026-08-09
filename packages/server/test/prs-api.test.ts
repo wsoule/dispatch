@@ -44,6 +44,10 @@ function initDispatchGitRepo(): string {
 interface StubResults {
   listResult: CommandResult;
   viewResult?: CommandResult;
+  // `gh pr view <n> --json <the RepoPr field set>` — PrManager.findRepoPr's
+  // fallback for a PR the open list no longer has. Unset means the repo has
+  // no such PR at all, which is what every by-number 404 below relies on.
+  viewRepoPrResult?: CommandResult;
   reviewResult?: CommandResult;
   commentResult?: CommandResult;
   apiResult?: CommandResult;
@@ -150,6 +154,19 @@ function stubRunner(
       return Promise.resolve(results.listResult);
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
+      // findRepoPr's fallback is the only caller that asks for
+      // `isCrossRepository`, which is how its answer is told apart from
+      // getPrDetailByUrl's — two different shapes behind one verb.
+      const fields = cmd[cmd.indexOf('--json') + 1] ?? '';
+      if (fields.includes('isCrossRepository')) {
+        return Promise.resolve(
+          results.viewRepoPrResult ?? {
+            ok: false,
+            stdout: '',
+            stderr: `no pull requests found for ${cmd[3] ?? ''}`,
+          }
+        );
+      }
       return Promise.resolve(
         results.viewResult ?? {
           ok: false,
@@ -339,6 +356,38 @@ function listResultWithCommentPr(): CommandResult {
   return { ok: true, stdout: JSON.stringify([COMMENT_PR]), stderr: '' };
 }
 
+// Task 4: a PR that merged while the reviewer had it open. `gh pr list
+// --state open` no longer returns it, so it exists only behind findRepoPr's
+// `gh pr view` fallback — which is exactly the case that used to 404.
+const MERGED_PR_NUMBER = 43;
+
+function viewResultForMergedPr(): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify({
+      number: MERGED_PR_NUMBER,
+      title: 'Merged out from under the reviewer',
+      url: `https://github.com/example/repo/pull/${MERGED_PR_NUMBER}`,
+      headRefName: 'feature/already-merged',
+      baseRefName: 'main',
+      headRefOid: 'deadbeef43',
+      author: { login: 'someone' },
+      isDraft: false,
+      updatedAt: '2026-08-07T00:00:00Z',
+      state: 'MERGED',
+      isCrossRepository: false,
+      headRepositoryOwner: { login: 'example' },
+      reviewDecision: 'APPROVED',
+      mergeable: null,
+      statusCheckRollup: [],
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+    }),
+    stderr: '',
+  };
+}
+
 // One GitHub REST review comment on COMMENT_PR, shaped per the spec's
 // verified payload facts (docs/superpowers/specs/2026-08-04-review-github-
 // sync-design.md) — `diff_hunk`'s last line keeps its `+` prefix, which
@@ -455,6 +504,7 @@ describe('GET /api/prs', () => {
               author: { login: 'someone' },
               isDraft: false,
               updatedAt: '2026-07-22T00:00:00Z',
+              state: 'OPEN',
               isCrossRepository: true,
               headRepositoryOwner: { login: 'someone-fork-owner' },
               reviewDecision: 'APPROVED',
@@ -490,6 +540,7 @@ describe('GET /api/prs', () => {
         author: 'someone',
         isDraft: false,
         updatedAt: '2026-07-22T00:00:00Z',
+        state: 'OPEN',
         isCrossRepository: true,
         headRepositoryOwner: 'someone-fork-owner',
         reviewDecision: 'APPROVED',
@@ -916,6 +967,47 @@ describe('GET /api/prs/:number/comments', () => {
 
     const res = await fetch(`${baseUrl}/api/prs/999/comments`);
     expect(res.status).toBe(404);
+  });
+
+  // Task 4: the whole point of the fallback. This route used to 404 the
+  // moment the PR merged, taking the reviewer's own staged notes with it.
+  it('still lists a merged PR’s comments, and the drafts staged on it', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner({
+        listResult: listResultWithCommentPr(),
+        viewRepoPrResult: viewResultForMergedPr(),
+        commentsListResult: commentsListResultFor(rawGitHubComment()),
+        reviewThreadsResult: reviewThreadsResultFor(501),
+      }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${MERGED_PR_NUMBER}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/b.ts',
+          line: 5,
+          anchorText: '',
+          body: 'staged before it merged',
+        }),
+      }
+    );
+    expect(addRes.status).toBe(201);
+
+    const res = await fetch(`${baseUrl}/api/prs/${MERGED_PR_NUMBER}/comments`);
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as Array<{ body: string; pending: boolean }>;
+    expect(body.map((c) => c.body).sort()).toEqual([
+      'staged before it merged',
+      'why one?',
+    ]);
   });
 
   it('400s a malformed PR number, without shelling out at all', async () => {
@@ -1585,6 +1677,73 @@ describe('POST /api/prs/:number/review-submit', () => {
       body: JSON.stringify({ verdict: 'approve', body: '' }),
     });
     expect(res.status).toBe(404);
+  });
+
+  // Task 4: GitHub rejects a review on a PR that is no longer open. What
+  // reached the reviewer for it was the reviews endpoint's bare 404; this
+  // pins the message that replaced it, and that the batch stayed on disk.
+  it('409s a merged PR with a message that says so, and posts nothing', async () => {
+    const commandLog: string[][] = [];
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner(
+        {
+          listResult: listResultWithCommentPr(),
+          viewRepoPrResult: viewResultForMergedPr(),
+          commentsListResult: commentsListResultFor(),
+          reviewThreadsResult: reviewThreadsResultFor(0),
+        },
+        [],
+        commandLog
+      ),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const addRes = await fetch(
+      `${baseUrl}/api/prs/${MERGED_PR_NUMBER}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          file: 'src/a.ts',
+          line: 3,
+          anchorText: 'const x = 1;',
+          body: 'why one?',
+        }),
+      }
+    );
+    expect(addRes.status).toBe(201);
+
+    const res = await fetch(
+      `${baseUrl}/api/prs/${MERGED_PR_NUMBER}/review-submit`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ verdict: 'comment', body: 'one more thing' }),
+      }
+    );
+    expect(res.status).toBe(409);
+    const body = (await json(res)) as { error: string };
+    expect(body.error).toBe(
+      `PR #${MERGED_PR_NUMBER} is merged on GitHub, which does not accept ` +
+        'reviews on a pull request that is no longer open. Your 1 staged ' +
+        'comment is still saved here.'
+    );
+    expect(
+      commandLog.some((cmd) =>
+        cmd.some((arg) => /\/pulls\/\d+\/reviews$/.test(arg))
+      )
+    ).toBe(false);
+    // The note is still there to send somewhere else.
+    const after = await fetch(
+      `${baseUrl}/api/prs/${MERGED_PR_NUMBER}/comments`
+    );
+    const kept = (await json(after)) as Array<{ pending: boolean }>;
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.pending).toBe(true);
   });
 
   it('409s when the project lacks the pr capability', async () => {
