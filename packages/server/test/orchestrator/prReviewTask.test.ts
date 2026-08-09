@@ -244,8 +244,17 @@ describe('prNumberFromOrigin', () => {
 // stops equalling the plain path a human declared and the conflict — two
 // tasks scheduled onto one file — goes undetected.
 describe('glob escaping round-trips through conflict detection', () => {
+  // Every ASCII punctuation character a path may legally contain, rather than
+  // the ones escaped today: a character *added* to one list and not the other
+  // is the drift being guarded, so it has to already be under test. `/` is
+  // the separator and excluded — the escapers must never touch it.
+  const PUNCTUATION = '!"#$%&\'()*+,-.:;<=>?@[\\]^_`{|}~'
+    .split('')
+    .map((c) => `x${c}y`)
+    .join('.');
+
   it('conflicts an escaped writes entry with its plain twin', () => {
-    const path = 'app/[id]/(g)/a+b@c!d{e}f|g?h*i\\j.ts';
+    const path = `app/${PUNCTUATION}/route.ts`;
     const writes = buildPrReviewTask(makePr(), [{ path }]).writes ?? [];
 
     // An empty writes-set conflicts with everything, so pin it non-empty or

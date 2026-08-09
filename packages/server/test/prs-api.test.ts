@@ -686,6 +686,41 @@ describe('POST /api/prs/:number/review', () => {
     expect(res.status).toBe(404);
   });
 
+  // The other door to the same GitHub POST. Once findRepoPr resolved closed
+  // PRs, this route stopped 404ing and started reaching GitHub — so it needs
+  // review-submit's refusal too, not just review-submit.
+  it('409s a merged PR by name rather than reaching gh pr review', async () => {
+    const calls: string[][] = [];
+    const scripted = stubRunner({
+      listResult: listResultWithCommentPr(),
+      viewRepoPrResult: viewResultForMergedPr(),
+      reviewResult: { ok: true, stdout: '', stderr: '' },
+    });
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: async (cwd, cmd) => {
+        calls.push(cmd);
+        return scripted(cwd, cmd);
+      },
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/${MERGED_PR_NUMBER}/review`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: 'approve', body: '' }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await json(res)) as { error: string };
+    expect(body.error).toContain(`PR #${MERGED_PR_NUMBER} is merged`);
+    expect(
+      calls.some((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'review')
+    ).toBe(false);
+  });
+
   it('400s a request-changes review with no body, same as the run-keyed route', async () => {
     handle = await startServer({
       rootDir: root,

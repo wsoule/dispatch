@@ -109,10 +109,10 @@ export interface OrchestratorContext {
   // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
-  // How the orchestrator shells out for the one git call it makes itself:
-  // deleting a retired PR review's head ref (see cleanupDerivedAuxRun). Same
-  // seam PrManager/MergeQueue/GitRepo share, so a test stubs git rather than
-  // running it; index.ts hands all four the same runner.
+  // How the orchestrator shells out to delete a retired PR review's head ref
+  // (see cleanupDerivedAuxRun) — its one *async* git call, alongside several
+  // pre-existing synchronous Bun.spawnSync ones. Same seam PrManager /
+  // MergeQueue / GitRepo share, so a test stubs git rather than running it.
   commandRunner?: CommandRunner;
 }
 
