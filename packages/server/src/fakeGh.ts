@@ -211,6 +211,7 @@ export function makeFakeGhRunner(): CommandRunner {
           author: { login: pr.author },
           isDraft: pr.isDraft,
           updatedAt: now,
+          state: pr.state,
           isCrossRepository: false,
           headRepositoryOwner: { login: 'dispatch-demo' },
           reviewDecision: reviewDecision(pr),
@@ -229,9 +230,48 @@ export function makeFakeGhRunner(): CommandRunner {
 
     if (bin === 'gh' && sub === 'pr' && action === 'view') {
       const url = cmd[3];
-      const pr = prs.get(url);
-      if (flagValue(cmd, '--json') === 'state') {
+      // findRepoPr's closed-PR fallback addresses a PR by bare number, every
+      // other caller by url — both resolve against the same map here so the
+      // fallback sees the PR the list would have.
+      const pr =
+        prs.get(url) ?? [...prs.values()].find((p) => String(p.number) === url);
+      const fields = flagValue(cmd, '--json') ?? '';
+      if (fields === 'state') {
         return ok(JSON.stringify({ state: pr?.state ?? 'OPEN' }));
+      }
+      // The RepoPr field set (findRepoPr's fallback) rather than the detail
+      // one — same shape `pr list` reports, so a closed PR resolves here
+      // exactly as an open one does from the list.
+      if (fields.includes('isCrossRepository')) {
+        if (pr === undefined) {
+          return Promise.resolve({
+            ok: false,
+            stdout: '',
+            stderr: `no pull requests found for ${url}`,
+          });
+        }
+        return ok(
+          JSON.stringify({
+            number: pr.number,
+            title: pr.title,
+            url: pr.url,
+            headRefName: pr.headRefName,
+            baseRefName: 'main',
+            headRefOid: `fakesha${pr.number}`,
+            author: { login: pr.author },
+            isDraft: pr.isDraft,
+            updatedAt: now,
+            state: pr.state,
+            isCrossRepository: false,
+            headRepositoryOwner: { login: 'dispatch-demo' },
+            reviewDecision: reviewDecision(pr),
+            mergeable: pr.mergeable,
+            statusCheckRollup: pr.statusCheckRollup,
+            additions: pr.additions,
+            deletions: pr.deletions,
+            changedFiles: pr.changedFiles,
+          })
+        );
       }
       return ok(
         JSON.stringify({

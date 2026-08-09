@@ -257,7 +257,7 @@ export interface PrDetail {
 // the other two require one (enforced at the API layer, mirroring gh itself).
 export type PrReviewEvent = 'approve' | 'request-changes' | 'comment';
 
-// One open PR in the repo, from `gh pr list --json …` — the body of
+// One PR in the repo, from `gh pr list --json …` — the body of
 // `GET /api/prs`. Carries the same status the review UI shows, so the queue
 // renders every row from one batched call instead of a `gh pr view` per PR.
 export interface RepoPr {
@@ -272,6 +272,11 @@ export interface RepoPr {
   updatedAt: string;
   /** Head commit SHA — the `commit_id` GitHub wants when posting a review comment. */
   headRefOid: string;
+  /**
+   * Open on GitHub, or closed/merged. Only an OPEN PR accepts a review, so
+   * pushPrReview reads this to refuse — and say why — before the POST.
+   */
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
   /** True when the head branch lives in a fork; gates Phase 4's confirm. */
   isCrossRepository: boolean;
   /** Login owning the head repository, named in that confirm. */
@@ -284,6 +289,61 @@ export interface RepoPr {
   changedFiles: number;
 }
 
+// The `--json` field set behind every RepoPr. `gh pr list` and `gh pr view`
+// accept the identical set, which is what lets findRepoPr's closed-PR
+// fallback below reuse this one list rather than keep a second copy.
+const REPO_PR_FIELDS =
+  'number,title,url,headRefName,baseRefName,headRefOid,author,isDraft,' +
+  'updatedAt,state,isCrossRepository,headRepositoryOwner,reviewDecision,' +
+  'mergeable,statusCheckRollup,additions,deletions,changedFiles';
+
+// Declared as a readonly array so a membership check against an unvalidated
+// `unknown` payload needs no cast — see findRepoPr's fallback.
+const PR_STATES: readonly RepoPr['state'][] = ['OPEN', 'CLOSED', 'MERGED'];
+
+// Maps one `gh pr list`/`gh pr view --json REPO_PR_FIELDS` payload to a
+// RepoPr. Shared by both verbs so the fallback reads every field — fork-ness
+// above all — off GitHub's own answer rather than a hand-built stand-in.
+function toRepoPr(item: Record<string, unknown>): RepoPr {
+  return {
+    number: Number(item.number ?? 0),
+    title: ghString(item.title),
+    url: ghString(item.url),
+    headRefName: ghString(item.headRefName),
+    baseRefName: ghString(item.baseRefName),
+    author: authorLogin(item.author),
+    isDraft: item.isDraft === true,
+    updatedAt: ghString(item.updatedAt),
+    headRefOid: ghString(item.headRefOid),
+    state: (item.state as RepoPr['state']) ?? 'OPEN',
+    isCrossRepository: item.isCrossRepository === true,
+    headRepositoryOwner: authorLogin(item.headRepositoryOwner),
+    reviewDecision: (item.reviewDecision as RepoPr['reviewDecision']) ?? null,
+    mergeable: (item.mergeable as RepoPr['mergeable']) ?? null,
+    checks: summarizeChecks(item.statusCheckRollup),
+    additions: Number(item.additions ?? 0),
+    deletions: Number(item.deletions ?? 0),
+    changedFiles: Number(item.changedFiles ?? 0),
+  };
+}
+
+// The one wording for a review GitHub will not take because the PR is no
+// longer open. Names the state and says the staged notes are still on disk,
+// so the user reads a reason instead of the reviews endpoint's bare 404.
+// Shared with api.ts's by-number review route, the other door to the same POST.
+export function closedPrReviewMessage(pr: RepoPr, staged: number): string {
+  const word = pr.state === 'MERGED' ? 'merged' : 'closed';
+  const kept =
+    staged === 0
+      ? ''
+      : ` Your ${staged} staged comment${staged === 1 ? ' is' : 's are'} ` +
+        'still saved here.';
+  return (
+    `PR #${pr.number} is ${word} on GitHub, which does not accept reviews ` +
+    `on a pull request that is no longer open.${kept}`
+  );
+}
+
 // The one wording for a refused fork review — shared by fetchPrHead's throw
 // and api.ts's 409, so the same sentence reaches the user wherever the gate
 // happens to fire.
@@ -293,6 +353,48 @@ export function forkConfirmMessage(number: number, owner: string): string {
     'checks that code out and runs it on this machine. Re-send with ' +
     'confirmFork: true to allow it.'
   );
+}
+
+/**
+ * The namespace a PR's head is parked in for review. Fully qualified
+ * deliberately (see fetchPrHead), and the single owner of the name: the
+ * fetch that creates the ref, the delete that retires it, and the API
+ * layer's refusal to review one by name (api/review.ts) all read it here.
+ */
+export const PR_HEAD_REF_PREFIX = 'refs/dispatch/pr/';
+
+// Where a PR's head is parked for review, named once so the fetch that
+// creates the ref and the delete below can never disagree.
+function prHeadRef(number: number): string {
+  return `${PR_HEAD_REF_PREFIX}${number}`;
+}
+
+/**
+ * Removes the ref fetchPrHead created, once the review it was fetched for is
+ * over. Nothing else ever deleted these, so they accumulated forever — and
+ * each one is a standing start-point a worktree could be cut from without
+ * passing the fork gate.
+ *
+ * A free function rather than a PrManager method: the orchestrator retires a
+ * review long after the request that built a PrManager is gone, so it takes
+ * the same injected CommandRunner instead of the manager. requirePrNumber
+ * keeps the target inside `refs/dispatch/pr/` whatever the caller passes.
+ */
+export async function deletePrHeadRef(
+  run: CommandRunner,
+  rootDir: string,
+  number: number
+): Promise<void> {
+  requirePrNumber(number);
+  const ref = prHeadRef(number);
+  // `update-ref -d` without an old value succeeds on a ref that is already
+  // gone, so retiring one review twice is not an error.
+  const result = await run(rootDir, ['git', 'update-ref', '-d', ref]);
+  if (!result.ok) {
+    throw new OrchestratorConflictError(
+      `git update-ref -d ${ref} failed: ${commandErrorText(result)}`
+    );
+  }
 }
 
 // Splits a GitHub PR URL (https://github.com/OWNER/REPO/pull/N) into its
@@ -481,9 +583,7 @@ export class PrManager {
       'pr',
       'list',
       '--json',
-      'number,title,url,headRefName,baseRefName,headRefOid,author,isDraft,' +
-        'updatedAt,isCrossRepository,headRepositoryOwner,reviewDecision,' +
-        'mergeable,statusCheckRollup,additions,deletions,changedFiles',
+      REPO_PR_FIELDS,
       '--state',
       'open',
       '--limit',
@@ -500,25 +600,67 @@ export class PrManager {
     } catch {
       throw new OrchestratorConflictError('gh pr list returned invalid JSON');
     }
-    return raw.map((item) => ({
-      number: Number(item.number ?? 0),
-      title: ghString(item.title),
-      url: ghString(item.url),
-      headRefName: ghString(item.headRefName),
-      baseRefName: ghString(item.baseRefName),
-      author: authorLogin(item.author),
-      isDraft: item.isDraft === true,
-      updatedAt: ghString(item.updatedAt),
-      headRefOid: ghString(item.headRefOid),
-      isCrossRepository: item.isCrossRepository === true,
-      headRepositoryOwner: authorLogin(item.headRepositoryOwner),
-      reviewDecision: (item.reviewDecision as RepoPr['reviewDecision']) ?? null,
-      mergeable: (item.mergeable as RepoPr['mergeable']) ?? null,
-      checks: summarizeChecks(item.statusCheckRollup),
-      additions: Number(item.additions ?? 0),
-      deletions: Number(item.deletions ?? 0),
-      changedFiles: Number(item.changedFiles ?? 0),
-    }));
+    return raw.map((item) => toRepoPr(item));
+  }
+
+  /**
+   * One PR by number, open or not — `null` when the repo has no such PR.
+   *
+   * `gh pr list` above stays `--state open` because it is also the body of
+   * `GET /api/prs`, which the board renders as "Other open PRs": widening
+   * it would fill that triage list (and its 50-row window) with every PR
+   * the repo has ever closed. So the closed case is a second, per-number
+   * `gh pr view` instead, paid only when the list misses.
+   */
+  async findRepoPr(number: number): Promise<RepoPr | null> {
+    requirePrNumber(number);
+    const prs = await this.listRepoPrs();
+    const open = prs.find((p) => p.number === number);
+    if (open !== undefined) return open;
+    const view = await this.run(this.ctx.rootDir, [
+      'gh',
+      'pr',
+      'view',
+      String(number),
+      '--json',
+      REPO_PR_FIELDS,
+    ]);
+    // A PR that does not exist is `gh`'s own failure here, and is the only
+    // thing this reports as a miss — the caller turns it into a 404.
+    if (!view.ok) return null;
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(view.stdout) as Record<string, unknown>;
+    } catch {
+      throw new OrchestratorConflictError('gh pr view returned invalid JSON');
+    }
+    // Everything downstream — the fork gate above all — reads this payload
+    // as the answer for `number`. A different PR would gate on one and act
+    // on another, so a mismatch is refused rather than quietly returned.
+    if (Number(raw.number) !== number) {
+      throw new OrchestratorConflictError(
+        `gh pr view #${number} answered with PR #${String(raw.number)}`
+      );
+    }
+    // isCrossRepository decides whether a stranger's code is checked out and
+    // run on this machine. A payload that does not state it is refused, not
+    // read as same-repo: the permissive default would open the fork gate.
+    if (typeof raw.isCrossRepository !== 'boolean') {
+      throw new OrchestratorConflictError(
+        `gh pr view #${number} did not report isCrossRepository; ` +
+          'refusing to guess whether this PR comes from a fork'
+      );
+    }
+    // toRepoPr defaults a missing `state` to OPEN, which is sound for the
+    // list above (it asks for open PRs only) but not here, where the answer
+    // is the whole reason to make this call.
+    if (!PR_STATES.includes(raw.state as RepoPr['state'])) {
+      throw new OrchestratorConflictError(
+        `gh pr view #${number} reported no usable state ` +
+          `(${String(raw.state)})`
+      );
+    }
+    return toRepoPr(raw);
   }
 
   // Starts the merge poller on `intervalMs` (default 60s per the plan;
@@ -917,7 +1059,7 @@ export class PrManager {
     // Fully qualified, not a bare branch name: an unqualified dest DWIMs to
     // refs/heads/, which would permanently add a branch to Dispatch's own
     // branch UI per review and let `--force` clobber a same-named one.
-    const ref = `refs/dispatch/pr/${pr.number}`;
+    const ref = prHeadRef(pr.number);
     // Force: a re-review after new commits must update `ref`, not fail.
     const fetch = await this.run(this.ctx.rootDir, [
       'git',
@@ -951,15 +1093,12 @@ export class PrManager {
   // Resolves a bare PR number — the form syncPrComments/pushPrReview/
   // fetchPrHead take, straight from a route param — to the RepoPr entry
   // callers need: url (owner/repo), headRefOid (commit_id) and baseRefName
-  // (fetchPrHead's merge-base anchor). Mirrors api.ts's own
-  // resolveRepoPrByNumber; duplicated rather than shared because these
-  // methods, unlike every other PrManager entry point, are given a number
-  // instead of a url and have to do this resolution themselves.
+  // (fetchPrHead's merge-base anchor). Resolves a closed or merged PR too,
+  // via findRepoPr's fallback: its comments are still worth reading, and a
+  // reviewer with staged notes needs a reason rather than a bare 404.
   private async resolvePrForComments(number: number): Promise<RepoPr> {
-    requirePrNumber(number);
-    const prs = await this.listRepoPrs();
-    const pr = prs.find((p) => p.number === number);
-    if (pr === undefined) {
+    const pr = await this.findRepoPr(number);
+    if (pr === null) {
       throw new OrchestratorNotFoundError(`PR not found: #${number}`);
     }
     return pr;
@@ -1079,6 +1218,14 @@ export class PrManager {
     }
 
     const pr = await this.resolvePrForComments(number);
+    // GitHub rejects a review on a PR that is no longer open, so this is
+    // refused here instead — before the POST, and naming the state — so the
+    // reviewer learns the PR closed rather than reading a bare 404.
+    if (pr.state !== 'OPEN') {
+      throw new OrchestratorConflictError(
+        closedPrReviewMessage(pr, unsent.length)
+      );
+    }
     const location = parsePrUrl(pr.url);
     if (location === null) {
       throw new OrchestratorConflictError(`unrecognizable PR url: ${pr.url}`);

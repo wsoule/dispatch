@@ -40,11 +40,14 @@ import {
   worktreePath,
   worktreesDir,
 } from './paths.js';
+import type { CommandRunner } from './pr.js';
+import { defaultCommandRunner, deletePrHeadRef } from './pr.js';
 import {
   buildTaskPrompt,
   renderSurveySection,
   untrustedInline,
 } from './prompt.js';
+import { prNumberFromOrigin } from './prReviewTask.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
 import type { RunDetail } from './transcript.js';
@@ -106,6 +109,11 @@ export interface OrchestratorContext {
   // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
+  // How the orchestrator shells out to delete a retired PR review's head ref
+  // (see cleanupDerivedAuxRun) — its one *async* git call, alongside several
+  // pre-existing synchronous Bun.spawnSync ones. Same seam PrManager /
+  // MergeQueue / GitRepo share, so a test stubs git rather than running it.
+  commandRunner?: CommandRunner;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -184,6 +192,9 @@ export class Orchestrator {
   private readonly registry = new RunRegistry();
   // In-flight scheduled surveys, keyed by run — see surveySettled().
   private readonly scheduledSurveys = new Map<string, Promise<void>>();
+  // In-flight PR-head-ref deletes, keyed by run — see prRefDeleteSettled().
+  private readonly prRefDeletes = new Map<string, Promise<void>>();
+  private readonly runCommand: CommandRunner;
   private readonly worktrees: WorktreeManager;
   // Only ever used on the multi-blocker dispatch path (see resolveBase):
   // constructing it is inert — it shells out to jj lazily, per call — so an
@@ -232,6 +243,7 @@ export class Orchestrator {
     this.claimsRefreshCooldownMs =
       ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
     this.stopEscalationMs = ctx.stopEscalationMs ?? STOP_ESCALATION_MS;
+    this.runCommand = ctx.commandRunner ?? defaultCommandRunner;
   }
 
   // Subscribes to "a run just reached a terminal state" — provisioning ->
@@ -588,6 +600,8 @@ export class Orchestrator {
    * And the task retires here. Nothing else would ever close it: aux runs
    * leave their task alone by design, so it would sit `todo` forever, which
    * both syncers read as outstanding work to mirror out to the team.
+   *
+   * The fetched ref goes too — see schedulePrRefDelete.
    */
   private cleanupDerivedAuxRun(
     runId: string,
@@ -595,6 +609,11 @@ export class Orchestrator {
     derivedFrom: string
   ): void {
     this.worktrees.remove(meta.worktreePath, meta.branch, runId);
+    // Only a PR review names a ref; another artifact type could reach this
+    // method later, and reading a ref name out of its `derivedFrom` is how an
+    // unrelated ref gets deleted. prNumberFromOrigin returns null instead.
+    const prNumber = prNumberFromOrigin(derivedFrom);
+    if (prNumber !== null) this.schedulePrRefDelete(runId, prNumber);
     this.bestEffort(`retiring derived task ${meta.taskId}`, () => {
       const now = new Date().toISOString();
       this.ctx.store.update(
@@ -611,6 +630,42 @@ export class Orchestrator {
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed' });
     });
+  }
+
+  /**
+   * Fire-and-forget delete of a retired review's `refs/dispatch/pr/<n>`.
+   *
+   * Scheduled rather than awaited because every caller of cleanupAuxRun is
+   * synchronous — the review terminal hook, the verify hook, and boot
+   * reconciliation — while the CommandRunner seam every git call must go
+   * through is async. Awaiting would push the same unawaited promise up into
+   * those callers, which have no error containment of their own; here the
+   * rejection is caught and logged, exactly as scheduleSurvey does.
+   *
+   * A leftover ref is untidy; an unretired task is worse — so a failure never
+   * reaches the retirement above, which has already happened either way. The
+   * promise is kept so prRefDeleteSettled can be waited on.
+   */
+  private schedulePrRefDelete(runId: string, number: number): void {
+    const done = deletePrHeadRef(this.runCommand, this.ctx.rootDir, number)
+      .catch((err: unknown) => {
+        console.error(
+          `dispatchd: deleting the head ref of PR #${number} for run ${runId} failed: ${(err as Error).message}`
+        );
+      })
+      .finally(() => {
+        if (this.prRefDeletes.get(runId) === done) {
+          this.prRefDeletes.delete(runId);
+        }
+      });
+    this.prRefDeletes.set(runId, done);
+  }
+
+  // Resolves once a retired review's ref delete has settled, so a caller can
+  // wait on it instead of guessing at how long it takes. Mirrors
+  // surveySettled(); resolves immediately for a run that scheduled none.
+  prRefDeleteSettled(runId: string): Promise<void> {
+    return this.prRefDeletes.get(runId) ?? Promise.resolve();
   }
 
   /**
@@ -2237,6 +2292,9 @@ export class Orchestrator {
     // Runs THIS call just force-failed (not one replayed already-terminal)
     // — the actual crash victims, worth surveying below.
     const crashedRunIds: string[] = [];
+    // Every run hydrated below, terminal or not — the input to the derived
+    // task sweep, which cannot read `pending` because a restart lost it.
+    const bootRuns: RunMeta[] = [];
     if (existsSync(dir)) {
       for (const file of readdirSync(dir)) {
         if (!file.endsWith('.jsonl')) continue;
@@ -2256,6 +2314,7 @@ export class Orchestrator {
             crashedRunIds.push(meta.id);
           }
           this.registry.create(meta);
+          bootRuns.push(meta);
           keepPaths.add(meta.worktreePath);
           keepRunIds.add(meta.id);
         } catch (err) {
@@ -2291,12 +2350,67 @@ export class Orchestrator {
       }
     }
     this.worktrees.pruneOrphans(worktreesDir(this.ctx.rootDir), keepPaths);
+    // Reviews whose daemon restarted mid-flight: nothing in this process is
+    // listening for them, so boot has to be the one that retires them.
+    const retiredRunIds = this.retireLostDerivedRuns(bootRuns);
     this.reconcileArchives();
     // Deferred, not awaited — reconcileOnBoot() stays synchronous, so each
-    // crashed run's worktree is surveyed and upgraded in the background.
+    // crashed run's worktree is surveyed and upgraded in the background. A
+    // retired review's worktree is already gone, and deliberately discarded.
     for (const runId of crashedRunIds) {
+      if (retiredRunIds.has(runId)) continue;
       this.scheduleSurvey(runId);
     }
+  }
+
+  // Retires the derived task of every review run this boot found terminal:
+  // ReviewRunner.ingest keys off an in-memory map a restart loses, so the
+  // durable `derivedFrom` drives this sweep instead. Returns what it retired.
+  //
+  // Per-run bestEffort, like the transcript loop above: one unretirable run
+  // must not take down the rest of the sweep, nor the archive reconcile and
+  // crash surveys reconcileOnBoot() runs after it.
+  private retireLostDerivedRuns(runs: RunMeta[]): Set<string> {
+    const retired = new Set<string>();
+    for (const meta of runs) {
+      if (!TERMINAL_RUN_STATES.has(meta.state)) continue;
+      if (runKind(meta) === 'execute') continue;
+      this.bestEffort(`retiring lost derived run ${meta.id}`, () => {
+        // cache.get, not store.get: an indexed lookup that parses nothing (so
+        // a half-written task file is simply absent, not a throw) and pays no
+        // readdir per run. It carries archived rows, which store.get's
+        // frontmatter and this method's guard below both need.
+        const task = this.ctx.cache.get(meta.taskId);
+        if (task === null || task.meta.derivedFrom === undefined) return;
+        // Already retired by the process that ran the review — skipping keeps
+        // a boot from re-archiving (and re-noting) every derived task there is.
+        if (task.meta.archivedAt !== undefined) return;
+        this.cleanupAuxRun(meta.id);
+        // Recorded before the note, which can throw: the worktree is already
+        // gone, so a crash survey scheduled against it would only fail.
+        retired.add(meta.id);
+        this.noteLostReviewFindings(meta);
+      });
+    }
+    return retired;
+  }
+
+  // A second Activity line for a review only boot retired. cleanupAuxRun's own
+  // note reads like a review that ran its course; this one did not — nothing
+  // ingested its findings, and findings.json outlives the discarded worktree.
+  private noteLostReviewFindings(meta: RunMeta): void {
+    const now = new Date().toISOString();
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        appendActivity: `${now} [run ${meta.id}] the daemon restarted mid-review; its findings were never ingested`,
+        // Mechanical cleanup, not an action anyone asked for by name.
+        activityActor: 'none',
+      },
+      now
+    );
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
   }
 
   private requireRun(runId: string): RunMeta {
