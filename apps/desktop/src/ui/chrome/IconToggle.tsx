@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { Toggle } from '@/ui/toggle';
 
 interface IconToggleProps {
   on: boolean;
@@ -17,6 +18,9 @@ interface IconToggleProps {
  * is one-of-several and always has a selection, while this is a thing that is
  * either on or off. Rendering the second as a one-option group would report the
  * wrong shape to a screen reader.
+ *
+ * Built on radix Toggle, which keeps the plain button/aria-pressed semantics
+ * this already relied on (unlike ToggleGroupItem, which reports radio/aria-checked).
  */
 export function IconToggle({
   on,
@@ -26,21 +30,19 @@ export function IconToggle({
   className,
 }: IconToggleProps) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={on}
+    <Toggle
+      pressed={on}
+      onPressedChange={onClick}
       title={label}
       aria-label={label}
       className={cn(
-        'border-border rounded-md border p-1 transition-colors duration-150',
-        on
-          ? 'bg-accent text-accent-foreground'
-          : 'text-muted-foreground hover:text-foreground',
+        'border-border h-auto min-w-0 rounded-md border p-1 transition-colors duration-150',
+        'data-[state=on]:bg-accent data-[state=on]:text-accent-foreground',
+        'text-muted-foreground hover:bg-transparent hover:text-foreground',
         className
       )}
     >
       {children}
-    </button>
+    </Toggle>
   );
 }
