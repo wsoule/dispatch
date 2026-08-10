@@ -785,7 +785,7 @@ export function PlansView({
           <EmptyState
             icon={History}
             message="No plans started yet this session."
-            className="border-border rounded-lg border border-dashed px-0 py-8 [&_[data-slot=empty-description]]:text-[length:inherit]"
+            className="border-border rounded-lg border border-dashed px-0 py-8 [&_[data-slot=empty-description]]:text-[13px]"
           />
         ) : (
           <div className="flex flex-col gap-1.5">
