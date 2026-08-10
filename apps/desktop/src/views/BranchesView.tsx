@@ -76,6 +76,7 @@ import { Field, FieldLabel } from '@/ui/field';
 import { Input } from '@/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
 import { Kbd } from '@/ui/kbd';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface BranchesViewProps {
   data: DispatchProjectData;
@@ -590,14 +591,19 @@ export function BranchesView({
             <GitBranchIcon className="size-3.5" />
             Dispatch agent
           </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            title="Keyboard shortcuts (?)"
-            onClick={() => setKeymapOpen(true)}
-          >
-            <HelpCircle className="size-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Keyboard shortcuts (?)"
+                onClick={() => setKeymapOpen(true)}
+              >
+                <HelpCircle className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Keyboard shortcuts (?)</TooltipContent>
+          </Tooltip>
           <Button
             variant="ghost"
             size="sm"

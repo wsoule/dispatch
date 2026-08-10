@@ -46,6 +46,7 @@ import {
   Sidebar as SidebarRoot,
   useSidebar,
 } from '@/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 // `board` hosts both the Kanban and dense-list layouts behind its own in-view toggle now (see
 // `BoardView`), so it gets one "Tasks" row rather than the old separate Board/Tasks pair —
@@ -438,7 +439,7 @@ export function Sidebar({
                 return (
                   <SidebarMenuItem key={view.id}>
                     <SidebarMenuButton
-                      title={view.label}
+                      tooltip={view.label}
                       aria-label={collapsed ? view.label : undefined}
                       isActive={active}
                       disabled={!hasActiveProject}
@@ -483,7 +484,7 @@ export function Sidebar({
           <SidebarMenu className="gap-0.5">
             <SidebarMenuItem>
               <SidebarMenuButton
-                title="Notifications"
+                tooltip="Notifications"
                 aria-label={
                   collapsed
                     ? `Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`
@@ -516,7 +517,7 @@ export function Sidebar({
               return (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
-                    title={item.label}
+                    tooltip={item.label}
                     aria-label={collapsed ? item.label : undefined}
                     isActive={active}
                     onClick={() => onSetGlobalView(item.id)}
@@ -576,21 +577,27 @@ export function Sidebar({
               <Kbd className={FOOTER_HINT_CLASS}>⌘K</Kbd> to jump anywhere
             </span>
           )}
-          <button
-            type="button"
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-expanded={!collapsed}
-            aria-controls="dispatch-sidebar"
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            onClick={() => toggleSidebar()}
-            className="text-muted-foreground hover:bg-accent hover:text-foreground flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-150"
-          >
-            {collapsed ? (
-              <ChevronRight className="size-4" />
-            ) : (
-              <ChevronLeft className="size-4" />
-            )}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                aria-expanded={!collapsed}
+                aria-controls="dispatch-sidebar"
+                onClick={() => toggleSidebar()}
+                className="text-muted-foreground hover:bg-accent hover:text-foreground flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-150"
+              >
+                {collapsed ? (
+                  <ChevronRight className="size-4" />
+                ) : (
+                  <ChevronLeft className="size-4" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </SidebarFooter>
     </SidebarRoot>

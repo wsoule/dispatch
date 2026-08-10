@@ -6,6 +6,7 @@ import { buildFeed } from '../../lib/controlRoom';
 import { FEED_STATE_LABEL, FEED_STATE_ORDER } from '../../lib/feedState';
 import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface MiniOverviewProps {
   data: DispatchProjectData;
@@ -70,17 +71,21 @@ export function MiniOverview({
 
   if (!open) {
     return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        onClick={onToggle}
-        aria-label="Show the overview rail"
-        title="Show the overview rail"
-        className="text-muted-foreground border-border h-auto shrink-0 rounded-none border-l p-2"
-      >
-        <PanelRightOpen className="size-4" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={onToggle}
+            aria-label="Show the overview rail"
+            className="text-muted-foreground border-border h-auto shrink-0 rounded-none border-l p-2"
+          >
+            <PanelRightOpen className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="left">Show the overview rail</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -88,17 +93,21 @@ export function MiniOverview({
     <aside className="border-border flex w-60 shrink-0 flex-col gap-3 overflow-y-auto border-l p-3">
       <div className="flex items-center gap-2">
         <span className="dense-label flex-1">Overview</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          onClick={onToggle}
-          aria-label="Hide the overview rail"
-          title="Hide the overview rail"
-          className="text-muted-foreground h-auto p-0.5"
-        >
-          <PanelRightClose className="size-3.5" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={onToggle}
+              aria-label="Hide the overview rail"
+              className="text-muted-foreground h-auto p-0.5"
+            >
+              <PanelRightClose className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Hide the overview rail</TooltipContent>
+        </Tooltip>
       </div>
 
       {groups.length === 0 ? (
