@@ -232,7 +232,8 @@ export function createDemoServer(
       }
       // `alive` and `ws` deliberately do not touch: the overlay polls the first
       // every 30s and connectEvents reconnects the second forever, so either
-      // would keep an abandoned tab's sandbox alive. Real use hits /api/*.
+      // would keep an abandoned tab's sandbox alive. Real use hits /api/*,
+      // minus the one poll excluded below.
       if (parsed.kind === 'alive') {
         return new Response(null, {
           status: 200,
@@ -253,7 +254,10 @@ export function createDemoServer(
         return upgraded ? undefined : json({ error: 'upgrade-failed' }, 400);
       }
 
-      manager.touch(parsed.id);
+      // The SyncChip polls GET /api/sync every few seconds unprompted, so it
+      // is background noise, not activity — same reasoning as `alive` above.
+      const idlePoll = req.method === 'GET' && parsed.rest === '/api/sync';
+      if (!idlePoll) manager.touch(parsed.id);
       if (parsed.kind === 'html') return sessionPage(req, parsed.id, session);
 
       try {
