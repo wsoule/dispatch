@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { injectDemoHtml } from './inject.js';
 import { parseSessionPath, proxyHttp } from './proxy.js';
+import { RateLimiter } from './rateLimit.js';
 import {
   DEFAULT_SESSIONS_DIR,
   type Session,
@@ -18,11 +19,17 @@ export interface DemoServerOptions {
   /** The desktop Vite bundle; its index.html is what /s/<id>/ serves. */
   distDir: string;
   port?: number;
+  /** POST /session creates allowed per IP per minute; env DEMO_CREATES_PER_MINUTE. */
+  createsPerMinute?: number;
+  /** Concurrent upstream WS a session's bridge allows; env DEMO_WS_PER_SESSION. */
+  wsPerSession?: number;
 }
 
-// Per-socket state for the WS bridge: the daemon port to dial, the token the
-// page put in the query, and the upstream socket once open() has dialed it.
+// Per-socket state for the WS bridge: which session it belongs to (for the
+// per-session cap), the daemon port to dial, the token the page put in the
+// query, and the upstream socket once open() has dialed it.
 interface BridgeData {
+  id: string;
   port: number;
   token: string | null;
   upstream?: WebSocket;
@@ -84,6 +91,16 @@ function publicOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
+// The address the creation throttle keys on: the first hop of X-Forwarded-For
+// (trusted the same way publicOrigin trusts Railway's edge to set it) with a
+// direct-connection fallback to the TCP peer for local/non-proxied runs.
+function clientIp(req: Request, server: Bun.Server<BridgeData>): string {
+  const xff = req.headers.get('x-forwarded-for');
+  const first = xff?.split(',')[0]?.trim();
+  if (first !== undefined && first !== '') return first;
+  return server.requestIP(req)?.address ?? 'unknown';
+}
+
 // Maps a request path to a file inside `dir`, or null if it escapes. Containment
 // is asserted, not assumed — see apps/site/server.ts for why URL() is unsafe here.
 function resolveInDir(dir: string, pathname: string): string | null {
@@ -109,6 +126,15 @@ export function createDemoServer(
 ): Bun.Server<BridgeData> {
   const { manager } = opts;
   const distDir = resolve(opts.distDir);
+  const createThrottle = new RateLimiter({
+    limit:
+      opts.createsPerMinute ?? Number(process.env.DEMO_CREATES_PER_MINUTE ?? 6),
+  });
+  const wsPerSession =
+    opts.wsPerSession ?? Number(process.env.DEMO_WS_PER_SESSION ?? 4);
+  // Concurrent upstream WS currently open per session id; incremented/decremented
+  // in the bridge's open/close below, never touched from the fetch handler.
+  const wsCounts = new Map<string, number>();
 
   // Serves the desktop bundle's index.html with the session's tokens injected.
   // no-store because those tokens are per-session credentials.
@@ -156,6 +182,9 @@ export function createDemoServer(
 
       if (pathname === '/session') {
         if (req.method !== 'POST') return json({ error: 'method' }, 405);
+        if (!createThrottle.allow(clientIp(req, server))) {
+          return json({ error: 'rate-limited' }, 429);
+        }
         try {
           const session = await manager.create();
           return json({ id: session.id }, 201);
@@ -202,8 +231,12 @@ export function createDemoServer(
         });
       }
       if (parsed.kind === 'ws') {
+        if ((wsCounts.get(parsed.id) ?? 0) >= wsPerSession) {
+          return json({ error: 'ws-cap' }, 429);
+        }
         const upgraded = server.upgrade(req, {
           data: {
+            id: parsed.id,
             port: session.port,
             token: new URL(req.url).searchParams.get('token'),
           },
@@ -229,6 +262,7 @@ export function createDemoServer(
     },
     websocket: {
       open(ws) {
+        wsCounts.set(ws.data.id, (wsCounts.get(ws.data.id) ?? 0) + 1);
         const upstream = new WebSocket(
           `ws://127.0.0.1:${ws.data.port}/ws?token=${encodeURIComponent(ws.data.token ?? '')}`
         );
@@ -248,6 +282,9 @@ export function createDemoServer(
       message() {},
       close(ws) {
         ws.data.upstream?.close();
+        const next = (wsCounts.get(ws.data.id) ?? 1) - 1;
+        if (next <= 0) wsCounts.delete(ws.data.id);
+        else wsCounts.set(ws.data.id, next);
       },
     },
   });
