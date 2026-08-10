@@ -65,7 +65,7 @@ export function conflictIn(cwd: string, file: string): void {
 
 // Task files are named `<id>-<slug>.md` (see board.ts's writeTasks); a caller
 // only knows the id, so resolve the actual filename before editing it.
-export function findTaskFile(cwd: string, taskId: string): string {
+function findTaskFile(cwd: string, taskId: string): string {
   const dir = join(cwd, '.dispatch', 'tasks');
   const file = readdirSync(dir).find((f) => f.startsWith(`${taskId}-`));
   if (file === undefined) {

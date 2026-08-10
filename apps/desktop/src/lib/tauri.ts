@@ -29,14 +29,14 @@ function browserParam(name: string): string | null {
 // Injected by the web demo's session manager into the served index.html
 // (mirrors dispatchd's own __DISPATCH_DAEMON_TOKEN__ injection). Present only
 // on the hosted demo; undefined in the desktop app and plain vite dev.
-export interface DemoConfig {
+interface DemoConfig {
   baseUrl: string;
   root: string;
   agentToken: string;
   appToken: string | null;
 }
 
-export function injectedDemoConfig(): DemoConfig | undefined {
+function injectedDemoConfig(): DemoConfig | undefined {
   const value = (globalThis as { __DISPATCH_DEMO__?: unknown })
     .__DISPATCH_DEMO__;
   if (typeof value !== 'object' || value === null) return undefined;
