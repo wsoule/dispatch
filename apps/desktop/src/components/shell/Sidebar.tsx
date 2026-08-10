@@ -329,8 +329,9 @@ export function Sidebar({
               onOpenChange={() => onToggleSwitcher()}
             >
               <DropdownMenuTrigger asChild>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   title={projectPath ?? projectName}
                   aria-label={
                     collapsed
@@ -338,8 +339,10 @@ export function Sidebar({
                       : undefined
                   }
                   className={cn(
-                    'text-foreground hover:bg-accent flex items-center rounded-md py-1.5 text-left text-[13px] font-medium transition-colors duration-150',
-                    collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2'
+                    'h-auto rounded-md py-1.5 text-left text-[13px] font-medium text-foreground hover:text-foreground transition-colors duration-150',
+                    collapsed
+                      ? 'w-full px-0 has-[>svg]:px-0'
+                      : 'w-full justify-start px-2 has-[>svg]:px-2'
                   )}
                 >
                   <span
@@ -354,7 +357,7 @@ export function Sidebar({
                       <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
                     </>
                   )}
-                </button>
+                </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
                 <DropdownMenuItem disabled className="text-muted-foreground">
@@ -583,20 +586,22 @@ export function Sidebar({
           )}
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 aria-expanded={!collapsed}
                 aria-controls="dispatch-sidebar"
                 onClick={() => toggleSidebar()}
-                className="text-muted-foreground hover:bg-accent hover:text-foreground flex shrink-0 items-center justify-center rounded-md p-1 transition-colors duration-150"
+                className="text-muted-foreground hover:text-foreground shrink-0 transition-colors duration-150"
               >
                 {collapsed ? (
                   <ChevronRight className="size-4" />
                 ) : (
                   <ChevronLeft className="size-4" />
                 )}
-              </button>
+              </Button>
             </TooltipTrigger>
             <TooltipContent side="right">
               {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
