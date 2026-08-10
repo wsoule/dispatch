@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { Progress } from '@/ui/progress';
 
 interface ProgressTrackProps {
   /**
@@ -22,21 +23,21 @@ export function ProgressTrack({ value, className, label }: ProgressTrackProps) {
     ? 100
     : Math.round(Math.min(1, Math.max(0, value)) * 100);
   return (
-    <div
-      role="progressbar"
+    // Progress never forwards `value` to its Radix root, so its own aria attrs
+    // stay stuck on "indeterminate"; pass ours through explicitly to override.
+    <Progress
+      value={pct}
       aria-label={label}
       aria-valuenow={indeterminate ? undefined : pct}
       aria-valuemin={0}
       aria-valuemax={100}
-      className={cn('bg-border h-0.5 w-full overflow-hidden', className)}
-    >
-      <div
-        className={cn(
-          'bg-state-working h-full',
-          indeterminate && 'motion-safe:animate-pulse'
-        )}
-        style={{ width: `${pct}%` }}
-      />
-    </div>
+      className={cn(
+        'bg-border h-0.5 w-full overflow-hidden rounded-none',
+        '[&>[data-slot=progress-indicator]]:bg-state-working [&>[data-slot=progress-indicator]]:transition-none',
+        indeterminate &&
+          '[&>[data-slot=progress-indicator]]:motion-safe:animate-pulse',
+        className
+      )}
+    />
   );
 }
