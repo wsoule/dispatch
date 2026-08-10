@@ -220,7 +220,7 @@ export function EpicCardTile({
         {error !== null && (
           <Alert
             variant="destructive"
-            className="bg-destructive/10 flex items-center gap-1.5 rounded-md border-0 px-2 py-1 text-[11px] [&>svg]:translate-y-0"
+            className="bg-destructive/10 flex items-center gap-1.5 rounded-md border-0 px-2 py-1 text-[11px] has-[>svg]:gap-x-1.5 [&>svg]:translate-y-0"
           >
             <AlertCircle className="size-3 shrink-0" />
             <AlertDescription className="truncate text-[11px]">
