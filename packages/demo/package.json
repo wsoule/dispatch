@@ -5,6 +5,9 @@
     "demo": "./src/cli.ts"
   },
   "type": "module",
+  "exports": {
+    "./repo": "./src/repo.ts"
+  },
   "scripts": {
     "tsc": "tsc --noEmit",
     "test": "bun test",
