@@ -5,6 +5,7 @@ import { RunStatePill } from '../components/runs/RunStatePill';
 import { ErrorBoundary } from '../components/shell/ErrorBoundary';
 import type { TaskDetailPanelProps } from '../components/tasks/detail';
 import { TaskDetailPanel } from '../components/tasks/detail';
+import { TaskChatTab } from '../components/tasks/TaskChatTab';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import { formatRelativeTimeFromIso } from '../lib/format';
@@ -30,8 +31,8 @@ export interface TaskViewProps {
 
 /**
  * One task, full-window, with Details/Chat/Diff tabs. Details hosts the same
- * `TaskDetailPanel` the peek dialog uses; Chat and Diff are placeholders here
- * (Tasks 5-6 fill them in) so the shell is shippable and testable alone.
+ * `TaskDetailPanel` the peek dialog uses; Chat hosts `TaskChatTab`; Diff is
+ * still a placeholder here (Task 6 fills it in).
  */
 export function TaskView({
   data,
@@ -122,9 +123,12 @@ export function TaskView({
           </div>
         )}
         {tab === 'chat' && (
-          <div className="text-muted-foreground flex h-full items-center justify-center text-[13px]">
-            Coming in the next task.
-          </div>
+          <TaskChatTab
+            data={data}
+            doc={doc}
+            selectedRun={selectedRun}
+            onDispatch={() => void data.handleDispatch(doc.meta.id)}
+          />
         )}
         {tab === 'diff' && (
           <div className="text-muted-foreground flex h-full items-center justify-center text-[13px]">
