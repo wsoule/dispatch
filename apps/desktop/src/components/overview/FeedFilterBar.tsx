@@ -1,6 +1,8 @@
 import { Search } from 'lucide-react';
 
 import type { FeedState } from '@/lib/feedState';
+import { Button } from '@/ui/button';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
 
 interface FeedFilterBarProps {
   query: string;
@@ -34,15 +36,21 @@ export function FeedFilterBar({
 }: FeedFilterBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="shadow-hairline flex w-64 items-center gap-2 rounded-md px-2.5">
-        <Search className="text-muted-foreground size-3.5 shrink-0" />
-        <input
+      {/* `shadow-[var(--hairline)]`, not `shadow-hairline` — twMerge can't see the
+          custom token as the same "shadow" group as InputGroup's own `shadow-xs`, so
+          the arbitrary-value form is what actually overrides it (DispatchDialog
+          precedent). Border and focus-ring are neutralized the same way. */}
+      <InputGroup className="h-auto w-64 gap-2 rounded-md border-0 bg-transparent px-2.5 shadow-[var(--hairline)] outline-none has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent">
+        <InputGroupAddon className="p-0">
+          <Search className="text-muted-foreground size-3.5 shrink-0" />
+        </InputGroupAddon>
+        <InputGroupInput
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           placeholder="Filter by task, id or epic"
-          className="text-foreground min-w-0 flex-1 bg-transparent py-1.5 text-[12.5px] outline-none"
+          className="text-foreground h-auto px-0 py-1.5 text-[12.5px] md:text-[12.5px]"
         />
-      </div>
+      </InputGroup>
 
       {/* The per-state chips used to live here as well as on the ribbon
           above — two controls, the same counts, the same activeStates, stacked
@@ -51,24 +59,29 @@ export function FeedFilterBar({
           the filter is hiding, and collapse-all. */}
       <span className="flex-1" />
       {activeStates.size > 0 && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={onClearStates}
-          className="text-muted-foreground hover:text-foreground rounded-md px-2 py-1.5 text-[12px]"
+          // Ghost's hover bg/transition are neutralized — the old button had neither.
+          className="text-muted-foreground hover:text-foreground h-auto rounded-md px-2 py-1.5 text-[12px] font-normal transition-none hover:bg-transparent dark:hover:bg-transparent"
         >
           Clear filter
-        </button>
+        </Button>
       )}
       <span className="dense-meta">
         {shown} of {total} shown
       </span>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="xs"
         onClick={onToggleCollapseAll}
-        className="text-muted-foreground hover:bg-muted/50 hover:text-foreground rounded-md px-2.5 py-1.5 text-[12px] transition-colors duration-150"
+        className="text-muted-foreground hover:bg-muted/50 hover:text-foreground dark:hover:bg-muted/50 h-auto rounded-md px-2.5 py-1.5 text-[12px] font-normal transition-colors duration-150"
       >
         {allCollapsed ? 'Expand all' : 'Collapse all'}
-      </button>
+      </Button>
     </div>
   );
 }
