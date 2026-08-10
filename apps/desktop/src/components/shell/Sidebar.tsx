@@ -17,7 +17,7 @@ import {
   Radar,
   Waypoints,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { colorForProject } from '../../lib/projectColor';
@@ -99,12 +99,8 @@ interface ProjectViewGroup {
   entries: { view: (typeof PROJECT_VIEWS)[number]; index: number }[];
 }
 
-/**
- * `PROJECT_VIEWS` cut into its stages, one `SidebarGroup` each.
- *
- * The index travels with the entry because it is the cmd+N number: it counts across the whole
- * rail, so it must not restart at each stage.
- */
+// `PROJECT_VIEWS` cut into its stages, one `SidebarGroup` each. The index travels with the entry
+// because it is the cmd+N number, which counts across the whole rail rather than per stage.
 const PROJECT_VIEW_GROUPS: ProjectViewGroup[] = [];
 PROJECT_VIEWS.forEach((view, index) => {
   const current = PROJECT_VIEW_GROUPS[PROJECT_VIEW_GROUPS.length - 1];
@@ -147,7 +143,10 @@ export function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
       collapsed ? '1' : '0'
     );
   }, [collapsed]);
-  return [collapsed, setCollapsed];
+  // A plain setter, not React's raw one: `SidebarProvider` always hands back a resolved
+  // open/closed value, so the updater overload is not part of this hook's contract.
+  const set = useCallback((next: boolean) => setCollapsed(next), []);
+  return [collapsed, set];
 }
 
 // `SidebarMenuButton` ships 14px rows on a fixed 2rem grid, a 2rem square in icon mode, and its
@@ -312,7 +311,10 @@ export function Sidebar({
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="gap-0">
+      {/* The block stops the rail scrolling once it is an icon strip; the rail has always
+          scrolled in both modes, and at the window's 660px minimum the footer is reachable
+          only if it still does. */}
+      <SidebarContent className="gap-0 group-data-[collapsible=icon]:overflow-auto">
         <SidebarGroup className="p-0">
           {!collapsed && (
             <SidebarGroupLabel className={cn(SECTION_LABEL_CLASS, 'pt-1')}>

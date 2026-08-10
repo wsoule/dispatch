@@ -121,6 +121,49 @@ test('the collapse button still announces the rail it controls', () => {
   ).toBe('false');
 });
 
+// The rail no longer owns its collapsed state; the button reaches the provider through
+// `useSidebar().toggleSidebar`, so this asserts what the provider is actually told.
+test('the collapse button reports the new open state to the provider', () => {
+  const seen: boolean[] = [];
+  render(
+    <SidebarProvider open onOpenChange={(open) => seen.push(open)}>
+      <Sidebar {...props} />
+    </SidebarProvider>
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+  expect(seen).toEqual([false]);
+});
+
+// The whole seam end to end, wired the way App wires it: button → provider → persistence → the
+// rail rendering as an icon strip.
+test('collapsing the rail persists the choice and flips the rail', () => {
+  function Shell() {
+    const [collapsed, setCollapsed] = useSidebarCollapsed();
+    return (
+      <SidebarProvider
+        open={!collapsed}
+        onOpenChange={(open) => setCollapsed(!open)}
+      >
+        <Sidebar {...props} />
+      </SidebarProvider>
+    );
+  }
+
+  window.localStorage.removeItem('dispatch:sidebar-collapsed');
+  render(<Shell />);
+  fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+  expect(window.localStorage.getItem('dispatch:sidebar-collapsed')).toBe('1');
+  expect(screen.queryByText('⌘K')).toBeNull();
+  expect(
+    screen.getByRole('button', { name: 'Overview' }).getAttribute('aria-label')
+  ).toBe('Overview');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+  expect(window.localStorage.getItem('dispatch:sidebar-collapsed')).toBe('0');
+  expect(screen.getByText('⌘K')).toBeTruthy();
+  window.localStorage.removeItem('dispatch:sidebar-collapsed');
+});
+
 // The key and its '1'/'0' encoding are a stored-state contract with every install that already
 // has a preference written — a rename or a re-encoding silently expands everyone's rail once.
 test('the collapsed preference round-trips through its long-standing key', () => {
