@@ -34,7 +34,8 @@ export class SessionCapError extends Error {
   }
 }
 
-const DEFAULT_SESSIONS_DIR = join(tmpdir(), 'dispatch-demo-sessions');
+/** Where every session sandbox lands; server.ts checks it is writable at boot. */
+export const DEFAULT_SESSIONS_DIR = join(tmpdir(), 'dispatch-demo-sessions');
 const DEFAULT_DAEMON_PATH = join(import.meta.dir, 'daemon.ts');
 const SWEEP_INTERVAL_MS = 60_000;
 const STDOUT_TIMEOUT_MS = 20_000;
