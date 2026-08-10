@@ -127,19 +127,23 @@ export function TaskView({
           </div>
         )}
         {tab === 'chat' && (
-          <TaskChatTab
-            data={data}
-            doc={doc}
-            selectedRun={selectedRun}
-            onDispatch={() => void data.handleDispatch(doc.meta.id)}
-          />
+          <ErrorBoundary label="this tab">
+            <TaskChatTab
+              data={data}
+              doc={doc}
+              selectedRun={selectedRun}
+              onDispatch={() => void data.handleDispatch(doc.meta.id)}
+            />
+          </ErrorBoundary>
         )}
         {tab === 'diff' && (
-          <TaskDiffTab
-            data={data}
-            selectedRun={selectedRun}
-            onViewPr={onViewPr}
-          />
+          <ErrorBoundary label="this tab">
+            <TaskDiffTab
+              data={data}
+              selectedRun={selectedRun}
+              onViewPr={onViewPr}
+            />
+          </ErrorBoundary>
         )}
       </div>
     </div>
