@@ -8,9 +8,8 @@ export interface ParsedSessionPath {
   rest: string;
 }
 
-// Rewrites /s/<id>/(api/…|ws|alive|) into the route kind the server should
-// dispatch on. Returns null for anything that isn't a well-formed session
-// path (wrong id shape, or a suffix none of the known routes own).
+// Rewrites /s/<id>/(api/…|ws|alive|) into the route kind to dispatch on;
+// null for a bad id shape or a suffix none of the known routes own.
 export function parseSessionPath(pathname: string): ParsedSessionPath | null {
   const match = SESSION_PATH.exec(pathname);
   if (match === null) return null;
@@ -23,12 +22,8 @@ export function parseSessionPath(pathname: string): ParsedSessionPath | null {
   return null;
 }
 
-/**
- * Forward an /s/<id>/api/* request to the session daemon on 127.0.0.1:port.
- * Strips Origin (the daemon hard-403s non-localhost origins on non-GET
- * requests) and Host (fetch sets its own for the loopback target); preserves
- * method, body, and auth headers; never follows redirects itself.
- */
+// Forwards a request to the session daemon on 127.0.0.1:port, stripping
+// Origin (daemon 403s non-localhost origins) and Host; never follows redirects.
 export async function proxyHttp(
   req: Request,
   port: number,
@@ -44,8 +39,7 @@ export async function proxyHttp(
     method: req.method,
     headers,
     body: hasBody ? req.body : undefined,
-    // Required by fetch whenever body is a ReadableStream (streaming a
-    // request body implies the request "reads" while it "writes").
+    // WHATWG fetch requires duplex on a streamed body; portability, not a fix.
     ...(hasBody ? { duplex: 'half' as const } : {}),
     redirect: 'manual',
   });
