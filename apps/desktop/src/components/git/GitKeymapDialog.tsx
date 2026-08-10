@@ -1,4 +1,5 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/ui/dialog';
+import { Kbd } from '@/ui/kbd';
 
 const ENTRIES: [string, string][] = [
   ['1 .. 5', 'Focus Status / Files / Branches / Commits / Stashes'],
@@ -36,7 +37,9 @@ export function GitKeymapDialog({ open, onClose }: GitKeymapDialogProps) {
         <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-[12px]">
           {ENTRIES.map(([key, label]) => (
             <div key={key} className="contents">
-              <dt className="text-muted-foreground font-mono">{key}</dt>
+              <dt>
+                <Kbd className="font-mono">{key}</Kbd>
+              </dt>
               <dd>{label}</dd>
             </div>
           ))}

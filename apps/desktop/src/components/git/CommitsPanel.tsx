@@ -2,6 +2,7 @@ import type { GitLogEntry } from '@dispatch/client';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 
 interface CommitsPanelProps {
   commits: GitLogEntry[];
@@ -32,13 +33,14 @@ export function CommitsPanel({
   return (
     <div className="flex flex-col">
       {commits.map((commit, index) => (
-        <button
+        <Button
           key={commit.sha}
           type="button"
+          variant="ghost"
           data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
           className={cn(
-            'flex flex-col gap-0.5 px-3 py-1.5 text-left text-[12px]',
+            'h-auto flex-col items-start justify-start gap-0.5 rounded-none px-3 py-1.5 text-left text-[12px] font-normal hover:text-inherit',
             index === selectedIndex ? 'bg-accent' : 'hover:bg-muted/50'
           )}
         >
@@ -48,7 +50,7 @@ export function CommitsPanel({
             <span className="truncate">{commit.author}</span>
             <span>{formatRelativeTimeFromIso(commit.date)}</span>
           </span>
-        </button>
+        </Button>
       ))}
     </div>
   );
