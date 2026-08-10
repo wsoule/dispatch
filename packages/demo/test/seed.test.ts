@@ -117,6 +117,24 @@ describe('seedSession', () => {
     }
   });
 
+  // The board syncer captures refs/remotes/origin/<trunk> before its first
+  // pull and, when that pull rebase-conflicts, materializes the bystander
+  // files from it. A repo that only ever pushed has no such ref, so that one
+  // cycle would drop whatever else trunk had picked up.
+  test('the owner clone has remote-tracking refs, not just pushed branches', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'demo-session-refs-'));
+    const paths = seedSession(dir);
+
+    expect(
+      git(paths.root, 'rev-parse', 'refs/remotes/origin/main').trim()
+    ).toBe(git(paths.root, 'rev-parse', 'refs/heads/main').trim());
+    for (const branch of listSeededBranches(paths.root, paths.home)) {
+      expect(() =>
+        git(paths.root, 'rev-parse', `refs/remotes/origin/${branch}`)
+      ).not.toThrow();
+    }
+  });
+
   test('sessionPaths derives the fixed sub-paths under dir', () => {
     const paths = sessionPaths('/tmp/demo-session-xyz');
     expect(paths.dir).toBe('/tmp/demo-session-xyz');

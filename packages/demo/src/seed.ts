@@ -81,6 +81,9 @@ export function seedSession(dir: string): SessionPaths {
     paths.root,
     listSeededBranches(paths.root, paths.home)
   );
+  // Pushing alone never creates refs/remotes/origin/*, and the board syncer's
+  // first cycle reads refs/remotes/origin/<trunk> to rescue a pulled commit.
+  git(paths.root, 'fetch', '-q', 'origin');
 
   return paths;
 }
