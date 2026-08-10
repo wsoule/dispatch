@@ -78,7 +78,7 @@ export function AiTaskComposer({
               {error !== null && (
                 <Alert
                   variant="destructive"
-                  className="border-destructive/30 bg-destructive/10 flex items-center gap-2 rounded-md px-3 py-2 text-[13px] [&>svg]:translate-y-0"
+                  className="border-destructive/30 bg-destructive/10 flex items-center gap-2 rounded-md px-3 py-2 text-[13px] has-[>svg]:gap-x-2 [&>svg]:translate-y-0"
                 >
                   <CircleAlert className="size-4 shrink-0" />
                   <span>{error}</span>

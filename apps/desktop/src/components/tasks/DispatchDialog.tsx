@@ -72,7 +72,13 @@ export function DispatchDialog({
         if (!open) onCancel();
       }}
     >
-      <DialogContent className="bg-card shadow-hairline-strong w-[min(560px,100%)] gap-0 rounded-xl border-none p-5 sm:max-w-[560px]">
+      {/* `shadow-hairline-strong` is a theme-scale token (tailwind.css), not one of
+          twMerge's built-in shadow names, so it can't dedupe against DialogContent's
+          own `shadow-lg` — both classes would survive and `shadow-lg` would win in the
+          compiled CSS. Spelling it out as `shadow-[inset_0_0_0_1px_var(--border-strong)]`
+          (the value `--hairline-strong` resolves to, see tokens.css) is recognized by
+          twMerge as the same "shadow" group as `shadow-lg`, so it actually overrides it. */}
+      <DialogContent className="bg-card w-[min(560px,100%)] gap-0 rounded-xl border-none p-5 shadow-[inset_0_0_0_1px_var(--border-strong)] sm:max-w-[560px]">
         <DialogTitle className="text-[17px] leading-none font-medium">
           {title}
         </DialogTitle>
