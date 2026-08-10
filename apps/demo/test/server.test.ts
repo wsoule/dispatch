@@ -324,4 +324,78 @@ describe('demo server routes', () => {
       expect(res.status).toBe(404);
     });
   });
+
+  test('POST /session is throttled per IP once the per-minute cap is hit', async () => {
+    const manager = stubManager({
+      create: () => Promise.resolve(fakeSession(1234)),
+    });
+    const server = createDemoServer({
+      manager,
+      distDir: '/nonexistent',
+      port: 0,
+      createsPerMinute: 1,
+    });
+    try {
+      const base = origin(server);
+      const first = await fetch(`${base}/session`, { method: 'POST' });
+      expect(first.status).toBe(201);
+      const second = await fetch(`${base}/session`, { method: 'POST' });
+      expect(second.status).toBe(429);
+      expect(((await second.json()) as { error: string }).error).toBe(
+        'rate-limited'
+      );
+    } finally {
+      void server.stop(true);
+    }
+  });
+
+  test('the per-session ws cap allows up to N concurrent upstream sockets, rejects the next', async () => {
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: (req, server) =>
+        server.upgrade(req) ? undefined : new Response('no', { status: 400 }),
+      websocket: {
+        open: (ws) => {
+          ws.send('hello');
+        },
+        message: () => {},
+      },
+    });
+    const manager = stubManager({
+      get: (id: string) =>
+        id === ID ? fakeSession(upstream.port as number) : undefined,
+    });
+    const server = createDemoServer({
+      manager,
+      distDir: '/nonexistent',
+      port: 0,
+      wsPerSession: 1,
+    });
+    try {
+      const base = origin(server);
+      const firstOpen = Promise.withResolvers<void>();
+      const first = new WebSocket(
+        `${base.replace('http', 'ws')}/s/${ID}/ws?token=t`
+      );
+      first.onmessage = () => firstOpen.resolve();
+      await firstOpen.promise;
+
+      let secondConnected = false;
+      const secondClosed = Promise.withResolvers<void>();
+      const second = new WebSocket(
+        `${base.replace('http', 'ws')}/s/${ID}/ws?token=t`
+      );
+      second.onmessage = () => {
+        secondConnected = true;
+      };
+      second.onclose = () => secondClosed.resolve();
+      await secondClosed.promise;
+      expect(secondConnected).toBe(false);
+
+      first.close();
+    } finally {
+      void server.stop(true);
+      void upstream.stop(true);
+    }
+  });
 });
