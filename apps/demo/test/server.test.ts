@@ -213,6 +213,38 @@ describe('demo server routes', () => {
     }
   });
 
+  // The SyncChip fires this on its own every few seconds, so an idle open tab
+  // used to renew its sandbox forever and the TTL never reclaimed it.
+  test('GET /api/sync is proxied but never counts as activity', async () => {
+    const touched: string[] = [];
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: (req) => new Response(new URL(req.url).pathname),
+    });
+    const manager = stubManager({
+      get: (id: string) =>
+        id === ID ? fakeSession(upstream.port as number) : undefined,
+      touch: (id: string) => {
+        touched.push(id);
+      },
+    });
+    try {
+      await withServer(manager, '/nonexistent', async (base) => {
+        const poll = await fetch(`${base}/s/${ID}/api/sync`);
+        expect(poll.status).toBe(200);
+        expect(await poll.text()).toBe('/api/sync');
+        expect(touched).toEqual([]);
+
+        // Only the poll is exempt: a deliberate sync still keeps the tab alive.
+        await fetch(`${base}/s/${ID}/api/sync`, { method: 'POST' });
+        await fetch(`${base}/s/${ID}/api/tasks`);
+        expect(touched).toEqual([ID, ID]);
+      });
+    } finally {
+      void upstream.stop(true);
+    }
+  });
+
   test('static assets come from distDir and stay inside it', async () => {
     const distDir = fakeDist();
     await withServer(stubManager(), distDir, async (base) => {
