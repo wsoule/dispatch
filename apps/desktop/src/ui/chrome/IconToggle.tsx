@@ -37,7 +37,9 @@ export function IconToggle({
       aria-label={label}
       className={cn(
         'border-border h-auto min-w-0 rounded-md border p-1 transition-colors duration-150',
-        'data-[state=on]:bg-accent data-[state=on]:text-accent-foreground',
+        // toggleVariants sets text-sm/font-medium; the old markup had no size
+        // class (icon-only today, but keep future text children un-shifted).
+        'text-[length:inherit] font-[weight:inherit]',
         'text-muted-foreground hover:bg-transparent hover:text-foreground',
         className
       )}
