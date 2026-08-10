@@ -1,13 +1,13 @@
 import type { RunQuestion } from '@dispatch/client';
 import {
   Archive,
-  FileX,
   GitBranch,
   MousePointerClick,
   PanelRight,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { DiffEmptyState } from '../components/runs/DiffEmptyState';
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
 import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunDiffView } from '../components/runs/RunDiffView';
@@ -42,19 +42,6 @@ const DEFAULT_RUN_LIST_WIDTH = 288;
 // Shared empty array so a run with no open questions keeps the same prop
 // identity across renders.
 const NO_QUESTIONS: RunQuestion[] = [];
-
-// A muted centered placeholder for the Diff tab when there's nothing to review yet — a run
-// that's still going (no worktree diff exposed until it's terminal) or a terminal run whose
-// worktree/diff is gone (already reviewed, or genuinely nothing changed).
-function DiffEmptyState({ message }: { message: string }) {
-  return (
-    <EmptyState
-      icon={FileX}
-      message={message}
-      className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
-    />
-  );
-}
 
 interface RunsViewProps {
   data: DispatchProjectData;

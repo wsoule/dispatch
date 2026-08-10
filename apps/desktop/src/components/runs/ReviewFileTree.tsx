@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 import { normalizeDiffFilePath, toTreeGitStatus } from '../../lib/pierreTree';
 import { composeRowDecoration, worstSeverity } from '../../lib/reviewAttention';
 import { viewedSummary } from '../../lib/reviewViewed';
+import { Button } from '@/ui/button';
 
 interface ReviewFileTreeProps {
   files: DiffFile[];
@@ -107,13 +108,15 @@ export function ReviewFileTree({
         <span className="dense-label">Changed files</span>
         <span className="dense-meta">{files.length}</span>
         <span className="flex-1" />
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={onToggleUnviewedOnly}
-          className="text-accent-foreground text-[11px]"
+          className="text-accent-foreground hover:text-accent-foreground h-auto p-0 text-[11px] font-normal hover:bg-transparent"
         >
           {unviewedOnly ? 'All' : 'Unviewed'}
-        </button>
+        </Button>
       </div>
       <p className="dense-meta px-3 pb-1">{viewedSummary(viewed, allPaths)}</p>
 
