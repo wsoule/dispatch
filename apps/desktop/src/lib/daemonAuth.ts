@@ -15,6 +15,16 @@ export interface DaemonConnection {
   port: number;
   appToken: string | null;
   agentToken: string | null;
+  /** Full API base URL override; when set, port is ignored. Set by the web demo. */
+  baseUrl?: string | null;
+}
+
+/** The HTTP base for this daemon: the web demo's injected proxy URL, or the
+ * desktop's loopback-port form. */
+export function daemonBaseUrl(connection: DaemonConnection): string {
+  return connection.baseUrl != null && connection.baseUrl !== ''
+    ? connection.baseUrl
+    : `http://127.0.0.1:${connection.port}`;
 }
 
 /** The credential to present, and whether it reaches decide tier. */

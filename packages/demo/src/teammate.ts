@@ -18,6 +18,12 @@ function rewriteField(text: string, key: string, value: string): string {
   return text.replace(pattern, `${key}: ${value}`);
 }
 
+// Moves `updated:` to now, on top of whatever field the caller rewrote. The
+// board syncer only materializes an incoming task that beats the local copy.
+function touchUpdated(text: string): string {
+  return rewriteField(text, 'updated', new Date().toISOString());
+}
+
 // Rebases onto whatever origin/HEAD's tracking branch picked up since this
 // clone was last synced, then pushes. The demo runs these commands live and
 // out of order (see the design spec's Purpose section) — by the time a
@@ -33,10 +39,8 @@ function pushCurrentBranch(cwd: string): void {
 /** Rewrites `file`'s `assignee:` line to `human:<handle>`, commits, and pushes from `cwd`. */
 export function claimIn(cwd: string, file: string, handle: string): void {
   const path = join(cwd, file);
-  const updated = rewriteField(
-    readFileSync(path, 'utf8'),
-    'assignee',
-    `human:${handle}`
+  const updated = touchUpdated(
+    rewriteField(readFileSync(path, 'utf8'), 'assignee', `human:${handle}`)
   );
   writeFileSync(path, updated);
   git(cwd, 'add', file);
@@ -52,10 +56,8 @@ export function claimIn(cwd: string, file: string, handle: string): void {
  */
 export function conflictIn(cwd: string, file: string): void {
   const path = join(cwd, file);
-  const updated = rewriteField(
-    readFileSync(path, 'utf8'),
-    'status',
-    'in-progress'
+  const updated = touchUpdated(
+    rewriteField(readFileSync(path, 'utf8'), 'status', 'in-progress')
   );
   writeFileSync(path, updated);
   git(cwd, 'add', file);
@@ -65,7 +67,7 @@ export function conflictIn(cwd: string, file: string): void {
 
 // Task files are named `<id>-<slug>.md` (see board.ts's writeTasks); a caller
 // only knows the id, so resolve the actual filename before editing it.
-function findTaskFile(cwd: string, taskId: string): string {
+export function findTaskFile(cwd: string, taskId: string): string {
   const dir = join(cwd, '.dispatch', 'tasks');
   const file = readdirSync(dir).find((f) => f.startsWith(`${taskId}-`));
   if (file === undefined) {
@@ -96,7 +98,7 @@ const NEW_TASK_PARENT = 'e-4a19c2';
 // Builds a valid task file's contents for `addTask`: the same frontmatter
 // shape board.ts's writeTasks uses, so the file reads like the rest of the
 // seeded board rather than a stripped-down stub.
-function newTaskContents(id: string): string {
+function newTaskContents(id: string, handle: string): string {
   const now = new Date().toISOString();
   return [
     '---',
@@ -109,7 +111,7 @@ function newTaskContents(id: string): string {
     'blocked-by: []',
     'labels: []',
     'priority: medium',
-    `assignee: human:${TEAMMATE.handle}`,
+    `assignee: human:${handle}`,
     `created: ${now}`,
     `updated: ${now}`,
     'external: null',
@@ -123,9 +125,12 @@ function newTaskContents(id: string): string {
 }
 
 /** Writes a new task file into `cwd`'s board, commits, and pushes; returns the new task's id. */
-export function addTaskIn(cwd: string): string {
+export function addTaskIn(
+  cwd: string,
+  handle: string = TEAMMATE.handle
+): string {
   const id = `t-${randomBytes(3).toString('hex')}`;
-  const contents = newTaskContents(id);
+  const contents = newTaskContents(id, handle);
   const dir = join(cwd, '.dispatch', 'tasks');
   mkdirSync(dir, { recursive: true });
   const relFile = join(

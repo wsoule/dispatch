@@ -125,6 +125,7 @@
   "ignorePatterns": [
     "scripts/**",
     "apps/site/public/**",
+    "apps/demo/public/**",
     "packages/demo/storefront-src/**",
     "**/dist/**",
     "{packages,apps}/*/node_modules/**",

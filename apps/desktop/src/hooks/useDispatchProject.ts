@@ -41,6 +41,7 @@ import {
 import type { DecideAvailability } from '../lib/daemonAuth';
 import {
   assertCanDecide,
+  daemonBaseUrl,
   decideAvailability,
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
@@ -614,10 +615,10 @@ export function useDispatchProject(
 
   const client = useMemo(
     () =>
-      port !== undefined
-        ? createApiClient(`http://127.0.0.1:${port}`, auth.token)
+      connection !== undefined
+        ? createApiClient(daemonBaseUrl(connection), auth.token)
         : null,
-    [port, auth.token]
+    [connection, auth.token]
   );
 
   const tasksQueryKey = useMemo(() => ['dispatch-tasks', port], [port]);
