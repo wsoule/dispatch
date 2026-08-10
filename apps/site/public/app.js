@@ -138,3 +138,26 @@
   };
   setTimeout(step, 1200);
 })();
+
+/**
+ * The live demo card.
+ *
+ * The iframe has no src until the button is clicked: the landing page it
+ * points at auto-starts a session when embedded, so loading it any earlier
+ * (on scroll, on page load) would spend a session nobody asked for.
+ */
+(function () {
+  // Placeholder — Task 12 provisions the Railway domain and sets this.
+  var DEMO_URL = 'https://demo.<the-production-domain>';
+  var btn = document.getElementById('livedemo');
+  var frame = document.getElementById('liveframe');
+  var iframe = document.getElementById('liveiframe');
+  var full = document.getElementById('livefull');
+  if (!btn || !frame || !iframe || !full) return;
+  full.href = DEMO_URL;
+  btn.addEventListener('click', function () {
+    iframe.src = DEMO_URL + '/?embed=1';
+    frame.hidden = false;
+    btn.closest('.livecard').hidden = true;
+  });
+})();
