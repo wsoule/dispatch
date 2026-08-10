@@ -57,6 +57,8 @@ function landing(status = 200): Response {
 // one this process bound — an injected baseUrl of the latter reaches nothing.
 function publicOrigin(req: Request): string {
   const url = new URL(req.url);
+  // Trusted only because Railway's edge overwrites these; a direct-to-container
+  // deployment would let a client forge the baseUrl its own page is handed.
   const host =
     req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? url.host;
   const forwardedProto = req.headers.get('x-forwarded-proto');
@@ -175,12 +177,15 @@ export function createDemoServer(
           ? landing(404)
           : json({ error: 'session-expired' }, 404);
       }
-      // Deliberately not touched for `alive`: the overlay polls it every 30s,
-      // so counting it as activity would keep an abandoned tab alive forever.
-      if (parsed.kind === 'alive') return new Response(null, { status: 200 });
-      manager.touch(parsed.id);
-
-      if (parsed.kind === 'html') return sessionPage(req, parsed.id, session);
+      // `alive` and `ws` deliberately do not touch: the overlay polls the first
+      // every 30s and connectEvents reconnects the second forever, so either
+      // would keep an abandoned tab's sandbox alive. Real use hits /api/*.
+      if (parsed.kind === 'alive') {
+        return new Response(null, {
+          status: 200,
+          headers: { 'cache-control': 'no-store' },
+        });
+      }
       if (parsed.kind === 'ws') {
         const upgraded = server.upgrade(req, {
           data: {
@@ -190,6 +195,9 @@ export function createDemoServer(
         });
         return upgraded ? undefined : json({ error: 'upgrade-failed' }, 400);
       }
+
+      manager.touch(parsed.id);
+      if (parsed.kind === 'html') return sessionPage(req, parsed.id, session);
 
       try {
         return await proxyHttp(req, session.port, parsed.rest);
@@ -277,20 +285,27 @@ if (import.meta.main) {
   SessionManager.reap(DEFAULT_SESSIONS_DIR);
   bootSelfCheck(DEFAULT_SESSIONS_DIR, distDir);
 
+  const port = Number(process.env.PORT ?? 3000);
+  if (Number.isNaN(port)) {
+    console.error(`invalid PORT: ${process.env.PORT}`);
+    process.exit(1);
+  }
+
   const manager = new SessionManager({ sessionsDir: DEFAULT_SESSIONS_DIR });
-  const server = createDemoServer({
-    manager,
-    distDir,
-    port: Number(process.env.PORT ?? 3000),
-  });
+  const server = createDemoServer({ manager, distDir, port });
   console.log(`dispatch demo on :${server.port}`);
 
   const shutdown = async () => {
-    // stop(true) is never awaited: in Bun 1.3 its promise does not resolve
-    // once the server has served a WebSocket, and killing daemons matters more.
+    // Not awaited: stop(true) can hang when a socket was closed from this side
+    // (see test/server.test.ts), and killing session daemons matters more.
     void server.stop(true);
-    await manager.stop();
-    process.exit(0);
+    try {
+      await manager.stop();
+    } finally {
+      // A destroy that rejects must still exit, or the container lingers with
+      // daemons up until the platform SIGKILLs it.
+      process.exit(0);
+    }
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
