@@ -279,15 +279,17 @@ export function RunsView({
                   ? epicTitleById.get(task.meta.parent)
                   : undefined;
               return (
-                <button
+                <Button
                   key={run.id}
                   type="button"
+                  variant="ghost"
+                  size="xs"
                   onClick={() => onSelectRun(run.id)}
                   className={cn(
-                    'flex w-full items-start gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors duration-150',
+                    'h-auto w-full items-start justify-start gap-2 rounded-md border px-2 py-1.5 text-left text-[length:inherit] font-normal',
                     run.id === selectedRunId
                       ? 'border-border bg-accent'
-                      : 'hover:bg-muted/60'
+                      : 'border-transparent hover:bg-muted/60 hover:text-foreground'
                   )}
                 >
                   {/* Two lines: the title gets the full width, and the state,
@@ -321,7 +323,7 @@ export function RunsView({
                       )}
                     </span>
                   </span>
-                </button>
+                </Button>
               );
             })
           )}

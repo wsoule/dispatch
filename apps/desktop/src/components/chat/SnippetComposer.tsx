@@ -70,14 +70,16 @@ export function SnippetComposer({
                 className="gap-1 pr-1 text-[11px]"
               >
                 <span className="font-mono">{label}</span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-xs"
                   aria-label={`Remove ${label}`}
-                  className="hover:text-foreground text-muted-foreground"
                   onClick={() => onRemoveAttachment(index)}
+                  className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-0 hover:bg-transparent"
                 >
                   <X className="size-3" />
-                </button>
+                </Button>
               </Badge>
             );
           })}

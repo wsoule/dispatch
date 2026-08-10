@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import {
   Collapsible,
   CollapsibleContent,
@@ -127,13 +128,15 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
       {/* No point offering the kill switch once sync is already off — flipping
           autoCommit doesn't stop anything that isn't running. */}
       {status.state !== 'disabled' && status.state !== 'off' && (
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="xs"
           onClick={onDisableAutoCommit}
-          className="text-muted-foreground/70 hover:text-foreground self-start text-[10px] underline-offset-2 hover:underline"
+          className="text-muted-foreground/70 hover:text-foreground h-auto self-start p-0 text-[10px] font-normal underline-offset-2"
         >
           Turn off auto-commit
-        </button>
+        </Button>
       )}
     </div>
   );
