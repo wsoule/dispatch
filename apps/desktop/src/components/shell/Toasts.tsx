@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { sonnerOptionsFor, type ToastTone } from './toastContract';
 import { Toaster } from '@/ui/sonner';
 
-export interface ToastInput {
+interface ToastInput {
   title: string;
   /** The detail line. For a failure this should be what actually went wrong. */
   description?: string;
