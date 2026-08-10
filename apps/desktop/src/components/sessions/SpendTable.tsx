@@ -1,6 +1,15 @@
 import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
+import { EmptyState } from '@/ui/chrome';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/ui/table';
 
 interface SpendRow {
   key: string;
@@ -37,47 +46,55 @@ export function SpendTable({
   activeKey,
 }: SpendTableProps) {
   if (rows.length === 0) {
-    return <p className="text-muted-foreground text-[13px]">{emptyMessage}</p>;
+    return (
+      <EmptyState
+        message={emptyMessage}
+        className="px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+      />
+    );
   }
 
   return (
-    <table className="w-full text-[13px]">
-      <thead>
-        <tr>
-          <th className="border-border text-muted-foreground border-b pb-2 text-left text-[11px] font-medium tracking-wide uppercase">
+    <Table className="text-[13px]">
+      <TableHeader>
+        {/* Table's base row hover (hover:bg-muted/50) doesn't apply to a header row in the
+            old design, so it's neutralized here same as the body rows below. */}
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="text-muted-foreground h-auto px-0 py-2 text-[11px] font-medium tracking-wide whitespace-normal uppercase">
             {columnLabel}
-          </th>
-          <th className="border-border text-muted-foreground border-b pb-2 text-right text-[11px] font-medium tracking-wide uppercase">
+          </TableHead>
+          <TableHead className="text-muted-foreground h-auto px-0 py-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
             Sessions
-          </th>
-          <th className="border-border text-muted-foreground border-b pb-2 text-right text-[11px] font-medium tracking-wide uppercase">
+          </TableHead>
+          <TableHead className="text-muted-foreground h-auto px-0 py-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
             Spend
-          </th>
-        </tr>
-      </thead>
-      <tbody>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {rows.map((row) => (
-          <tr
+          <TableRow
             key={row.key}
             onClick={onRowClick ? () => onRowClick(row.key) : undefined}
             className={cn(
+              'hover:bg-transparent',
               onRowClick &&
                 'hover:bg-accent/40 cursor-pointer transition-colors',
               activeKey === row.key && 'bg-accent/50'
             )}
           >
-            <td className="border-border text-foreground border-b py-2 last:border-b-0">
+            <TableCell className="text-foreground px-0 py-2 whitespace-normal">
               {row.label}
-            </td>
-            <td className="border-border text-muted-foreground border-b py-2 text-right font-mono last:border-b-0">
+            </TableCell>
+            <TableCell className="text-muted-foreground px-0 py-2 text-right font-mono whitespace-normal">
               {row.sessionCount}
-            </td>
-            <td className="border-border text-muted-foreground border-b py-2 text-right font-mono last:border-b-0">
+            </TableCell>
+            <TableCell className="text-muted-foreground px-0 py-2 text-right font-mono whitespace-normal">
               ${row.totalCostUsd.toFixed(2)}
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
