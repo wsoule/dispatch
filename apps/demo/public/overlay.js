@@ -7,10 +7,13 @@
 
   var POLL_MS = 30000;
   var shown = false;
+  var timer = null;
 
   function show() {
     if (shown) return;
     shown = true;
+    // An expiry is final, so stop polling a sandbox that is already gone.
+    if (timer !== null) clearInterval(timer);
     var overlay = document.createElement('div');
     overlay.id = 'demo-expired';
     overlay.setAttribute('role', 'alertdialog');
@@ -41,5 +44,5 @@
       .catch(function () {});
   }
 
-  setInterval(poll, POLL_MS);
+  timer = setInterval(poll, POLL_MS);
 })();

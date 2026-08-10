@@ -66,8 +66,8 @@ async function withServer(
   try {
     await run(origin(server));
   } finally {
-    // Never awaited: Bun 1.3's stop(true) does not resolve once the server has
-    // served a WebSocket, so awaiting it hangs the ws tests below.
+    // Not awaited: on Bun 1.3.14/macOS, stop(true) did not resolve after a
+    // socket this server closed itself — the daemon-dropped case below.
     void server.stop(true);
   }
 }
@@ -134,6 +134,8 @@ describe('demo server routes', () => {
     });
     await withServer(manager, '/nonexistent', async (base) => {
       expect((await fetch(`${base}/s/${ID}/alive`)).status).toBe(200);
+      const res = await fetch(`${base}/s/${ID}/alive`);
+      expect(res.headers.get('cache-control')).toBe('no-store');
       expect((await fetch(`${base}/s/${'b'.repeat(16)}/alive`)).status).toBe(
         404
       );
@@ -250,9 +252,13 @@ describe('demo server routes', () => {
         close: () => upstreamClosed.resolve(),
       },
     });
+    const touched: string[] = [];
     const manager = stubManager({
       get: (id: string) =>
         id === ID ? fakeSession(upstream.port as number) : undefined,
+      touch: (id: string) => {
+        touched.push(id);
+      },
     });
     try {
       await withServer(manager, '/nonexistent', async (base) => {
@@ -263,6 +269,9 @@ describe('demo server routes', () => {
         client.onmessage = (event) => received.resolve(event.data as string);
         expect(await received.promise).toBe('hello-from-daemon');
         expect(seenTokens).toEqual(['app-tok']);
+        // connectEvents reconnects forever at 1s backoff, so an upgrade that
+        // counted as activity would make an abandoned tab immortal.
+        expect(touched).toEqual([]);
 
         // Closing the browser side must not leave the daemon's socket open.
         client.close();
