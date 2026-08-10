@@ -37,10 +37,12 @@
   function poll() {
     fetch(config.baseUrl + '/alive', { cache: 'no-store' })
       .then(function (res) {
-        if (!res.ok) show();
+        // 404 is the one answer that means gone (see server.ts's session
+        // lookup); a transient 5xx is a bad moment, not a dead sandbox.
+        if (res.status === 404) show();
       })
-      // A network blip is not an expiry; only a real answer from the server
-      // that the session is gone puts the overlay up.
+      // A network blip is not an expiry either; only a real answer from the
+      // server that the session is gone puts the overlay up.
       .catch(function () {});
   }
 
