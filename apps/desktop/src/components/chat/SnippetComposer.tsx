@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { snippetLabel } from '../../lib/conversation';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
+import { NativeSelect, NativeSelectOption } from '@/ui/native-select';
 import { Textarea } from '@/ui/textarea';
 
 /** A conversation target the composer can send to. `canAct` is the whole reason to pick one
@@ -100,24 +101,25 @@ export function SnippetComposer({
       />
 
       <div className="flex items-center justify-between gap-3">
-        {/* A native `<select>`, not the Radix-backed `@/ui/select`: that primitive mounts its
-            options only once opened (a `Presence`-gated portal), which is right for a mouse-
-            driven combobox but breaks `ReviewChatPanel`'s coverage of which targets are
-            offered — it reads `role="option"` the moment this composer mounts, never opening
-            the dropdown. Kept native so that assertion stays honest without touching the test. */}
-        <select
+        {/* `NativeSelect`, not the Radix-backed `@/ui/select`: that primitive mounts its
+            options only once opened (a `Presence`-gated portal), which breaks
+            `ReviewChatPanel`'s coverage of which targets are offered — it reads
+            `role="option"` right after mount, never opening the dropdown. A real `<select>`
+            keeps that assertion honest while still landing on a shared primitive. */}
+        <NativeSelect
           aria-label="Send to"
+          size="sm"
           value={selectedTarget?.id}
           disabled={sending}
           onChange={(e) => setTargetId(e.target.value)}
-          className="border-input h-8 rounded-md border bg-transparent px-2 text-[12px] shadow-xs outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          className="pl-2 text-[12px]"
         >
           {targets.map((target) => (
-            <option key={target.id} value={target.id}>
+            <NativeSelectOption key={target.id} value={target.id}>
               {target.label}
-            </option>
+            </NativeSelectOption>
           ))}
-        </select>
+        </NativeSelect>
 
         <Button
           type="button"

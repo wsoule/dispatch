@@ -122,9 +122,12 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
                 <Panel
                   className={cn(
                     'cursor-pointer px-3 py-2.5 transition-colors duration-150',
+                    // Panel's own base is `bg-card`, a different token than the page
+                    // background — neutralize it at rest so a row is only ever filled
+                    // when stalled, matching the original's resting state.
                     row.stalled
                       ? 'bg-state-waiting-surface'
-                      : 'hover:bg-muted/40'
+                      : 'bg-transparent hover:bg-muted/40'
                   )}
                 >
                   <div className="grid grid-cols-[28px_minmax(160px,1fr)_180px_80px] items-center gap-3">
