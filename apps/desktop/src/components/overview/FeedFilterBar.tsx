@@ -36,11 +36,9 @@ export function FeedFilterBar({
 }: FeedFilterBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {/* `shadow-[var(--hairline)]`, not `shadow-hairline` — twMerge can't see the
-          custom token as the same "shadow" group as InputGroup's own `shadow-xs`, so
-          the arbitrary-value form is what actually overrides it (DispatchDialog
-          precedent). Border and focus-ring are neutralized the same way. */}
-      <InputGroup className="h-auto w-64 gap-2 rounded-md border-0 bg-transparent px-2.5 shadow-[var(--hairline)] outline-none has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent">
+      {/* Fully-expanded `shadow-[inset_...]`, not `shadow-hairline` — twMerge only
+          dedupes against InputGroup's `shadow-xs` in this spelled-out form (DispatchDialog). */}
+      <InputGroup className="h-auto w-64 gap-2 rounded-md border-0 bg-transparent px-2.5 shadow-[inset_0_0_0_1px_var(--border-default)] outline-none has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent">
         <InputGroupAddon className="p-0">
           <Search className="text-muted-foreground size-3.5 shrink-0" />
         </InputGroupAddon>
