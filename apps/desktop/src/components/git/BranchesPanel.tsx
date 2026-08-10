@@ -144,11 +144,16 @@ export function BranchesPanel({
                     <Button
                       type="button"
                       variant="ghost"
+                      size="xs"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenRun(row.runId);
                       }}
-                      className="hover:text-foreground h-auto p-0 font-mono font-normal underline-offset-2 hover:bg-transparent hover:underline"
+                      // `size="xs"` sets its own `h-6`/`text-xs` — both cancelled (`h-auto`,
+                      // `text-[length:inherit]`) so this restores the parent row's inherited
+                      // 11px instead of picking up either the xs size's 12px or Button's
+                      // default 14px.
+                      className="hover:text-foreground h-auto p-0 font-mono text-[length:inherit] font-normal underline-offset-2 hover:bg-transparent hover:underline"
                     >
                       {row.runId}
                     </Button>
