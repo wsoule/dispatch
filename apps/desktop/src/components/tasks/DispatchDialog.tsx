@@ -93,12 +93,15 @@ export function DispatchDialog({
           >
             Run at most
           </FieldLabel>
+          {/* Same trap as the DialogContent above: `shadow-hairline` doesn't dedupe
+              against Input's built-in `shadow-xs`, so both survive and `shadow-xs`
+              wins. Spelled out, twMerge treats it as the same "shadow" group. */}
           <Input
             id="dispatch-concurrency"
             value={concurrency}
             onChange={(e) => setConcurrency(e.target.value)}
             inputMode="numeric"
-            className="shadow-hairline h-auto w-14 rounded-md px-2 py-1 text-center font-mono text-[12.5px] outline-none"
+            className="h-auto w-14 rounded-md px-2 py-1 text-center font-mono text-[12.5px] shadow-[inset_0_0_0_1px_var(--border-default)] outline-none"
           />
           <span className="text-muted-foreground text-[12px]">at a time</span>
         </div>
