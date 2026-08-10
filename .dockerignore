@@ -1,8 +1,5 @@
-# Build context for apps/demo/Dockerfile is the repo root (that service
-# consumes workspace packages and the desktop bundle, so its context can't be
-# scoped to its own directory the way apps/site's is). This only excludes
-# what a fresh `bun install --frozen-lockfile && bun run build` never reads —
-# every package.json and source file workspace deps might resolve stays in.
+# Build context for apps/demo/Dockerfile is the repo root, not apps/demo/
+# itself — it needs workspace deps and the desktop bundle. Only excludes what a fresh `bun install && bun run build` never reads.
 node_modules
 
 # Rebuilt inside the image; a stale local copy must never leak into it.
