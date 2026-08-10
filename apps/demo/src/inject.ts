@@ -23,7 +23,7 @@ export function injectDemoHtml(distHtml: string, opts: InjectOptions): string {
     .replace(/</g, '\\u003c');
   const banner = opts.embed
     ? ''
-    : `<div id="demo-banner">Sandbox — resets after 30 minutes of inactivity · <a href="${DESKTOP_APP_URL}">Get the desktop app</a> <a href="${opts.baseUrl}/" target="_blank">⤢</a></div>
+    : `<div id="demo-banner">Sandbox — resets after 30 minutes of inactivity · <a href="${DESKTOP_APP_URL}" rel="noreferrer">Get the desktop app</a> <a href="${opts.baseUrl}/" target="_blank">⤢</a></div>
 <style>#demo-banner{position:fixed;top:0;left:0;right:0;z-index:9999;padding:6px 12px;font:12px system-ui;background:#17181c;color:#c8cad0;border-bottom:1px solid #23252a;text-align:center}#demo-banner a{color:#7c86e8}body{padding-top:30px}</style>`;
   const inject = `<script>window.__DISPATCH_DEMO__=${config}</script>
 <script defer src="/demo-overlay.js"></script>
