@@ -256,6 +256,43 @@ export class WorktreeManager {
     ]).ok;
   }
 
+  // True when `branch` carries at least one commit of its own and every one
+  // of them is patch-equivalent to a commit already on `base` — the signature
+  // a hand `git merge --squash` (or an applied patch) leaves behind. `git
+  // cherry` marks each branch-only commit `-` (equivalent landed on base) or
+  // `+` (missing); all-minus over a non-empty list is the proof. The
+  // non-empty requirement matters: an ancestry-only check would also match a
+  // run whose agent committed nothing, which must not read as merged.
+  landedByPatchOn(branch: string, base: string): boolean {
+    const result = runGit(this.mainRepoDir, ['cherry', base, branch]);
+    if (!result.ok) return false;
+    const lines = result.stdout.split('\n').filter((l) => l.trim() !== '');
+    return lines.length > 0 && lines.every((l) => l.startsWith('-'));
+  }
+
+  // The commit on `base` that merged `branch` in, if one exists: a merge
+  // commit in `branch..base` carrying the branch tip as a NON-first parent.
+  // First-parent hits are deliberately ignored — a no-op branch's tip is just
+  // an old base commit, and any later merge on base has that commit on its
+  // first-parent chain, which proves nothing about THIS branch's work.
+  externalMergeCommitFor(branch: string, base: string): string | undefined {
+    const tip = runGit(this.mainRepoDir, ['rev-parse', `${branch}^{commit}`]);
+    if (!tip.ok) return undefined;
+    const tipSha = tip.stdout.trim();
+    const merges = runGit(this.mainRepoDir, [
+      'rev-list',
+      '--min-parents=2',
+      '--parents',
+      `${branch}..${base}`,
+    ]);
+    if (!merges.ok) return undefined;
+    for (const line of merges.stdout.split('\n')) {
+      const [sha, , ...laterParents] = line.trim().split(/\s+/);
+      if (sha !== undefined && laterParents.includes(tipSha)) return sha;
+    }
+    return undefined;
+  }
+
   hasOriginRemote(): boolean {
     return runGit(this.mainRepoDir, ['remote', 'get-url', 'origin']).ok;
   }
