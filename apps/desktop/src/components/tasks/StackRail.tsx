@@ -8,6 +8,8 @@ import { MergeLadderDot } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/ui/badge';
+import { Separator } from '@/ui/separator';
 
 export interface StackRailProps {
   /** Full project task list — the stack is derived from it internally (see
@@ -114,8 +116,9 @@ export function StackRail({
             <div className="flex flex-col items-center pt-1">
               <StatusIcon status={rowDoc.meta.status} />
               {!isLast && (
-                <span
-                  className="bg-border my-0.5 w-px flex-1"
+                <Separator
+                  orientation="vertical"
+                  className="my-0.5 flex-1"
                   aria-hidden="true"
                 />
               )}
@@ -178,12 +181,13 @@ export function StackBadge({
   const stack = getStackByTaskId(tasks).get(taskId);
   if (stack === undefined) return null;
   return (
-    <span
-      className="text-muted-foreground border-border/60 inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-0 font-mono text-[10px]"
+    <Badge
+      variant="outline"
+      className="border-border/60 text-muted-foreground gap-0.5 px-1.5 py-0 font-mono text-[10px] [&>svg]:size-2.5"
       title={`Stack position ${stack.index + 1} of ${stack.order.length}`}
     >
-      <Layers2 className="size-2.5" />
+      <Layers2 />
       {stack.index + 1}/{stack.order.length}
-    </span>
+    </Badge>
   );
 }

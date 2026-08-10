@@ -6,6 +6,7 @@ import { AssigneeAvatar } from './AssigneeAvatar';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,16 +64,17 @@ function PropertyDropdown({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           aria-label={ariaLabel}
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           className={cn(
-            'focus-visible:ring-ring/40 focus-visible:outline-none',
+            'h-auto font-normal hover:text-foreground focus-visible:outline-none focus-visible:ring-ring/40',
             variant === 'icon'
-              ? 'hover:bg-muted/70 inline-flex size-5 items-center justify-center rounded focus-visible:ring-2'
-              : 'hover:bg-muted/60 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] focus-visible:ring-1'
+              ? 'size-5 justify-center rounded p-0 has-[>svg]:px-0 hover:bg-muted/70 focus-visible:ring-2'
+              : 'w-full justify-start gap-2 rounded-md px-2 py-1.5 has-[>svg]:px-2 text-[13px] hover:bg-muted/60 focus-visible:ring-1'
           )}
         >
           {variant === 'icon' ? (
@@ -87,7 +89,7 @@ function PropertyDropdown({
               </span>
             </>
           )}
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"

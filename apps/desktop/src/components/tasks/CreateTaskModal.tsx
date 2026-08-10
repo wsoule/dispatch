@@ -6,6 +6,7 @@ import type {
 } from '@dispatch/core/browser';
 import { useState } from 'react';
 
+import { Alert, AlertDescription } from '../../ui/alert';
 import { Button } from '../../ui/button';
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../ui/dialog';
+import { Field, FieldLabel } from '../../ui/field';
 import { Input } from '../../ui/input';
 import {
   Select,
@@ -106,28 +108,38 @@ export function CreateTaskModal({
 
         <div className="flex flex-col gap-4">
           {error !== null && (
-            <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
-              {error}
-            </div>
+            <Alert
+              variant="destructive"
+              className="bg-destructive/10 rounded-md border-0 px-3 py-2 text-[13px]"
+            >
+              <AlertDescription className="text-[13px]">
+                {error}
+              </AlertDescription>
+            </Alert>
           )}
 
-          <label className="flex flex-1 flex-col gap-1.5">
-            <span className="text-muted-foreground text-[13px]">Title</span>
+          <Field className="gap-1.5">
+            <FieldLabel htmlFor="title" className="text-[13px] font-normal">
+              Title
+            </FieldLabel>
             <Input
+              id="title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               autoFocus
             />
-          </label>
+          </Field>
 
           <div className="flex gap-3">
-            <label className="flex flex-1 flex-col gap-1.5">
-              <span className="text-muted-foreground text-[13px]">Kind</span>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="kind" className="text-[13px] font-normal">
+                Kind
+              </FieldLabel>
               <Select
                 value={kind}
                 onValueChange={(value) => setKind(value as TaskKind)}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="kind" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -138,16 +150,19 @@ export function CreateTaskModal({
                   ))}
                 </SelectContent>
               </Select>
-            </label>
-            <label className="flex flex-1 flex-col gap-1.5">
-              <span className="text-muted-foreground text-[13px]">
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel
+                htmlFor="priority"
+                className="text-[13px] font-normal"
+              >
                 Priority
-              </span>
+              </FieldLabel>
               <Select
                 value={priority}
                 onValueChange={(value) => setPriority(value as Priority)}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="priority" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -158,14 +173,16 @@ export function CreateTaskModal({
                   ))}
                 </SelectContent>
               </Select>
-            </label>
+            </Field>
           </div>
 
           <div className="flex gap-3">
-            <label className="flex flex-1 flex-col gap-1.5">
-              <span className="text-muted-foreground text-[13px]">Status</span>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="status" className="text-[13px] font-normal">
+                Status
+              </FieldLabel>
               <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="status" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -176,16 +193,18 @@ export function CreateTaskModal({
                   ))}
                 </SelectContent>
               </Select>
-            </label>
-            <label className="flex flex-1 flex-col gap-1.5">
-              <span className="text-muted-foreground text-[13px]">Epic</span>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="epic" className="text-[13px] font-normal">
+                Epic
+              </FieldLabel>
               <Select
                 value={parent === '' ? NO_EPIC : parent}
                 onValueChange={(value) =>
                   setParent(value === NO_EPIC ? '' : value)
                 }
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="epic" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -197,19 +216,23 @@ export function CreateTaskModal({
                   ))}
                 </SelectContent>
               </Select>
-            </label>
+            </Field>
           </div>
 
-          <label className="flex flex-col gap-1.5">
-            <span className="text-muted-foreground text-[13px]">
+          <Field className="gap-1.5">
+            <FieldLabel
+              htmlFor="description"
+              className="text-[13px] font-normal"
+            >
               Description
-            </span>
+            </FieldLabel>
             <Textarea
+              id="description"
               rows={4}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
-          </label>
+          </Field>
         </div>
 
         <DialogFooter>
