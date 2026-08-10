@@ -140,11 +140,8 @@
 })();
 
 /**
- * The live demo card.
- *
- * The iframe has no src until the button is clicked: the landing page it
- * points at auto-starts a session when embedded, so loading it any earlier
- * (on scroll, on page load) would spend a session nobody asked for.
+ * No src until click: the embedded landing auto-starts a session, so
+ * setting it any earlier would spend one nobody asked for.
  */
 (function () {
   // Placeholder — Task 12 provisions the Railway domain and sets this.
