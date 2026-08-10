@@ -18,6 +18,12 @@ function rewriteField(text: string, key: string, value: string): string {
   return text.replace(pattern, `${key}: ${value}`);
 }
 
+// Moves `updated:` to now, on top of whatever field the caller rewrote. The
+// board syncer only materializes an incoming task that beats the local copy.
+function touchUpdated(text: string): string {
+  return rewriteField(text, 'updated', new Date().toISOString());
+}
+
 // Rebases onto whatever origin/HEAD's tracking branch picked up since this
 // clone was last synced, then pushes. The demo runs these commands live and
 // out of order (see the design spec's Purpose section) — by the time a
@@ -33,10 +39,8 @@ function pushCurrentBranch(cwd: string): void {
 /** Rewrites `file`'s `assignee:` line to `human:<handle>`, commits, and pushes from `cwd`. */
 export function claimIn(cwd: string, file: string, handle: string): void {
   const path = join(cwd, file);
-  const updated = rewriteField(
-    readFileSync(path, 'utf8'),
-    'assignee',
-    `human:${handle}`
+  const updated = touchUpdated(
+    rewriteField(readFileSync(path, 'utf8'), 'assignee', `human:${handle}`)
   );
   writeFileSync(path, updated);
   git(cwd, 'add', file);
@@ -52,10 +56,8 @@ export function claimIn(cwd: string, file: string, handle: string): void {
  */
 export function conflictIn(cwd: string, file: string): void {
   const path = join(cwd, file);
-  const updated = rewriteField(
-    readFileSync(path, 'utf8'),
-    'status',
-    'in-progress'
+  const updated = touchUpdated(
+    rewriteField(readFileSync(path, 'utf8'), 'status', 'in-progress')
   );
   writeFileSync(path, updated);
   git(cwd, 'add', file);

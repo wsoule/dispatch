@@ -13,7 +13,10 @@ function twoClones(): { mine: string; theirs: string } {
   git(bare, 'init', '-q', '--bare', '-b', 'main');
   const seed = mkdtempSync(join(tmpdir(), 'demo-seed-'));
   git(seed, 'init', '-q', '-b', 'main');
-  writeFileSync(join(seed, 'task.md'), 'status: todo\nassignee: none\n');
+  writeFileSync(
+    join(seed, 'task.md'),
+    'status: todo\nassignee: none\nupdated: 2026-07-01T00:00:00.000Z\n'
+  );
   git(seed, 'add', '-A');
   git(seed, 'commit', '-qm', 'seed');
   git(seed, 'remote', 'add', 'origin', bare);
@@ -71,6 +74,27 @@ test('claim leaves every other line byte-identical', () => {
     .split('\n')
     .find((line) => line.startsWith('status:'));
   expect(afterStatus).toBe(beforeStatus);
+});
+
+// BoardSyncer.materialize() drops an incoming task whose `updated` does not
+// beat the local copy's (isOutstanding is a strict >). A teammate edit that
+// only rewrote `assignee:`/`status:` therefore reached the sync worktree and
+// stopped there — the visitor's board never showed the claim or the conflict.
+test('claim and conflict both move updated forward', () => {
+  const { theirs } = twoClones();
+  const before = Date.now();
+
+  claimIn(theirs, 'task.md', 'pmirand');
+  const claimed = readFileSync(join(theirs, 'task.md'), 'utf8');
+  const claimedAt = /^updated: (.+)$/m.exec(claimed)?.[1] ?? '';
+  expect(Date.parse(claimedAt)).toBeGreaterThanOrEqual(before);
+
+  conflictIn(theirs, 'task.md');
+  const conflicted = readFileSync(join(theirs, 'task.md'), 'utf8');
+  const conflictedAt = /^updated: (.+)$/m.exec(conflicted)?.[1] ?? '';
+  expect(Date.parse(conflictedAt)).toBeGreaterThanOrEqual(
+    Date.parse(claimedAt)
+  );
 });
 
 test('claim pushes onto a real task file with wire-format frontmatter', () => {
