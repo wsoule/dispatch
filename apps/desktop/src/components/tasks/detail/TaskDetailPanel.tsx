@@ -799,7 +799,9 @@ export function TaskDetailPanel({
                 value={activityDraft}
                 onChange={(e) => setActivityDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') submitActivity();
+                  // Plain Enter only — the peek's cmd+Enter expand chord must not also submit.
+                  if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey)
+                    submitActivity();
                 }}
               />
               <Button

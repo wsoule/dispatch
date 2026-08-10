@@ -52,7 +52,8 @@ export function LabelEditor({
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') add();
+          // Plain Enter only — the peek's cmd+Enter expand chord must not also add a label.
+          if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) add();
         }}
         onBlur={add}
       />

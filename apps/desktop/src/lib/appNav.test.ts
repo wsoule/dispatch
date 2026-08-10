@@ -489,4 +489,20 @@ describe('task view teardown', () => {
     expect(escaped.peekTaskId).toBeNull();
     expect(escaped.projectView).toBe('task');
   });
+
+  test('escape on a global view is a no-op even with a lingering task view underneath', () => {
+    // `setGlobalView` never clears `projectView`, so it can still read 'task' while
+    // `section` is 'global' (Settings). Without checking `section` too, escape's task-view
+    // branch treats that as "still on the task view" and teleports out of Settings via back.
+    const opened = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    const inSettings = navReducer(opened, {
+      type: 'setGlobalView',
+      view: 'settings',
+    });
+    const escaped = navReducer(inSettings, { type: 'escape' });
+    expect(escaped).toEqual(inSettings);
+  });
 });
