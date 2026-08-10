@@ -545,7 +545,17 @@ describe('GET /api/prs', () => {
         headRepositoryOwner: 'someone-fork-owner',
         reviewDecision: 'APPROVED',
         mergeable: 'MERGEABLE',
-        checks: { passed: 2, failed: 0, pending: 1, total: 3 },
+        checks: {
+          passed: 2,
+          failed: 0,
+          pending: 1,
+          total: 3,
+          runs: [
+            { name: 'check', conclusion: 'SUCCESS', url: '' },
+            { name: 'check', conclusion: 'SUCCESS', url: '' },
+            { name: 'check', conclusion: 'PENDING', url: '' },
+          ],
+        },
         additions: 7,
         deletions: 1,
         changedFiles: 3,

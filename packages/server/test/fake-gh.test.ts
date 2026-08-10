@@ -59,7 +59,16 @@ describe('the DISPATCH_FAKE_GH runner', () => {
     const prs = await makePrManager().listRepoPrs();
     const pr = prs.find((p) => p.number === 7);
     expect(pr).toBeDefined();
-    expect(pr?.checks).toEqual({ passed: 1, failed: 1, pending: 0, total: 2 });
+    expect(pr?.checks).toEqual({
+      passed: 1,
+      failed: 1,
+      pending: 0,
+      total: 2,
+      runs: [
+        { name: 'check', conclusion: 'SUCCESS', url: '' },
+        { name: 'check', conclusion: 'FAILURE', url: '' },
+      ],
+    });
     expect(pr?.reviewDecision).toBe('REVIEW_REQUIRED');
     expect(pr?.mergeable).toBe('CONFLICTING');
     expect(pr?.changedFiles).toBe(1);
