@@ -15,6 +15,7 @@ import {
   listProjects,
   listSessions,
 } from '../lib/tauri';
+import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import { StatTile } from '@/ui/chrome/StatTile';
@@ -204,17 +205,22 @@ export function SessionsHubView() {
             Sessions
           </h2>
           {filteredProject && (
-            <span className="border-border bg-accent/40 text-foreground inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]">
+            <Badge
+              variant="outline"
+              className="bg-accent/40 gap-1.5 text-[11px] font-normal"
+            >
               {filteredProject.name}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => setProjectFilter(null)}
                 aria-label="Clear project filter"
-                className="text-muted-foreground hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-0 hover:bg-transparent"
               >
                 <X className="size-3" />
-              </button>
-            </span>
+              </Button>
+            </Badge>
           )}
         </div>
 

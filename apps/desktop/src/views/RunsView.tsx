@@ -28,6 +28,7 @@ import { liveCostUsd } from '../lib/runLog';
 import { isTerminalRunState } from '../lib/runState';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import { IconToggle } from '@/ui/chrome/IconToggle';
 import { Segmented } from '@/ui/chrome/Segmented';
 import { Skeleton } from '@/ui/skeleton';
@@ -47,10 +48,11 @@ const NO_QUESTIONS: RunQuestion[] = [];
 // worktree/diff is gone (already reviewed, or genuinely nothing changed).
 function DiffEmptyState({ message }: { message: string }) {
   return (
-    <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
-      <FileX className="size-5" />
-      <p className="text-[13px]">{message}</p>
-    </div>
+    <EmptyState
+      icon={FileX}
+      message={message}
+      className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
+    />
   );
 }
 
@@ -264,12 +266,11 @@ export function RunsView({
               ))}
             </div>
           ) : data.visibleRuns.length === 0 ? (
-            <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-              <GitBranch className="size-5" />
-              <p className="text-[13px]">
-                No runs yet — dispatch a ready task from the Board to start one.
-              </p>
-            </div>
+            <EmptyState
+              icon={GitBranch}
+              message="No runs yet — dispatch a ready task from the Board to start one."
+              className="flex-1 justify-center p-6 [&_[data-slot=empty-description]]:text-[13px]"
+            />
           ) : (
             data.visibleRuns.map((run) => {
               const task = taskById.get(run.taskId);
@@ -351,12 +352,11 @@ export function RunsView({
 
         <div className="flex min-w-0 flex-1 flex-col pl-1">
           {selected === undefined ? (
-            <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 text-center">
-              <MousePointerClick className="size-5" />
-              <p className="text-[13px]">
-                Select a run on the left to see its log or review its result.
-              </p>
-            </div>
+            <EmptyState
+              icon={MousePointerClick}
+              message="Select a run on the left to see its log or review its result."
+              className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
+            />
           ) : data.runDetail === undefined ? (
             <div className="flex flex-col gap-3 p-1">
               <Skeleton className="h-6 w-48 rounded-md" />

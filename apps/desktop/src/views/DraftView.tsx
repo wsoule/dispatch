@@ -1,13 +1,6 @@
 import type { DraftRecord } from '@dispatch/client';
 import type { CreateInput, Priority } from '@dispatch/core/browser';
-import {
-  Check,
-  CircleAlert,
-  Loader2,
-  Plus,
-  Sparkles,
-  Trash2,
-} from 'lucide-react';
+import { Check, CircleAlert, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { PlanQuestionsForm } from '../components/plans/PlanQuestionsForm';
@@ -25,6 +18,7 @@ import {
 } from '../lib/taskDraft';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
+import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
 
 /** One labeled cell of the draft's property rail, so Status/Priority/Epic all read the same
@@ -319,7 +313,7 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
           disabled={saving || discarding}
         >
           {discarding ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Spinner className="size-4" />
           ) : (
             <Trash2 className="size-4" />
           )}
@@ -336,7 +330,7 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
         >
           {saving ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Creating…
+              <Spinner className="size-4" /> Creating…
             </>
           ) : (
             <>

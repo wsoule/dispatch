@@ -6,6 +6,8 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { heldCount, toQueueRows } from '../lib/mergeQueueView';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { Panel } from '@/ui/chrome';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 import { StepStrip } from '@/ui/chrome/StepStrip';
 
@@ -84,16 +86,17 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
           count={entries.length}
           trailing={
             held > 0 ? (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="xs"
                 onClick={() => void retryHeld()}
                 disabled={retrying}
-                className="text-state-waiting shadow-hairline hover:bg-muted/60 rounded-md px-2 py-1 text-[12px] disabled:opacity-50"
+                className="text-state-waiting shadow-hairline hover:bg-muted/60 hover:text-state-waiting h-auto rounded-md px-2 py-1 text-[length:inherit] font-normal"
               >
                 {retrying
                   ? 'Rechecking…'
                   : `Retry ${held} held ${held === 1 ? 'entry' : 'entries'}`}
-              </button>
+              </Button>
             ) : undefined
           }
         >
@@ -114,51 +117,56 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
             {rows.map((row) => (
               <li
                 key={row.entry.runId}
-                className={cn(
-                  'shadow-hairline cursor-pointer rounded-lg px-3 py-2.5 transition-colors duration-150',
-                  row.stalled ? 'bg-state-waiting-surface' : 'hover:bg-muted/40'
-                )}
                 onClick={() => onOpenRun(row.entry.runId)}
               >
-                <div className="grid grid-cols-[28px_minmax(160px,1fr)_180px_80px] items-center gap-3">
-                  <span className="dense-meta">#{row.position}</span>
-                  <span className="truncate text-[13.5px]">
-                    {row.entry.taskTitle}
-                  </span>
-                  <span
-                    className={cn(
-                      'dense-meta truncate',
-                      (row.stalled || row.overdue) && 'text-state-waiting'
-                    )}
-                  >
-                    {row.label}
-                    {row.overdue && ' · taking longer than expected'}
-                  </span>
-                  {/* Time in the CURRENT state, not since enqueue — a step that
-                      has run for two minutes and one wedged for eleven look
-                      identical measured from enqueue. */}
-                  <span
-                    className={cn(
-                      'dense-meta text-right',
-                      row.overdue && 'text-state-waiting'
-                    )}
-                  >
-                    {formatRelativeTimeFromIso(row.elapsedSince)}
-                  </span>
-                </div>
-
-                {row.reason !== null && (
-                  <div className="mt-1.5 flex items-center gap-2 pl-[40px]">
-                    <TriangleAlert className="text-state-waiting size-3.5 shrink-0" />
-                    <span className="text-state-waiting truncate text-[12.5px]">
-                      {row.reason}
+                <Panel
+                  className={cn(
+                    'cursor-pointer px-3 py-2.5 transition-colors duration-150',
+                    row.stalled
+                      ? 'bg-state-waiting-surface'
+                      : 'hover:bg-muted/40'
+                  )}
+                >
+                  <div className="grid grid-cols-[28px_minmax(160px,1fr)_180px_80px] items-center gap-3">
+                    <span className="dense-meta">#{row.position}</span>
+                    <span className="truncate text-[13.5px]">
+                      {row.entry.taskTitle}
+                    </span>
+                    <span
+                      className={cn(
+                        'dense-meta truncate',
+                        (row.stalled || row.overdue) && 'text-state-waiting'
+                      )}
+                    >
+                      {row.label}
+                      {row.overdue && ' · taking longer than expected'}
+                    </span>
+                    {/* Time in the CURRENT state, not since enqueue — a step that
+                        has run for two minutes and one wedged for eleven look
+                        identical measured from enqueue. */}
+                    <span
+                      className={cn(
+                        'dense-meta text-right',
+                        row.overdue && 'text-state-waiting'
+                      )}
+                    >
+                      {formatRelativeTimeFromIso(row.elapsedSince)}
                     </span>
                   </div>
-                )}
 
-                {row.steps !== null && (
-                  <StepStrip steps={row.steps} className="mt-2.5" />
-                )}
+                  {row.reason !== null && (
+                    <div className="mt-1.5 flex items-center gap-2 pl-[40px]">
+                      <TriangleAlert className="text-state-waiting size-3.5 shrink-0" />
+                      <span className="text-state-waiting truncate text-[12.5px]">
+                        {row.reason}
+                      </span>
+                    </div>
+                  )}
+
+                  {row.steps !== null && (
+                    <StepStrip steps={row.steps} className="mt-2.5" />
+                  )}
+                </Panel>
               </li>
             ))}
           </ul>
@@ -208,13 +216,14 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
             ))}
             {history.length > HISTORY_PREVIEW && (
               <li>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="xs"
                   onClick={() => setShowAllHistory((v) => !v)}
-                  className="text-muted-foreground hover:text-foreground px-3 py-2 text-[12px]"
+                  className="text-muted-foreground hover:text-foreground h-auto px-3 py-2 text-[length:inherit] font-normal hover:bg-transparent"
                 >
                   {showAllHistory ? 'Show fewer' : `Show all ${history.length}`}
-                </button>
+                </Button>
               </li>
             )}
           </ul>

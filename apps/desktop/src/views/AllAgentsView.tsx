@@ -8,6 +8,7 @@ import { formatRelativeTimeFromIso } from '../lib/format';
 import { modelDisplayName } from '../lib/models';
 import { deriveRunDisposition } from '../lib/runState';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
 import { Skeleton } from '@/ui/skeleton';
 
@@ -129,13 +130,14 @@ export function AllAgentsView({
             const state = deriveFeedState(run);
             const past = isPast(run);
             return (
-              <button
+              <Button
                 key={run.id}
-                type="button"
+                variant="ghost"
+                size="xs"
                 onClick={() => onJumpToRun(run.id)}
                 className={cn(
                   GRID,
-                  'hover:bg-muted/40 rounded-md px-3 py-1.5 text-left transition-colors duration-150'
+                  'h-auto justify-start rounded-md px-3 py-1.5 text-left text-[length:inherit] font-normal hover:bg-muted/40 hover:text-foreground'
                 )}
               >
                 <span className="flex min-w-0 items-center gap-2">
@@ -171,18 +173,19 @@ export function AllAgentsView({
                 >
                   {outcomeLabel(run)}
                 </span>
-              </button>
+              </Button>
             );
           })}
 
           {ordered.length > shown.length && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => setShowAll(true)}
-              className="text-muted-foreground hover:text-foreground px-3 py-2 text-left text-[12px]"
+              className="text-muted-foreground hover:text-foreground h-auto justify-start px-3 py-2 text-left text-[length:inherit] font-normal hover:bg-transparent"
             >
               Show all {ordered.length}
-            </button>
+            </Button>
           )}
         </div>
       )}

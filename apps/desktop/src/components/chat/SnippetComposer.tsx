@@ -100,6 +100,11 @@ export function SnippetComposer({
       />
 
       <div className="flex items-center justify-between gap-3">
+        {/* A native `<select>`, not the Radix-backed `@/ui/select`: that primitive mounts its
+            options only once opened (a `Presence`-gated portal), which is right for a mouse-
+            driven combobox but breaks `ReviewChatPanel`'s coverage of which targets are
+            offered — it reads `role="option"` the moment this composer mounts, never opening
+            the dropdown. Kept native so that assertion stays honest without touching the test. */}
         <select
           aria-label="Send to"
           value={selectedTarget?.id}
