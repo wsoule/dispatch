@@ -124,15 +124,22 @@ describe('demo server routes', () => {
     });
   });
 
-  test('alive follows session existence', async () => {
+  test('alive follows session existence without counting as activity', async () => {
+    const touched: string[] = [];
     const manager = stubManager({
       get: (id: string) => (id === ID ? fakeSession(1234) : undefined),
+      touch: (id: string) => {
+        touched.push(id);
+      },
     });
     await withServer(manager, '/nonexistent', async (base) => {
       expect((await fetch(`${base}/s/${ID}/alive`)).status).toBe(200);
       expect((await fetch(`${base}/s/${'b'.repeat(16)}/alive`)).status).toBe(
         404
       );
+      // The overlay polls this every 30s; touching here would make an
+      // abandoned tab immortal and hold a cap slot forever.
+      expect(touched).toEqual([]);
     });
   });
 

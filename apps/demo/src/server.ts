@@ -175,9 +175,11 @@ export function createDemoServer(
           ? landing(404)
           : json({ error: 'session-expired' }, 404);
       }
+      // Deliberately not touched for `alive`: the overlay polls it every 30s,
+      // so counting it as activity would keep an abandoned tab alive forever.
+      if (parsed.kind === 'alive') return new Response(null, { status: 200 });
       manager.touch(parsed.id);
 
-      if (parsed.kind === 'alive') return new Response(null, { status: 200 });
       if (parsed.kind === 'html') return sessionPage(req, parsed.id, session);
       if (parsed.kind === 'ws') {
         const upgraded = server.upgrade(req, {
