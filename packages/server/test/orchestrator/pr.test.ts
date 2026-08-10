@@ -928,6 +928,7 @@ describe('PrManager.listRepoPrs', () => {
           failed: 0,
           pending: 0,
           total: 0,
+          runs: [],
         },
         additions: 0,
         deletions: 0,
@@ -1024,6 +1025,11 @@ describe('PrManager.listRepoPrs', () => {
       failed: 1,
       pending: 1,
       total: 3,
+      runs: [
+        { name: 'check', conclusion: 'SUCCESS', url: '' },
+        { name: 'check', conclusion: 'FAILURE', url: '' },
+        { name: 'check', conclusion: 'PENDING', url: '' },
+      ],
     });
     expect(prs[0]?.reviewDecision).toBe('CHANGES_REQUESTED');
     expect(prs[0]?.mergeable).toBe('CONFLICTING');

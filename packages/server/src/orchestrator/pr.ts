@@ -206,13 +206,20 @@ export interface PrManagerContext {
   reviewComments: ReviewCommentStore;
 }
 
+export interface PrCheckRun {
+  name: string;
+  conclusion: string; // SUCCESS | FAILURE | PENDING | … (normalized verdict)
+  url: string;
+}
+
 // A CI check rollup summarized to counts the UI can render as a compact
 // pass/fail/pending line, instead of the raw per-check array GitHub returns.
-interface PrCheckSummary {
+export interface PrCheckSummary {
   passed: number;
   failed: number;
   pending: number;
   total: number;
+  runs: PrCheckRun[];
 }
 
 // The reviewable state of a run's GitHub PR, from `gh pr view --json …`.
@@ -411,29 +418,39 @@ export function parsePrUrl(
 }
 
 // Collapses GitHub's per-check rollup (a mix of CheckRun and StatusContext
-// nodes, each reporting completion differently) into pass/fail/pending counts.
-// A CheckRun reports `status` (COMPLETED/IN_PROGRESS/QUEUED) + `conclusion`
-// (SUCCESS/FAILURE/…); a legacy StatusContext reports `state`
+// nodes, each reporting completion differently) into pass/fail/pending counts
+// and per-check detail. A CheckRun reports `status` (COMPLETED/IN_PROGRESS/QUEUED)
+// + `conclusion` (SUCCESS/FAILURE/…); a legacy StatusContext reports `state`
 // (SUCCESS/FAILURE/PENDING/ERROR). Anything not clearly success or failure
 // counts as pending, so an in-flight run reads as pending rather than passed.
-function summarizeChecks(rollup: unknown): PrCheckSummary {
+export function summarizeChecks(rollup: unknown): PrCheckSummary {
   const summary: PrCheckSummary = {
     passed: 0,
     failed: 0,
     pending: 0,
     total: 0,
+    runs: [],
   };
   if (!Array.isArray(rollup)) return summary;
   for (const raw of rollup) {
     if (raw === null || typeof raw !== 'object') continue;
-    const check = raw as { conclusion?: unknown; state?: unknown };
-    const verdict = ghString(check.conclusion ?? check.state).toUpperCase();
+    const node = raw as {
+      name?: unknown;
+      context?: unknown;
+      conclusion?: unknown;
+      state?: unknown;
+      detailsUrl?: unknown;
+      targetUrl?: unknown;
+    };
+    const verdict = ghString(node.conclusion ?? node.state).toUpperCase();
     summary.total += 1;
+    let summaryBucket: 'passed' | 'failed' | 'pending';
     if (
       verdict === 'SUCCESS' ||
       verdict === 'NEUTRAL' ||
       verdict === 'SKIPPED'
     ) {
+      summaryBucket = 'passed';
       summary.passed += 1;
     } else if (
       verdict === 'FAILURE' ||
@@ -442,10 +459,23 @@ function summarizeChecks(rollup: unknown): PrCheckSummary {
       verdict === 'TIMED_OUT' ||
       verdict === 'ACTION_REQUIRED'
     ) {
+      summaryBucket = 'failed';
       summary.failed += 1;
     } else {
+      summaryBucket = 'pending';
       summary.pending += 1;
     }
+    const name = ghString(node.name ?? node.context);
+    summary.runs.push({
+      name: name.length > 0 ? name : 'check',
+      conclusion:
+        verdict === ''
+          ? 'PENDING'
+          : summaryBucket === 'pending'
+            ? 'PENDING'
+            : verdict,
+      url: ghString(node.detailsUrl ?? node.targetUrl),
+    });
   }
   return summary;
 }
