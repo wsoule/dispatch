@@ -1,6 +1,6 @@
 import type { EpicProgress, RunMeta } from '@dispatch/client';
 import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
-import { ChevronDown, ChevronRight, SearchX, Waypoints } from 'lucide-react';
+import { ChevronRight, SearchX, Waypoints } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
@@ -19,7 +19,15 @@ import { resolveListKeyCommand } from '../lib/keyboard';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
+import { EmptyState } from '@/ui/chrome';
 import { StateDot } from '@/ui/chrome/StateDot';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
 
 interface TasksListViewProps {
   data: DispatchProjectData;
@@ -286,12 +294,11 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
       </div>
 
       {orderedIds.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-          <SearchX className="text-muted-foreground size-5" />
-          <p className="text-muted-foreground text-[13px]">
-            No tasks match this filter.
-          </p>
-        </div>
+        <EmptyState
+          icon={SearchX}
+          message="No tasks match this filter."
+          className="flex-1 justify-center gap-3 p-0 text-[13px] [&>[data-slot=empty-description]]:text-[length:inherit]"
+        />
       ) : (
         <div
           ref={listRef}
@@ -313,62 +320,69 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
               data.readyIds
             );
             return (
-              <div key={key} className="mb-1">
+              // Controlled off `collapsedGroups` — that Set, not the trigger, is what
+              // `orderedIds` reads to keep j/k out of a collapsed group.
+              <Collapsible
+                key={key}
+                open={!collapsed}
+                onOpenChange={() => toggleGroup(key)}
+                className="mb-1"
+              >
                 <div className="bg-background sticky top-0 z-10 flex w-full items-center gap-1.5 px-1 py-1.5">
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(key)}
-                    aria-expanded={!collapsed}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                  >
-                    {collapsed ? (
-                      <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
-                    ) : (
-                      <ChevronDown className="text-muted-foreground size-3.5 shrink-0" />
-                    )}
-                    <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
-                      {group.title}
-                    </span>
-                    <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
-                      {group.tasks.length}
-                    </span>
-                    {totalCount > 0 && (
-                      <span className="text-muted-foreground/70 shrink-0 text-[11px]">
-                        {doneCount}/{totalCount} done
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="group h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[length:inherit] font-normal hover:bg-transparent"
+                    >
+                      <ChevronRight className="text-muted-foreground size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+                      <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
+                        {group.title}
                       </span>
-                    )}
-                    {/* The single most actionable fact about this epic, rather than a tally of
-                        everything — see deriveEpicPulse for why the ordering matters. */}
-                    <span className="flex shrink-0 items-center gap-1.5">
-                      {pulse.state !== null && <StateDot state={pulse.state} />}
-                      <span
-                        className={cn(
-                          'dense-meta',
-                          pulse.state === 'waiting' && 'text-state-waiting'
+                      <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
+                        {group.tasks.length}
+                      </span>
+                      {totalCount > 0 && (
+                        <span className="text-muted-foreground/70 shrink-0 text-[11px]">
+                          {doneCount}/{totalCount} done
+                        </span>
+                      )}
+                      {/* The single most actionable fact about this epic, rather than a tally of
+                          everything — see deriveEpicPulse for why the ordering matters. */}
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {pulse.state !== null && (
+                          <StateDot state={pulse.state} />
                         )}
-                      >
-                        {pulse.label}
+                        <span
+                          className={cn(
+                            'dense-meta',
+                            pulse.state === 'waiting' && 'text-state-waiting'
+                          )}
+                        >
+                          {pulse.label}
+                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </Button>
+                  </CollapsibleTrigger>
                   {/* Only for a group keyed by a real, known epic (not the dangling-parent or
                       "No epic" buckets) — there's no epic to graph otherwise. A sibling of the
                       toggle button above, not nested inside it (button-in-button isn't valid
                       HTML), so no stopPropagation is needed here the way the card entry points
                       below need it. */}
                   {group.epicId !== null && epicTitleById.has(group.epicId) && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       onClick={() => setDagEpicId(group.epicId)}
                       aria-label={`View dependency graph for ${group.title}`}
                       title="View dependency graph"
-                      className="text-muted-foreground hover:bg-accent hover:text-foreground shrink-0 rounded-md p-1 transition-colors duration-150"
+                      className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-1"
                     >
                       <Waypoints className="size-3.5" />
-                    </button>
+                    </Button>
                   )}
                 </div>
-                {!collapsed && (
+                <CollapsibleContent>
                   <div className="flex flex-col">
                     {group.tasks.map((doc) => (
                       <TaskListRow
@@ -403,8 +417,8 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                       />
                     ))}
                   </div>
-                )}
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
             );
           })}
         </div>
@@ -419,21 +433,22 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
             {selectedReady.length} ready to dispatch
           </span>
           <span className="flex-1" />
-          <button
-            type="button"
+          <Button
+            size="xs"
             disabled={selectedReady.length === 0}
             onClick={() => setDispatchOpen(true)}
-            className="bg-accent text-accent-foreground rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
+            className="bg-accent text-accent-foreground hover:bg-accent h-auto px-2.5 py-1 text-[12px] font-normal"
           >
             Dispatch {selectedReady.length}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => setSelectedIds(new Set())}
-            className="shadow-hairline rounded-md px-2.5 py-1 text-[12px]"
+            className="shadow-hairline h-auto px-2.5 py-1 text-[12px] font-normal"
           >
             Clear
-          </button>
+          </Button>
         </div>
       )}
 
@@ -540,16 +555,12 @@ function TaskListRow({
       {/* Hidden until you hover or select something, so an unused affordance does not add a
           column of empty boxes to every row. stopPropagation because selecting a task and
           opening it are different intents. */}
-      <input
-        type="checkbox"
+      <Checkbox
         checked={selected}
         aria-label={`Select ${doc.meta.title}`}
         onClick={(e) => e.stopPropagation()}
-        onChange={(e) => {
-          e.stopPropagation();
-          onToggleSelect();
-        }}
-        className={`accent-accent size-3.5 shrink-0 transition-opacity duration-150 ${
+        onCheckedChange={() => onToggleSelect()}
+        className={`size-3.5 shrink-0 transition-opacity duration-150 ${
           selected ? '' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
         }`}
       />
