@@ -44,6 +44,7 @@ import {
 } from '@/lib/reviewDiffItems';
 import { isTerminalRunState } from '@/lib/runState';
 import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
+import { Button } from '@/ui/button';
 
 interface PierreReviewDiffProps {
   /** Backs the contents loader that fills in what a patch's own hunks don't carry — omitted
@@ -436,8 +437,10 @@ export function PierreReviewDiff({
       // the affordance here keeps the two from competing over the same gesture.
       if (editing === item.id) return null;
       return (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-xs"
           aria-label="Actions for this line"
           onClick={(event) => {
             const hovered = getHoveredLine();
@@ -475,12 +478,12 @@ export function PierreReviewDiff({
               anchor: anchorFrom(event.currentTarget, containerRef.current),
             });
           }}
-          className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center"
+          className="text-muted-foreground hover:text-accent-foreground size-4 hover:bg-transparent"
         >
           {/* Neutral on purpose: this arms a bar of several actions, so an icon promising a
               comment would misdescribe it on any surface that cannot take one. */}
           <MoreHorizontal className="size-3" />
-        </button>
+        </Button>
       );
     },
     [selection, editing, files]
@@ -633,33 +636,39 @@ export function PierreReviewDiff({
           )}
           {isEditing ? (
             <>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 onClick={() => saveEdit(item.id)}
-                className="text-accent-foreground text-[11px]"
+                className="text-accent-foreground hover:text-accent-foreground h-auto p-0 text-[11px] font-normal hover:bg-transparent"
               >
                 Save
-              </button>
+              </Button>
               {/* Cancel is the only way out that keeps the file as it was — without it,
                   leaving edit mode always meant a commit attempt. */}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 onClick={() => cancelEdit(item.id)}
-                className="text-muted-foreground hover:text-foreground text-[11px]"
+                className="text-muted-foreground hover:text-foreground h-auto p-0 text-[11px] font-normal hover:bg-transparent"
               >
                 Cancel
-              </button>
+              </Button>
             </>
           ) : (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               aria-label="Edit this file"
               disabled={isPending}
               onClick={() => beginEdit(item.id)}
-              className="text-muted-foreground hover:text-accent-foreground grid size-4 place-items-center disabled:opacity-50"
+              className="text-muted-foreground hover:text-accent-foreground size-4 hover:bg-transparent"
             >
               <Pencil className="size-3" />
-            </button>
+            </Button>
           )}
         </span>
       );
