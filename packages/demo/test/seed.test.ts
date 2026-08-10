@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { writeBoard } from '../src/board.js';
 import { git } from '../src/git.js';
+import { runsDir } from '../src/paths.js';
 import { buildRepo } from '../src/repo.js';
+import { seedSession, sessionPaths, VISITOR } from '../src/seed.js';
 
 function makeBareOrigin(dir: string): string {
   const origin = join(dir, 'origin.git');
@@ -60,5 +62,46 @@ describe('writeBoard options', () => {
     const config = readFileSync(join(a, '.dispatch', 'config.yml'), 'utf8');
     expect(config).toContain('enabled: true'); // linear
     expect(config).toContain('enabled: on'); // carto
+  });
+});
+
+describe('seedSession', () => {
+  test('builds origin, owner clone, teammate clone, board, runs — no github anywhere', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'demo-session-'));
+    const paths = seedSession(dir);
+
+    // layout
+    expect(existsSync(join(paths.origin, 'HEAD'))).toBe(true); // bare repo
+    expect(existsSync(join(paths.root, '.dispatch', 'tasks'))).toBe(true);
+    expect(existsSync(join(paths.teammateRoot, '.dispatch', 'tasks'))).toBe(
+      true
+    );
+
+    // no GitHub remote in either clone
+    expect(git(paths.root, 'remote', '-v')).not.toContain('github.com');
+    expect(git(paths.teammateRoot, 'remote', '-v')).not.toContain('github.com');
+
+    // run history + review diff snapshots for the visitor
+    const runs = readdirSync(runsDir(paths.root, paths.home));
+    expect(runs.some((f) => f.endsWith('.jsonl'))).toBe(true);
+    expect(runs).toContain('r-2e91aa.diff.json');
+
+    // visitor is on the roster and owns the identity
+    const team = readFileSync(
+      join(paths.root, '.dispatch', 'team.yml'),
+      'utf8'
+    );
+    expect(team).toContain(`handle: ${VISITOR.handle}`);
+  });
+
+  test('sessionPaths derives the fixed sub-paths under dir', () => {
+    const paths = sessionPaths('/tmp/demo-session-xyz');
+    expect(paths.dir).toBe('/tmp/demo-session-xyz');
+    expect(paths.origin).toBe('/tmp/demo-session-xyz/origin.git');
+    expect(paths.root).toBe('/tmp/demo-session-xyz/storefront');
+    expect(paths.home).toBe('/tmp/demo-session-xyz/home');
+    expect(paths.teammateRoot).toBe(
+      '/tmp/demo-session-xyz/teammate/storefront'
+    );
   });
 });

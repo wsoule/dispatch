@@ -1,0 +1,73 @@
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+import { writeBoard } from './board.js';
+import { git } from './git.js';
+import type { DemoActor } from './paths.js';
+import { writeRecords } from './records.js';
+import { assertNoCredentialsStaged, buildRepo } from './repo.js';
+import { clearRunHistory, writeRuns } from './runs.js';
+
+export interface SessionPaths {
+  dir: string;
+  origin: string;
+  root: string;
+  home: string;
+  teammateRoot: string;
+}
+
+/** The anonymous web visitor's identity — on the roster, owns the seeded run history. */
+export const VISITOR: DemoActor = {
+  handle: 'demo',
+  email: 'demo@example.com',
+  displayName: 'You (demo)',
+};
+
+export function sessionPaths(dir: string): SessionPaths {
+  return {
+    dir,
+    origin: join(dir, 'origin.git'),
+    root: join(dir, 'storefront'),
+    home: join(dir, 'home'),
+    teammateRoot: join(dir, 'teammate', 'storefront'),
+  };
+}
+
+/**
+ * Seeds one visitor sandbox: bare origin standing in for GitHub, an owner
+ * clone (the daemon root) with board/records/run history, and a teammate
+ * clone the puppet pushes from. `dir` must be under tmpdir() — the demo
+ * package's delete guard enforces it.
+ */
+export function seedSession(dir: string): SessionPaths {
+  const paths = sessionPaths(dir);
+
+  mkdirSync(dir, { recursive: true });
+  git(dir, 'init', '-q', '--bare', paths.origin);
+
+  buildRepo({ root: paths.root, push: true, remote: paths.origin });
+  writeBoard(paths.root, {
+    extraActors: [VISITOR],
+    linearEnabled: false,
+    cartoEnabled: false,
+  });
+  writeRecords(paths.root);
+  git(paths.root, 'add', '-A');
+  assertNoCredentialsStaged(paths.root);
+  git(paths.root, 'commit', '-qm', 'demo: seed board and records');
+  git(paths.root, 'push', '-q', 'origin', 'main');
+
+  mkdirSync(dirname(paths.teammateRoot), { recursive: true });
+  git(
+    dirname(paths.teammateRoot),
+    'clone',
+    '-q',
+    paths.origin,
+    paths.teammateRoot
+  );
+
+  clearRunHistory(paths.root, paths.home);
+  writeRuns(paths.root, paths.home, VISITOR.handle);
+
+  return paths;
+}
