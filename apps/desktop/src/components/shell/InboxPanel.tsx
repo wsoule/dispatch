@@ -3,6 +3,9 @@ import { useEffect, useRef } from 'react';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import type { InboxEntry, InboxTarget } from '../../lib/inbox';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
+import { ScrollArea } from '@/ui/scroll-area';
 
 interface InboxPanelProps {
   /** Newest-first inbox entries — `data.inbox.entries`, unfiltered (read/unread both show,
@@ -65,27 +68,30 @@ export function InboxPanel({
         <span className="text-foreground text-[13px] font-medium">
           Notifications
         </span>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={onMarkAllRead}
-          className="text-muted-foreground hover:text-foreground text-[11px]"
+          className="text-muted-foreground hover:text-foreground h-auto p-0 text-[11px] font-normal hover:bg-transparent"
         >
           Mark all read
-        </button>
+        </Button>
       </div>
-      <div className="overflow-y-auto">
+      {/* min-h-0 lets this flex child shrink below its content height so it scrolls instead
+          of growing past the panel's max-h and getting hard-clipped. */}
+      <ScrollArea className="min-h-0">
         {entries.length === 0 ? (
-          <p className="text-muted-foreground px-3 py-6 text-center text-[13px]">
-            No notifications yet.
-          </p>
+          <EmptyState message="No notifications yet." />
         ) : (
           entries.map((entry) => (
-            <button
+            <Button
               key={entry.id}
               type="button"
+              variant="ghost"
               onClick={() => onNavigate(entry.target)}
               className={cn(
-                'border-border/60 hover:bg-accent/60 flex w-full flex-col items-start gap-0.5 border-b px-3 py-2 text-left last:border-b-0',
+                'border-border/60 hover:bg-accent/60 flex h-auto w-full flex-col items-start justify-start gap-0.5 rounded-none border-b px-3 py-2 text-left font-normal last:border-b-0',
                 entry.read && 'opacity-60'
               )}
             >
@@ -100,10 +106,10 @@ export function InboxPanel({
               <span className="text-muted-foreground line-clamp-2 text-[12px]">
                 {entry.body}
               </span>
-            </button>
+            </Button>
           ))
         )}
-      </div>
+      </ScrollArea>
     </div>
   );
 }

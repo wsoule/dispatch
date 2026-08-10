@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { Update } from '@tauri-apps/plugin-updater';
-import { Loader2, Plus, TriangleAlert } from 'lucide-react';
+import { Plus, TriangleAlert } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import {
   useCallback,
   useEffect,
@@ -16,7 +17,7 @@ import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
 import { MiniOverview } from './components/shell/MiniOverview';
-import { Sidebar } from './components/shell/Sidebar';
+import { Sidebar, useSidebarCollapsed } from './components/shell/Sidebar';
 import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
 import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
@@ -58,6 +59,17 @@ import { RunsView } from './views/RunsView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/ui/empty';
+import { SidebarProvider } from '@/ui/sidebar';
+import { Spinner } from '@/ui/spinner';
 import { TooltipProvider } from '@/ui/tooltip';
 
 function App() {
@@ -78,6 +90,10 @@ function App() {
   const [railOpen, setRailOpen] = useState<boolean>(
     () => window.localStorage.getItem('dispatch:overview-rail') !== '0'
   );
+
+  // The left rail's collapsed state, owned here because `SidebarProvider` wraps the whole
+  // shell row; `Sidebar` reads it back through `useSidebar`. Persistence lives with the rail.
+  const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
   useEffect(() => {
     window.localStorage.setItem('dispatch:overview-rail', railOpen ? '1' : '0');
   }, [railOpen]);
@@ -604,7 +620,21 @@ function App() {
             onDismiss={() => setUpdateDismissed(true)}
           />
         )}
-        <div className="flex min-h-0 flex-1 overflow-hidden">
+        <SidebarProvider
+          open={!sidebarCollapsed}
+          onOpenChange={(open) => setSidebarCollapsed(!open)}
+          // The rail's widths, unchanged from the hand-rolled version it replaced: 15rem
+          // expanded, a 3.5rem icon strip collapsed.
+          style={
+            {
+              '--sidebar-width': '15rem',
+              '--sidebar-width-icon': '3.5rem',
+            } as CSSProperties
+          }
+          // `relative` is what keeps the rail inside this row rather than pinned to the
+          // viewport, so an update banner above it is never covered.
+          className="relative min-h-0 flex-1 overflow-hidden"
+        >
           <Sidebar
             projectName={activeProject?.name ?? null}
             projectPath={activeProject?.path ?? null}
@@ -648,15 +678,13 @@ function App() {
               {resolutionError !== null ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
                   <TriangleAlert className="text-destructive size-5" />
-                  <p className="text-muted-foreground max-w-sm text-[13px]">
-                    {resolutionError}
-                  </p>
+                  <EmptyState message={resolutionError} className="p-0" />
                 </div>
               ) : noProjectYet ? (
-                <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+                <Empty className="h-full gap-4 rounded-none border-none p-0 md:p-0">
                   {/* The Hydrogen mark — same wordmark icon as the sidebar, scaled up — so the
                   empty first-run state still reads as "Dispatch", not a generic error page. */}
-                  <span className="border-border inline-flex size-12 items-center justify-center rounded-xl border bg-white">
+                  <EmptyMedia className="border-border mb-0 size-12 rounded-xl border bg-white p-0">
                     <svg
                       viewBox="0 0 34 36"
                       className="size-7"
@@ -668,27 +696,27 @@ function App() {
                         fill="#000000"
                       />
                     </svg>
-                  </span>
-                  <div className="space-y-1">
-                    <p className="text-foreground text-[15px] font-medium">
+                  </EmptyMedia>
+                  <EmptyHeader className="gap-1">
+                    <EmptyTitle className="text-[15px] tracking-normal">
                       No project yet
-                    </p>
-                    <p className="text-muted-foreground max-w-sm text-[13px]">
+                    </EmptyTitle>
+                    <EmptyDescription className="max-w-sm text-[13px]">
                       Add a local folder or clone a repository from GitHub to
                       get started.
-                    </p>
-                  </div>
-                  <Button onClick={() => setAddProjectOpen(true)}>
-                    <Plus className="size-4" />
-                    Add project
-                  </Button>
-                </div>
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button onClick={() => setAddProjectOpen(true)}>
+                      <Plus className="size-4" />
+                      Add project
+                    </Button>
+                  </EmptyContent>
+                </Empty>
               ) : stillResolving ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                  <Loader2 className="text-muted-foreground size-5 animate-spin" />
-                  <p className="text-muted-foreground text-[13px]">
-                    Loading project…
-                  </p>
+                  <Spinner className="text-muted-foreground size-5" />
+                  <EmptyState message="Loading project…" className="p-0" />
                 </div>
               ) : showGetStarted ? (
                 <GetStartedView projectPath={root} />
@@ -712,10 +740,8 @@ function App() {
                 </>
               ) : activeProject === null ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                  <Loader2 className="text-muted-foreground size-5 animate-spin" />
-                  <p className="text-muted-foreground text-[13px]">
-                    Loading project…
-                  </p>
+                  <Spinner className="text-muted-foreground size-5" />
+                  <EmptyState message="Loading project…" className="p-0" />
                 </div>
               ) : (
                 <>
@@ -828,22 +854,25 @@ function App() {
                       />
                     ) : data.config === null ? (
                       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                        <Loader2 className="text-muted-foreground size-5 animate-spin" />
-                        <p className="text-muted-foreground text-[13px]">
-                          Loading project…
-                        </p>
+                        <Spinner className="text-muted-foreground size-5" />
+                        <EmptyState
+                          message="Loading project…"
+                          className="p-0"
+                        />
                       </div>
                     ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                        <p className="text-muted-foreground text-[13px]">
-                          That draft is no longer available.
-                        </p>
-                        <Button
-                          size="sm"
-                          onClick={() => selectProjectView('board')}
-                        >
-                          Back to board
-                        </Button>
+                      <div className="flex h-full items-center justify-center">
+                        <EmptyState
+                          message="That draft is no longer available."
+                          action={
+                            <Button
+                              size="sm"
+                              onClick={() => selectProjectView('board')}
+                            >
+                              Back to board
+                            </Button>
+                          }
+                        />
                       </div>
                     ))}
                 </>
@@ -878,7 +907,7 @@ function App() {
                 }}
               />
             )}
-        </div>
+        </SidebarProvider>
 
         {selectedDoc !== null && data.config !== null && (
           // Remount dialog per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.

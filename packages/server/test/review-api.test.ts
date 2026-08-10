@@ -194,6 +194,76 @@ describe('POST /api/tasks/:id/review', () => {
     );
   });
 
+  // `refs/dispatch/pr/<n>` is only ever created behind the fork
+  // confirmation gate, and the gated path calls the runner directly. Naming
+  // one here would cut a worktree from a fork's code without that gate.
+  it('400s a head that names a PR head ref, qualified or not', async () => {
+    runGitSync(root, ['update-ref', 'refs/dispatch/pr/7', head]);
+    for (const bad of [
+      'refs/dispatch/pr/7',
+      // Git resolves an unqualified name through `refs/<name>` before
+      // `refs/heads/<name>`, so this reaches the very same ref.
+      'dispatch/pr/7',
+      'refs/dispatch/pr/7^{commit}',
+      // A loose ref is a file, so on a case-insensitive volume (macOS's
+      // default) these resolve to the ref created as `refs/dispatch/pr/7`.
+      'refs/Dispatch/pr/7',
+      'Dispatch/PR/7',
+    ]) {
+      const res = await startReview({ base, head: bad });
+      expect(res.status).toBe(400);
+      const body = await json<{ error: string }>(res);
+      expect(body.error).toContain('invalid head');
+      expect(body.error).toContain('fork');
+    }
+  });
+
+  // A commit only the PR ref reaches — what a fetched fork head actually is,
+  // as opposed to the fixture above, which points the ref at main's own tip.
+  function fetchForkHead(): string {
+    const tree = runGitSync(root, ['rev-parse', 'HEAD^{tree}']).trim();
+    const sha = runGitSync(root, [
+      'commit-tree',
+      tree,
+      '-p',
+      head,
+      '-m',
+      'work from a stranger',
+    ]).trim();
+    runGitSync(root, ['update-ref', 'refs/dispatch/pr/7', sha]);
+    return sha;
+  }
+
+  // The name rule is a rule about spellings, and a commit has more than one:
+  // GET /api/prs hands every caller the PR's `headRefOid`, which reaches the
+  // same tree without ever matching the prefix.
+  it('400s the PR head’s raw sha, which no name rule can catch', async () => {
+    const forkSha = fetchForkHead();
+    const res = await startReview({ base, head: forkSha });
+    expect(res.status).toBe(400);
+    expect((await json<{ error: string }>(res)).error).toContain('fork');
+  });
+
+  // Retirement deletes the ref, which does not delete the objects — they sit
+  // unreachable until a gc. That is the one shape that outlives the name rule
+  // *and* the ref itself.
+  it('400s a fork head whose ref was already deleted', async () => {
+    const forkSha = fetchForkHead();
+    runGitSync(root, ['update-ref', '-d', 'refs/dispatch/pr/7']);
+    const res = await startReview({ base, head: forkSha });
+    expect(res.status).toBe(400);
+  });
+
+  // The two shapes real callers send: the desktop's ReviewView posts
+  // `head: run.branch` (a `dispatch/…` local branch) and the server's own
+  // tests post a sha. Neither may be caught by the PR-head-ref refusal.
+  it('accepts a dispatch run branch as head', async () => {
+    const branch = `dispatch/${taskId}-harden-the-sync-path-abc123`;
+    runGitSync(root, ['branch', branch, head]);
+    const res = await startReview({ base, head: branch });
+    expect(res.status).toBe(202);
+  });
+
   it('404s an unknown task', async () => {
     const res = await fetch(`${baseUrl}/api/tasks/t-000000/review`, {
       method: 'POST',

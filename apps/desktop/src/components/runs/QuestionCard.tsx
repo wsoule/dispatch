@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Markdown } from './Markdown';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { Button } from '@/ui/button';
+import { Textarea } from '@/ui/textarea';
 
 interface QuestionCardProps {
   question: string;
@@ -73,7 +74,7 @@ export function QuestionCard({
         <div className="text-destructive text-[12px]">{error}</div>
       )}
       <div className="flex gap-2">
-        <textarea
+        <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -88,7 +89,7 @@ export function QuestionCard({
               : 'Answer the agent…'
           }
           disabled={sending}
-          className="shadow-hairline min-h-[52px] flex-1 resize-y rounded-md px-2 py-1.5 text-[12.5px] outline-none"
+          className="min-h-[52px] flex-1 resize-y text-[12.5px]"
         />
         <Button
           size="sm"

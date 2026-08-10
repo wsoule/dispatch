@@ -3,6 +3,7 @@ import { describeValue } from '@dispatch/core';
 import type { ApiContext } from '../api.js';
 import type { ReviewScope } from '../orchestrator/review.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
+import { refusePrHeadRef } from './prHead.js';
 
 // Declared as `readonly string[]` so a membership check against an
 // unvalidated `unknown` never needs an `as` cast.
@@ -25,12 +26,18 @@ export async function startTaskReview(
     extraRisks?: unknown;
     runId?: unknown;
   };
+  // `base` deliberately gets no PR-head check. A PR review run's baseBranch
+  // *is* that ref (orchestrator.ts `baseBranch: opts.head`), and ReviewView
+  // sends it back as `base` to review the reviewer — refusing it breaks that.
+  // Reading a diff is also weaker than `head`, which gets checked out.
   if (typeof body.base !== 'string' || body.base.trim() === '') {
     return errorResponse(400, 'invalid base: base is required');
   }
   if (typeof body.head !== 'string' || body.head.trim() === '') {
     return errorResponse(400, 'invalid head: head is required');
   }
+  const refusedHead = refusePrHeadRef(body.head, ctx);
+  if (refusedHead !== null) return refusedHead;
   if (body.scope !== undefined && !SCOPES.includes(body.scope as string)) {
     return errorResponse(
       400,

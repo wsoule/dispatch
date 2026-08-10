@@ -10,6 +10,9 @@ import {
   MILESTONE_HEALTH_LABEL,
 } from '../lib/milestoneRisk';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { EmptyState, Panel } from '@/ui/chrome';
+import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
 import { StateDot } from '@/ui/chrome/StateDot';
 
 interface MilestonesViewProps {
@@ -66,13 +69,11 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
       <h1 className="sr-only">Milestones</h1>
 
       {groups.length === 0 ? (
-        <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
-          <Target className="size-6" />
-          <p className="text-[13px]">
-            No milestones yet. Assign a task to a milestone from its detail
-            panel to group work here.
-          </p>
-        </div>
+        <EmptyState
+          icon={Target}
+          message="No milestones yet. Assign a task to a milestone from its detail panel to group work here."
+          className="flex-1 justify-center gap-2 p-0 text-[13px] [&_[data-slot=empty-description]]:text-[length:inherit] [&_[data-slot=empty-icon]_svg]:size-6"
+        />
       ) : (
         <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-1 gap-3 overflow-y-auto lg:grid-cols-2">
           {groups.map((group) => {
@@ -87,11 +88,11 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
             );
             const stalled = status.health === 'stalled';
             return (
-              <section
+              <Panel
                 key={group.name}
                 className={cn(
-                  'shadow-hairline flex flex-col rounded-lg',
-                  stalled ? 'bg-state-waiting-surface' : 'bg-card'
+                  'flex flex-col',
+                  stalled && 'bg-state-waiting-surface'
                 )}
               >
                 <div className="flex flex-col gap-2 px-4 py-3">
@@ -112,15 +113,17 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
                       {group.done}/{group.tasks.length}
                     </span>
                   </div>
-                  <div className="bg-muted h-1.5 overflow-hidden rounded-full">
-                    <div
-                      className={cn(
-                        'h-full rounded-full transition-[width] duration-300',
-                        pct === 100 ? 'bg-state-review' : 'bg-primary'
-                      )}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
+                  <ProgressTrack
+                    value={pct / 100}
+                    label={`${group.name} milestone progress`}
+                    className={cn(
+                      'bg-muted h-1.5 rounded-full',
+                      '[&>[data-slot=progress-indicator]]:transition-transform [&>[data-slot=progress-indicator]]:duration-300',
+                      pct === 100
+                        ? '[&>[data-slot=progress-indicator]]:bg-state-review'
+                        : '[&>[data-slot=progress-indicator]]:bg-primary'
+                    )}
+                  />
                   {/* Never "at risk" without saying why — an unexplained warning is just
                       anxiety. There is no target date to be late against (milestones are
                       free-form names), so the reason is always about what is stuck. */}
@@ -143,11 +146,12 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
                 </div>
                 <div className="border-border/60 flex flex-col gap-0.5 border-t p-1.5">
                   {group.tasks.map((task) => (
-                    <button
+                    <Button
                       key={task.meta.id}
-                      type="button"
+                      variant="ghost"
+                      size="xs"
                       onClick={() => onOpenTask(task.meta.id)}
-                      className="hover:bg-muted/60 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors duration-150"
+                      className="hover:bg-muted/60 hover:text-foreground h-auto w-full justify-start gap-2 rounded-md px-2.5 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-2.5"
                     >
                       <PriorityIcon priority={task.meta.priority} />
                       <StatusIcon status={task.meta.status} />
@@ -166,10 +170,10 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
                           epic
                         </span>
                       )}
-                    </button>
+                    </Button>
                   ))}
                 </div>
-              </section>
+              </Panel>
             );
           })}
         </div>

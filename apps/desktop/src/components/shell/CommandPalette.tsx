@@ -1,10 +1,15 @@
-import { Search } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { PaletteItem } from '../../lib/paletteMatch';
 import { rankPaletteItems } from '../../lib/paletteMatch';
-import { cn } from '@/lib/utils';
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/ui/command';
+import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
 
 export interface PaletteEntry extends PaletteItem {
   /** A short tag shown at the entry's right edge — "task", "go to", "action" — so the fuzzy
@@ -21,16 +26,14 @@ interface CommandPaletteProps {
 
 /**
  * The Linear-signature ⌘K palette: fuzzy-matches task ids/titles and app actions ("Dispatch
- * <task>", "New task", every view switch) against a single query. Arrow keys (not j/k — the
- * input itself is a text field, and "j"/"k" are real letters someone might type into a
- * search box) move the highlighted row and keep it scrolled into view; Enter runs it;
- * Escape closes via the caller's `onClose` (also wired through the app-level `navReducer`'s
- * `escape` action). `useFocusTrap` handles focusing the input on open, trapping Tab inside
- * the panel, and restoring whatever had focus before the palette opened once it closes (I7).
- *
- * Styling is hand-rolled Tailwind (not shadcn's `cmdk`-based `command` primitive) so this
- * keeps its existing fuzzy-match/keyboard-nav logic byte-for-byte — only the presentation
- * layer changed.
+ * <task>", "New task", every view switch) against a single query. Ranking stays
+ * `rankPaletteItems` (cmdk's own filtering is off, `shouldFilter={false}`) so the fuzzy-match
+ * scoring this app ships is the only ranking that ever runs. cmdk itself now owns arrow-key
+ * selection, wraparound, and Enter; `Dialog` (Radix) owns the backdrop, focus trap/restore,
+ * and Escape — Escape reaches `onClose` once, through `Dialog`'s `onOpenChange`, and the
+ * app-level `navReducer` closes the palette via the same `onClose` callback rather than a
+ * second Escape listener (see `useGlobalKeyboard`'s `isAnyModalOpen`, which now recognizes
+ * this dialog like every other one and steps aside while it's open).
  */
 export function CommandPalette({
   isOpen,
@@ -38,114 +41,60 @@ export function CommandPalette({
   onClose,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
-  const [highlighted, setHighlighted] = useState(0);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const resultsRef = useRef<HTMLDivElement>(null);
 
-  useFocusTrap(panelRef, isOpen);
+  // Reset to a clean search every time the palette closes, so reopening it never shows a
+  // stale filter from the last time it was used.
+  useEffect(() => {
+    if (!isOpen) setQuery('');
+  }, [isOpen]);
 
   const ranked = useMemo(
     () => rankPaletteItems(entries, query),
     [entries, query]
   );
 
-  // Reset to a clean search every time the palette opens — focusing the input itself is
-  // `useFocusTrap`'s job now (the input is the panel's first focusable element).
-  useEffect(() => {
-    if (isOpen) {
-      setQuery('');
-      setHighlighted(0);
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    setHighlighted(0);
-  }, [query]);
-
-  // Keeps the highlighted row visible as ArrowUp/ArrowDown moves it, same treatment as
-  // TasksListView's row list.
-  useEffect(() => {
-    resultsRef.current?.children[highlighted]?.scrollIntoView({
-      block: 'nearest',
-    });
-  }, [highlighted]);
-
-  if (!isOpen) return null;
-
-  function runHighlighted() {
-    const entry = ranked[highlighted];
-    if (entry !== undefined) {
-      entry.run();
-      onClose();
-    }
-  }
-
   return (
-    <div
-      className="animate-in fade-in-0 fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[12vh] duration-150"
-      onClick={onClose}
-    >
-      <div
-        ref={panelRef}
-        className="border-border bg-popover animate-in fade-in-0 zoom-in-95 flex max-h-[60vh] w-[min(34rem,90vw)] flex-col overflow-hidden rounded-lg border shadow-lg duration-150"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Command palette"
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="border-border bg-popover top-24 flex max-h-[60vh] w-[min(34rem,90vw)] max-w-none translate-y-0 flex-col gap-0 overflow-hidden rounded-lg p-0 shadow-lg duration-150 sm:max-w-none"
+        showCloseButton={false}
       >
-        <div className="border-border flex items-center gap-2 border-b px-3">
-          <Search className="text-muted-foreground size-4 shrink-0" />
-          <input
-            className="text-foreground placeholder:text-muted-foreground w-full bg-transparent py-3 text-[13px] outline-none"
-            placeholder="Jump to a task, dispatch work, or switch views…"
+        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <Command shouldFilter={false}>
+          <CommandInput
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                setHighlighted((h) => Math.min(h + 1, ranked.length - 1));
-              } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                setHighlighted((h) => Math.max(h - 1, 0));
-              } else if (e.key === 'Enter') {
-                e.preventDefault();
-                runHighlighted();
-              }
-            }}
+            onValueChange={setQuery}
+            className="text-[13px]"
+            placeholder="Jump to a task, dispatch work, or switch views…"
           />
-        </div>
-        <div className="overflow-y-auto p-1.5" ref={resultsRef}>
-          {ranked.length === 0 && (
-            <div className="text-muted-foreground px-3 py-6 text-center text-[13px]">
+          <CommandList className="max-h-none overflow-y-auto p-1.5">
+            <CommandEmpty className="text-muted-foreground px-3 py-6 text-center text-[13px]">
               No matches.
-            </div>
-          )}
-          {ranked.map((entry, i) => (
-            <button
-              key={entry.id}
-              type="button"
-              className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-foreground',
-                i === highlighted && 'bg-accent text-accent-foreground'
-              )}
-              onMouseEnter={() => setHighlighted(i)}
-              onClick={() => {
-                entry.run();
-                onClose();
-              }}
-            >
-              <span className="truncate">{entry.label}</span>
-              {entry.sublabel !== undefined && (
-                <span className="text-muted-foreground min-w-0 flex-1 truncate font-mono text-[11px]">
-                  {entry.sublabel}
+            </CommandEmpty>
+            {ranked.map((entry) => (
+              <CommandItem
+                key={entry.id}
+                value={entry.id}
+                className="text-foreground gap-2 rounded-md px-2.5 py-1.5 text-[13px]"
+                onSelect={() => {
+                  onClose();
+                  entry.run();
+                }}
+              >
+                <span className="truncate">{entry.label}</span>
+                {entry.sublabel !== undefined && (
+                  <span className="text-muted-foreground min-w-0 flex-1 truncate font-mono text-[11px]">
+                    {entry.sublabel}
+                  </span>
+                )}
+                <span className="text-muted-foreground shrink-0 text-[11px]">
+                  {entry.kind}
                 </span>
-              )}
-              <span className="text-muted-foreground shrink-0 text-[11px]">
-                {entry.kind}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </DialogContent>
+    </Dialog>
   );
 }

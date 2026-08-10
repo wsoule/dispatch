@@ -47,6 +47,19 @@ export interface RepoPrDetailData {
 const NO_COMMENTS: ReviewComment[] = [];
 
 /**
+ * The cache key for one PR's `GET /api/prs/:number/detail`. Exported because
+ * ReviewView invalidates it from outside this hook: a PR dropping out of the
+ * open list means it merged or closed, and the status shown here is then the
+ * one thing on screen that is wrong.
+ */
+export function repoPrDetailKey(
+  baseUrl: string | undefined,
+  number: number | null
+): [string, string | undefined, number | null] {
+  return ['dispatch-repo-pr-detail', baseUrl, number];
+}
+
+/**
  * The in-app review surface for a repo PR dispatch never opened itself
  * ("Other open PRs") — mirrors useDispatchProject's own run-PR
  * prDetail/handlePrReview/handlePrComment, plus its line-comment trio, but
@@ -72,7 +85,7 @@ export function useRepoPrDetail(
 ): RepoPrDetailData {
   const queryClient = useQueryClient();
   const queryKey = useMemo(
-    () => ['dispatch-repo-pr-detail', client?.baseUrl, number],
+    () => repoPrDetailKey(client?.baseUrl, number),
     [client, number]
   );
 

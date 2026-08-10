@@ -217,6 +217,7 @@ class StubRunner {
         author: { login: 'teammate' },
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
+        state: 'OPEN',
         isCrossRepository: false,
         headRepositoryOwner: { login: 'someone' },
         reviewDecision: null,
@@ -227,6 +228,33 @@ class StubRunner {
         changedFiles: 0,
       },
     ]),
+    stderr: '',
+  };
+  // `gh pr view <n> --json <the RepoPr field set>` — findRepoPr's closed-PR
+  // fallback, a single object rather than the list's array. Merged by
+  // default, since a PR the open list misses is what the fallback is for.
+  viewRepoPrResult: CommandResult = {
+    ok: true,
+    stdout: JSON.stringify({
+      number: 21,
+      title: 'A PR that has since merged',
+      url: 'https://github.com/example/repo/pull/21',
+      headRefName: 'feature/merged',
+      baseRefName: 'main',
+      headRefOid: 'mergedsha1',
+      author: { login: 'teammate' },
+      isDraft: false,
+      updatedAt: '2026-08-07T00:00:00Z',
+      state: 'MERGED',
+      isCrossRepository: false,
+      headRepositoryOwner: { login: 'example' },
+      reviewDecision: 'APPROVED',
+      mergeable: null,
+      statusCheckRollup: [],
+      additions: 3,
+      deletions: 1,
+      changedFiles: 1,
+    }),
     stderr: '',
   };
   // `git fetch`/`git merge-base` results fetchPrHead reads — distinct from
@@ -340,10 +368,28 @@ class StubRunner {
       return this.apiResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'view') {
-      // The poller reads only `--json state`; getPrDetail reads the full set.
-      const jsonArg = cmd[cmd.indexOf('--json') + 1];
+      // The poller reads only `--json state`; getPrDetail reads the full
+      // set; findRepoPr's fallback asks for the RepoPr set, told apart by
+      // `isCrossRepository` — a field only that one requests.
+      const jsonArg = cmd[cmd.indexOf('--json') + 1] ?? '';
       if (jsonArg === 'state') return this.viewResult;
       if (jsonArg === 'body') return this.viewBodyResult;
+      if (jsonArg.includes('isCrossRepository')) {
+        // Real `gh` errors on a PR the repo does not have. The scripted
+        // payload answers for its own number only, so a test asking for a
+        // different one gets the miss findRepoPr turns into a 404.
+        const scripted = this.viewRepoPrResult.ok
+          ? (JSON.parse(this.viewRepoPrResult.stdout) as { number?: unknown })
+          : {};
+        if (String(scripted.number) !== cmd[3]) {
+          return {
+            ok: false,
+            stdout: '',
+            stderr: `no pull requests found for ${cmd[3] ?? ''}`,
+          };
+        }
+        return this.viewRepoPrResult;
+      }
       return this.viewDetailResult;
     }
     if (cmd[0] === 'gh' && cmd[1] === '--version') {
@@ -872,6 +918,7 @@ describe('PrManager.listRepoPrs', () => {
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
         headRefOid: '',
+        state: 'OPEN',
         isCrossRepository: false,
         headRepositoryOwner: 'someone',
         reviewDecision: null,
@@ -896,8 +943,9 @@ describe('PrManager.listRepoPrs', () => {
       'list',
       '--json',
       'number,title,url,headRefName,baseRefName,headRefOid,author,isDraft,' +
-        'updatedAt,isCrossRepository,headRepositoryOwner,reviewDecision,' +
-        'mergeable,statusCheckRollup,additions,deletions,changedFiles',
+        'updatedAt,state,isCrossRepository,headRepositoryOwner,' +
+        'reviewDecision,mergeable,statusCheckRollup,additions,deletions,' +
+        'changedFiles',
       '--state',
       'open',
       '--limit',
@@ -998,6 +1046,104 @@ describe('PrManager.listRepoPrs', () => {
     expect(fields).toContain('headRefOid');
     // One call total — a per-PR `gh pr view` for status is what this avoids.
     expect(stub.calls.filter((c) => c.cmd[2] === 'view')).toHaveLength(0);
+  });
+});
+
+// Task 4: `gh pr list` stays `--state open` because it is also the body of
+// GET /api/prs (the board's "Other open PRs"). A closed or merged PR is
+// resolved by a second, per-number `gh pr view` instead.
+describe('PrManager.findRepoPr', () => {
+  it('answers an open PR from the list alone, with no view call', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    const found = await pr.findRepoPr(9);
+
+    expect(found?.number).toBe(9);
+    expect(found?.state).toBe('OPEN');
+    expect(stub.calls.filter((c) => c.cmd[2] === 'view')).toHaveLength(0);
+  });
+
+  it('falls back to gh pr view for a PR the open list does not have', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+
+    const found = await pr.findRepoPr(21);
+
+    expect(found?.number).toBe(21);
+    expect(found?.state).toBe('MERGED');
+    expect(found?.url).toBe('https://github.com/example/repo/pull/21');
+    const viewCall = stub.calls.find((c) => c.cmd[2] === 'view')?.cmd;
+    expect(viewCall?.[3]).toBe('21');
+    // The same field set the list asks for, so both paths build one shape.
+    expect(viewCall?.[viewCall.indexOf('--json') + 1]).toBe(
+      stub.calls.find((c) => c.cmd[2] === 'list')?.cmd[4]
+    );
+  });
+
+  // The fork gate's data source. `isCrossRepository` decides whether a
+  // stranger's code is checked out and run here, so the fallback has to read
+  // GitHub's own answer — a closed fork PR is still a fork.
+  it('carries isCrossRepository off the view payload, not a default', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewRepoPrResult = {
+      ok: true,
+      stdout: JSON.stringify({
+        number: 21,
+        url: 'https://github.com/example/repo/pull/21',
+        baseRefName: 'main',
+        headRefOid: 'forksha1',
+        state: 'CLOSED',
+        isCrossRepository: true,
+        headRepositoryOwner: { login: 'outsider-org' },
+      }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const found = await pr.findRepoPr(21);
+
+    expect(found?.isCrossRepository).toBe(true);
+    expect(found?.headRepositoryOwner).toBe('outsider-org');
+    // And the gate downstream still fires on it.
+    await expect(pr.fetchPrHead(21, { confirmFork: false })).rejects.toThrow(
+      /comes from a fork owned by outsider-org/
+    );
+  });
+
+  it('refuses a view payload that does not report isCrossRepository', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewRepoPrResult = {
+      ok: true,
+      stdout: JSON.stringify({
+        number: 21,
+        url: 'https://github.com/example/repo/pull/21',
+        state: 'CLOSED',
+      }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.findRepoPr(21)).rejects.toThrow(
+      /did not report isCrossRepository/
+    );
+  });
+
+  it('is null — not an error — when gh knows of no such PR', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewRepoPrResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'no pull requests found for branch',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    expect(await pr.findRepoPr(21)).toBeNull();
   });
 });
 
@@ -1410,6 +1556,7 @@ function listResultWithHeadRefOid(sha: string): CommandResult {
         author: { login: 'teammate' },
         isDraft: true,
         updatedAt: '2026-07-22T00:00:00Z',
+        state: 'OPEN',
         isCrossRepository: false,
         headRepositoryOwner: { login: 'someone' },
         reviewDecision: null,
@@ -1576,13 +1723,46 @@ describe('PrManager.syncPrComments', () => {
     expect(harness.reviewComments.list(prTarget)).toEqual(comments);
   });
 
-  it('404s a PR number the repo does not currently have open', async () => {
+  it('404s a PR number neither the open list nor gh pr view has', async () => {
     const harness = makeHarness();
     const stub = new StubRunner();
     const pr = new PrManager(harness, true, stub.run);
     await expect(pr.syncPrComments(404)).rejects.toThrow(
       OrchestratorNotFoundError
     );
+  });
+
+  // Task 4: the comments on a merged PR are still worth reading, and a
+  // reviewer's own staged notes live in the same list. Before the fallback
+  // this threw "PR not found: #21" and stranded both.
+  it('lists a merged PR’s comments, and the drafts staged against it', async () => {
+    const harness = makeHarness();
+    const mergedTarget: ReviewTarget = { kind: 'pr', number: 21 };
+    const draft = harness.reviewComments.add(mergedTarget, {
+      file: 'src/b.ts',
+      line: 1,
+      anchorText: 'const y = 2;',
+      body: 'my own note',
+      pending: true,
+    });
+    const stub = new StubRunner();
+    stub.apiResult = {
+      ok: true,
+      stdout: JSON.stringify([rawGitHubComment()]),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    const comments = await pr.syncPrComments(21);
+
+    expect(comments).toContainEqual(draft);
+    expect(comments.some((c) => c.githubId === 555)).toBe(true);
+    // Read through the merged PR's own url, not the open list's #9.
+    expect(
+      stub.calls.some((c) =>
+        c.cmd.some((a) => /\/pulls\/21\/comments$/.test(a))
+      )
+    ).toBe(true);
   });
 
   it('rejects a non-integer PR number before shelling out at all', async () => {
@@ -1902,6 +2082,60 @@ describe('PrManager.pushPrReview', () => {
       c.cmd.some((arg) => /\/pulls\/9\/comments$/.test(arg))
     );
     expect(getCalls).toHaveLength(0);
+  });
+
+  // Task 4: GitHub genuinely rejects a review on a PR that is no longer
+  // open. What the reviewer used to get for it was a bare 404 from the
+  // reviews endpoint, with staged notes and no explanation.
+  it('refuses a merged PR by name, before any POST, and keeps the notes', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    const mergedTarget: ReviewTarget = { kind: 'pr', number: 21 };
+    const staged = harness.reviewComments.add(mergedTarget, {
+      file: 'src/a.ts',
+      line: 3,
+      anchorText: 'const x = 1;',
+      body: 'why one?',
+      pending: true,
+    });
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.pushPrReview(21, 'comment', 'two things')).rejects.toThrow(
+      'PR #21 is merged on GitHub, which does not accept reviews on a ' +
+        'pull request that is no longer open. Your 1 staged comment is ' +
+        'still saved here.'
+    );
+    const postCalls = stub.calls.filter((c) =>
+      c.cmd.some((arg) => /\/pulls\/\d+\/reviews$/.test(arg))
+    );
+    expect(postCalls).toHaveLength(0);
+    // Nothing was consumed: the note is still pending and still unsent.
+    expect(harness.reviewComments.list(mergedTarget)).toEqual([staged]);
+    expect(harness.reviewComments.lastPush(mergedTarget)).toBeNull();
+  });
+
+  it('says "closed" rather than "merged" for a PR that was closed unmerged', async () => {
+    const harness = makeHarness();
+    const stub = new StubRunner();
+    stub.viewRepoPrResult = {
+      ok: true,
+      stdout: JSON.stringify({
+        number: 21,
+        url: 'https://github.com/example/repo/pull/21',
+        baseRefName: 'main',
+        headRefOid: 'closedsha1',
+        state: 'CLOSED',
+        isCrossRepository: false,
+        headRepositoryOwner: { login: 'example' },
+      }),
+      stderr: '',
+    };
+    const pr = new PrManager(harness, true, stub.run);
+
+    await expect(pr.pushPrReview(21, 'approve', '')).rejects.toThrow(
+      'PR #21 is closed on GitHub, which does not accept reviews on a ' +
+        'pull request that is no longer open.'
+    );
   });
 });
 

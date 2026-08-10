@@ -325,7 +325,11 @@ export function PrReviewPanel({
     }
   }
 
-  const isMerged = detail?.status.state === 'MERGED';
+  // GitHub takes a *review* only while the PR is open, and the server refuses
+  // the batch before the POST once it is not. An ordinary comment it still
+  // takes, so a closed PR narrows the composer rather than losing it.
+  const state = detail?.status.state;
+  const isOpen = state === undefined || state === 'OPEN';
   const needsBody = draft.trim() === '';
 
   return (
@@ -360,11 +364,51 @@ export function PrReviewPanel({
             <p className="text-destructive text-[12px]">{actionError}</p>
           )}
 
-          {isMerged ? (
-            <p className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
-              <GitMerge className="size-3.5" />
-              This PR is merged.
-            </p>
+          {!isOpen ? (
+            <div className="flex flex-col gap-2">
+              <div className="text-muted-foreground flex flex-col gap-1 text-[12px]">
+                <p className="flex items-center gap-1.5">
+                  {state === 'MERGED' ? (
+                    <GitMerge className="size-3.5" />
+                  ) : (
+                    <X className="size-3.5" />
+                  )}
+                  This PR is {state === 'MERGED' ? 'merged' : 'closed'}.
+                </p>
+                {/* The whole point of showing the state here: notes staged
+                    against a PR that has since closed cannot be published, and
+                    a dead Comment button would never say so. */}
+                {stagedNotes > 0 && (
+                  <p>
+                    {`GitHub does not accept reviews on a pull request that is ` +
+                      `no longer open, so your ${stagedNotes} staged ` +
+                      `note${stagedNotes === 1 ? '' : 's'} cannot be sent. ` +
+                      'They stay saved here, and on the diff.'}
+                  </p>
+                )}
+              </div>
+              {/* Only the verdict is refused. A plain comment still lands, so
+                  the composer narrows to onComment — never onReview, which
+                  is the call the server 409s on a PR that is not open. */}
+              <Textarea
+                rows={2}
+                placeholder="Leave a comment…"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                className="text-[13px]"
+              />
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy || needsBody}
+                  onClick={() => void act(() => onComment(draft.trim()))}
+                >
+                  <MessageSquare className="size-3.5" />
+                  Comment
+                </Button>
+              </div>
+            </div>
           ) : (
             <div className="flex flex-col gap-2">
               {dispatchedRunId !== null && (
