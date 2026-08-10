@@ -38,9 +38,8 @@ export function ControlRibbon({
       <ToggleGroup
         type="multiple"
         value={FEED_STATE_ORDER.filter((state) => activeStates.has(state))}
-        // `spacing={1}` opts out of ToggleGroupItem's `data-[spacing=0]:rounded-none`
-        // corner-trimming (see GitSummary); `contents` keeps the grid above as the
-        // real layout container instead of nesting a flex row inside it.
+        // `spacing={1}` opts out of ToggleGroupItem's corner-trimming (GitSummary);
+        // `contents` keeps the grid above as the real layout container.
         spacing={1}
         className="contents"
         onValueChange={(next) => {
