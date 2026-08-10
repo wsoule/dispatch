@@ -14,9 +14,10 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-04T18:06:50.010Z
-updated: 2026-08-10T23:57:41.975Z
+updated: 2026-08-10T23:58:52.399Z
 external: null
 writes: []
+archived-at: 2026-08-10T23:58:52.399Z
 ---
 
 ## Description
