@@ -29,8 +29,8 @@ export type ProjectView =
 export type TaskTab = 'details' | 'chat' | 'diff';
 
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
- * and what the three "open in Impact" entry points (Review case panel, task
- * detail, Git file pane) hand it preselected. */
+ * and what the two "open in Impact" entry points (Review case panel, Git
+ * file pane) hand it preselected. */
 export interface ImpactSubjectRef {
   kind: ImpactSubjectKind;
   id: string;
@@ -56,7 +56,7 @@ export interface NavState {
   /** Draft id shown by the draft view, or `null` when none is selected. */
   activeDraftId: string | null;
   /** The subject `ImpactView` is showing, or `null` for the picker with
-   * nothing preselected — set by `openImpact`, the three entry points' way
+   * nothing preselected — set by `openImpact`, the two entry points' way
    * of handing over "open in Impact" with a subject already chosen. */
   impactSubject: ImpactSubjectRef | null;
   /** Task id shown in the task full-window view, or `null` when it's not the current view. */
@@ -155,7 +155,7 @@ export type NavAction =
   /** Routes to the draft review page for one draft — the drafts tray's row click. */
   | { type: 'openDraft'; draftId: string }
   /** Routes to `ImpactView` with a subject preselected — the "open in Impact"
-   * action on the Review case panel, task detail, and Git file pane. */
+   * action on the Review case panel and the Git file pane. */
   | { type: 'openImpact'; subject: ImpactSubjectRef }
   /** Routes to the task full-window view with a specific task, tab, and optional run. */
   | { type: 'openTask'; taskId: string; tab?: TaskTab; runId?: string | null }
@@ -392,7 +392,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       if (state.peekTaskId !== null) return { ...state, peekTaskId: null };
       if (state.projectView === 'new-task')
         return { ...state, projectView: state.newTaskReturnView };
-      if (state.projectView === 'task')
+      if (state.section === 'project' && state.projectView === 'task')
         return navReducer(state, { type: 'back' });
       return state;
     default:
