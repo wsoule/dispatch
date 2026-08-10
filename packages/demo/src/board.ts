@@ -27,7 +27,7 @@ export interface DemoTask {
   writes: string[];
 }
 
-export interface VerifyStepConfig {
+interface VerifyStepConfig {
   name: string;
   command: string;
 }
