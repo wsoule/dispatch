@@ -1,10 +1,15 @@
 import type { DraftRecord } from '@dispatch/client';
-import { CircleAlert, Loader2, Sparkles, X } from 'lucide-react';
+import { CircleAlert, Sparkles, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { draftTrayViewModel } from '../../lib/draftTray';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
+import { CountChip } from '@/ui/chrome/CountChip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
+import { ScrollArea } from '@/ui/scroll-area';
+import { Spinner } from '@/ui/spinner';
 
 interface DraftTrayProps {
   /** Every draft currently held in memory, newest first — `data.drafts`. */
@@ -63,16 +68,19 @@ export function DraftTray({
             <>
               <span className="flex-1">Drafts</span>
               {badgeCount > 0 && (
-                <span
+                // CountChip is deliberately colorless everywhere else, but this badge is the
+                // one place a count doubles as a status (a waiting question needs to stand
+                // out), so its pill styling is preserved via className, overriding
+                // dense-meta's mono/tabular-nums treatment back to the original look.
+                <CountChip
+                  count={badgeCount}
                   className={cn(
-                    'flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium',
+                    'flex min-w-[1.1rem] items-center justify-center rounded-full px-1 font-sans text-[10px] font-medium tracking-normal normal-nums',
                     questionCount > 0
                       ? 'bg-state-waiting-surface text-state-waiting border-state-waiting-edge border'
                       : 'bg-secondary text-secondary-foreground'
                   )}
-                >
-                  {badgeCount}
-                </span>
+                />
               )}
             </>
           )}
@@ -84,11 +92,9 @@ export function DraftTray({
             AI task drafts
           </span>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto">
+        <ScrollArea className="max-h-[60vh]">
           {items.length === 0 ? (
-            <p className="text-muted-foreground px-3 py-6 text-center text-[13px]">
-              No drafts yet — start one from "New task".
-            </p>
+            <EmptyState message='No drafts yet — start one from "New task".' />
           ) : (
             items.map((item) => (
               <div
@@ -96,22 +102,23 @@ export function DraftTray({
                 className="border-border/60 flex items-center gap-2 border-b px-3 py-2 last:border-b-0"
               >
                 {item.state === 'running' && (
-                  <Loader2 className="text-primary size-3.5 shrink-0 animate-spin" />
+                  <Spinner className="text-primary size-3.5 shrink-0" />
                 )}
                 {item.state === 'failed' && (
                   <CircleAlert className="text-destructive size-3.5 shrink-0" />
                 )}
                 {item.openable ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={() => {
                       onOpenDraft(item.id);
                       setOpen(false);
                     }}
-                    className="hover:text-foreground min-w-0 flex-1 truncate text-left text-[13px]"
+                    className="h-auto min-w-0 flex-1 justify-start truncate px-1.5 py-1 text-left text-[13px] font-normal"
                   >
                     {item.label}
-                  </button>
+                  </Button>
                 ) : (
                   <span className="text-muted-foreground min-w-0 flex-1 truncate text-[13px]">
                     {item.label}
@@ -120,18 +127,20 @@ export function DraftTray({
                 <span className="text-muted-foreground shrink-0 text-[11px]">
                   {item.elapsed}
                 </span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-xs"
                   aria-label="Dismiss draft"
                   onClick={() => onDismissDraft(item.id)}
                   className="text-muted-foreground hover:text-destructive shrink-0"
                 >
                   <X className="size-3.5" />
-                </button>
+                </Button>
               </div>
             ))
           )}
-        </div>
+        </ScrollArea>
       </PopoverContent>
     </Popover>
   );

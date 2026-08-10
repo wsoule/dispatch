@@ -1,9 +1,11 @@
 import type { Update } from '@tauri-apps/plugin-updater';
-import { Download, Loader2, X } from 'lucide-react';
+import { Download, X } from 'lucide-react';
 import { useState } from 'react';
 
 import { installUpdateAndRelaunch } from '@/lib/updater';
+import { Alert, AlertTitle } from '@/ui/alert';
 import { Button } from '@/ui/button';
+import { Spinner } from '@/ui/spinner';
 
 interface UpdateBannerProps {
   /** The pending update discovered by `checkForUpdate()` at launch. */
@@ -38,20 +40,22 @@ export function UpdateBanner({ update, onDismiss }: UpdateBannerProps) {
   };
 
   return (
-    <div className="border-border bg-secondary/60 flex items-center gap-3 border-b px-4 py-2 text-[13px]">
+    // Alert's own grid/rounded/border/padding classes are all overridden back to the flat,
+    // single-row banner this was before — see the twMerge-verified overrides below.
+    <Alert className="border-border bg-secondary/60 [&>svg]:text-muted-foreground flex items-center gap-3 rounded-none border-0 border-b px-4 py-2 text-[13px] [&>svg]:translate-y-0">
       <Download className="text-muted-foreground size-4 shrink-0" />
-      <span className="text-foreground min-w-0 flex-1 truncate">
+      <AlertTitle className="text-foreground min-w-0 flex-1 text-[13px] font-normal tracking-normal">
         Dispatch {update.version} available
         {error !== null && (
           <span className="text-destructive ml-2">
             — update failed: {error}
           </span>
         )}
-      </span>
+      </AlertTitle>
       <Button size="xs" onClick={() => void onRestart()} disabled={installing}>
         {installing ? (
           <>
-            <Loader2 className="size-3 animate-spin" />
+            <Spinner className="size-3" />
             Updating…
           </>
         ) : (
@@ -67,6 +71,6 @@ export function UpdateBanner({ update, onDismiss }: UpdateBannerProps) {
       >
         <X />
       </Button>
-    </div>
+    </Alert>
   );
 }

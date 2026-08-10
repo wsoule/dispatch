@@ -1,10 +1,4 @@
-import {
-  ChevronLeft,
-  FolderOpen,
-  GitBranch,
-  Loader2,
-  Search,
-} from 'lucide-react';
+import { ChevronLeft, FolderOpen, GitBranch, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import {
@@ -21,7 +15,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../ui/dialog';
-import { Input } from '../../ui/input';
+import { EmptyState } from '@/ui/chrome';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
+import { ScrollArea } from '@/ui/scroll-area';
+import { Spinner } from '@/ui/spinner';
 
 interface AddProjectDialogProps {
   /** Called with an absolute path once a project is chosen — either a locally picked folder
@@ -166,7 +163,7 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
 
         {busy !== null ? (
           <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-[13px]">
-            <Loader2 className="size-4 animate-spin" />
+            <Spinner />
             {busy}
           </div>
         ) : mode === 'choose' ? (
@@ -204,49 +201,55 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            <div className="relative">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-              <Input
+            <InputGroup>
+              <InputGroupAddon>
+                <Search className="size-3.5" />
+              </InputGroupAddon>
+              <InputGroupInput
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder="Search repositories…"
-                className="pl-8"
                 autoFocus
               />
-            </div>
+            </InputGroup>
 
             {reposLoading ? (
               <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-[13px]">
-                <Loader2 className="size-4 animate-spin" />
+                <Spinner />
                 Loading repositories…
               </div>
             ) : repos !== null && filteredRepos.length === 0 ? (
-              <div className="text-muted-foreground px-1 py-8 text-center text-[13px]">
-                {repos.length === 0
-                  ? 'No repositories found.'
-                  : 'No repositories match your search.'}
-              </div>
+              <EmptyState
+                message={
+                  repos.length === 0
+                    ? 'No repositories found.'
+                    : 'No repositories match your search.'
+                }
+              />
             ) : (
-              <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto">
-                {filteredRepos.map((repo) => (
-                  <button
-                    key={repo.nameWithOwner}
-                    type="button"
-                    onClick={() => void cloneRepo(repo)}
-                    title={repo.description || repo.nameWithOwner}
-                    className="hover:bg-accent flex flex-col gap-0.5 rounded-md px-2.5 py-2 text-left transition-colors"
-                  >
-                    <span className="text-foreground truncate text-[13px] font-medium">
-                      {repo.nameWithOwner}
-                    </span>
-                    {repo.description !== '' && (
-                      <span className="text-muted-foreground truncate text-[12px]">
-                        {repo.description}
+              <ScrollArea className="max-h-72">
+                <div className="flex flex-col gap-0.5">
+                  {filteredRepos.map((repo) => (
+                    <Button
+                      key={repo.nameWithOwner}
+                      type="button"
+                      variant="ghost"
+                      onClick={() => void cloneRepo(repo)}
+                      title={repo.description || repo.nameWithOwner}
+                      className="h-auto flex-col items-start justify-start gap-0.5 px-2.5 py-2 text-left font-normal"
+                    >
+                      <span className="text-foreground w-full truncate text-[13px] font-medium">
+                        {repo.nameWithOwner}
                       </span>
-                    )}
-                  </button>
-                ))}
-              </div>
+                      {repo.description !== '' && (
+                        <span className="text-muted-foreground w-full truncate text-[12px]">
+                          {repo.description}
+                        </span>
+                      )}
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
             )}
           </div>
         )}
