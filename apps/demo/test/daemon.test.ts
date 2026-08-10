@@ -5,31 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { buildStorefrontRunScript } from '../src/script.js';
+import { parseDaemonStdout } from '../src/stdoutContract.js';
 
 // Two shapes below aren't obvious from the route names: GET /api/runs/:id
 // nests `state` under `.meta.state`, and the approval route is singular —
 // `POST /api/runs/:id/approval`, with `requestId` in the body.
-
-async function readUntil(
-  proc: Bun.Subprocess<'ignore', 'pipe', 'inherit'>,
-  patterns: RegExp[]
-): Promise<Record<string, string>> {
-  const found: Record<string, string> = {};
-  const reader = proc.stdout.getReader();
-  let buf = '';
-  const deadline = Date.now() + 20_000;
-  while (Object.keys(found).length < patterns.length && Date.now() < deadline) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += new TextDecoder().decode(value);
-    for (const p of patterns) {
-      const m = p.exec(buf);
-      if (m !== null) found[p.source] = m[1] ?? m[0];
-    }
-  }
-  reader.releaseLock();
-  return found;
-}
 
 interface TaskDoc {
   meta: { id: string; status: string; blockedBy: string[] };
@@ -73,12 +53,10 @@ describe('demo daemon', () => {
       }
     );
     try {
-      const out = await readUntil(proc, [
-        /listening on http:\/\/127\.0\.0\.1:(\d+)/,
-        /DISPATCH_AGENT_TOKEN=([0-9a-f]+)/,
-      ]);
-      const port = out['listening on http:\\/\\/127\\.0\\.0\\.1:(\\d+)'];
-      const token = out['DISPATCH_AGENT_TOKEN=([0-9a-f]+)'];
+      const { port, agentToken: token } = await parseDaemonStdout(
+        proc.stdout,
+        20_000
+      );
       expect(port).toBeDefined();
       expect(token).toBeDefined();
 
