@@ -188,10 +188,8 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
         >
           {PERMISSION_MODES.map(([mode, label]) => (
             <Label key={mode} className="flex items-center gap-2 font-normal">
-              {/* Radix's styled RadioGroupItem always renders its own
-                  Indicator as children, so it can't host a real <input> —
-                  asChild on the raw primitive swaps in one with a genuine
-                  `checked` property, matching the old native radio. */}
+              {/* asChild swaps Radix's button for a real input so
+                  getByLabelText/.checked keep working. */}
               <RadioGroupPrimitive.Item asChild value={mode}>
                 <input
                   type="radio"
