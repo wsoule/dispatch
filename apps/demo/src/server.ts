@@ -90,12 +90,14 @@ function publicOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
-// The address the creation throttle keys on: X-Forwarded-For's first hop
-// (trusted like publicOrigin trusts it), else the direct TCP peer.
+// The address the creation throttle keys on: X-Forwarded-For's LAST hop —
+// the one Railway's edge itself appended, so a client-sent XFF header can
+// prepend fake entries but can't overwrite this one — else the TCP peer.
 function clientIp(req: Request, server: Bun.Server<BridgeData>): string {
   const xff = req.headers.get('x-forwarded-for');
-  const first = xff?.split(',')[0]?.trim();
-  if (first !== undefined && first !== '') return first;
+  const hops = xff?.split(',') ?? [];
+  const last = hops[hops.length - 1]?.trim();
+  if (last !== undefined && last !== '') return last;
   return server.requestIP(req)?.address ?? 'unknown';
 }
 
