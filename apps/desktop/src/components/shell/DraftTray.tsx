@@ -48,8 +48,9 @@ export function DraftTray({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           title="AI task drafts"
           aria-label={
             collapsed
@@ -59,8 +60,10 @@ export function DraftTray({
               : undefined
           }
           className={cn(
-            'text-foreground/80 hover:bg-accent/60 mb-0.5 flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
-            collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2'
+            'h-auto mb-0.5 rounded-md py-1.5 text-left text-[13px] font-normal text-foreground/80 hover:bg-accent/60 hover:text-foreground/80 transition-colors duration-150',
+            collapsed
+              ? 'w-full px-0 has-[>svg]:px-0'
+              : 'w-full justify-start px-2 has-[>svg]:px-2'
           )}
         >
           <Sparkles className="size-4 shrink-0" strokeWidth={2} />
@@ -84,7 +87,7 @@ export function DraftTray({
               )}
             </>
           )}
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent align="start" side="right" className="w-80 p-0">
         <div className="border-border border-b px-3 py-2">
