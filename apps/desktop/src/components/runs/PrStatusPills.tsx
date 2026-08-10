@@ -7,6 +7,7 @@ import { Check, Clock, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
+import { Badge } from '@/ui/badge';
 
 export type PillTone = 'green' | 'amber' | 'red' | 'purple' | 'muted';
 
@@ -30,15 +31,13 @@ export function StatusPill({
     muted: 'border-border bg-muted/60 text-muted-foreground',
   }[tone];
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium',
-        toneClass
-      )}
+    <Badge
+      variant="outline"
+      className={cn('rounded-full text-[11px] font-medium', toneClass)}
     >
       {icon}
       {children}
-    </span>
+    </Badge>
   );
 }
 

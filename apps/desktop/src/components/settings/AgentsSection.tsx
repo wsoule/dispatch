@@ -4,12 +4,16 @@ import type {
   ModelConfig,
 } from '@dispatch/core/browser';
 import { MODEL_ROLES } from '@dispatch/core/browser';
+import { RadioGroup as RadioGroupPrimitive } from 'radix-ui';
 import { useEffect, useState } from 'react';
 
 import { MODELS } from '../../lib/models';
 import { EscalationEditor } from './EscalationEditor';
 import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
+import { Field, FieldDescription, FieldLabel } from '@/ui/field';
 import { Input } from '@/ui/input';
+import { Label } from '@/ui/label';
+import { RadioGroup } from '@/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -144,12 +148,15 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
       })}
 
       <PanelRow className="flex-col items-stretch gap-1.5">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[12px]">
+        <Field className="gap-1.5 [&>*]:w-auto">
+          <FieldLabel
+            htmlFor="how-many-run-at-once-when-you-dispatch-an-epic"
+            className="text-[12px] font-normal"
+          >
             How many run at once when you dispatch an epic
-          </span>
+          </FieldLabel>
           <Input
-            aria-label="How many run at once when you dispatch an epic"
+            id="how-many-run-at-once-when-you-dispatch-an-epic"
             value={concurrency}
             onChange={(e) => setConcurrency(e.target.value)}
             onBlur={() => {
@@ -167,25 +174,34 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
             inputMode="numeric"
             className="w-20 font-mono text-[12.5px]"
           />
-        </label>
+        </Field>
       </PanelRow>
 
       <PanelRow className="flex-col items-stretch gap-1.5">
         <span className="text-[12px]">
           When an agent wants to do something consequential
         </span>
-        {PERMISSION_MODES.map(([mode, label]) => (
-          <label key={mode} className="flex items-center gap-2">
-            <input
-              type="radio"
-              name="permission-mode"
-              checked={config.orchestrator.permissionMode === mode}
-              onChange={() => void onSave({ permissionMode: mode })}
-              className="accent-accent size-3.5"
-            />
-            <span className="text-[13px]">{label}</span>
-          </label>
-        ))}
+        <RadioGroup
+          value={config.orchestrator.permissionMode}
+          onValueChange={(next) => void onSave({ permissionMode: next })}
+          className="gap-1.5"
+        >
+          {PERMISSION_MODES.map(([mode, label]) => (
+            <Label key={mode} className="flex items-center gap-2 font-normal">
+              {/* asChild swaps Radix's button for a real input so
+                  getByLabelText/.checked keep working. */}
+              <RadioGroupPrimitive.Item asChild value={mode}>
+                <input
+                  type="radio"
+                  checked={config.orchestrator.permissionMode === mode}
+                  readOnly
+                  className="accent-accent size-3.5"
+                />
+              </RadioGroupPrimitive.Item>
+              <span className="text-[13px]">{label}</span>
+            </Label>
+          ))}
+        </RadioGroup>
         <HintText>
           Auto lets the SDK&rsquo;s own classifier approve every tool, so a
           dispatched agent proceeds unattended instead of stalling on the first
@@ -200,10 +216,12 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
       </PanelRow>
 
       <PanelRow className="flex-col items-stretch gap-1.5">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[12px]">Turn cap</span>
+        <Field className="gap-1.5 [&>*]:w-auto">
+          <FieldLabel htmlFor="turn-cap" className="text-[12px] font-normal">
+            Turn cap
+          </FieldLabel>
           <Input
-            aria-label="Turn cap"
+            id="turn-cap"
             value={maxTurns}
             onChange={(e) => setMaxTurns(e.target.value)}
             onBlur={() =>
@@ -218,17 +236,22 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
             placeholder="No cap"
             className="w-24 font-mono text-[12.5px]"
           />
-          <HintText>
+          <FieldDescription className="text-[11px]">
             Ceiling on turns for one run. Leave empty for no cap.
-          </HintText>
-        </label>
+          </FieldDescription>
+        </Field>
       </PanelRow>
 
       <PanelRow className="flex-col items-stretch gap-1.5">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[12px]">Budget cap per run</span>
+        <Field className="gap-1.5 [&>*]:w-auto">
+          <FieldLabel
+            htmlFor="budget-cap-per-run"
+            className="text-[12px] font-normal"
+          >
+            Budget cap per run
+          </FieldLabel>
           <Input
-            aria-label="Budget cap per run"
+            id="budget-cap-per-run"
             value={maxBudgetUsd}
             onChange={(e) => setMaxBudgetUsd(e.target.value)}
             onBlur={() =>
@@ -243,17 +266,22 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
             placeholder="No cap"
             className="w-24 font-mono text-[12.5px]"
           />
-          <HintText>
+          <FieldDescription className="text-[11px]">
             Dollar ceiling on one run&rsquo;s spend. Leave empty for no cap.
-          </HintText>
-        </label>
+          </FieldDescription>
+        </Field>
       </PanelRow>
 
       <PanelRow className="flex-col items-stretch gap-1.5">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[12px]">Fix-loop round cap</span>
+        <Field className="gap-1.5 [&>*]:w-auto">
+          <FieldLabel
+            htmlFor="fix-loop-round-cap"
+            className="text-[12px] font-normal"
+          >
+            Fix-loop round cap
+          </FieldLabel>
           <Input
-            aria-label="Fix-loop round cap"
+            id="fix-loop-round-cap"
             value={fixLoopCap}
             onChange={(e) => setFixLoopCap(e.target.value)}
             onBlur={() => {
@@ -267,10 +295,10 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
             inputMode="numeric"
             className="w-20 font-mono text-[12.5px]"
           />
-          <HintText>
+          <FieldDescription className="text-[11px]">
             Last round the fix loop may dispatch before demanding a ruling.
-          </HintText>
-        </label>
+          </FieldDescription>
+        </Field>
       </PanelRow>
 
       <div className="p-3">

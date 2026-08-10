@@ -7,6 +7,12 @@ import { toolView } from './ToolCard';
 import type { GutterTone } from '@/lib/transcriptGutter';
 import { gutterTag, gutterTone } from '@/lib/transcriptGutter';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
 
 const TONE: Record<GutterTone, string> = {
   muted: 'text-muted-foreground',
@@ -85,27 +91,37 @@ function ToolRow({
   const hasBody = view.body !== undefined;
 
   return (
-    <div className="flex min-w-0 flex-col">
-      <button
-        type="button"
-        disabled={!hasBody}
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          'flex min-w-0 items-center gap-1.5 text-left font-mono text-[12px]',
-          hasBody && 'hover:text-foreground',
-          TONE[tone]
-        )}
-      >
-        {hasBody &&
-          (open ? (
-            <ChevronDown className="size-3 shrink-0 opacity-60" />
-          ) : (
-            <ChevronRight className="size-3 shrink-0 opacity-60" />
-          ))}
-        <span className="text-muted-foreground shrink-0">{view.icon}</span>
-        <span className="truncate">{view.target ?? view.verb}</span>
-      </button>
-      {open && hasBody && <div className="mt-1 min-w-0">{view.body}</div>}
-    </div>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="flex min-w-0 flex-col"
+    >
+      <CollapsibleTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={!hasBody}
+          className={cn(
+            'h-auto w-full min-w-0 shrink justify-start gap-1.5 p-0 text-left font-mono text-[12px] font-normal hover:bg-transparent',
+            hasBody && 'hover:text-foreground',
+            TONE[tone]
+          )}
+        >
+          {hasBody &&
+            (open ? (
+              <ChevronDown className="size-3 shrink-0 opacity-60" />
+            ) : (
+              <ChevronRight className="size-3 shrink-0 opacity-60" />
+            ))}
+          <span className="text-muted-foreground shrink-0">{view.icon}</span>
+          <span className="truncate">{view.target ?? view.verb}</span>
+        </Button>
+      </CollapsibleTrigger>
+      {hasBody && (
+        <CollapsibleContent className="mt-1 min-w-0">
+          {view.body}
+        </CollapsibleContent>
+      )}
+    </Collapsible>
   );
 }

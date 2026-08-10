@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 
 import type { ReviewDestination } from './ReviewThread';
 import { ReviewThread } from './ReviewThread';
+import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 interface ReviewThreadIndexProps {
@@ -65,16 +66,22 @@ export function ReviewThreadIndex({
             {list.map((c) => (
               <div key={c.id}>
                 <div className="flex items-center gap-1.5 px-1">
-                  <button
+                  {/* Button's own `text-sm font-medium` are Tailwind utilities, which — per
+                      `.dense-meta`'s own doc comment in global.css — always beat a
+                      `@layer components` class on the same element regardless of source
+                      order. Both have to be cancelled explicitly or the line reference
+                      would render at the wrong size/weight. */}
+                  <Button
                     type="button"
+                    variant="ghost"
                     disabled={onJumpTo === undefined}
                     onClick={() => onJumpTo?.(c)}
-                    className="dense-meta hover:text-accent-foreground"
+                    className="dense-meta hover:text-accent-foreground h-auto p-0 text-[length:var(--text-meta)] font-normal hover:bg-transparent"
                   >
                     {c.startLine !== undefined && c.startLine !== c.line
                       ? `L${c.startLine}–${c.line}`
                       : `L${c.line}`}
-                  </button>
+                  </Button>
                   {c.pending && (
                     <span className="dense-meta text-state-waiting">
                       pending

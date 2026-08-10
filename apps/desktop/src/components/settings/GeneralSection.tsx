@@ -1,8 +1,11 @@
 import type { DispatchConfig, VerifyConfig } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
+import { Checkbox } from '@/ui/checkbox';
 import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
+import { Field, FieldDescription, FieldLabel } from '@/ui/field';
 import { Input } from '@/ui/input';
+import { Label } from '@/ui/label';
 import { Textarea } from '@/ui/textarea';
 
 interface GeneralSectionProps {
@@ -60,10 +63,15 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
         <PanelHeader>Before anything lands</PanelHeader>
 
         <PanelRow className="flex-col items-stretch gap-1.5">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[12px]">Verify command</span>
+          <Field className="gap-1.5">
+            <FieldLabel
+              htmlFor="verify-command"
+              className="text-[12px] font-normal"
+            >
+              Verify command
+            </FieldLabel>
             <Input
-              aria-label="Verify command"
+              id="verify-command"
               value={verify}
               onChange={(e) => setVerify(e.target.value)}
               onBlur={() => {
@@ -77,32 +85,38 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
               placeholder="bun run verify"
               className="font-mono text-[12.5px]"
             />
-            <HintText>
+            <FieldDescription className="text-[11px]">
               Runs in the merge queue before a branch lands. Leave empty to skip
               verification entirely.
-            </HintText>
-          </label>
+            </FieldDescription>
+          </Field>
         </PanelRow>
 
         <PanelRow>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
+          <Label className="flex items-center gap-2 font-normal">
+            <Checkbox
+              className="size-3.5"
               checked={config.autoCommit}
-              onChange={(e) => void onSave({ autoCommit: e.target.checked })}
-              className="accent-accent size-3.5"
+              onCheckedChange={(checked) =>
+                void onSave({ autoCommit: checked === true })
+              }
             />
             <span className="text-[13px]">
               Let an agent commit its own work as it goes
             </span>
-          </label>
+          </Label>
         </PanelRow>
 
         <PanelRow className="flex-col items-stretch gap-1.5">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[12px]">Verify timeout</span>
+          <Field className="gap-1.5 [&>*]:w-auto">
+            <FieldLabel
+              htmlFor="verify-timeout"
+              className="text-[12px] font-normal"
+            >
+              Verify timeout
+            </FieldLabel>
             <Input
-              aria-label="Verify timeout"
+              id="verify-timeout"
               value={timeoutSec}
               onChange={(e) => setTimeoutSec(e.target.value)}
               onBlur={() => {
@@ -122,11 +136,11 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
               inputMode="numeric"
               className="w-20 font-mono text-[12.5px]"
             />
-            <HintText>
+            <FieldDescription className="text-[11px]">
               Ceiling on one verify run, in seconds. The merge queue is serial,
               so a verify that never returns holds up every entry behind it.
-            </HintText>
-          </label>
+            </FieldDescription>
+          </Field>
         </PanelRow>
       </Panel>
 
@@ -143,10 +157,15 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
         </PanelRow>
 
         <PanelRow className="flex-col items-stretch gap-1.5">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[12px]">Run command</span>
+          <Field className="gap-1.5">
+            <FieldLabel
+              htmlFor="run-command"
+              className="text-[12px] font-normal"
+            >
+              Run command
+            </FieldLabel>
             <Input
-              aria-label="Run command"
+              id="run-command"
               value={runCommand}
               onChange={(e) => setRunCommand(e.target.value)}
               onBlur={() =>
@@ -160,18 +179,20 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
               placeholder="bun run dev"
               className="font-mono text-[12.5px]"
             />
-            <HintText>
+            <FieldDescription className="text-[11px]">
               Starts the project so a verify run has something to exercise. Not
               the merge-queue gate above.
-            </HintText>
-          </label>
+            </FieldDescription>
+          </Field>
         </PanelRow>
 
         <PanelRow className="flex-col items-stretch gap-1.5">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[12px]">URL</span>
+          <Field className="gap-1.5">
+            <FieldLabel htmlFor="url" className="text-[12px] font-normal">
+              URL
+            </FieldLabel>
             <Input
-              aria-label="URL"
+              id="url"
               value={runUrl}
               onChange={(e) => setRunUrl(e.target.value)}
               onBlur={() =>
@@ -180,17 +201,19 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
               placeholder="http://localhost:3000"
               className="font-mono text-[12.5px]"
             />
-            <HintText>
+            <FieldDescription className="text-[11px]">
               Where a verify run should look once the project is running.
-            </HintText>
-          </label>
+            </FieldDescription>
+          </Field>
         </PanelRow>
 
         <PanelRow className="flex-col items-stretch gap-1.5">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[12px]">Notes</span>
+          <Field className="gap-1.5">
+            <FieldLabel htmlFor="notes" className="text-[12px] font-normal">
+              Notes
+            </FieldLabel>
             <Textarea
-              aria-label="Notes"
+              id="notes"
               value={runNotes}
               onChange={(e) => setRunNotes(e.target.value)}
               onBlur={() =>
@@ -204,10 +227,10 @@ export function GeneralSection({ config, onSave }: GeneralSectionProps) {
               placeholder="Login steps, seed data, ports…"
               className="text-[12.5px]"
             />
-            <HintText>
+            <FieldDescription className="text-[11px]">
               Anything else a verify run needs to know to exercise the project.
-            </HintText>
-          </label>
+            </FieldDescription>
+          </Field>
         </PanelRow>
       </Panel>
     </>

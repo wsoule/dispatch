@@ -1,7 +1,14 @@
 import type { SyncStatus } from '@dispatch/client';
+import { useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
 
 interface SyncChipProps {
   /** `null` until the first `GET /api/sync` resolves — nothing renders yet. */
@@ -57,6 +64,10 @@ function messageFor(status: SyncStatus): string {
  * fetching, matching every other shell widget's props-in shape.
  */
 export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
+  // Owned here (not `<details>`'s native toggle state) so the disclosure can be a controlled
+  // Collapsible — must run before the `status === null` early return, same as any other hook.
+  const [warningOpen, setWarningOpen] = useState(false);
+
   if (status === null) return null;
 
   const message = messageFor(status);
@@ -97,27 +108,35 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
           words and hid the remedy. The summary fits the width; the body wraps
           instead of truncating. */}
       {status.mergeDriverWarning !== null && (
-        <details className="pl-3">
-          <summary className="text-state-waiting cursor-pointer list-none marker:content-none">
+        <Collapsible
+          open={warningOpen}
+          onOpenChange={setWarningOpen}
+          className="pl-3"
+        >
+          <CollapsibleTrigger className="text-state-waiting cursor-pointer text-left">
             <span className="underline decoration-dotted underline-offset-2">
               Task merge driver not set up
             </span>
-          </summary>
-          <p className="text-muted-foreground mt-1 leading-snug text-pretty">
-            {status.mergeDriverWarning}
-          </p>
-        </details>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <p className="text-muted-foreground mt-1 leading-snug text-pretty">
+              {status.mergeDriverWarning}
+            </p>
+          </CollapsibleContent>
+        </Collapsible>
       )}
       {/* No point offering the kill switch once sync is already off — flipping
           autoCommit doesn't stop anything that isn't running. */}
       {status.state !== 'disabled' && status.state !== 'off' && (
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="xs"
           onClick={onDisableAutoCommit}
-          className="text-muted-foreground/70 hover:text-foreground self-start text-[10px] underline-offset-2 hover:underline"
+          className="text-muted-foreground/70 hover:text-foreground h-auto self-start p-0 text-[10px] font-normal underline-offset-2"
         >
           Turn off auto-commit
-        </button>
+        </Button>
       )}
     </div>
   );

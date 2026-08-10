@@ -27,6 +27,7 @@ import type {
   GitRightPane as GitRightPaneState,
 } from '@/lib/gitPanels';
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 
 interface GitRightPaneProps {
   pane: GitRightPaneState;
@@ -72,9 +73,10 @@ export function GitRightPane(props: GitRightPaneProps) {
 
   if (pane.kind === 'empty') {
     return (
-      <div className="text-muted-foreground flex h-full items-center justify-center text-[12px]">
-        Nothing selected.
-      </div>
+      <EmptyState
+        message="Nothing selected."
+        className="h-full justify-center px-0 py-0 [&_[data-slot=empty-description]]:text-[12px]"
+      />
     );
   }
 

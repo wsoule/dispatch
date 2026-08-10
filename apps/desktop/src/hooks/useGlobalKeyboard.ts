@@ -17,18 +17,24 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * `components/ui/Modal.tsx`'s `data-modal="true"` marker) or a shadcn/Radix `Dialog`
  * (`@/ui/dialog`'s `DialogContent` renders with `data-slot="dialog-content"`, and Radix keeps
  * `data-state="open"` on it only while open — briefly `"closed"` during its exit animation, so
- * that state is checked too rather than just presence in the DOM). Checked live via a DOM
+ * that state is checked too rather than just presence in the DOM). `AlertDialogContent` is the
+ * same device under a different slot name (`data-slot="alert-dialog-content"`), so it is matched
+ * too — a destructive confirm has to swallow the app's shortcuts exactly like any other modal
+ * does (BranchesView's confirm is one). Checked live via a DOM
  * query at the moment a keydown fires, rather than threaded through as reactive React state —
- * every dialog instance (CreateTaskModal, SessionDetailModal, DiffModal, …) already only
- * renders into the DOM while open, so the query itself is always exactly as current as the
- * state would be, without App.tsx needing to know about every modal that exists anywhere in the
- * component tree (including ones mounted deep inside the Sessions hub, which App.tsx has no
- * direct view into). Excludes the command palette on purpose — see Modal.tsx's doc comment on
- * `data-modal`. */
+ * every dialog instance (CreateTaskModal, SessionDetailModal, DiffModal, CommandPalette, …)
+ * already only renders into the DOM while open, so the query itself is always exactly as
+ * current as the state would be, without App.tsx needing to know about every modal that exists
+ * anywhere in the component tree (including ones mounted deep inside the Sessions hub, which
+ * App.tsx has no direct view into). CommandPalette is one of these now that it builds on
+ * `Dialog` too, so a keydown reaching this listener while the palette is open resolves
+ * `Escape` to `null` here — Radix's own Escape handling on `Dialog` already owns it, and
+ * `CommandPalette`'s `onClose` prop is the only thing that closes it (see `appNav.ts`'s
+ * `closePalette` case). */
 function isAnyModalOpen(): boolean {
   return (
     document.querySelector(
-      '[data-modal="true"], [data-slot="dialog-content"][data-state="open"]'
+      '[data-modal="true"], [data-slot="dialog-content"][data-state="open"], [data-slot="alert-dialog-content"][data-state="open"]'
     ) !== null
   );
 }

@@ -23,8 +23,10 @@ import { parseViewMode, VIEW_MODE_STORAGE_KEY } from '../lib/tasksViewMode';
 import { MilestonesView } from './MilestonesView';
 import { TasksListView } from './TasksListView';
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import { Segmented } from '@/ui/chrome/Segmented';
 import { Skeleton } from '@/ui/skeleton';
+import { Toggle } from '@/ui/toggle';
 
 interface BoardViewProps {
   data: DispatchProjectData;
@@ -237,15 +239,16 @@ export function BoardView({
             ]}
           />
           {showArchiveToggle(data.showArchived, data.archivedTasks.length) && (
-            <Button
-              variant={data.showArchived ? 'secondary' : 'outline'}
+            <Toggle
+              variant="outline"
               size="sm"
-              aria-pressed={data.showArchived}
-              onClick={() => data.setShowArchived(!data.showArchived)}
+              pressed={data.showArchived}
+              onPressedChange={data.setShowArchived}
+              className="data-[state=on]:bg-secondary data-[state=on]:text-secondary-foreground data-[state=on]:hover:bg-secondary/80 gap-1.5 px-3 has-[>svg]:px-2.5"
             >
               <Archive className="size-3.5" />
               Archived ({data.archivedTasks.length})
-            </Button>
+            </Toggle>
           )}
           <Button
             variant="secondary"
@@ -267,17 +270,17 @@ export function BoardView({
       </div>
 
       {boardTasks.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-          <LayoutGrid className="text-muted-foreground size-5" />
-          <p className="text-muted-foreground max-w-sm text-[13px]">
-            No tasks yet — create the first one, or describe the work with
-            &ldquo;Plan work…&rdquo; and let the planner draft it.
-          </p>
-          <Button size="sm" onClick={() => onNewTask()}>
-            <Plus className="size-3.5" />
-            New task
-          </Button>
-        </div>
+        <EmptyState
+          icon={LayoutGrid}
+          message="No tasks yet — create the first one, or describe the work with “Plan work…” and let the planner draft it."
+          className="flex-1 justify-center gap-3 p-0 text-[13px] [&_[data-slot=empty-description]]:max-w-sm [&_[data-slot=empty-description]]:text-[length:inherit]"
+          action={
+            <Button size="sm" onClick={() => onNewTask()}>
+              <Plus className="size-3.5" />
+              New task
+            </Button>
+          }
+        />
       ) : mode === 'milestones' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <MilestonesView data={data} onOpenTask={onSelectTask} />

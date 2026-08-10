@@ -20,6 +20,7 @@ import {
   parseTags,
   statusDotClass,
 } from './sessionDisplay';
+import { Alert } from '@/ui/alert';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { StatTile } from '@/ui/chrome/StatTile';
@@ -117,12 +118,15 @@ export function SessionDetailModal({
             </div>
           )}
           {isError && (
-            <div className="flex flex-col items-center gap-2 py-6 text-center">
-              <OctagonAlert className="text-destructive size-5" />
+            <Alert
+              variant="destructive"
+              className="flex flex-col items-center gap-2 border-none bg-transparent px-0 py-6 text-center [&>svg]:size-5 [&>svg]:translate-y-0"
+            >
+              <OctagonAlert />
               <p className="text-muted-foreground text-[13px]">
                 Couldn&rsquo;t load this session.
               </p>
-            </div>
+            </Alert>
           )}
           {!isLoading && !isError && !data && (
             <p className="text-muted-foreground text-[13px]">
