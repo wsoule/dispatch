@@ -76,6 +76,7 @@ import { MilestoneRow } from './MilestoneRow';
 import { RailSection } from './RailSection';
 import { SelfReviewRow } from './SelfReviewRow';
 import { VerificationSection } from './VerificationSection';
+import { Alert, AlertDescription } from '@/ui/alert';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import {
@@ -488,18 +489,19 @@ export function TaskDetailPanel({
                 Pushed
               </span>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={(e) => {
                   e.stopPropagation();
                   void pushToLinear();
                 }}
                 disabled={pushingLinear}
-                className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] disabled:opacity-50"
+                className="text-muted-foreground hover:text-foreground h-auto gap-1 p-0 text-[11px] hover:bg-transparent has-[>svg]:px-0"
               >
                 <Link2 className="size-3" />
                 {pushingLinear ? 'Pushing…' : 'Push to Linear'}
-              </button>
+              </Button>
             )}
           </>
         )}
@@ -513,9 +515,14 @@ export function TaskDetailPanel({
         sessions, and the activity feed + composer — all left-aligned in a roomy flow. */}
         <div className="flex min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-8 py-6">
           {error !== null && (
-            <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px]">
-              {error}
-            </div>
+            <Alert
+              variant="destructive"
+              className="bg-destructive/10 rounded-md border-0 px-3 py-2 text-[13px]"
+            >
+              <AlertDescription className="text-[13px]">
+                {error}
+              </AlertDescription>
+            </Alert>
           )}
 
           <Input
@@ -540,9 +547,14 @@ export function TaskDetailPanel({
           )}
 
           {ledgerError !== null && (
-            <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12.5px]">
-              Couldn&rsquo;t load the ledger: {ledgerError}
-            </div>
+            <Alert
+              variant="destructive"
+              className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2 text-[12.5px]"
+            >
+              <AlertDescription className="text-[12.5px]">
+                Couldn&rsquo;t load the ledger: {ledgerError}
+              </AlertDescription>
+            </Alert>
           )}
           <LedgerSection entries={ledgerEntries} />
 
@@ -601,13 +613,14 @@ export function TaskDetailPanel({
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button
+                      <Button
                         type="button"
-                        className="text-muted-foreground hover:bg-muted/60 hover:text-foreground inline-flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-[12px] transition-colors duration-150"
+                        variant="ghost"
+                        className="text-muted-foreground hover:bg-muted/60 hover:text-foreground h-auto gap-1 rounded-md border border-transparent px-2 py-1 text-[12px] has-[>svg]:px-2"
                       >
                         {modelLabel(model)}
                         <ChevronDown className="size-3" />
-                      </button>
+                      </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
                       {MODELS.map((m) => (
@@ -646,34 +659,44 @@ export function TaskDetailPanel({
                 </Button>
               )}
               {run?.prUrl !== undefined && (
-                <a
-                  className="text-primary hover:bg-accent border-border inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors duration-150"
-                  href={run.prUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  PR
-                  <ArrowUpRight className="size-3" />
+                <a href={run.prUrl} target="_blank" rel="noreferrer">
+                  <Badge
+                    variant="outline"
+                    className="text-primary hover:bg-accent gap-1 rounded-full px-2 py-1 text-[11px] transition-colors duration-150"
+                  >
+                    PR
+                    <ArrowUpRight className="size-3" />
+                  </Badge>
                 </a>
               )}
             </div>
           )}
 
           {fixLoopError !== null && (
-            <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12.5px]">
-              Couldn&rsquo;t load the fix loop: {fixLoopError}
-            </div>
+            <Alert
+              variant="destructive"
+              className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2 text-[12.5px]"
+            >
+              <AlertDescription className="text-[12.5px]">
+                Couldn&rsquo;t load the fix loop: {fixLoopError}
+              </AlertDescription>
+            </Alert>
           )}
           {fixLoop !== null && (
             <FixLoopSection fixLoop={fixLoop} escalation={fixLoopEscalation} />
           )}
 
           {findingsError !== null && (
-            <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12.5px]">
-              Couldn&rsquo;t load findings: {findingsError}
-              {fixLoopNeedsRuling(fixLoop) &&
-                ' — any open findings can’t be ruled on right now.'}
-            </div>
+            <Alert
+              variant="destructive"
+              className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2 text-[12.5px]"
+            >
+              <AlertDescription className="text-[12.5px]">
+                Couldn&rsquo;t load findings: {findingsError}
+                {fixLoopNeedsRuling(fixLoop) &&
+                  ' — any open findings can’t be ruled on right now.'}
+              </AlertDescription>
+            </Alert>
           )}
           <FindingsPanel
             findings={findings}
@@ -716,10 +739,11 @@ export function TaskDetailPanel({
               <ul className="flex flex-col gap-1">
                 {runs.map((r) => (
                   <li key={r.id}>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       onClick={() => onOpenSession(r.id)}
-                      className="hover:bg-muted/60 border-border/60 flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150"
+                      className="border-border/60 hover:bg-muted/60 h-auto w-full justify-start gap-2 rounded-md border px-2.5 py-1.5 text-left"
                     >
                       <RunStatePill meta={r} />
                       <span className="text-muted-foreground font-mono text-[11px]">
@@ -730,7 +754,7 @@ export function TaskDetailPanel({
                           `$${r.costUsd.toFixed(2)} · `}
                         {formatRelativeTimeFromIso(r.updatedAt)}
                       </span>
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>

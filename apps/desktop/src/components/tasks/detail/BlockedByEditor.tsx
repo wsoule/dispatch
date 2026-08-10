@@ -2,6 +2,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
 import { Plus, X } from 'lucide-react';
 
 import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/ui/select';
 
 // The blocked-by editor in the rail: current blockers as removable chips (each
@@ -30,14 +31,15 @@ export function BlockedByEditor({
               className="gap-1 pr-1 text-[11px]"
             >
               <span className="font-mono">{id}</span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 aria-label={`Remove blocker ${id}`}
-                className="hover:text-foreground text-muted-foreground"
+                className="text-muted-foreground hover:text-foreground size-auto p-0 hover:bg-transparent has-[>svg]:px-0"
                 onClick={() => onChange(blockedBy.filter((b) => b !== id))}
               >
                 <X className="size-3" />
-              </button>
+              </Button>
             </Badge>
           ))}
         </div>

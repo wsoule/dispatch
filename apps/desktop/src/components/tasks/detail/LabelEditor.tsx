@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { useState } from 'react';
 
 import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
 
 // The labels editor in the rail: existing labels as removable chips plus an
@@ -32,14 +33,15 @@ export function LabelEditor({
               className="gap-1 pr-1 text-[11px]"
             >
               {label}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 aria-label={`Remove label ${label}`}
-                className="hover:text-foreground text-muted-foreground"
+                className="text-muted-foreground hover:text-foreground size-auto p-0 hover:bg-transparent has-[>svg]:px-0"
                 onClick={() => onChange(labels.filter((l) => l !== label))}
               >
                 <X className="size-3" />
-              </button>
+              </Button>
             </Badge>
           ))}
         </div>
