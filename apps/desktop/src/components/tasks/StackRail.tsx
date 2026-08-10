@@ -9,6 +9,7 @@ import { RunStatePill } from '../runs/RunStatePill';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
 import { Separator } from '@/ui/separator';
 
 export interface StackRailProps {
@@ -130,14 +131,16 @@ export function StackRail({
               )}
             >
               {onOpenTask !== undefined ? (
-                <button
+                <Button
                   type="button"
+                  variant="link"
+                  size="xs"
                   onClick={() => onOpenTask(id)}
-                  className="min-w-0 flex-1 truncate text-left text-[13px] hover:underline"
                   title={rowDoc.meta.title}
+                  className="text-foreground h-auto min-w-0 flex-1 justify-start truncate p-0 text-left text-[13px] font-normal"
                 >
                   {rowDoc.meta.title}
-                </button>
+                </Button>
               ) : (
                 <span
                   className="min-w-0 flex-1 truncate text-[13px]"

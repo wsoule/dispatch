@@ -286,10 +286,10 @@ export function RunsView({
                   size="xs"
                   onClick={() => onSelectRun(run.id)}
                   className={cn(
-                    'h-auto w-full items-start justify-start gap-2 rounded-md border px-2 py-1.5 text-left text-[length:inherit] font-normal',
+                    'h-auto w-full items-start justify-start gap-2 rounded-md border px-2 py-1.5 text-left text-[length:inherit] font-normal hover:text-foreground',
                     run.id === selectedRunId
                       ? 'border-border bg-accent'
-                      : 'border-transparent hover:bg-muted/60 hover:text-foreground'
+                      : 'border-transparent hover:bg-muted/60'
                   )}
                 >
                   {/* Two lines: the title gets the full width, and the state,

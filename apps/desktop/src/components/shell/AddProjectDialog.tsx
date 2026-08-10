@@ -134,17 +134,19 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {mode === 'github' && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => {
                   setMode('choose');
                   setError(null);
                 }}
-                className="text-muted-foreground hover:text-foreground -ml-1 rounded p-0.5"
                 aria-label="Back"
+                className="text-muted-foreground hover:text-foreground -ml-1 size-auto rounded p-0.5 hover:bg-transparent"
               >
                 <ChevronLeft className="size-4" />
-              </button>
+              </Button>
             )}
             {mode === 'github' ? 'Clone from GitHub' : 'Add project'}
           </DialogTitle>
@@ -168,10 +170,12 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
           </div>
         ) : mode === 'choose' ? (
           <div className="flex flex-col gap-2">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="xs"
               onClick={() => void pickLocalFolder()}
-              className="border-border hover:bg-accent flex items-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors"
+              className="border-border h-auto justify-start gap-3 rounded-lg border px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
             >
               <FolderOpen className="text-muted-foreground size-5 shrink-0" />
               <span className="flex flex-col">
@@ -182,11 +186,13 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
                   Add a project already on this machine
                 </span>
               </span>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="xs"
               onClick={() => setMode('github')}
-              className="border-border hover:bg-accent flex items-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors"
+              className="border-border h-auto justify-start gap-3 rounded-lg border px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
             >
               <GitBranch className="text-muted-foreground size-5 shrink-0" />
               <span className="flex flex-col">
@@ -197,7 +203,7 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
                   Clone one of your repositories
                 </span>
               </span>
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="flex flex-col gap-2">

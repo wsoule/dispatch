@@ -790,13 +790,17 @@ export function PlansView({
         ) : (
           <div className="flex flex-col gap-1.5">
             {history.map((entry) => (
-              <button
+              <Button
                 key={entry.id}
                 type="button"
+                variant="ghost"
+                size="xs"
                 onClick={() => openHistoryEntry(entry)}
                 className={cn(
-                  'border-border bg-card hover:border-muted-foreground/30 flex items-center gap-2 rounded-md border px-3 py-2 text-left text-[13px] transition-colors duration-150',
-                  entry.id === data.planId && 'border-primary/40 bg-accent'
+                  'h-auto w-full items-center justify-start gap-2 rounded-md border px-3 py-2 text-left text-[length:inherit] font-normal hover:text-foreground',
+                  entry.id === data.planId
+                    ? 'border-primary/40 bg-accent'
+                    : 'border-border bg-card hover:border-muted-foreground/30 hover:bg-card'
                 )}
               >
                 <PlanStateDot state={entry.state} />
@@ -804,7 +808,7 @@ export function PlansView({
                 <span className="text-muted-foreground shrink-0 text-[11px] capitalize">
                   {entry.state}
                 </span>
-              </button>
+              </Button>
             ))}
           </div>
         )}
