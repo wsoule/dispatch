@@ -1,4 +1,5 @@
 import { Button } from '@/ui/button';
+import { Panel } from '@/ui/chrome';
 
 /** The sections an "Add detail" pass proposes — structurally `EnrichDraft`, but
  * inline here so this component depends on neither caller's module. */
@@ -29,7 +30,7 @@ export function EnrichReview({
   note?: string;
 }) {
   return (
-    <div className="shadow-hairline bg-card flex flex-col gap-3 rounded-lg p-3.5">
+    <Panel className="flex flex-col gap-3 p-3.5">
       <div className="flex items-baseline gap-2">
         <span className="text-[12.5px] font-medium">Proposed detail</span>
         <span className="text-muted-foreground text-[12px]">{note}</span>
@@ -72,6 +73,6 @@ export function EnrichReview({
           {discardLabel}
         </Button>
       </div>
-    </div>
+    </Panel>
   );
 }

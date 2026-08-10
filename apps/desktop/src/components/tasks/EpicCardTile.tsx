@@ -13,9 +13,11 @@ import { EpicDagModal } from './EpicDagModal';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
+import { Alert, AlertDescription } from '@/ui/alert';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 // See `TaskCardTile`'s identical type — kept as its own copy rather than a shared import
 // since the two cards' JSX around it differs enough that sharing the type alone wouldn't
@@ -171,21 +173,26 @@ export function EpicCardTile({
           >
             Epic
           </Badge>
-          <button
-            type="button"
-            aria-label="View dependency graph"
-            title="View dependency graph"
-            // Nested inside the card's own click-to-open-detail root, so — same bug class as the
-            // Work/Stop buttons and the concurrency input below — a click here must not also
-            // bubble up into `onSelect`.
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowGraph(true);
-            }}
-            className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto shrink-0 rounded-md p-0.5 transition-colors duration-150"
-          >
-            <Waypoints className="size-3" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label="View dependency graph"
+                // Nested inside the card's own click-to-open-detail root, so — same bug class
+                // as the Work/Stop buttons and the concurrency input below — a click here must
+                // not also bubble up into `onSelect`.
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowGraph(true);
+                }}
+                className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto size-auto shrink-0 rounded-md p-0.5 has-[>svg]:px-0.5"
+              >
+                <Waypoints className="size-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>View dependency graph</TooltipContent>
+          </Tooltip>
         </div>
 
         <div className="flex items-start gap-1.5">
@@ -211,10 +218,15 @@ export function EpicCardTile({
         </div>
 
         {error !== null && (
-          <div className="bg-destructive/10 text-destructive flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]">
+          <Alert
+            variant="destructive"
+            className="bg-destructive/10 flex items-center gap-1.5 rounded-md border-0 px-2 py-1 text-[11px] [&>svg]:translate-y-0"
+          >
             <AlertCircle className="size-3 shrink-0" />
-            <span className="truncate">{error}</span>
-          </div>
+            <AlertDescription className="truncate text-[11px]">
+              {error}
+            </AlertDescription>
+          </Alert>
         )}
 
         <div className="flex items-center justify-between gap-2">
