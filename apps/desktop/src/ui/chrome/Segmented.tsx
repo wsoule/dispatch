@@ -47,9 +47,8 @@ export function Segmented<T extends string>({
       // A segmented control always has a selection; ignore radix's deselect.
       onValueChange={(next) => next !== '' && onChange(next as T)}
       aria-label={label}
-      // Non-zero spacing opts out of ToggleGroupItem's joined-pill corner
-      // trimming (data-[spacing=0]:rounded-*), which would otherwise square
-      // off the middle items' corners; the actual gap is set via className.
+      // Non-zero spacing opts out of ToggleGroupItem's corner-radius trimming
+      // (data-[spacing=0]:rounded-*); the actual gap comes from className.
       spacing={1}
       className={cn(
         'border-border flex items-center gap-0.5 rounded-md border p-0.5',
@@ -63,7 +62,9 @@ export function Segmented<T extends string>({
           title={option.label}
           className={cn(
             'flex h-auto items-center gap-1.5 rounded-[5px] px-2 py-0.5 transition-colors duration-150',
-            'data-[state=on]:bg-accent data-[state=on]:text-accent-foreground',
+            // toggleVariants sets text-sm/font-medium; the old markup had no
+            // size class, so restore its inherited font-size/weight exactly.
+            'text-[length:inherit] font-[weight:inherit]',
             'text-muted-foreground hover:bg-transparent hover:text-foreground'
           )}
         >
