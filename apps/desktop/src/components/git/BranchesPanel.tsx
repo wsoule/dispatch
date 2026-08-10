@@ -141,16 +141,17 @@ export function BranchesPanel({
                     <span className="truncate">{row.taskTitle}</span>
                   )}
                   {row.runId !== undefined && (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenRun(row.runId);
                       }}
-                      className="hover:text-foreground font-mono underline-offset-2 hover:underline"
+                      className="hover:text-foreground h-auto p-0 font-mono font-normal underline-offset-2 hover:bg-transparent hover:underline"
                     >
                       {row.runId}
-                    </button>
+                    </Button>
                   )}
                   <span>{row.shortSha}</span>
                   <span className="truncate">{row.subject}</span>

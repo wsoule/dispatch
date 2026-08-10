@@ -2,6 +2,7 @@ import { AlertTriangle, Check, FileQuestion, Square } from 'lucide-react';
 
 import type { GitFileRow } from '@/lib/gitPanels';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 
 const SECTION_LABEL: Record<GitFileRow['section'], string> = {
   conflicted: 'Conflicted',
@@ -61,8 +62,10 @@ export function FilesPanel({
                 selected ? 'bg-accent' : 'hover:bg-muted/50'
               )}
             >
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 disabled={busy}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -71,7 +74,7 @@ export function FilesPanel({
                 title={
                   row.section === 'staged' ? 'Unstage (space)' : 'Stage (space)'
                 }
-                className="text-muted-foreground hover:text-foreground grid size-4 shrink-0 place-items-center disabled:opacity-50"
+                className="text-muted-foreground hover:text-foreground size-4 shrink-0 hover:bg-transparent disabled:opacity-50"
               >
                 {row.section === 'conflicted' ? (
                   <AlertTriangle className="text-destructive size-3.5" />
@@ -82,7 +85,7 @@ export function FilesPanel({
                 ) : (
                   <Square className="size-3.5" />
                 )}
-              </button>
+              </Button>
               <span className="truncate font-mono">{row.path}</span>
             </div>
           </div>

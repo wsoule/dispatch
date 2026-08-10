@@ -5,6 +5,7 @@ import { formatBytes } from '../../lib/formatBytes';
 import type { GitFilter, GitHealth } from '../../lib/gitHealth';
 import { computeGitHealth } from '../../lib/gitHealth';
 import { cn } from '@/lib/utils';
+import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 interface GitSummaryProps {
   branches: BranchEntry[];
@@ -36,51 +37,56 @@ export function GitSummary({
 
   return (
     <div className="border-border flex flex-wrap items-center gap-x-1 gap-y-0.5 rounded-lg border px-1.5 py-1">
-      <Stat
-        label="Branches"
-        value={String(health.branches)}
-        onClick={() => onFocus('all')}
-        selected={active === 'all'}
-      />
-      <Stat
-        label="On disk"
-        value={formatBytes(health.totalBytes)}
-        hint={`${health.onDisk.length} worktree${health.onDisk.length === 1 ? '' : 's'}`}
-      />
-      <Stat
-        label="Stale"
-        value={String(health.stale.length)}
-        hint={
-          health.staleBytes > 0 ? formatBytes(health.staleBytes) : undefined
-        }
-        tone={health.stale.length > 0 ? 'warn' : undefined}
-        onClick={health.stale.length > 0 ? () => onFocus('stale') : undefined}
-        selected={active === 'stale'}
-      />
-      <Stat
-        label="Orphaned"
-        value={String(health.orphans.length)}
-        tone={health.orphans.length > 0 ? 'bad' : undefined}
-        onClick={
-          health.orphans.length > 0 ? () => onFocus('orphans') : undefined
-        }
-        selected={active === 'orphans'}
-      />
-      <Stat
-        label="Uncommitted"
-        value={String(health.dirty)}
-        tone={health.dirty > 0 ? 'warn' : undefined}
-        onClick={health.dirty > 0 ? () => onFocus('dirty') : undefined}
-        selected={active === 'dirty'}
-      />
-      <Stat
-        label="Stacked"
-        value={String(health.stacked.length)}
-        onClick={
-          health.stacked.length > 0 ? () => onFocus('stacked') : undefined
-        }
-        selected={active === 'stacked'}
-      />
+      {/* `type="multiple"` because the chips are laid out flat, not as a mutually exclusive
+          radio strip — `value` only ever holds the one active filter, and each chip's own
+          `onClick` (not the group's `onValueChange`) is what drives `onFocus`. */}
+      <ToggleGroup type="multiple" value={[active]} className="contents">
+        <Stat
+          label="Branches"
+          value={String(health.branches)}
+          filterValue="all"
+          onClick={() => onFocus('all')}
+        />
+        <Stat
+          label="On disk"
+          value={formatBytes(health.totalBytes)}
+          hint={`${health.onDisk.length} worktree${health.onDisk.length === 1 ? '' : 's'}`}
+        />
+        <Stat
+          label="Stale"
+          value={String(health.stale.length)}
+          hint={
+            health.staleBytes > 0 ? formatBytes(health.staleBytes) : undefined
+          }
+          tone={health.stale.length > 0 ? 'warn' : undefined}
+          filterValue={health.stale.length > 0 ? 'stale' : undefined}
+          onClick={health.stale.length > 0 ? () => onFocus('stale') : undefined}
+        />
+        <Stat
+          label="Orphaned"
+          value={String(health.orphans.length)}
+          tone={health.orphans.length > 0 ? 'bad' : undefined}
+          filterValue={health.orphans.length > 0 ? 'orphans' : undefined}
+          onClick={
+            health.orphans.length > 0 ? () => onFocus('orphans') : undefined
+          }
+        />
+        <Stat
+          label="Uncommitted"
+          value={String(health.dirty)}
+          tone={health.dirty > 0 ? 'warn' : undefined}
+          filterValue={health.dirty > 0 ? 'dirty' : undefined}
+          onClick={health.dirty > 0 ? () => onFocus('dirty') : undefined}
+        />
+        <Stat
+          label="Stacked"
+          value={String(health.stacked.length)}
+          filterValue={health.stacked.length > 0 ? 'stacked' : undefined}
+          onClick={
+            health.stacked.length > 0 ? () => onFocus('stacked') : undefined
+          }
+        />
+      </ToggleGroup>
 
       <span className="flex-1" />
 
@@ -107,14 +113,16 @@ function Stat({
   hint,
   tone,
   onClick,
-  selected = false,
+  filterValue,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: 'warn' | 'bad';
   onClick?: () => void;
-  selected?: boolean;
+  /** The `GitFilter` this chip toggles to — undefined keeps it a plain, non-interactive
+   * readout (see the comment below). */
+  filterValue?: GitFilter;
 }) {
   const body = (
     <>
@@ -133,7 +141,7 @@ function Stat({
 
   // A count with nothing behind it is not a button. Rendering it as one would
   // promise a filter that shows an empty list.
-  if (onClick === undefined) {
+  if (onClick === undefined || filterValue === undefined) {
     return (
       <div className="flex items-baseline gap-1 px-1 py-0.5" title={hint}>
         {body}
@@ -141,17 +149,16 @@ function Stat({
     );
   }
   return (
-    <button
-      type="button"
+    <ToggleGroupItem
+      value={filterValue}
       onClick={onClick}
-      aria-pressed={selected}
       title={hint}
-      className={cn(
-        'hover:bg-accent/60 flex items-baseline gap-1 rounded-md px-1 py-0.5 text-left transition-colors duration-150',
-        selected && 'bg-accent'
-      )}
+      // `ToggleGroupItem`'s own size/weight/hover classes are for a taller, bolder toggle
+      // button — every one that would change this chip's look is neutralized so pressed
+      // state (now real radix `data-state`/`aria-pressed`) is the only thing that moved.
+      className="hover:bg-accent/60 h-auto min-w-0 justify-normal gap-1 rounded-md px-1 py-0.5 text-left text-xs font-normal whitespace-normal normal-case transition-colors duration-150 hover:text-inherit data-[state=on]:text-inherit"
     >
       {body}
-    </button>
+    </ToggleGroupItem>
   );
 }
