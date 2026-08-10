@@ -6,26 +6,12 @@ import { join } from 'node:path';
 
 import { buildStorefrontRunScript } from '../src/script.js';
 
-// TaskDoc/RunMeta/RunDetail field shapes below are confirmed against
-// packages/server/src/api.ts and packages/core/src/types.ts rather than
-// guessed:
-//  - GET /api/tasks returns TaskDoc[] = { meta: { id, status, ... }, body },
-//    not a flat { id, status }.
-//  - POST /api/tasks/:id/runs returns RunMeta (flat { id, state, ... }).
-//  - GET /api/runs/:id returns RunDetail = { meta: RunMeta, entries, ... } —
-//    the run's `state` lives at `.meta.state`, not the top level.
-//  - The approval route is `POST /api/runs/:id/approval` (singular, body
-//    carries `requestId`), not `/api/runs/:id/approvals/:requestId`.
-//    `pendingApproval` is never returned by GET /api/runs/:id — see
-//    apps/desktop/src/hooks/useDispatchProject.ts's own comment: "the REST
-//    API has no way to hand back a paused run's requestId on a plain
-//    refetch, only the live WS event". Since this daemon's script is fixed
-//    and known ahead of time, the test reads the approval's requestId
-//    straight from `buildStorefrontRunScript()` instead of standing up a WS
-//    listener just to relearn a value it already has.
+// Two shapes below aren't obvious from the route names: GET /api/runs/:id
+// nests `state` under `.meta.state`, and the approval route is singular —
+// `POST /api/runs/:id/approval`, with `requestId` in the body.
 
 async function readUntil(
-  proc: Bun.Subprocess<'ignore', 'pipe', 'pipe'>,
+  proc: Bun.Subprocess<'ignore', 'pipe', 'inherit'>,
   patterns: RegExp[]
 ): Promise<Record<string, string>> {
   const found: Record<string, string> = {};
@@ -62,8 +48,8 @@ describe('demo daemon', () => {
   test('serves a seeded session and plays a fake run to finished', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'demo-daemon-'));
     const paths = seedSession(dir);
-    // The daemon's fake executor plays this same script; its approval step
-    // pauses the run under this requestId (see the module doc comment above).
+    // GET /api/runs/:id never returns `pendingApproval` (only the live WS
+    // event does), so the test reads the approval's requestId from the script.
     const script = buildStorefrontRunScript();
     const approvalStep = (script.steps ?? []).find(
       (s) => s.approval !== undefined
@@ -81,7 +67,9 @@ describe('demo daemon', () => {
       {
         env: { ...process.env, DISPATCH_HOME: paths.home },
         stdout: 'pipe',
-        stderr: 'pipe',
+        // 'inherit', not 'pipe': the daemon's error paths (47 console.error
+        // sites in server) would otherwise fill an unread pipe and stall it.
+        stderr: 'inherit',
       }
     );
     try {
