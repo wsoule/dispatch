@@ -8,6 +8,7 @@ import {
 } from '../../../lib/verificationSummary';
 import { MainSection } from './MainSection';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 
 // `exercised` stays visually distinct from review status; self-hides when
 // there is nothing to say (never exercised, no result, no error).
@@ -91,19 +92,20 @@ export function VerificationSection({
           <div className="flex flex-wrap gap-1.5">
             {result.artifacts.map((path) =>
               path.startsWith('/') ? (
-                <button
+                <Button
                   key={path}
                   type="button"
+                  variant="ghost"
                   onClick={() => {
                     revealInFinder(path).catch((err: unknown) => {
                       console.error(`Failed to reveal ${path}:`, err);
                     });
                   }}
                   title={path}
-                  className="border-border/60 text-muted-foreground hover:text-foreground max-w-full min-w-0 rounded border px-1.5 py-0.5 text-left font-mono text-[11px] break-all"
+                  className="border-border/60 text-muted-foreground hover:text-foreground h-auto max-w-full min-w-0 justify-start rounded border px-1.5 py-0.5 text-left font-mono text-[11px] break-all whitespace-normal hover:bg-transparent"
                 >
                   {path}
-                </button>
+                </Button>
               ) : (
                 <span
                   key={path}
