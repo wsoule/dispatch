@@ -18,11 +18,13 @@ test('the selected option is marked pressed', () => {
       onChange={() => {}}
     />
   );
+  // Radix ToggleGroup type="single" exposes role="radio"/aria-checked
+  // rather than role="button"/aria-pressed; query mechanics only.
   expect(
-    screen.getByRole('button', { name: 'Lanes' }).getAttribute('aria-pressed')
+    screen.getByRole('radio', { name: 'Lanes' }).getAttribute('aria-checked')
   ).toBe('true');
   expect(
-    screen.getByRole('button', { name: 'Board' }).getAttribute('aria-pressed')
+    screen.getByRole('radio', { name: 'Board' }).getAttribute('aria-checked')
   ).toBe('false');
 });
 
@@ -38,7 +40,7 @@ test('clicking an option reports it', () => {
       }}
     />
   );
-  fireEvent.click(screen.getByRole('button', { name: 'List' }));
+  fireEvent.click(screen.getByRole('radio', { name: 'List' }));
   expect(picked).toBe('list');
 });
 
@@ -67,5 +69,7 @@ test('the group is named for assistive tech', () => {
       onChange={() => {}}
     />
   );
-  expect(screen.getByRole('group', { name: 'View' })).toBeDefined();
+  // Radix ToggleGroup type="single" reports role="radiogroup" rather than
+  // "group"; query mechanics only, the group is still named "View".
+  expect(screen.getByRole('radiogroup', { name: 'View' })).toBeDefined();
 });
