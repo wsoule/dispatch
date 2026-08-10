@@ -859,6 +859,37 @@ function App() {
                       onPlanWork={() => selectProjectView('plans')}
                     />
                   )}
+                  {navState.projectView === 'task' &&
+                    navState.activeTaskId !== null &&
+                    data.config !== null && (
+                      <TaskView
+                        key={navState.activeTaskId}
+                        data={data}
+                        taskId={navState.activeTaskId}
+                        tab={navState.taskTab}
+                        activeRunId={navState.activeRunId}
+                        onSetTab={(tab) =>
+                          dispatchNav({ type: 'setTaskTab', tab })
+                        }
+                        onSelectRun={(runId) =>
+                          openTaskView(
+                            navState.activeTaskId,
+                            navState.taskTab,
+                            runId
+                          )
+                        }
+                        onBack={() => dispatchNav({ type: 'back' })}
+                        // `undefined` when the task has gone away (deleted/archived out from
+                        // under an open view) — TaskView's own lookup finds the same absence
+                        // and renders its "no longer available" state before ever touching
+                        // this prop.
+                        panelProps={
+                          activeTaskDoc !== null
+                            ? buildTaskPanelProps(activeTaskDoc)
+                            : undefined
+                        }
+                      />
+                    )}
                   {navState.projectView === 'runs' && (
                     <RunsView
                       data={data}
@@ -979,31 +1010,6 @@ function App() {
             onExpand={() => openTaskView(selectedDoc.meta.id)}
           />
         )}
-
-        {navState.projectView === 'task' &&
-          navState.activeTaskId !== null &&
-          data.config !== null && (
-            <TaskView
-              key={navState.activeTaskId}
-              data={data}
-              taskId={navState.activeTaskId}
-              tab={navState.taskTab}
-              activeRunId={navState.activeRunId}
-              onSetTab={(tab) => dispatchNav({ type: 'setTaskTab', tab })}
-              onSelectRun={(runId) =>
-                openTaskView(navState.activeTaskId, navState.taskTab, runId)
-              }
-              onBack={() => dispatchNav({ type: 'back' })}
-              // `undefined` when the task has gone away (deleted/archived out from under an
-              // open view) — TaskView's own lookup finds the same absence and renders its
-              // "no longer available" state before ever touching this prop.
-              panelProps={
-                activeTaskDoc !== null
-                  ? buildTaskPanelProps(activeTaskDoc)
-                  : undefined
-              }
-            />
-          )}
 
         {showCreate && data.config !== null && (
           <CreateTaskModal
