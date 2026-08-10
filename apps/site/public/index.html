@@ -322,6 +322,67 @@
         color: var(--muted);
       }
 
+      /* ── try it live ─────────────────────────────────────────────────────
+         The iframe src is only ever set from the click handler in app.js —
+         the landing page it points at auto-starts a session on load, so
+         setting it any earlier (on scroll, on hover) would spend one. */
+      .livecard {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-top: 16px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+      }
+      .livecard h3 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .livecard p {
+        margin: 0;
+        max-width: 48ch;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .live-btn {
+        flex: none;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 16px;
+        background: var(--raised);
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .live-btn:hover {
+        border-color: var(--dim);
+      }
+      .liveframe {
+        margin-top: 16px;
+      }
+      .liveframe iframe {
+        display: block;
+        width: 100%;
+        aspect-ratio: 1680 / 960;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      .liveframe a {
+        display: inline-block;
+        margin-top: 8px;
+        font-size: 13px;
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .liveframe a:hover {
+        color: var(--ink);
+      }
+
       /* ── chat vs board ───────────────────────────────────────────────────
          Two columns rather than a stacked diff. The old page listed fifteen
          rows of prose and nobody was going to read the eleventh; side by side,
@@ -573,6 +634,10 @@
         .facts {
           grid-template-columns: 1fr;
         }
+        .livecard {
+          flex-direction: column;
+          align-items: flex-start;
+        }
         /* The sidebar becomes a scrolling tab strip: the same navigation, in
            the only shape that fits a phone. */
         .app {
@@ -757,6 +822,29 @@ there is output. Move to a push model.
             A board, with epics as cards and one lane per epic if you want it.
           </figcaption>
         </figure>
+
+        <div class="livecard" id="livecard">
+          <div>
+            <h3>Or drive it yourself.</h3>
+            <p>
+              A live sandbox of the real app — seeded repo, a teammate making
+              moves, an agent run to review. Nothing to install.
+            </p>
+          </div>
+          <button type="button" id="livedemo" class="live-btn">
+            Try it live
+          </button>
+        </div>
+        <div class="liveframe" id="liveframe" hidden>
+          <iframe
+            id="liveiframe"
+            title="Dispatch live demo"
+            loading="lazy"
+          ></iframe>
+          <a id="livefull" href="#" target="_blank" rel="noopener"
+            >Open full screen ↗</a
+          >
+        </div>
       </div>
     </section>
 
