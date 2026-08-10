@@ -1,11 +1,10 @@
 import type { RunMeta } from '@dispatch/client';
-import { FileX } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { isTerminalRunState } from '../../lib/runState';
+import { DiffEmptyState } from '../runs/DiffEmptyState';
 import { RunDiffView } from '../runs/RunDiffView';
 import { RunReviewView } from '../runs/RunReviewView';
-import { EmptyState } from '@/ui/chrome';
 import { Skeleton } from '@/ui/skeleton';
 
 export interface TaskDiffTabProps {
@@ -13,18 +12,6 @@ export interface TaskDiffTabProps {
   selectedRun: RunMeta | undefined;
   /** Jumps to the Pull requests tab — see `RunsView`'s identical prop. */
   onViewPr: (runId: string) => void;
-}
-
-// A muted centered placeholder for the Diff tab when there's nothing to review yet — mirrors
-// RunsView's local DiffEmptyState.
-function DiffEmptyState({ message }: { message: string }) {
-  return (
-    <EmptyState
-      icon={FileX}
-      message={message}
-      className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
-    />
-  );
 }
 
 /** The task view's Diff tab: the selected run's diff/review surface, wired exactly like
