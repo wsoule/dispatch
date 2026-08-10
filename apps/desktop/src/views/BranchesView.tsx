@@ -565,7 +565,9 @@ export function BranchesView({
       <div className="flex items-center justify-between gap-3">
         <h1 className="view-topbar-title">Git</h1>
         <div className="flex min-w-0 flex-1 items-center px-2">
-          <InputGroup className="h-7 max-w-64 gap-2 px-2">
+          {/* The `pl-2` InputGroup pushes onto its input is variant-prefixed, so it out-ranks
+              a plain `px-0` on the control and has to be overridden in the same form. */}
+          <InputGroup className="h-7 max-w-64 gap-2 px-2 has-[>[data-align=inline-start]]:[&>input]:pl-0">
             <InputGroupAddon className="p-0">
               <Search className="text-muted-foreground size-3.5 shrink-0" />
             </InputGroupAddon>
@@ -1170,9 +1172,9 @@ function ConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel variant="ghost" onClick={onCancel}>
-            Cancel
-          </AlertDialogCancel>
+          {/* No `onClick` — Cancel is a Radix Close, so dismissal already runs through
+              `onOpenChange` above; handling both would call `onCancel` twice. */}
+          <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
             onClick={() => void onConfirm(force)}
