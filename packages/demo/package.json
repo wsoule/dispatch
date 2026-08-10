@@ -6,9 +6,11 @@
   },
   "type": "module",
   "exports": {
+    "./git": "./src/git.ts",
     "./paths": "./src/paths.ts",
     "./repo": "./src/repo.ts",
-    "./seed": "./src/seed.ts"
+    "./seed": "./src/seed.ts",
+    "./teammate": "./src/teammate.ts"
   },
   "scripts": {
     "tsc": "tsc --noEmit",

@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { parseDaemonStdout } from './stdoutContract.js';
+import {
+  CLAIM_TASK_ID,
+  conflictOn,
+  scheduleTeammate,
+} from './teammateScript.js';
 
 export interface Session {
   id: string;
@@ -16,7 +21,7 @@ export interface Session {
   createdAt: number;
   lastSeenAt: number;
   // setTimeout handles the teammate puppet script schedules against this
-  // session (a later task); destroy() clears whatever has accumulated here.
+  // session; destroy() clears whatever has accumulated here.
   timers: Array<ReturnType<typeof setTimeout>>;
 }
 
@@ -25,6 +30,10 @@ export interface SessionManagerOptions {
   maxSessions?: number;
   ttlMs?: number;
   daemonPath?: string;
+  /** How long after a task mutation the teammate's conflict beat fires. */
+  conflictDelayMs?: number;
+  /** How long, absent any mutation, before the fallback conflict beat fires. */
+  conflictFallbackMs?: number;
 }
 
 export class SessionCapError extends Error {
@@ -40,6 +49,11 @@ const DEFAULT_DAEMON_PATH = join(import.meta.dir, 'daemon.ts');
 const SWEEP_INTERVAL_MS = 60_000;
 const STDOUT_TIMEOUT_MS = 20_000;
 const KILL_TIMEOUT_MS = 5_000;
+// How long after the visitor's first task mutation the teammate steps on it.
+const CONFLICT_DELAY_MS = 30_000;
+// If the visitor never mutates a task, the teammate conflicts with its own
+// 45s claim instead — the demo still gets its conflict beat either way.
+const CONFLICT_FALLBACK_MS = 300_000;
 
 /**
  * Owns every live per-visitor demo daemon: seeds a fresh sandbox, spawns and
@@ -48,6 +62,10 @@ const KILL_TIMEOUT_MS = 5_000;
  */
 export class SessionManager {
   private readonly sessions = new Map<string, Session>();
+  // Session ids whose conflict beat has already been scheduled (by a task
+  // mutation or the fallback timer) — the first one wins, every later call
+  // is a no-op. Cleared in destroy() alongside everything else per-session.
+  private readonly conflictScheduled = new Set<string>();
   // Ids reserved by a create() call that's still seeding/spawning/waiting on
   // stdout — not yet in `sessions`. count() includes these so a second
   // create() racing the first one's async work still sees the slot as taken.
@@ -58,6 +76,8 @@ export class SessionManager {
   private readonly maxSessions: number;
   private readonly ttlMs: number;
   private readonly daemonPath: string;
+  private readonly conflictDelayMs: number;
+  private readonly conflictFallbackMs: number;
   private readonly sweepInterval: ReturnType<typeof setInterval>;
 
   constructor(opts: SessionManagerOptions = {}) {
@@ -67,6 +87,8 @@ export class SessionManager {
     this.ttlMs =
       opts.ttlMs ?? Number(process.env.DEMO_SESSION_TTL_MS ?? 1_800_000);
     this.daemonPath = opts.daemonPath ?? DEFAULT_DAEMON_PATH;
+    this.conflictDelayMs = opts.conflictDelayMs ?? CONFLICT_DELAY_MS;
+    this.conflictFallbackMs = opts.conflictFallbackMs ?? CONFLICT_FALLBACK_MS;
     this.sweepInterval = setInterval(
       () => void this.sweep(),
       SWEEP_INTERVAL_MS
@@ -134,6 +156,11 @@ export class SessionManager {
         timers: [],
       };
       this.sessions.set(id, session);
+      scheduleTeammate(paths, (t) => session.timers.push(t));
+      const fallback = setTimeout(() => {
+        this.triggerConflict(session, CLAIM_TASK_ID, 0);
+      }, this.conflictFallbackMs);
+      session.timers.push(fallback);
       return session;
     } catch (err) {
       if (proc !== undefined) await this.killProc(proc);
@@ -150,16 +177,41 @@ export class SessionManager {
     return this.sessions.get(id);
   }
 
-  /** Bumps lastSeenAt; called by the proxy on every forwarded request. */
-  touch(id: string): void {
+  /**
+   * Bumps lastSeenAt; called by the proxy on every forwarded html/api
+   * request. `mutatedTaskId`, present only on a successful `PATCH
+   * /api/tasks/<id>`, schedules the teammate's conflict beat — once per
+   * session; every call after the first is ignored.
+   */
+  touch(id: string, mutatedTaskId?: string): void {
     const session = this.sessions.get(id);
-    if (session !== undefined) session.lastSeenAt = Date.now();
+    if (session === undefined) return;
+    session.lastSeenAt = Date.now();
+    if (mutatedTaskId !== undefined) {
+      this.triggerConflict(session, mutatedTaskId, this.conflictDelayMs);
+    }
+  }
+
+  // Schedules exactly one conflictOn call per session, `delayMs` out — either
+  // the visitor's first task mutation (see touch) or, failing that, the
+  // fallback timer set up in doCreate (fired with delayMs 0, since the wait
+  // already happened).
+  private triggerConflict(
+    session: Session,
+    taskId: string,
+    delayMs: number
+  ): void {
+    if (this.conflictScheduled.has(session.id)) return;
+    this.conflictScheduled.add(session.id);
+    const timer = setTimeout(() => conflictOn(session.paths, taskId), delayMs);
+    session.timers.push(timer);
   }
 
   async destroy(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (session === undefined) return;
     this.sessions.delete(id);
+    this.conflictScheduled.delete(id);
     for (const timer of session.timers) clearTimeout(timer);
     await this.killProc(session.proc);
     rmSync(session.paths.dir, { recursive: true, force: true });

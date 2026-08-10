@@ -5,8 +5,12 @@ import { writeBoard } from './board.js';
 import { git } from './git.js';
 import type { DemoActor } from './paths.js';
 import { writeRecords } from './records.js';
-import { assertNoCredentialsStaged, buildRepo } from './repo.js';
-import { clearRunHistory, writeRuns } from './runs.js';
+import {
+  assertNoCredentialsStaged,
+  buildRepo,
+  ensureRunBranchesExist,
+} from './repo.js';
+import { clearRunHistory, listSeededBranches, writeRuns } from './runs.js';
 
 export interface SessionPaths {
   dir: string;
@@ -68,6 +72,15 @@ export function seedSession(dir: string): SessionPaths {
 
   clearRunHistory(paths.root, paths.home);
   writeRuns(paths.root, paths.home, VISITOR.handle);
+  // A visitor can dispatch any todo task, including one blocked on an
+  // in-review task — the orchestrator then bases the new worktree on that
+  // blocker's most recent run branch (see ensureRunBranchesExist's doc
+  // comment). Only the sandbox needs this: cli.ts's local `writeRuns` calls
+  // never reach here, so DEMO.root's real GitHub remote is untouched.
+  ensureRunBranchesExist(
+    paths.root,
+    listSeededBranches(paths.root, paths.home)
+  );
 
   return paths;
 }

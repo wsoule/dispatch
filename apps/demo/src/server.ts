@@ -33,6 +33,21 @@ const LANDING = join(PUBLIC_DIR, 'landing.html');
 const OVERLAY = join(PUBLIC_DIR, 'overlay.js');
 // The daemon holds API calls open for up to 65s; the proxy has to outlast that.
 const IDLE_TIMEOUT_SECONDS = 120;
+// The task-mutation route (see api.ts's `segments.length === 2 && method ===
+// 'PATCH'` branch, which dispatches to updateTask) — matched against
+// ParsedSessionPath.rest, which already has the `/s/<id>` prefix stripped.
+const PATCH_TASK_PATH = /^\/api\/tasks\/([^/]+)$/;
+
+// The task id a successful `PATCH /api/tasks/<id>` just changed, or
+// undefined for anything else — what schedules the teammate's conflict beat.
+function mutatedTaskId(
+  method: string,
+  rest: string,
+  res: Response
+): string | undefined {
+  if (method !== 'PATCH' || !res.ok) return undefined;
+  return PATCH_TASK_PATH.exec(rest)?.[1];
+}
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -200,7 +215,10 @@ export function createDemoServer(
       if (parsed.kind === 'html') return sessionPage(req, parsed.id, session);
 
       try {
-        return await proxyHttp(req, session.port, parsed.rest);
+        const res = await proxyHttp(req, session.port, parsed.rest);
+        const taskId = mutatedTaskId(req.method, parsed.rest, res);
+        if (taskId !== undefined) manager.touch(parsed.id, taskId);
+        return res;
       } catch (err) {
         // The daemon died under a session we still had a record for. Treat it
         // exactly like an expiry so the overlay offers a fresh sandbox.
