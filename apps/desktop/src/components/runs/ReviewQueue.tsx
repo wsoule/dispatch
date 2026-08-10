@@ -5,6 +5,7 @@ import { reviewTargetKey } from '../../lib/reviewTarget';
 import type { ReviewTarget } from '../../lib/reviewTarget';
 import { PrChecksPill, REVIEW_VERDICT, StatusPill } from './PrStatusPills';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 export interface ReviewQueueItem {
@@ -125,12 +126,15 @@ function Row({
         ? REVIEW_VERDICT.CHANGES_REQUESTED
         : undefined;
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={() => onSelect(item.target)}
       className={cn(
-        'flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors duration-150',
-        selected ? 'border-border bg-accent' : 'hover:bg-muted/60'
+        'h-auto w-full justify-start gap-2 rounded-md border border-transparent px-2 py-1.5 font-normal text-left',
+        selected
+          ? 'border-border bg-accent hover:bg-accent'
+          : 'hover:bg-muted/60'
       )}
     >
       <Icon
@@ -153,7 +157,7 @@ function Row({
       {!compact && run?.costUsd !== undefined && (
         <span className="dense-meta shrink-0">${run.costUsd.toFixed(2)}</span>
       )}
-    </button>
+    </Button>
   );
 }
 

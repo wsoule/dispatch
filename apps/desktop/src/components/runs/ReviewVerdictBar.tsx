@@ -4,7 +4,19 @@ import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { ButtonGroup } from '@/ui/button-group';
+import { Panel } from '@/ui/chrome';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
+import { Input } from '@/ui/input';
+import { Label } from '@/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/ui/radio-group';
+import { Textarea } from '@/ui/textarea';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/ui/tooltip';
 
 interface ReviewVerdictBarProps {
   /** 'stacked' is the card the in-Runs review shows in its column; 'bar' is the footer the
@@ -189,6 +201,14 @@ export function ReviewVerdictBar({
   // the label, in both layouts: leaving the box off is not "skip the review",
   // it is "keep the review off GitHub", and a hover `title` says that to
   // nobody using a keyboard or a screen reader.
+  //
+  // Stays a native `<input type="checkbox">` rather than the shadcn `Checkbox`
+  // primitive: Radix renders that as a `<button role="checkbox">` with no
+  // `.checked` property, and `screen.getByLabelText(...).checked` in both
+  // ReviewVerdictBar.test.tsx and ReviewCommentsPanel.test.tsx reads that
+  // property directly — swapping it breaks those tests for good, since
+  // `getByLabelText` always resolves to the first labelable *element*
+  // (button, here) regardless of whether the label wraps it or uses `htmlFor`.
   const githubCheckbox = !canPostToGitHub ? null : (
     <label className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px]">
       <input
@@ -207,56 +227,68 @@ export function ReviewVerdictBar({
   );
 
   const submitButton = (
-    <button
-      type="button"
+    <Button
       disabled={busy || !canSubmit}
       onClick={() => void submit()}
-      className="bg-accent text-accent-foreground shrink-0 rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
+      className="shrink-0"
     >
       {busy ? 'Submitting…' : 'Submit review'}
-    </button>
+    </Button>
   );
 
   // The footer form: one row, so the diff above it keeps the height. Verdict hints move to
-  // `title` — there is no room for three lines of explanation on a single row.
+  // a Tooltip on each radio — there is no room for three lines of explanation on a single row,
+  // and unlike a hover `title` a Tooltip actually reaches keyboard/screen-reader users.
   if (layout === 'bar') {
     return (
       <div className="border-border flex shrink-0 flex-col gap-1.5 border-t pt-3">
         <div className="flex items-center gap-3">
-          <input
+          <Input
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             placeholder="Anything the agent should know overall…"
-            className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none"
+            className="h-auto min-w-0 flex-1 border-none bg-transparent px-0 text-[12.5px] shadow-none outline-none focus-visible:ring-0"
           />
-          <div className="flex shrink-0 items-center gap-2">
-            {VERDICTS.map((v) => {
-              const Icon = v.icon;
-              const active = verdict === v.value;
-              return (
-                <label
-                  key={v.value}
-                  title={v.hint}
-                  className={cn(
-                    'flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[12px]',
-                    active ? 'bg-accent/15' : 'hover:bg-muted/40'
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="verdict-bar"
-                    checked={active}
-                    onChange={() => setVerdict(v.value)}
-                    className="accent-accent size-3 shrink-0"
-                  />
-                  <Icon className="size-3" />
-                  {v.label}
-                </label>
-              );
-            })}
-          </div>
-          {aiReviewButton}
-          {submitButton}
+          {/* RadioGroup's own base is `grid gap-3` (a vertical stack) — `flex-row` alone
+              can't dedupe against that `display: grid` via twMerge (different utility
+              group), so `flex` has to be spelled out too or the grid layout survives
+              underneath it, same trap as shadow-hairline-strong vs shadow-lg.
+              A local TooltipProvider, not just App's root one: this component renders
+              standalone in its own tests, with no ambient provider above it. */}
+          <TooltipProvider>
+            <RadioGroup
+              value={verdict}
+              onValueChange={(value) => setVerdict(value as ReviewVerdict)}
+              className="flex shrink-0 flex-row items-center gap-2"
+            >
+              {VERDICTS.map((v) => {
+                const Icon = v.icon;
+                const active = verdict === v.value;
+                return (
+                  <Label
+                    key={v.value}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-normal',
+                      active ? 'bg-accent/15' : 'hover:bg-muted/40'
+                    )}
+                  >
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <RadioGroupItem value={v.value} className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipContent>{v.hint}</TooltipContent>
+                    </Tooltip>
+                    <Icon className="size-3" />
+                    {v.label}
+                  </Label>
+                );
+              })}
+            </RadioGroup>
+          </TooltipProvider>
+          <ButtonGroup>
+            {aiReviewButton}
+            {submitButton}
+          </ButtonGroup>
         </div>
         {/* Wraps: the GitHub label carries a full sentence, which on a narrow
             window would otherwise squeeze the status text beside it. */}
@@ -278,7 +310,7 @@ export function ReviewVerdictBar({
   }
 
   return (
-    <div className="shadow-hairline rounded-lg p-3">
+    <Panel className="p-3">
       <SectionLabel>Finish the review</SectionLabel>
 
       {/* A row of its own rather than riding beside the label — this column is narrow enough
@@ -290,32 +322,32 @@ export function ReviewVerdictBar({
         </div>
       )}
 
-      <textarea
+      <Textarea
         value={summary}
         onChange={(e) => setSummary(e.target.value)}
         placeholder="Anything the agent should know overall…"
-        className="mt-2 min-h-[64px] w-full resize-y bg-transparent text-[12.5px] outline-none"
+        className="mt-2 min-h-[64px] w-full resize-y border-none bg-transparent px-0 text-[12.5px] shadow-none outline-none focus-visible:ring-0"
       />
 
-      <div className="mt-2 flex flex-col gap-1">
+      {/* Hints stay visible text here (unlike the bar layout's Tooltip) — there's room for
+          them on their own line under each option. */}
+      <RadioGroup
+        value={verdict}
+        onValueChange={(value) => setVerdict(value as ReviewVerdict)}
+        className="mt-2 gap-1"
+      >
         {VERDICTS.map((v) => {
           const Icon = v.icon;
           const active = verdict === v.value;
           return (
-            <label
+            <Label
               key={v.value}
               className={cn(
-                'flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5',
+                'flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 font-normal',
                 active ? 'bg-accent/15' : 'hover:bg-muted/40'
               )}
             >
-              <input
-                type="radio"
-                name="verdict"
-                checked={active}
-                onChange={() => setVerdict(v.value)}
-                className="accent-accent mt-0.5 size-3.5 shrink-0"
-              />
+              <RadioGroupItem value={v.value} className="mt-0.5 size-3.5" />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5 text-[12.5px]">
                   <Icon className="size-3" />
@@ -327,10 +359,10 @@ export function ReviewVerdictBar({
                   {v.hint}
                 </span>
               </span>
-            </label>
+            </Label>
           );
         })}
-      </div>
+      </RadioGroup>
 
       {githubCheckbox !== null && <div className="mt-2">{githubCheckbox}</div>}
 
@@ -346,6 +378,6 @@ export function ReviewVerdictBar({
         {warnings}
         {submitButton}
       </div>
-    </div>
+    </Panel>
   );
 }

@@ -3,7 +3,10 @@ import type { TaskDoc } from '@dispatch/core/browser';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
+import { ScrollArea } from '@/ui/scroll-area';
 
 interface RunSidebarProps {
   meta: RunMeta;
@@ -31,81 +34,91 @@ export function RunSidebar({
 }: RunSidebarProps) {
   const files = diff?.files ?? [];
 
+  // `h-full min-h-0`: the caller (RunsView) already wraps this in a `min-h-0 w-64
+  // shrink-0` column of its own, but ScrollArea's Viewport only ever fills its own
+  // Root (`size-full`) — without an explicit height here the Root has nothing to
+  // size itself against and the shrink/scroll contract falls apart.
   return (
-    <div className="flex w-64 shrink-0 flex-col gap-5 overflow-y-auto">
-      <div>
-        <SectionLabel count={files.length}>Files touched</SectionLabel>
-        {files.length === 0 ? (
-          <p className="text-muted-foreground mt-1.5 text-[12px]">
-            Nothing changed yet.
-          </p>
-        ) : (
-          <ul className="mt-1.5 flex flex-col gap-0.5">
-            {files.map((f) => (
-              <li key={f.path} className="flex items-center gap-2">
-                {/* Truncates from the left so the filename — the part you actually read —
+    <ScrollArea className="h-full min-h-0 w-64 shrink-0">
+      <div className="flex flex-col gap-5">
+        <div>
+          <SectionLabel count={files.length}>Files touched</SectionLabel>
+          {files.length === 0 ? (
+            <EmptyState
+              message="Nothing changed yet."
+              className="mt-1.5 items-start p-0 text-left"
+            />
+          ) : (
+            <ul className="mt-1.5 flex flex-col gap-0.5">
+              {files.map((f) => (
+                <li key={f.path} className="flex items-center gap-2">
+                  {/* Truncates from the left so the filename — the part you actually read —
                     survives on a deep path. */}
-                <span
-                  dir="rtl"
-                  className="dense-meta min-w-0 flex-1 truncate text-left"
-                  title={f.path}
-                >
-                  {f.path}
-                </span>
-                {/* The mockup showed per-file +/- counts. DiffFile carries only a path and a
+                  <span
+                    dir="rtl"
+                    className="dense-meta min-w-0 flex-1 truncate text-left"
+                    title={f.path}
+                  >
+                    {f.path}
+                  </span>
+                  {/* The mockup showed per-file +/- counts. DiffFile carries only a path and a
                     git status — the counts would have to be parsed back out of the patch, and
                     a number invented here would be indistinguishable from a real one. The
                     status is what we actually know. */}
-                <span
-                  className={cn(
-                    'dense-meta',
-                    f.status === 'A' && 'text-state-review',
-                    f.status === 'D' && 'text-state-failed'
-                  )}
-                >
-                  {f.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div>
-        <SectionLabel>Task</SectionLabel>
-        <button
-          type="button"
-          onClick={() => onOpenTask(meta.taskId)}
-          className="hover:text-accent-foreground mt-1.5 text-left text-[12.5px] leading-relaxed"
-        >
-          {task?.meta.title ?? meta.taskTitle}
-        </button>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <span className="dense-meta">{meta.taskId}</span>
-          {epicTitle !== null && (
-            <span className="dense-meta truncate">· {epicTitle}</span>
+                  <span
+                    className={cn(
+                      'dense-meta',
+                      f.status === 'A' && 'text-state-review',
+                      f.status === 'D' && 'text-state-failed'
+                    )}
+                  >
+                    {f.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-      </div>
 
-      <div>
-        <SectionLabel>Run</SectionLabel>
-        <dl className="mt-1.5 flex flex-col gap-1">
-          <Row label="branch" value={meta.branch} mono title={meta.branch} />
-          <Row
-            label="started"
-            value={formatRelativeTimeFromIso(meta.createdAt)}
-          />
-          {meta.turns !== undefined && (
-            <Row label="turns" value={String(meta.turns)} />
-          )}
-          {meta.costUsd !== undefined && (
-            <Row label="spend" value={`$${meta.costUsd.toFixed(2)}`} />
-          )}
-          {meta.model !== undefined && <Row label="model" value={meta.model} />}
-        </dl>
+        <div>
+          <SectionLabel>Task</SectionLabel>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onOpenTask(meta.taskId)}
+            className="hover:text-accent-foreground mt-1.5 h-auto justify-start p-0 text-left text-[12.5px] leading-relaxed font-normal hover:bg-transparent"
+          >
+            {task?.meta.title ?? meta.taskTitle}
+          </Button>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className="dense-meta">{meta.taskId}</span>
+            {epicTitle !== null && (
+              <span className="dense-meta truncate">· {epicTitle}</span>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <SectionLabel>Run</SectionLabel>
+          <dl className="mt-1.5 flex flex-col gap-1">
+            <Row label="branch" value={meta.branch} mono title={meta.branch} />
+            <Row
+              label="started"
+              value={formatRelativeTimeFromIso(meta.createdAt)}
+            />
+            {meta.turns !== undefined && (
+              <Row label="turns" value={String(meta.turns)} />
+            )}
+            {meta.costUsd !== undefined && (
+              <Row label="spend" value={`$${meta.costUsd.toFixed(2)}`} />
+            )}
+            {meta.model !== undefined && (
+              <Row label="model" value={meta.model} />
+            )}
+          </dl>
+        </div>
       </div>
-    </div>
+    </ScrollArea>
   );
 }
 

@@ -23,6 +23,12 @@ import { ImpactPanel } from '../impact/ImpactPanel';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
+import { ScrollArea } from '@/ui/scroll-area';
 
 interface ReviewCasePanelProps {
   evidence: CommandEvidence[];
@@ -66,159 +72,165 @@ export function ReviewCasePanel({
   const { judgment, checks } = partitionFindings(findings);
   const openCount = judgment.reduce((n, g) => n + g.findings.length, 0);
 
+  // `h-full min-h-0`: this panel is the sole flexible child of ReviewView's own
+  // `flex-1 flex-col` pane, so it has to actually claim that space itself before
+  // ScrollArea's Viewport (which only ever fills its own Root, `size-full`) has
+  // anything real to scroll within.
   return (
-    <div className="flex flex-col gap-5 overflow-y-auto p-1">
-      <section>
-        <SectionLabel rule count={evidence.length}>
-          What the agent verified
-        </SectionLabel>
-        {evidence.length === 0 ? (
-          // The absence is the finding, so this must not read as a blank section or a tick.
-          <p className="text-state-waiting mt-2 text-[12.5px]">
-            The agent recorded no verification.
-          </p>
-        ) : (
-          <div className="mt-2 flex flex-col gap-1">
-            {evidence.map((e) => (
-              <div
-                key={`${e.at}-${e.command}`}
-                className="flex items-baseline gap-2 text-[12.5px]"
-              >
-                {e.exitCode === 0 ? (
-                  <Check className="text-state-review size-3 shrink-0" />
-                ) : (
-                  <X className="text-state-failed size-3 shrink-0" />
-                )}
-                <code className="min-w-0 flex-1 truncate">{e.command}</code>
-                <span className="dense-meta shrink-0">{e.summary}</span>
-                <span className="dense-meta shrink-0">
-                  {(e.durationMs / 1000).toFixed(1)}s
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+    <ScrollArea className="h-full min-h-0">
+      <div className="flex flex-col gap-5 p-1">
+        <section>
+          <SectionLabel rule count={evidence.length}>
+            What the agent verified
+          </SectionLabel>
+          {evidence.length === 0 ? (
+            // The absence is the finding, so this must not read as a blank section or a tick.
+            <p className="text-state-waiting mt-2 text-[12.5px]">
+              The agent recorded no verification.
+            </p>
+          ) : (
+            <div className="mt-2 flex flex-col gap-1">
+              {evidence.map((e) => (
+                <div
+                  key={`${e.at}-${e.command}`}
+                  className="flex items-baseline gap-2 text-[12.5px]"
+                >
+                  {e.exitCode === 0 ? (
+                    <Check className="text-state-review size-3 shrink-0" />
+                  ) : (
+                    <X className="text-state-failed size-3 shrink-0" />
+                  )}
+                  <code className="min-w-0 flex-1 truncate">{e.command}</code>
+                  <span className="dense-meta shrink-0">{e.summary}</span>
+                  <span className="dense-meta shrink-0">
+                    {(e.durationMs / 1000).toFixed(1)}s
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
-      {/* Only ever mounted when a real run is behind this panel — the caller
+        {/* Only ever mounted when a real run is behind this panel — the caller
           (ReviewView) always has both; this component's own tests exercise
           `empty` without them, which just hides the section. */}
-      {client !== undefined && runId !== undefined && (
-        <section>
-          <SectionLabel rule>Impact</SectionLabel>
-          <div className="mt-2 flex flex-col items-start gap-2">
-            <ImpactPanel client={client} subject="run" id={runId} />
-            {onOpenImpact && (
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => onOpenImpact({ kind: 'run', id: runId })}
-              >
-                <Waypoints className="size-3.5" />
-                Open in Impact
-              </Button>
-            )}
-          </div>
-        </section>
-      )}
-
-      {mutations.length > 0 && (
-        <section>
-          <SectionLabel rule count={mutations.length}>
-            Guards it mutation-tested
-          </SectionLabel>
-          <div className="mt-2 flex flex-col gap-1">
-            {mutations.map((m) => (
-              <div
-                key={`${m.at}-${m.guard}`}
-                className="flex items-baseline gap-2 text-[12.5px]"
-              >
-                {isDeadGuard(m) ? (
-                  <TriangleAlert className="text-state-waiting size-3 shrink-0" />
-                ) : (
-                  <Check className="text-state-review size-3 shrink-0" />
-                )}
-                <span className="min-w-0 flex-1 truncate">{m.guard}</span>
-                <span className="dense-meta shrink-0">{m.file}</span>
-                <span
-                  className={
-                    isDeadGuard(m)
-                      ? 'text-state-waiting shrink-0 text-[11px]'
-                      : 'dense-meta shrink-0'
-                  }
+        {client !== undefined && runId !== undefined && (
+          <section>
+            <SectionLabel rule>Impact</SectionLabel>
+            <div className="mt-2 flex flex-col items-start gap-2">
+              <ImpactPanel client={client} subject="run" id={runId} />
+              {onOpenImpact && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => onOpenImpact({ kind: 'run', id: runId })}
                 >
-                  {isDeadGuard(m)
-                    ? '0 tests failed — dead guard, or a vacuous test'
-                    : `${m.testsFailed} tests failed`}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section>
-        <SectionLabel rule count={openCount}>
-          Agent review
-        </SectionLabel>
-        {judgment.length === 0 ? (
-          <div className="mt-2 flex flex-col items-start gap-2">
-            {/* Never "no findings": an empty set means nobody looked, and saying otherwise
-                would turn an absent review into a clean bill of health. */}
-            <p className="text-muted-foreground text-[12.5px]">
-              No agent review has run over this diff.
-            </p>
-            {onStartAiReview !== undefined && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={aiReviewBusy}
-                onClick={() => void onStartAiReview()}
-              >
-                <Bot className="size-3.5" />
-                {aiReviewBusy ? 'Starting…' : 'Ask an agent to review'}
-              </Button>
-            )}
-          </div>
-        ) : (
-          <div className="mt-2 flex flex-col gap-3">
-            {judgment.map((group) => (
-              <div key={group.severity} className="flex flex-col gap-2">
-                <SectionLabel count={group.findings.length}>
-                  {group.severity}
-                </SectionLabel>
-                {group.findings.map((f) => (
-                  <FindingRow key={f.id} finding={f} />
-                ))}
-              </div>
-            ))}
-          </div>
+                  <Waypoints className="size-3.5" />
+                  Open in Impact
+                </Button>
+              )}
+            </div>
+          </section>
         )}
-      </section>
 
-      {checks.length > 0 && (
-        <section>
-          {/* The count is rules, not rows: one rule can span a hundred files. */}
-          <SectionLabel rule count={checks.length}>
-            Checks that fired
-          </SectionLabel>
-          <div className="mt-2 flex flex-col gap-1">
-            {checks.map((group) => (
-              <CheckRow key={group.rule} group={group} />
-            ))}
-          </div>
-        </section>
-      )}
+        {mutations.length > 0 && (
+          <section>
+            <SectionLabel rule count={mutations.length}>
+              Guards it mutation-tested
+            </SectionLabel>
+            <div className="mt-2 flex flex-col gap-1">
+              {mutations.map((m) => (
+                <div
+                  key={`${m.at}-${m.guard}`}
+                  className="flex items-baseline gap-2 text-[12.5px]"
+                >
+                  {isDeadGuard(m) ? (
+                    <TriangleAlert className="text-state-waiting size-3 shrink-0" />
+                  ) : (
+                    <Check className="text-state-review size-3 shrink-0" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{m.guard}</span>
+                  <span className="dense-meta shrink-0">{m.file}</span>
+                  <span
+                    className={
+                      isDeadGuard(m)
+                        ? 'text-state-waiting shrink-0 text-[11px]'
+                        : 'dense-meta shrink-0'
+                    }
+                  >
+                    {isDeadGuard(m)
+                      ? '0 tests failed — dead guard, or a vacuous test'
+                      : `${m.testsFailed} tests failed`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
-      {decisions.length > 0 && (
         <section>
-          <SectionLabel rule count={decisions.length}>
-            Decisions it escalated
+          <SectionLabel rule count={openCount}>
+            Agent review
           </SectionLabel>
-          <DecisionList entries={decisions} />
+          {judgment.length === 0 ? (
+            <div className="mt-2 flex flex-col items-start gap-2">
+              {/* Never "no findings": an empty set means nobody looked, and saying otherwise
+                would turn an absent review into a clean bill of health. */}
+              <p className="text-muted-foreground text-[12.5px]">
+                No agent review has run over this diff.
+              </p>
+              {onStartAiReview !== undefined && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={aiReviewBusy}
+                  onClick={() => void onStartAiReview()}
+                >
+                  <Bot className="size-3.5" />
+                  {aiReviewBusy ? 'Starting…' : 'Ask an agent to review'}
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-col gap-3">
+              {judgment.map((group) => (
+                <div key={group.severity} className="flex flex-col gap-2">
+                  <SectionLabel count={group.findings.length}>
+                    {group.severity}
+                  </SectionLabel>
+                  {group.findings.map((f) => (
+                    <FindingRow key={f.id} finding={f} />
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
-      )}
-    </div>
+
+        {checks.length > 0 && (
+          <section>
+            {/* The count is rules, not rows: one rule can span a hundred files. */}
+            <SectionLabel rule count={checks.length}>
+              Checks that fired
+            </SectionLabel>
+            <div className="mt-2 flex flex-col gap-1">
+              {checks.map((group) => (
+                <CheckRow key={group.rule} group={group} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {decisions.length > 0 && (
+          <section>
+            <SectionLabel rule count={decisions.length}>
+              Decisions it escalated
+            </SectionLabel>
+            <DecisionList entries={decisions} />
+          </section>
+        )}
+      </div>
+    </ScrollArea>
   );
 }
 
@@ -252,13 +264,14 @@ function FindingRow({ finding }: { finding: Finding }) {
         {finding.detail}
       </p>
       {long && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => setExpanded((v) => !v)}
-          className="text-accent-foreground pl-4.5 text-[11px]"
+          className="text-accent-foreground h-auto p-0 pl-4.5 text-[11px] font-normal hover:bg-transparent"
         >
           {expanded ? 'less' : 'more'}
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -275,25 +288,22 @@ function CheckRow({ group }: { group: CheckGroup }) {
   const shown = group.files.slice(0, CHECK_FILE_CAP);
   const hidden = group.files.length - shown.length;
   return (
-    <div className="text-[12.5px]">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-baseline gap-1.5 text-left"
-      >
-        <ChevronRight
-          className={cn(
-            'size-3 shrink-0 self-center transition-transform',
-            expanded && 'rotate-90'
-          )}
-        />
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
+      className="text-[12.5px]"
+    >
+      {/* `group` + `group-data-[state=open]:rotate-90` rather than `expanded &&
+          'rotate-90'` — the chevron reacts to the trigger's own Radix data-state
+          instead of threading local state down another level. */}
+      <CollapsibleTrigger className="group flex w-full items-baseline gap-1.5 text-left">
+        <ChevronRight className="size-3 shrink-0 self-center transition-transform group-data-[state=open]:rotate-90" />
         <span className="min-w-0 flex-1">{group.rule}</span>
         <span className="dense-meta shrink-0">
           {group.files.length} file{group.files.length === 1 ? '' : 's'}
         </span>
-      </button>
-      {expanded && (
+      </CollapsibleTrigger>
+      <CollapsibleContent>
         <ul className="text-muted-foreground mt-1 flex flex-col gap-0.5 pl-4.5 text-[11px]">
           {shown.map((path) => (
             <li key={path} className="truncate">
@@ -302,8 +312,8 @@ function CheckRow({ group }: { group: CheckGroup }) {
           ))}
           {hidden > 0 && <li className="dense-meta">+{hidden} more</li>}
         </ul>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -336,13 +346,14 @@ function DecisionList({ entries }: { entries: LedgerEntry[] }) {
         </div>
       ))}
       {entries.length > DECISION_CAP && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => setShowAll((v) => !v)}
-          className="text-accent-foreground self-start pl-4.5 text-[11px]"
+          className="text-accent-foreground h-auto self-start p-0 pl-4.5 text-[11px] font-normal hover:bg-transparent"
         >
           {showAll ? 'Show fewer' : `Show all ${entries.length}`}
-        </button>
+        </Button>
       )}
     </div>
   );

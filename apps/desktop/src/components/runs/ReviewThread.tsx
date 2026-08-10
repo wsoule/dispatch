@@ -13,6 +13,11 @@ import {
   suggestionForSubmit,
 } from '@/lib/suggestionRange';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { Panel } from '@/ui/chrome';
+import { Input } from '@/ui/input';
+import { ScrollArea } from '@/ui/scroll-area';
+import { Textarea } from '@/ui/textarea';
 
 /**
  * Where a note written here ends up: back to the agent on a run's own diff, or
@@ -190,11 +195,10 @@ export function ReviewThread({
   };
 
   return (
-    <div
-      className={cn(
-        'bg-card shadow-hairline my-1.5 ml-[90px] rounded-lg p-3',
-        comment.resolved && 'opacity-60'
-      )}
+    // Panel's own border replaces `shadow-hairline` here — same swap as every other card in
+    // this sweep (e.g. EnrichReview), not a diff-rendering change.
+    <Panel
+      className={cn('my-1.5 ml-[90px] p-3', comment.resolved && 'opacity-60')}
     >
       <div className="flex items-center gap-2">
         <span className="text-accent-foreground text-[11px] font-medium">
@@ -210,13 +214,14 @@ export function ReviewThread({
         )}
         <span className="flex-1" />
         {canResolve && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => void toggleResolved()}
             className={cn(
-              'text-[11px]',
+              'h-auto p-0 text-[11px] font-normal hover:bg-transparent',
               comment.resolved
-                ? 'text-state-review'
+                ? 'text-state-review hover:text-state-review'
                 : 'text-muted-foreground hover:text-foreground'
             )}
           >
@@ -228,7 +233,7 @@ export function ReviewThread({
             ) : (
               'resolve'
             )}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -240,7 +245,7 @@ export function ReviewThread({
               splice over the line the suggestion just replaced, and come back as 409
               anchor-drifted — "the code here has changed" — which is a baffling way to
               find out the first click worked. */}
-          <button
+          <Button
             type="button"
             disabled={
               applyState.status === 'applying' ||
@@ -248,14 +253,14 @@ export function ReviewThread({
               (applyState.status === 'failed' && applyState.disabled)
             }
             onClick={handleApply}
-            className="bg-accent text-accent-foreground rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
+            className="h-auto rounded-md px-2.5 py-1 text-[12px]"
           >
             {applyState.status === 'applying'
               ? 'Applying…'
               : applyState.status === 'succeeded'
                 ? 'Applied'
                 : 'Apply'}
-          </button>
+          </Button>
           {applyState.status === 'failed' && (
             <span className="text-destructive text-[11px]">
               {applyState.message}
@@ -289,18 +294,18 @@ export function ReviewThread({
           </p>
         ) : (
           <div className="mt-2 flex gap-2">
-            <input
+            <Input
               value={reply}
               onChange={(e) => setReply(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void sendReply();
               }}
               placeholder={REPLY_PLACEHOLDER[destination]}
-              className="shadow-hairline min-w-0 flex-1 rounded-md px-2 py-1 text-[12px] outline-none"
+              className="h-auto min-w-0 flex-1 px-2 py-1 text-[12px]"
             />
           </div>
         ))}
-    </div>
+    </Panel>
   );
 }
 
@@ -452,13 +457,15 @@ export function ReviewComposer({
   };
 
   return (
-    <div className="bg-card shadow-hairline-strong my-1.5 ml-[90px] rounded-lg p-3">
+    // Panel's own border replaces `shadow-hairline-strong` — same swap as `ReviewThread`'s
+    // own card above, not a diff-rendering change.
+    <Panel className="my-1.5 ml-[90px] p-3">
       <div className="dense-label text-accent-foreground">
         {startLine !== undefined && startLine !== line
           ? `Comment on lines ${startLine}–${line}`
           : `Comment on line ${line}`}
       </div>
-      <textarea
+      <Textarea
         autoFocus
         value={body}
         onChange={(e) => setBody(e.target.value)}
@@ -469,12 +476,12 @@ export function ReviewComposer({
           }
         }}
         placeholder={COMPOSER_PLACEHOLDER[destination]}
-        className="mt-1.5 min-h-[52px] w-full resize-y bg-transparent text-[12.5px] outline-none"
+        className="mt-1.5 min-h-[52px] w-full resize-y bg-transparent text-[12.5px]"
       />
       {suggestionItem !== null && (
-        <div
+        <ScrollArea
           data-testid="suggestion-editor"
-          className="shadow-hairline mt-1.5 max-h-40 overflow-auto rounded-md"
+          className="border-border mt-1.5 max-h-40 rounded-md border"
         >
           <CodeView
             disableWorkerPool
@@ -484,7 +491,7 @@ export function ReviewComposer({
             }
             className="text-[12px]"
           />
-        </div>
+        </ScrollArea>
       )}
       {error !== null && (
         <p role="alert" className="text-destructive text-[11.5px]">
@@ -492,32 +499,34 @@ export function ReviewComposer({
         </p>
       )}
       <div className="mt-1.5 flex gap-2">
-        <button
+        <Button
           type="button"
           disabled={body.trim() === '' || busy}
           onClick={handleSuggest}
-          className="bg-accent text-accent-foreground rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
+          className="h-auto rounded-md px-2.5 py-1 text-[12px]"
         >
           {suggestion !== undefined ? 'Suggest' : 'Add comment'}
-        </button>
+        </Button>
         {canApplyNow(seed, suggestionText, onApply !== undefined) && (
-          <button
+          <Button
             type="button"
+            variant="outline"
             disabled={body.trim() === '' || busy}
             onClick={handleApplyNow}
-            className="shadow-hairline rounded-md px-2.5 py-1 text-[12px] disabled:opacity-50"
+            className="h-auto rounded-md px-2.5 py-1 text-[12px]"
           >
             Apply now
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={onCancel}
-          className="shadow-hairline rounded-md px-2.5 py-1 text-[12px]"
+          className="h-auto rounded-md px-2.5 py-1 text-[12px]"
         >
           Cancel
-        </button>
+        </Button>
       </div>
-    </div>
+    </Panel>
   );
 }

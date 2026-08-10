@@ -6,6 +6,8 @@ import { modelLabel } from '../../lib/models';
 import { deriveStopControl } from '../../lib/runState';
 import { RunKindBadge } from './RunKindBadge';
 import { RunStatePill } from './RunStatePill';
+import { Alert, AlertDescription } from '@/ui/alert';
+import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 
 interface RunDetailHeaderProps {
@@ -85,9 +87,12 @@ export function RunDetailHeader({
           </span>
         )}
         {meta.model !== undefined && (
-          <span className="border-border text-muted-foreground shrink-0 rounded-full border px-2 py-0.5 text-[11px]">
+          <Badge
+            variant="outline"
+            className="text-muted-foreground shrink-0 rounded-full text-[11px]"
+          >
             {modelLabel(meta.model)}
-          </span>
+          </Badge>
         )}
         {cost !== null && (
           <span className="text-muted-foreground font-mono text-[12px]">
@@ -105,19 +110,25 @@ export function RunDetailHeader({
           </span>
         )}
         {meta.prUrl !== undefined && (
-          <a
-            className="border-state-landing-edge bg-state-landing-surface text-state-landing hover:bg-state-landing-surface/70 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors duration-150"
-            href={meta.prUrl}
-            target="_blank"
-            rel="noreferrer"
+          // Badge's outline variant carries `[a&]:hover:bg-accent` for an `asChild` anchor —
+          // a different twMerge bucket than plain `hover:*`, so both survive and the wrong one
+          // wins unless the override is spelled out in the same `[a&]:hover:*` form (same trap
+          // as `has-[>svg]:gap-x-*`, verified against twMerge).
+          <Badge
+            asChild
+            variant="outline"
+            className="border-state-landing-edge bg-state-landing-surface text-state-landing [a&]:hover:bg-state-landing-surface/70 [a&]:hover:text-state-landing rounded-full text-[11px] transition-colors duration-150"
           >
-            PR opened
-            <ExternalLink className="size-3" />
-          </a>
+            <a href={meta.prUrl} target="_blank" rel="noreferrer">
+              PR opened
+              <ExternalLink className="size-3" />
+            </a>
+          </Badge>
         )}
         {meta.stackParents !== undefined && meta.stackParents.length > 0 && (
-          <span
-            className="border-border text-muted-foreground inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]"
+          <Badge
+            variant="outline"
+            className="text-muted-foreground min-w-0 rounded-full text-[11px]"
             title={meta.stackParents.join(', ')}
           >
             <Layers2 className="size-3 shrink-0" />
@@ -127,7 +138,7 @@ export function RunDetailHeader({
                 ? meta.stackParents[0]
                 : `${meta.stackParents.length} branches`}
             </span>
-          </span>
+          </Badge>
         )}
         {/* `baseDiscarded` is raised for three different reasons and only one
             of them is an actually-discarded base — the other two are a failed
@@ -137,8 +148,9 @@ export function RunDetailHeader({
             fallback only applies to a run flagged before the reason was
             persisted. */}
         {meta.baseDiscarded === true && (
-          <span
-            className="border-destructive/30 bg-destructive/10 text-destructive inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+          <Badge
+            variant="outline"
+            className="border-destructive/30 bg-destructive/10 text-destructive min-w-0 rounded-full text-[11px] font-medium"
             title={meta.baseDiscardedReason}
           >
             <TriangleAlert className="size-3 shrink-0" />
@@ -146,18 +158,19 @@ export function RunDetailHeader({
               {meta.baseDiscardedReason ??
                 'base discarded — rebase before merging'}
             </span>
-          </span>
+          </Badge>
         )}
         {/* A terminal run that carries the marker ended because someone asked it
             to, not because it ran out of work — worth saying, since "Finished"
             alone would read as a run that completed its task. */}
         {stop.showStoppedChip && (
-          <span
-            className="border-border text-muted-foreground shrink-0 rounded-full border px-2 py-0.5 text-[11px]"
+          <Badge
+            variant="outline"
+            className="text-muted-foreground shrink-0 rounded-full text-[11px]"
             title={`Stop requested at ${meta.stopRequestedAt}`}
           >
             Stopped
-          </span>
+          </Badge>
         )}
         {/* One cluster, so the tab switch and the halting controls wrap together
             rather than splitting across two lines mid-group. */}
@@ -195,9 +208,14 @@ export function RunDetailHeader({
         </div>
       </div>
       {error !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
-          {error}
-        </div>
+        <Alert
+          variant="destructive"
+          className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2"
+        >
+          <AlertDescription className="text-destructive text-[12px]">
+            {error}
+          </AlertDescription>
+        </Alert>
       )}
     </div>
   );
