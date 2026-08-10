@@ -50,10 +50,14 @@ export function seedSession(dir: string): SessionPaths {
   git(dir, 'init', '-q', '--bare', paths.origin);
 
   buildRepo({ root: paths.root, push: true, remote: paths.origin });
+  // Non-empty verifySteps shadows verifyCommand in the merge queue and,
+  // unlike verifyCommand, is never PATCH-editable — so a visitor can't turn
+  // this hermetic step into arbitrary shell (see mergeQueue.ts's verify()).
   writeBoard(paths.root, {
     extraActors: [VISITOR],
     linearEnabled: false,
     cartoEnabled: false,
+    verifySteps: [{ name: 'verify', command: 'bun --version' }],
   });
   writeRecords(paths.root);
   git(paths.root, 'add', '-A');

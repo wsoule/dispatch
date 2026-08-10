@@ -27,6 +27,20 @@ export interface DemoTask {
   writes: string[];
 }
 
+export interface VerifyStepConfig {
+  name: string;
+  command: string;
+}
+
+// The local demo's verify pipeline: real, slow, and safe to run because it
+// only ever executes on a machine the operator already trusts.
+const DEFAULT_VERIFY_STEPS: VerifyStepConfig[] = [
+  { name: 'install', command: 'bun install' },
+  { name: 'typecheck', command: 'bun run tsc' },
+  { name: 'test', command: 'bun test' },
+  { name: 'lint', command: 'bun run lint' },
+];
+
 export interface BoardOptions {
   /** Appended to the team.yml roster after ACTORS (e.g. the web visitor). */
   extraActors?: DemoActor[];
@@ -34,6 +48,8 @@ export interface BoardOptions {
   linearEnabled?: boolean;
   /** Default true ("on") — the local demo's value. */
   cartoEnabled?: boolean;
+  /** Default DEFAULT_VERIFY_STEPS — the local demo's value. */
+  verifySteps?: VerifyStepConfig[];
 }
 
 // A one-off credit on a task's `## Activity` section, so attribution reads
@@ -372,18 +388,15 @@ function writeTeam(root: string, extraActors: DemoActor[]): void {
 function writeConfig(root: string, opts?: BoardOptions): void {
   const linear = opts?.linearEnabled ?? true;
   const carto = opts?.cartoEnabled ?? true;
+  const verifySteps = opts?.verifySteps ?? DEFAULT_VERIFY_STEPS;
+  const verifyStepsYaml = verifySteps
+    .map((s) => `  - name: ${s.name}\n    command: ${s.command}`)
+    .join('\n');
   const config = `statuses: [backlog, todo, in-progress, in-review, done, cancelled]
 autoCommit: true
 
 verifySteps:
-  - name: install
-    command: bun install
-  - name: typecheck
-    command: bun run tsc
-  - name: test
-    command: bun test
-  - name: lint
-    command: bun run lint
+${verifyStepsYaml}
 
 orchestrator:
   epicConcurrency: 3
