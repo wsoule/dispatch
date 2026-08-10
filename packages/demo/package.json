@@ -6,6 +6,7 @@
   },
   "type": "module",
   "exports": {
+    "./paths": "./src/paths.ts",
     "./repo": "./src/repo.ts",
     "./seed": "./src/seed.ts"
   },

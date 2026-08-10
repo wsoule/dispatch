@@ -32,7 +32,10 @@
       // by the manager and by test/daemon.test.ts, never imported — no
       // static analysis reaches it, so it needs the same explicit entry
       // packages/server's own bin gets.
-      "entry": ["src/daemon.ts"]
+      "entry": ["src/daemon.ts"],
+      // public/ holds browser assets server.ts hands out as files (the landing
+      // page and the expiry overlay), never imported — as in apps/site.
+      "ignore": ["public/**"]
     }
   },
 
