@@ -4,6 +4,7 @@ import { Trash2, Undo2 } from 'lucide-react';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface StashesPanelProps {
   stashes: GitStash[];
@@ -57,31 +58,41 @@ export function StashesPanel({
               {formatRelativeTimeFromIso(stash.date)}
             </span>
           </div>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            disabled={busy}
-            title="Pop (S)"
-            onClick={(e) => {
-              e.stopPropagation();
-              onPop(stash.index);
-            }}
-          >
-            <Undo2 className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            disabled={busy}
-            className="hover:text-destructive"
-            title="Drop"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRequestDrop(stash);
-            }}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                disabled={busy}
+                aria-label="Pop (S)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPop(stash.index);
+                }}
+              >
+                <Undo2 className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Pop (S)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                disabled={busy}
+                className="hover:text-destructive"
+                aria-label="Drop"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRequestDrop(stash);
+                }}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Drop</TooltipContent>
+          </Tooltip>
         </div>
       ))}
     </div>

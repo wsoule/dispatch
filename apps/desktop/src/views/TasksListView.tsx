@@ -28,6 +28,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface TasksListViewProps {
   data: DispatchProjectData;
@@ -372,16 +373,20 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                       HTML), so no stopPropagation is needed here the way the card entry points
                       below need it. */}
                   {group.epicId !== null && epicTitleById.has(group.epicId) && (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => setDagEpicId(group.epicId)}
-                      aria-label={`View dependency graph for ${group.title}`}
-                      title="View dependency graph"
-                      className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-1"
-                    >
-                      <Waypoints className="size-3.5" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => setDagEpicId(group.epicId)}
+                          aria-label={`View dependency graph for ${group.title}`}
+                          className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-1"
+                        >
+                          <Waypoints className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>View dependency graph</TooltipContent>
+                    </Tooltip>
                   )}
                 </div>
                 <CollapsibleContent>
