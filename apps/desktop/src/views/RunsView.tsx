@@ -30,8 +30,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import { IconToggle } from '@/ui/chrome/IconToggle';
-import { Segmented } from '@/ui/chrome/Segmented';
 import { Skeleton } from '@/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 
 type RunTab = 'session' | 'diff';
 
@@ -374,15 +374,28 @@ export function RunsView({
                 onStop={() => data.handleStopRun(selected.id)}
                 trailing={
                   <div className="flex shrink-0 items-center gap-1">
-                    <Segmented<RunTab>
-                      label="Run tab"
+                    <Tabs
                       value={tab}
-                      onChange={setTab}
-                      options={[
-                        { value: 'session', label: 'Session' },
-                        { value: 'diff', label: 'Diff' },
-                      ]}
-                    />
+                      onValueChange={(v) => setTab(v as RunTab)}
+                    >
+                      <TabsList
+                        aria-label="Run tab"
+                        className="border-border h-7 gap-0.5 rounded-md border bg-transparent p-0.5"
+                      >
+                        <TabsTrigger
+                          value="session"
+                          className="px-2 text-[13px] font-normal"
+                        >
+                          Session
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="diff"
+                          className="px-2 text-[13px] font-normal"
+                        >
+                          Diff
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
                     <IconToggle
                       on={detailsOpen}
                       onClick={() => setDetailsOpen((v) => !v)}
