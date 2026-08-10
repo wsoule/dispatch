@@ -323,6 +323,13 @@ export class Orchestrator {
     return this.worktrees.hasOriginRemote();
   }
 
+  // For the API layer's `head` gate: which refs vouch for a commit, so a
+  // fetched pull request head can be told from the repo's own history no
+  // matter which spelling — ref name or raw SHA — a caller sends.
+  refsContaining(commitish: string): string[] | null {
+    return this.worktrees.refsContaining(commitish);
+  }
+
   defaultBaseBranch(): string {
     return this.worktrees.defaultBaseBranch();
   }
