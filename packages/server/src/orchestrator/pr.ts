@@ -502,6 +502,14 @@ const FILE_STATUS_LETTER: Record<string, string> = {
  */
 export class PrManager {
   private pollTimer: ReturnType<typeof setInterval> | undefined;
+  // The last poll's open-PR set — GET /api/landing (a later task) and the
+  // merge queue both read this instead of paying for their own `gh pr list`.
+  // Empty until pollOnce()'s first successful list call.
+  private cache: RepoPr[] = [];
+  // The previous poll's landingDeltaKey(), or undefined before any poll has
+  // succeeded — undefined never equals a real key, so the first successful
+  // fill always counts as a delta (empty -> non-empty is one too).
+  private cacheDeltaKey: string | undefined;
 
   constructor(
     private readonly ctx: PrManagerContext,
@@ -597,6 +605,23 @@ export class PrManager {
     return this.ctx.orchestrator.setRunPrUrl(runId, url);
   }
 
+  // The `gh pr list --json REPO_PR_FIELDS --state open --limit 50` argv —
+  // shared by listRepoPrs() and pollOnce()'s cache refresh so both read the
+  // identical field set and page size instead of drifting apart.
+  private listRepoPrsArgv(): string[] {
+    return [
+      'gh',
+      'pr',
+      'list',
+      '--json',
+      REPO_PR_FIELDS,
+      '--state',
+      'open',
+      '--limit',
+      '50',
+    ];
+  }
+
   // GET /api/prs (item B): every open PR in the repo, not just the ones
   // dispatch itself opened — the client renders dispatch's own PR rows
   // separately (via each run's `prUrl`) and lists whatever's left over here
@@ -608,17 +633,7 @@ export class PrManager {
         'PR review requires the gh CLI and a configured git remote'
       );
     }
-    const result = await this.run(this.ctx.rootDir, [
-      'gh',
-      'pr',
-      'list',
-      '--json',
-      REPO_PR_FIELDS,
-      '--state',
-      'open',
-      '--limit',
-      '50',
-    ]);
+    const result = await this.run(this.ctx.rootDir, this.listRepoPrsArgv());
     if (!result.ok) {
       throw new OrchestratorConflictError(
         `gh pr list failed: ${commandErrorText(result)}`
@@ -727,6 +742,7 @@ export class PrManager {
   // long interval, and sequential checks keep at most one `gh` subprocess
   // in flight at a time.
   async pollOnce(): Promise<void> {
+    await this.refreshCache();
     for (const meta of this.ctx.orchestrator.list()) {
       if (meta.prUrl === undefined || meta.reviewedAt !== undefined) continue;
       const view = await this.run(meta.worktreePath, [
@@ -748,6 +764,68 @@ export class PrManager {
         this.ctx.orchestrator.markRunMergedViaPr(meta.id);
       }
     }
+  }
+
+  // Refreshes `cache` from one `gh pr list` call (the same argv listRepoPrs()
+  // uses) and broadcasts `landing.changed` when the landing-relevant fields
+  // of the result differ from the previous poll's. Runs before the per-run
+  // merged-check loop above, and only when this project has the `pr`
+  // capability at all — mirroring startPolling's own gate, since a project
+  // with no gh/remote has nothing to list.
+  //
+  // A failed or unparseable `gh pr list` call leaves `cache` and
+  // `cacheDeltaKey` untouched: a flaky `gh` must not blank the landing table
+  // or fire a spurious event on its next successful poll.
+  private async refreshCache(): Promise<void> {
+    if (!this.capability) return;
+    const result = await this.run(this.ctx.rootDir, this.listRepoPrsArgv());
+    if (!result.ok) return;
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+    } catch {
+      return;
+    }
+    const prs = raw.map((item) => toRepoPr(item));
+    const key = this.landingDeltaKey(prs);
+    this.cache = prs;
+    if (key !== this.cacheDeltaKey) {
+      this.cacheDeltaKey = key;
+      this.ctx.events.broadcast({ type: 'landing.changed' });
+    }
+  }
+
+  // A stable JSON projection of the fields the landing page renders, sorted
+  // by PR number so a same-set reorder in gh's response never reads as a
+  // delta. Compared poll-to-poll in refreshCache() above to decide whether
+  // `landing.changed` fires.
+  private landingDeltaKey(prs: RepoPr[]): string {
+    const sorted = [...prs].sort((a, b) => a.number - b.number);
+    return JSON.stringify(
+      sorted.map((p) => ({
+        number: p.number,
+        headRefOid: p.headRefOid,
+        state: p.state,
+        mergeable: p.mergeable,
+        reviewDecision: p.reviewDecision,
+        checks: p.checks,
+        isDraft: p.isDraft,
+        updatedAt: p.updatedAt,
+      }))
+    );
+  }
+
+  // GET /api/landing (a later task) and the merge queue's read of a PR's
+  // current status — the last poll's open-PR set, with no `gh` call of its
+  // own. Empty until pollOnce()'s first successful list.
+  cachedPrs(): RepoPr[] {
+    return this.cache;
+  }
+
+  // Same cache, keyed by PR url — what the merge queue looks a specific
+  // entry's PR up by, since it holds a run's `prUrl` rather than a number.
+  cachedPrByUrl(url: string): RepoPr | undefined {
+    return this.cache.find((p) => p.url === url);
   }
 
   // Resolves a run that must have an open PR, for the in-app review calls
