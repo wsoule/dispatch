@@ -337,6 +337,11 @@
         border-radius: 10px;
         background: var(--panel);
       }
+      /* `display: flex` above outranks the UA's [hidden] rule, so the click
+         handler's `hidden = true` would otherwise leave the card on screen. */
+      .livecard[hidden] {
+        display: none;
+      }
       .livecard h3 {
         margin: 0 0 4px;
         font-size: 14px;
