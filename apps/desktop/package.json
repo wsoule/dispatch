@@ -32,6 +32,7 @@
     "@tauri-apps/plugin-updater": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
+    "cmdk": "catalog:",
     "lucide-react": "catalog:",
     "radix-ui": "catalog:",
     "react": "catalog:",
@@ -39,6 +40,7 @@
     "react-markdown": "catalog:",
     "rehype-highlight": "catalog:",
     "remark-gfm": "catalog:",
+    "sonner": "catalog:",
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {

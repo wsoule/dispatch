@@ -36,6 +36,7 @@ import { LandingView } from './LandingView';
 import { isTerminalRunState } from '@/lib/runState';
 import { cn } from '@/lib/utils';
 import { MetaText } from '@/ui/chrome';
+import { IconToggle } from '@/ui/chrome/IconToggle';
 import { StateDot } from '@/ui/chrome/StateDot';
 
 interface ReviewViewProps {
@@ -747,24 +748,28 @@ function Header({
           </>
         )}
         <span className="flex-1" />
-        <button
-          type="button"
+        <IconToggle
+          on={filesOpen}
           onClick={onToggleFiles}
-          aria-pressed={filesOpen}
-          className="text-accent-foreground text-[11px]"
+          label={filesOpen ? 'Hide files' : 'Show files'}
+          className="text-accent-foreground hover:text-accent-foreground data-[state=on]:text-accent-foreground border-none p-0 text-[11px] hover:bg-transparent data-[state=on]:bg-transparent"
         >
           {filesOpen ? 'Hide files' : 'Show files'}
-        </button>
-        <button
-          type="button"
+        </IconToggle>
+        <IconToggle
+          on={railOpen}
           onClick={onToggleRail}
-          aria-pressed={railOpen}
-          className="text-accent-foreground text-[11px]"
+          label={
+            railOpen
+              ? `Hide ${railLabel.toLowerCase()}`
+              : `${railLabel} (${railCount})`
+          }
+          className="text-accent-foreground hover:text-accent-foreground data-[state=on]:text-accent-foreground border-none p-0 text-[11px] hover:bg-transparent data-[state=on]:bg-transparent"
         >
           {railOpen
             ? `Hide ${railLabel.toLowerCase()}`
             : `${railLabel} (${railCount})`}
-        </button>
+        </IconToggle>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import type { FeedState } from '@/lib/feedState';
 import { FEED_STATE_LABEL, isUrgentState } from '@/lib/feedState';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
 import { StateDot } from '@/ui/chrome/StateDot';
 
@@ -30,8 +31,10 @@ function RowButton({
   tone?: 'urgent-waiting' | 'urgent-failed';
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="xs"
       // Every action sits inside a clickable row, so each one has to stop the click from also
       // opening the row behind it. Approving should not navigate away.
       onClick={(e) => {
@@ -39,15 +42,17 @@ function RowButton({
         onClick();
       }}
       className={cn(
-        'shadow-hairline rounded-md px-2 py-1 text-[12px] whitespace-nowrap transition-colors duration-150',
-        'hover:bg-muted/60',
-        tone === 'urgent-waiting' && 'text-state-waiting',
-        tone === 'urgent-failed' && 'text-state-failed',
+        'shadow-hairline h-auto rounded-md px-2 py-1 text-[12px] font-normal whitespace-nowrap transition-colors duration-150',
+        // Ghost's own hover bg/text are neutralized so only the row's own tones move.
+        'hover:bg-muted/60 dark:hover:bg-muted/60',
+        tone === 'urgent-waiting' &&
+          'text-state-waiting hover:text-state-waiting',
+        tone === 'urgent-failed' && 'text-state-failed hover:text-state-failed',
         tone === undefined && 'text-muted-foreground hover:text-foreground'
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 

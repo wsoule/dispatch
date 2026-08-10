@@ -1,9 +1,10 @@
 import type { DraftRecord } from '@dispatch/client';
-import { CircleAlert, Loader2, PanelTopOpen, Sparkles } from 'lucide-react';
+import { CircleAlert, PanelTopOpen, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { DaemonUnavailable } from '../shell/DaemonUnavailable';
+import { Alert } from '@/ui/alert';
 import { Button } from '@/ui/button';
 import {
   Dialog,
@@ -12,6 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/ui/dialog';
+import { Kbd } from '@/ui/kbd';
+import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
 
 interface AiTaskComposerProps {
@@ -73,10 +76,13 @@ export function AiTaskComposer({
           <>
             <div className="flex flex-col gap-3">
               {error !== null && (
-                <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+                <Alert
+                  variant="destructive"
+                  className="border-destructive/30 bg-destructive/10 flex items-center gap-2 rounded-md px-3 py-2 text-[13px] has-[>svg]:gap-x-2 [&>svg]:translate-y-0"
+                >
                   <CircleAlert className="size-4 shrink-0" />
                   <span>{error}</span>
-                </div>
+                </Alert>
               )}
               <Textarea
                 rows={5}
@@ -107,9 +113,9 @@ export function AiTaskComposer({
                   Quick add…
                 </Button>
                 <span className="text-muted-foreground text-[11px]">
-                  <kbd className="border-border bg-secondary rounded border px-1 py-0.5 font-mono text-[10px]">
+                  <Kbd className="border-border bg-secondary h-auto rounded border py-0.5 font-mono text-[10px]">
                     ⌘↵
-                  </kbd>{' '}
+                  </Kbd>{' '}
                   to draft — nothing is created until you review it.
                 </span>
               </div>
@@ -125,7 +131,7 @@ export function AiTaskComposer({
               >
                 {submitting ? (
                   <>
-                    <Loader2 className="size-4 animate-spin" /> Starting…
+                    <Spinner className="size-4" /> Starting…
                   </>
                 ) : (
                   <>

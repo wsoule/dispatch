@@ -3,6 +3,9 @@ import { useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { Button } from '@/ui/button';
+import { Collapsible, CollapsibleContent } from '@/ui/collapsible';
+import { ScrollArea } from '@/ui/scroll-area';
+import { Textarea } from '@/ui/textarea';
 
 interface ApprovalCardProps {
   toolName: string;
@@ -87,20 +90,24 @@ export function ApprovalCard({
           {toolName}
         </span>
       </div>
-      <pre className="border-border bg-card text-muted-foreground max-h-40 overflow-auto rounded-md border p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
-        {formatInput(toolInput)}
-      </pre>
+      <ScrollArea className="border-border bg-card max-h-40 rounded-md border">
+        <pre className="text-muted-foreground p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
+          {formatInput(toolInput)}
+        </pre>
+      </ScrollArea>
       {error !== null && (
         <div className="text-destructive text-[12px]">{error}</div>
       )}
-      {denying ? (
-        <div className="flex flex-col gap-2">
-          <textarea
+      {/* `denying` drives a real Collapsible rather than a plain conditional — no chevron
+          here, just the reveal/animate-in behavior for the reason box. */}
+      <Collapsible open={denying}>
+        <CollapsibleContent className="flex flex-col gap-2">
+          <Textarea
             autoFocus
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Why not? The agent gets this as the reason it was refused."
-            className="shadow-hairline min-h-[52px] w-full resize-y rounded-md px-2 py-1.5 text-[12.5px] outline-none"
+            className="min-h-[52px] w-full resize-y text-[12.5px]"
           />
           <div className="flex justify-end gap-2">
             <Button
@@ -119,8 +126,9 @@ export function ApprovalCard({
               Deny{reason.trim() === '' ? '' : ' and tell it why'}
             </Button>
           </div>
-        </div>
-      ) : (
+        </CollapsibleContent>
+      </Collapsible>
+      {!denying && (
         <div className="flex flex-wrap justify-end gap-2">
           <Button
             variant="ghost"

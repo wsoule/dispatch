@@ -4,7 +4,7 @@ import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from '@dnd-kit/core';
-import { ArrowRight, ChevronRight, Loader2 } from 'lucide-react';
+import { ArrowRight, ChevronRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
@@ -23,6 +23,8 @@ import {
 } from './RunStateIcon';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import { Spinner } from '@/ui/spinner';
 
 // Drag wiring handed down from `TaskBoard`'s `@dnd-kit` sortable card — grouped into one
 // optional prop rather than several loose ones so a card rendered outside the board (there
@@ -279,12 +281,13 @@ export function TaskCardTile({
           {formatRelativeTimeFromIso(doc.meta.updated)}
         </span>
         {ready && onDispatch !== undefined && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
             disabled={dispatching}
             onClick={(e) => void dispatchNow(e)}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground opacity-0 transition-opacity duration-150',
+              'h-auto gap-1 rounded-md px-1.5 py-0.5 has-[>svg]:px-1.5 text-[11px] font-medium text-muted-foreground opacity-0 transition-opacity duration-150',
               'hover:bg-primary/10 hover:text-primary',
               'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100',
               dispatching && 'pointer-events-none opacity-100'
@@ -292,7 +295,7 @@ export function TaskCardTile({
           >
             {dispatching ? (
               <>
-                <Loader2 className="size-3 animate-spin" />
+                <Spinner className="size-3" />
                 Dispatching
               </>
             ) : (
@@ -301,7 +304,7 @@ export function TaskCardTile({
                 <ArrowRight className="size-3" />
               </>
             )}
-          </button>
+          </Button>
         )}
       </div>
     </div>

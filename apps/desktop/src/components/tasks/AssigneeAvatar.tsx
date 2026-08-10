@@ -2,6 +2,7 @@ import type { Assignee } from '@dispatch/core/browser';
 import { Bot, User } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { Avatar, AvatarFallback } from '@/ui/avatar';
 
 const ASSIGNEE_LABEL: Record<Assignee, string> = {
   agent: 'Assigned to an agent',
@@ -26,12 +27,12 @@ export function AssigneeAvatar({ assignee, className }: AssigneeAvatarProps) {
 
   if (assignee === 'none') {
     return (
-      <span
+      <Avatar
         title={label}
         aria-label={label}
         role="img"
         className={cn(
-          'inline-block size-4 shrink-0 rounded-full border border-dashed border-muted-foreground/40',
+          'size-4 border border-dashed border-muted-foreground/40 bg-transparent',
           className
         )}
       />
@@ -43,17 +44,18 @@ export function AssigneeAvatar({ assignee, className }: AssigneeAvatarProps) {
   // board says which cards the fleet owns.
   const Icon = assignee === 'agent' ? Bot : User;
   return (
-    <span
-      title={label}
-      className={cn(
-        'inline-flex size-4 shrink-0 items-center justify-center rounded-full',
-        assignee === 'agent'
-          ? 'bg-state-working-surface text-state-working'
-          : 'bg-muted text-muted-foreground',
-        className
-      )}
-    >
-      <Icon className="size-2.5" strokeWidth={2} aria-label={label} />
-    </span>
+    <Avatar title={label} className={cn('size-4', className)}>
+      <AvatarFallback
+        aria-label={label}
+        className={cn(
+          'rounded-full',
+          assignee === 'agent'
+            ? 'bg-state-working-surface text-state-working'
+            : 'bg-muted text-muted-foreground'
+        )}
+      >
+        <Icon className="size-2.5" strokeWidth={2} aria-hidden="true" />
+      </AvatarFallback>
+    </Avatar>
   );
 }

@@ -6,7 +6,6 @@ import { ExportControl } from '../components/sessions/ExportControl';
 import { SessionDetailModal } from '../components/sessions/SessionDetailModal';
 import { projectNameFor } from '../components/sessions/sessionDisplay';
 import { SessionRow } from '../components/sessions/SessionRow';
-import { SessionsEmptyState } from '../components/sessions/SessionsEmptyState';
 import { SpendTable } from '../components/sessions/SpendTable';
 import { modelDisplayName } from '../lib/models';
 import {
@@ -16,6 +15,9 @@ import {
   listProjects,
   listSessions,
 } from '../lib/tauri';
+import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import { StatTile } from '@/ui/chrome/StatTile';
 import { Skeleton } from '@/ui/skeleton';
 
@@ -101,12 +103,22 @@ export function SessionsHubView() {
       </div>
 
       {statsError ? (
-        <SessionsEmptyState
-          icon={<OctagonAlert className="size-5" />}
-          message="Couldn’t load spend stats. Is the backend running?"
-          tone="destructive"
-          onRetry={() => void refetchStats()}
-        />
+        <div className="flex h-full flex-col items-center justify-center gap-3 pt-24 text-center">
+          <OctagonAlert className="text-destructive size-5" />
+          <EmptyState
+            message="Couldn’t load spend stats. Is the backend running?"
+            className="max-w-sm gap-3 px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void refetchStats()}
+              >
+                Retry
+              </Button>
+            }
+          />
+        </div>
       ) : statsLoading || !stats ? (
         <div className="grid grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -152,12 +164,22 @@ export function SessionsHubView() {
         </h2>
         <div className="border-border bg-card rounded-lg border p-4">
           {projectsError ? (
-            <SessionsEmptyState
-              icon={<OctagonAlert className="size-5" />}
-              message="Couldn’t load projects."
-              tone="destructive"
-              onRetry={() => void refetchProjects()}
-            />
+            <div className="flex h-full flex-col items-center justify-center gap-3 pt-24 text-center">
+              <OctagonAlert className="text-destructive size-5" />
+              <EmptyState
+                message="Couldn’t load projects."
+                className="max-w-sm gap-3 px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void refetchProjects()}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
+            </div>
           ) : projectsLoading ? (
             <Skeleton className="h-24 w-full" />
           ) : (
@@ -183,17 +205,22 @@ export function SessionsHubView() {
             Sessions
           </h2>
           {filteredProject && (
-            <span className="border-border bg-accent/40 text-foreground inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]">
+            <Badge
+              variant="outline"
+              className="bg-accent/40 gap-1.5 text-[11px] font-normal"
+            >
               {filteredProject.name}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => setProjectFilter(null)}
                 aria-label="Clear project filter"
-                className="text-muted-foreground hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-0 hover:bg-transparent"
               >
                 <X className="size-3" />
-              </button>
-            </span>
+              </Button>
+            </Badge>
           )}
         </div>
 
@@ -206,25 +233,38 @@ export function SessionsHubView() {
         )}
 
         {sessionsError && (
-          <SessionsEmptyState
-            icon={<OctagonAlert className="size-5" />}
-            message="Couldn’t load sessions. Is the backend running?"
-            tone="destructive"
-            onRetry={() => void refetchSessions()}
-          />
+          <div className="flex h-full flex-col items-center justify-center gap-3 pt-24 text-center">
+            <OctagonAlert className="text-destructive size-5" />
+            <EmptyState
+              message="Couldn’t load sessions. Is the backend running?"
+              className="max-w-sm gap-3 px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void refetchSessions()}
+                >
+                  Retry
+                </Button>
+              }
+            />
+          </div>
         )}
 
         {!sessionsLoading &&
           !sessionsError &&
           filteredSessions.length === 0 && (
-            <SessionsEmptyState
-              icon={<Inbox className="size-5" />}
-              message={
-                projectFilter
-                  ? 'No sessions for this project yet.'
-                  : 'No sessions yet — start a Claude Code session in any repo and it will appear here.'
-              }
-            />
+            <div className="flex h-full flex-col items-center justify-center gap-3 pt-24 text-center">
+              <Inbox className="text-muted-foreground size-5" />
+              <EmptyState
+                message={
+                  projectFilter
+                    ? 'No sessions for this project yet.'
+                    : 'No sessions yet — start a Claude Code session in any repo and it will appear here.'
+                }
+                className="max-w-sm px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+              />
+            </div>
           )}
 
         {!sessionsLoading && !sessionsError && filteredSessions.length > 0 && (

@@ -57,13 +57,15 @@ export function ExportControl({
       {state.status === 'saved' && (
         <span className="text-muted-foreground inline-flex items-center gap-2 text-[13px]">
           Saved to {state.path}
-          <button
-            className="text-primary inline-flex items-center gap-1 text-[11px] hover:underline"
+          <Button
+            variant="link"
+            size="xs"
             onClick={() => void revealInFinder(state.path)}
+            className="h-auto gap-1 p-0 text-[11px] font-normal whitespace-normal has-[>svg]:px-0"
           >
             <FolderOpen className="size-3" />
             Reveal in Finder
-          </button>
+          </Button>
         </span>
       )}
       {state.status === 'error' && (

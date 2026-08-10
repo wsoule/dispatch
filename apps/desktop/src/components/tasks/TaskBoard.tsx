@@ -28,6 +28,7 @@ import { EpicCardTile } from './EpicCardTile';
 import { StatusIcon } from './StatusIcon';
 import { TaskCardTile } from './TaskCardTile';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 
 interface TaskBoardProps {
   tasks: TaskDoc[];
@@ -353,14 +354,15 @@ export function TaskBoard({
                   {columnTasks.length}
                 </span>
                 {onAddTask !== undefined && (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={() => onAddTask(status)}
                     aria-label={`New task in ${status}`}
-                    className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto rounded-md p-0.5 opacity-0 transition-opacity duration-150 group-hover/header:opacity-100 focus-visible:opacity-100"
+                    className="text-muted-foreground hover:bg-accent hover:text-foreground ml-auto size-auto rounded-md p-0.5 opacity-0 transition-opacity duration-150 group-hover/header:opacity-100 focus-visible:opacity-100 has-[>svg]:px-0.5"
                   >
                     <Plus className="size-3.5" />
-                  </button>
+                  </Button>
                 )}
               </div>
               <DroppableColumn status={status}>
