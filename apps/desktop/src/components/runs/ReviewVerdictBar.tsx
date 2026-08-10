@@ -1,5 +1,6 @@
 import type { ReviewComment, ReviewVerdict } from '@dispatch/client';
 import { Bot, Check, GitPullRequest, MessageSquare, Undo2 } from 'lucide-react';
+import { Checkbox as CheckboxPrimitive } from 'radix-ui';
 import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -202,21 +203,31 @@ export function ReviewVerdictBar({
   // it is "keep the review off GitHub", and a hover `title` says that to
   // nobody using a keyboard or a screen reader.
   //
-  // Stays a native `<input type="checkbox">` rather than the shadcn `Checkbox`
-  // primitive: Radix renders that as a `<button role="checkbox">` with no
-  // `.checked` property, and `screen.getByLabelText(...).checked` in both
-  // ReviewVerdictBar.test.tsx and ReviewCommentsPanel.test.tsx reads that
-  // property directly — swapping it breaks those tests for good, since
-  // `getByLabelText` always resolves to the first labelable *element*
-  // (button, here) regardless of whether the label wraps it or uses `htmlFor`.
+  // `CheckboxPrimitive.Root asChild` around a real `<input>`, not the shadcn
+  // `Checkbox` wrapper — same device AgentsSection.tsx already uses for its
+  // radios (`RadioGroupPrimitive.Item asChild`). Slot's mergeProps gives the
+  // child's own `type`/`checked` priority over Radix's `type="button"`, and
+  // `checked` is consumed internally by the primitive rather than re-emitted
+  // onto the trigger, so the rendered node is a genuine native checkbox with
+  // a working `.checked` — `getByLabelText(...).checked` in both
+  // ReviewVerdictBar.test.tsx and ReviewCommentsPanel.test.tsx keeps working
+  // unedited. `readOnly` only silences React's "controlled input needs
+  // onChange" warning; Radix's own composed `onClick` still drives
+  // `onCheckedChange` (`readonly` is inert on a checkbox input in the DOM).
   const githubCheckbox = !canPostToGitHub ? null : (
     <label className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px]">
-      <input
-        type="checkbox"
+      <CheckboxPrimitive.Root
         checked={postToGitHub}
-        onChange={(e) => setPostToGitHub(e.target.checked)}
-        className="accent-accent size-3 shrink-0"
-      />
+        onCheckedChange={(checked) => setPostToGitHub(checked === true)}
+        asChild
+      >
+        <input
+          type="checkbox"
+          checked={postToGitHub}
+          readOnly
+          className="accent-accent size-3 shrink-0"
+        />
+      </CheckboxPrimitive.Root>
       <GitPullRequest className="size-3 shrink-0" />
       Also post to GitHub
       <span className="text-muted-foreground text-[11px] leading-snug">

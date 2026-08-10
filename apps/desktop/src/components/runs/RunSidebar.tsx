@@ -44,9 +44,12 @@ export function RunSidebar({
         <div>
           <SectionLabel count={files.length}>Files touched</SectionLabel>
           {files.length === 0 ? (
+            // EmptyState's `className` only reaches its outer `Empty` root — `EmptyDescription`
+            // hardcodes `text-sm`, so the original 12px line needs a descendant-selector
+            // override rather than a prop `EmptyState` doesn't expose.
             <EmptyState
               message="Nothing changed yet."
-              className="mt-1.5 items-start p-0 text-left"
+              className="mt-1.5 items-start p-0 text-left [&_[data-slot=empty-description]]:text-[12px]"
             />
           ) : (
             <ul className="mt-1.5 flex flex-col gap-0.5">
