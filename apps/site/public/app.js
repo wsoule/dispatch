@@ -138,3 +138,23 @@
   };
   setTimeout(step, 1200);
 })();
+
+/**
+ * No src until click: the embedded landing auto-starts a session, so
+ * setting it any earlier would spend one nobody asked for.
+ */
+(function () {
+  // The live-demo Railway service (apps/demo), provisioned in Task 12.
+  var DEMO_URL = 'https://dispatch-demo-production-aed7.up.railway.app';
+  var btn = document.getElementById('livedemo');
+  var frame = document.getElementById('liveframe');
+  var iframe = document.getElementById('liveiframe');
+  var full = document.getElementById('livefull');
+  if (!btn || !frame || !iframe || !full) return;
+  full.href = DEMO_URL;
+  btn.addEventListener('click', function () {
+    iframe.src = DEMO_URL + '/?embed=1';
+    frame.hidden = false;
+    btn.closest('.livecard').hidden = true;
+  });
+})();

@@ -1,0 +1,26 @@
+# Build context for apps/demo/Dockerfile is the repo root, not apps/demo/
+# itself — it needs workspace deps and the desktop bundle. Only excludes what a fresh `bun install && bun run build` never reads.
+node_modules
+
+# Rebuilt inside the image; a stale local copy must never leak into it.
+packages/*/dist
+apps/*/dist
+packages/*/tsconfig.tsbuildinfo
+apps/*/tsconfig.tsbuildinfo
+tsconfig.tsbuildinfo
+dist-sidecar
+
+# The image only needs the `git` binary (installed via apk) to seed and run
+# sessions, never this repo's own history.
+.git
+
+# Dev-only surfaces neither the demo server nor the desktop web build touch.
+apps/desktop/src-tauri
+apps/desktop/e2e
+.superpowers
+.agents
+.dispatch
+.github
+.husky
+.vscode
+docs

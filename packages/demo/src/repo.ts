@@ -161,6 +161,36 @@ export function rank(query: string, products: Product[]): Hit[] {
   },
 ];
 
+/**
+ * Creates a local branch off `main` for any of `branches` not already
+ * resolvable in `root`, then pushes everything to the `origin` remote.
+ * `BRANCH_FIXES` branches already resolve and are skipped.
+ *
+ * Real review/verify runs get their `dispatch/<kind>-<taskId>-<runId>`
+ * branch from a genuine `git worktree add` at dispatch time (see
+ * dispatchAuxRun in packages/server's orchestrator); a seeded run only ever
+ * narrates that branch name in its transcript, so without this, a task
+ * whose blocker's most recent run is one of those narrated-only branches
+ * (Orchestrator.resolveBase bases the dependent's worktree on it) 500s the
+ * moment a visitor dispatches it — `git worktree add` can't resolve a ref
+ * that was never actually created. Called only from seedSession, so the
+ * local demo's real GitHub remote never sees these extra branches.
+ */
+export function ensureRunBranchesExist(root: string, branches: string[]): void {
+  let created = false;
+  for (const branch of branches) {
+    try {
+      git(root, 'rev-parse', '--verify', '--quiet', branch);
+      continue; // already real — a BRANCH_FIXES entry, most likely
+    } catch {
+      // no local ref yet — created below
+    }
+    git(root, 'branch', branch, 'main');
+    created = true;
+  }
+  if (created) git(root, 'push', '-q', '--force', '--all', 'origin');
+}
+
 // Resolves symlinks in the longest existing ancestor of `p`, then re-appends
 // whatever suffix doesn't exist yet. Plain `realpathSync` throws ENOENT on a
 // path that hasn't been created, which `root` often hasn't when the guard
@@ -244,12 +274,19 @@ export function assertNoCredentialsStaged(root: string): void {
 }
 
 /** Copies the template into `root`, commits main, then lays down one branch per in-review fix. */
-export function buildRepo(opts: { root: string; push: boolean }): void {
-  const { root, push } = opts;
+export function buildRepo(opts: {
+  root: string;
+  push: boolean;
+  /** Git URL/path pushed to as `origin`; the local demo's GitHub remote by default. */
+  remote?: string;
+  /** Source tree copied into the new repo; the storefront template by default. */
+  template?: string;
+}): void {
+  const { root, push, remote = DEMO.remote, template = DEMO.template } = opts;
   assertSafeToDelete(root);
   rmSync(root, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
-  cpSync(DEMO.template, root, {
+  cpSync(template, root, {
     recursive: true,
     filter: skipInstallArtifacts,
   });
@@ -269,7 +306,7 @@ export function buildRepo(opts: { root: string; push: boolean }): void {
   }
 
   if (push) {
-    git(root, 'remote', 'add', 'origin', DEMO.remote);
+    git(root, 'remote', 'add', 'origin', remote);
     git(root, 'push', '-q', '--force', '--all', 'origin');
   }
 }

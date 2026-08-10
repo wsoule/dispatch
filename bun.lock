@@ -18,6 +18,13 @@
         "typescript": "catalog:",
       },
     },
+    "apps/demo": {
+      "name": "@dispatch/sandbox",
+      "dependencies": {
+        "@dispatch/demo": "workspace:*",
+        "@dispatch/server": "workspace:*",
+      },
+    },
     "apps/desktop": {
       "name": "@dispatch/desktop",
       "version": "0.0.1",
@@ -118,6 +125,9 @@
     },
     "packages/demo": {
       "name": "@dispatch/demo",
+      "bin": {
+        "demo": "./src/cli.ts",
+      },
       "dependencies": {
         "@dispatch/core": "workspace:*",
       },
@@ -298,6 +308,8 @@
     "@dispatch/desktop": ["@dispatch/desktop@workspace:apps/desktop"],
 
     "@dispatch/mcp": ["@dispatch/mcp@workspace:packages/mcp"],
+
+    "@dispatch/sandbox": ["@dispatch/sandbox@workspace:apps/demo"],
 
     "@dispatch/server": ["@dispatch/server@workspace:packages/server"],
 
