@@ -144,8 +144,8 @@
  * setting it any earlier would spend one nobody asked for.
  */
 (function () {
-  // Placeholder — Task 12 provisions the Railway domain and sets this.
-  var DEMO_URL = 'https://demo.<the-production-domain>';
+  // The live-demo Railway service (apps/demo), provisioned in Task 12.
+  var DEMO_URL = 'https://dispatch-demo-production-aed7.up.railway.app';
   var btn = document.getElementById('livedemo');
   var frame = document.getElementById('liveframe');
   var iframe = document.getElementById('liveiframe');
