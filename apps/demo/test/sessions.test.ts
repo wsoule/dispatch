@@ -45,4 +45,28 @@ describe('SessionManager', () => {
       await mgr.stop();
     }
   }, 120_000);
+
+  test('concurrent create() at cap: exactly one resolves, one rejects fast', async () => {
+    const mgr = new SessionManager({
+      sessionsDir: mkdtempSync(join(tmpdir(), 'demo-mgr3-')),
+      maxSessions: 1,
+    });
+    try {
+      // Fired without awaiting either individually: both create() calls
+      // start executing synchronously, so this exercises the cap check
+      // racing the first call's seed/spawn/stdout-parse — not two calls
+      // that happen to run one after the other.
+      const results = await Promise.allSettled([mgr.create(), mgr.create()]);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.find(
+        (r): r is PromiseRejectedResult => r.status === 'rejected'
+      );
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toBeDefined();
+      expect(rejected?.reason).toBeInstanceOf(SessionCapError);
+      expect(mgr.count()).toBe(1);
+    } finally {
+      await mgr.stop();
+    }
+  }, 120_000);
 });
