@@ -1,6 +1,5 @@
 // A per-key fixed-window rate limiter: caps how many times one key (a
-// visitor's IP) may pass in a rolling window, so a single address can't spin
-// up sessions fast enough to exhaust SessionManager's cap for everyone else.
+// visitor's IP) may pass per window, so one address can't exhaust the cap.
 export interface RateLimiterOptions {
   limit?: number;
   windowMs?: number;

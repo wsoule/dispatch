@@ -398,4 +398,59 @@ describe('demo server routes', () => {
       void upstream.stop(true);
     }
   });
+
+  test('closing a socket frees its slot for a new one', async () => {
+    // Resolved from the fixture's own close callback, so the wait proves the
+    // bridge's close(ws) handler (which decrements wsCounts) already ran.
+    const upstreamClosed: Array<() => void> = [];
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: (req, server) =>
+        server.upgrade(req) ? undefined : new Response('no', { status: 400 }),
+      websocket: {
+        open: (ws) => {
+          ws.send('hello');
+        },
+        message: () => {},
+        close: () => {
+          upstreamClosed.shift()?.();
+        },
+      },
+    });
+    const manager = stubManager({
+      get: (id: string) =>
+        id === ID ? fakeSession(upstream.port as number) : undefined,
+    });
+    const server = createDemoServer({
+      manager,
+      distDir: '/nonexistent',
+      port: 0,
+      wsPerSession: 1,
+    });
+    try {
+      const base = origin(server);
+      const firstOpen = Promise.withResolvers<void>();
+      const first = new WebSocket(
+        `${base.replace('http', 'ws')}/s/${ID}/ws?token=t`
+      );
+      first.onmessage = () => firstOpen.resolve();
+      await firstOpen.promise;
+
+      const firstUpstreamClosed = Promise.withResolvers<void>();
+      upstreamClosed.push(() => firstUpstreamClosed.resolve());
+      first.close();
+      await firstUpstreamClosed.promise;
+
+      const secondOpen = Promise.withResolvers<void>();
+      const second = new WebSocket(
+        `${base.replace('http', 'ws')}/s/${ID}/ws?token=t`
+      );
+      second.onmessage = () => secondOpen.resolve();
+      await secondOpen.promise;
+      second.close();
+    } finally {
+      void server.stop(true);
+      void upstream.stop(true);
+    }
+  });
 });

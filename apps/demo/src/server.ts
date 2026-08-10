@@ -25,9 +25,8 @@ export interface DemoServerOptions {
   wsPerSession?: number;
 }
 
-// Per-socket state for the WS bridge: which session it belongs to (for the
-// per-session cap), the daemon port to dial, the token the page put in the
-// query, and the upstream socket once open() has dialed it.
+// Per-socket state for the WS bridge: session id (for the per-session cap),
+// daemon port, token, and the upstream socket once open() has dialed it.
 interface BridgeData {
   id: string;
   port: number;
@@ -91,14 +90,26 @@ function publicOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
-// The address the creation throttle keys on: the first hop of X-Forwarded-For
-// (trusted the same way publicOrigin trusts Railway's edge to set it) with a
-// direct-connection fallback to the TCP peer for local/non-proxied runs.
+// The address the creation throttle keys on: X-Forwarded-For's first hop
+// (trusted like publicOrigin trusts it), else the direct TCP peer.
 function clientIp(req: Request, server: Bun.Server<BridgeData>): string {
   const xff = req.headers.get('x-forwarded-for');
   const first = xff?.split(',')[0]?.trim();
   if (first !== undefined && first !== '') return first;
   return server.requestIP(req)?.address ?? 'unknown';
+}
+
+// A bad numeric env value would silently disable the guard it configures
+// (`x >= NaN` is always false); log and fall back to `fallback` instead.
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (Number.isNaN(parsed)) {
+    console.error(`invalid ${name}: ${raw} (using default ${fallback})`);
+    return fallback;
+  }
+  return parsed;
 }
 
 // Maps a request path to a file inside `dir`, or null if it escapes. Containment
@@ -127,11 +138,9 @@ export function createDemoServer(
   const { manager } = opts;
   const distDir = resolve(opts.distDir);
   const createThrottle = new RateLimiter({
-    limit:
-      opts.createsPerMinute ?? Number(process.env.DEMO_CREATES_PER_MINUTE ?? 6),
+    limit: opts.createsPerMinute ?? envInt('DEMO_CREATES_PER_MINUTE', 6),
   });
-  const wsPerSession =
-    opts.wsPerSession ?? Number(process.env.DEMO_WS_PER_SESSION ?? 4);
+  const wsPerSession = opts.wsPerSession ?? envInt('DEMO_WS_PER_SESSION', 4);
   // Concurrent upstream WS currently open per session id; incremented/decremented
   // in the bridge's open/close below, never touched from the fetch handler.
   const wsCounts = new Map<string, number>();
@@ -159,7 +168,7 @@ export function createDemoServer(
     });
   }
 
-  return Bun.serve<BridgeData>({
+  const server = Bun.serve<BridgeData>({
     port: opts.port ?? 3000,
     hostname: '0.0.0.0',
     idleTimeout: IDLE_TIMEOUT_SECONDS,
@@ -288,6 +297,16 @@ export function createDemoServer(
       },
     },
   });
+
+  // Wrapped so every caller's existing server.stop() also retires the
+  // throttle's sweep interval, instead of needing a second stop call.
+  const stop = server.stop.bind(server);
+  server.stop = ((closeActiveConnections?: boolean) => {
+    createThrottle.stop();
+    return stop(closeActiveConnections);
+  }) as typeof server.stop;
+
+  return server;
 }
 
 /**
