@@ -19,8 +19,10 @@ import {
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
 import { HintText, MetaText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
 import { Input } from '@/ui/input';
+import { Label } from '@/ui/label';
 import {
   Select,
   SelectContent,
@@ -297,20 +299,19 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
           </PanelRow>
 
           <PanelRow>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
+            <Label className="flex items-center gap-2 font-normal">
+              <Checkbox
+                className="size-3.5"
                 checked={config.linear.enabled}
                 disabled={!configured}
-                onChange={(e) =>
+                onCheckedChange={(checked) =>
                   void data.handleUpdateConfig({
-                    linear: { enabled: e.target.checked },
+                    linear: { enabled: checked === true },
                   })
                 }
-                className="accent-accent size-3.5"
               />
               <span className="text-[13px]">Sync this project with Linear</span>
-            </label>
+            </Label>
             {!teamChosen && <MetaText>choose a team first</MetaText>}
           </PanelRow>
 
