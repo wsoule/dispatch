@@ -37,6 +37,7 @@ export function CommitsPanel({
           key={commit.sha}
           type="button"
           variant="ghost"
+          size="xs"
           data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
           className={cn(

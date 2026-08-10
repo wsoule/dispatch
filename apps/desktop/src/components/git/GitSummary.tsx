@@ -39,8 +39,19 @@ export function GitSummary({
     <div className="border-border flex flex-wrap items-center gap-x-1 gap-y-0.5 rounded-lg border px-1.5 py-1">
       {/* `type="multiple"` because the chips are laid out flat, not as a mutually exclusive
           radio strip — `value` only ever holds the one active filter, and each chip's own
-          `onClick` (not the group's `onValueChange`) is what drives `onFocus`. */}
-      <ToggleGroup type="multiple" value={[active]} className="contents">
+          `onClick` (not the group's `onValueChange`) is what drives `onFocus`. `spacing={1}`
+          (the `Segmented` precedent) opts every chip out of `ToggleGroupItem`'s
+          `data-[spacing=0]:rounded-none` corner-trimming — an attribute-qualified selector
+          that otherwise beats a plain `rounded-md` on specificity regardless of class order,
+          since `className="contents"` makes the group itself invisible to layout (this row's
+          own `gap-x-1 gap-y-0.5` already spaces the chips) so the numeric value has no visual
+          effect of its own here. */}
+      <ToggleGroup
+        type="multiple"
+        value={[active]}
+        spacing={1}
+        className="contents"
+      >
         <Stat
           label="Branches"
           value={String(health.branches)}
