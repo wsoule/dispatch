@@ -528,6 +528,17 @@ export async function startServer(
   );
   prManager.startPolling(opts.prPollIntervalMs);
 
+  // Hand-merged run branches (a git merge/squash done in a plain checkout,
+  // outside review() and outside any PR) never get their reviewedAt set by
+  // either of the two paths above, so they'd sit in the review queue as
+  // "needs review" forever. Reconcile once at boot — catching anything merged
+  // while dispatchd was down — and then on the PR poller's cadence.
+  orchestrator.reconcileExternallyMergedRuns();
+  const externalMergeTimer = setInterval(
+    () => orchestrator.reconcileExternallyMergedRuns(),
+    opts.prPollIntervalMs ?? 60000
+  );
+
   // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,
   // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
   // stub) fakes the merge queue's own gh/git calls too, not just PrManager's.
@@ -777,6 +788,7 @@ export async function startServer(
       watcher.close();
       sourceWatcher.close();
       prManager.stopPolling();
+      clearInterval(externalMergeTimer);
       mergeQueue.stop();
       unsubscribeLinear();
       await linearSync.stop();
