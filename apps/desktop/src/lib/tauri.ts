@@ -26,6 +26,33 @@ function browserParam(name: string): string | null {
   return new URLSearchParams(window.location.search).get(name);
 }
 
+// Injected by the web demo's session manager into the served index.html
+// (mirrors dispatchd's own __DISPATCH_DAEMON_TOKEN__ injection). Present only
+// on the hosted demo; undefined in the desktop app and plain vite dev.
+export interface DemoConfig {
+  baseUrl: string;
+  root: string;
+  agentToken: string;
+  appToken: string | null;
+}
+
+export function injectedDemoConfig(): DemoConfig | undefined {
+  const value = (globalThis as { __DISPATCH_DEMO__?: unknown })
+    .__DISPATCH_DEMO__;
+  if (typeof value !== 'object' || value === null) return undefined;
+  const cfg = value as Partial<DemoConfig>;
+  return typeof cfg.baseUrl === 'string' &&
+    typeof cfg.root === 'string' &&
+    typeof cfg.agentToken === 'string'
+    ? {
+        baseUrl: cfg.baseUrl,
+        root: cfg.root,
+        agentToken: cfg.agentToken,
+        appToken: cfg.appToken ?? null,
+      }
+    : undefined;
+}
+
 export function listProjects(): Promise<ProjectSummary[]> {
   // Project enumeration is backed by Tauri IPC; in the browser dev
   // harness there's no backend, so degrade to an empty list rather than
@@ -83,10 +110,13 @@ export function getFileDiffForSessionFile(
  * dispatch's own task/board/plan surfaces are offered for it at all. Pure filesystem check on
  * the backend, no daemon involved. */
 export function hasDispatch(root: string): Promise<boolean> {
-  // Browser-dev fallback: if a `port` param is present the caller has already
-  // pointed us at a running daemon, so the project is dispatch-enabled by
-  // definition.
-  if (!isTauri()) return Promise.resolve(browserParam('port') !== null);
+  // Browser-dev fallback: dispatch-enabled if the web demo injected a config,
+  // or if a `port` param points at an already-running daemon.
+  if (!isTauri()) {
+    return Promise.resolve(
+      injectedDemoConfig() !== undefined || browserParam('port') !== null
+    );
+  }
   return invoke('has_dispatch', { root });
 }
 
@@ -103,11 +133,22 @@ export function hasDispatch(root: string): Promise<boolean> {
  * `appToken` comes back non-null only on the spawn path, where the backend reads it off the
  * daemon's stdout; attaching to a daemon someone else started yields request tier only. */
 export function ensureDispatchd(root: string): Promise<DaemonConnection> {
-  // Browser-dev fallback: the daemon is already running (started outside the
-  // app); take its port straight from the URL param instead of spawning one.
-  // Structurally the attach path — a browser cannot read the daemon's stdout,
-  // so `?token=` can only ever carry the request-tier agent token.
   if (!isTauri()) {
+    // Hosted web demo: the session manager proxies a per-sandbox dispatchd
+    // behind an absolute URL, not a loopback port.
+    const demo = injectedDemoConfig();
+    if (demo !== undefined) {
+      return Promise.resolve({
+        port: 0,
+        appToken: demo.appToken,
+        agentToken: demo.agentToken,
+        baseUrl: demo.baseUrl,
+      });
+    }
+    // Browser-dev fallback: the daemon is already running (started outside the
+    // app); take its port straight from the URL param instead of spawning one.
+    // Structurally the attach path — a browser cannot read the daemon's stdout,
+    // so `?token=` can only ever carry the request-tier agent token.
     const port = browserParam('port');
     return port !== null
       ? Promise.resolve({
@@ -143,12 +184,13 @@ export function restartDispatchd(root: string): Promise<DaemonConnection> {
  * arg, no dev checkout above the binary): that's an expected state the frontend handles by
  * offering "+ Add project", not an error to surface as a fatal screen. */
 export function currentProjectRoot(): Promise<string | null> {
-  // Browser-dev fallback: the active project root comes from the URL param so the full UI can
-  // run against a live daemon in a plain browser. A missing `?root=` resolves to `null` (same
-  // "no project yet" contract as the packaged app), matching this function's return type
-  // rather than rejecting.
+  // Browser-dev fallback: the active project root comes from the web demo's
+  // injected config if present, else the URL param, so the full UI can run
+  // against a live daemon in a plain browser. A missing root resolves to
+  // `null` (same "no project yet" contract as the packaged app), matching
+  // this function's return type rather than rejecting.
   if (!isTauri()) {
-    return Promise.resolve(browserParam('root'));
+    return Promise.resolve(injectedDemoConfig()?.root ?? browserParam('root'));
   }
   return invoke('current_project_root');
 }
