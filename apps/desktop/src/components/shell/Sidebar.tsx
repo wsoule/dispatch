@@ -24,6 +24,7 @@ import { colorForProject } from '../../lib/projectColor';
 import { DraftTray } from './DraftTray';
 import { SyncChip } from './SyncChip';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { CountChip } from '@/ui/chrome/CountChip';
 import {
   DropdownMenu,
@@ -393,17 +394,20 @@ export function Sidebar({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : noProjectYet ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => onAddProject()}
               className={cn(
-                'text-muted-foreground hover:bg-accent hover:text-foreground flex items-center rounded-md py-1.5 text-left text-[13px] transition-colors duration-150',
-                collapsed ? 'w-full justify-center' : 'w-full gap-2 px-2'
+                'h-auto rounded-md py-1.5 text-left text-[13px] font-normal text-muted-foreground hover:text-foreground transition-colors duration-150',
+                collapsed
+                  ? 'w-full px-0 has-[>svg]:px-0'
+                  : 'w-full justify-start px-2 has-[>svg]:px-2'
               )}
             >
               <Plus className="size-3.5 shrink-0" />
               {!collapsed && <span className="flex-1">Add project…</span>}
-            </button>
+            </Button>
           ) : (
             !collapsed && (
               <p className="text-muted-foreground px-2 text-[13px]">

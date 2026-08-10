@@ -5,6 +5,7 @@ import { formatBytes } from '../../lib/formatBytes';
 import type { GitFilter, GitHealth } from '../../lib/gitHealth';
 import { computeGitHealth } from '../../lib/gitHealth';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 interface GitSummaryProps {
@@ -102,17 +103,23 @@ export function GitSummary({
       <span className="flex-1" />
 
       {health.reclaimable.length > 0 && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           disabled={reclaiming}
           onClick={onReclaimMerged}
           title={`${formatBytes(health.reclaimableBytes)} in ${health.reclaimable.length} merged worktree${health.reclaimable.length === 1 ? '' : 's'}`}
-          className="border-border hover:bg-accent rounded-md border px-1.5 py-0.5 text-[11px] disabled:opacity-50"
+          // `disabled:pointer-events-auto` undoes Button's own suppression — the native
+          // `title` (byte/worktree count) is the only place that detail shows, and a
+          // pointer-events-blocked disabled button can't receive the hover that shows it.
+          // Same device as BrainDumpView's "Refresh groups" button.
+          className="border-border hover:text-foreground h-auto border px-1.5 py-0.5 text-[11px] font-normal disabled:pointer-events-auto"
         >
           {reclaiming
             ? 'Reclaiming…'
             : `Reclaim ${formatBytes(health.reclaimableBytes)}`}
-        </button>
+        </Button>
       )}
     </div>
   );
