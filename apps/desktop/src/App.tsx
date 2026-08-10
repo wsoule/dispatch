@@ -888,6 +888,10 @@ function App() {
                             ? buildTaskPanelProps(activeTaskDoc)
                             : undefined
                         }
+                        onViewPr={(runId) => {
+                          dispatchNav({ type: 'openRun', runId });
+                          selectProjectView('review');
+                        }}
                       />
                     )}
                   {navState.projectView === 'runs' && (

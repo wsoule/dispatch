@@ -6,6 +6,7 @@ import { ErrorBoundary } from '../components/shell/ErrorBoundary';
 import type { TaskDetailPanelProps } from '../components/tasks/detail';
 import { TaskDetailPanel } from '../components/tasks/detail';
 import { TaskChatTab } from '../components/tasks/TaskChatTab';
+import { TaskDiffTab } from '../components/tasks/TaskDiffTab';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import { formatRelativeTimeFromIso } from '../lib/format';
@@ -27,12 +28,14 @@ export interface TaskViewProps {
    * empty; this component's `doc === null` branch below renders the same "gone" state first,
    * so the Details tab never actually needs it in that case. */
   panelProps: TaskDetailPanelProps | undefined;
+  /** Jumps to the Pull requests tab — see `RunsView`'s identical prop. */
+  onViewPr: (runId: string) => void;
 }
 
 /**
  * One task, full-window, with Details/Chat/Diff tabs. Details hosts the same
- * `TaskDetailPanel` the peek dialog uses; Chat hosts `TaskChatTab`; Diff is
- * still a placeholder here (Task 6 fills it in).
+ * `TaskDetailPanel` the peek dialog uses; Chat hosts `TaskChatTab`; Diff hosts
+ * `TaskDiffTab`.
  */
 export function TaskView({
   data,
@@ -43,6 +46,7 @@ export function TaskView({
   onSelectRun,
   onBack,
   panelProps,
+  onViewPr,
 }: TaskViewProps) {
   const doc =
     data.tasksIncludingArchived.find((t) => t.meta.id === taskId) ?? null;
@@ -131,9 +135,11 @@ export function TaskView({
           />
         )}
         {tab === 'diff' && (
-          <div className="text-muted-foreground flex h-full items-center justify-center text-[13px]">
-            Coming in the next task.
-          </div>
+          <TaskDiffTab
+            data={data}
+            selectedRun={selectedRun}
+            onViewPr={onViewPr}
+          />
         )}
       </div>
     </div>
