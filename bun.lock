@@ -164,6 +164,7 @@
         "@dispatch/core": "workspace:*",
         "@dispatch/mcp": "workspace:*",
         "yaml": "catalog:",
+        "zod": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
