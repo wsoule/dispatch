@@ -10,11 +10,6 @@
       "entry": ["scripts/*.ts"],
       "project": ["scripts/**/*.ts"]
     },
-    "packages/server": {
-      // The daemon's `bin` is src/bin.ts, but src/index.ts is the library face
-      // (startServer) that the CLI and every server test reach for.
-      "entry": ["src/index.ts"]
-    },
     "apps/site": {
       // A static marketing site: server.ts serves public/ as browser assets,
       // so nothing under it is ever imported. Mirrors the `apps/site/public/**`
@@ -26,6 +21,13 @@
       // (see src/paths.ts's `template`), so nothing in this workspace ever
       // imports it. Unreferenced here is the point, not dead code.
       "ignore": ["storefront-src/**"]
+    },
+    "apps/demo": {
+      // daemon.ts is spawned as a subprocess (`bun src/daemon.ts --root ...`)
+      // by the manager and by test/daemon.test.ts, never imported — no
+      // static analysis reaches it, so it needs the same explicit entry
+      // packages/server's own bin gets.
+      "entry": ["src/daemon.ts"]
     }
   },
 

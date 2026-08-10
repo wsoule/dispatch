@@ -9,6 +9,7 @@
   "type": "module",
   "exports": {
     "./package.json": "./package.json",
+    ".": "./src/index.ts",
     "./testing": "./src/testing.ts"
   },
   "scripts": {
