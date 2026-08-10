@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -28,6 +29,9 @@ interface SegmentedProps<T extends string> {
  *
  * Icon options show their label too, collapsing to sr-only under `sm` so a
  * toolbar cannot clip while the accessible name stays intact at every width.
+ *
+ * Built on radix ToggleGroup so roving focus and single-selection semantics
+ * come from the primitive rather than being hand-rolled here.
  */
 export function Segmented<T extends string>({
   value,
@@ -37,42 +41,44 @@ export function Segmented<T extends string>({
   className,
 }: SegmentedProps<T>) {
   return (
-    <div
-      role="group"
+    <ToggleGroup
+      type="single"
+      value={value}
+      // A segmented control always has a selection; ignore radix's deselect.
+      onValueChange={(next) => next !== '' && onChange(next as T)}
       aria-label={label}
+      // Non-zero spacing opts out of ToggleGroupItem's corner-radius trimming
+      // (data-[spacing=0]:rounded-*); the actual gap comes from className.
+      spacing={1}
       className={cn(
         'border-border flex items-center gap-0.5 rounded-md border p-0.5',
         className
       )}
     >
-      {options.map((option) => {
-        const active = value === option.value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            title={option.label}
-            aria-pressed={active}
-            onClick={() => onChange(option.value)}
+      {options.map((option) => (
+        <ToggleGroupItem
+          key={option.value}
+          value={option.value}
+          title={option.label}
+          className={cn(
+            'flex h-auto items-center gap-1.5 rounded-[5px] px-2 py-0.5 transition-colors duration-150',
+            // toggleVariants sets text-sm/font-medium; the old markup had no
+            // size class, so restore its inherited font-size/weight exactly.
+            'text-[length:inherit] font-[weight:inherit]',
+            'text-muted-foreground hover:bg-transparent hover:text-foreground'
+          )}
+        >
+          {option.icon}
+          <span
             className={cn(
-              'flex items-center gap-1.5 rounded-[5px] px-2 py-0.5 transition-colors duration-150',
-              active
-                ? 'bg-accent text-accent-foreground'
-                : 'text-muted-foreground hover:text-foreground'
+              'whitespace-nowrap',
+              option.icon !== undefined && 'max-sm:sr-only'
             )}
           >
-            {option.icon}
-            <span
-              className={cn(
-                'whitespace-nowrap',
-                option.icon !== undefined && 'max-sm:sr-only'
-              )}
-            >
-              {option.label}
-            </span>
-          </button>
-        );
-      })}
-    </div>
+            {option.label}
+          </span>
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
   );
 }

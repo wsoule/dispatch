@@ -4,9 +4,11 @@ import type {
   DiffInlineHighlight,
   DiffLayout,
 } from '../../lib/diffDisplay';
+import { Checkbox } from '@/ui/checkbox';
 import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
 import type { SegmentedOption } from '@/ui/chrome/Segmented';
 import { Segmented } from '@/ui/chrome/Segmented';
+import { Label } from '@/ui/label';
 import {
   Select,
   SelectContent,
@@ -114,43 +116,42 @@ export function DiffsSection() {
       </PanelRow>
 
       <PanelRow>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
+        <Label className="flex items-center gap-2 font-normal">
+          <Checkbox
+            className="size-3.5"
             checked={settings.showBackgrounds}
-            onChange={(e) =>
-              updateSettings({ showBackgrounds: e.target.checked })
+            onCheckedChange={(checked) =>
+              updateSettings({ showBackgrounds: checked === true })
             }
-            className="accent-accent size-3.5"
           />
           <span className="text-[13px]">Show backgrounds on changed lines</span>
-        </label>
+        </Label>
       </PanelRow>
 
       <PanelRow>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
+        <Label className="flex items-center gap-2 font-normal">
+          <Checkbox
+            className="size-3.5"
             checked={settings.showLineNumbers}
-            onChange={(e) =>
-              updateSettings({ showLineNumbers: e.target.checked })
+            onCheckedChange={(checked) =>
+              updateSettings({ showLineNumbers: checked === true })
             }
-            className="accent-accent size-3.5"
           />
           <span className="text-[13px]">Show line numbers</span>
-        </label>
+        </Label>
       </PanelRow>
 
       <PanelRow>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
+        <Label className="flex items-center gap-2 font-normal">
+          <Checkbox
+            className="size-3.5"
             checked={settings.wrapLines}
-            onChange={(e) => updateSettings({ wrapLines: e.target.checked })}
-            className="accent-accent size-3.5"
+            onCheckedChange={(checked) =>
+              updateSettings({ wrapLines: checked === true })
+            }
           />
           <span className="text-[13px]">Wrap long lines</span>
-        </label>
+        </Label>
       </PanelRow>
     </Panel>
   );

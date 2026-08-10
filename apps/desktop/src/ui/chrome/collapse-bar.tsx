@@ -18,6 +18,7 @@ export function CollapseBar({
   return (
     <button
       type="button"
+      aria-expanded={!collapsed}
       onClick={onToggle}
       className={cn(
         'bg-muted hover:bg-secondary dense-meta flex w-full items-center gap-2 rounded px-3 py-1.5',

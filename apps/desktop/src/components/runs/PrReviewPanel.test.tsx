@@ -253,3 +253,82 @@ describe('PrReviewPanel', () => {
     expect(reviews).toEqual([]);
   });
 });
+
+// Task 4: GitHub takes a review only while the PR is open, and the server
+// refuses the batch before the POST once it is not. A reviewer holding
+// staged notes has to read that here, not in an error under a live button.
+describe('PrReviewPanel on a PR that is no longer open', () => {
+  const calls: { review: number; comment: number } = { review: 0, comment: 0 };
+
+  function closedPanel(state: 'CLOSED' | 'MERGED', stagedNotes: number): void {
+    calls.review = 0;
+    calls.comment = 0;
+    render(
+      <PrReviewPanel
+        detail={{ ...DETAIL, status: { ...DETAIL.status, state } }}
+        loading={false}
+        error={null}
+        stagedNotes={stagedNotes}
+        onReview={() => {
+          calls.review += 1;
+          return Promise.resolve();
+        }}
+        onComment={() => {
+          calls.comment += 1;
+          return Promise.resolve();
+        }}
+        onAgentReview={() => Promise.resolve(DISPATCHED)}
+      />
+    );
+  }
+
+  test.each(['CLOSED', 'MERGED'] as const)(
+    'says the PR is %s and withholds every action GitHub would refuse',
+    (state) => {
+      closedPanel(state, 0);
+      expect(
+        screen.getByText(`This PR is ${state.toLowerCase()}.`)
+      ).toBeDefined();
+      expect(screen.queryByRole('button', { name: /approve/i })).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: /request changes/i })
+      ).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: /review with agent/i })
+      ).toBeNull();
+    }
+  );
+
+  // GitHub does take an ordinary comment on a closed PR — only a review is
+  // refused. Withholding the whole composer would have hidden a path that
+  // works, so what is left has to be the comment and not the review.
+  test('still offers a plain comment, and sends it as a comment', async () => {
+    closedPanel('MERGED', 2);
+    const box = screen.getByRole('textbox');
+    fireEvent.change(box, { target: { value: 'noting this for later' } });
+    fireEvent.click(screen.getByRole('button', { name: /comment/i }));
+    await waitFor(() => expect(calls.comment).toBe(1));
+    // Never onReview: that is the call the server 409s once a PR is closed,
+    // and staged notes here would otherwise route the button to it.
+    expect(calls.review).toBe(0);
+  });
+
+  test('names the staged notes that can no longer be sent', () => {
+    closedPanel('MERGED', 2);
+    expect(
+      screen.getByText(/your 2 staged notes cannot be sent/i)
+    ).toBeDefined();
+  });
+
+  test('counts a single staged note in the singular', () => {
+    closedPanel('CLOSED', 1);
+    expect(
+      screen.getByText(/your 1 staged note cannot be sent/i)
+    ).toBeDefined();
+  });
+
+  test('says nothing about staged notes when there are none', () => {
+    closedPanel('MERGED', 0);
+    expect(screen.queryByText(/staged note/i)).toBeNull();
+  });
+});

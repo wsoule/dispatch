@@ -1,9 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Loader2, Terminal, TriangleAlert } from 'lucide-react';
+import { Terminal, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 
 import { ensureDispatchd } from '../lib/tauri';
 import { Button } from '@/ui/button';
+import { Spinner } from '@/ui/spinner';
 
 interface GetStartedViewProps {
   /** Absolute path of the one project this window is scoped to — shown here specifically
@@ -78,7 +79,7 @@ export function GetStartedView({ projectPath }: GetStartedViewProps) {
       >
         {initState === 'pending' ? (
           <>
-            <Loader2 className="size-3.5 animate-spin" /> Initializing…
+            <Spinner className="size-3.5" /> Initializing…
           </>
         ) : (
           'Initialize project'

@@ -25,6 +25,7 @@ import type { ReviewChatHandle } from './ReviewChatPanel';
 import { ReviewChatPanel } from './ReviewChatPanel';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 import { RunDiffView } from './RunDiffView';
+import { Alert, AlertDescription } from '@/ui/alert';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
 
@@ -204,9 +205,14 @@ export function RunReviewView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       {error !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
-          {error}
-        </div>
+        <Alert
+          variant="destructive"
+          className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2"
+        >
+          <AlertDescription className="text-destructive text-[12px]">
+            {error}
+          </AlertDescription>
+        </Alert>
       )}
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-4 overflow-hidden">

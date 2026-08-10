@@ -1,3 +1,4 @@
+import { tasksConflict } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import type { RepoPr } from '../../src/orchestrator/pr.js';
@@ -5,6 +6,7 @@ import {
   buildPrReviewTask,
   isPrReviewTaskFor,
   PR_REVIEW_LABEL,
+  prNumberFromOrigin,
   prReviewOrigin,
 } from '../../src/orchestrator/prReviewTask.js';
 
@@ -22,6 +24,7 @@ function makePr(overrides: Partial<RepoPr & { body: string }> = {}) {
     isDraft: false,
     updatedAt: '2026-08-01T00:00:00Z',
     headRefOid: 'deadbeef',
+    state: 'OPEN' as const,
     isCrossRepository: false,
     headRepositoryOwner: 'acme',
     reviewDecision: null,
@@ -204,5 +207,60 @@ describe('isPrReviewTaskFor', () => {
   // Another artifact type could land here later; only a PR origin counts.
   it('does not match a task derived from something else', () => {
     expect(isPrReviewTaskFor({ derivedFrom: 'linear-issue:7' }, 7)).toBe(false);
+  });
+});
+
+// The inverse of prReviewOrigin, used to name the `refs/dispatch/pr/<n>` a
+// retiring review should delete. Wrong answers here delete the wrong ref, so
+// the round trip is what it promises — never a best-effort parse.
+describe('prNumberFromOrigin', () => {
+  it('reads back the number prReviewOrigin minted', () => {
+    expect(prNumberFromOrigin(prReviewOrigin(12))).toBe(12);
+    expect(prNumberFromOrigin(prReviewOrigin(1))).toBe(1);
+  });
+
+  it('returns null for an origin no PR review ever minted', () => {
+    expect(prNumberFromOrigin('linear-issue:7')).toBeNull();
+    expect(prNumberFromOrigin('github-pr')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:abc')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:1.5')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:-3')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:7 ')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:7/../../heads/main')).toBeNull();
+  });
+
+  // A padded or oversized number parses to something prReviewOrigin would
+  // never have written — so it names a ref this code never created.
+  it('refuses a number that does not mint the same string back', () => {
+    expect(prNumberFromOrigin('github-pr:007')).toBeNull();
+    expect(prNumberFromOrigin('github-pr:99999999999999999999')).toBeNull();
+  });
+});
+
+// escapeGlobPath (here) and GLOB_ESCAPE (core's conflicts.ts) spell the same
+// character set twice, because core cannot depend on the server. This is the
+// only place that can see both: if the two drift, a synthesized writes entry
+// stops equalling the plain path a human declared and the conflict — two
+// tasks scheduled onto one file — goes undetected.
+describe('glob escaping round-trips through conflict detection', () => {
+  // Every ASCII punctuation character a path may legally contain, rather than
+  // the ones escaped today: a character *added* to one list and not the other
+  // is the drift being guarded, so it has to already be under test. `/` is
+  // the separator and excluded — the escapers must never touch it.
+  const PUNCTUATION = '!"#$%&\'()*+,-.:;<=>?@[\\]^_`{|}~'
+    .split('')
+    .map((c) => `x${c}y`)
+    .join('.');
+
+  it('conflicts an escaped writes entry with its plain twin', () => {
+    const path = `app/${PUNCTUATION}/route.ts`;
+    const writes = buildPrReviewTask(makePr(), [{ path }]).writes ?? [];
+
+    // An empty writes-set conflicts with everything, so pin it non-empty or
+    // the assertion below passes for the wrong reason.
+    expect(writes).toHaveLength(1);
+    expect(writes).not.toEqual([path]);
+    expect(tasksConflict(writes, [path])).toBe(true);
   });
 });

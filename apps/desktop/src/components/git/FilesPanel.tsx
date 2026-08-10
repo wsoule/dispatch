@@ -2,6 +2,8 @@ import { AlertTriangle, Check, FileQuestion, Square } from 'lucide-react';
 
 import type { GitFileRow } from '@/lib/gitPanels';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 const SECTION_LABEL: Record<GitFileRow['section'], string> = {
   conflicted: 'Conflicted',
@@ -61,28 +63,41 @@ export function FilesPanel({
                 selected ? 'bg-accent' : 'hover:bg-muted/50'
               )}
             >
-              <button
-                type="button"
-                disabled={busy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleStage(row);
-                }}
-                title={
-                  row.section === 'staged' ? 'Unstage (space)' : 'Stage (space)'
-                }
-                className="text-muted-foreground hover:text-foreground grid size-4 shrink-0 place-items-center disabled:opacity-50"
-              >
-                {row.section === 'conflicted' ? (
-                  <AlertTriangle className="text-destructive size-3.5" />
-                ) : row.section === 'staged' ? (
-                  <Check className="size-3.5" />
-                ) : row.section === 'untracked' ? (
-                  <FileQuestion className="size-3.5" />
-                ) : (
-                  <Square className="size-3.5" />
-                )}
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleStage(row);
+                    }}
+                    aria-label={
+                      row.section === 'staged'
+                        ? 'Unstage (space)'
+                        : 'Stage (space)'
+                    }
+                    className="text-muted-foreground hover:text-foreground size-4 shrink-0 hover:bg-transparent disabled:opacity-50"
+                  >
+                    {row.section === 'conflicted' ? (
+                      <AlertTriangle className="text-destructive size-3.5" />
+                    ) : row.section === 'staged' ? (
+                      <Check className="size-3.5" />
+                    ) : row.section === 'untracked' ? (
+                      <FileQuestion className="size-3.5" />
+                    ) : (
+                      <Square className="size-3.5" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {row.section === 'staged'
+                    ? 'Unstage (space)'
+                    : 'Stage (space)'}
+                </TooltipContent>
+              </Tooltip>
               <span className="truncate font-mono">{row.path}</span>
             </div>
           </div>

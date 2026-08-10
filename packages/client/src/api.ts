@@ -368,6 +368,11 @@ export interface RepoPr {
   updatedAt: string;
   /** Head commit SHA — the `commit_id` GitHub wants when posting a review comment. */
   headRefOid: string;
+  /**
+   * Open on GitHub, or closed/merged. Only an OPEN PR accepts a review, so
+   * the server refuses a staged batch — and says which — before the POST.
+   */
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
   /** True when the head branch lives in a fork; gates Phase 4's confirm. */
   isCrossRepository: boolean;
   /** Login owning the head repository, named in that confirm. */

@@ -22,7 +22,7 @@ import {
   useProjectLedger,
   useTaskFindings,
 } from '../hooks/useOrchestration';
-import { useRepoPrDetail } from '../hooks/useRepoPrDetail';
+import { repoPrDetailKey, useRepoPrDetail } from '../hooks/useRepoPrDetail';
 import type { ImpactSubjectRef } from '../lib/appNav';
 import { findingWarnings, partitionFindings } from '../lib/findings';
 import { normalizeDiffFilePath } from '../lib/pierreTree';
@@ -36,6 +36,7 @@ import { LandingView } from './LandingView';
 import { isTerminalRunState } from '@/lib/runState';
 import { cn } from '@/lib/utils';
 import { MetaText } from '@/ui/chrome';
+import { IconToggle } from '@/ui/chrome/IconToggle';
 import { StateDot } from '@/ui/chrome/StateDot';
 
 interface ReviewViewProps {
@@ -107,14 +108,18 @@ export function ReviewView({
     return () => clearInterval(id);
   }, [queryClient, data.port]);
 
-  // A PR that has left the open list (merged or closed by someone else) has
-  // nothing left to review. `null` is "not loaded yet", not "none open".
+  // A PR that has left the open list merged or closed while it was on screen.
+  // The surface stays open — a reviewer holding staged notes has to be told
+  // why they cannot send them, and closing it out from under them would take
+  // the notes and the diff away too. Only the status is now wrong, so that is
+  // what gets re-read. `null` is "not loaded yet", not "none open".
   useEffect(() => {
     if (selectedPrNumber === null || data.repoPrs === null) return;
-    if (!data.repoPrs.some((pr) => pr.number === selectedPrNumber)) {
-      setSelectedPrNumber(null);
-    }
-  }, [data.repoPrs, selectedPrNumber]);
+    if (data.repoPrs.some((pr) => pr.number === selectedPrNumber)) return;
+    void queryClient.invalidateQueries({
+      queryKey: repoPrDetailKey(data.client?.baseUrl, selectedPrNumber),
+    });
+  }, [data.repoPrs, data.client, queryClient, selectedPrNumber]);
 
   const repoPr = useRepoPrDetail(data.client, data.port, selectedPrNumber);
 
@@ -743,24 +748,28 @@ function Header({
           </>
         )}
         <span className="flex-1" />
-        <button
-          type="button"
+        <IconToggle
+          on={filesOpen}
           onClick={onToggleFiles}
-          aria-pressed={filesOpen}
-          className="text-accent-foreground text-[11px]"
+          label={filesOpen ? 'Hide files' : 'Show files'}
+          className="text-accent-foreground hover:text-accent-foreground data-[state=on]:text-accent-foreground border-none p-0 text-[11px] hover:bg-transparent data-[state=on]:bg-transparent"
         >
           {filesOpen ? 'Hide files' : 'Show files'}
-        </button>
-        <button
-          type="button"
+        </IconToggle>
+        <IconToggle
+          on={railOpen}
           onClick={onToggleRail}
-          aria-pressed={railOpen}
-          className="text-accent-foreground text-[11px]"
+          label={
+            railOpen
+              ? `Hide ${railLabel.toLowerCase()}`
+              : `${railLabel} (${railCount})`
+          }
+          className="text-accent-foreground hover:text-accent-foreground data-[state=on]:text-accent-foreground border-none p-0 text-[11px] hover:bg-transparent data-[state=on]:bg-transparent"
         >
           {railOpen
             ? `Hide ${railLabel.toLowerCase()}`
             : `${railLabel} (${railCount})`}
-        </button>
+        </IconToggle>
       </div>
     </div>
   );

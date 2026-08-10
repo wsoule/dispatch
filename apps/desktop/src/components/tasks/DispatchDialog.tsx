@@ -5,6 +5,10 @@ import { useMemo, useState } from 'react';
 import { buildDispatchPreview } from '@/lib/dispatchPreview';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
+import { FieldLabel } from '@/ui/field';
+import { Input } from '@/ui/input';
+import { ScrollArea } from '@/ui/scroll-area';
 
 interface DispatchDialogProps {
   /** What the user selected — every one of these appears in the preview. */
@@ -62,62 +66,78 @@ export function DispatchDialog({
   );
 
   return (
-    <div
-      className="bg-overlay fixed inset-0 z-50 grid place-items-center p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onCancel();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel();
       }}
     >
-      <div className="bg-card shadow-hairline-strong w-[min(560px,100%)] rounded-xl p-5">
-        <h2 className="text-[17px] font-medium">{title}</h2>
+      {/* `shadow-hairline-strong` is a theme-scale token (tailwind.css), not one of
+          twMerge's built-in shadow names, so it can't dedupe against DialogContent's
+          own `shadow-lg` — both classes would survive and `shadow-lg` would win in the
+          compiled CSS. Spelling it out as `shadow-[inset_0_0_0_1px_var(--border-strong)]`
+          (the value `--hairline-strong` resolves to, see tokens.css) is recognized by
+          twMerge as the same "shadow" group as `shadow-lg`, so it actually overrides it. */}
+      <DialogContent className="bg-card w-[min(560px,100%)] gap-0 rounded-xl border-none p-5 shadow-[inset_0_0_0_1px_var(--border-strong)] sm:max-w-[560px]">
+        <DialogTitle className="text-[17px] leading-none font-medium">
+          {title}
+        </DialogTitle>
         <p className="text-muted-foreground mt-1 text-[12.5px]">
           {preview.summary}
         </p>
 
-        <label className="mt-3 flex items-center gap-2">
-          <span className="text-muted-foreground text-[12px]">Run at most</span>
-          <input
+        <div className="mt-3 flex items-center gap-2">
+          <FieldLabel
+            htmlFor="dispatch-concurrency"
+            className="text-muted-foreground w-auto text-[12px] font-normal"
+          >
+            Run at most
+          </FieldLabel>
+          {/* Same trap as the DialogContent above: `shadow-hairline` doesn't dedupe
+              against Input's built-in `shadow-xs`, so both survive and `shadow-xs`
+              wins. Spelled out, twMerge treats it as the same "shadow" group. */}
+          <Input
+            id="dispatch-concurrency"
             value={concurrency}
             onChange={(e) => setConcurrency(e.target.value)}
             inputMode="numeric"
-            aria-label="Concurrency"
-            className="shadow-hairline w-14 rounded-md px-2 py-1 text-center font-mono text-[12.5px] outline-none"
+            className="h-auto w-14 rounded-md px-2 py-1 text-center font-mono text-[12.5px] shadow-[inset_0_0_0_1px_var(--border-default)] outline-none"
           />
           <span className="text-muted-foreground text-[12px]">at a time</span>
-        </label>
+        </div>
 
-        <ul className="mt-3 max-h-64 overflow-y-auto">
-          {preview.rows.map((row) => (
-            <li
-              key={row.taskId}
-              className="grid grid-cols-[64px_minmax(0,1fr)_90px] items-center gap-2 py-1"
-            >
-              <span className="dense-meta">{row.taskId}</span>
-              <span
-                className={cn(
-                  'truncate text-[13px]',
-                  row.disposition === 'starts-now'
-                    ? 'text-foreground'
-                    : 'text-muted-foreground'
-                )}
+        <ScrollArea className="mt-3 max-h-64">
+          <ul>
+            {preview.rows.map((row) => (
+              <li
+                key={row.taskId}
+                className="grid grid-cols-[64px_minmax(0,1fr)_90px] items-center gap-2 py-1"
               >
-                {row.title}
-              </span>
-              <span
-                className={cn(
-                  'dense-meta text-right',
-                  row.disposition === 'starts-now' && 'text-accent-foreground',
-                  row.disposition === 'not-ready' && 'text-state-blocked'
-                )}
-              >
-                {DISPOSITION_LABEL[row.disposition]}
-              </span>
-            </li>
-          ))}
-        </ul>
+                <span className="dense-meta">{row.taskId}</span>
+                <span
+                  className={cn(
+                    'truncate text-[13px]',
+                    row.disposition === 'starts-now'
+                      ? 'text-foreground'
+                      : 'text-muted-foreground'
+                  )}
+                >
+                  {row.title}
+                </span>
+                <span
+                  className={cn(
+                    'dense-meta text-right',
+                    row.disposition === 'starts-now' &&
+                      'text-accent-foreground',
+                    row.disposition === 'not-ready' && 'text-state-blocked'
+                  )}
+                >
+                  {DISPOSITION_LABEL[row.disposition]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </ScrollArea>
 
         {error !== null && (
           <p className="text-state-failed mt-2 text-[12px]">{error}</p>
@@ -148,7 +168,7 @@ export function DispatchDialog({
             Dispatch {preview.startsNow + preview.queued}
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

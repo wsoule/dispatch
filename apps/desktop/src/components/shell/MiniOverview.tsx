@@ -4,8 +4,9 @@ import { useMemo } from 'react';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { buildFeed } from '../../lib/controlRoom';
 import { FEED_STATE_LABEL, FEED_STATE_ORDER } from '../../lib/feedState';
-import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface MiniOverviewProps {
   data: DispatchProjectData;
@@ -70,15 +71,21 @@ export function MiniOverview({
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-label="Show the overview rail"
-        title="Show the overview rail"
-        className="border-border text-muted-foreground hover:text-foreground shrink-0 border-l p-2"
-      >
-        <PanelRightOpen className="size-4" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={onToggle}
+            aria-label="Show the overview rail"
+            className="text-muted-foreground border-border h-auto shrink-0 rounded-none border-l p-2"
+          >
+            <PanelRightOpen className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="left">Show the overview rail</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -86,15 +93,21 @@ export function MiniOverview({
     <aside className="border-border flex w-60 shrink-0 flex-col gap-3 overflow-y-auto border-l p-3">
       <div className="flex items-center gap-2">
         <span className="dense-label flex-1">Overview</span>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label="Hide the overview rail"
-          title="Hide the overview rail"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <PanelRightClose className="size-3.5" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={onToggle}
+              aria-label="Hide the overview rail"
+              className="text-muted-foreground h-auto p-0.5"
+            >
+              <PanelRightClose className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Hide the overview rail</TooltipContent>
+        </Tooltip>
       </div>
 
       {groups.length === 0 ? (
@@ -115,20 +128,20 @@ export function MiniOverview({
               {/* Three per group. The rail is a glance, not a second inbox —
                   the count above already says how much is behind it. */}
               {rows.slice(0, 3).map((row) => (
-                <button
+                <Button
                   key={row.runId}
                   type="button"
+                  variant="ghost"
+                  size="xs"
                   onClick={() =>
                     state === 'review'
                       ? onReviewRun(row.runId)
                       : onOpenRun(row.runId)
                   }
-                  className={cn(
-                    'hover:bg-muted/60 truncate rounded px-1.5 py-1 text-left text-[12px]'
-                  )}
+                  className="h-auto justify-start truncate rounded px-1.5 py-1 text-left text-[12px] font-normal"
                 >
                   {row.title}
-                </button>
+                </Button>
               ))}
               {total > 3 && (
                 <span className="dense-meta px-1.5">+{total - 3} more</span>

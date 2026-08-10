@@ -2,6 +2,7 @@ import { formatRelativeTime, sessionDisplayName } from '../../lib/format';
 import { modelDisplayName } from '../../lib/models';
 import type { Session } from '../../lib/types';
 import { statusDotClass } from './sessionDisplay';
+import { Button } from '@/ui/button';
 import { ProjectDot } from '@/ui/chrome/ProjectDot';
 
 interface SessionRowProps {
@@ -18,9 +19,10 @@ interface SessionRowProps {
  */
 export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
   return (
-    <button
+    <Button
+      variant="ghost"
       onClick={onClick}
-      className="border-border bg-card hover:bg-accent/40 flex w-full items-center justify-between gap-4 rounded-lg border p-3 text-left transition-colors"
+      className="border-border bg-card hover:bg-accent/40 flex h-auto w-full items-center justify-between gap-4 rounded-lg border p-3 text-left font-normal whitespace-normal transition-colors"
     >
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex items-center gap-2">
@@ -50,6 +52,6 @@ export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
           {session.prompt_tokens + session.completion_tokens} tokens
         </span>
       </div>
-    </button>
+    </Button>
   );
 }

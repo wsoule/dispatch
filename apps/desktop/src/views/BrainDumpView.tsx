@@ -20,7 +20,12 @@ import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
+import { Panel } from '@/ui/chrome';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
+import { Kbd } from '@/ui/kbd';
+import { Textarea } from '@/ui/textarea';
 
 // Mirrors InboxClusterer's own MIN_ITEMS (packages/server/src/inboxClusterer.ts) — the sidebar
 // copy and the auto-cluster trigger must agree on this threshold.
@@ -228,8 +233,10 @@ export function BrainDumpView({
           </span>
         </div>
 
-        <div className="shadow-hairline bg-card rounded-lg p-3.5">
-          <textarea
+        <Panel className="p-3.5">
+          {/* `field-sizing-fixed` cancels the primitive's `field-sizing-content`: this box
+              stays a draggable 92px rather than growing with what you type. */}
+          <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -241,7 +248,7 @@ export function BrainDumpView({
               }
             }}
             placeholder="Dump it here — bugs, half-ideas, things you noticed, one per line…"
-            className="text-foreground min-h-[92px] w-full resize-y bg-transparent text-[14px] leading-relaxed outline-none"
+            className="text-foreground field-sizing-fixed min-h-[92px] resize-y border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[14px] dark:bg-transparent"
           />
           <div className="mt-2.5 flex items-center gap-2.5">
             <span className="dense-meta flex-1">
@@ -249,26 +256,29 @@ export function BrainDumpView({
                 ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} — each becomes one item`
                 : 'One thought per line. Paste a wall of text and it gets split.'}
             </span>
-            <button
-              type="button"
+            {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
+                size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}
+            <Button
+              variant="ghost"
+              size="xs"
               disabled={draft.trim() === '' || busy}
               onClick={() => onPlanText(draft)}
-              className="shadow-hairline text-muted-foreground hover:bg-muted/60 hover:text-foreground flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] disabled:opacity-50"
+              className="shadow-hairline text-muted-foreground hover:bg-muted/60 hover:text-foreground h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
             >
               <Sparkles className="size-3.5" />
               Hand it to the planner
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              size="xs"
               disabled={draft.trim() === '' || busy}
               onClick={capture}
-              className="text-accent-foreground bg-accent hover:bg-accent/80 flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] disabled:opacity-50"
+              className="text-accent-foreground bg-accent hover:bg-accent/80 h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
             >
               <Inbox className="size-3.5" />
               Drop into the inbox
-            </button>
+            </Button>
           </div>
-        </div>
+        </Panel>
 
         {error !== null && (
           <p className="text-state-failed text-[12.5px]">{error}</p>
@@ -363,13 +373,14 @@ export function BrainDumpView({
 
         {sorted.length > 0 && (
           <section>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => setArchiveOpen((v) => !v)}
-              className="text-muted-foreground hover:text-foreground text-[12px]"
+              className="text-muted-foreground hover:text-foreground h-auto px-0 text-[12px] font-normal hover:bg-transparent"
             >
               {archiveOpen ? 'Hide' : 'Show'} the {sorted.length} already sorted
-            </button>
+            </Button>
             {archiveOpen && (
               <ul className="mt-1.5 flex flex-col">
                 {sorted.map((it) => (
@@ -391,13 +402,14 @@ export function BrainDumpView({
                     {it.linkedTaskId === null ? (
                       <span className="dense-meta text-right">dismissed</span>
                     ) : (
-                      <button
-                        type="button"
+                      <Button
+                        variant="link"
+                        size="xs"
                         onClick={() => onOpenTask(it.linkedTaskId ?? '')}
-                        className="dense-meta text-accent-foreground text-right hover:underline"
+                        className="dense-meta text-accent-foreground h-auto justify-end px-0 text-right text-[length:var(--text-meta)] font-normal"
                       >
                         → {it.linkedTaskId}
-                      </button>
+                      </Button>
                     )}
                   </li>
                 ))}
@@ -408,8 +420,10 @@ export function BrainDumpView({
       </div>
 
       <aside className="flex w-64 shrink-0 flex-col gap-5 overflow-y-auto">
+        {/* `border-transparent` keeps Panel's box geometry while leaving the edge to the
+            stronger inset hairline this card has always worn. */}
         {cluster !== null && (
-          <div className="bg-accent/10 shadow-hairline-strong rounded-lg p-3">
+          <Panel className="bg-accent/10 shadow-hairline-strong border-transparent p-3">
             <div className="dense-label text-accent-foreground flex items-center gap-1.5">
               <Combine className="size-3.5" />
               These look like one thing
@@ -417,14 +431,14 @@ export function BrainDumpView({
             <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
               {describeCluster(cluster)}
             </p>
-            <button
-              type="button"
+            <Button
+              size="xs"
               onClick={() => setSelected(new Set(cluster.ids))}
-              className="text-accent-foreground bg-accent mt-2.5 rounded-md px-2.5 py-1 text-[12px]"
+              className="text-accent-foreground bg-accent hover:bg-accent mt-2.5 h-auto px-2.5 py-1 text-[12px] font-normal"
             >
               Select them
-            </button>
-          </div>
+            </Button>
+          </Panel>
         )}
 
         <div>
@@ -438,8 +452,9 @@ export function BrainDumpView({
                     Grouping…
                   </span>
                 )}
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={() => runCluster(openItemIds)}
                   disabled={grouping || openItemIds.length < CLUSTER_MIN_ITEMS}
                   aria-label={
@@ -453,7 +468,9 @@ export function BrainDumpView({
                       : 'Refresh groups'
                   }
                   className={cn(
-                    'rounded p-0.5 disabled:opacity-40',
+                    // `disabled:pointer-events-auto` undoes Button's own suppression: while
+                    // disabled this button's `title` is the only place the cluster error shows.
+                    'size-auto rounded p-0.5 hover:bg-transparent disabled:pointer-events-auto disabled:opacity-40',
                     clusterError !== null
                       ? 'text-state-failed'
                       : 'text-muted-foreground hover:text-foreground'
@@ -462,7 +479,7 @@ export function BrainDumpView({
                   <RefreshCw
                     className={cn('size-3.5', grouping && 'animate-spin')}
                   />
-                </button>
+                </Button>
               </span>
             }
           >
@@ -481,37 +498,42 @@ export function BrainDumpView({
           ) : (
             <ul className="mt-2 flex flex-col gap-2">
               {groups.map((g) => (
-                <li
-                  key={g.epicTitle}
-                  className="shadow-hairline rounded-lg p-2.5"
-                >
-                  <div className="text-[12.5px] font-medium">{g.epicTitle}</div>
-                  <p className="text-muted-foreground mt-1 text-[12px] leading-relaxed">
-                    {g.reason}
-                  </p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="dense-meta">{g.itemIds.length} items</span>
-                    <span className="flex-1" />
-                    <button
-                      type="button"
-                      onClick={() => setSelected(new Set(g.itemIds))}
-                      className="text-accent-foreground text-[11px]"
-                    >
-                      Select
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const texts = inbox
-                          .filter((i) => g.itemIds.includes(i.id))
-                          .map((i) => i.text);
-                        onPlanText(`${g.epicTitle}. ${texts.join('. ')}`);
-                      }}
-                      className="text-accent-foreground text-[11px]"
-                    >
-                      Make an epic
-                    </button>
-                  </div>
+                <li key={g.epicTitle}>
+                  <Panel className="shadow-hairline border-transparent bg-transparent p-2.5">
+                    <div className="text-[12.5px] font-medium">
+                      {g.epicTitle}
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-[12px] leading-relaxed">
+                      {g.reason}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="dense-meta">
+                        {g.itemIds.length} items
+                      </span>
+                      <span className="flex-1" />
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setSelected(new Set(g.itemIds))}
+                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
+                      >
+                        Select
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => {
+                          const texts = inbox
+                            .filter((i) => g.itemIds.includes(i.id))
+                            .map((i) => i.text);
+                          onPlanText(`${g.epicTitle}. ${texts.join('. ')}`);
+                        }}
+                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
+                      >
+                        Make an epic
+                      </Button>
+                    </div>
+                  </Panel>
                 </li>
               ))}
             </ul>
@@ -543,9 +565,10 @@ function ExplainerPopover() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
+        <Button
           ref={triggerRef}
-          type="button"
+          variant="ghost"
+          size="xs"
           onMouseEnter={() => setOpen(true)}
           onMouseLeave={closeUnlessTriggerFocused}
           onFocus={() => setOpen(true)}
@@ -553,11 +576,12 @@ function ExplainerPopover() {
           // Suppresses Radix's own click-to-toggle, which would close a popover that
           // hovering or focusing the button has already opened.
           onClick={(e) => e.preventDefault()}
-          className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]"
+          // `has-[>svg]:px-2` too — the icon makes the size's own `has-[>svg]:px-1.5` match.
+          className="text-muted-foreground hover:text-foreground h-auto gap-1.5 px-2 py-1 text-[11px] font-normal hover:bg-transparent has-[>svg]:px-2"
         >
           <CircleHelp className="size-3.5" />
           What is this?
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         side="top"
@@ -609,14 +633,15 @@ function BarButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="xs"
       onClick={onClick}
       disabled={disabled}
-      className="shadow-hairline hover:bg-muted/60 rounded-md px-2 py-1 text-[12px] disabled:opacity-50"
+      className="shadow-hairline hover:bg-muted/60 h-auto px-2 py-1 text-[12px] font-normal"
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -624,7 +649,9 @@ function Key({ combo, what }: { combo: string; what: string }) {
   return (
     <div className="flex items-center gap-2">
       <dt className="dense-meta shadow-hairline rounded px-1.5 py-0.5">
-        {combo}
+        <Kbd className="h-auto min-w-0 bg-transparent px-0 font-mono text-[length:inherit] font-normal text-inherit">
+          {combo}
+        </Kbd>
       </dt>
       <dd className="text-muted-foreground text-[12px]">{what}</dd>
     </div>
@@ -661,12 +688,11 @@ function InboxRow({
         selected ? 'bg-accent/15 shadow-hairline-strong' : 'hover:bg-muted/40'
       )}
     >
-      <input
-        type="checkbox"
+      <Checkbox
         checked={selected}
-        onChange={onToggle}
+        onCheckedChange={() => onToggle()}
         aria-label={`Select "${item.text}"`}
-        className="accent-accent size-3.5"
+        className="size-3.5"
       />
       <span
         className={cn(
@@ -702,15 +728,16 @@ function InboxRow({
         <BarButton onClick={onPlan} disabled={busy}>
           Plan it
         </BarButton>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={onDismiss}
           disabled={busy}
           aria-label="Dismiss"
-          className="text-muted-foreground hover:text-state-failed rounded p-1 disabled:opacity-50"
+          className="text-muted-foreground hover:text-state-failed size-auto rounded p-1 hover:bg-transparent"
         >
           <X className="size-3.5" />
-        </button>
+        </Button>
       </span>
     </li>
   );

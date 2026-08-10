@@ -1,6 +1,9 @@
-import { Loader2, OctagonAlert } from 'lucide-react';
+import { OctagonAlert } from 'lucide-react';
 
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
+import { ScrollArea } from '@/ui/scroll-area';
+import { Spinner } from '@/ui/spinner';
 
 interface DaemonUnavailableProps {
   /** The daemon is still starting — a lighter, non-error status line, no Retry button (there
@@ -25,10 +28,8 @@ export function DaemonUnavailable({
   if (starting) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <Loader2 className="text-muted-foreground size-5 animate-spin" />
-        <p className="text-muted-foreground text-[13px]">
-          Starting the task daemon…
-        </p>
+        <Spinner className="text-muted-foreground size-5" />
+        <EmptyState message="Starting the task daemon…" className="p-0" />
       </div>
     );
   }
@@ -37,17 +38,26 @@ export function DaemonUnavailable({
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
       <OctagonAlert className="text-destructive size-5" />
-      <p className="text-muted-foreground max-w-sm text-[13px]">
-        Couldn&rsquo;t start dispatchd for this project
-      </p>
-      {detail !== null && (
-        <pre className="text-muted-foreground bg-secondary/50 max-h-48 max-w-lg overflow-auto rounded-md p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
-          {detail}
-        </pre>
-      )}
-      <Button variant="secondary" size="sm" onClick={onRetry}>
-        Retry
-      </Button>
+      <EmptyState
+        message="Couldn’t start dispatchd for this project"
+        className="p-0"
+        action={
+          <>
+            {detail !== null && (
+              // EmptyState's action slot is `max-w-none` (unbounded), so the old `max-w-lg`
+              // cap has to be restored explicitly here rather than inherited.
+              <ScrollArea className="bg-secondary/50 max-h-48 w-full max-w-lg rounded-md">
+                <pre className="text-muted-foreground p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
+                  {detail}
+                </pre>
+              </ScrollArea>
+            )}
+            <Button variant="secondary" size="sm" onClick={onRetry}>
+              Retry
+            </Button>
+          </>
+        }
+      />
     </div>
   );
 }

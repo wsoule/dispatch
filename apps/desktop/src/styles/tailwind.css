@@ -35,6 +35,14 @@
   --border: var(--border-default);
   --input: var(--border-default);
   --ring: var(--accent);
+  --sidebar: var(--surface-page);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-contrast);
+  --sidebar-accent: var(--accent-muted);
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--border-default);
+  --sidebar-ring: var(--accent);
 }
 
 @theme inline {
@@ -108,6 +116,14 @@
   --shadow-hairline-bottom: var(--hairline-bottom);
   --shadow-hairline-left: var(--hairline-left);
   --shadow-hairline-right: var(--hairline-right);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
 }
 
 @layer base {
