@@ -333,7 +333,9 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                     <Button
                       variant="ghost"
                       size="xs"
-                      className="group h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[length:inherit] font-normal hover:bg-transparent"
+                      // `has-[>svg]:px-0` as well as `px-0`: the chevron makes the size's own
+                      // `has-[>svg]:px-1.5` match, and that out-ranks a plain `px-0`.
+                      className="group h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-0"
                     >
                       <ChevronRight className="text-muted-foreground size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
                       <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
@@ -445,7 +447,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
             variant="ghost"
             size="xs"
             onClick={() => setSelectedIds(new Set())}
-            className="shadow-hairline h-auto px-2.5 py-1 text-[12px] font-normal"
+            className="shadow-hairline h-auto px-2.5 py-1 text-[12px] font-normal hover:bg-transparent"
           >
             Clear
           </Button>

@@ -256,12 +256,14 @@ export function BrainDumpView({
                 ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} — each becomes one item`
                 : 'One thought per line. Paste a wall of text and it gets split.'}
             </span>
+            {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
+                size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}
             <Button
               variant="ghost"
               size="xs"
               disabled={draft.trim() === '' || busy}
               onClick={() => onPlanText(draft)}
-              className="shadow-hairline text-muted-foreground hover:bg-muted/60 hover:text-foreground h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal"
+              className="shadow-hairline text-muted-foreground hover:bg-muted/60 hover:text-foreground h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
             >
               <Sparkles className="size-3.5" />
               Hand it to the planner
@@ -270,7 +272,7 @@ export function BrainDumpView({
               size="xs"
               disabled={draft.trim() === '' || busy}
               onClick={capture}
-              className="text-accent-foreground bg-accent hover:bg-accent/80 h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal"
+              className="text-accent-foreground bg-accent hover:bg-accent/80 h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
             >
               <Inbox className="size-3.5" />
               Drop into the inbox
@@ -466,7 +468,9 @@ export function BrainDumpView({
                       : 'Refresh groups'
                   }
                   className={cn(
-                    'size-auto rounded p-0.5 hover:bg-transparent disabled:opacity-40',
+                    // `disabled:pointer-events-auto` undoes Button's own suppression: while
+                    // disabled this button's `title` is the only place the cluster error shows.
+                    'size-auto rounded p-0.5 hover:bg-transparent disabled:pointer-events-auto disabled:opacity-40',
                     clusterError !== null
                       ? 'text-state-failed'
                       : 'text-muted-foreground hover:text-foreground'
@@ -572,7 +576,8 @@ function ExplainerPopover() {
           // Suppresses Radix's own click-to-toggle, which would close a popover that
           // hovering or focusing the button has already opened.
           onClick={(e) => e.preventDefault()}
-          className="text-muted-foreground hover:text-foreground h-auto gap-1.5 px-2 py-1 text-[11px] font-normal hover:bg-transparent"
+          // `has-[>svg]:px-2` too — the icon makes the size's own `has-[>svg]:px-1.5` match.
+          className="text-muted-foreground hover:text-foreground h-auto gap-1.5 px-2 py-1 text-[11px] font-normal hover:bg-transparent has-[>svg]:px-2"
         >
           <CircleHelp className="size-3.5" />
           What is this?
