@@ -48,6 +48,7 @@ import {
   untrustedInline,
 } from './prompt.js';
 import { prNumberFromOrigin } from './prReviewTask.js';
+import type { PendingApproval } from './registry.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
 import type { RunDetail } from './transcript.js';
@@ -292,6 +293,51 @@ export class Orchestrator {
       .list()
       .filter((r) => !TERMINAL_RUN_STATES.has(r.state))
       .map((r) => ({ runId: r.id, taskId: r.taskId, claims: r.claims ?? [] }));
+  }
+
+  // Every approval request currently waiting on a human, flattened into one
+  // row per run. The registry holds these per-run for approve()'s benefit;
+  // read surfaces (the warden's status tools) need the whole list, and
+  // deriving it from `list()` alone is impossible — RunState only says
+  // `awaiting-approval`, never which tool call is being asked about.
+  //
+  // Filtered on that state because approve() is the ONLY thing that clears a
+  // run's pending approval: a run cancelled (or zombie-healed) while parked on
+  // a gate keeps its record forever. Nothing is listening for an answer to
+  // those any more, so listing them would only offer the human an action that
+  // approve() itself would then refuse.
+  pendingApprovals(): {
+    runId: string;
+    taskId: string;
+    taskTitle: string;
+    requestId: string;
+    toolName: string;
+    input: unknown;
+  }[] {
+    return this.registry
+      .listPendingApprovals()
+      .filter(({ meta }) => meta.state === 'awaiting-approval')
+      .map(({ meta, approval }) => ({
+        runId: meta.id,
+        taskId: meta.taskId,
+        taskTitle: meta.taskTitle,
+        requestId: approval.requestId,
+        toolName: approval.toolName,
+        input: approval.input,
+      }));
+  }
+
+  // The approval one run is parked on, if any. Lets a caller answer an
+  // approval by run id alone instead of having to carry the requestId it was
+  // told about earlier — see approve(), which still requires an explicit
+  // requestId so a stale answer can never resolve a newer request.
+  //
+  // Gated on the run's state for the same reason pendingApprovals() filters on
+  // it: a stale record left on a cancelled run is not an answerable request.
+  pendingApprovalFor(runId: string): PendingApproval | undefined {
+    const meta = this.registry.get(runId);
+    if (meta?.state !== 'awaiting-approval') return undefined;
+    return this.registry.getPendingApproval(runId);
   }
 
   // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
