@@ -36,7 +36,7 @@ export async function startTaskReview(
   if (typeof body.head !== 'string' || body.head.trim() === '') {
     return errorResponse(400, 'invalid head: head is required');
   }
-  const refusedHead = refusePrHeadRef(body.head);
+  const refusedHead = refusePrHeadRef(body.head, ctx);
   if (refusedHead !== null) return refusedHead;
   if (body.scope !== undefined && !SCOPES.includes(body.scope as string)) {
     return errorResponse(
