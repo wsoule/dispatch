@@ -44,11 +44,8 @@ function requirePort(server: ReturnType<typeof Bun.serve>): number {
   return port;
 }
 
-// Captures what the upstream handler observed via a resolvable promise
-// rather than a shared `let` — reading a `let` mutated only inside an async
-// closure hits a TypeScript control-flow quirk that keeps it narrowed to its
-// initial value at the read site, and a promise also guarantees the handler
-// actually ran before we assert on it.
+// Resolves once the upstream handler runs, avoiding req.clone() (its .text()
+// deadlocks here) and a shared `let` (TS narrows it to its initial value).
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {

@@ -10,12 +10,8 @@ export interface InjectOptions {
 // apps/site/public/index.html's Linux install box.
 const DESKTOP_APP_URL = 'https://github.com/wsoule/dispatch/releases/latest';
 
-/**
- * Returns dist index.html with window.__DISPATCH_DEMO__ + the overlay script
- * tag and (unless embedded) the sandbox banner injected before </head> — or,
- * lacking that tag, before the first <script> — so the config lands ahead of
- * any app code.
- */
+// Injects window.__DISPATCH_DEMO__, the overlay script, and (unless embedded)
+// the banner before </head> — or the first <script> — so app code runs after.
 export function injectDemoHtml(distHtml: string, opts: InjectOptions): string {
   const config = JSON.stringify({
     baseUrl: opts.baseUrl,
@@ -23,10 +19,7 @@ export function injectDemoHtml(distHtml: string, opts: InjectOptions): string {
     agentToken: opts.agentToken,
     appToken: opts.appToken,
   })
-    // Defensive escaping: none of these values are expected to contain
-    // "</script>" today (tokens are hex, baseUrl is server-built), but a
-    // literal "<" here would otherwise let embedded content close the tag
-    // early and inject a sibling <script>.
+    // Escape "<" so an embedded "</script>" can't close the tag early.
     .replace(/</g, '\\u003c');
   const banner = opts.embed
     ? ''
