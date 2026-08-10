@@ -17,7 +17,10 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * `components/ui/Modal.tsx`'s `data-modal="true"` marker) or a shadcn/Radix `Dialog`
  * (`@/ui/dialog`'s `DialogContent` renders with `data-slot="dialog-content"`, and Radix keeps
  * `data-state="open"` on it only while open — briefly `"closed"` during its exit animation, so
- * that state is checked too rather than just presence in the DOM). Checked live via a DOM
+ * that state is checked too rather than just presence in the DOM). `AlertDialogContent` is the
+ * same device under a different slot name (`data-slot="alert-dialog-content"`), so it is matched
+ * too — a destructive confirm has to swallow the app's shortcuts exactly like any other modal
+ * does (BranchesView's confirm is one). Checked live via a DOM
  * query at the moment a keydown fires, rather than threaded through as reactive React state —
  * every dialog instance (CreateTaskModal, SessionDetailModal, DiffModal, CommandPalette, …)
  * already only renders into the DOM while open, so the query itself is always exactly as
@@ -31,7 +34,7 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 function isAnyModalOpen(): boolean {
   return (
     document.querySelector(
-      '[data-modal="true"], [data-slot="dialog-content"][data-state="open"]'
+      '[data-modal="true"], [data-slot="dialog-content"][data-state="open"], [data-slot="alert-dialog-content"][data-state="open"]'
     ) !== null
   );
 }

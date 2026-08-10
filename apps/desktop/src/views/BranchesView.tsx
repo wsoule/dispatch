@@ -52,7 +52,18 @@ import {
   resolveGitKeyCommand,
 } from '../lib/keyboard';
 import { cn } from '@/lib/utils';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/ui/alert-dialog';
 import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -61,7 +72,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/ui/dialog';
+import { Field, FieldLabel } from '@/ui/field';
 import { Input } from '@/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
+import { Kbd } from '@/ui/kbd';
 
 interface BranchesViewProps {
   data: DispatchProjectData;
@@ -550,15 +564,19 @@ export function BranchesView({
     >
       <div className="flex items-center justify-between gap-3">
         <h1 className="view-topbar-title">Git</h1>
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
-          <Search className="text-muted-foreground size-3.5 shrink-0" />
-          <Input
-            ref={filterInputRef}
-            value={textFilter}
-            onChange={(e) => setTextFilter(e.target.value)}
-            placeholder="Filter files and branches (/)"
-            className="h-7 max-w-64 text-[12px]"
-          />
+        <div className="flex min-w-0 flex-1 items-center px-2">
+          <InputGroup className="h-7 max-w-64 gap-2 px-2">
+            <InputGroupAddon className="p-0">
+              <Search className="text-muted-foreground size-3.5 shrink-0" />
+            </InputGroupAddon>
+            <InputGroupInput
+              ref={filterInputRef}
+              value={textFilter}
+              onChange={(e) => setTextFilter(e.target.value)}
+              placeholder="Filter files and branches (/)"
+              className="h-auto px-0 text-[12px] md:text-[12px]"
+            />
+          </InputGroup>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -623,17 +641,21 @@ export function BranchesView({
                       : 'min-h-[5.5rem] flex-[1.2]'
               )}
             >
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setPanelState((s) => focusGitPanel(s, panel))}
                 className={cn(
-                  'bg-muted/40 flex items-center gap-2 px-3 py-1.5 text-left text-[10.5px] font-medium tracking-wide uppercase',
-                  panelState.focused === panel && 'bg-accent/60'
+                  // The header has never lit up on hover, so ghost's own hover fill is pinned
+                  // back to whichever resting fill this panel is wearing.
+                  'bg-muted/40 hover:bg-muted/40 h-auto justify-start gap-2 rounded-none px-3 py-1.5 text-left text-[10.5px] font-medium tracking-wide uppercase',
+                  panelState.focused === panel &&
+                    'bg-accent/60 hover:bg-accent/60'
                 )}
               >
-                <span className="text-muted-foreground font-mono normal-case">
+                <Kbd className="text-muted-foreground h-auto min-w-0 bg-transparent px-0 font-mono text-[length:inherit] normal-case">
                   {PANEL_DIGIT[panel]}
-                </span>
+                </Kbd>
                 {PANEL_LABEL[panel]}
                 {panel !== 'status' && (
                   <span
@@ -643,7 +665,7 @@ export function BranchesView({
                     {listLength(panel)}
                   </span>
                 )}
-              </button>
+              </Button>
               <div
                 data-git-panel={panel}
                 className="scroll-affordance min-h-0 flex-1 overflow-y-auto"
@@ -1114,14 +1136,20 @@ function ConfirmDialog({
             : 'not reachable from any other branch you have'}
           .
         </span>
-        <label className="flex items-center gap-1.5 text-[12px]">
-          <input
-            type="checkbox"
+        <Field orientation="horizontal" className="w-fit gap-1.5">
+          <Checkbox
+            id="git-force-delete-branch"
+            className="size-3.5"
             checked={force}
-            onChange={(e) => setForce(e.target.checked)}
+            onCheckedChange={(checked) => setForce(checked === true)}
           />
-          Force delete (destroys them permanently)
-        </label>
+          <FieldLabel
+            htmlFor="git-force-delete-branch"
+            className="text-[12px] font-normal"
+          >
+            Force delete (destroys them permanently)
+          </FieldLabel>
+        </Field>
       </div>
     ) : (
       <>
@@ -1130,24 +1158,29 @@ function ConfirmDialog({
       </>
     );
 
+  // `AlertDialogDescription` renders a `<p>`, so `asChild` swaps in the `<div>` the
+  // delete-branch copy needs — a block layout inside a paragraph is invalid markup.
   return (
-    <Dialog open onOpenChange={(next) => !next && onCancel()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription asChild>
+    <AlertDialog open onOpenChange={(next) => !next && onCancel()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription asChild>
             <div>{description}</div>
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onCancel}>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel variant="ghost" onClick={onCancel}>
             Cancel
-          </Button>
-          <Button variant="destructive" onClick={() => void onConfirm(force)}>
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => void onConfirm(force)}
+          >
             Confirm
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
