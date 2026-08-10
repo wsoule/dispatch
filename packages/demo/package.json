@@ -6,7 +6,8 @@
   },
   "type": "module",
   "exports": {
-    "./repo": "./src/repo.ts"
+    "./repo": "./src/repo.ts",
+    "./seed": "./src/seed.ts"
   },
   "scripts": {
     "tsc": "tsc --noEmit",

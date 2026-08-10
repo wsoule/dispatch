@@ -58,6 +58,12 @@ import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
 
+// This module is also the package's root ("." ) export — a deliberate,
+// visible exception to the "server is a daemon, not a library" boundary
+// (see testing.ts's doc comment), added for apps/demo's per-session daemon
+// (apps/demo/src/daemon.ts), which needs `startServer` itself rather than a
+// spawned `dispatchd` process. @dispatch/cli and @dispatch/mcp still avoid
+// depending on this Bun-only package at all.
 export interface ServerHandle {
   port: number;
   // Minted at boot unless the caller supplied them. bin.ts prints `appToken`
