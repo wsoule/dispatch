@@ -1,0 +1,15 @@
+{
+  "name": "@dispatch/sandbox",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun run src/server.ts",
+    "tsc": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@dispatch/demo": "workspace:*",
+    "@dispatch/server": "workspace:*"
+  }
+}
