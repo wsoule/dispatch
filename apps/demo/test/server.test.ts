@@ -381,6 +381,35 @@ describe('demo server routes', () => {
     }
   });
 
+  test('the throttle keys on the last X-Forwarded-For hop, so a spoofed first hop cannot bypass it', async () => {
+    const manager = stubManager({
+      create: () => Promise.resolve(fakeSession(1234)),
+    });
+    const server = createDemoServer({
+      manager,
+      distDir: '/nonexistent',
+      port: 0,
+      createsPerMinute: 1,
+    });
+    try {
+      const base = origin(server);
+      // Same trusted-edge hop (9.9.9.9) both times; only the attacker-controlled
+      // first hop changes. If the throttle used the first hop, this would pass.
+      const first = await fetch(`${base}/session`, {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '1.2.3.4, 9.9.9.9' },
+      });
+      expect(first.status).toBe(201);
+      const second = await fetch(`${base}/session`, {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '5.6.7.8, 9.9.9.9' },
+      });
+      expect(second.status).toBe(429);
+    } finally {
+      void server.stop(true);
+    }
+  });
+
   test('the per-session ws cap allows up to N concurrent upstream sockets, rejects the next', async () => {
     const upstream = Bun.serve({
       port: 0,
