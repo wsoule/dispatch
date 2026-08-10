@@ -44,7 +44,9 @@ export function UpdateBanner({ update, onDismiss }: UpdateBannerProps) {
     // single-row banner this was before — see the twMerge-verified overrides below.
     <Alert className="border-border bg-secondary/60 [&>svg]:text-muted-foreground flex items-center gap-3 rounded-none border-0 border-b px-4 py-2 text-[13px] [&>svg]:translate-y-0">
       <Download className="text-muted-foreground size-4 shrink-0" />
-      <AlertTitle className="text-foreground min-w-0 flex-1 text-[13px] font-normal tracking-normal">
+      {/* line-clamp-none cancels AlertTitle's default clamp mechanism so plain `truncate`
+          (the original behavior) is the only thing controlling the single-line ellipsis. */}
+      <AlertTitle className="text-foreground line-clamp-none min-w-0 flex-1 truncate text-[13px] font-normal tracking-normal">
         Dispatch {update.version} available
         {error !== null && (
           <span className="text-destructive ml-2">

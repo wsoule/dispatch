@@ -44,7 +44,9 @@ export function DaemonUnavailable({
         action={
           <>
             {detail !== null && (
-              <ScrollArea className="bg-secondary/50 max-h-48 w-full rounded-md">
+              // EmptyState's action slot is `max-w-none` (unbounded), so the old `max-w-lg`
+              // cap has to be restored explicitly here rather than inherited.
+              <ScrollArea className="bg-secondary/50 max-h-48 w-full max-w-lg rounded-md">
                 <pre className="text-muted-foreground p-3 text-left font-mono text-[11px] whitespace-pre-wrap">
                   {detail}
                 </pre>

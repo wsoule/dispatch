@@ -78,7 +78,9 @@ export function InboxPanel({
           Mark all read
         </Button>
       </div>
-      <ScrollArea>
+      {/* min-h-0 lets this flex child shrink below its content height so it scrolls instead
+          of growing past the panel's max-h and getting hard-clipped. */}
+      <ScrollArea className="min-h-0">
         {entries.length === 0 ? (
           <EmptyState message="No notifications yet." />
         ) : (
