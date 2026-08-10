@@ -106,7 +106,7 @@ export function SessionsHubView() {
           <OctagonAlert className="text-destructive size-5" />
           <EmptyState
             message="Couldn’t load spend stats. Is the backend running?"
-            className="max-w-sm px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+            className="max-w-sm gap-3 px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
             action={
               <Button
                 variant="secondary"
@@ -167,7 +167,7 @@ export function SessionsHubView() {
               <OctagonAlert className="text-destructive size-5" />
               <EmptyState
                 message="Couldn’t load projects."
-                className="max-w-sm px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+                className="max-w-sm gap-3 px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
                 action={
                   <Button
                     variant="secondary"
@@ -231,7 +231,7 @@ export function SessionsHubView() {
             <OctagonAlert className="text-destructive size-5" />
             <EmptyState
               message="Couldn’t load sessions. Is the backend running?"
-              className="max-w-sm px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
+              className="max-w-sm gap-3 px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
               action={
                 <Button
                   variant="secondary"

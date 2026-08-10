@@ -60,13 +60,13 @@ export function SpendTable({
         {/* Table's base row hover (hover:bg-muted/50) doesn't apply to a header row in the
             old design, so it's neutralized here same as the body rows below. */}
         <TableRow className="hover:bg-transparent">
-          <TableHead className="text-muted-foreground h-auto px-0 py-2 text-[11px] font-medium tracking-wide whitespace-normal uppercase">
+          <TableHead className="text-muted-foreground h-auto px-0 pb-2 text-[11px] font-medium tracking-wide whitespace-normal uppercase">
             {columnLabel}
           </TableHead>
-          <TableHead className="text-muted-foreground h-auto px-0 py-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
+          <TableHead className="text-muted-foreground h-auto px-0 pb-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
             Sessions
           </TableHead>
-          <TableHead className="text-muted-foreground h-auto px-0 py-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
+          <TableHead className="text-muted-foreground h-auto px-0 pb-2 text-right text-[11px] font-medium tracking-wide whitespace-normal uppercase">
             Spend
           </TableHead>
         </TableRow>
