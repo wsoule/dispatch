@@ -63,6 +63,23 @@ describe('writeBoard options', () => {
     const config = readFileSync(join(a, '.dispatch', 'config.yml'), 'utf8');
     expect(config).toContain('enabled: true'); // linear
     expect(config).toContain('enabled: on'); // carto
+    // The local demo's real (slow, safe-on-a-trusted-machine) verify pipeline.
+    expect(config).toContain(
+      'verifySteps:\n  - name: install\n    command: bun install\n  - name: typecheck\n    command: bun run tsc\n  - name: test\n    command: bun test\n  - name: lint\n    command: bun run lint\n'
+    );
+  });
+
+  test('verifySteps can be overridden without touching any other field', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'demo-board-verify-'));
+    writeBoard(dir, {
+      verifySteps: [{ name: 'verify', command: 'bun --version' }],
+    });
+    const config = readFileSync(join(dir, '.dispatch', 'config.yml'), 'utf8');
+    expect(config).toContain(
+      'verifySteps:\n  - name: verify\n    command: bun --version\n'
+    );
+    expect(config).not.toContain('bun install');
+    expect(config).toContain('enabled: true'); // linear default untouched
   });
 });
 
@@ -93,6 +110,24 @@ describe('seedSession', () => {
       'utf8'
     );
     expect(team).toContain(`handle: ${VISITOR.handle}`);
+  });
+
+  // A visitor session's verifySteps must stay non-empty (so it keeps
+  // shadowing the PATCH-editable verifyCommand — see mergeQueue.ts's
+  // verify()) but must never be the local demo's real install/tsc/test/lint
+  // pipeline, which would run untrusted-triggered shell on the public box.
+  test('the visitor sandbox gets a hermetic verify step, not the local demo pipeline', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'demo-session-verify-'));
+    const paths = seedSession(dir);
+    const config = readFileSync(
+      join(paths.root, '.dispatch', 'config.yml'),
+      'utf8'
+    );
+    expect(config).toContain(
+      'verifySteps:\n  - name: verify\n    command: bun --version\n'
+    );
+    expect(config).not.toContain('bun install');
+    expect(config).not.toContain('bun run tsc');
   });
 
   // Regression for the t-6c40de landmine: Orchestrator.resolveBase bases a
