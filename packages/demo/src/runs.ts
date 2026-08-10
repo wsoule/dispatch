@@ -1,5 +1,12 @@
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { actorFile, runKey, runsDir } from './paths.js';
@@ -938,4 +945,29 @@ export function writeRuns(rootDir: string, home: string, handle: string): void {
   writeReviewDiffs(dir, rootDir);
 
   writeActorIdentity(rootDir, home, handle);
+}
+
+/**
+ * Reads back every `.jsonl` header `writeRuns` just wrote under
+ * `runsDir(rootDir, home)` and returns the distinct `branch` values they
+ * reference. The single source of truth for "which branches does this run
+ * history narrate" — re-deriving each writer's own naming rule here would
+ * drift the moment one of them changed independently.
+ */
+export function listSeededBranches(rootDir: string, home: string): string[] {
+  const dir = runsDir(rootDir, home);
+  const branches = new Set<string>();
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.jsonl')) continue;
+    const firstLine = readFileSync(join(dir, file), 'utf8').split('\n')[0];
+    if (firstLine === undefined || firstLine === '') continue;
+    const parsed = JSON.parse(firstLine) as {
+      type?: string;
+      meta?: { branch?: unknown };
+    };
+    if (parsed.type === 'header' && typeof parsed.meta?.branch === 'string') {
+      branches.add(parsed.meta.branch);
+    }
+  }
+  return [...branches];
 }

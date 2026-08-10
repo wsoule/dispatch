@@ -7,6 +7,7 @@ import { writeBoard } from '../src/board.js';
 import { git } from '../src/git.js';
 import { runsDir } from '../src/paths.js';
 import { buildRepo } from '../src/repo.js';
+import { listSeededBranches } from '../src/runs.js';
 import { seedSession, sessionPaths, VISITOR } from '../src/seed.js';
 
 function makeBareOrigin(dir: string): string {
@@ -92,6 +93,28 @@ describe('seedSession', () => {
       'utf8'
     );
     expect(team).toContain(`handle: ${VISITOR.handle}`);
+  });
+
+  // Regression for the t-6c40de landmine: Orchestrator.resolveBase bases a
+  // blocked task's new worktree on its blocker's most recent run branch —
+  // for t-2e91aa that's a review/verify run's branch, which a seeded
+  // fixture only ever narrates in JSONL, never actually creates via `git
+  // worktree add`. Without ensureRunBranchesExist, `git worktree add` fails
+  // resolving that ref and dispatching t-6c40de 500s.
+  test('every branch a seeded run references is real, locally and on origin', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'demo-session-branches-'));
+    const paths = seedSession(dir);
+
+    const branches = listSeededBranches(paths.root, paths.home);
+    expect(branches.length).toBeGreaterThan(0);
+    expect(branches).toContain('dispatch/verify-t-2e91aa-4b91de');
+
+    const rootBranches = git(paths.root, 'branch', '--list');
+    const originBranches = git(paths.origin, 'branch', '--list');
+    for (const branch of branches) {
+      expect(rootBranches).toContain(branch);
+      expect(originBranches).toContain(branch);
+    }
   });
 
   test('sessionPaths derives the fixed sub-paths under dir', () => {
