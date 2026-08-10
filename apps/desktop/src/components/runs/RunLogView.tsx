@@ -28,6 +28,7 @@ import { QuestionCard } from './QuestionCard';
 import { ScopeRequestCard } from './ScopeRequestCard';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
+import { Alert, AlertDescription } from '@/ui/alert';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
 
@@ -290,9 +291,14 @@ export function RunLogView({
       )}
 
       {error !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-[12px]">
-          {error}
-        </div>
+        <Alert
+          variant="destructive"
+          className="border-destructive/30 bg-destructive/10 rounded-md px-3 py-2"
+        >
+          <AlertDescription className="text-destructive text-[12px]">
+            {error}
+          </AlertDescription>
+        </Alert>
       )}
 
       {(canSend || terminal) && (

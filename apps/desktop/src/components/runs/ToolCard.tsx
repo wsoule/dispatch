@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 
+import { ScrollArea } from '@/ui/scroll-area';
+
 // Reads a string field off a tool entry's `toolInput` (typed `unknown` — it's whatever the
 // executor forwarded from the SDK), returning undefined for anything that isn't a present
 // string so a malformed/absent field just degrades to "no detail" rather than throwing.
@@ -31,26 +33,28 @@ function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   const removed = oldStr === '' ? [] : oldStr.split('\n');
   const added = newStr === '' ? [] : newStr.split('\n');
   return (
-    <pre className="border-border/60 max-h-64 overflow-auto rounded-md border font-mono text-[11.5px] leading-snug">
-      {removed.map((line, i) => (
-        <div
-          key={`r${i}`}
-          className="bg-destructive/10 text-destructive px-2 whitespace-pre-wrap"
-        >
-          <span className="opacity-60 select-none">- </span>
-          {line}
-        </div>
-      ))}
-      {added.map((line, i) => (
-        <div
-          key={`a${i}`}
-          className="bg-state-review-surface text-state-review px-2 whitespace-pre-wrap"
-        >
-          <span className="opacity-60 select-none">+ </span>
-          {line}
-        </div>
-      ))}
-    </pre>
+    <ScrollArea className="border-border/60 max-h-64 rounded-md border">
+      <pre className="font-mono text-[11.5px] leading-snug">
+        {removed.map((line, i) => (
+          <div
+            key={`r${i}`}
+            className="bg-destructive/10 text-destructive px-2 whitespace-pre-wrap"
+          >
+            <span className="opacity-60 select-none">- </span>
+            {line}
+          </div>
+        ))}
+        {added.map((line, i) => (
+          <div
+            key={`a${i}`}
+            className="bg-state-review-surface text-state-review px-2 whitespace-pre-wrap"
+          >
+            <span className="opacity-60 select-none">+ </span>
+            {line}
+          </div>
+        ))}
+      </pre>
+    </ScrollArea>
   );
 }
 
@@ -58,9 +62,11 @@ function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
 // fallback JSON dump) so a large payload never blows out the transcript's height.
 function CodeBlock({ text }: { text: string }) {
   return (
-    <pre className="bg-muted/50 border-border/60 max-h-64 overflow-auto rounded-md border p-2 font-mono text-[11.5px] leading-snug whitespace-pre-wrap">
-      {text}
-    </pre>
+    <ScrollArea className="bg-muted/50 border-border/60 max-h-64 rounded-md border">
+      <pre className="p-2 font-mono text-[11.5px] leading-snug whitespace-pre-wrap">
+        {text}
+      </pre>
+    </ScrollArea>
   );
 }
 
