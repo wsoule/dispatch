@@ -13,6 +13,7 @@ import {
   PanelHeader,
   PanelRow,
 } from '@/ui/chrome';
+import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
 import { Skeleton } from '@/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
@@ -34,10 +35,7 @@ interface ImpactPanelProps {
 }
 
 /** The bar splitting a subject's direct dependents (one hop) from everything
- *  further out. No existing chrome primitive draws two proportioned
- *  segments — `ProgressTrack` is a single value against a fixed track — so
- *  this composes the same track+fill shape from token colours instead of
- *  reaching for shadcn's `progress`. */
+ *  further out — the direct share as a fraction of the whole reach. */
 function HopSplitBar({
   direct,
   downstream,
@@ -46,18 +44,12 @@ function HopSplitBar({
   downstream: number;
 }) {
   const total = direct + downstream;
-  const directPct = total === 0 ? 0 : Math.round((direct / total) * 100);
   return (
-    <div
-      role="img"
-      aria-label={`${direct} direct, ${downstream} downstream`}
-      className="bg-muted h-1.5 w-full overflow-hidden rounded-full"
-    >
-      <div
-        className="bg-foreground h-full"
-        style={{ width: `${directPct}%` }}
-      />
-    </div>
+    <ProgressTrack
+      value={total === 0 ? 0 : direct / total}
+      label={`${direct} direct, ${downstream} downstream`}
+      className="bg-muted [&>[data-slot=progress-indicator]]:bg-foreground h-1.5 rounded-full"
+    />
   );
 }
 

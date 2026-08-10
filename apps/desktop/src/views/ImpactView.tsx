@@ -1,7 +1,7 @@
 import type { ImpactEntry, ImpactSubjectKind } from '@dispatch/client';
 import { IMPACT_SUBJECT_KINDS } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
-import { Waypoints } from 'lucide-react';
+import { ChevronDown, ChevronUp, Waypoints } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ImpactPanel } from '../components/impact/ImpactPanel';
@@ -16,10 +16,14 @@ import {
   PanelHeader,
   PanelRow,
 } from '@/ui/chrome';
-import { CollapseBar } from '@/ui/chrome/collapse-bar';
 import { PathCrumb } from '@/ui/chrome/path-crumb';
 import { Toolbar } from '@/ui/chrome/toolbar';
 import { ViewHeader } from '@/ui/chrome/view-header';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
 import { Input } from '@/ui/input';
 import {
   Select,
@@ -269,29 +273,45 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
               ) : status.kind === 'empty' ? (
                 <EmptyState message={status.message} />
               ) : (
-                status.groups.map((group) => (
-                  <PanelRow
-                    key={group.hops}
-                    className="flex-col items-stretch gap-1.5"
-                  >
-                    <CollapseBar
-                      label={`Hop ${group.hops} · ${group.paths.length} file${
-                        group.paths.length === 1 ? '' : 's'
-                      }`}
-                      collapsed={collapsedHops.has(group.hops)}
-                      onToggle={() => toggleHop(group.hops)}
-                    />
-                    {!collapsedHops.has(group.hops) && (
-                      <ul className="flex flex-col gap-1 pl-1">
-                        {group.paths.map((path) => (
-                          <li key={path}>
-                            <PathCrumb path={path} />
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </PanelRow>
-                ))
+                status.groups.map((group) => {
+                  // Controlled off `collapsedHops` — that external `ReadonlySet` stays the
+                  // single source of truth, same as TasksListView's groups.
+                  const open = !collapsedHops.has(group.hops);
+                  return (
+                    <PanelRow
+                      key={group.hops}
+                      className="flex-col items-stretch gap-1.5"
+                    >
+                      <Collapsible
+                        open={open}
+                        onOpenChange={() => toggleHop(group.hops)}
+                        className="flex flex-col gap-1.5"
+                      >
+                        <CollapsibleTrigger className="bg-muted hover:bg-secondary dense-meta flex w-full items-center gap-2 rounded px-3 py-1.5 transition-colors duration-150">
+                          {open ? (
+                            <ChevronUp className="size-3.5 shrink-0" />
+                          ) : (
+                            <ChevronDown className="size-3.5 shrink-0" />
+                          )}
+                          <span>
+                            {`Hop ${group.hops} · ${group.paths.length} file${
+                              group.paths.length === 1 ? '' : 's'
+                            }`}
+                          </span>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <ul className="flex flex-col gap-1 pl-1">
+                            {group.paths.map((path) => (
+                              <li key={path}>
+                                <PathCrumb path={path} />
+                              </li>
+                            ))}
+                          </ul>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    </PanelRow>
+                  );
+                })
               )}
             </Panel>
           )}

@@ -1,9 +1,4 @@
-import {
-  ChevronDown,
-  ChevronRight,
-  CircleCheck,
-  MoreHorizontal,
-} from 'lucide-react';
+import { ChevronRight, CircleCheck, MoreHorizontal } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ControlRibbon } from '../components/overview/ControlRibbon';
@@ -16,7 +11,13 @@ import { buildFeed, FEED_GROUPS } from '../lib/controlRoom';
 import type { FeedState } from '../lib/feedState';
 import { FEED_STATE_LABEL, isUrgentState } from '../lib/feedState';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
 
 interface OverviewViewProps {
   data: DispatchProjectData;
@@ -172,72 +173,80 @@ export function OverviewView({
           <EmptyFeed filtered={query !== '' || activeStates.size > 0} />
         ) : (
           feed.groups.map((group) => (
-            <section key={group.state} className="mb-1">
-              <button
-                type="button"
-                onClick={() =>
-                  setCollapsed((prev) => toggle(prev, group.state))
-                }
-                className="text-muted-foreground hover:text-foreground flex w-full items-center gap-2 px-1 pt-3 pb-1.5 transition-colors duration-150"
-              >
-                {group.collapsed ? (
-                  <ChevronRight className="size-3" />
-                ) : (
-                  <ChevronDown className="size-3" />
-                )}
-                <StateDot state={group.state} pulse={false} />
-                <span
-                  className={cn(
-                    'dense-label',
-                    isUrgentState(group.state) && 'text-foreground'
-                  )}
+            // Controlled off `collapsed` — the external `ReadonlySet` (and the collapse-all
+            // wiring above) stays the single source of truth, same as TasksListView's groups.
+            <Collapsible
+              key={group.state}
+              open={!group.collapsed}
+              onOpenChange={() =>
+                setCollapsed((prev) => toggle(prev, group.state))
+              }
+              className="mb-1"
+            >
+              <CollapsibleTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="group text-muted-foreground hover:text-foreground h-auto w-full min-w-0 justify-start gap-2 px-1 pt-3 pb-1.5 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-1"
                 >
-                  {FEED_STATE_LABEL[group.state]}
-                </span>
-                <span className="dense-meta">{group.total}</span>
-                <span
-                  aria-hidden
-                  className="ml-1 h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
-                />
-              </button>
+                  <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+                  <StateDot state={group.state} pulse={false} />
+                  <span
+                    className={cn(
+                      'dense-label',
+                      isUrgentState(group.state) && 'text-foreground'
+                    )}
+                  >
+                    {FEED_STATE_LABEL[group.state]}
+                  </span>
+                  <span className="dense-meta">{group.total}</span>
+                  <span
+                    aria-hidden
+                    className="ml-1 h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
+                  />
+                </Button>
+              </CollapsibleTrigger>
 
-              <div className="flex flex-col gap-0.5">
-                {group.rows.map((row) => (
-                  <FeedRow key={row.runId} row={row} actions={actions} />
-                ))}
-              </div>
+              <CollapsibleContent>
+                <div className="flex flex-col gap-0.5">
+                  {group.rows.map((row) => (
+                    <FeedRow key={row.runId} row={row} actions={actions} />
+                  ))}
+                </div>
 
-              {group.hidden > 0 && (
-                <ShowMore
-                  label={`Show the other ${group.hidden} ${FEED_STATE_LABEL[
-                    group.state
-                  ].toLowerCase()}`}
-                  onClick={() =>
-                    setExpanded((prev) => toggle(prev, group.state))
-                  }
-                />
-              )}
-              {expanded.has(group.state) && (
-                <ShowMore
-                  label="Collapse back"
-                  onClick={() =>
-                    setExpanded((prev) => toggle(prev, group.state))
-                  }
-                />
-              )}
-            </section>
+                {group.hidden > 0 && (
+                  <ShowMore
+                    label={`Show the other ${group.hidden} ${FEED_STATE_LABEL[
+                      group.state
+                    ].toLowerCase()}`}
+                    onClick={() =>
+                      setExpanded((prev) => toggle(prev, group.state))
+                    }
+                  />
+                )}
+                {expanded.has(group.state) && (
+                  <ShowMore
+                    label="Collapse back"
+                    onClick={() =>
+                      setExpanded((prev) => toggle(prev, group.state))
+                    }
+                  />
+                )}
+              </CollapsibleContent>
+            </Collapsible>
           ))
         )}
       </div>
 
       <div className="flex justify-center pb-1">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="xs"
           onClick={onGoToBoard}
-          className="text-muted-foreground hover:text-foreground text-[12px]"
+          className="text-muted-foreground hover:text-foreground h-auto px-0 py-0 text-[length:inherit] font-normal hover:bg-transparent"
         >
           Open the board
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -245,14 +254,15 @@ export function OverviewView({
 
 function ShowMore({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="xs"
       onClick={onClick}
-      className="text-muted-foreground hover:text-foreground hover:bg-muted/40 mt-0.5 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12px] transition-colors duration-150"
+      className="text-muted-foreground hover:bg-muted/40 hover:text-foreground mt-0.5 h-auto w-full min-w-0 justify-start gap-2 rounded-md px-3 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
     >
       <MoreHorizontal className="size-3.5" />
       {label}
-    </button>
+    </Button>
   );
 }
 

@@ -11,7 +11,6 @@ import {
   CircleAlert,
   History,
   Link2,
-  Loader2,
   Minus,
   Plus,
   Send,
@@ -36,6 +35,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import { Input } from '@/ui/input';
 import {
   Select,
@@ -45,6 +45,7 @@ import {
   SelectValue,
 } from '@/ui/select';
 import { Skeleton } from '@/ui/skeleton';
+import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
@@ -247,7 +248,7 @@ function PlanConversation({
                 key={item.key}
                 className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 self-start rounded-md border px-3 py-2 text-[13px]"
               >
-                <Loader2 className="text-primary size-3.5 animate-spin" />
+                <Spinner className="text-primary size-3.5" />
                 Planning — reading the codebase and updating the proposal…
               </div>
             );
@@ -319,7 +320,7 @@ function PlanConversation({
             >
               {sending ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" /> Sending…
+                  <Spinner className="size-4" /> Sending…
                 </>
               ) : (
                 <>
@@ -646,7 +647,7 @@ export function PlansView({
             >
               {submitting ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" /> Starting…
+                  <Spinner className="size-4" /> Starting…
                 </>
               ) : (
                 <>
@@ -698,7 +699,7 @@ export function PlansView({
           {reviewNotice !== null && (
             <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
               {turnRunning ? (
-                <Loader2 className="text-primary size-3.5 shrink-0 animate-spin" />
+                <Spinner className="text-primary size-3.5 shrink-0" />
               ) : (
                 <CircleAlert className="text-destructive size-3.5 shrink-0" />
               )}
@@ -759,7 +760,7 @@ export function PlansView({
             >
               {confirming ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" /> Creating…
+                  <Spinner className="size-4" /> Creating…
                 </>
               ) : planConfirmed ? (
                 <>
@@ -781,12 +782,11 @@ export function PlansView({
           History
         </div>
         {history.length === 0 ? (
-          <div className="border-border flex flex-col items-center gap-2 rounded-lg border border-dashed py-8 text-center">
-            <History className="text-muted-foreground size-5" />
-            <p className="text-muted-foreground text-[13px]">
-              No plans started yet this session.
-            </p>
-          </div>
+          <EmptyState
+            icon={History}
+            message="No plans started yet this session."
+            className="border-border rounded-lg border border-dashed px-0 py-8 [&_[data-slot=empty-description]]:text-[length:inherit]"
+          />
         ) : (
           <div className="flex flex-col gap-1.5">
             {history.map((entry) => (
