@@ -89,7 +89,7 @@ export function RunDetailHeader({
         {meta.model !== undefined && (
           <Badge
             variant="outline"
-            className="text-muted-foreground shrink-0 rounded-full text-[11px]"
+            className="text-muted-foreground shrink-0 rounded-full text-[11px] font-normal"
           >
             {modelLabel(meta.model)}
           </Badge>
@@ -117,7 +117,7 @@ export function RunDetailHeader({
           <Badge
             asChild
             variant="outline"
-            className="border-state-landing-edge bg-state-landing-surface text-state-landing [a&]:hover:bg-state-landing-surface/70 [a&]:hover:text-state-landing rounded-full text-[11px] transition-colors duration-150"
+            className="border-state-landing-edge bg-state-landing-surface text-state-landing [a&]:hover:bg-state-landing-surface/70 [a&]:hover:text-state-landing rounded-full text-[11px] font-normal transition-colors duration-150"
           >
             <a href={meta.prUrl} target="_blank" rel="noreferrer">
               PR opened
@@ -128,7 +128,7 @@ export function RunDetailHeader({
         {meta.stackParents !== undefined && meta.stackParents.length > 0 && (
           <Badge
             variant="outline"
-            className="text-muted-foreground min-w-0 rounded-full text-[11px]"
+            className="text-muted-foreground min-w-0 rounded-full text-[11px] font-normal"
             title={meta.stackParents.join(', ')}
           >
             <Layers2 className="size-3 shrink-0" />
@@ -166,7 +166,7 @@ export function RunDetailHeader({
         {stop.showStoppedChip && (
           <Badge
             variant="outline"
-            className="text-muted-foreground shrink-0 rounded-full text-[11px]"
+            className="text-muted-foreground shrink-0 rounded-full text-[11px] font-normal"
             title={`Stop requested at ${meta.stopRequestedAt}`}
           >
             Stopped
