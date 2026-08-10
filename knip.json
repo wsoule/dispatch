@@ -10,6 +10,11 @@
       "entry": ["scripts/*.ts"],
       "project": ["scripts/**/*.ts"]
     },
+    "packages/server": {
+      // The daemon's `bin` is src/bin.ts, but src/index.ts is the library face
+      // (startServer) that the CLI and every server test reach for.
+      "entry": ["src/index.ts"]
+    },
     "apps/site": {
       // A static marketing site: server.ts serves public/ as browser assets,
       // so nothing under it is ever imported. Mirrors the `apps/site/public/**`

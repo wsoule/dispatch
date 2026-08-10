@@ -9,14 +9,16 @@ import { assertSafeToDelete, BRANCH_FIXES, computeFixDiff } from './repo.js';
 // ---------------------------------------------------------------------------
 // Hand-kept mirrors of @dispatch/server's orchestrator types.
 //
-// packages/server's package.json exports nothing but its own package.json
-// (`"exports": { "./package.json": "./package.json" }`), so nothing outside
-// that package can import its modules — not a Bun/Node runtime limitation
-// (this package is Bun-only too), but a deliberate boundary: server is a
-// daemon, not a library. packages/cli and packages/mcp hit the same wall and
-// hand-mirror these same types (see packages/cli/src/apiClient.ts and
-// packages/mcp/src/tools.ts) with a source-comparison test to catch drift;
-// test/runs.test.ts does the same thing here (see "RunState mirror").
+// packages/server's package.json has no root export — only its own
+// package.json plus two deliberately narrow subpaths, `./testing` (fake
+// executor/planner doubles) and `./embed` (startServer, for apps/demo's
+// daemon) — so nothing outside that package can import its modules
+// generally. Not a Bun/Node runtime limitation (this package is Bun-only
+// too), but a deliberate boundary: server is a daemon, not a library.
+// packages/cli and packages/mcp hit the same wall and hand-mirror these same
+// types (see packages/cli/src/apiClient.ts and packages/mcp/src/tools.ts)
+// with a source-comparison test to catch drift; test/runs.test.ts does the
+// same thing here (see "RunState mirror").
 // ---------------------------------------------------------------------------
 
 export const RUN_STATES = [

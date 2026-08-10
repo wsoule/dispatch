@@ -1,5 +1,9 @@
 #!/usr/bin/env bun
-import { startServer } from '@dispatch/server';
+// startServer comes from @dispatch/server's own './embed' subpath (see
+// packages/server/src/embed.ts) — a narrow re-export kept separate from a
+// root export so @dispatch/cli/@dispatch/mcp still cannot resolve this
+// Bun-only package at all.
+import { startServer } from '@dispatch/server/embed';
 // FakeExecutor/FakePlanner come from @dispatch/server's own './testing'
 // subpath (see packages/server/src/testing.ts) — the export surface Task 5
 // settled on for consumers outside that package.
@@ -22,7 +26,13 @@ function readFlag(args: string[], name: string): string | undefined {
 
 const args = process.argv.slice(2);
 const rootDir = resolve(readFlag(args, '--root') ?? process.cwd());
-const port = Number(readFlag(args, '--port') ?? 0);
+const portArg = readFlag(args, '--port');
+const port = portArg !== undefined ? Number(portArg) : 0;
+
+if (portArg !== undefined && Number.isNaN(port)) {
+  console.error(`invalid --port: ${portArg}`);
+  process.exit(1);
+}
 
 // Every seam this daemon touches (daemonfile, credentials, project registry,
 // worktree homes) resolves relative to DISPATCH_HOME instead of the real
