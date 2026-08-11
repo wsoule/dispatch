@@ -1,7 +1,7 @@
 ---
 id: t-e1548f
 title: Epic branch lifecycle in the orchestrator
-status: todo
+status: in-progress
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T17:27:55.810Z
+updated: 2026-08-11T17:33:11.316Z
 external: null
 writes:
   - packages/server/src/orchestrator/epicBranch.ts
@@ -31,3 +31,4 @@ Create and maintain `epic/<id>` branches: cut from the default branch on the epi
 - Child runs restack (or flag, mirroring baseDiscarded) when the epic branch moves under them.
 
 ## Activity
+- 2026-08-11T17:33:11.316Z dispatched (claude, branch dispatch/t-e1548f-epic-branch-lifecycle-in-the-orchestrato-c53f56) — none
