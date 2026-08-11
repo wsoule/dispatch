@@ -170,3 +170,26 @@ test('findSuspiciousStagedFiles catches .env, .pem, id_rsa*, and .key filenames 
 test('buildRepo runs clean against the real template with no credential check tripped', () => {
   expect(() => build()).not.toThrow();
 });
+
+// The daemon commits in this repo (FakeExecutor step commits, the
+// orchestrator's auto-commit net) with plain `git commit` — no inline
+// identity like src/git.ts passes. CI runners and the Railway container
+// have no ambient git config, so the repo itself must carry one or every
+// fake run dies dirty (found via apps/demo daemon.test.ts, task t-ca5959).
+test('a built repo can commit without ambient git identity', () => {
+  const root = build();
+  writeFileSync(join(root, 'probe.txt'), 'probe');
+  Bun.spawnSync(['git', 'add', 'probe.txt'], { cwd: root });
+  const result = Bun.spawnSync(
+    ['git', 'commit', '-m', 'probe: no ambient identity'],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+      },
+    }
+  );
+  expect(result.exitCode).toBe(0);
+});
