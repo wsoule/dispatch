@@ -1,4 +1,10 @@
-import { CopyIcon, RotateCcwIcon } from 'lucide-react';
+import {
+  CopyIcon,
+  FileTextIcon,
+  PencilIcon,
+  RotateCcwIcon,
+  TerminalIcon,
+} from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
 import { ApprovalCard, type ApprovalCardOption } from '@/ui/ai/approval-card';
@@ -8,6 +14,7 @@ import {
   type StreamingTextSource,
 } from '@/ui/ai/streaming-text';
 import { Thinking, type ThinkingStep } from '@/ui/ai/thinking';
+import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
 
 // `Thinking` is fully controlled (collapsed/onToggle live with the caller), so its
@@ -281,6 +288,39 @@ export const galleryStories: GalleryStory[] = [
         disabled
         onSelect={() => {}}
       />
+    ),
+  },
+  {
+    id: 'tool-chips-mixed-state',
+    title: 'Tool chips — mixed state, with overflow',
+    note: 'Edit and Bash done with diff/exit-code meta, Read still running (shimmering label), a failed Bash chip in red, and a "+3" overflow chip for the rest of the run.',
+    render: () => (
+      <ToolChipGroup overflowCount={3}>
+        <ToolChip
+          icon={PencilIcon}
+          label="Edit"
+          meta={
+            <>
+              <span className="text-green">+24</span>{' '}
+              <span className="text-red">−3</span>
+            </>
+          }
+          state="done"
+        />
+        <ToolChip icon={TerminalIcon} label="bun test" state="done" />
+        <ToolChip
+          icon={FileTextIcon}
+          label="Read"
+          meta="AGENTS.md"
+          state="running"
+        />
+        <ToolChip
+          icon={TerminalIcon}
+          label="bun run tsc"
+          meta="exit 1"
+          state="failed"
+        />
+      </ToolChipGroup>
     ),
   },
 ];
