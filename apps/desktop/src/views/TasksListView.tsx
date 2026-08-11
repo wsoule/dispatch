@@ -473,8 +473,14 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
             // Dispatched one at a time up to the chosen concurrency, matching what the preview
             // promised — the per-task endpoint is the only one that takes an arbitrary set.
             const starting = selectedReady.slice(0, concurrency);
+            // Marking a real batch keeps the app in the list instead of following each run
+            // in turn as the loop creates it (see DispatchOptions). Starting exactly one is
+            // an ordinary single dispatch and still jumps to its Chat.
+            const batch = starting.length > 1;
             for (const task of starting) {
-              await data.handleDispatch(task.meta.id);
+              await data.handleDispatch(task.meta.id, undefined, undefined, {
+                batch,
+              });
             }
             setDispatchOpen(false);
             setSelectedIds(new Set());
