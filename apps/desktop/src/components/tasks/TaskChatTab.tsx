@@ -21,9 +21,9 @@ export interface TaskChatTabProps {
   onDispatch: () => void;
 }
 
-/** The task view's Chat tab: the selected run's transcript, wired the way the old Runs page's
- * Session tab, with an empty state before any run exists and a skeleton while the selected
- * run's detail is still loading. */
+/** The task view's Chat tab: the selected run's transcript and composer, the surface the
+ * retired Runs page hosted as its Session tab. It shows an empty state before any run exists
+ * and a skeleton while the selected run's detail is still loading. */
 export function TaskChatTab({
   data,
   doc,

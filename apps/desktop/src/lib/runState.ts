@@ -121,6 +121,24 @@ export function deriveRunDisposition(meta: RunMeta): RunDisposition {
 }
 
 /**
+ * The three coarse buckets a run history is filtered by: still working, still owed something,
+ * or finished business.
+ *
+ * Deliberately coarser than `RunDisposition` — a filter offering all six is a taxonomy to
+ * learn rather than a control to use. `dead` and `stopped-short` both land in `needs-review`
+ * because both still owe a person an action (discard it, or continue it); only a run a human
+ * closed out, or one that was killed outright, is past.
+ */
+export type RunStateBucket = 'live' | 'needs-review' | 'closed';
+
+export function runStateBucket(meta: RunMeta): RunStateBucket {
+  const disposition = deriveRunDisposition(meta);
+  if (disposition === 'live') return 'live';
+  if (disposition === 'closed' || meta.state === 'cancelled') return 'closed';
+  return 'needs-review';
+}
+
+/**
  * What Continue resumes a `stopped-short` run with when the composer is empty.
  * Such a run was cut off rather than wrong, so there is nothing to critique —
  * it needs re-orienting, which is why this says where to look rather than just

@@ -2,6 +2,7 @@ import type { Finding, RunMeta } from '@dispatch/client';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useTaskFindings } from '../../hooks/useOrchestration';
+import type { ImpactSubjectRef } from '../../lib/appNav';
 import { isTerminalRunState, liveReviewAgentFor } from '../../lib/runState';
 import { DiffEmptyState } from '../runs/DiffEmptyState';
 import { RunDiffView } from '../runs/RunDiffView';
@@ -13,12 +14,19 @@ export interface TaskDiffTabProps {
   selectedRun: RunMeta | undefined;
   /** Opens the run's pull request on the PR review page. */
   onViewPr: (runId: string) => void;
+  /** Opens `ImpactView` with this run preselected — the case panel's "Open in Impact". */
+  onOpenImpact: (subject: ImpactSubjectRef) => void;
 }
 
-/** The task view's Diff tab: the selected run's diff/review surface, wired exactly like
- * The task view's Diff tab, with an empty state before any run exists and a skeleton while the
- * selected run's detail is still loading. */
-export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
+/** The task view's Diff tab: the selected run's diff and the review actions over it, the
+ * surface the retired Review page used to host. It shows an empty state before any run
+ * exists and a skeleton while the selected run's detail is still loading. */
+export function TaskDiffTab({
+  data,
+  selectedRun,
+  onViewPr,
+  onOpenImpact,
+}: TaskDiffTabProps) {
   // Called unconditionally, ahead of the early returns below, even though its result is only
   // used once a run is selected and terminal — `enabled` inside the hook itself already no-ops
   // when there's no task id yet.
@@ -100,6 +108,7 @@ export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
           reviewAgentLive={
             liveReviewAgentFor(data.runs, selectedRun.branch) !== undefined
           }
+          onOpenImpact={onOpenImpact}
           casePanel={{
             evidence: data.runDetail.evidence,
             mutations: data.runDetail.mutations,

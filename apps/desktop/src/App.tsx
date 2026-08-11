@@ -17,7 +17,7 @@ import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
-import { LiveRail } from './components/shell/LiveRail';
+import { LiveRail, useLiveRailCollapsed } from './components/shell/LiveRail';
 import { Sidebar, useSidebarCollapsed } from './components/shell/Sidebar';
 import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
 import { useToasts } from './components/shell/Toasts';
@@ -32,6 +32,7 @@ import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { withActionFeedback } from './lib/actionFeedback';
 import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
+import { hideArchivedRuns } from './lib/archiveFilter';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
@@ -92,6 +93,9 @@ function App() {
   // The left rail's collapsed state, owned here because `SidebarProvider` wraps the whole
   // shell row; `Sidebar` reads it back through `useSidebar`. Persistence lives with the rail.
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
+  // The live-agents rail's collapsed state, owned here for the same reason: the rail is a
+  // sibling of `<main>` in the shell row, not something a view can size for itself.
+  const [liveRailCollapsed, setLiveRailCollapsed] = useLiveRailCollapsed();
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -368,6 +372,16 @@ function App() {
     () => data.runs.filter((run) => !isTerminalRunState(run.state)),
     [data.runs]
   );
+
+  // How many runs the archive filter is holding back, computed off the *unfiltered* list so
+  // the All-agents toggle can still say what turning it on would reveal while it is already
+  // on (`visibleRuns` is the full list in that case, and would report zero).
+  const archivedRunCount = useMemo(() => {
+    const archivedTaskIds = new Set(data.archivedTasks.map((t) => t.meta.id));
+    return (
+      data.runs.length - hideArchivedRuns(data.runs, archivedTaskIds).length
+    );
+  }, [data.runs, data.archivedTasks]);
 
   // Everything the Inbox view shows — the Review queue plus any run stalled
   // on an approval or a question. See `buildInbox`.
@@ -778,7 +792,15 @@ function App() {
                 <>
                   {navState.globalView === 'all-agents' && (
                     <AllAgentsView
-                      runs={data.runs}
+                      // `visibleRuns`, not `runs`: this is the run *list* the archive filter
+                      // was built for, and the only surface left that can unarchive one.
+                      runs={data.visibleRuns}
+                      archivedRunCount={archivedRunCount}
+                      showArchived={data.showArchived}
+                      onSetShowArchived={data.setShowArchived}
+                      onArchiveRun={(runId, archived) =>
+                        void data.handleArchiveRun(runId, archived)
+                      }
                       portLoading={data.portLoading}
                       portError={data.portError}
                       portErrorDetail={data.portErrorDetail}
@@ -894,6 +916,9 @@ function App() {
                             dispatchNav({ type: 'openPr', number });
                           }
                         }}
+                        onOpenImpact={(subject) =>
+                          dispatchNav({ type: 'openImpact', subject })
+                        }
                       />
                     )}
                   {navState.projectView === 'branches' && (
@@ -965,7 +990,9 @@ function App() {
           {/* The live-agents rail, kept in the corner across every project screen — unlike the
               old MiniOverview, it never hides itself: a row per running agent stays put even
               when nothing needs a human, and the attention strip is the only part that comes
-              and goes. Project scope only — the global views have no runs to show. */}
+              and goes. Collapsing narrows it to a strip (the attention count survives) rather
+              than removing it, which is what keeps a narrow window's Diff column readable.
+              Project scope only — the global views have no runs to show. */}
           {navState.section === 'project' && activeProject !== null && (
             <LiveRail
               runs={data.runs}
@@ -973,6 +1000,8 @@ function App() {
               openQuestions={data.openQuestions}
               onOpenTask={openTaskView}
               onOpenInbox={() => selectProjectView('inbox')}
+              collapsed={liveRailCollapsed}
+              onSetCollapsed={setLiveRailCollapsed}
             />
           )}
         </SidebarProvider>
