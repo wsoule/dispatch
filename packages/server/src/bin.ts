@@ -17,6 +17,12 @@ import { FakeExecutor } from './orchestrator/executors/fake.js';
 import type { PlanProposal } from './orchestrator/planner.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import { FakePlanner } from './orchestrator/planners/fake.js';
+import { ClaudeWarden } from './orchestrator/wardens/claude.js';
+import type {
+  FakeWardenScript,
+  FakeWardenTurn,
+} from './orchestrator/wardens/fake.js';
+import { FakeWarden } from './orchestrator/wardens/fake.js';
 
 // ---------------------------------------------------------------------------
 // Phase 7 fakes hook (DISPATCH_ENABLE_FAKES / DISPATCH_FAKE_APPROVAL)
@@ -25,9 +31,9 @@ import { FakePlanner } from './orchestrator/planners/fake.js';
 // desktop app's release-build sidecar) registers ONLY the real ClaudeExecutor
 // (as 'claude') and ClaudePlanner (as 'claude') — see index.ts's own
 // defaults. Setting `DISPATCH_ENABLE_FAKES=1` in this process's environment
-// additionally registers a FakeExecutor and FakePlanner, both under the name
-// 'fake', alongside the real ones — never replacing 'claude'. This exists
-// purely so the CLI's headless integration tests (and any other e2e script)
+// additionally registers a FakeExecutor, FakePlanner, and FakeWarden, all
+// under the name 'fake', alongside the real ones — never replacing 'claude'.
+// This exists purely so the CLI's headless integration tests (and any other e2e script)
 // can drive a REAL spawned daemon through a full run/plan lifecycle without
 // spending real Claude budget: `dispatch run <id> --executor fake` and
 // `dispatch plan <prompt> --planner fake` only work against a daemon booted
@@ -168,6 +174,66 @@ const DEFAULT_FAKE_PROPOSAL: PlanProposal = {
   ],
 };
 
+// One mutating turn of the default fake warden script: read the ready list,
+// then queue a dispatch of the FIRST ready task on the fake executor — derived
+// from the live board rather than a hard-coded id, so the script works against
+// any fixture. Queue, not run: the dispatch happens only if a human approves
+// the pending action in the chat UI, which is exactly the confirm/deny seam
+// the desktop e2e suite exercises.
+const FAKE_WARDEN_MUTATING_TURN: FakeWardenTurn = {
+  calls: [
+    { tool: 'list_ready_tasks' },
+    {
+      tool: 'dispatch_task',
+      input: (prior) => {
+        const ready = prior[0]?.content as
+          | { tasks?: { id: string }[] }
+          | undefined;
+        const first = ready?.tasks?.[0];
+        return first === undefined
+          ? { taskId: '(no ready task)' }
+          : { taskId: first.id, executor: 'fake' };
+      },
+    },
+  ],
+  // Wording deliberately avoids echoing the queued summary or the confirm
+  // card's "Needs your approval" header: the e2e spec locates the card by
+  // those strings, and a reply repeating them would make the locators
+  // ambiguous.
+  reply: (results) => {
+    const queued = results[1]?.content as { summary?: string } | undefined;
+    return queued?.summary === undefined
+      ? 'I could not queue a dispatch — no task is ready right now.'
+      : 'I queued that — nothing happens until you decide in the card above.';
+  },
+};
+
+// The one default script every DISPATCH_ENABLE_FAKES daemon's 'fake' warden
+// backend plays: a status turn that answers from a real list_runs read, then
+// two identical mutating turns (queue-deny-requeue-approve is the flow the
+// desktop e2e drives, so the second ask must queue again). Fixed like the
+// executor/planner defaults above — a test/e2e hook, not a scripting facility.
+function buildDefaultFakeWardenScript(): FakeWardenScript {
+  return {
+    ok: true,
+    turns: [
+      {
+        calls: [{ tool: 'list_runs', input: { includeTerminal: true } }],
+        reply: (results) => {
+          const listed = results[0]?.content as
+            | { runs?: { live: boolean }[]; total?: number }
+            | undefined;
+          const total = listed?.total ?? 0;
+          const live = listed?.runs?.filter((run) => run.live).length ?? 0;
+          return `Status check: this project has ${total} runs on record, ${live} of them live.`;
+        },
+      },
+      FAKE_WARDEN_MUTATING_TURN,
+      FAKE_WARDEN_MUTATING_TURN,
+    ],
+  };
+}
+
 // Minimal flag parsing (no commander dependency here — `@dispatch/cli` is the
 // one place that owns the user-facing CLI surface; this bin is just what
 // `dispatch serve` spawns).
@@ -233,6 +299,15 @@ const handle = await startServer({
         );
       }
     : undefined,
+  registerWardens: enableFakes
+    ? (wardenManager) => {
+        wardenManager.registerBackend('claude', new ClaudeWarden(rootDir));
+        wardenManager.registerBackend(
+          'fake',
+          new FakeWarden(buildDefaultFakeWardenScript())
+        );
+      }
+    : undefined,
   // DISPATCH_FAKE_GH=1 swaps PrManager's gh/git seam for an in-memory fake, so
   // the whole PR review surface (open PR -> status/checks/conversation ->
   // approve/comment) can be exercised end-to-end without a real GitHub remote
@@ -252,7 +327,7 @@ console.log(
 
 if (enableFakes) {
   console.log(
-    'dispatchd: DISPATCH_ENABLE_FAKES=1 — fake executor/planner registered (test/e2e only)'
+    'dispatchd: DISPATCH_ENABLE_FAKES=1 — fake executor/planner/warden registered (test/e2e only)'
   );
 }
 
