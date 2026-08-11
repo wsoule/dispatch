@@ -3,6 +3,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
 import {
   AlertCircle,
   ChevronRight,
+  GitMerge,
   Layers,
   Play,
   Square,
@@ -44,6 +45,11 @@ interface EpicLaneHeaderProps {
   /** When given, Work asks for a confirmation preview instead of dispatching straight away. */
   onRequestWork?: (epicId: string) => void;
   onStop: (epicId: string) => Promise<void>;
+  /** Lands the finished epic branch on the default base (one PR or one local merge, decided
+   * server-side). Optional so a header rendered without land wiring stays valid; the Land
+   * button only renders once every child is done/cancelled, replacing the then-useless Work
+   * button. */
+  onLand?: (epicId: string) => Promise<void>;
 }
 
 /**
@@ -69,6 +75,7 @@ export function EpicLaneHeader({
   onWork,
   onRequestWork,
   onStop,
+  onLand,
 }: EpicLaneHeaderProps) {
   const [concurrency, setConcurrency] = useState(concurrencyDefault);
   const [busy, setBusy] = useState(false);
@@ -94,6 +101,16 @@ export function EpicLaneHeader({
     ).length ?? 0;
   const totalCount = progress?.children.length ?? 0;
   const liveCount = progress?.liveRuns.length ?? 0;
+  // Same "finished" rule the server's land validation applies (every child
+  // done or cancelled) — the button still only *requests*; the server is the
+  // authority and 409s with its reason into the error alert below.
+  const landable =
+    onLand !== undefined &&
+    epic !== null &&
+    !active &&
+    totalCount > 0 &&
+    doneCount === totalCount &&
+    epic.meta.status !== 'done';
 
   return (
     <>
@@ -196,17 +213,19 @@ export function EpicLaneHeader({
                 active && 'opacity-100'
               )}
             >
-              <Input
-                type="number"
-                min={1}
-                value={concurrency}
-                disabled={active || busy}
-                onChange={(e) =>
-                  setConcurrency(clampConcurrencyInput(e.target.value))
-                }
-                aria-label={`Epic dispatch concurrency for ${epic.meta.id}`}
-                className="h-6 w-11 rounded px-1.5 py-0 text-[11px]"
-              />
+              {!landable && (
+                <Input
+                  type="number"
+                  min={1}
+                  value={concurrency}
+                  disabled={active || busy}
+                  onChange={(e) =>
+                    setConcurrency(clampConcurrencyInput(e.target.value))
+                  }
+                  aria-label={`Epic dispatch concurrency for ${epic.meta.id}`}
+                  className="h-6 w-11 rounded px-1.5 py-0 text-[11px]"
+                />
+              )}
               {active ? (
                 <Button
                   variant="ghost"
@@ -217,6 +236,17 @@ export function EpicLaneHeader({
                 >
                   <Square className="size-3" />
                   Stop
+                </Button>
+              ) : landable ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void run(() => onLand(epic.meta.id))}
+                  className="hover:bg-primary/10 hover:text-primary h-6 gap-1 px-2 text-[11px]"
+                >
+                  <GitMerge className="size-3" />
+                  Land
                 </Button>
               ) : (
                 <Button
