@@ -1,9 +1,12 @@
 import {
   CopyIcon,
+  EyeIcon,
   FileTextIcon,
   PencilIcon,
   RotateCcwIcon,
+  SquareIcon,
   TerminalIcon,
+  XIcon,
 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
@@ -13,6 +16,7 @@ import {
   StreamingText,
   type StreamingTextSource,
 } from '@/ui/ai/streaming-text';
+import { TaskRow, TaskRowList } from '@/ui/ai/task-rows';
 import { Thinking, type ThinkingStep } from '@/ui/ai/thinking';
 import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
@@ -181,6 +185,27 @@ const ANSWERED_OPTIONS: ApprovalCardOption[] = [
   { id: 'deny', label: 'Deny — keep origin-first ordering' },
 ];
 
+// Compact icon button for a TaskRow's hover-revealed `actions` slot — the same
+// treatment the showcase uses for its "copy code" / "view code" corner buttons.
+function TaskRowActionButton({
+  icon: Icon,
+  label,
+}: {
+  icon: typeof EyeIcon;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={(event) => event.stopPropagation()}
+      className="text-muted-foreground hover:bg-surface-hover-strong hover:text-foreground rounded-control flex size-6 items-center justify-center transition-colors duration-100"
+    >
+      <Icon aria-hidden className="size-3.5" />
+    </button>
+  );
+}
+
 /** One reviewable primitive in the dev gallery: a title for the left index, an
  * optional caption, and the markup to render on the right. Every primitive task
  * (6-24) appends one or more of these — this file is the running catalog. */
@@ -321,6 +346,70 @@ export const galleryStories: GalleryStory[] = [
           state="failed"
         />
       </ToolChipGroup>
+    ),
+  },
+  {
+    id: 'task-rows-all-states',
+    title: 'Task rows — all states',
+    note: 'One TaskRowList covering running (pulsing dot, shimmering detail), waiting, failed (red wash), done, and queued — hover a row to reveal its actions.',
+    render: () => (
+      <TaskRowList>
+        <TaskRow
+          title="Patch dispatchd/src/boot.rs"
+          agent="Claude"
+          state="running"
+          detail="Reading boot.rs to trace the failing assertion"
+          progress="2/5 files"
+          elapsedLabel="1:42"
+          onClick={() => {}}
+          actions={
+            <>
+              <TaskRowActionButton icon={EyeIcon} label="Open run" />
+              <TaskRowActionButton icon={SquareIcon} label="Stop run" />
+            </>
+          }
+        />
+        <TaskRow
+          title="Approve merge queue reorder"
+          agent="Codex"
+          state="waiting"
+          detail="Waiting on human approval before the queue lands"
+          elapsedLabel="0:38"
+          onClick={() => {}}
+          actions={<TaskRowActionButton icon={EyeIcon} label="Open task" />}
+        />
+        <TaskRow
+          title="bun test apps/desktop failed"
+          agent="Claude"
+          state="failed"
+          detail="3 assertions failed in the WebSocket reconnect suite"
+          progress="3 failing"
+          elapsedLabel="4:12"
+          onClick={() => {}}
+          actions={
+            <>
+              <TaskRowActionButton icon={RotateCcwIcon} label="Retry run" />
+              <TaskRowActionButton icon={XIcon} label="Dismiss" />
+            </>
+          }
+        />
+        <TaskRow
+          title="Verified vendor records"
+          agent="Codex"
+          state="done"
+          detail="All acceptance criteria met — ready for review"
+          progress="12/12"
+          elapsedLabel="6:05"
+          onClick={() => {}}
+        />
+        <TaskRow
+          title="Draft supplier emails"
+          agent="Claude"
+          state="queued"
+          detail="Queued behind 2 other tasks on this repo"
+          progress="0/3"
+        />
+      </TaskRowList>
     ),
   },
 ];
