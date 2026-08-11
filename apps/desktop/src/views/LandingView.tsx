@@ -5,6 +5,7 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { heldCount, toQueueRows } from '../lib/mergeQueueView';
+import { groupQueueHistory } from '../lib/queueHistory';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Panel } from '@/ui/chrome';
@@ -16,7 +17,7 @@ interface LandingViewProps {
   onOpenRun: (runId: string) => void;
 }
 
-/** How many history rows show before the explicit show-all. */
+/** How many landed rows show before the explicit show-all. */
 const HISTORY_PREVIEW = 4;
 
 /**
@@ -25,6 +26,11 @@ const HISTORY_PREVIEW = 4;
  * The queue has run since well before this view; it was just only ever visible one entry at a
  * time, through a control attached to a single run. That made the two questions you actually
  * have — what is in line, and what is stuck — unanswerable. This is the whole pipeline.
+ *
+ * History renders as the two stories it actually contains, not one list: "Landed" holds
+ * successful merges only, "Failed to land" holds live failures with the error legible and a
+ * retry. A failed attempt whose run was reviewed anyway, or that a newer attempt superseded,
+ * is stale history and collapses behind a disclosure — see `groupQueueHistory`.
  *
  * Nothing here simulates progress. Each entry's strip is drawn from the phase the server says
  * it is in, and an entry whose phase cannot be known shows no strip at all.
@@ -36,10 +42,18 @@ const HISTORY_PREVIEW = 4;
  * unreachable exactly when it was busiest. Content sizing plus the outer scroller fixes that.
  */
 export function LandingView({ data, onOpenRun }: LandingViewProps) {
-  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [showAllLanded, setShowAllLanded] = useState(false);
+  const [showStale, setShowStale] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [pushRetrying, setPushRetrying] = useState(false);
+  // The failed-row retry re-enqueues one run; track which, plus the server's
+  // refusal (409: already queued, already reviewed…) to render inline.
+  const [reenqueuingId, setReenqueuingId] = useState<string | null>(null);
+  const [reenqueueError, setReenqueueError] = useState<{
+    runId: string;
+    message: string;
+  } | null>(null);
 
   // Keyed on the snapshot rather than on `?? []`, which mints a fresh array identity every
   // render and would make the memo do nothing.
@@ -47,6 +61,16 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
   const entries = useMemo(() => queue?.entries ?? [], [queue]);
   const history = useMemo(() => queue?.history ?? [], [queue]);
   const rows = useMemo(() => toQueueRows(entries), [entries]);
+  const runs = data.runs;
+  const { landed, failed, stale } = useMemo(
+    () =>
+      groupQueueHistory(
+        history,
+        runs ?? [],
+        new Set(entries.map((e) => e.runId))
+      ),
+    [history, runs, entries]
+  );
   const held = heldCount(entries);
 
   if (data.portLoading || data.portError || data.client === null) {
@@ -84,26 +108,32 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
     }
   }
 
-  const shownHistory = showAllHistory
-    ? history
-    : history.slice(0, HISTORY_PREVIEW);
+  // Re-enqueue one failed run. The server's refusals (already reviewed, already queued,
+  // run not terminal) come back as thrown Errors carrying its message — render that on
+  // the row rather than swallowing it.
+  async function retryFailed(runId: string) {
+    setReenqueuingId(runId);
+    setReenqueueError(null);
+    try {
+      await data.handleEnqueueMerge(runId);
+    } catch (err) {
+      setReenqueueError({
+        runId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setReenqueuingId(null);
+    }
+  }
+
+  const shownLanded = showAllLanded ? landed : landed.slice(0, HISTORY_PREVIEW);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline gap-2">
-        <h2 className="text-[13px] font-semibold">Landing</h2>
-        <span className="text-muted-foreground text-[12px]">
-          {entries.length === 0
-            ? 'nothing in the queue'
-            : `${entries.length} in the queue`}{' '}
-          · verify runs before anything lands
-        </span>
-      </div>
-
       {/* The one queue outcome nothing else reports. A drain that merges locally but fails to
           push leaves origin without the commit, and the per-entry rows below have already
-          moved that entry into "Recently landed" — from the queue's point of view it did
-          land. This is the only place that says otherwise. */}
+          moved that entry into "Landed" — from the queue's point of view it did land. This is
+          the only place that says otherwise. */}
       {data.lastPushError !== null && (
         <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-[12px]">
           <span className="min-w-0 truncate">
@@ -120,39 +150,45 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
         </div>
       )}
 
-      <section>
-        <SectionLabel
-          rule
-          count={entries.length}
-          trailing={
-            held > 0 ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => void retryHeld()}
-                disabled={retrying}
-                className="text-state-waiting shadow-hairline hover:bg-muted/60 hover:text-state-waiting h-auto rounded-md px-2 py-1 text-[length:inherit] font-normal"
-              >
-                {retrying
-                  ? 'Rechecking…'
-                  : `Retry ${held} held ${held === 1 ? 'entry' : 'entries'}`}
-              </Button>
-            ) : undefined
-          }
-        >
-          Merge queue
-        </SectionLabel>
+      {/* An empty queue is one line, not a header plus a section both saying nothing is
+          queued — the chrome should cost no more than the fact it reports. */}
+      {entries.length === 0 ? (
+        <p className="text-muted-foreground flex items-center gap-2 text-[12.5px]">
+          <CircleCheck className="size-4" />
+          Merge queue: empty
+        </p>
+      ) : (
+        <section>
+          <SectionLabel
+            rule
+            count={entries.length}
+            trailing={
+              held > 0 ? (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => void retryHeld()}
+                  disabled={retrying}
+                  className="text-state-waiting shadow-hairline hover:bg-muted/60 hover:text-state-waiting h-auto rounded-md px-2 py-1 text-[length:inherit] font-normal"
+                >
+                  {retrying
+                    ? 'Rechecking…'
+                    : `Retry ${held} held ${held === 1 ? 'entry' : 'entries'}`}
+                </Button>
+              ) : (
+                <span className="dense-meta">
+                  verify runs before anything lands
+                </span>
+              )
+            }
+          >
+            Merge queue
+          </SectionLabel>
 
-        {retryError !== null && (
-          <p className="text-state-failed mt-2 text-[12px]">{retryError}</p>
-        )}
+          {retryError !== null && (
+            <p className="text-state-failed mt-2 text-[12px]">{retryError}</p>
+          )}
 
-        {rows.length === 0 ? (
-          <p className="text-muted-foreground flex items-center gap-2 py-4 text-[12.5px]">
-            <CircleCheck className="size-4" />
-            Nothing is waiting to land.
-          </p>
-        ) : (
           <ul className="mt-2 flex flex-col gap-1.5">
             {rows.map((row) => (
               <li
@@ -213,42 +249,26 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
               </li>
             ))}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
 
-      <section>
-        <SectionLabel rule count={history.length}>
-          Recently landed
-        </SectionLabel>
-        {history.length === 0 ? (
-          <p className="text-muted-foreground py-3 text-[12.5px]">
-            Nothing has landed yet.
-          </p>
-        ) : (
+      {landed.length > 0 && (
+        <section>
+          <SectionLabel rule count={landed.length}>
+            Landed
+          </SectionLabel>
           <ul className="mt-1 flex flex-col">
-            {shownHistory.map((h) => (
+            {shownLanded.map((h) => (
               <li
                 key={`${h.runId}-${h.finishedAt ?? ''}`}
-                className="hover:bg-muted/40 grid cursor-pointer grid-cols-[minmax(160px,1fr)_minmax(0,220px)_80px_72px] items-center gap-3 rounded-md px-3 py-1.5 transition-colors duration-150"
+                className="hover:bg-muted/40 grid cursor-pointer grid-cols-[minmax(160px,1fr)_80px_72px] items-center gap-3 rounded-md px-3 py-1.5 transition-colors duration-150"
                 onClick={() => onOpenRun(h.runId)}
               >
                 <span className="text-muted-foreground truncate text-[13px]">
                   {h.taskTitle}
                 </span>
-                {/* A failed entry states what actually went wrong, since the phase it died in
-                    was never recorded — the message is the only specific thing we have. */}
-                <span className="dense-meta text-state-failed truncate">
-                  {h.state === 'failed' ? (h.reason ?? 'failed') : ''}
-                </span>
-                <span
-                  className={cn(
-                    'dense-meta text-right',
-                    h.state === 'merged'
-                      ? 'text-state-review'
-                      : 'text-state-failed'
-                  )}
-                >
-                  {h.state}
+                <span className="dense-meta text-state-review text-right">
+                  merged
                 </span>
                 <span className="dense-meta text-right">
                   {h.finishedAt === undefined
@@ -257,21 +277,109 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
                 </span>
               </li>
             ))}
-            {history.length > HISTORY_PREVIEW && (
+            {landed.length > HISTORY_PREVIEW && (
               <li>
                 <Button
                   variant="ghost"
                   size="xs"
-                  onClick={() => setShowAllHistory((v) => !v)}
+                  onClick={() => setShowAllLanded((v) => !v)}
                   className="text-muted-foreground hover:text-foreground h-auto px-3 py-2 text-[length:inherit] font-normal hover:bg-transparent"
                 >
-                  {showAllHistory ? 'Show fewer' : `Show all ${history.length}`}
+                  {showAllLanded ? 'Show fewer' : `Show all ${landed.length}`}
                 </Button>
               </li>
             )}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
+
+      {failed.length > 0 && (
+        <section>
+          <SectionLabel rule count={failed.length}>
+            Failed to land
+          </SectionLabel>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {failed.map((h) => (
+              <li
+                key={`${h.runId}-${h.finishedAt ?? ''}`}
+                className="hover:bg-muted/40 cursor-pointer rounded-md px-3 py-2 transition-colors duration-150"
+                onClick={() => onOpenRun(h.runId)}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="min-w-0 flex-1 truncate text-[13px]">
+                    {h.taskTitle}
+                  </span>
+                  <span className="dense-meta shrink-0">
+                    {h.finishedAt === undefined
+                      ? ''
+                      : formatRelativeTimeFromIso(h.finishedAt)}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={reenqueuingId !== null}
+                    onClick={(e) => {
+                      // The row itself navigates; retrying must not also open the run.
+                      e.stopPropagation();
+                      void retryFailed(h.runId);
+                    }}
+                    aria-label={`Retry: ${h.taskTitle}`}
+                    className="shrink-0"
+                  >
+                    {reenqueuingId === h.runId ? 'Queuing…' : 'Retry'}
+                  </Button>
+                </div>
+                {/* The error is the row's whole point — full text, wrapped, not a truncated
+                    monospace fragment. */}
+                <p className="text-state-failed mt-1 text-[12.5px] break-words">
+                  {h.reason ?? 'failed'}
+                </p>
+                {reenqueueError !== null &&
+                  reenqueueError.runId === h.runId && (
+                    <p className="text-state-failed mt-1 text-[12px]">
+                      Retry failed: {reenqueueError.message}
+                    </p>
+                  )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Failures the run has outgrown — reviewed anyway, or superseded by a newer attempt.
+          Kept reachable for the curious, but never as headline rows. */}
+      {stale.length > 0 && (
+        <div>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setShowStale((v) => !v)}
+            className="text-muted-foreground hover:text-foreground h-auto px-3 py-1 text-[length:inherit] font-normal hover:bg-transparent"
+          >
+            {showStale ? 'Hide' : 'Show'} {stale.length} stale{' '}
+            {stale.length === 1 ? 'attempt' : 'attempts'}
+          </Button>
+          {showStale && (
+            <ul className="mt-1 flex flex-col">
+              {stale.map((h) => (
+                <li
+                  key={`${h.runId}-${h.finishedAt ?? ''}`}
+                  className="text-muted-foreground/70 hover:bg-muted/40 grid cursor-pointer grid-cols-[minmax(160px,1fr)_minmax(0,220px)_72px] items-center gap-3 rounded-md px-3 py-1 text-[12.5px] transition-colors duration-150"
+                  onClick={() => onOpenRun(h.runId)}
+                >
+                  <span className="truncate">{h.taskTitle}</span>
+                  <span className="truncate">{h.reason ?? 'failed'}</span>
+                  <span className="dense-meta text-right">
+                    {h.finishedAt === undefined
+                      ? ''
+                      : formatRelativeTimeFromIso(h.finishedAt)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -68,7 +68,8 @@ test('a busy Inbox still renders the merge queue section', () => {
 
   expect(screen.getByText('Waiting on you').closest('section')).not.toBeNull();
   expect(screen.getByText('Needs review').closest('section')).not.toBeNull();
-  expect(screen.getByText('Merge queue').closest('section')).not.toBeNull();
+  // The queue is empty here, so its whole footprint is the one-line empty state.
+  expect(screen.getByText('Merge queue: empty')).toBeDefined();
 });
 
 // The merge affordances added 2026-08-11: reviews used to be open-one-click-merge-
@@ -118,4 +119,62 @@ test('queue-merge affordances call the queue, not navigation', () => {
   );
   expect(calls).toEqual(['r1']);
   expect(navigated).toBe(0);
+});
+
+// The two sections must tell one story: a run still in Needs review whose latest queue
+// attempt failed carries a badge, so the review row itself says the queue bounced it. A
+// run whose failure was followed by a merged attempt gets no badge — latest attempt wins.
+test('a needs-review run whose latest queue attempt failed is badged', () => {
+  const runOf = (id: string) =>
+    ({ ...waitingRun(id), state: 'finished' }) as unknown as RunMeta;
+  const review: InboxData['review'] = [
+    {
+      target: { kind: 'run', runId: 'bounced' },
+      run: runOf('bounced'),
+      title: 'Bounced by verify',
+      isPr: false,
+      updatedAt: '2026-08-10T00:00:00.000Z',
+    },
+    {
+      target: { kind: 'run', runId: 'fine' },
+      run: runOf('fine'),
+      title: 'Never queued',
+      isPr: false,
+      updatedAt: '2026-08-10T00:00:00.000Z',
+    },
+  ];
+  const history = [
+    {
+      runId: 'bounced',
+      taskId: 't-bounced',
+      taskTitle: 'Bounced by verify',
+      state: 'failed',
+      reason: 'verify failed',
+      enqueuedAt: '2026-08-10T00:00:00.000Z',
+      finishedAt: '2026-08-10T00:05:00.000Z',
+    },
+  ];
+
+  render(
+    <InboxView
+      data={{ waiting: [], review }}
+      project={projectWith({
+        mergeQueue: { entries: [], history },
+      } as unknown as Partial<DispatchProjectData>)}
+      onOpenTask={() => {}}
+      onOpenPr={() => {}}
+    />
+  );
+
+  const badges = screen.getAllByText('verify failed');
+  // Once as the badge on the review row; the failure row below repeats the reason text.
+  const badge = badges.find((el) =>
+    el.closest('button')?.textContent?.includes('Bounced by verify')
+  );
+  expect(badge).toBeDefined();
+  expect(
+    screen
+      .getAllByRole('button')
+      .find((b) => b.textContent?.includes('Never queued'))?.textContent
+  ).not.toContain('verify failed');
 });

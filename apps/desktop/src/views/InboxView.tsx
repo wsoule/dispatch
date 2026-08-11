@@ -8,6 +8,7 @@ import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import type { InboxData } from '../lib/inboxQueue';
+import { latestAttemptFailedRunIds } from '../lib/queueHistory';
 import { reviewTargetKey } from '../lib/reviewTarget';
 import { LandingView } from './LandingView';
 import { cn } from '@/lib/utils';
@@ -81,6 +82,18 @@ export function InboxView({
   const { review, waiting } = data;
   const empty = review.length === 0 && waiting.length === 0;
 
+  // Runs whose latest merge-queue attempt failed. A needs-review row for one of these
+  // carries a "verify failed" badge, so this list and the queue history below tell one
+  // story instead of two. A run back in the live queue is exempt — its pending attempt,
+  // not the old failure, is its story. Cheap to derive inline: history is capped at 20
+  // server-side.
+  const verifyFailed = latestAttemptFailedRunIds(
+    project.mergeQueue?.history ?? []
+  );
+  const queued = new Set(
+    (project.mergeQueue?.entries ?? []).map((e) => e.runId)
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
       <div className="flex items-baseline gap-2">
@@ -144,6 +157,12 @@ export function InboxView({
                   <ReviewRow
                     key={reviewTargetKey(item.target)}
                     item={item}
+                    verifyFailed={
+                      item.target.kind === 'run' &&
+                      item.run !== undefined &&
+                      verifyFailed.has(item.run.id) &&
+                      !queued.has(item.run.id)
+                    }
                     onOpenTask={onOpenTask}
                     onOpenPr={onOpenPr}
                     onQueueMerge={(runId) =>
@@ -180,11 +199,15 @@ export function InboxView({
  */
 function ReviewRow({
   item,
+  verifyFailed = false,
   onOpenTask,
   onOpenPr,
   onQueueMerge,
 }: {
   item: ReviewQueueItem;
+  /** The run's latest merge-queue attempt failed — badge the row so the review list
+   * and the queue history below it agree. */
+  verifyFailed?: boolean;
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
   onOpenPr: (number: number) => void;
   /** Queues one run for the merge queue without opening it first. */
@@ -197,6 +220,13 @@ function ReviewRow({
         title={item.title}
         state="review"
         updatedAt={item.updatedAt}
+        badge={
+          verifyFailed ? (
+            <span className="bg-state-failed-surface text-state-failed shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-none">
+              verify failed
+            </span>
+          ) : undefined
+        }
         onClick={() => onOpenTask(run.taskId, 'diff', run.id)}
         action={
           onQueueMerge !== undefined ? (
@@ -234,6 +264,7 @@ function Row({
   updatedAt,
   onClick,
   action,
+  badge,
 }: {
   title: string;
   state: FeedState;
@@ -242,11 +273,14 @@ function Row({
   /** A trailing control rendered as the row button's sibling, never nested
    * inside it — nested buttons are invalid markup and swallow clicks. */
   action?: ReactNode;
+  /** A small status tag rendered right after the title (e.g. "verify failed"). */
+  badge?: ReactNode;
 }) {
   const content = (
     <>
       <StateDot state={state} />
       <span className="min-w-0 flex-1 truncate text-[13px]">{title}</span>
+      {badge}
       <span className="dense-meta shrink-0">
         {formatRelativeTimeFromIso(updatedAt)}
       </span>
