@@ -1,6 +1,5 @@
-// The landing feed (spec's unified PR table): a pure join of runs, the merge
-// queue, and PRs into rows plus landed history. No I/O, no Date.now — `now`
-// is injected by the caller (Task 5's HTTP handler).
+// The landing feed: a pure join of runs, the merge queue, and PRs into rows
+// plus landed history. No I/O, no Date.now — `now` is injected by the caller.
 import type {
   MergeQueueEntry,
   MergeQueueSnapshot,
