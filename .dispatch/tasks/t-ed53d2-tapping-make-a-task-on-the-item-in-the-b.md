@@ -11,14 +11,14 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T01:53:02.544Z
-updated: 2026-08-11T01:53:02.544Z
+updated: 2026-08-11T01:58:38.520Z
 external: null
 writes: []
 ---
 
 ## Description
 
-
+the toast needs to also say "add detail" with the ai stars to easily add detail to the task from the toast
 
 ## Acceptance Criteria
 
