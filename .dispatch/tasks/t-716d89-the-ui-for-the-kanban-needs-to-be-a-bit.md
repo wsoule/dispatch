@@ -1,7 +1,7 @@
 ---
 id: t-716d89
 title: the ui for the kanban needs to be a bit different…
-status: in-review
+status: done
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T01:52:30.113Z
-updated: 2026-08-11T17:25:52.607Z
+updated: 2026-08-11T18:01:55.162Z
 external: null
 writes: []
 ---
@@ -40,3 +40,4 @@ Merge the separate 'board' (flat status columns) and 'lanes' (epic swim lanes) v
 
 Heads-up for a human: apps/desktop/e2e/views.spec.ts-snapshots/tasks-{dark,light}-darwin.png are full-page shots of this exact view and will now mismatch. They need `bun run e2e:update` on a machine where Playwright can actually launch — this shell cannot (its webServer can't posix_spawn git), and regenerating baselines from a worktree is not safe. The layout also has not had a live visual check for the same reason; the sticky header/lane column alignment is asserted only structurally. — none
 - 2026-08-11T17:25:52.607Z [run r-2d522b] finished: finished — 16 files, $10.98 — agent:wsoule679/claude
+- 2026-08-11T18:01:55.162Z run r-2d522b merged into main — human:wsoule679
