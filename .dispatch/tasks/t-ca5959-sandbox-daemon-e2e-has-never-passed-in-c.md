@@ -1,7 +1,7 @@
 ---
 id: t-ca5959
 title: "Sandbox daemon e2e has never passed in CI: fake run lands interrupted-dirty"
-status: todo
+status: done
 kind: task
 parent: null
 milestone: null
@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T00:31:25.909Z
-updated: 2026-08-11T00:31:25.909Z
+updated: 2026-08-11T01:00:12.598Z
 external: null
 writes: []
 ---
