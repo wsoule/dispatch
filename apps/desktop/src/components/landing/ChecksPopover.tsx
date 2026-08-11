@@ -12,10 +12,8 @@ interface ChecksPopoverProps {
   url?: string;
 }
 
-// Buckets a check's normalized `conclusion` string the same way the server's
-// `summarizeChecks` does (packages/server/src/orchestrator/pr.ts), so a
-// per-check dot's tone always agrees with which of passed/failed/pending it
-// was counted under in the aggregate line above it.
+// Buckets a check's conclusion the same way the server's `summarizeChecks`
+// does, so a check's dot tone always agrees with the aggregate line above it.
 type RunBucket = 'passed' | 'failed' | 'pending';
 
 const PASSED_CONCLUSIONS = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
@@ -34,9 +32,8 @@ function runBucket(conclusion: string): RunBucket {
   return 'pending';
 }
 
-// The same three tones `PrChecksPill`/the aggregate breakdown below use,
-// reused here as a dot fill rather than a pill so a dozen checks stay
-// scannable in one column instead of a dozen full pills.
+// Same three tones as `PrChecksPill`/the breakdown below, as a dot fill so
+// many checks stay scannable in one column instead of full pills.
 const BUCKET_DOT_CLASS: Record<RunBucket, string> = {
   passed: 'bg-state-review',
   failed: 'bg-destructive',
@@ -73,16 +70,8 @@ function CheckRunRow({ run }: { run: PrCheckRun }) {
   );
 }
 
-/**
- * The Checks cell: `PrChecksPill`'s rollup, expandable into a popover listing
- * each named check with its conclusion and a click-through to GitHub.
- *
- * `checks.runs` is only populated from a daemon new enough to serialize it
- * (`summarizeChecks` on the server) — a project talking to an older one still
- * sends a valid aggregate with an empty `runs` array, so that case falls back
- * to the passed/failed/pending breakdown plus one link to the PR's checks tab
- * rather than rendering an empty list.
- */
+/** The Checks cell: `PrChecksPill`'s rollup, expanding into a popover of named
+ * checks — or, when `runs` is empty (an older daemon), the aggregate only. */
 export function ChecksPopover({ checks, url }: ChecksPopoverProps) {
   if (checks.total === 0) {
     return <span className="dense-meta text-muted-foreground">no CI</span>;
@@ -119,9 +108,7 @@ export function ChecksPopover({ checks, url }: ChecksPopoverProps) {
           {hasNamedRuns ? (
             <div className="border-border mt-1 flex max-h-48 flex-col gap-1.5 overflow-y-auto border-t pt-1.5">
               {checks.runs.map((run, i) => (
-                // Check names aren't guaranteed unique across GitHub Apps —
-                // index is stable within one rollup snapshot, which is all
-                // this list's lifetime ever spans.
+                // Names aren't guaranteed unique; index is stable for this list's lifetime.
                 <CheckRunRow key={`${run.name}-${i}`} run={run} />
               ))}
             </div>

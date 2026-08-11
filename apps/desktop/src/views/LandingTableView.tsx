@@ -33,8 +33,7 @@ import {
 } from '@/ui/table';
 
 // Persists filters across launches, same key/shape Task 8's read/serialize
-// pair round-trips — this view is the only place that ever touches
-// localStorage for them.
+// pair round-trips — the only place that touches localStorage for them.
 const FILTERS_STORAGE_KEY = 'dispatch:landing:filters';
 
 function readStoredFilters(): LandingFilters {
@@ -49,16 +48,8 @@ interface LandingTableViewProps {
   onSelectTarget: (target: ReviewTarget) => void;
 }
 
-/**
- * The unified PR table: every run, PR, and queue-local entry currently in
- * flight, grouped by what it needs (a human, GitHub, or nothing), plus a
- * collapsible history of what recently landed.
- *
- * Replaces the old queue-only Landing panel that used to render inline at the
- * bottom of Review's empty state — that view answered "what's in the merge
- * queue"; this answers the broader "what's in flight and where is it stuck"
- * across runs, PRs opened outside dispatch, and the queue alike.
- */
+/** The unified PR table: every run/PR/queue-local entry in flight, grouped by
+ * what it needs, plus a collapsible history of what recently landed. */
 export function LandingTableView({
   data,
   onSelectTarget,
@@ -87,17 +78,14 @@ export function LandingTableView({
   const snapshot = data.landing;
   const now = Date.now();
 
-  // A row's own author-text/gate-chip buttons call these with a value already
-  // known to exist, so re-clicking the same one clears it — the dismissible
-  // chip above the table does the same thing from the other direction.
+  // Re-clicking the same author/gate a row's own buttons set clears it —
+  // the dismissible chip above the table does the same thing in reverse.
   const toggleAuthor = (author: string) =>
     setFilters((f) => ({ ...f, author: f.author === author ? null : author }));
   const toggleGate = (gate: GateStatus) =>
     setFilters((f) => ({ ...f, gate: f.gate === gate ? null : gate }));
   const clearFilters = () => setFilters(EMPTY_FILTERS);
-  // Narrowed locals rather than re-reading `filters.author`/`filters.gate`
-  // inside the chips below: TS can't carry a `!== null` narrowing on a
-  // destructured object's property through a closure boundary.
+  // Narrowed locals so TS can carry the `!== null` check into the chips below.
   const authorFilter = filters.author;
   const gateFilter = filters.gate;
   const hasActiveFilters =
@@ -117,9 +105,8 @@ export function LandingTableView({
         <span className="text-muted-foreground text-[12px]">
           Every run, PR, and queue entry in flight, in one table.
         </span>
-        {/* react-query keeps the last successful snapshot on a failed
-            background refetch (see the hook's own comment) — this is the
-            only thing that tells the difference from a healthy, current one. */}
+        {/* react-query keeps the last snapshot on a failed refetch — this
+            badge is the only thing that flags it as stale, not current. */}
         {snapshot !== null && data.landingIsError && (
           <Badge
             variant="outline"
