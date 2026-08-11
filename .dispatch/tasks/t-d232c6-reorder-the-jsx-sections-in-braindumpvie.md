@@ -5,7 +5,7 @@ title: Reorder the JSX sections in BrainDumpView to render the 'Group into
   suggestions appear after the inbox items (lines 430-519 after lines 299-362);
   they should appear before. This improves UX by showing epic-grouping hints
   before the raw item list, helping users think about structure earlier.
-status: in-review
+status: done
 kind: task
 parent: null
 milestone: null
@@ -14,9 +14,10 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-04T18:06:50.010Z
-updated: 2026-08-04T18:24:09.282Z
+updated: 2026-08-10T23:58:52.399Z
 external: null
 writes: []
+archived-at: 2026-08-10T23:58:52.399Z
 ---
 
 ## Description
@@ -35,3 +36,4 @@ Verified: format/lint clean, desktop tsc + vite build pass, inbox clustering uni
 
 NOTE FOR REVIEW — the committed Playwright baselines e2e/views.spec.ts-snapshots/braindump-{light,dark}-darwin.png are now stale and must be regenerated (`bun run e2e:update --grep braindump`) on a machine with a clean storefront fixture. I deliberately did NOT regenerate them: unmodified HEAD already fails on this machine by 458px, all of it the env-specific sidebar warning ("Board sync is off" / "dispatch command isn't resolvable" / "Task merge driver not set up", which varied between runs). Updating here would have baked that local noise into the shared baselines. — none
 - 2026-08-04T18:24:09.282Z [run r-d5ee92] finished: finished — 1 files, $5.57 — agent:wsoule679/claude
+- 2026-08-10T23:57:41.975Z run r-d5ee92 merged outside dispatch (branch dispatch/t-d232c6-reorder-the-jsx-sections-in-braindumpvie-d5ee92 landed on main) — none

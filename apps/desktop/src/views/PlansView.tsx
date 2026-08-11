@@ -292,10 +292,10 @@ function PlanConversation({
         )}
         <span className="text-muted-foreground text-[11px]">
           {confirmed
-            ? 'This plan is confirmed — its tasks are already created. Start a new plan to keep planning.'
+            ? 'Confirmed. Tasks are created. Start a new plan to keep going.'
             : busy
-              ? 'The planner is answering — send your next message once its reply lands.'
-              : 'Keep refining — ask for a change and the proposal below updates.'}
+              ? 'The planner is answering…'
+              : 'Ask for a change. The proposal updates.'}
         </span>
         {!confirmed && (
           <div className="flex gap-2">
@@ -609,9 +609,9 @@ export function PlansView({
   // proposal the planner sent either way, so it stays on screen and this line says what
   // changed underneath it.
   const reviewNotice = turnRunning
-    ? 'The planner is revising this plan — the version below is the last one it sent, and your edits to it will be replaced when the new one arrives.'
+    ? 'The planner is revising. Edits here get replaced when the new version lands.'
     : data.planRecord?.state === 'failed'
-      ? 'That turn failed, so this is still the last plan the planner sent. Send another message to get a version you can confirm.'
+      ? 'That turn failed. Send another message to retry.'
       : null;
 
   return (
@@ -635,7 +635,7 @@ export function PlansView({
           )}
           <Textarea
             rows={4}
-            placeholder="Describe the work — the planner will propose an epic and its tasks…"
+            placeholder="Describe the work…"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             className="resize-y text-[13px]"
@@ -784,7 +784,7 @@ export function PlansView({
         {history.length === 0 ? (
           <EmptyState
             icon={History}
-            message="No plans started yet this session."
+            message="No plans yet."
             className="border-border rounded-lg border border-dashed px-0 py-8 [&_[data-slot=empty-description]]:text-[13px]"
           />
         ) : (

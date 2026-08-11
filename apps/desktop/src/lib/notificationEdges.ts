@@ -112,15 +112,15 @@ export function diffQueueNotifications(
         });
       } else if (entry.state === 'blocked-environment') {
         notifications.push({
-          title: 'Merge blocked — action needed',
-          body: `${entry.taskTitle} — ${(entry.reason ?? '').slice(0, 80)}`,
+          title: 'Merge blocked. Action needed.',
+          body: `${entry.taskTitle} · ${(entry.reason ?? '').slice(0, 80)}`,
           target: { kind: 'queue' },
         });
       } else {
         const reason = (entry.reason ?? '').slice(0, 80);
         notifications.push({
           title: 'Merge failed',
-          body: `${entry.taskTitle} — ${reason}`,
+          body: `${entry.taskTitle} · ${reason}`,
           target: { kind: 'queue' },
         });
       }

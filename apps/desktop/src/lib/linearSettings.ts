@@ -98,11 +98,11 @@ export function linearKeySourceNote(
     case 'project':
       return null;
     case 'env':
-      return 'Using LINEAR_API_KEY from your environment. Connect a key here to use a different Linear workspace for this project. Unset the variable and restart Dispatch to stop using it entirely.';
+      return 'Using LINEAR_API_KEY from your environment. Connect a key here to override it, or unset it and restart Dispatch.';
     case 'global':
       return 'Using your shared default key. Connect a key here to use a different Linear workspace for this project.';
     default:
-      return 'Connect a Linear API key to pull issues in and push task changes back out. The key is sent once and never shown again — only whether a connection exists.';
+      return 'Connect a Linear API key to sync both ways. The key is sent once and never shown again.';
   }
 }
 
@@ -114,7 +114,7 @@ export function describeFetchFailure(error: unknown): string {
   // (`body.error`) and carries no status digits, as ApiError's own `code` doc comment warns.
   const status = error instanceof ApiError ? error.status : null;
   if (status === 401) {
-    return 'Linear rejected this key — it may have been revoked. Reconnect with a new one.';
+    return 'Linear rejected this key. Reconnect with a new one.';
   }
   if (status === 409) {
     return 'No Linear API key is configured.';

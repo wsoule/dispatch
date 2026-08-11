@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { ACTORS } from './paths.js';
+import { ACTORS, type DemoActor } from './paths.js';
 
 export interface DemoTask {
   id: string;
@@ -25,6 +25,31 @@ export interface DemoTask {
    * `t-9b2d14` below — so the "declares no writes" state stays demonstrable.
    */
   writes: string[];
+}
+
+interface VerifyStepConfig {
+  name: string;
+  command: string;
+}
+
+// The local demo's verify pipeline: real, slow, and safe to run because it
+// only ever executes on a machine the operator already trusts.
+const DEFAULT_VERIFY_STEPS: VerifyStepConfig[] = [
+  { name: 'install', command: 'bun install' },
+  { name: 'typecheck', command: 'bun run tsc' },
+  { name: 'test', command: 'bun test' },
+  { name: 'lint', command: 'bun run lint' },
+];
+
+export interface BoardOptions {
+  /** Appended to the team.yml roster after ACTORS (e.g. the web visitor). */
+  extraActors?: DemoActor[];
+  /** Default true — the local demo's value. */
+  linearEnabled?: boolean;
+  /** Default true ("on") — the local demo's value. */
+  cartoEnabled?: boolean;
+  /** Default DEFAULT_VERIFY_STEPS — the local demo's value. */
+  verifySteps?: VerifyStepConfig[];
 }
 
 // A one-off credit on a task's `## Activity` section, so attribution reads
@@ -338,9 +363,9 @@ function writeTasks(root: string): void {
   }
 }
 
-function writeTeam(root: string): void {
+function writeTeam(root: string, extraActors: DemoActor[]): void {
   const lines = ['members:'];
-  for (const actor of ACTORS) {
+  for (const actor of [...ACTORS, ...extraActors]) {
     lines.push(
       `  - handle: ${actor.handle}`,
       `    email: ${actor.email}`,
@@ -360,19 +385,18 @@ function writeTeam(root: string): void {
 // file is not trying to differ from defaults for its own sake. Holds no
 // secret — the Linear API key lives outside the repo, in
 // ~/.dispatch/credentials.json.
-function writeConfig(root: string): void {
+function writeConfig(root: string, opts?: BoardOptions): void {
+  const linear = opts?.linearEnabled ?? true;
+  const carto = opts?.cartoEnabled ?? true;
+  const verifySteps = opts?.verifySteps ?? DEFAULT_VERIFY_STEPS;
+  const verifyStepsYaml = verifySteps
+    .map((s) => `  - name: ${s.name}\n    command: ${s.command}`)
+    .join('\n');
   const config = `statuses: [backlog, todo, in-progress, in-review, done, cancelled]
 autoCommit: true
 
 verifySteps:
-  - name: install
-    command: bun install
-  - name: typecheck
-    command: bun run tsc
-  - name: test
-    command: bun test
-  - name: lint
-    command: bun run lint
+${verifyStepsYaml}
 
 orchestrator:
   epicConcurrency: 3
@@ -400,7 +424,7 @@ fixLoop:
       modelTier: high
 
 carto:
-  enabled: on
+  enabled: ${carto ? 'on' : 'off'}
 
 verify:
   command: bun run src/server/routes.ts
@@ -408,7 +432,7 @@ verify:
   notes: Confirm /health returns 200, then check that an exact SKU search beats a fuzzy one and a discount code is checked server-side.
 
 linear:
-  enabled: true
+  enabled: ${linear}
   teamId: STORE
   statusMap:
     backlog: Backlog
@@ -431,9 +455,9 @@ function writeGitattributes(root: string): void {
 }
 
 /** Lays down the committed `.dispatch/` board state: tasks, roster, config, merge-driver registration. */
-export function writeBoard(root: string): void {
+export function writeBoard(root: string, opts?: BoardOptions): void {
   writeTasks(root);
-  writeTeam(root);
-  writeConfig(root);
+  writeTeam(root, opts?.extraActors ?? []);
+  writeConfig(root, opts);
   writeGitattributes(root);
 }

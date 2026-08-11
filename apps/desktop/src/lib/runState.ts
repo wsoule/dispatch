@@ -136,7 +136,7 @@ export function runSurveyNotice(
   if (paths === 0) return null;
   return {
     title: 'Run left uncommitted work',
-    body: `${taskTitle} — ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
+    body: `${taskTitle} · ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
   };
 }
 

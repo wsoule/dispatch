@@ -1,5 +1,12 @@
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { actorFile, runKey, runsDir } from './paths.js';
@@ -9,14 +16,16 @@ import { assertSafeToDelete, BRANCH_FIXES, computeFixDiff } from './repo.js';
 // ---------------------------------------------------------------------------
 // Hand-kept mirrors of @dispatch/server's orchestrator types.
 //
-// packages/server's package.json exports nothing but its own package.json
-// (`"exports": { "./package.json": "./package.json" }`), so nothing outside
-// that package can import its modules — not a Bun/Node runtime limitation
-// (this package is Bun-only too), but a deliberate boundary: server is a
-// daemon, not a library. packages/cli and packages/mcp hit the same wall and
-// hand-mirror these same types (see packages/cli/src/apiClient.ts and
-// packages/mcp/src/tools.ts) with a source-comparison test to catch drift;
-// test/runs.test.ts does the same thing here (see "RunState mirror").
+// packages/server's package.json has no root export — only its own
+// package.json plus two deliberately narrow subpaths, `./testing` (fake
+// executor/planner doubles) and `./embed` (startServer, for apps/demo's
+// daemon) — so nothing outside that package can import its modules
+// generally. Not a Bun/Node runtime limitation (this package is Bun-only
+// too), but a deliberate boundary: server is a daemon, not a library.
+// packages/cli and packages/mcp hit the same wall and hand-mirror these same
+// types (see packages/cli/src/apiClient.ts and packages/mcp/src/tools.ts)
+// with a source-comparison test to catch drift; test/runs.test.ts does the
+// same thing here (see "RunState mirror").
 // ---------------------------------------------------------------------------
 
 export const RUN_STATES = [
@@ -936,4 +945,29 @@ export function writeRuns(rootDir: string, home: string, handle: string): void {
   writeReviewDiffs(dir, rootDir);
 
   writeActorIdentity(rootDir, home, handle);
+}
+
+/**
+ * Reads back every `.jsonl` header `writeRuns` just wrote under
+ * `runsDir(rootDir, home)` and returns the distinct `branch` values they
+ * reference. The single source of truth for "which branches does this run
+ * history narrate" — re-deriving each writer's own naming rule here would
+ * drift the moment one of them changed independently.
+ */
+export function listSeededBranches(rootDir: string, home: string): string[] {
+  const dir = runsDir(rootDir, home);
+  const branches = new Set<string>();
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.jsonl')) continue;
+    const firstLine = readFileSync(join(dir, file), 'utf8').split('\n')[0];
+    if (firstLine === undefined || firstLine === '') continue;
+    const parsed = JSON.parse(firstLine) as {
+      type?: string;
+      meta?: { branch?: unknown };
+    };
+    if (parsed.type === 'header' && typeof parsed.meta?.branch === 'string') {
+      branches.add(parsed.meta.branch);
+    }
+  }
+  return [...branches];
 }

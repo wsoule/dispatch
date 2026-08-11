@@ -137,7 +137,7 @@ export function SnippetComposer({
         <p className="text-muted-foreground text-[11px]">
           {selectedTarget.canAct
             ? 'This target can edit this branch.'
-            : 'This target is read-only — it explains, it does not edit.'}
+            : "Read-only. It explains, it doesn't edit."}
         </p>
       )}
     </div>

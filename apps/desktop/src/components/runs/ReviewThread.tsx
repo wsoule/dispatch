@@ -28,8 +28,8 @@ import { Textarea } from '@/ui/textarea';
 export type ReviewDestination = 'agent' | 'github';
 
 const REPLY_PLACEHOLDER: Record<ReviewDestination, string> = {
-  agent: 'Reply — the agent reads this when you send the work back',
-  github: 'Reply — posts to this thread on GitHub',
+  agent: 'Reply. The agent reads this when you send the work back.',
+  github: 'Reply. Posts to GitHub.',
 };
 
 const COMPOSER_PLACEHOLDER: Record<ReviewDestination, string> = {
@@ -41,14 +41,14 @@ const COMPOSER_PLACEHOLDER: Record<ReviewDestination, string> = {
 // draft. There is no thread on GitHub to reply into until a verdict
 // publishes the note, so the box is withheld rather than left to fail.
 const STAGED_REPLY_NOTE =
-  'Staged — this note reaches GitHub when you submit your review. ' +
+  'Staged. Reaches GitHub when you submit. ' +
   'Replying and resolving open up then.';
 
 // Shown when a note is on GitHub but Dispatch has not read its ids back yet
 // (a thread sync that failed, or a PR past the 100-thread page). Replying
 // would 409, so the box waits for the next refresh instead of failing.
 const UNLINKED_REPLY_NOTE =
-  'Not linked to its GitHub thread yet — reopen this review to pick it up.';
+  'Not linked to GitHub yet. Reopen the review to pick it up.';
 
 // Fallback for a composer save that rejected with something that is not an
 // Error, which carries no message worth showing.

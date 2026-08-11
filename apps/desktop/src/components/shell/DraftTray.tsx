@@ -97,7 +97,7 @@ export function DraftTray({
         </div>
         <ScrollArea className="max-h-[60vh]">
           {items.length === 0 ? (
-            <EmptyState message='No drafts yet — start one from "New task".' />
+            <EmptyState message='No drafts yet. Start one from "New task".' />
           ) : (
             items.map((item) => (
               <div

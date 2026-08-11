@@ -6,8 +6,6 @@ import type {
 } from '../../lib/diffDisplay';
 import { Checkbox } from '@/ui/checkbox';
 import { HintText, Panel, PanelHeader, PanelRow } from '@/ui/chrome';
-import type { SegmentedOption } from '@/ui/chrome/Segmented';
-import { Segmented } from '@/ui/chrome/Segmented';
 import { Label } from '@/ui/label';
 import {
   Select,
@@ -16,20 +14,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 
-const DIFF_LAYOUT_OPTIONS: SegmentedOption<DiffLayout>[] = [
+const DIFF_LAYOUT_OPTIONS: { value: DiffLayout; label: string }[] = [
   { value: 'split', label: 'Split' },
   { value: 'unified', label: 'Unified' },
 ];
 
-const DIFF_INDICATOR_OPTIONS: SegmentedOption<DiffIndicatorStyle>[] = [
+const DIFF_INDICATOR_OPTIONS: { value: DiffIndicatorStyle; label: string }[] = [
   { value: 'bars', label: 'Bars' },
   { value: 'classic', label: 'Classic' },
   { value: 'none', label: 'None' },
 ];
 
 // Human names for `lineDiffType`, not the raw prop values — four options is one too many for a
-// comfortable `Segmented` row at narrow widths, so this renders as a `Select` instead.
+// comfortable compact tab row at narrow widths, so this renders as a `Select` instead.
 const DIFF_INLINE_HIGHLIGHT_OPTIONS: {
   value: DiffInlineHighlight;
   label: string;
@@ -61,12 +60,27 @@ export function DiffsSection() {
       <PanelRow>
         <label className="flex items-center gap-3">
           <span className="w-40 flex-shrink-0 text-[13px]">Layout</span>
-          <Segmented
+          <Tabs
             value={settings.layout}
-            onChange={(layout) => updateSettings({ layout })}
-            options={DIFF_LAYOUT_OPTIONS}
-            label="Diff layout"
-          />
+            onValueChange={(layout) =>
+              updateSettings({ layout: layout as DiffLayout })
+            }
+          >
+            <TabsList
+              aria-label="Diff layout"
+              className="border-border h-7 gap-0.5 rounded-md border bg-transparent p-0.5"
+            >
+              {DIFF_LAYOUT_OPTIONS.map((option) => (
+                <TabsTrigger
+                  key={option.value}
+                  value={option.value}
+                  className="px-2 text-[13px] font-normal"
+                >
+                  {option.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </label>
       </PanelRow>
 
@@ -75,12 +89,27 @@ export function DiffsSection() {
           <span className="w-40 flex-shrink-0 text-[13px]">
             Change indicators
           </span>
-          <Segmented
+          <Tabs
             value={settings.indicators}
-            onChange={(indicators) => updateSettings({ indicators })}
-            options={DIFF_INDICATOR_OPTIONS}
-            label="Diff change indicators"
-          />
+            onValueChange={(indicators) =>
+              updateSettings({ indicators: indicators as DiffIndicatorStyle })
+            }
+          >
+            <TabsList
+              aria-label="Diff change indicators"
+              className="border-border h-7 gap-0.5 rounded-md border bg-transparent p-0.5"
+            >
+              {DIFF_INDICATOR_OPTIONS.map((option) => (
+                <TabsTrigger
+                  key={option.value}
+                  value={option.value}
+                  className="px-2 text-[13px] font-normal"
+                >
+                  {option.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </label>
       </PanelRow>
 

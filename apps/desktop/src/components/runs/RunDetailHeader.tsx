@@ -155,8 +155,7 @@ export function RunDetailHeader({
           >
             <TriangleAlert className="size-3 shrink-0" />
             <span className="truncate">
-              {meta.baseDiscardedReason ??
-                'base discarded — rebase before merging'}
+              {meta.baseDiscardedReason ?? 'base discarded · rebase first'}
             </span>
           </Badge>
         )}
@@ -186,8 +185,8 @@ export function RunDetailHeader({
               disabled={busy || stop.stopDisabled}
               title={
                 stop.stopDisabled
-                  ? 'Already stopping — the agent is finishing its current operation'
-                  : 'Let the agent finish its current operation, then stop and keep its work'
+                  ? 'Already stopping. Finishing its current operation.'
+                  : 'Finish the current operation, then stop and keep the work'
               }
               onClick={() => void submit(onStop)}
             >
@@ -199,7 +198,7 @@ export function RunDetailHeader({
               variant="ghost"
               size="sm"
               disabled={busy}
-              title="Stop immediately, without letting the agent finish or commit"
+              title="Stop now, mid-operation. Nothing is committed."
               onClick={() => void submit(onCancel)}
             >
               Cancel

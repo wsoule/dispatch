@@ -87,7 +87,7 @@ export function AiTaskComposer({
               <Textarea
                 rows={5}
                 autoFocus
-                placeholder="Describe the task — what should change, and how you'll know it's done…"
+                placeholder="What should change, and how you'll know it's done…"
                 aria-label="Describe the task"
                 value={prompt}
                 disabled={submitting}

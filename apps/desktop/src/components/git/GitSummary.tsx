@@ -41,7 +41,7 @@ export function GitSummary({
       {/* `type="multiple"` because the chips are laid out flat, not as a mutually exclusive
           radio strip — `value` only ever holds the one active filter, and each chip's own
           `onClick` (not the group's `onValueChange`) is what drives `onFocus`. `spacing={1}`
-          (the `Segmented` precedent) opts every chip out of `ToggleGroupItem`'s
+          (the convention other ToggleGroup-based controls use) opts every chip out of `ToggleGroupItem`'s
           `data-[spacing=0]:rounded-none` corner-trimming — an attribute-qualified selector
           that otherwise beats a plain `rounded-md` on specificity regardless of class order,
           since `className="contents"` makes the group itself invisible to layout (this row's

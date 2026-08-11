@@ -50,7 +50,7 @@ function describeSources(
   sources: readonly ('carto' | 'scanner')[],
   degraded: boolean
 ): string {
-  if (degraded) return `carto unavailable — ${SCANNER_NOTE}`;
+  if (degraded) return `carto unavailable. ${SCANNER_NOTE}`;
   const hasCarto = sources.includes('carto');
   const hasScanner = sources.includes('scanner');
   if (hasCarto && hasScanner) return 'carto + scanner';
@@ -80,8 +80,8 @@ function analyzeSeeds(
       allUnanalyzed: true,
       note:
         seedCount === 1
-          ? "This file can't be analyzed by the active sources, so its impact is unknown — not zero."
-          : `None of these ${seedCount} ${noun} can be analyzed by the active sources, so their impact is unknown — not zero.`,
+          ? "Can't analyze this file. Impact unknown, not zero."
+          : `Can't analyze any of these ${seedCount} ${noun}. Impact unknown, not zero.`,
     };
   }
   return {
