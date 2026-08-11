@@ -11,7 +11,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T02:17:13.360Z
-updated: 2026-08-11T02:17:27.629Z
+updated: 2026-08-11T02:20:25.942Z
 external: null
 writes: []
 ---
@@ -24,3 +24,4 @@ writes: []
 
 ## Activity
 - 2026-08-11T02:17:27.629Z dispatched (claude, branch dispatch/t-55b589-i-need-a-little-brain-button-on-the-bott-51f5bd) — human:wsoule679
+- 2026-08-11T02:20:25.942Z Plan: new BrainDumpFab component in apps/desktop/src/components/shell — fixed bottom-right brain button opening a small capture panel (textarea, ⌘⏎, "Drop into the inbox"), wired in App.tsx via rawData.handleCaptureInbox; hidden on the Brain dump view itself and while the daemon client is null. Following the InboxPanel hand-rolled-popover pattern (testable under happy-dom, no Radix portal). Install+build running in background. — none
