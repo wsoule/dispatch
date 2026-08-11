@@ -1,7 +1,7 @@
 ---
 id: t-cafe27
-title: "Boot force-fail must say why, and surface work the orphan completed"
-status: todo
+title: Boot force-fail must say why, and surface work the orphan completed
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:55:00.000Z
-updated: 2026-08-10T23:55:00.000Z
+updated: 2026-08-11T16:50:06.186Z
 external: null
 writes: []
 ---
@@ -31,3 +31,4 @@ Two pieces:
 - A force-failed run with post-fail commits on its branch is visibly distinguishable from a genuinely dead run.
 
 ## Activity
+- 2026-08-11T16:50:06.186Z dispatched (claude, branch dispatch/t-cafe27-boot-force-fail-must-say-why-and-surface-d8b65c) — human:wsoule679
