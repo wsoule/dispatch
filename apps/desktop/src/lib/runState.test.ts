@@ -204,7 +204,7 @@ describe('runSurveyNotice', () => {
     );
     expect(notice).toEqual({
       title: 'Run left uncommitted work',
-      body: 'Ship it — 4 uncommitted paths on dispatch/t-1',
+      body: 'Ship it · 4 uncommitted paths on dispatch/t-1',
     });
   });
 
@@ -212,7 +212,7 @@ describe('runSurveyNotice', () => {
     expect(
       runSurveyNotice('Ship it', survey({ cleanTree: false, staged: ['a.ts'] }))
         ?.body
-    ).toBe('Ship it — 1 uncommitted path on dispatch/t-1');
+    ).toBe('Ship it · 1 uncommitted path on dispatch/t-1');
   });
 
   // The daemon does not broadcast a clean survey today, but an alarm naming no

@@ -52,7 +52,7 @@ function sentence(
 ): string {
   if (startsNow === 0 && queued === 0) {
     return notReady > 0
-      ? 'Nothing here can start — every task is blocked or already running.'
+      ? 'Nothing can start. Everything is blocked or already running.'
       : 'Nothing selected.';
   }
   const parts = [

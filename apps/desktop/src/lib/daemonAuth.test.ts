@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   assertCanDecide,
   ATTACHED_DAEMON_EXPLANATION,
+  daemonBaseUrl,
   daemonRestartReadiness,
   decideAvailability,
   isInsufficientTier,
@@ -135,6 +136,31 @@ describe('daemonRestartReadiness', () => {
     ]);
     expect(readiness.safe).toBe(false);
     expect(readiness.blockedReason).toContain('2 runs are still in flight');
+  });
+});
+
+describe('daemonBaseUrl', () => {
+  test('uses the injected base URL when present', () => {
+    expect(
+      daemonBaseUrl({
+        port: 1234,
+        appToken: null,
+        agentToken: null,
+        baseUrl: 'https://demo.example/s/abc',
+      })
+    ).toBe('https://demo.example/s/abc');
+  });
+
+  test('falls back to loopback + port', () => {
+    expect(
+      daemonBaseUrl({ port: 1234, appToken: null, agentToken: null })
+    ).toBe('http://127.0.0.1:1234');
+  });
+
+  test('empty string base does not win', () => {
+    expect(
+      daemonBaseUrl({ port: 9, appToken: null, agentToken: null, baseUrl: '' })
+    ).toBe('http://127.0.0.1:9');
   });
 });
 

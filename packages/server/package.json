@@ -8,7 +8,9 @@
   },
   "type": "module",
   "exports": {
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./embed": "./src/embed.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "build": "echo 'run directly with bun'",
@@ -19,7 +21,8 @@
     "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@dispatch/core": "workspace:*",
     "@dispatch/mcp": "workspace:*",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

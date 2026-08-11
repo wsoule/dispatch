@@ -48,6 +48,7 @@ import {
   untrustedInline,
 } from './prompt.js';
 import { prNumberFromOrigin } from './prReviewTask.js';
+import type { PendingApproval } from './registry.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
 import type { RunDetail } from './transcript.js';
@@ -292,6 +293,51 @@ export class Orchestrator {
       .list()
       .filter((r) => !TERMINAL_RUN_STATES.has(r.state))
       .map((r) => ({ runId: r.id, taskId: r.taskId, claims: r.claims ?? [] }));
+  }
+
+  // Every approval request currently waiting on a human, flattened into one
+  // row per run. The registry holds these per-run for approve()'s benefit;
+  // read surfaces (the warden's status tools) need the whole list, and
+  // deriving it from `list()` alone is impossible — RunState only says
+  // `awaiting-approval`, never which tool call is being asked about.
+  //
+  // Filtered on that state because approve() is the ONLY thing that clears a
+  // run's pending approval: a run cancelled (or zombie-healed) while parked on
+  // a gate keeps its record forever. Nothing is listening for an answer to
+  // those any more, so listing them would only offer the human an action that
+  // approve() itself would then refuse.
+  pendingApprovals(): {
+    runId: string;
+    taskId: string;
+    taskTitle: string;
+    requestId: string;
+    toolName: string;
+    input: unknown;
+  }[] {
+    return this.registry
+      .listPendingApprovals()
+      .filter(({ meta }) => meta.state === 'awaiting-approval')
+      .map(({ meta, approval }) => ({
+        runId: meta.id,
+        taskId: meta.taskId,
+        taskTitle: meta.taskTitle,
+        requestId: approval.requestId,
+        toolName: approval.toolName,
+        input: approval.input,
+      }));
+  }
+
+  // The approval one run is parked on, if any. Lets a caller answer an
+  // approval by run id alone instead of having to carry the requestId it was
+  // told about earlier — see approve(), which still requires an explicit
+  // requestId so a stale answer can never resolve a newer request.
+  //
+  // Gated on the run's state for the same reason pendingApprovals() filters on
+  // it: a stale record left on a cancelled run is not an answerable request.
+  pendingApprovalFor(runId: string): PendingApproval | undefined {
+    const meta = this.registry.get(runId);
+    if (meta?.state !== 'awaiting-approval') return undefined;
+    return this.registry.getPendingApproval(runId);
   }
 
   // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
@@ -1649,6 +1695,91 @@ export class Orchestrator {
     const reviewedViaPr = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewedViaPr);
     return reviewedViaPr;
+  }
+
+  // The hand-merge counterpart of markRunMergedViaPr: someone merged a run's
+  // branch into its base with plain git (a squash or a merge commit), outside
+  // both review() and any PR — without this, nothing ever sets that run's
+  // reviewedAt and it sits in the review queue as "needs review" forever.
+  // Same bookkeeping shape as the PR path: committed-only diff snapshot,
+  // worktree cleanup, task done, one-way reviewedAt. reviewAction is 'merge'
+  // — the work landed on the local base branch exactly where review()'s own
+  // merge would have put it.
+  markRunMergedExternally(runId: string, mergeCommit?: string): RunMeta {
+    const meta = this.requireRun(runId);
+    if (meta.reviewedAt !== undefined) {
+      throw new OrchestratorConflictError(
+        `run has already been reviewed: ${runId}`
+      );
+    }
+    const now = new Date().toISOString();
+    // `diffCommittedOnly` for the same reason markRunMergedViaPr uses it:
+    // only the branch's commits landed on base; stray uncommitted files in
+    // the worktree were never part of the merge.
+    const mergedDiff = this.worktrees.diffCommittedOnly(
+      meta.worktreePath,
+      meta.baseBranch
+    );
+    this.persistDiffSnapshot(meta, mergedDiff);
+    this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: 'done',
+        appendActivity: `${now} run ${runId} merged outside dispatch (branch ${meta.branch} landed on ${meta.baseBranch})`,
+        // Whoever ran the merge did so in a plain git checkout, outside
+        // anything dispatch can attribute.
+        activityActor: 'none',
+      },
+      now
+    );
+    this.transition(runId, meta.state, {
+      reviewedAt: now,
+      reviewAction: 'merge',
+      mergeCommit,
+    });
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+    const reviewed = this.registry.get(runId)!;
+    this.invokeHooksSafely(this.reviewedHooks, reviewed);
+    return reviewed;
+  }
+
+  // One reconcile pass over every terminal, un-reviewed, non-PR run: marks
+  // merged any whose branch provably landed on its base outside dispatch.
+  // Only two proofs count (see WorktreeManager): a merge commit carrying the
+  // branch tip as a non-first parent, or a non-empty all-patch-equivalent
+  // commit list (a squash). Plain ancestry is deliberately NOT a proof — an
+  // agent that committed nothing leaves its tip an ancestor of base, and
+  // closing that run would mark its task done for work that never happened.
+  // An ambiguous leftover (e.g. a fast-forward merge) still resolves through
+  // the normal review button, whose merge no-ops on already-landed content.
+  // One run's failure is isolated; the pass itself never throws.
+  reconcileExternallyMergedRuns(): RunMeta[] {
+    const reconciled: RunMeta[] = [];
+    for (const meta of this.list()) {
+      if (!TERMINAL_RUN_STATES.has(meta.state)) continue;
+      if (meta.reviewedAt !== undefined) continue;
+      // A run with an open PR belongs to PrManager's poller, which records
+      // the more specific reviewAction 'pr' when GitHub reports the merge.
+      if (meta.prUrl !== undefined) continue;
+      try {
+        const mergeCommit = this.worktrees.externalMergeCommitFor(
+          meta.branch,
+          meta.baseBranch
+        );
+        const landed =
+          mergeCommit !== undefined ||
+          this.worktrees.landedByPatchOn(meta.branch, meta.baseBranch);
+        if (!landed) continue;
+        reconciled.push(this.markRunMergedExternally(meta.id, mergeCommit));
+      } catch (err) {
+        console.error(
+          `dispatchd: external-merge reconcile failed for run ${meta.id}: ${(err as Error).message}`
+        );
+      }
+    }
+    return reconciled;
   }
 
   // C1: squash-merges `meta.branch` into the main checkout and folds this

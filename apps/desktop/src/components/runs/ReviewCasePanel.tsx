@@ -159,7 +159,7 @@ export function ReviewCasePanel({
                     }
                   >
                     {isDeadGuard(m)
-                      ? '0 tests failed — dead guard, or a vacuous test'
+                      ? '0 tests failed: dead guard or vacuous test'
                       : `${m.testsFailed} tests failed`}
                   </span>
                 </div>

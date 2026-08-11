@@ -247,14 +247,14 @@ export function BrainDumpView({
                 if (draft.trim() !== '') capture();
               }
             }}
-            placeholder="Dump it here — bugs, half-ideas, things you noticed, one per line…"
+            placeholder="Dump it here…"
             className="text-foreground field-sizing-fixed min-h-[92px] resize-y border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[14px] dark:bg-transparent"
           />
           <div className="mt-2.5 flex items-center gap-2.5">
             <span className="dense-meta flex-1">
               {pendingLines > 0
-                ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} — each becomes one item`
-                : 'One thought per line. Paste a wall of text and it gets split.'}
+                ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} , one item each`
+                : 'One per line. Walls of text get split.'}
             </span>
             {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
                 size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}
@@ -305,6 +305,108 @@ export function BrainDumpView({
             </BarButton>
           </div>
         )}
+
+        {/* Sits above the inbox list on purpose: the structural hint should land before the raw
+            items, so grouping is the first thing considered rather than an afterthought. */}
+        <section>
+          {/* The right rail's cluster hint is instant; this one asks a model, so it runs
+              automatically rather than on a click. The refresh icon is the manual escape hatch. */}
+          <SectionLabel
+            rule
+            trailing={
+              <span className="flex items-center gap-1.5">
+                {grouping && (
+                  <span className="text-muted-foreground text-[11px]">
+                    Grouping…
+                  </span>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => runCluster(openItemIds)}
+                  disabled={grouping || openItemIds.length < CLUSTER_MIN_ITEMS}
+                  aria-label={
+                    clusterError !== null
+                      ? `Refresh groups (last attempt failed: ${clusterError})`
+                      : 'Refresh groups'
+                  }
+                  title={
+                    clusterError !== null
+                      ? `Last attempt failed: ${clusterError}`
+                      : 'Refresh groups'
+                  }
+                  className={cn(
+                    // `disabled:pointer-events-auto` undoes Button's own suppression: while
+                    // disabled this button's `title` is the only place the cluster error shows.
+                    'size-auto rounded p-0.5 hover:bg-transparent disabled:pointer-events-auto disabled:opacity-40',
+                    clusterError !== null
+                      ? 'text-state-failed'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <RefreshCw
+                    className={cn('size-3.5', grouping && 'animate-spin')}
+                  />
+                </Button>
+              </span>
+            }
+          >
+            Group into epics
+          </SectionLabel>
+          {groups === null ? (
+            openItemIds.length < CLUSTER_MIN_ITEMS ? (
+              <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
+                Capture a few more to enable grouping.
+              </p>
+            ) : null
+          ) : groups.length === 0 ? (
+            <p className="text-muted-foreground mt-2 text-[12.5px]">
+              Nothing here looks related.
+            </p>
+          ) : (
+            <ul className="mt-2 flex flex-col gap-2">
+              {groups.map((g) => (
+                <li key={g.epicTitle}>
+                  <Panel className="shadow-hairline border-transparent bg-transparent p-2.5">
+                    <div className="text-[12.5px] font-medium">
+                      {g.epicTitle}
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-[12px] leading-relaxed">
+                      {g.reason}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="dense-meta">
+                        {g.itemIds.length} items
+                      </span>
+                      <span className="flex-1" />
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setSelected(new Set(g.itemIds))}
+                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
+                      >
+                        Select
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => {
+                          const texts = inbox
+                            .filter((i) => g.itemIds.includes(i.id))
+                            .map((i) => i.text);
+                          onPlanText(`${g.epicTitle}. ${texts.join('. ')}`);
+                        }}
+                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
+                      >
+                        Make an epic
+                      </Button>
+                    </div>
+                  </Panel>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         <section>
           <SectionLabel rule count={open.length}>
@@ -440,105 +542,6 @@ export function BrainDumpView({
             </Button>
           </Panel>
         )}
-
-        <div>
-          {/* The free hint above is instant; this one asks a model, so it runs automatically
-              rather than on a click. The refresh icon is the manual escape hatch. */}
-          <SectionLabel
-            trailing={
-              <span className="flex items-center gap-1.5">
-                {grouping && (
-                  <span className="text-muted-foreground text-[11px]">
-                    Grouping…
-                  </span>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => runCluster(openItemIds)}
-                  disabled={grouping || openItemIds.length < CLUSTER_MIN_ITEMS}
-                  aria-label={
-                    clusterError !== null
-                      ? `Refresh groups (last attempt failed: ${clusterError})`
-                      : 'Refresh groups'
-                  }
-                  title={
-                    clusterError !== null
-                      ? `Last attempt failed: ${clusterError}`
-                      : 'Refresh groups'
-                  }
-                  className={cn(
-                    // `disabled:pointer-events-auto` undoes Button's own suppression: while
-                    // disabled this button's `title` is the only place the cluster error shows.
-                    'size-auto rounded p-0.5 hover:bg-transparent disabled:pointer-events-auto disabled:opacity-40',
-                    clusterError !== null
-                      ? 'text-state-failed'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <RefreshCw
-                    className={cn('size-3.5', grouping && 'animate-spin')}
-                  />
-                </Button>
-              </span>
-            }
-          >
-            Group into epics
-          </SectionLabel>
-          {groups === null ? (
-            openItemIds.length < CLUSTER_MIN_ITEMS ? (
-              <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
-                Capture a few more to enable grouping.
-              </p>
-            ) : null
-          ) : groups.length === 0 ? (
-            <p className="text-muted-foreground mt-2 text-[12.5px]">
-              Nothing here looks related.
-            </p>
-          ) : (
-            <ul className="mt-2 flex flex-col gap-2">
-              {groups.map((g) => (
-                <li key={g.epicTitle}>
-                  <Panel className="shadow-hairline border-transparent bg-transparent p-2.5">
-                    <div className="text-[12.5px] font-medium">
-                      {g.epicTitle}
-                    </div>
-                    <p className="text-muted-foreground mt-1 text-[12px] leading-relaxed">
-                      {g.reason}
-                    </p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="dense-meta">
-                        {g.itemIds.length} items
-                      </span>
-                      <span className="flex-1" />
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setSelected(new Set(g.itemIds))}
-                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
-                      >
-                        Select
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => {
-                          const texts = inbox
-                            .filter((i) => g.itemIds.includes(i.id))
-                            .map((i) => i.text);
-                          onPlanText(`${g.epicTitle}. ${texts.join('. ')}`);
-                        }}
-                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
-                      >
-                        Make an epic
-                      </Button>
-                    </div>
-                  </Panel>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
 
         {/* The explainer prose that used to sit here permanently now lives behind one
             hover/focus-reachable footer affordance — see ExplainerPopover below. */}

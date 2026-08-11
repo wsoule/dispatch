@@ -37,7 +37,7 @@ describe('fixLoopStatusLabel', () => {
     ).toBe('Round 2/5 · Reviewing');
     expect(
       fixLoopStatusLabel(state({ state: 'capped', round: 5, cap: 5 }))
-    ).toBe('Capped at 5/5 — needs a ruling');
+    ).toBe('Capped at 5/5: needs a ruling');
     expect(fixLoopStatusLabel(state({ state: 'complete' }))).toBe('Complete');
   });
 
@@ -51,12 +51,12 @@ describe('fixLoopStatusLabel', () => {
           stopReason: 'standing-block',
         })
       )
-    ).toBe('Stopped at 2/5 — held by a blocking ruling');
+    ).toBe('Stopped at 2/5: held by a blocking ruling');
     expect(
       fixLoopStatusLabel(
         state({ state: 'capped', round: 3, cap: 5, stopReason: 'error' })
       )
-    ).toBe('Stopped at 3/5 — the loop failed');
+    ).toBe('Stopped at 3/5: the loop failed');
     expect(
       fixLoopStatusLabel(
         state({
@@ -66,7 +66,7 @@ describe('fixLoopStatusLabel', () => {
           stopReason: 'rounds-exhausted',
         })
       )
-    ).toBe('Capped at 5/5 — needs a ruling');
+    ).toBe('Capped at 5/5: needs a ruling');
   });
 });
 

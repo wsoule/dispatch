@@ -1,13 +1,13 @@
 import type { RunQuestion } from '@dispatch/client';
 import {
   Archive,
-  FileX,
   GitBranch,
   MousePointerClick,
   PanelRight,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { DiffEmptyState } from '../components/runs/DiffEmptyState';
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
 import { RunDetailHeader } from '../components/runs/RunDetailHeader';
 import { RunDiffView } from '../components/runs/RunDiffView';
@@ -30,8 +30,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import { IconToggle } from '@/ui/chrome/IconToggle';
-import { Segmented } from '@/ui/chrome/Segmented';
 import { Skeleton } from '@/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 
 type RunTab = 'session' | 'diff';
 
@@ -42,19 +42,6 @@ const DEFAULT_RUN_LIST_WIDTH = 288;
 // Shared empty array so a run with no open questions keeps the same prop
 // identity across renders.
 const NO_QUESTIONS: RunQuestion[] = [];
-
-// A muted centered placeholder for the Diff tab when there's nothing to review yet — a run
-// that's still going (no worktree diff exposed until it's terminal) or a terminal run whose
-// worktree/diff is gone (already reviewed, or genuinely nothing changed).
-function DiffEmptyState({ message }: { message: string }) {
-  return (
-    <EmptyState
-      icon={FileX}
-      message={message}
-      className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
-    />
-  );
-}
 
 interface RunsViewProps {
   data: DispatchProjectData;
@@ -268,7 +255,7 @@ export function RunsView({
           ) : data.visibleRuns.length === 0 ? (
             <EmptyState
               icon={GitBranch}
-              message="No runs yet — dispatch a ready task from the Board to start one."
+              message="No runs yet. Dispatch a task from the Board."
               className="flex-1 justify-center p-6 [&_[data-slot=empty-description]]:text-[13px]"
             />
           ) : (
@@ -356,7 +343,7 @@ export function RunsView({
           {selected === undefined ? (
             <EmptyState
               icon={MousePointerClick}
-              message="Select a run on the left to see its log or review its result."
+              message="Pick a run on the left."
               className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
             />
           ) : data.runDetail === undefined ? (
@@ -374,15 +361,28 @@ export function RunsView({
                 onStop={() => data.handleStopRun(selected.id)}
                 trailing={
                   <div className="flex shrink-0 items-center gap-1">
-                    <Segmented<RunTab>
-                      label="Run tab"
+                    <Tabs
                       value={tab}
-                      onChange={setTab}
-                      options={[
-                        { value: 'session', label: 'Session' },
-                        { value: 'diff', label: 'Diff' },
-                      ]}
-                    />
+                      onValueChange={(v) => setTab(v as RunTab)}
+                    >
+                      <TabsList
+                        aria-label="Run tab"
+                        className="border-border h-7 gap-0.5 rounded-md border bg-transparent p-0.5"
+                      >
+                        <TabsTrigger
+                          value="session"
+                          className="px-2 text-[13px] font-normal"
+                        >
+                          Session
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="diff"
+                          className="px-2 text-[13px] font-normal"
+                        >
+                          Diff
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
                     <IconToggle
                       on={detailsOpen}
                       onClick={() => setDetailsOpen((v) => !v)}
@@ -483,7 +483,7 @@ export function RunsView({
                       diffError={data.diffError}
                     />
                   ) : data.diffError !== null ? (
-                    <DiffEmptyState message="This run has no changes to review." />
+                    <DiffEmptyState message="No changes to review." />
                   ) : (
                     <RunReviewView
                       client={data.client}

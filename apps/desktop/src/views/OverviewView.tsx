@@ -274,7 +274,7 @@ function EmptyFeed({ filtered }: { filtered: boolean }) {
       <CircleCheck className="size-4" />
       {filtered
         ? 'Nothing matches that filter.'
-        : 'No agents are running and nothing is waiting on you.'}
+        : 'Nothing running, nothing waiting on you.'}
     </div>
   );
 }

@@ -11,6 +11,11 @@ autoCommit: true
 # Named steps rather than one shell line: a failure then says WHICH gate broke.
 # The whole reason this was hard to diagnose once was that "verify failed" is
 # what you get when four commands share one name.
+# The full test suite alone runs ~8 min under merge-queue load; the 600s
+# default kept killing the test step mid-run.
+orchestrator:
+  verifyTimeoutSec: 1500
+
 verifySteps:
   - name: install
     command: bun install --frozen-lockfile

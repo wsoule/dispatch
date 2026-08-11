@@ -24,8 +24,8 @@ import { MilestonesView } from './MilestonesView';
 import { TasksListView } from './TasksListView';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
-import { Segmented } from '@/ui/chrome/Segmented';
 import { Skeleton } from '@/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 import { Toggle } from '@/ui/toggle';
 
 interface BoardViewProps {
@@ -209,35 +209,51 @@ export function BoardView({
           Tasks
         </h1>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Segmented<TasksViewMode>
-            label="View"
-            value={mode}
-            onChange={setMode}
-            options={[
-              {
-                value: 'list',
-                label: 'List view',
-                icon: <Rows3 className="size-3.5" />,
-              },
-              {
-                value: 'board',
-                label: 'Board view',
-                icon: <LayoutGrid className="size-3.5" />,
-              },
-              {
-                value: 'lanes',
-                label: 'Epic swim lanes',
-                icon: <Layers className="size-3.5" />,
-              },
-              // Milestones groups the same tasks a different way — it belongs
-              // beside the other groupings, not in the rail as its own place.
-              {
-                value: 'milestones',
-                label: 'Milestones',
-                icon: <Target className="size-3.5" />,
-              },
-            ]}
-          />
+          <Tabs value={mode} onValueChange={(v) => setMode(v as TasksViewMode)}>
+            <TabsList
+              aria-label="View"
+              className="border-border h-7 gap-0.5 rounded-md border bg-transparent p-0.5"
+            >
+              <TabsTrigger
+                value="list"
+                className="px-2 text-[13px] font-normal"
+              >
+                <Rows3 className="size-3.5" />
+                <span className="whitespace-nowrap max-sm:sr-only">
+                  List view
+                </span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="board"
+                className="px-2 text-[13px] font-normal"
+              >
+                <LayoutGrid className="size-3.5" />
+                <span className="whitespace-nowrap max-sm:sr-only">
+                  Board view
+                </span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="lanes"
+                className="px-2 text-[13px] font-normal"
+              >
+                <Layers className="size-3.5" />
+                <span className="whitespace-nowrap max-sm:sr-only">
+                  Epic swim lanes
+                </span>
+              </TabsTrigger>
+              {/* Milestones groups the same tasks a different way — it belongs
+                  beside the other groupings, not in the rail as its own place. */}
+              <TabsTrigger
+                value="milestones"
+                className="px-2 text-[13px] font-normal"
+              >
+                <Target className="size-3.5" />
+                <span className="whitespace-nowrap max-sm:sr-only">
+                  Milestones
+                </span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           {showArchiveToggle(data.showArchived, data.archivedTasks.length) && (
             <Toggle
               variant="outline"
@@ -272,7 +288,7 @@ export function BoardView({
       {boardTasks.length === 0 ? (
         <EmptyState
           icon={LayoutGrid}
-          message="No tasks yet — create the first one, or describe the work with “Plan work…” and let the planner draft it."
+          message="No tasks yet. Create one, or let “Plan work…” draft them."
           className="flex-1 justify-center gap-3 p-0 text-[13px] [&_[data-slot=empty-description]]:max-w-sm [&_[data-slot=empty-description]]:text-[length:inherit]"
           action={
             <Button size="sm" onClick={() => onNewTask()}>

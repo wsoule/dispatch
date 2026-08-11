@@ -41,6 +41,7 @@ import {
 import type { DecideAvailability } from '../lib/daemonAuth';
 import {
   assertCanDecide,
+  daemonBaseUrl,
   decideAvailability,
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
@@ -614,10 +615,10 @@ export function useDispatchProject(
 
   const client = useMemo(
     () =>
-      port !== undefined
-        ? createApiClient(`http://127.0.0.1:${port}`, auth.token)
+      connection !== undefined
+        ? createApiClient(daemonBaseUrl(connection), auth.token)
         : null,
-    [port, auth.token]
+    [connection, auth.token]
   );
 
   const tasksQueryKey = useMemo(() => ['dispatch-tasks', port], [port]);
@@ -1088,7 +1089,7 @@ export function useDispatchProject(
             const taskTitle =
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
-            void notify('Approval needed', `${event.toolName} — ${taskTitle}`);
+            void notify('Approval needed', `${event.toolName} · ${taskTitle}`);
           } else if (event.type === 'question.asked') {
             void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
             // Same cache-read reason as approval.requested above: this effect's
