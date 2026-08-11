@@ -1,7 +1,7 @@
 ---
 id: t-783b53
 title: Land an epic branch on main as one PR or one merge
-status: in-review
+status: in-progress
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T21:30:35.961Z
+updated: 2026-08-11T21:32:23.577Z
 external: null
 writes: []
 ---
@@ -48,3 +48,4 @@ hint: You can instead skip this commit: run "git rebase --skip".
 hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
 hint: Disable this message with "git config set advice.mergeConflict false"
 Could not apply f917f38e... # feat: land a finished epic branch on main as one PR or one merge — none
+- 2026-08-11T21:32:23.577Z requested changes (run r-3390cd): Your branch no longer restacks onto main: the unified-kanban work (landed while you ran) DELETED apps/desktop/src/components/tasks/EpicCardTile.tsx — epics are now expandable lane headers rendered by TaskBoard.tsx, not draggable cards. Rebase your branch onto current origin/main yourself (resolve the modify/delete by dropping your EpicCardTile edits) and port your land-epic affordance to the epic lane header in TaskBoard.tsx, matching its existing header controls (Work/Stop/DAG buttons). Re-run the tests covering your changes plus the TaskBoard tests, tsc, and root lint before finishing. — human:wsoule679
