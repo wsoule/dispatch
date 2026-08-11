@@ -1,7 +1,7 @@
 ---
 id: t-0ebf6b
 title: Deterministic e2e coverage for the warden chat flow
-status: todo
+status: done
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-04T18:06:37.201Z
-updated: 2026-08-11T15:39:11.271Z
+updated: 2026-08-11T15:39:21.770Z
 external: null
 writes:
   - apps/desktop/e2e/warden.spec.ts
