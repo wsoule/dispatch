@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.200Z
-updated: 2026-08-11T02:07:48.864Z
+updated: 2026-08-11T02:12:28.461Z
 external: null
 writes:
   - apps/desktop/src/views/WardenView.tsx
@@ -38,3 +38,4 @@ Acceptance criteria:
 
 ## Activity
 - 2026-08-11T02:07:48.864Z dispatched (claude, branch dispatch/t-d4995b-warden-chat-view-in-the-global-nav-0faef1) — none
+- 2026-08-11T02:12:28.461Z Starting the Warden chat view. Design settled from reading the branch: 'warden' joins GlobalView in appNav.ts; a new lib/wardenThread.ts flattens WardenRecord into transcript rows (mirroring planThread.ts, with confirm cards emitted for still-pending actions and superseded "queued" rows skipped); a new hooks/useWardenSession.ts owns wardenId + the record query (key exported so useDispatchProject's WS handler can invalidate it on warden.changed, same wiring as plan.changed/draft.changed); Sidebar gets a Warden row in the global section; App.tsx mounts the session hook and routes globalView==='warden' to a new views/WardenView.tsx with the OverviewView DaemonUnavailable gate. Files touched: appNav.ts, wardenThread.ts(+test), useWardenSession.ts, useDispatchProject.ts, Sidebar.tsx(+test), App.tsx, WardenView.tsx. — none
