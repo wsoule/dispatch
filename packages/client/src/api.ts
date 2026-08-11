@@ -80,6 +80,10 @@ export interface RunSurvey {
   untracked: string[];
   lastCommit: { sha: string; subject: string } | null;
   cleanTree: boolean;
+  // Commits on the run's branch authored after the run first reached `failed`
+  // — work an orphaned agent process landed after the daemon lost track of it.
+  // Newest first. Optional: surveys recorded before this field existed.
+  postFailCommits?: { sha: string; subject: string; date: string }[];
 }
 
 // Mirrors RunMeta in packages/server/src/orchestrator/types.ts.

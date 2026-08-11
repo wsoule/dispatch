@@ -21,6 +21,7 @@ import {
   continueMessage,
   deriveRunDisposition,
   isTerminalRunState,
+  postFailWorkLabel,
 } from '../../lib/runState';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
@@ -147,6 +148,7 @@ export function RunLogView({
   // and only one with a session id, which is the same thing the server's own
   // resume gate checks, so the button never offers what would 400.
   const canContinue = deriveRunDisposition(meta) === 'stopped-short';
+  const orphanWork = postFailWorkLabel(meta);
 
   // Finds the most recent tool-log entry with a matching name to back the
   // approval card's input preview — see the field doc comment above for why
@@ -230,6 +232,28 @@ export function RunLogView({
             ) : (
               <TranscriptRow key={i} entry={group.entries[0]} />
             )
+          )}
+
+          {/* Why the run stopped, in the run itself — without this a force-failed run (a
+              daemon restart, not the agent's doing) reads as "failed, $0" with zero
+              explanation. Rendered at the end of the transcript because the failure is
+              chronologically the run's last event. */}
+          {(meta.state === 'failed' || meta.state === 'interrupted-dirty') &&
+            meta.error !== undefined && (
+              <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+                <Info className="size-3.5 shrink-0 translate-y-0.5" />
+                {meta.error}
+              </div>
+            )}
+
+          {/* The run failed but its branch kept moving — the orphaned agent process
+              survived and committed. Distinguishes "dead $0 run" from "the work actually
+              landed, go look at the branch". */}
+          {orphanWork !== null && (
+            <div className="border-state-review-edge bg-state-review-surface text-state-review flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+              <Info className="size-3.5 shrink-0 translate-y-0.5" />
+              {orphanWork}
+            </div>
           )}
 
           {/* A live run that has not printed anything for a moment is indistinguishable from a
