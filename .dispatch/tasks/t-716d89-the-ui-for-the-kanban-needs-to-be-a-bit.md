@@ -1,7 +1,7 @@
 ---
 id: t-716d89
 title: the ui for the kanban needs to be a bit different…
-status: in-progress
+status: in-review
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T01:52:30.113Z
-updated: 2026-08-11T17:25:24.146Z
+updated: 2026-08-11T17:25:52.607Z
 external: null
 writes: []
 ---
@@ -39,3 +39,4 @@ Merge the separate 'board' (flat status columns) and 'lanes' (epic swim lanes) v
 - 2026-08-11T17:25:24.146Z Shipped as eb595933. TaskBoard now always renders the epic-lane layout with a new EpicLaneHeader (chevron toggle, epic swatch, done/total progress bar, open-epic + dependency-graph buttons, concurrency stepper and Work/Stop); EpicCardTile is deleted, so epics are never draggable. A shared sticky status header carries the per-status visible count, the hover "+" new-task button, and the "+N hidden" badge summed over collapsed lanes. Collapse state is sessionStorage-backed, so it survives a switch to List view and back but not a restart. Two fixes fell out of the merge: drop zones are now keyed `lane:<index>:<status>` (identical bare-status ids meant @dnd-kit only registered one lane per status as a real drop target, so dragging inside any other lane did nothing), and j/k keep working while focus sits on a lane header instead of going dead right after you click one to expand it.
 
 Heads-up for a human: apps/desktop/e2e/views.spec.ts-snapshots/tasks-{dark,light}-darwin.png are full-page shots of this exact view and will now mismatch. They need `bun run e2e:update` on a machine where Playwright can actually launch — this shell cannot (its webServer can't posix_spawn git), and regenerating baselines from a worktree is not safe. The layout also has not had a live visual check for the same reason; the sticky header/lane column alignment is asserted only structurally. — none
+- 2026-08-11T17:25:52.607Z [run r-2d522b] finished: finished — 16 files, $10.98 — agent:wsoule679/claude
