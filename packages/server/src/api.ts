@@ -2939,6 +2939,24 @@ async function startEpic(
   return jsonResponse(session, 201);
 }
 
+// POST /api/epics/:id/land — the one action that takes a finished epic
+// branch to the default base: a PR through PrManager when the project has
+// the `pr` capability (and the branch actually carries commits to PR),
+// a local merge otherwise. All readiness validation — the partially-done
+// refusal above all — lives in Orchestrator.epicLandStatus, which both
+// paths run; its typed errors map through handleApi's outer catch.
+async function landEpic(ctx: ApiContext, epicId: string): Promise<Response> {
+  const status = ctx.orchestrator.epicLandStatus(epicId);
+  if (ctx.prCapability && status.hasChanges) {
+    const prUrl = await ctx.prManager.openEpicPr(epicId);
+    return jsonResponse({ mode: 'pr', prUrl }, 201);
+  }
+  // No remote/gh — or nothing to PR at all (a no-commits epic still needs
+  // closing out, which the local path handles without a merge).
+  const result = ctx.orchestrator.landEpicLocally(epicId);
+  return jsonResponse({ mode: 'merge', mergeCommit: result.mergeCommit });
+}
+
 // POST /api/merge-queue { runId }. Enqueues a finished, unreviewed run for
 // the serial rebase -> verify -> merge pipeline. 404/409 map straight from
 // MergeQueue.enqueue's typed errors via the shared handler below.
@@ -4548,6 +4566,18 @@ export async function handleApi(
         method === 'GET'
       ) {
         return jsonResponse(ctx.epicEngine.progress(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'land' &&
+        method === 'POST'
+      ) {
+        return await landEpic(ctx, segments[1]);
+      }
+      // The epic branch's diff against the default base — served from the
+      // land-time snapshot once the branch itself is gone.
+      if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
+        return jsonResponse(ctx.orchestrator.epicDiff(segments[1]));
       }
     }
 

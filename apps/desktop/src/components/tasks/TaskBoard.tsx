@@ -66,6 +66,10 @@ interface TaskBoardProps {
   onDispatch?: (taskId: string) => Promise<void>;
   onWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   onStopEpic: (epicId: string) => Promise<void>;
+  /** Lands a finished epic branch on the default base — see EpicLaneHeader's Land button.
+   * Optional for the same reason as `onDispatch`: a board rendered without live land wiring
+   * (tests, previews) simply never shows the button. */
+  onLandEpic?: (epicId: string) => Promise<void>;
   /** Moves a task to a different status — wired to the drag-and-drop drop handler below (and
    * nowhere else); optional purely so a board rendered without a live project (there isn't
    * one today) doesn't need to supply a no-op. */
@@ -195,6 +199,7 @@ export function TaskBoard({
   onDispatch,
   onWorkEpic,
   onStopEpic,
+  onLandEpic,
   onMoveStatus,
   onEditTask,
   onAddTask,
@@ -359,6 +364,7 @@ export function TaskBoard({
                       onWork={onWorkEpic}
                       onRequestWork={onRequestWorkEpic}
                       onStop={onStopEpic}
+                      onLand={onLandEpic}
                     />
                     {expanded && (
                       <div className="flex gap-6">

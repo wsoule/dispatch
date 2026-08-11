@@ -206,15 +206,12 @@ export interface BranchEntry {
   lastCommitAt?: string;
   /** Commits this branch has that its base does not — what deletion destroys. */
   ahead: number;
-  /** Commits the base gained since this branch diverged — how far unmerged
-   * work has fallen behind. Absent on merged branches, where the count no
-   * longer means anything. */
+  /** Commits the base gained since this branch diverged — how far the branch
+   * has fallen behind. Absent on merged branches, where the count no longer
+   * means anything. For 'epic' entries it is the drift signal: dispatch never
+   * updates an integration branch on its own, a human should. */
   behindBase?: number;
   mergedIntoBase: boolean;
-  /** Commits the base has that this branch does not — drift. Only computed
-   * for 'epic' entries, where it signals the integration branch has fallen
-   * behind the default base and a human should update it. */
-  behindBase?: number;
   runId?: string;
   taskId?: string;
   taskTitle?: string;
@@ -919,6 +916,19 @@ export interface EpicProgress {
   children: EpicProgressChild[];
   liveRuns: RunMeta[];
 }
+
+/**
+ * The body of `POST /api/epics/:id/land`. `pr`: a landing PR was opened and
+ * the server's poller will flip the epic to done once GitHub reports it
+ * merged. `merge`: the epic landed locally right now — `mergeCommit` is the
+ * merge commit's sha, absent only when the branch carried no commits and
+ * landing just closed the epic out. Not exported until a consumer needs it
+ * by name (knip gates unused exports at zero); reach it via
+ * `Awaited<ReturnType<ApiClient['landEpic']>>` meanwhile.
+ */
+type EpicLandResult =
+  | { mode: 'pr'; prUrl: string }
+  | { mode: 'merge'; mergeCommit?: string };
 
 // Mirrors InboxKind/InboxItem in packages/server/src/inbox.ts — the brain-dump inbox, which
 // replaced the notes store. `createdByRunId` is how "an agent flagged this mid-run" survives.
@@ -1855,6 +1865,13 @@ export interface ApiClient {
   ): Promise<EpicSession>;
   stopEpic(epicId: string): Promise<EpicSession>;
   fetchEpicProgress(epicId: string): Promise<EpicProgress>;
+  // Lands a finished epic branch on the default base — one PR (when the
+  // project has the `pr` capability) or one local merge. 409s with the
+  // server's reason when the epic is only partially done.
+  landEpic(epicId: string): Promise<EpicLandResult>;
+  /** The epic branch's diff against the default base, in `fetchRunDiff`'s shape —
+   * served from the land-time snapshot once the branch is gone. */
+  fetchEpicDiff(epicId: string): Promise<DiffResult>;
   // The merge queue: serialized rebase -> verify -> merge over
   // reviewed-and-approved runs. `enqueueMergeQueue` 404/409s the same way
   // the server's MergeQueue.enqueue does (unknown run, non-terminal, already
@@ -2356,6 +2373,9 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/epics/${epicId}/stop`, { method: 'POST' }),
     fetchEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
+    landEpic: (epicId) =>
+      request(target, `/api/epics/${epicId}/land`, { method: 'POST' }),
+    fetchEpicDiff: (epicId) => request(target, `/api/epics/${epicId}/diff`),
     fetchMergeQueue: () => request(target, '/api/merge-queue'),
     enqueueMergeQueue: (runId) =>
       request(target, '/api/merge-queue', {
