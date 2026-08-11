@@ -89,6 +89,11 @@ import { Input } from '@/ui/input';
 
 export interface TaskDetailPanelProps {
   doc: TaskDoc;
+  /** The model a dispatch runs on when the picker is untouched — the project
+   * config's `models.execute` resolved with the per-device override (see
+   * resolveExecuteModel). Absent, the picker falls back to the device default,
+   * which ignores the project config. */
+  defaultModel?: string;
   statuses: string[];
   ready: boolean;
   run: RunMeta | undefined;
@@ -164,6 +169,7 @@ export interface TaskDetailPanelProps {
  */
 export function TaskDetailPanel({
   doc,
+  defaultModel,
   statuses,
   ready,
   run,
@@ -200,9 +206,10 @@ export function TaskDetailPanel({
   // plan started; it clears when a draft or an error actually arrives.
   const [enrichStarted, setEnrichStarted] = useState(false);
   const [applyingEnrich, setApplyingEnrich] = useState(false);
-  // The model this dispatch will use — seeded from the saved default, overridable per-dispatch
-  // via the picker beside the Dispatch button.
-  const [model, setModel] = useState(readDefaultModel);
+  // The model this dispatch will use — seeded from the project's resolved
+  // default (config models.execute layered under the device override),
+  // overridable per-dispatch via the picker beside the Dispatch button.
+  const [model, setModel] = useState(() => defaultModel ?? readDefaultModel());
   // View-local modal state for this epic's dependency graph — only ever meaningful when
   // `doc.meta.kind === 'epic'`; not lifted to App-level nav state since nothing outside this
   // panel needs to know the graph is open.

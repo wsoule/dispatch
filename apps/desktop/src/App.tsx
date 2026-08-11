@@ -39,6 +39,7 @@ import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
 import { isLinearConfigured } from './lib/linearSettings';
+import { resolveExecuteModel } from './lib/models';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
@@ -462,6 +463,7 @@ function App() {
     }
     return {
       doc,
+      defaultModel: resolveExecuteModel(data.config),
       statuses: data.config.statuses,
       ready: data.readyIds.has(doc.meta.id),
       run: data.latestRunByTaskId.get(doc.meta.id),
