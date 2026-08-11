@@ -526,11 +526,19 @@ export async function startServer(
       orchestrator,
       actorContext,
       reviewComments,
+      // Lazy closure, not a direct reference: `mergeQueue` is constructed
+      // below (it needs `prManager` itself for its own `prState` lookup), so
+      // at this point in the function it exists only as a `const` binding
+      // this closure will read once startPolling() actually calls it — long
+      // after both constructors have run.
+      hasGithubHolds: () =>
+        mergeQueue
+          .snapshot()
+          .entries.some((entry) => entry.state === 'waiting-github'),
     },
     prCapability,
     opts.prCommandRunner
   );
-  prManager.startPolling(opts.prPollIntervalMs);
 
   // Hand-merged run branches (a git merge/squash done in a plain checkout,
   // outside review() and outside any PR) never get their reviewedAt set by
@@ -547,10 +555,23 @@ export async function startServer(
   // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
   // stub) fakes the merge queue's own gh/git calls too, not just PrManager's.
   const mergeQueue = new MergeQueue(
-    { rootDir, store, cache, events, orchestrator, jj },
+    {
+      rootDir,
+      store,
+      cache,
+      events,
+      orchestrator,
+      jj,
+      prState: (url) => prManager.cachedPrByUrl(url),
+    },
     opts.prCommandRunner
   );
   mergeQueue.startAutoRefresh();
+  // Started only now, not right after PrManager's own construction above:
+  // startPolling() calls `hasGithubHolds()` synchronously (to size its very
+  // first tick's delay), and that closure reads `mergeQueue` — which does
+  // not exist yet at the point PrManager is constructed.
+  prManager.startPolling(opts.prPollIntervalMs);
 
   // The brain-dump inbox, scoped to this daemon's own actor, plus the one-time folds of older
   // storage shapes into it: the legacy single shared `inbox.md` (pre-dating per-actor files) and,
