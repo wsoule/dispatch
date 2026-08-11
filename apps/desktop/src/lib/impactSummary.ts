@@ -50,7 +50,7 @@ function describeSources(
   sources: readonly ('carto' | 'scanner')[],
   degraded: boolean
 ): string {
-  if (degraded) return `carto unavailable — ${SCANNER_NOTE}`;
+  if (degraded) return `carto unavailable. ${SCANNER_NOTE}`;
   const hasCarto = sources.includes('carto');
   const hasScanner = sources.includes('scanner');
   if (hasCarto && hasScanner) return 'carto + scanner';

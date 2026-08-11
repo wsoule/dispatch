@@ -112,7 +112,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   const dagEpic = dagEpicId !== null ? (epicById.get(dagEpicId) ?? null) : null;
   // Memoized so this array is referentially stable across re-renders while the modal is open —
   // otherwise a new array every render would bust EpicDagView's own `[tasks]` memo on every
-  // parent re-render (mirrors TaskDetailDialog's `epicChildren` memo for the same shape of
+  // parent re-render (mirrors TaskDetailPanel's `epicChildren` memo for the same shape of
   // derivation).
   const dagTasks = useMemo(
     () =>

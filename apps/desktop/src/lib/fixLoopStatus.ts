@@ -36,11 +36,11 @@ function cappedLabel(state: FixLoopState): string {
   const at = `${state.round}/${state.cap}`;
   switch (fixLoopStopReason(state)) {
     case 'standing-block':
-      return `Stopped at ${at} — held by a blocking ruling`;
+      return `Stopped at ${at}: held by a blocking ruling`;
     case 'error':
-      return `Stopped at ${at} — the loop failed`;
+      return `Stopped at ${at}: the loop failed`;
     case 'rounds-exhausted':
-      return `Capped at ${at} — needs a ruling`;
+      return `Capped at ${at}: needs a ruling`;
   }
 }
 

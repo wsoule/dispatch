@@ -35,6 +35,7 @@ import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
 import { isTerminalRunState } from '@/lib/runState';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { MetaText } from '@/ui/chrome';
 import { IconToggle } from '@/ui/chrome/IconToggle';
 import { StateDot } from '@/ui/chrome/StateDot';
@@ -456,17 +457,18 @@ export function ReviewView({
             {/* The case is the agent's account of its own work. A PR has no
                 agent behind it, so there is nothing to open here. */}
             {!isPrTarget && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setSelected(null)}
                 className={cn(
-                  'mb-1 flex shrink-0 items-center gap-1.5 rounded px-3 py-1 text-left text-[12px]',
+                  'mb-1 h-auto shrink-0 justify-start gap-1.5 rounded px-3 py-1 text-left text-[12px] font-normal',
                   selected === null ? 'bg-accent/15' : 'hover:bg-muted/60'
                 )}
               >
                 <StateDot state="review" pulse={false} />
                 The case
-              </button>
+              </Button>
             )}
             <div className="min-h-0 flex-1 overflow-hidden">
               <ReviewFileTree
@@ -664,19 +666,23 @@ function DiffPaneHeader({
           {commentCount}
         </MetaText>
       )}
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-xs"
         role="checkbox"
         aria-checked={isViewed}
         aria-label={`Mark ${path} viewed`}
         onClick={onToggleViewed}
         className={cn(
-          'grid size-3.5 shrink-0 place-items-center rounded-sm',
-          isViewed ? 'bg-state-review text-background' : 'shadow-hairline'
+          'size-3.5 shrink-0 rounded-sm p-0 hover:bg-transparent',
+          isViewed
+            ? 'bg-state-review text-background hover:bg-state-review'
+            : 'shadow-hairline'
         )}
       >
         {isViewed && <Check className="size-2.5" />}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -717,16 +723,18 @@ function Header({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={onBack}
-          className="text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1.5 text-[11.5px]"
+          className="text-muted-foreground hover:text-foreground h-auto shrink-0 gap-1.5 p-0 text-[11.5px] font-normal hover:bg-transparent"
         >
           <ArrowLeft className="size-3" />
           {/* Closing a review returns to the review queue now that Review has
               one — it used to go back to the Control room, and kept saying so. */}
           All reviews
-        </button>
+        </Button>
         <StateDot state="review" pulse={false} />
         <h1 className="min-w-0 flex-1 truncate text-[15px] font-medium">
           {title}
