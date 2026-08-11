@@ -1,6 +1,7 @@
 import { CopyIcon, RotateCcwIcon } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
+import { ApprovalCard, type ApprovalCardOption } from '@/ui/ai/approval-card';
 import { LoadingState } from '@/ui/ai/loading-state';
 import {
   StreamingText,
@@ -100,6 +101,79 @@ function StreamingActions() {
   );
 }
 
+const SCOPE_OPTIONS: ApprovalCardOption[] = [
+  {
+    id: 'once',
+    label: 'Allow apps/desktop/src/server for this call only',
+    description:
+      'One-time grant — the next write outside the fence asks again.',
+  },
+  {
+    id: 'session',
+    label: 'Allow apps/desktop/src/server for the rest of this run',
+    description: 'Covers every remaining tool call in run c204.',
+    recommended: true,
+  },
+  {
+    id: 'deny',
+    label: 'Deny and keep the agent inside its declared fence',
+  },
+];
+
+// `ApprovalCard` is fully controlled, so the "unanswered" and "selected" gallery stories
+// each need a small stateful wrapper to make clicking an option actually select it —
+// same pattern as the Thinking demos above.
+function ApprovalCardScopeDemo() {
+  const [selectedId, setSelectedId] = useState<string | undefined>();
+  return (
+    <ApprovalCard
+      question="The agent wants to edit outside its declared fence"
+      detail="apps/desktop/src/server isn't in task t-716d89's scope."
+      options={SCOPE_OPTIONS}
+      selectedId={selectedId}
+      onSelect={setSelectedId}
+    />
+  );
+}
+
+const PLAN_OPTIONS: ApprovalCardOption[] = [
+  {
+    id: 'kanban-columns',
+    label: 'Rework the kanban columns first',
+    description:
+      'Matches the "UI needs to be a bit" task — highest-visibility surface.',
+    recommended: true,
+  },
+  {
+    id: 'boot-fail',
+    label: 'Fix boot force-fail messaging first',
+    description: 'Smaller, self-contained; unblocks t-cafe27 sooner.',
+  },
+  {
+    id: 'agents-view',
+    label: 'Build the all-agents view first',
+  },
+];
+
+function ApprovalCardPlanDemo() {
+  const [selectedId, setSelectedId] = useState<string | undefined>(
+    'kanban-columns'
+  );
+  return (
+    <ApprovalCard
+      question="Which task should I pick up next?"
+      options={PLAN_OPTIONS}
+      selectedId={selectedId}
+      onSelect={setSelectedId}
+    />
+  );
+}
+
+const ANSWERED_OPTIONS: ApprovalCardOption[] = [
+  { id: 'approve', label: 'Approve the merge queue reorder' },
+  { id: 'deny', label: 'Deny — keep origin-first ordering' },
+];
+
 /** One reviewable primitive in the dev gallery: a title for the left index, an
  * optional caption, and the markup to render on the right. Every primitive task
  * (6-24) appends one or more of these — this file is the running catalog. */
@@ -179,6 +253,33 @@ export const galleryStories: GalleryStory[] = [
         followUps={STREAMING_FOLLOW_UPS}
         onFollowUp={() => {}}
         actions={<StreamingActions />}
+      />
+    ),
+  },
+  {
+    id: 'approval-card-unanswered',
+    title: 'Approval card — scope request, unanswered',
+    note: 'Radio-style option rows with hover; the "session" grant is flagged Recommended. Click an option to select it.',
+    render: () => <ApprovalCardScopeDemo />,
+  },
+  {
+    id: 'approval-card-selected',
+    title: 'Approval card — plan question, selected',
+    note: 'One option pre-selected — accent-tint wash, selected-border ring, and the confirm row at the bottom.',
+    render: () => <ApprovalCardPlanDemo />,
+  },
+  {
+    id: 'approval-card-disabled',
+    title: 'Approval card — disabled, answered',
+    note: 'A decision already landed: options are inert (disabled) and the footer reads "Answered".',
+    render: () => (
+      <ApprovalCard
+        question="Approve the merge queue reorder for apps/desktop?"
+        detail="e-f00b6d requested origin-first ordering before the queue lands."
+        options={ANSWERED_OPTIONS}
+        selectedId="approve"
+        disabled
+        onSelect={() => {}}
       />
     ),
   },
