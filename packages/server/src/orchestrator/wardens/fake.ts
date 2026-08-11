@@ -8,7 +8,16 @@ import type {
 /** One tool call a scripted turn makes, in the order the script lists them. */
 interface FakeWardenCall {
   tool: string;
-  input?: unknown;
+  /**
+   * The call's input. A function receives the results of this turn's *earlier*
+   * calls, so a scripted turn can read state with one tool and target it with
+   * the next (list the ready tasks, dispatch the first) instead of hard-coding
+   * an id the test fixture would have to promise forever — the input-side
+   * counterpart of FakeWardenTurn's reply-as-function.
+   */
+  input?:
+    | Record<string, unknown>
+    | ((prior: WardenToolResult[]) => Record<string, unknown>);
 }
 
 /** One scripted assistant turn: the calls it makes, then the text it replies with. */
@@ -107,10 +116,12 @@ export class FakeWarden implements WardenBackend {
     const turn = this.turnAt(index);
     const results: WardenToolResult[] = [];
     for (const call of turn.calls ?? []) {
-      const result = await toolset.call(call.tool, call.input ?? {});
+      const input =
+        typeof call.input === 'function' ? call.input(results) : call.input;
+      const result = await toolset.call(call.tool, input ?? {});
       this.observations.push({
         tool: call.tool,
-        input: call.input ?? {},
+        input: input ?? {},
         result,
       });
       results.push(result);
