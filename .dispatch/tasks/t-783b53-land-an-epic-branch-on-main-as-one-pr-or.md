@@ -1,7 +1,7 @@
 ---
 id: t-783b53
 title: Land an epic branch on main as one PR or one merge
-status: in-progress
+status: in-review
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T23:04:21.132Z
+updated: 2026-08-11T23:04:38.529Z
 external: null
 writes: []
 ---
@@ -50,3 +50,4 @@ hint: Disable this message with "git config set advice.mergeConflict false"
 Could not apply f917f38e... # feat: land a finished epic branch on main as one PR or one merge — none
 - 2026-08-11T21:32:23.577Z requested changes (run r-3390cd): Your branch no longer restacks onto main: the unified-kanban work (landed while you ran) DELETED apps/desktop/src/components/tasks/EpicCardTile.tsx — epics are now expandable lane headers rendered by TaskBoard.tsx, not draggable cards. Rebase your branch onto current origin/main yourself (resolve the modify/delete by dropping your EpicCardTile edits) and port your land-epic affordance to the epic lane header in TaskBoard.tsx, matching its existing header controls (Work/Stop/DAG buttons). Re-run the tests covering your changes plus the TaskBoard tests, tsc, and root lint before finishing. — human:wsoule679
 - 2026-08-11T23:04:21.132Z Rebased onto current origin/main after the unified-kanban work deleted EpicCardTile. Squashed my wip+feature commits into one and replayed only that onto main (the epic-lifecycle base commit landed separately as f03260c6). Resolutions: dropped my EpicCardTile edits (file deleted upstream), took main's TaskBoard rendering and ported the Land affordance to EpicLaneHeader instead — same landable rule (all children done/cancelled, epic not done), Land replaces Work in the header's hover controls, onLandEpic now optional on TaskBoard matching its onDispatch convention. Added 2 TaskBoard tests for the button. Also fixed a pre-existing main breakage the rebase surfaced: client BranchEntry had a duplicate behindBase field from two concurrently-landed runs (failed tsgo); collapsed into one field mirroring the server's merged doc — separate commit 87edc9c7. Branch is now 991ba399 + 87edc9c7 on origin/main, clean tree. Verified post-rebase: server epic-land+epic-branch+pr+merge-queue 195 pass, TaskBoard suite 12 pass, full desktop 1304 pass, tsc x3 clean, lint 0 errors. — none
+- 2026-08-11T23:04:38.529Z [run r-3390cd] finished: finished — 0 files, $31.79 — agent:wsoule679/claude
