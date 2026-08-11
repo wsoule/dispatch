@@ -1,7 +1,7 @@
 ---
 id: t-57d72c
 title: "Inbox legibility: landed means landed, failures get their own section"
-status: todo
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T21:17:23.645Z
-updated: 2026-08-11T21:17:23.645Z
+updated: 2026-08-11T21:18:11.405Z
 external: null
 writes:
   - apps/desktop/src/views/InboxView.tsx
@@ -37,3 +37,4 @@ Keep everything inside LandingView/InboxView; pure derivation (which history ent
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T21:18:11.405Z dispatched (claude, branch dispatch/t-57d72c-inbox-legibility-landed-means-landed-fai-403c41) — human:wsoule679

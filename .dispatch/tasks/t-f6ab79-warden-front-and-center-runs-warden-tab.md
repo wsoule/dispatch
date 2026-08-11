@@ -1,7 +1,7 @@
 ---
 id: t-f6ab79
 title: "Warden front and center: Runs | Warden tab toggle in the right rail"
-status: todo
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T21:17:49.629Z
-updated: 2026-08-11T21:17:49.629Z
+updated: 2026-08-11T21:18:14.234Z
 external: null
 writes:
   - apps/desktop/src/components/shell/LiveRail.tsx
@@ -38,3 +38,4 @@ Constraints:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T21:18:14.234Z dispatched (claude, branch dispatch/t-f6ab79-warden-front-and-center-runs-warden-tab-136b66) — human:wsoule679
