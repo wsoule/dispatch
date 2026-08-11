@@ -984,6 +984,70 @@ export interface MergeQueueSnapshot {
   history: MergeQueueEntry[];
 }
 
+// Mirrors GateStatus in packages/server/src/landing.ts — what a landing row
+// is currently blocked on, if anything.
+export type GateStatus =
+  | 'ready'
+  | 'waiting-checks'
+  | 'waiting-review'
+  | 'conflicts'
+  | 'draft'
+  | 'queue-position'
+  | 'verifying'
+  | 'merging'
+  | 'blocked'
+  | 'none';
+
+// Mirrors LandingGate in packages/server/src/landing.ts.
+export interface LandingGate {
+  status: GateStatus;
+  detail: string;
+}
+
+// Mirrors LandingWorktree in packages/server/src/landing.ts.
+export interface LandingWorktree {
+  path: string;
+  syncState: 'synced' | 'behind' | 'dirty-hold';
+  headOid: string;
+}
+
+// The body of `GET /api/landing` — mirrors LandingRow in
+// packages/server/src/landing.ts.
+export interface LandingRow {
+  id: string;
+  kind: 'pr' | 'run-pr' | 'queue-local';
+  title: string;
+  taskId?: string;
+  runId?: string;
+  pr?: RepoPr;
+  queue?: { position: number; entry: MergeQueueEntry };
+  gate: LandingGate;
+  worktree?: LandingWorktree;
+}
+
+// Mirrors LandedRow in packages/server/src/landing.ts — one entry in the
+// landing feed's "recently landed" history.
+export interface LandedRow {
+  id: string;
+  title: string;
+  via: 'pr' | 'local';
+  prNumber?: number;
+  mergeCommit?: string;
+  finishedAt: string;
+}
+
+// Mirrors LandingGroup in packages/server/src/landing.ts — the four landing
+// sections a row's gate buckets into.
+export type LandingGroup = 'needs-you' | 'in-queue' | 'waiting-github' | 'open';
+
+// The body of `GET /api/landing` — mirrors LandingSnapshot in
+// packages/server/src/landing.ts.
+export interface LandingSnapshot {
+  rows: LandingRow[];
+  landed: LandedRow[];
+  generatedAt: string;
+}
+
 // Mirrors SyncState in packages/server/src/sync/boardSyncer.ts. No real
 // SyncResult a `syncOnce()` produces ever carries `'disabled'` or `'off'` —
 // GET /api/sync synthesizes `'disabled'` when no scheduler exists (no trunk
@@ -1715,6 +1779,10 @@ export interface ApiClient {
   // reviewed, already queued); `removeFromMergeQueue` 409s only when the
   // given run is the entry actively being processed.
   fetchMergeQueue(): Promise<MergeQueueSnapshot>;
+  // The unified PR table: runs, the merge queue, and open/merged PRs joined
+  // into one feed — server's GET /api/landing. Never 409s: a project with no
+  // pr capability still gets its queue-local rows back.
+  getLanding(): Promise<LandingSnapshot>;
   enqueueMergeQueue(runId: string): Promise<MergeQueueEntry>;
   // Enqueues every reviewable run in taskId's stack (blockedBy-connected
   // component), blockers first — server's MergeQueue.enqueueStack. 409s only
@@ -2191,6 +2259,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
     fetchMergeQueue: () => request(target, '/api/merge-queue'),
+    getLanding: () => request(target, '/api/landing'),
     enqueueMergeQueue: (runId) =>
       request(target, '/api/merge-queue', {
         method: 'POST',
