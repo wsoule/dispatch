@@ -5,7 +5,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
  *
  * The mockup framed this as "5 of 8 slots are busy, so 3 start now" — a fixed global cap. There
  * isn't one: dispatch concurrency is chosen per call (see `handleWorkEpic(epicId, concurrency)`
- * and the stepper in EpicCardTile), not configured once for the project. So the honest preview
+ * and the stepper in EpicLaneHeader), not configured once for the project. So the honest preview
  * is computed against the concurrency the user is about to pick, not an imaginary ceiling.
  *
  * The rule the dialog exists to enforce: nothing is ever silently dropped. Every selected task
