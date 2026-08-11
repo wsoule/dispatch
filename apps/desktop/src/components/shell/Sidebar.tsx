@@ -8,7 +8,7 @@ import {
   ChevronsUpDown,
   Cog,
   GitBranch,
-  GitPullRequestArrow,
+  Inbox,
   LayoutDashboard,
   ListChecks,
   NotebookPen,
@@ -79,13 +79,13 @@ const PROJECT_VIEWS: {
   { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },
   { id: 'board', label: 'Tasks', icon: ListChecks },
 
-  { id: 'runs', label: 'Runs', icon: Play, group: 'Work' },
-  // Review owns the whole tail of the pipeline now — the queue of things
-  // needing a look, and the merge queue that approving them feeds.
-  { id: 'review', label: 'Review', icon: GitPullRequestArrow },
+  // A slim, list-only "everything waiting on a human" — the whole Work stage
+  // now that Runs and Review are gone: a run is watched from its own task, and
+  // every past run is listed under All agents.
+  { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'Work' },
   // Blast radius of a file, run, or task's declared writes — reached from
   // here with nothing preselected, or from the "open in Impact" action on
-  // the Review case panel and the Git file pane.
+  // the review case panel and the Git file pane.
   { id: 'impact', label: 'Impact', icon: Waypoints },
 
   { id: 'branches', label: 'Git', icon: GitBranch, group: 'Git' },

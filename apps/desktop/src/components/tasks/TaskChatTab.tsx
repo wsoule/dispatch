@@ -11,7 +11,7 @@ import { EmptyState } from '@/ui/chrome';
 import { Skeleton } from '@/ui/skeleton';
 
 // Shared empty array so a run with no open questions keeps the same prop
-// identity across renders — mirrors RunsView's NO_QUESTIONS.
+// identity across renders.
 const NO_QUESTIONS: RunQuestion[] = [];
 
 export interface TaskChatTabProps {
@@ -21,9 +21,9 @@ export interface TaskChatTabProps {
   onDispatch: () => void;
 }
 
-/** The task view's Chat tab: the selected run's transcript, wired exactly like RunsView's
- * Session tab, with an empty state before any run exists and a skeleton while the selected
- * run's detail is still loading. */
+/** The task view's Chat tab: the selected run's transcript and composer, the surface the
+ * retired Runs page hosted as its Session tab. It shows an empty state before any run exists
+ * and a skeleton while the selected run's detail is still loading. */
 export function TaskChatTab({
   data,
   doc,

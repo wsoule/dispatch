@@ -1,12 +1,18 @@
 import type {
   ApiClient,
   DiffResult,
+  Finding,
   MergeQueueSnapshot,
   RunMeta,
   Snippet,
 } from '@dispatch/client';
 import { canPostReviewToPr } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type {
+  CommandEvidence,
+  LedgerEntry,
+  MutationEvidence,
+  TaskDoc,
+} from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
 import {
   ExternalLink,
@@ -18,9 +24,11 @@ import {
 } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 
+import type { ImpactSubjectRef } from '../../lib/appNav';
 import { isTerminalRunState } from '../../lib/runState';
 import { PierreReviewDiff } from './PierreReviewDiff';
 import { QueueMergeControl } from './QueueMergeControl';
+import { ReviewCasePanel } from './ReviewCasePanel';
 import type { ReviewChatHandle } from './ReviewChatPanel';
 import { ReviewChatPanel } from './ReviewChatPanel';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
@@ -55,7 +63,7 @@ interface RunReviewViewProps {
   onDiscard: () => Promise<void>;
   onRequestChanges: (text: string) => Promise<void>;
   onOpenPr: () => Promise<void>;
-  /** Jumps to the Pull requests tab (this run's PR, once opened, is reviewed there rather than
+  /** Opens the PR review page (this run's PR, once opened, is reviewed there rather than
    * inline here — keeps the run surface from nesting a whole second review surface inside it). */
   onViewPr: () => void;
   onQueueMerge: () => Promise<void>;
@@ -85,13 +93,33 @@ interface RunReviewViewProps {
     body: string,
     postToGitHub: boolean
   ) => Promise<{ published: number; error?: string }>;
+  /** Omitted by pre-consolidation call sites; the ReviewView page supplied its own until it
+   * was retired. */
+  onStartAiReview?: () => Promise<void>;
+  /** Omitted by pre-consolidation call sites; the ReviewView page supplied its own until it
+   * was retired. */
+  reviewAgentLive?: boolean;
+  /** Navigates to the full `ImpactView` with this run preselected — the case panel's
+   * "Open in Impact" button. The retired Review page received this the same way; without it
+   * that button (and the embedded blast-radius panel above it) has no home in the app. */
+  onOpenImpact?: (subject: ImpactSubjectRef) => void;
+  /** The agent's own account of the work — evidence, mutation tests, findings and the fix
+   * action, escalated decisions — rendered above the comments panel. Absent hides the section
+   * entirely, so pre-consolidation call sites keep compiling without it. */
+  casePanel?: {
+    evidence: CommandEvidence[];
+    mutations: MutationEvidence[];
+    findings: Finding[];
+    decisions: LedgerEntry[];
+    onFixFindings?: (findings: Finding[]) => Promise<void>;
+  };
 }
 
 /**
  * Review surface for a terminal run: the shared unified diff (RunDiffView) plus the local
  * review actions — merge / discard / request-changes, and Open PR when the project supports it.
  * Deliberately does NOT host the GitHub PR review UI: once a PR is open, reviewing it (status,
- * conversation, approve/request-changes) happens in the top-level Pull requests tab, so this
+ * conversation, approve/request-changes) happens on the PR review page, so this
  * surface stays a single diff + one action row instead of stacking a second review surface
  * under the first.
  */
@@ -118,6 +146,10 @@ export function RunReviewView({
   onReplyComment,
   onApplySuggestion,
   onSubmitReview,
+  onStartAiReview,
+  reviewAgentLive,
+  onOpenImpact,
+  casePanel,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
@@ -260,26 +292,49 @@ export function RunReviewView({
             />
           )}
         </div>
-        {onAddComment !== undefined &&
-          onResolveComment !== undefined &&
-          onReplyComment !== undefined &&
-          onSubmitReview !== undefined && (
-            <div className="min-h-0 overflow-auto">
-              <ReviewCommentsPanel
-                comments={reviewComments ?? []}
-                onResolve={onResolveComment}
-                onReply={onReplyComment}
-                onSubmit={onSubmitReview}
-                canPostToGitHub={canPostReviewToPr(meta.prUrl)}
+        <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
+          {casePanel !== undefined && (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <ReviewCasePanel
+                evidence={casePanel.evidence}
+                mutations={casePanel.mutations}
+                findings={casePanel.findings}
+                decisions={casePanel.decisions}
+                onFixFindings={casePanel.onFixFindings}
+                onStartAiReview={onStartAiReview}
+                reviewAgentLive={reviewAgentLive}
+                // The Impact section's own gate: both together, or it hides. This surface
+                // always has a run, so it always has both — the retired Review page passed
+                // exactly the same pair.
+                client={client}
+                runId={meta.id}
+                onOpenImpact={onOpenImpact}
               />
             </div>
           )}
+          {onAddComment !== undefined &&
+            onResolveComment !== undefined &&
+            onReplyComment !== undefined &&
+            onSubmitReview !== undefined && (
+              <div className="min-h-0 flex-1 overflow-auto">
+                <ReviewCommentsPanel
+                  comments={reviewComments ?? []}
+                  onResolve={onResolveComment}
+                  onReply={onReplyComment}
+                  onSubmit={onSubmitReview}
+                  canPostToGitHub={canPostReviewToPr(meta.prUrl)}
+                  onStartAiReview={onStartAiReview}
+                  reviewAgentLive={reviewAgentLive}
+                />
+              </div>
+            )}
+        </div>
       </div>
 
       {hasOpenPr ? (
         <div className="border-border flex items-center justify-between gap-2 border-t pt-3">
           <span className="text-muted-foreground text-[12px]">
-            A PR is open for this run — review it in the Pull requests tab.
+            A PR is open for this run — review it on the pull request page.
           </span>
           <div className="flex items-center gap-2">
             <QueueMergeControl

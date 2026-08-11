@@ -8,7 +8,7 @@ import { TaskDetailPanel } from '../components/tasks/detail';
 import { TaskChatTab } from '../components/tasks/TaskChatTab';
 import { TaskDiffTab } from '../components/tasks/TaskDiffTab';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import type { TaskTab } from '../lib/appNav';
+import type { ImpactSubjectRef, TaskTab } from '../lib/appNav';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { Button } from '@/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/ui/select';
@@ -28,8 +28,11 @@ export interface TaskViewProps {
    * empty; this component's `doc === null` branch below renders the same "gone" state first,
    * so the Details tab never actually needs it in that case. */
   panelProps: TaskDetailPanelProps | undefined;
-  /** Jumps to the Pull requests tab — see `RunsView`'s identical prop. */
+  /** Opens the run's pull request on the PR review page. */
   onViewPr: (runId: string) => void;
+  /** Opens `ImpactView` with a subject preselected — reaches the Diff tab's review case
+   * panel, which is where the retired Review page used to offer this. */
+  onOpenImpact: (subject: ImpactSubjectRef) => void;
 }
 
 /**
@@ -47,6 +50,7 @@ export function TaskView({
   onBack,
   panelProps,
   onViewPr,
+  onOpenImpact,
 }: TaskViewProps) {
   const doc =
     data.tasksIncludingArchived.find((t) => t.meta.id === taskId) ?? null;
@@ -142,6 +146,7 @@ export function TaskView({
               data={data}
               selectedRun={selectedRun}
               onViewPr={onViewPr}
+              onOpenImpact={onOpenImpact}
             />
           </ErrorBoundary>
         )}

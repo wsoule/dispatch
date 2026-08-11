@@ -9,7 +9,7 @@ const props = {
   projectPath: '/Users/x/dispatch',
   hasActiveProject: true,
   section: 'project' as const,
-  projectView: 'runs' as const,
+  projectView: 'inbox' as const,
   globalView: 'all-agents' as const,
   liveAgentCount: 3,
   badges: { board: 2 },
@@ -46,8 +46,7 @@ const RAIL_LABELS = [
   'Brain dump',
   'Plans',
   'Tasks',
-  'Runs',
-  'Review',
+  'Inbox',
   'Impact',
   'Git',
 ];
@@ -58,8 +57,7 @@ test('the exported view order is the cmd+N order App.tsx indexes into', () => {
     'brain-dump',
     'plans',
     'board',
-    'runs',
-    'review',
+    'inbox',
     'impact',
     'branches',
   ]);
@@ -73,7 +71,7 @@ test('expanded rail shows every row with its shortcut number', () => {
     const row = screen.getByRole('button', {
       name: new RegExp(`^${label.replace(' ', '.')}.*⌘${index + 1}$`),
     });
-    expect(row.getAttribute('data-active')).toBe(String(label === 'Runs'));
+    expect(row.getAttribute('data-active')).toBe(String(label === 'Inbox'));
   });
   expect(screen.getByText('Workspace')).toBeTruthy();
   expect(screen.getByText('Plan')).toBeTruthy();

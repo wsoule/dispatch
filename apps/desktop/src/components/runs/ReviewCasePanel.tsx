@@ -11,6 +11,7 @@ import {
   Flag,
   TriangleAlert,
   Waypoints,
+  Wrench,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -22,6 +23,7 @@ import { isDeadGuard } from '../../lib/reviewCase';
 import { ImpactPanel } from '../impact/ImpactPanel';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 import {
   Collapsible,
@@ -43,6 +45,10 @@ interface ReviewCasePanelProps {
   /** True while a review agent's run is live over this run's branch — derived from the run
    * list rather than click-local state, so it survives navigation (see `liveReviewAgentFor`). */
   reviewAgentLive?: boolean;
+  /** Hands the checked findings to an agent to fix — the run resumes on its own branch with
+   * them attached (the request-changes path). Omitted where fixing isn't possible (the run is
+   * already reviewed, or still live): the checkboxes and button hide rather than disable. */
+  onFixFindings?: (findings: Finding[]) => Promise<void>;
   /** The dispatchd client and this run's id — both required to embed the
    *  blast-radius panel. Omitted (as in this component's own tests) hides
    *  the Impact section entirely rather than rendering it half-wired. */
@@ -69,14 +75,50 @@ export function ReviewCasePanel({
   onStartAiReview,
   aiReviewBusy = false,
   reviewAgentLive = false,
+  onFixFindings,
   client,
   runId,
   onOpenImpact,
 }: ReviewCasePanelProps) {
   const { judgment, checks } = partitionFindings(findings);
+
+  // Which judgment findings are checked for the fix action. Ephemeral on
+  // purpose: a selection is a half-formed intention, unlike the dispatched
+  // fix itself, which the run list remembers.
+  const [selectedFindingIds, setSelectedFindingIds] = useState<
+    ReadonlySet<string>
+  >(new Set());
+  const [fixBusy, setFixBusy] = useState(false);
+  const [fixError, setFixError] = useState<string | null>(null);
+
+  function toggleFinding(id: string) {
+    setSelectedFindingIds((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  async function fixSelected() {
+    if (onFixFindings === undefined) return;
+    const picked = judgment
+      .flatMap((group) => group.findings)
+      .filter((f) => selectedFindingIds.has(f.id));
+    if (picked.length === 0) return;
+    setFixBusy(true);
+    setFixError(null);
+    try {
+      await onFixFindings(picked);
+      setSelectedFindingIds(new Set());
+    } catch (err) {
+      setFixError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFixBusy(false);
+    }
+  }
   const openCount = judgment.reduce((n, g) => n + g.findings.length, 0);
 
-  // `h-full min-h-0`: this panel is the sole flexible child of ReviewView's own
+  // `h-full min-h-0`: this panel is the sole flexible child of the review page's own
   // `flex-1 flex-col` pane, so it has to actually claim that space itself before
   // ScrollArea's Viewport (which only ever fills its own Root, `size-full`) has
   // anything real to scroll within.
@@ -116,7 +158,7 @@ export function ReviewCasePanel({
         </section>
 
         {/* Only ever mounted when a real run is behind this panel — the caller
-          (ReviewView) always has both; this component's own tests exercise
+          (the task view's Diff tab) always has both; this component's own tests exercise
           `empty` without them, which just hides the section. */}
         {client !== undefined && runId !== undefined && (
           <section>
@@ -209,10 +251,41 @@ export function ReviewCasePanel({
                     {group.severity}
                   </SectionLabel>
                   {group.findings.map((f) => (
-                    <FindingRow key={f.id} finding={f} />
+                    <FindingRow
+                      key={f.id}
+                      finding={f}
+                      selected={selectedFindingIds.has(f.id)}
+                      onToggleSelect={
+                        onFixFindings === undefined
+                          ? undefined
+                          : () => toggleFinding(f.id)
+                      }
+                    />
                   ))}
                 </div>
               ))}
+              {onFixFindings !== undefined && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={fixBusy || selectedFindingIds.size === 0}
+                    onClick={() => void fixSelected()}
+                  >
+                    <Wrench className="size-3.5" />
+                    {fixBusy
+                      ? 'Sending to the agent…'
+                      : selectedFindingIds.size > 0
+                        ? `Fix ${selectedFindingIds.size} selected`
+                        : 'Fix selected'}
+                  </Button>
+                  {fixError !== null && (
+                    <span className="text-state-failed text-[11px]">
+                      {fixError}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -249,13 +322,30 @@ const DETAIL_CLAMP_CHARS = 220;
 
 /** One agent-raised finding. The title wraps and the detail clamps — the
  *  inverse of the first cut, where a clipped title sat above an unbounded
- *  paragraph. */
-function FindingRow({ finding }: { finding: Finding }) {
+ *  paragraph. `onToggleSelect` adds the fix-selection checkbox; absent, the
+ *  row renders exactly as before. */
+function FindingRow({
+  finding,
+  selected = false,
+  onToggleSelect,
+}: {
+  finding: Finding;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const long = finding.detail.length > DETAIL_CLAMP_CHARS;
   return (
     <div className="text-[12.5px]">
       <div className="flex items-baseline gap-1.5">
+        {onToggleSelect !== undefined && (
+          <Checkbox
+            checked={selected}
+            onCheckedChange={onToggleSelect}
+            aria-label={`Select finding: ${finding.title}`}
+            className="self-center"
+          />
+        )}
         <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
         <span className="min-w-0 flex-1">{finding.title}</span>
         {finding.file !== null && (

@@ -24,17 +24,17 @@ describe('navReducer', () => {
     expect(next.activeRunId).toBeNull();
   });
 
-  test('setProjectView to runs preserves an existing activeRunId', () => {
+  test('setProjectView to task preserves an existing activeRunId', () => {
     const state: NavState = { ...initialNavState, activeRunId: 'run-1' };
-    const next = navReducer(state, { type: 'setProjectView', view: 'runs' });
-    expect(next.projectView).toBe('runs');
+    const next = navReducer(state, { type: 'setProjectView', view: 'task' });
+    expect(next.projectView).toBe('task');
     expect(next.activeRunId).toBe('run-1');
   });
 
-  test('setProjectView away from runs clears activeRunId', () => {
+  test('setProjectView to any other view clears activeRunId', () => {
     const state: NavState = {
       ...initialNavState,
-      projectView: 'runs',
+      projectView: 'task',
       activeRunId: 'run-1',
     };
     const next = navReducer(state, { type: 'setProjectView', view: 'board' });
@@ -107,11 +107,11 @@ describe('navReducer', () => {
   });
 
   test('openNewTask opens the full-page creator and remembers where it came from', () => {
-    const state: NavState = { ...initialNavState, projectView: 'runs' };
+    const state: NavState = { ...initialNavState, projectView: 'branches' };
     const next = navReducer(state, { type: 'openNewTask' });
     expect(next.section).toBe('project');
     expect(next.projectView).toBe('new-task');
-    expect(next.newTaskReturnView).toBe('runs');
+    expect(next.newTaskReturnView).toBe('branches');
   });
 
   test('closeNewTask returns to the view the creator was opened from', () => {
@@ -164,32 +164,39 @@ describe('navReducer', () => {
     expect(state.projectView).toBe('new-task');
   });
 
-  // C1 regression guard: `activeRunId` is the *only* place "which run is selected" lives —
-  // `useDispatchProject` and `RunsView` both read it directly now (no more hook-internal
-  // duplicate). These sequences are exactly what App.tsx's `jumpToRun` (All Agents → a run
-  // in another project) and the task peek panel's "View run"/"Review run" button each
-  // dispatch, chained through the same reducer instance a real `useReducer` would use.
-  test('jumpToRun sequence (selectProject, setProjectView runs, openRun) ends with the run selected', () => {
+  // C1 regression guard: `activeRunId` is the *only* place "which run is selected" lives.
+  // These sequences are exactly what App.tsx's `jumpToRun` (All Agents → a run) and the task
+  // peek panel's "View run" button each dispatch, chained through the same reducer instance a
+  // real `useReducer` would use — both land on the task view now that Runs is gone.
+  test('jumpToRun sequence (selectProject, openTask with the run) ends with the run selected', () => {
     let state = navReducer(initialNavState, {
       type: 'selectProject',
       projectId: 'proj-b',
     });
-    state = navReducer(state, { type: 'setProjectView', view: 'runs' });
-    state = navReducer(state, { type: 'openRun', runId: 'run-42' });
+    state = navReducer(state, {
+      type: 'openTask',
+      taskId: 'task-42',
+      tab: 'chat',
+      runId: 'run-42',
+    });
 
     expect(state.activeProjectId).toBe('proj-b');
-    expect(state.projectView).toBe('runs');
+    expect(state.projectView).toBe('task');
     expect(state.activeRunId).toBe('run-42');
   });
 
-  test('the peek panel\'s "view run" sequence (closePeek, setProjectView runs, openRun) selects the run', () => {
+  test('the peek panel\'s "view run" sequence (closePeek, openTask) selects the run', () => {
     let state: NavState = { ...initialNavState, peekTaskId: 'task-9' };
     state = navReducer(state, { type: 'closePeek' });
-    state = navReducer(state, { type: 'setProjectView', view: 'runs' });
-    state = navReducer(state, { type: 'openRun', runId: 'run-7' });
+    state = navReducer(state, {
+      type: 'openTask',
+      taskId: 'task-9',
+      tab: 'chat',
+      runId: 'run-7',
+    });
 
     expect(state.peekTaskId).toBeNull();
-    expect(state.projectView).toBe('runs');
+    expect(state.projectView).toBe('task');
     expect(state.activeRunId).toBe('run-7');
   });
 
@@ -212,12 +219,12 @@ describe('history', () => {
 
   test('back returns to where you came from, not a fixed destination', () => {
     let state = initialNavState; // overview
-    state = navReducer(state, { type: 'setProjectView', view: 'runs' });
-    state = navReducer(state, { type: 'setProjectView', view: 'review' });
-    expect(view(state)).toBe('project:review');
+    state = navReducer(state, { type: 'setProjectView', view: 'inbox' });
+    state = navReducer(state, { type: 'setProjectView', view: 'branches' });
+    expect(view(state)).toBe('project:branches');
 
     state = navReducer(state, { type: 'back' });
-    expect(view(state)).toBe('project:runs');
+    expect(view(state)).toBe('project:inbox');
     state = navReducer(state, { type: 'back' });
     expect(view(state)).toBe('project:overview');
   });
@@ -225,23 +232,23 @@ describe('history', () => {
   test('forward works after going back', () => {
     let state = navReducer(initialNavState, {
       type: 'setProjectView',
-      view: 'runs',
+      view: 'inbox',
     });
     state = navReducer(state, { type: 'back' });
     expect(view(state)).toBe('project:overview');
     state = navReducer(state, { type: 'forward' });
-    expect(view(state)).toBe('project:runs');
+    expect(view(state)).toBe('project:inbox');
   });
 
   test('navigating after going back discards the forward entries', () => {
     let state = navReducer(initialNavState, {
       type: 'setProjectView',
-      view: 'runs',
+      view: 'inbox',
     });
-    state = navReducer(state, { type: 'setProjectView', view: 'review' });
-    state = navReducer(state, { type: 'back' }); // on runs
+    state = navReducer(state, { type: 'setProjectView', view: 'branches' });
+    state = navReducer(state, { type: 'back' }); // on inbox
     state = navReducer(state, { type: 'setProjectView', view: 'plans' });
-    // Review is gone from the future; forward must not resurrect it.
+    // Git is gone from the future; forward must not resurrect it.
     state = navReducer(state, { type: 'forward' });
     expect(view(state)).toBe('project:plans');
   });
@@ -262,7 +269,7 @@ describe('history', () => {
   test('back restores the run that was open on that entry', () => {
     let state = navReducer(initialNavState, {
       type: 'setProjectView',
-      view: 'runs',
+      view: 'task',
     });
     state = navReducer(state, { type: 'openRun', runId: 'r-1' });
     state = navReducer(state, { type: 'setProjectView', view: 'plans' });
@@ -359,6 +366,77 @@ describe('draft page navigation', () => {
   });
 });
 
+describe('retired views', () => {
+  test("the retired 'runs' and 'review' views normalize to 'inbox'", () => {
+    for (const view of ['runs', 'review'] as const) {
+      const next = navReducer(initialNavState, {
+        type: 'setProjectView',
+        view,
+      });
+      expect(next.projectView).toBe('inbox');
+    }
+  });
+
+  test('a retired view never reaches history, so back cannot land on one', () => {
+    const state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'runs',
+    });
+    expect(state.history[state.historyIndex]?.projectView).toBe('inbox');
+  });
+
+  test('a stored nav state on a retired view returns from the creator to the inbox', () => {
+    const stored: NavState = { ...initialNavState, projectView: 'review' };
+    let state = navReducer(stored, { type: 'openNewTask' });
+    expect(state.newTaskReturnView).toBe('inbox');
+    state = navReducer(state, { type: 'closeNewTask' });
+    expect(state.projectView).toBe('inbox');
+  });
+});
+
+describe('pull request page navigation', () => {
+  test('openPr routes to the PR view with that number selected', () => {
+    const next = navReducer(initialNavState, { type: 'openPr', number: 12 });
+    expect(next.section).toBe('project');
+    expect(next.projectView).toBe('pr');
+    expect(next.activePrNumber).toBe(12);
+  });
+
+  test('leaving the PR view clears the selected pull request', () => {
+    const opened = navReducer(initialNavState, { type: 'openPr', number: 12 });
+    const next = navReducer(opened, { type: 'setProjectView', view: 'inbox' });
+    expect(next.activePrNumber).toBeNull();
+  });
+
+  test('back returns to the pull request that was open on that entry', () => {
+    let state = navReducer(initialNavState, { type: 'openPr', number: 12 });
+    state = navReducer(state, { type: 'setProjectView', view: 'board' });
+    expect(state.activePrNumber).toBeNull();
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('pr');
+    expect(state.activePrNumber).toBe(12);
+  });
+
+  test('escape on the PR view acts as back', () => {
+    const onInbox = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'inbox',
+    });
+    const opened = navReducer(onInbox, { type: 'openPr', number: 12 });
+    const escaped = navReducer(opened, { type: 'escape' });
+    expect(escaped.projectView).toBe('inbox');
+  });
+
+  test('selecting a project drops a pull request left open in the previous one', () => {
+    const opened = navReducer(initialNavState, { type: 'openPr', number: 12 });
+    const next = navReducer(opened, {
+      type: 'selectProject',
+      projectId: 'other',
+    });
+    expect(next.activePrNumber).toBeNull();
+  });
+});
+
 describe('openTask', () => {
   test('routes to the task view, seeds tab and run, closes the peek', () => {
     const peeked = navReducer(initialNavState, {
@@ -437,18 +515,18 @@ describe('setTaskTab', () => {
 });
 
 describe('task view teardown', () => {
-  test('setProjectView away from task clears activeTaskId, keeps run for runs', () => {
+  test('setProjectView away from task clears activeTaskId and its run', () => {
     const opened = navReducer(initialNavState, {
       type: 'openTask',
       taskId: 't-1',
       runId: 'r-1',
     });
-    const toRuns = navReducer(opened, {
+    const toInbox = navReducer(opened, {
       type: 'setProjectView',
-      view: 'runs',
+      view: 'inbox',
     });
-    expect(toRuns.activeTaskId).toBeNull();
-    expect(toRuns.activeRunId).toBe('r-1');
+    expect(toInbox.activeTaskId).toBeNull();
+    expect(toInbox.activeRunId).toBeNull();
     const toBoard = navReducer(opened, {
       type: 'setProjectView',
       view: 'board',
