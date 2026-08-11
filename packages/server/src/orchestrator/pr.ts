@@ -18,6 +18,7 @@ import type {
 } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
+import type { PrWorktreeManager } from './prWorktree.js';
 import type { RunMeta } from './types.js';
 import {
   OrchestratorClientError,
@@ -212,6 +213,11 @@ export interface PrManagerContext {
   // react to. Absent ⇒ always poll at the configured interval, unchanged
   // behavior for every caller that doesn't wire the merge queue in at all.
   hasGithubHolds?: () => boolean;
+  // Task 7: keeps review worktrees synced/retired alongside each poll's
+  // cache refresh (see pollOnce). Absent ⇒ no worktree lifecycle runs at
+  // all, so every existing test's PrManagerContext (which never wires one
+  // in) is unaffected.
+  prWorktrees?: PrWorktreeManager;
 }
 
 export interface PrCheckRun {
@@ -818,6 +824,7 @@ export class PrManager {
   // in flight at a time.
   async pollOnce(): Promise<void> {
     await this.refreshCache();
+    await this.syncPrWorktrees();
     for (const meta of this.ctx.orchestrator.list()) {
       if (meta.prUrl === undefined || meta.reviewedAt !== undefined) continue;
       const view = await this.run(meta.worktreePath, [
@@ -868,6 +875,41 @@ export class PrManager {
     if (key !== this.cacheDeltaKey) {
       this.cacheDeltaKey = key;
       this.ctx.events.broadcast({ type: 'landing.changed' });
+    }
+  }
+
+  // Task 7: brings every already-cut review worktree back in line with its
+  // PR's current head, and retires any worktree whose PR has left the open
+  // cache (merged/closed, or a page-50 fall-off). No-op when this project
+  // has no PrWorktreeManager wired in (ctx.prWorktrees), same guard shape as
+  // hasGithubHolds. A single PR's sync/cleanup failing is logged and
+  // skipped, not thrown — one flaky worktree must not block the rest.
+  private async syncPrWorktrees(): Promise<void> {
+    const worktrees = this.ctx.prWorktrees;
+    if (worktrees === undefined) return;
+    for (const pr of this.cache) {
+      try {
+        await worktrees.sync(pr.number, pr.headRefOid);
+      } catch (err) {
+        console.error(
+          `dispatchd: PR worktree sync failed for #${pr.number}: ${(err as Error).message}`
+        );
+      }
+    }
+    // cacheReady() guards cleanup specifically: before the first successful
+    // list call, "not in the open cache" means "unknown", not "closed" — the
+    // same distinction MergeQueueContext.cacheReady exists to draw.
+    if (!this.cacheReady()) return;
+    const openNumbers = new Set(this.cache.map((pr) => pr.number));
+    for (const state of await worktrees.list()) {
+      if (openNumbers.has(state.prNumber)) continue;
+      try {
+        await worktrees.removeIfClean(state.prNumber);
+      } catch (err) {
+        console.error(
+          `dispatchd: PR worktree cleanup failed for #${state.prNumber}: ${(err as Error).message}`
+        );
+      }
     }
   }
 

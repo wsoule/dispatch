@@ -51,6 +51,9 @@ export interface DispatchConfig {
   verify?: VerifyConfig;
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
+  /** Parent directory for PR review worktrees (Task 7); each PR gets a
+   *  `pr-<n>` child inside it. Absent means the default sibling of `rootDir`. */
+  prWorktreeDir?: string;
 }
 
 /** Whether Dispatch uses carto for the dependency graph, and whether it may

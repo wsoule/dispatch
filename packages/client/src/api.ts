@@ -385,6 +385,16 @@ export interface RepoPr {
   changedFiles: number;
 }
 
+// Mirrors PrWorktreeState in packages/server/src/orchestrator/prWorktree.ts —
+// one PR review worktree's live state, as of the last create/list call.
+export interface PrWorktreeState {
+  prNumber: number;
+  path: string;
+  headOid: string;
+  dirty: boolean;
+  behind: boolean;
+}
+
 // The notes/triage hub — mirrors Note / NoteKind in packages/server/src/notes.ts. A
 // lightweight item (triage an agent found, a follow-up, a free note, a personal todo) that
 // can later be promoted into a real task.
@@ -1788,6 +1798,15 @@ export interface ApiClient {
   // into one feed — server's GET /api/landing. Never 409s: a project with no
   // pr capability still gets its queue-local rows back.
   getLanding(): Promise<LandingSnapshot>;
+  // Cuts (POST) or retires (DELETE) a PR's on-demand review worktree — the
+  // landing row's "review this locally" action. `confirmFork` mirrors
+  // startPrAgentReview's own fork-confirm contract. A dirty worktree 409s on
+  // delete; both throw an ApiError the caller can inspect for that.
+  createPrWorktree(
+    number: number,
+    opts?: { confirmFork?: boolean }
+  ): Promise<PrWorktreeState>;
+  removePrWorktree(number: number): Promise<{ removed: true }>;
   enqueueMergeQueue(runId: string): Promise<MergeQueueEntry>;
   // Enqueues every reviewable run in taskId's stack (blockedBy-connected
   // component), blockers first — server's MergeQueue.enqueueStack. 409s only
@@ -2265,6 +2284,13 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/epics/${epicId}/progress`),
     fetchMergeQueue: () => request(target, '/api/merge-queue'),
     getLanding: () => request(target, '/api/landing'),
+    createPrWorktree: (number, opts = {}) =>
+      request(target, `/api/prs/${number}/worktree`, {
+        method: 'POST',
+        ...jsonBody(opts),
+      }),
+    removePrWorktree: (number) =>
+      request(target, `/api/prs/${number}/worktree`, { method: 'DELETE' }),
     enqueueMergeQueue: (runId) =>
       request(target, '/api/merge-queue', {
         method: 'POST',

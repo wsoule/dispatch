@@ -43,7 +43,12 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
-import { detectPrCapability, PrManager } from './orchestrator/pr.js';
+import {
+  defaultCommandRunner,
+  detectPrCapability,
+  PrManager,
+} from './orchestrator/pr.js';
+import { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import { QuestionRegistry } from './orchestrator/questions.js';
 import {
   generateRepoDigest,
@@ -70,6 +75,9 @@ export interface ServerHandle {
   // populate cachedPrs() deterministically instead of racing its internal
   // poll timer (started/stopped by startServer itself below).
   prManager: PrManager;
+  // Task 7: exposed the same way prManager is — tests assert against real
+  // git state (create/sync/removeIfClean/list) without going through HTTP.
+  prWorktrees: PrWorktreeManager;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
@@ -517,6 +525,23 @@ export async function startServer(
   // same instance — a review run's comments and a human's land in the same
   // per-target file rather than two stores fighting over one file.
   const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
+  // Task 7: cuts/syncs/retires PR review worktrees. Constructed ahead of
+  // PrManager (whose context wires it in below) even though its own
+  // `fetchHead` closure calls back into `prManager` — the same lazy-closure
+  // trick `hasGithubHolds` uses for `mergeQueue` below: the closure only
+  // reads `prManager` once a real sync actually runs, long after the `const`
+  // it names has been assigned.
+  const prWorktrees = new PrWorktreeManager({
+    rootDir,
+    run: opts.prCommandRunner ?? defaultCommandRunner,
+    prWorktreeDir: loadConfig(rootDir).prWorktreeDir,
+    // confirmFork: true — a worktree only exists here because its PR already
+    // passed the fork gate once (at creation); re-syncing it must not ask
+    // again.
+    fetchHead: async (n) => {
+      await prManager.fetchPrHead(n, { confirmFork: true });
+    },
+  });
   const prManager = new PrManager(
     {
       rootDir,
@@ -526,6 +551,7 @@ export async function startServer(
       orchestrator,
       actorContext,
       reviewComments,
+      prWorktrees,
       // Lazy closure, not a direct reference: `mergeQueue` is constructed
       // below (it needs `prManager` itself for its own `prState` lookup), so
       // at this point in the function it exists only as a `const` binding
@@ -670,6 +696,7 @@ export async function startServer(
     planManager,
     epicEngine,
     prManager,
+    prWorktrees,
     mergeQueue,
     prCapability,
     noteStore: new NoteStore(rootDir),
@@ -811,6 +838,7 @@ export async function startServer(
     tokens,
     mergeQueue,
     prManager,
+    prWorktrees,
     async stop() {
       watcher.close();
       sourceWatcher.close();

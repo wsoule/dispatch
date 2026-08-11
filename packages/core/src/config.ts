@@ -511,6 +511,14 @@ export function loadConfig(rootDir: string): DispatchConfig {
       'invalid .dispatch/config.yml: verifyCommand must be a non-empty string'
     );
   }
+  if (
+    raw.prWorktreeDir !== undefined &&
+    (typeof raw.prWorktreeDir !== 'string' || raw.prWorktreeDir.trim() === '')
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: prWorktreeDir must be a non-empty string'
+    );
+  }
   return {
     statuses: [...(raw.statuses ?? DEFAULTS.statuses)],
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
@@ -523,6 +531,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verify: parseVerifyConfig(raw.verify),
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
+    prWorktreeDir: raw.prWorktreeDir,
   };
 }
 
