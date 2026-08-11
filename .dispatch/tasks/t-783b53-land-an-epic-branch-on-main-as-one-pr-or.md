@@ -1,7 +1,7 @@
 ---
 id: t-783b53
 title: Land an epic branch on main as one PR or one merge
-status: in-review
+status: todo
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T23:04:49.680Z
+updated: 2026-08-11T23:09:23.424Z
 external: null
 writes: []
 ---
@@ -67,3 +67,4 @@ hint: You can instead skip this commit: run "git rebase --skip".
 hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
 hint: Disable this message with "git config set advice.mergeConflict false"
 Could not apply d6235cc5... # chore(board): sync 1 task — none
+- 2026-08-11T23:09:23.424Z run r-3390cd discarded — human:wsoule679
