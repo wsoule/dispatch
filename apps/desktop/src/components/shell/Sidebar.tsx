@@ -9,6 +9,7 @@ import {
   Cog,
   GitBranch,
   GitPullRequestArrow,
+  Inbox,
   LayoutDashboard,
   ListChecks,
   NotebookPen,
@@ -79,7 +80,10 @@ const PROJECT_VIEWS: {
   { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },
   { id: 'board', label: 'Tasks', icon: ListChecks },
 
-  { id: 'runs', label: 'Runs', icon: Play, group: 'Work' },
+  // A slim, list-only "everything waiting on a human" — the entry point to
+  // the Work group, ahead of Runs (every run) and Review (its own queue).
+  { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'Work' },
+  { id: 'runs', label: 'Runs', icon: Play },
   // Review owns the whole tail of the pipeline now — the queue of things
   // needing a look, and the merge queue that approving them feeds.
   { id: 'review', label: 'Review', icon: GitPullRequestArrow },
