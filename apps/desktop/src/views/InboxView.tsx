@@ -1,4 +1,5 @@
-import { Inbox as InboxIcon } from 'lucide-react';
+import { GitMerge, Inbox as InboxIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import type { ReviewQueueItem } from '../components/runs/ReviewQueue';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
@@ -118,7 +119,24 @@ export function InboxView({
           )}
           {review.length > 0 && (
             <section>
-              <SectionLabel rule count={review.length}>
+              <SectionLabel
+                rule
+                count={review.length}
+                trailing={
+                  review.some((i) => i.target.kind === 'run') ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => void project.handleMergeAllReady()}
+                      title="Queue every ready run for the merge queue — each still runs verify before landing"
+                    >
+                      <GitMerge className="size-3" />
+                      Queue all for merge
+                    </Button>
+                  ) : undefined
+                }
+              >
                 Needs review
               </SectionLabel>
               <div className="mt-1.5 flex flex-col gap-0.5">
@@ -128,6 +146,9 @@ export function InboxView({
                     item={item}
                     onOpenTask={onOpenTask}
                     onOpenPr={onOpenPr}
+                    onQueueMerge={(runId) =>
+                      void project.handleEnqueueMerge(runId)
+                    }
                   />
                 ))}
               </div>
@@ -161,10 +182,13 @@ function ReviewRow({
   item,
   onOpenTask,
   onOpenPr,
+  onQueueMerge,
 }: {
   item: ReviewQueueItem;
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
   onOpenPr: (number: number) => void;
+  /** Queues one run for the merge queue without opening it first. */
+  onQueueMerge?: (runId: string) => void;
 }) {
   if (item.target.kind === 'run' && item.run !== undefined) {
     const run = item.run;
@@ -174,6 +198,21 @@ function ReviewRow({
         state="review"
         updatedAt={item.updatedAt}
         onClick={() => onOpenTask(run.taskId, 'diff', run.id)}
+        action={
+          onQueueMerge !== undefined ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => onQueueMerge(run.id)}
+              aria-label={`Queue merge: ${item.title}`}
+              title="Queue this run for merge"
+              className="text-muted-foreground hover:text-foreground shrink-0"
+            >
+              <GitMerge className="size-3.5" />
+            </Button>
+          ) : undefined
+        }
       />
     );
   }
@@ -194,11 +233,15 @@ function Row({
   state,
   updatedAt,
   onClick,
+  action,
 }: {
   title: string;
   state: FeedState;
   updatedAt: string;
   onClick?: () => void;
+  /** A trailing control rendered as the row button's sibling, never nested
+   * inside it — nested buttons are invalid markup and swallow clicks. */
+  action?: ReactNode;
 }) {
   const content = (
     <>
@@ -220,17 +263,25 @@ function Row({
     );
   }
 
-  return (
+  const row = (
     <Button
       type="button"
       variant="ghost"
       onClick={onClick}
       className={cn(
         'h-auto w-full justify-start gap-2 rounded-md border border-transparent px-2 py-1.5 font-normal text-left',
-        'hover:bg-muted/60'
+        'hover:bg-muted/60',
+        action !== undefined && 'flex-1'
       )}
     >
       {content}
     </Button>
+  );
+  if (action === undefined) return row;
+  return (
+    <div className="flex items-center gap-1">
+      {row}
+      {action}
+    </div>
   );
 }
