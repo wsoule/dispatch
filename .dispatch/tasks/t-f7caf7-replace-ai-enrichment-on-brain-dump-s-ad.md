@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-11T02:00:39.505Z
-updated: 2026-08-11T16:46:12.534Z
+updated: 2026-08-11T17:06:22.436Z
 external: null
 writes:
   - apps/desktop/src/views/BrainDumpView.tsx
@@ -38,3 +38,8 @@ Acceptance criteria:
 
 ## Activity
 - 2026-08-11T16:46:12.534Z dispatched (claude, branch dispatch/t-f7caf7-replace-ai-enrichment-on-brain-dump-s-ad-b9ae36) — human:wsoule679
+- 2026-08-11T17:06:22.435Z Replaced the AI enrich on Brain Dump's "Add detail" with an inline Textarea editor (Save/Cancel, ⌘⏎ saves, Escape cancels), persisting through the existing handleUpdateInboxItem → PATCH /api/inbox/:id. Removed handleEnrichInboxItem/inboxEnrichItemId/inboxEnrichPlanRecord/handleDismissInboxEnrich/handleApplyInboxEnrich, POST /api/inbox/:id/enrich + enrichInbox + buildInboxEnrichPrompt, and the client SDK's enrichInbox.
+
+Two deviations from the task text, both forced by knip being gated at zero:
+1. lib/enrichReview.ts is NOT shared with tasks — TaskDetailPanel uses lib/taskEnrich.ts, and EnrichReview.tsx declares its own inline props type. BrainDumpView was its only production consumer. Removed the inbox-only formatEnrichedInboxText (and its tests) and un-exported EnrichDraft; enrichViewState/EnrichViewState are left in place. Heads up: the module now has no production caller at all and is a deletion candidate, which I left alone as out of scope.
+2. apps/desktop/e2e/views.spec.ts needed no change — it only takes a braindump screenshot and never exercised the enrich flow, and the row's default rendering is unchanged ("Add detail" label kept). Playwright can't run in this shell anyway (posix_spawn git), so I did not touch the PNG baselines. — none
