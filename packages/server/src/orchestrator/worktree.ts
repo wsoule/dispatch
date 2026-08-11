@@ -535,6 +535,15 @@ export class WorktreeManager {
     }
   }
 
+  // The fork point of `branch` from `base`: the last commit the two still
+  // share, i.e. where the branch's own work begins even after the base has
+  // moved on. Null when either ref is missing or they share no history —
+  // callers treat that as "cannot determine a base" rather than an error.
+  mergeBase(base: string, branch: string): string | null {
+    const result = runGit(this.mainRepoDir, ['merge-base', base, branch]);
+    return result.ok ? result.stdout.trim() : null;
+  }
+
   // The commit a ref currently points at, in the main checkout. Used to pin
   // down what a stacked run was branched from at the moment it was created —
   // branch refs move, commit shas don't.
