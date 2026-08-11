@@ -33,6 +33,7 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [pushRetrying, setPushRetrying] = useState(false);
 
   // Keyed on the snapshot rather than on `?? []`, which mints a fresh array identity every
   // render and would make the memo do nothing.
@@ -64,6 +65,19 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
     }
   }
 
+  // `handleMergeAllReady`, not `handleRecheckMergeQueue`: kicking the pump with nothing new
+  // to enqueue is what makes the server retry a drain-push it failed (see the handler's
+  // comment in useDispatchProject). The banner clears on the next `queue.drained` that
+  // pushes cleanly, not here.
+  async function retryPush() {
+    setPushRetrying(true);
+    try {
+      await data.handleMergeAllReady();
+    } finally {
+      setPushRetrying(false);
+    }
+  }
+
   const shownHistory = showAllHistory
     ? history
     : history.slice(0, HISTORY_PREVIEW);
@@ -79,6 +93,26 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
           · verify runs before anything lands
         </span>
       </div>
+
+      {/* The one queue outcome nothing else reports. A drain that merges locally but fails to
+          push leaves origin without the commit, and the per-entry rows below have already
+          moved that entry into "Recently landed" — from the queue's point of view it did
+          land. This is the only place that says otherwise. */}
+      {data.lastPushError !== null && (
+        <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-[12px]">
+          <span className="min-w-0 truncate">
+            Merged locally — push failed: {data.lastPushError}
+          </span>
+          <Button
+            variant="secondary"
+            size="xs"
+            disabled={pushRetrying}
+            onClick={() => void retryPush()}
+          >
+            Retry push
+          </Button>
+        </div>
+      )}
 
       <section>
         <SectionLabel

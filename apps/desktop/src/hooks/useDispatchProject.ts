@@ -143,8 +143,25 @@ export interface UseDispatchProjectOptions {
   selectedRunId: string | null;
   /** Called once a run is created or re-dispatched (request-changes), so the caller can move
    * `navReducer` to point at it. The run's task travels with it: a brand-new run has not
-   * reached the caller's run list yet, and the task view is where it now gets shown. */
+   * reached the caller's run list yet, and the task view is where it now gets shown.
+   *
+   * Not called for a dispatch marked `batch` — see `DispatchOptions`. */
   onRunDispatched?: (runId: string, taskId: string) => void;
+}
+
+/** Extra intent a caller can attach to a single `handleDispatch` call. Not exported: callers
+ *  pass an object literal, and `DispatchProjectData` names the shape for them. */
+interface DispatchOptions {
+  /**
+   * True when this dispatch is one of several started by a single gesture (the tasks list's
+   * "Send agents at N selected tasks" bar loops `handleDispatch` once per task).
+   *
+   * Such a dispatch does not fire `onRunDispatched`. Firing it per task would navigate the app
+   * once per iteration — the user is yanked through each new run's Chat tab in turn and left on
+   * the last one, several history entries deep, having asked to stay in the list. A batch of
+   * exactly one is not a batch: pass `false` and it jumps like any single dispatch.
+   */
+  batch?: boolean;
 }
 
 export interface DispatchProjectData {
@@ -213,9 +230,6 @@ export interface DispatchProjectData {
   diff: import('@dispatch/client').DiffResult | undefined;
   diffLoading: boolean;
   diffError: string | null;
-  prDetail: import('@dispatch/client').PrDetail | undefined;
-  prDetailLoading: boolean;
-  prDetailError: string | null;
   // Every dispatch worktree/branch on disk, joined with whatever run claims it
   // — the Branches surface's data. See BranchEntry in @dispatch/client.
   branches: import('@dispatch/client').BranchEntry[];
@@ -419,7 +433,8 @@ export interface DispatchProjectData {
   handleDispatch: (
     taskId: string,
     executor?: 'fake' | 'claude',
-    model?: string
+    model?: string,
+    opts?: DispatchOptions
   ) => Promise<void>;
   handleApprove: (
     runId: string,
@@ -437,12 +452,6 @@ export interface DispatchProjectData {
   handleReview: (runId: string, action: 'merge' | 'discard') => Promise<void>;
   handleRequestChanges: (runId: string, text: string) => Promise<void>;
   handleOpenPr: (runId: string) => Promise<void>;
-  handlePrReview: (
-    runId: string,
-    event: 'approve' | 'request-changes' | 'comment',
-    body?: string
-  ) => Promise<void>;
-  handlePrComment: (runId: string, body: string) => Promise<void>;
   handleWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   handleStopEpic: (epicId: string) => Promise<void>;
   handleSubmitPrompt: (prompt: string) => Promise<string>;
@@ -471,8 +480,9 @@ export interface DispatchProjectData {
   /** Retries every entry held on a blocked checkout. Queue-wide, mirroring the server. */
   handleRecheckMergeQueue: () => Promise<void>;
   // Set from the `queue.drained` WS event when the queue's auto-push after a
-  // drain fails (merged locally, origin didn't get the commit) — surfaced as
-  // a banner. Cleared on the next successful drain-push.
+  // drain fails (merged locally, origin didn't get the commit) — rendered as
+  // LandingView's push-failure banner, whose Retry is handleMergeAllReady.
+  // Cleared on the next successful drain-push.
   lastPushError: string | null;
 
   // Task 10: the persisted notification inbox — the recoverable record behind every
@@ -525,8 +535,9 @@ export function useDispatchProject(
     itemId: string;
     planId: string;
   } | null>(null);
-  // Task 8: last drain-push failure reported by `queue.drained`, for the
-  // Sync banner — `null` once a later drain pushes successfully.
+  // Task 8: last drain-push failure reported by `queue.drained`, for
+  // LandingView's push-failure banner — `null` once a later drain pushes
+  // successfully.
   const [lastPushError, setLastPushError] = useState<string | null>(null);
   // Task 9: the Board/List/Runs "show archived" toggle — read from localStorage once on
   // mount, then kept in sync with every write via `setShowArchived` below.
@@ -631,10 +642,6 @@ export function useDispatchProject(
   );
   const runDiffQueryKey = useMemo(
     () => ['dispatch-run-diff', port, selectedRunId],
-    [port, selectedRunId]
-  );
-  const runPrQueryKey = useMemo(
-    () => ['dispatch-run-pr', port, selectedRunId],
     [port, selectedRunId]
   );
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
@@ -911,32 +918,6 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
-
-  // The GitHub PR status + conversation for the selected run, once it has an
-  // open PR (`prUrl` set). Separate from the diff query — the Pierre diff shows
-  // the *code*, this shows the PR's review state/threads on top of it.
-  const prEnabled =
-    client !== null &&
-    selectedRunId !== null &&
-    runDetail !== undefined &&
-    runDetail.meta.prUrl !== undefined;
-  const {
-    data: prDetail,
-    isLoading: prDetailLoading,
-    error: prDetailErrorDetail,
-  } = useQuery({
-    queryKey: runPrQueryKey,
-    queryFn: () => {
-      if (client === null || selectedRunId === null) {
-        throw new Error('no run selected');
-      }
-      return client.fetchPrDetail(selectedRunId);
-    },
-    enabled: prEnabled,
-    retry: false,
-  });
-  const prDetailError =
-    prDetailErrorDetail instanceof Error ? prDetailErrorDetail.message : null;
 
   const { data: health } = useQuery({
     queryKey: healthQueryKey,
@@ -1616,7 +1597,8 @@ export function useDispatchProject(
     async (
       taskId: string,
       executor?: 'fake' | 'claude',
-      model?: string
+      model?: string,
+      opts?: DispatchOptions
     ): Promise<void> => {
       if (client === null) return;
       // A real ('claude') dispatch always carries a model: the per-dispatch
@@ -1628,7 +1610,9 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-      onRunDispatched?.(meta.id, meta.taskId);
+      // A batch member stays where the user is; only a lone dispatch follows its
+      // run. See DispatchOptions for what firing this per task looks like.
+      if (opts?.batch !== true) onRunDispatched?.(meta.id, meta.taskId);
     },
     [
       client,
@@ -1791,36 +1775,6 @@ export function useDispatchProject(
     [client, queryClient, runsQueryKey, port]
   );
 
-  // Submitting a review or a comment returns the refreshed PrDetail, which we
-  // write straight into the PR query's cache so the conversation/status update
-  // without a second round trip.
-  //
-  // The repo-PRs list is invalidated too — the review queue reads this PR's
-  // decision and checks from there, on a poll that would otherwise lag 60s.
-  const handlePrReview = useCallback(
-    async (
-      runId: string,
-      event: 'approve' | 'request-changes' | 'comment',
-      body?: string
-    ): Promise<void> => {
-      if (client === null) return;
-      const detail = await client.reviewPr(runId, event, body);
-      queryClient.setQueryData(runPrQueryKey, detail);
-      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
-    },
-    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
-  );
-
-  const handlePrComment = useCallback(
-    async (runId: string, body: string): Promise<void> => {
-      if (client === null) return;
-      const detail = await client.commentPr(runId, body);
-      queryClient.setQueryData(runPrQueryKey, detail);
-      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
-    },
-    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
-  );
-
   const handleWorkEpic = useCallback(
     async (epicId: string, concurrency: number): Promise<void> => {
       if (client === null) return;
@@ -1928,11 +1882,11 @@ export function useDispatchProject(
   );
 
   // Task 8: the "Merge all ready" toolbar action — enqueues every eligible
-  // run in the project in one call. Also doubles as the push-failure Retry
-  // button: called with nothing new to enqueue, this still kicks the queue's
+  // run in the project in one call. Also doubles as LandingView's push-failure
+  // Retry: called with nothing new to enqueue, this still kicks the queue's
   // pump, which retries a failed drain-push per `lastDrainPushFailed` on the
   // server (see mergeQueue.ts). The `merge-queue.changed`/`queue.drained`
-  // broadcasts (not this invalidation) are what actually update the
+  // broadcasts (not this invalidation) are what actually clear the
   // lastPushError banner once the retry resolves.
   const handleMergeAllReady = useCallback(async (): Promise<void> => {
     if (client === null) return;
@@ -2305,9 +2259,6 @@ export function useDispatchProject(
     diff,
     diffLoading,
     diffError,
-    prDetail,
-    prDetailLoading,
-    prDetailError,
     branches: branches ?? [],
     branchesLoading,
     handleRefreshBranches,
@@ -2351,8 +2302,6 @@ export function useDispatchProject(
     handleReview,
     handleRequestChanges,
     handleOpenPr,
-    handlePrReview,
-    handlePrComment,
     handleWorkEpic,
     handleStopEpic,
     handleSubmitPrompt,
