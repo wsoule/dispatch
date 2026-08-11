@@ -3,20 +3,24 @@ import { describe, expect, test } from 'bun:test';
 import { parseViewMode, VIEW_MODE_STORAGE_KEY } from './tasksViewMode';
 
 describe('parseViewMode', () => {
-  test('an unset preference opens on lanes', () => {
-    expect(parseViewMode(null)).toBe('lanes');
+  test('an unset preference opens on the board', () => {
+    expect(parseViewMode(null)).toBe('board');
   });
 
-  test.each(['lanes', 'board', 'list'] as const)(
+  test.each(['board', 'list', 'milestones'] as const)(
     'a stored %s is honoured',
     (mode) => {
       expect(parseViewMode(mode)).toBe(mode);
     }
   );
 
-  test('junk falls back to lanes rather than throwing', () => {
-    expect(parseViewMode('kanban')).toBe('lanes');
-    expect(parseViewMode('')).toBe('lanes');
+  test('a stored lanes preference lands on the board that absorbed it', () => {
+    expect(parseViewMode('lanes')).toBe('board');
+  });
+
+  test('junk falls back to the board rather than throwing', () => {
+    expect(parseViewMode('kanban')).toBe('board');
+    expect(parseViewMode('')).toBe('board');
   });
 });
 
