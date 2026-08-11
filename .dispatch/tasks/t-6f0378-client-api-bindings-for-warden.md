@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-04T18:06:37.199Z
-updated: 2026-08-11T02:07:43.787Z
+updated: 2026-08-11T02:16:41.087Z
 external: null
 writes:
   - packages/client/src/api.ts
@@ -33,3 +33,4 @@ Acceptance criteria:
 - 2026-08-11T01:58:55.325Z dispatched (claude, branch dispatch/t-6f0378-client-api-bindings-for-warden-3d4e52) — none
 - 2026-08-11T02:07:29.270Z Done in f1339c2: WardenState/WardenMessage/WardenAction/WardenRecord mirrored into packages/client/src/api.ts (re-exported from index.ts), warden.changed added to ServerEvent with the plan.changed refetch-by-id contract, and ApiClient gained startWarden/getWarden/sendWardenMessage/confirmWardenAction as thin request() wrappers matching draftTask's error conventions. startWarden takes an optional { backend } following createRun's executor pattern. Verified: client tsc + 67 tests green (5 new request-shape tests, 7 new source-to-source parity tests), cli + desktop tsc green, root format/lint clean. Mutation-tested the parity guard: deliberate field rename + literal drift in the client mirror → 2 test failures, restored. — none
 - 2026-08-11T02:07:43.787Z [run r-3d4e52] finished: finished — 4 files, $7.66 — agent:wsoule679/claude
+- 2026-08-11T02:16:41.087Z [run r-bf2b84] finished: finished — 0 files, $1.83 — agent:wsoule679/claude
