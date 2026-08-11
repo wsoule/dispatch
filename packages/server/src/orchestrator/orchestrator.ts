@@ -1954,6 +1954,7 @@ export class Orchestrator {
       const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
       const base = meta?.baseBranch ?? fallbackBase;
       const worktreeExists = wtPath !== undefined && existsSync(wtPath);
+      const merged = this.worktrees.isMergedInto(ref.branch, base);
       return {
         branch: ref.branch,
         worktreePath: wtPath,
@@ -1965,7 +1966,13 @@ export class Orchestrator {
         dirty: wtPath !== undefined && this.worktrees.isWorktreeDirty(wtPath),
         lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
         ahead: this.worktrees.aheadCount(ref.branch, base),
-        mergedIntoBase: this.worktrees.isMergedInto(ref.branch, base),
+        // Only measured while unmerged: the count answers "how far has the
+        // base moved past this still-out work", which stops meaning anything
+        // once the work landed — and skipping it saves a git call per row.
+        behindBase: merged
+          ? undefined
+          : this.worktrees.behindCount(ref.branch, base),
+        mergedIntoBase: merged,
         runId: meta?.id,
         taskId: meta?.taskId,
         taskTitle: meta?.taskTitle,
@@ -1974,9 +1981,14 @@ export class Orchestrator {
         reviewedAt: meta?.reviewedAt,
         stackParents: meta?.stackParents,
         prUrl: meta?.prUrl,
+        // The recorded merge commit is the only reliable probe for a squash
+        // merge; a branch git itself sees as merged (hand-merged, no run, or
+        // a run without a mergeCommit) is judged by its own tip instead, so
+        // "pushed" doesn't read false just because no run claims the ref.
         pushedToOrigin:
-          meta?.mergeCommit !== undefined &&
-          this.worktrees.isOnOriginBase(meta.mergeCommit, base),
+          meta?.mergeCommit !== undefined
+            ? this.worktrees.isOnOriginBase(meta.mergeCommit, base)
+            : merged && this.worktrees.isOnOriginBase(ref.branch, base),
         status: branchEntryStatus(meta),
       } satisfies BranchEntry;
     });

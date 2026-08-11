@@ -8,6 +8,7 @@ import {
   ChevronsUpDown,
   Cog,
   GitBranch,
+  GitMerge,
   Inbox,
   LayoutDashboard,
   ListChecks,
@@ -90,6 +91,8 @@ const PROJECT_VIEWS: {
   { id: 'impact', label: 'Impact', icon: Waypoints },
 
   { id: 'branches', label: 'Git', icon: GitBranch, group: 'Git' },
+  // What landed on the base branch and what is still out, per run branch.
+  { id: 'landed', label: 'Landed', icon: GitMerge },
 ];
 
 /** The rail order is the shortcut order — cmd+1 is the first entry, and so on. */
