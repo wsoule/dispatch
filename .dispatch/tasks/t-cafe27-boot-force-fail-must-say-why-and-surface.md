@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:55:00.000Z
-updated: 2026-08-11T17:28:04.971Z
+updated: 2026-08-11T18:06:35.054Z
 external: null
 writes: []
 ---
@@ -35,3 +35,4 @@ Two pieces:
 - 2026-08-11T16:58:38.055Z Plan: (1) reconcileOnBoot force-fail now stamps error 'dispatchd restarted while this run was in flight…' on transcript + meta. (2) RunSurvey gains postFailCommits, computed against the transcript's FIRST 'failed' state line ts (stable cutoff — meta.updatedAt moves on re-survey). Boot survey computes it; getRun kicks a 60s-cooldown re-survey so commits an orphan lands after boot are still caught. Clean tree + post-fail commits → survey stamped on the still-failed run, run.survey broadcast, task activity note. (3) UI: failure-reason + "work landed after the failure" banners in RunLogView/RunReviewView, inbox wording in runState.ts. — none
 - 2026-08-11T17:27:44.046Z Done, committed as e2961904 (server+client) and 3681ca81 (desktop). Boot force-fail now stamps BOOT_FORCE_FAIL_ERROR on the transcript state line + meta; RunSurvey.postFailCommits records commits authored after the run's first 'failed' transcript ts (stable cutoff), computed at boot and via a 60s-cooldown re-survey kicked from getRun so post-boot orphan commits are caught. Clean-tree+orphan-commits runs stay 'failed' but get the survey stamped, run.survey broadcast, and a one-time Activity note (dedupe mutation-tested: 1 test fails without it; date-filter mutation also killed). UI: failure reason + green "work landed on this branch after the failure" banners in Chat + review surfaces, new inbox notice wording. Verified: survey tests 8/8, runState 42/42, tsc clean ×3, lint 0 errors, knip clean, merge-queue 70/70, full orchestrator dir 779 pass with 1 pre-existing environmental fail (claude-executor expects 'bun' but host's Dispatch.app supplies the bundled dispatch-mcp binary — reproduces with my changes stashed). — none
 - 2026-08-11T17:28:04.971Z [run r-d8b65c] finished: finished — 8 files, $18.27 — agent:wsoule679/claude
+- 2026-08-11T18:06:35.054Z [run r-31b683] finished: finished — 0 files, $3.51 — agent:wsoule679/claude
