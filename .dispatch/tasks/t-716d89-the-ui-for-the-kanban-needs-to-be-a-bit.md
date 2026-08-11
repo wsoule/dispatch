@@ -1,7 +1,7 @@
 ---
 id: t-716d89
 title: the ui for the kanban needs to be a bit different…
-status: todo
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T01:52:30.113Z
-updated: 2026-08-11T16:57:37.411Z
+updated: 2026-08-11T16:57:53.215Z
 external: null
 writes: []
 ---
@@ -34,3 +34,4 @@ Merge the separate 'board' (flat status columns) and 'lanes' (epic swim lanes) v
 - Keyboard navigation (j/k roving focus) still works and traverses only visible cards
 
 ## Activity
+- 2026-08-11T16:57:53.215Z dispatched (claude, branch dispatch/t-716d89-the-ui-for-the-kanban-needs-to-be-a-bit-2d522b) — human:wsoule679
