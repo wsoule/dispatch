@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T01:52:30.113Z
-updated: 2026-08-11T16:57:53.215Z
+updated: 2026-08-11T17:00:44.872Z
 external: null
 writes: []
 ---
@@ -35,3 +35,4 @@ Merge the separate 'board' (flat status columns) and 'lanes' (epic swim lanes) v
 
 ## Activity
 - 2026-08-11T16:57:53.215Z dispatched (claude, branch dispatch/t-716d89-the-ui-for-the-kanban-needs-to-be-a-bit-2d522b) — human:wsoule679
+- 2026-08-11T17:00:44.872Z Read the current board code. Plan: TaskBoard loses `swimLanes` and always renders the epic-lane layout; each lane gets an expandable header (chevron + swatch + title + progress bar + Work/Stop + DAG button), replacing EpicCardTile (which becomes dead code and gets deleted — epics stop being draggable cards). A sticky status-header row sits above the lanes carrying per-status visible counts, the hover "+" new-task button, and the "+N hidden" badge summed over collapsed lanes. Collapsed-epic ids live in sessionStorage (session-local, no localStorage). Drop-zone ids become `lane:<i>:<status>` — today every lane registers a droppable with the same `status` id, so @dnd-kit's id-keyed container map means only one lane per status is really a drop target. j/k ordering in BoardView switches to lane-order over visible (expanded) cards only. — none
