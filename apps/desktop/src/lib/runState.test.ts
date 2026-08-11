@@ -8,6 +8,7 @@ import {
   deriveRunDisposition,
   deriveStopControl,
   isTerminalRunState,
+  liveReviewAgentFor,
   runDispositionLabel,
   runSurveyNotice,
 } from './runState';
@@ -266,5 +267,52 @@ describe('deriveStopControl', () => {
     expect(deriveStopControl(run({ state: 'finished' })).showStoppedChip).toBe(
       false
     );
+  });
+});
+
+describe('liveReviewAgentFor', () => {
+  const execute = run({ id: 'r-exec', branch: 'dispatch/t-1-exec' });
+  const reviewOf = (over: Partial<RunMeta>) =>
+    run({
+      id: 'r-rev',
+      kind: 'review',
+      branch: 'dispatch/review-t-1',
+      baseBranch: 'dispatch/t-1-exec',
+      state: 'running',
+      ...over,
+    });
+
+  test('finds the live review agent whose base is the execute branch', () => {
+    const rev = reviewOf({});
+    expect(liveReviewAgentFor([execute, rev], 'dispatch/t-1-exec')).toBe(rev);
+  });
+
+  test('ignores a review agent over some other branch', () => {
+    const rev = reviewOf({ baseBranch: 'dispatch/t-2-exec' });
+    expect(
+      liveReviewAgentFor([execute, rev], 'dispatch/t-1-exec')
+    ).toBeUndefined();
+  });
+
+  test('ignores a review agent that already reached a terminal state', () => {
+    const rev = reviewOf({ state: 'finished' });
+    expect(
+      liveReviewAgentFor([execute, rev], 'dispatch/t-1-exec')
+    ).toBeUndefined();
+  });
+
+  // A verify agent and a stacked execute run both sit on another run's branch
+  // as their base — neither is "an agent reviewing this diff".
+  test('ignores verify agents and stacked execute runs on the same base', () => {
+    const verify = reviewOf({ id: 'r-ver', kind: 'verify' });
+    const stacked = run({
+      id: 'r-stack',
+      branch: 'dispatch/t-2-stacked',
+      baseBranch: 'dispatch/t-1-exec',
+      state: 'running',
+    });
+    expect(
+      liveReviewAgentFor([execute, verify, stacked], 'dispatch/t-1-exec')
+    ).toBeUndefined();
   });
 });

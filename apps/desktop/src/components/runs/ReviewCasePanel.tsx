@@ -40,6 +40,9 @@ interface ReviewCasePanelProps {
   decisions: LedgerEntry[];
   onStartAiReview?: () => Promise<void>;
   aiReviewBusy?: boolean;
+  /** True while a review agent's run is live over this run's branch — derived from the run
+   * list rather than click-local state, so it survives navigation (see `liveReviewAgentFor`). */
+  reviewAgentLive?: boolean;
   /** The dispatchd client and this run's id — both required to embed the
    *  blast-radius panel. Omitted (as in this component's own tests) hides
    *  the Impact section entirely rather than rendering it half-wired. */
@@ -65,6 +68,7 @@ export function ReviewCasePanel({
   decisions,
   onStartAiReview,
   aiReviewBusy = false,
+  reviewAgentLive = false,
   client,
   runId,
   onOpenImpact,
@@ -177,17 +181,23 @@ export function ReviewCasePanel({
               {/* Never "no findings": an empty set means nobody looked, and saying otherwise
                 would turn an absent review into a clean bill of health. */}
               <p className="text-muted-foreground text-[12.5px]">
-                No agent review has run over this diff.
+                {reviewAgentLive
+                  ? 'An agent is reviewing this diff — its findings land here once it finishes.'
+                  : 'No agent review has run over this diff.'}
               </p>
               {onStartAiReview !== undefined && (
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={aiReviewBusy}
+                  disabled={aiReviewBusy || reviewAgentLive}
                   onClick={() => void onStartAiReview()}
                 >
                   <Bot className="size-3.5" />
-                  {aiReviewBusy ? 'Starting…' : 'Ask an agent to review'}
+                  {reviewAgentLive
+                    ? 'Agent reviewing…'
+                    : aiReviewBusy
+                      ? 'Starting…'
+                      : 'Ask an agent to review'}
                 </Button>
               )}
             </div>
