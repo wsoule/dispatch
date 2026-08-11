@@ -490,7 +490,7 @@ export interface DispatchProjectData {
   handleRecheckMergeQueue: () => Promise<void>;
   // Set from the `queue.drained` WS event when the queue's auto-push after a
   // drain fails (merged locally, origin didn't get the commit) — rendered as
-  // LandingView's push-failure banner, whose Retry is handleMergeAllReady.
+  // the Landing table's push-failure banner, whose Retry is handleMergeAllReady.
   // Cleared on the next successful drain-push.
   lastPushError: string | null;
 
@@ -539,7 +539,7 @@ export function useDispatchProject(
     planId: string;
   } | null>(null);
   // Task 8: last drain-push failure reported by `queue.drained`, for
-  // LandingView's push-failure banner — `null` once a later drain pushes
+  // the Landing table's push-failure banner — `null` once a later drain pushes
   // successfully.
   const [lastPushError, setLastPushError] = useState<string | null>(null);
   // Task 9: the Board/List/Runs "show archived" toggle — read from localStorage once on
@@ -1945,7 +1945,7 @@ export function useDispatchProject(
   );
 
   // Task 8: the "Merge all ready" toolbar action — enqueues every eligible
-  // run in the project in one call. Also doubles as LandingView's push-failure
+  // run in the project in one call. Also doubles as the Landing table's push-failure
   // Retry: called with nothing new to enqueue, this still kicks the queue's
   // pump, which retries a failed drain-push per `lastDrainPushFailed` on the
   // server (see mergeQueue.ts). The `merge-queue.changed`/`queue.drained`
