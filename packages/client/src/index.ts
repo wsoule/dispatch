@@ -111,6 +111,10 @@ export type {
   UpdateNotePatch,
   VerificationCheck,
   VerificationResult,
+  WardenAction,
+  WardenMessage,
+  WardenRecord,
+  WardenState,
 } from './api';
 export { reduceProposal } from './proposalReducer';
 export type { ProposalAction } from './proposalReducer';

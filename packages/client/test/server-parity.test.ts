@@ -67,3 +67,87 @@ describe('client types mirror dispatchd', () => {
     expect(found).toEqual([...IMPACT_SUBJECT_KINDS]);
   });
 });
+
+// The client's own source, read as text like the server's: the warden mirrors
+// are inline literal unions on both sides (no exported const arrays), so
+// parity is checked source-to-source.
+function clientSource(): string {
+  return readFileSync(join(import.meta.dir, '..', 'src', 'api.ts'), 'utf8');
+}
+
+// Field names (with their `?` optionality marker) of one exported interface,
+// in declaration order. Returns null when the interface is gone.
+function fields(source: string, name: string): string[] | null {
+  const body = new RegExp(
+    `export interface ${name} \\{([\\s\\S]*?)\\n\\}`
+  ).exec(source)?.[1];
+  if (body === undefined) return null;
+  return [...body.matchAll(/\n {2}(\w+\??):/g)].map((m) => m[1]);
+}
+
+describe('warden types mirror dispatchd', () => {
+  it('WardenRecord declares the same fields with the same optionality', () => {
+    const server = fields(
+      serverSource('orchestrator', 'warden.ts'),
+      'WardenRecord'
+    );
+    const client = fields(clientSource(), 'WardenRecord');
+    expect(server).not.toBeNull();
+    expect(client).toEqual(server);
+  });
+
+  it('WardenMessage declares the same fields with the same optionality', () => {
+    const server = fields(
+      serverSource('orchestrator', 'warden.ts'),
+      'WardenMessage'
+    );
+    const client = fields(clientSource(), 'WardenMessage');
+    expect(server).not.toBeNull();
+    expect(client).toEqual(server);
+  });
+
+  it('WardenAction declares the same fields with the same optionality', () => {
+    const server = fields(
+      serverSource('orchestrator', 'wardenTools.ts'),
+      'WardenAction'
+    );
+    const client = fields(clientSource(), 'WardenAction');
+    expect(server).not.toBeNull();
+    expect(client).toEqual(server);
+  });
+
+  it('WardenState carries the same states the server stores', () => {
+    const pattern = /type WardenState = ([^;]+);/;
+    const server = literals(serverSource('orchestrator', 'warden.ts'), pattern);
+    const client = literals(clientSource(), pattern);
+    expect(server).not.toBeNull();
+    expect(client).toEqual(server);
+  });
+
+  // The three inline literal unions inside the interfaces (message role,
+  // action lifecycle outcome, action status) — field-name parity above says
+  // nothing about their members.
+  for (const [iface, field] of [
+    ['WardenMessage', 'role'],
+    ['WardenMessage', 'outcome?'],
+    ['WardenAction', 'status'],
+  ] as const) {
+    it(`${iface}.${field} carries the same literals as the server`, () => {
+      const file = iface === 'WardenAction' ? 'wardenTools.ts' : 'warden.ts';
+      const bodyOf = (source: string): string | undefined =>
+        new RegExp(`export interface ${iface} \\{([\\s\\S]*?)\\n\\}`).exec(
+          source
+        )?.[1];
+      const pattern = new RegExp(
+        `\\n {2}${field.replace('?', '\\?')}: ([^;]+);`
+      );
+      const server = literals(
+        bodyOf(serverSource('orchestrator', file)) ?? '',
+        pattern
+      );
+      const client = literals(bodyOf(clientSource()) ?? '', pattern);
+      expect(server).not.toBeNull();
+      expect(client).toEqual(server);
+    });
+  }
+});
