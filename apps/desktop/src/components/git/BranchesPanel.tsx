@@ -28,6 +28,10 @@ const STATUS_CHIP: Record<BranchEntryStatus, { label: string; cls: string }> = {
     label: 'Orphan',
     cls: 'border-muted-foreground/40 text-muted-foreground',
   },
+  epic: {
+    label: 'Epic',
+    cls: 'border-sky-500/40 text-sky-600 dark:text-sky-400',
+  },
 };
 
 interface BranchesPanelProps {
@@ -135,6 +139,16 @@ export function BranchesPanel({
                       Uncommitted
                     </span>
                   )}
+                  {row.worktree?.status === 'epic' &&
+                    (row.worktree.behindBase ?? 0) > 0 && (
+                      <span
+                        title={`This epic branch is missing ${row.worktree.behindBase} commit(s) from ${row.worktree.baseBranch ?? 'its base'} — merge it in to update (dispatch never rewrites an epic branch on its own)`}
+                        className="shrink-0 rounded border border-amber-500/40 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                      >
+                        {row.worktree.behindBase} behind{' '}
+                        {row.worktree.baseBranch ?? 'base'}
+                      </span>
+                    )}
                 </div>
                 <div className="text-muted-foreground/80 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-5 text-[11px]">
                   {row.taskTitle !== undefined && (
