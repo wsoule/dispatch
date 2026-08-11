@@ -1,13 +1,14 @@
-import type { ApiClient } from '@dispatch/client';
 import { Inbox as InboxIcon } from 'lucide-react';
 
 import type { ReviewQueueItem } from '../components/runs/ReviewQueue';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import type { InboxData } from '../lib/inboxQueue';
 import { reviewTargetKey } from '../lib/reviewTarget';
+import { LandingView } from './LandingView';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
@@ -17,31 +18,39 @@ import { Skeleton } from '@/ui/skeleton';
 interface InboxViewProps {
   /** The two lists this view renders — see `buildInbox`. */
   data: InboxData;
-  portLoading: boolean;
-  portError: boolean;
-  portErrorDetail: unknown;
-  client: ApiClient | null;
-  onRetry: () => void;
+  /** The whole project, for the merge queue below the lists. */
+  project: DispatchProjectData;
   /** Opens the full task view on a given tab, pinned to one run —
    * `openTaskView` from App.tsx. */
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
+  /** Opens the full-window review page for one repo pull request. */
+  onOpenPr: (number: number) => void;
 }
 
 /**
  * A slim, list-only page of what's waiting on a human: runs stalled on an
- * approval or a question, and everything the Review page's queue already
- * flags as needing a look. Composed entirely from `buildInbox` — this view
- * never re-derives which runs belong here.
+ * approval or a question, and everything `buildReviewQueue` flags as needing a
+ * look. Composed entirely from `buildInbox` — this view never re-derives which
+ * runs belong here.
+ *
+ * The merge queue sits underneath, because approving from here is what puts
+ * things in it — as its own destination it split one flow across two screens
+ * you had to remember to check.
  */
 export function InboxView({
   data,
-  portLoading,
-  portError,
-  portErrorDetail,
-  client,
-  onRetry,
+  project,
   onOpenTask,
+  onOpenPr,
 }: InboxViewProps) {
+  const {
+    portLoading,
+    portError,
+    portErrorDetail,
+    client,
+    retryEnsureDispatchd: onRetry,
+  } = project;
+
   if (portLoading) {
     return (
       <div className="flex flex-col gap-4">
@@ -118,6 +127,7 @@ export function InboxView({
                     key={reviewTargetKey(item.target)}
                     item={item}
                     onOpenTask={onOpenTask}
+                    onOpenPr={onOpenPr}
                   />
                 ))}
               </div>
@@ -125,24 +135,31 @@ export function InboxView({
           )}
         </div>
       )}
+
+      <LandingView
+        data={project}
+        onOpenRun={(runId) => {
+          const run = project.runs.find((r) => r.id === runId);
+          if (run !== undefined) onOpenTask(run.taskId, 'diff', run.id);
+        }}
+      />
     </div>
   );
 }
 
 /**
  * One `review` entry. A run-backed entry (a finished run, or a PR dispatch
- * itself opened) routes to that task's diff. A standalone repo PR has no
- * local task to open — the Review page's PR mode is the only surface that
- * can show it today, and nav state for opening it there lives only inside
- * `ReviewView` (Task 6 moves it here), so the row is a title-only affordance
- * rather than a dead click.
+ * itself opened) routes to that task's diff; a standalone repo PR, which has
+ * no local task, opens the full-window PR review page.
  */
 function ReviewRow({
   item,
   onOpenTask,
+  onOpenPr,
 }: {
   item: ReviewQueueItem;
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
+  onOpenPr: (number: number) => void;
 }) {
   if (item.target.kind === 'run' && item.run !== undefined) {
     const run = item.run;
@@ -156,12 +173,13 @@ function ReviewRow({
     );
   }
 
+  const target = item.target;
   return (
     <Row
       title={item.title}
       state="review"
       updatedAt={item.updatedAt}
-      disabledTitle="Open from the Review page for now"
+      onClick={target.kind === 'pr' ? () => onOpenPr(target.number) : undefined}
     />
   );
 }
@@ -171,13 +189,11 @@ function Row({
   state,
   updatedAt,
   onClick,
-  disabledTitle,
 }: {
   title: string;
   state: FeedState;
   updatedAt: string;
   onClick?: () => void;
-  disabledTitle?: string;
 }) {
   const content = (
     <>
@@ -189,12 +205,11 @@ function Row({
     </>
   );
 
+  // A review entry whose run has since gone away still belongs on the list,
+  // but there is nothing left to open.
   if (onClick === undefined) {
     return (
-      <div
-        title={disabledTitle}
-        className="text-muted-foreground/70 flex items-center gap-2 rounded-md px-2 py-1.5"
-      >
+      <div className="text-muted-foreground/70 flex items-center gap-2 rounded-md px-2 py-1.5">
         {content}
       </div>
     );

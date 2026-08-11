@@ -18,7 +18,7 @@ interface DaemonUnavailableProps {
  * phase-8 fix report) so every primary dispatch view shows the *same* starting/error/retry
  * treatment instead of each one growing its own copy (or, worse, silently showing an
  * unrelated "Loading…" state forever when the daemon never came up at all — the bug this was
- * extracted to fix in `TasksListView`/`RunsView`/`PlansView`).
+ * extracted to fix in `TasksListView`/`PlansView`).
  */
 export function DaemonUnavailable({
   starting,

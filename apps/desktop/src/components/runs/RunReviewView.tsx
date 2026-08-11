@@ -62,7 +62,7 @@ interface RunReviewViewProps {
   onDiscard: () => Promise<void>;
   onRequestChanges: (text: string) => Promise<void>;
   onOpenPr: () => Promise<void>;
-  /** Jumps to the Pull requests tab (this run's PR, once opened, is reviewed there rather than
+  /** Opens the PR review page (this run's PR, once opened, is reviewed there rather than
    * inline here — keeps the run surface from nesting a whole second review surface inside it). */
   onViewPr: () => void;
   onQueueMerge: () => Promise<void>;
@@ -114,7 +114,7 @@ interface RunReviewViewProps {
  * Review surface for a terminal run: the shared unified diff (RunDiffView) plus the local
  * review actions — merge / discard / request-changes, and Open PR when the project supports it.
  * Deliberately does NOT host the GitHub PR review UI: once a PR is open, reviewing it (status,
- * conversation, approve/request-changes) happens in the top-level Pull requests tab, so this
+ * conversation, approve/request-changes) happens on the PR review page, so this
  * surface stays a single diff + one action row instead of stacking a second review surface
  * under the first.
  */
@@ -322,7 +322,7 @@ export function RunReviewView({
       {hasOpenPr ? (
         <div className="border-border flex items-center justify-between gap-2 border-t pt-3">
           <span className="text-muted-foreground text-[12px]">
-            A PR is open for this run — review it in the Pull requests tab.
+            A PR is open for this run — review it on the pull request page.
           </span>
           <div className="flex items-center gap-2">
             <QueueMergeControl

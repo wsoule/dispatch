@@ -79,7 +79,7 @@ type PendingScopeRequest = { requestId: string };
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
-// The open-repo-PRs query key, exported so the Review page can refresh it for
+// The open-repo-PRs query key, exported so the PR review page can refresh it for
 // as long as it is the page on screen (no WS event announces a PR moving).
 export function repoPrsKey(
   port: number | undefined
@@ -137,14 +137,14 @@ export interface UseDispatchProjectOptions {
   /** Which run's detail/diff to fetch, if any — the *single* source of truth for "which run
    * is selected" lives in the app-root `navReducer`'s `activeRunId` (see the phase-8 fix
    * report's C1: this hook used to keep its own duplicate `selectedRunId` state that nothing
-   * outside `RunsView`'s row-click ever wrote to, so opening a run from the task peek panel
-   * updated nav state but left this hook still pointed at whatever run — or none — it saw
-   * last). Pass `null` when nothing is selected. */
+   * outside the old Runs page's row-click ever wrote to, so opening a run from the task peek
+   * panel updated nav state but left this hook still pointed at whatever run — or none — it
+   * saw last). Pass `null` when nothing is selected. */
   selectedRunId: string | null;
   /** Called once a run is created or re-dispatched (request-changes), so the caller can move
-   * `navReducer`'s `activeRunId`/`projectView` to point at it. Replaces the old internal
-   * `setSelectedRunId(meta.id)` side effect. */
-  onRunDispatched?: (runId: string) => void;
+   * `navReducer` to point at it. The run's task travels with it: a brand-new run has not
+   * reached the caller's run list yet, and the task view is where it now gets shown. */
+  onRunDispatched?: (runId: string, taskId: string) => void;
 }
 
 export interface DispatchProjectData {
@@ -185,7 +185,7 @@ export interface DispatchProjectData {
   // view's own run-*list* rendering should read `visibleRuns` instead.
   runs: RunMeta[];
   // Task 9: `runs` filtered to hide archived-task runs, unless `showArchived` is on — feeds
-  // only the Runs view's run-list UI (which run rows show up on the left). Every other
+  // only the run-list UI that offers a show-archived toggle. Every other
   // consumer of run data (countMergeReady, liveRunStateByTaskId, latestRunByTaskId, the merge
   // queue) reads the unfiltered `runs` above on purpose.
   visibleRuns: RunMeta[];
@@ -472,7 +472,7 @@ export interface DispatchProjectData {
   handleRecheckMergeQueue: () => Promise<void>;
   // Set from the `queue.drained` WS event when the queue's auto-push after a
   // drain fails (merged locally, origin didn't get the commit) — surfaced as
-  // a banner in RunsView. Cleared on the next successful drain-push.
+  // a banner. Cleared on the next successful drain-push.
   lastPushError: string | null;
 
   // Task 10: the persisted notification inbox — the recoverable record behind every
@@ -526,7 +526,7 @@ export function useDispatchProject(
     planId: string;
   } | null>(null);
   // Task 8: last drain-push failure reported by `queue.drained`, for the
-  // RunsView banner — `null` once a later drain pushes successfully.
+  // Sync banner — `null` once a later drain pushes successfully.
   const [lastPushError, setLastPushError] = useState<string | null>(null);
   // Task 9: the Board/List/Runs "show archived" toggle — read from localStorage once on
   // mount, then kept in sync with every write via `setShowArchived` below.
@@ -1250,7 +1250,7 @@ export function useDispatchProject(
             // only needs to report the *push* outcome, not repeat that a
             // merge happened. Both outcomes below also go through
             // onRecordInbox, not just `notify`: this is the exact event
-            // class the inbox exists for — `lastPushError`'s RunsView banner
+            // class the inbox exists for — `lastPushError`'s own banner
             // clears on the next drain, but without an inbox row a failed
             // auto-push would otherwise leave no trace at all once that
             // banner is gone.
@@ -1628,7 +1628,7 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-      onRunDispatched?.(meta.id);
+      onRunDispatched?.(meta.id, meta.taskId);
     },
     [
       client,
@@ -1769,7 +1769,7 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       // request-changes re-dispatches under a fresh run id — follow it so the caller keeps
       // showing the run that's now actually live.
-      onRunDispatched?.(meta.id);
+      onRunDispatched?.(meta.id, meta.taskId);
     },
     [
       client,

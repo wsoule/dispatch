@@ -28,7 +28,7 @@ export interface TaskViewProps {
    * empty; this component's `doc === null` branch below renders the same "gone" state first,
    * so the Details tab never actually needs it in that case. */
   panelProps: TaskDetailPanelProps | undefined;
-  /** Jumps to the Pull requests tab — see `RunsView`'s identical prop. */
+  /** Opens the run's pull request on the PR review page. */
   onViewPr: (runId: string) => void;
 }
 

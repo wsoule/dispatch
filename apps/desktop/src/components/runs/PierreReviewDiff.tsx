@@ -600,7 +600,7 @@ export function PierreReviewDiff({
     [client, runId, forgetFile]
   );
 
-  // A file can leave the rendered set with its editor still open — `ReviewView` swaps `only`
+  // A file can leave the rendered set with its editor still open — a review page swaps `only`
   // when the reviewer picks a different file, and passes no `key`, so `editing` outlives the
   // item it names. Every other pencil is hidden while one file is being edited, so a stale
   // `editing` would lock the whole diff until the original file was reselected.
@@ -697,7 +697,7 @@ export function PierreReviewDiff({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [armed]);
 
-  // A file leaving the rendered set takes its armed bar with it — `ReviewView` swaps `only`
+  // A file leaving the rendered set takes its armed bar with it — a review page swaps `only`
   // without remounting, so a bar left standing would act on a file no longer on screen.
   useEffect(() => {
     setArmed(null);
