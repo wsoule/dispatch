@@ -1,7 +1,7 @@
 ---
 id: t-6f0378
 title: Client API bindings for warden
-status: todo
+status: in-progress
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-04T18:06:37.199Z
-updated: 2026-08-04T18:06:37.202Z
+updated: 2026-08-11T01:58:55.325Z
 external: null
 writes:
   - packages/client/src/api.ts
@@ -30,3 +30,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T01:58:55.325Z dispatched (claude, branch dispatch/t-6f0378-client-api-bindings-for-warden-3d4e52) — none
