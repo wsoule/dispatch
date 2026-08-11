@@ -96,6 +96,8 @@ import {
   buildPrReviewTask,
   isPrReviewTaskFor,
 } from './orchestrator/prReviewTask.js';
+import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
+import { toLandingWorktree } from './orchestrator/prWorktree.js';
 import type {
   QuestionRegistry,
   RunQuestion,
@@ -137,6 +139,9 @@ export interface ApiContext {
   planManager: PlanManager;
   epicEngine: EpicEngine;
   prManager: PrManager;
+  // Task 7: PR review worktrees — cut on demand, kept in sync by
+  // PrManager's poll, listed here for GET /api/landing's worktree column.
+  prWorktrees: PrWorktreeManager;
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
   inboxStore: InboxStore;
@@ -2162,13 +2167,16 @@ async function getLandingSnapshot(ctx: ApiContext): Promise<Response> {
   } catch (err) {
     if (!(err instanceof OrchestratorConflictError)) throw err;
   }
+  const worktreeStates = await ctx.prWorktrees.list();
+  const worktrees = new Map(
+    worktreeStates.map((state) => [state.prNumber, toLandingWorktree(state)])
+  );
   const snapshot = buildLandingSnapshot({
     runs: ctx.orchestrator.list(),
     queue: ctx.mergeQueue.snapshot(),
     openPrs: ctx.prManager.cachedPrs(),
     mergedPrs,
-    // Task 7 wires the real worktree map; every row carries none until then.
-    worktrees: new Map(),
+    worktrees,
     now: new Date().toISOString(),
   });
   return jsonResponse(snapshot);
@@ -2440,6 +2448,51 @@ function rollbackSynthesizedTask(ctx: ApiContext, taskId: string): void {
 function requirePrNumberParam(numberParam: string): number | null {
   const number = Number(numberParam);
   return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+// POST /api/prs/:number/worktree — cuts a review worktree for a repo PR,
+// running the exact fork gate startPrAgentReview does (mirrors
+// dispatchPrAgentReview's confirmFork handling) before anything touches
+// disk: fetchPrHead is what actually writes refs/dispatch/pr/<n>, and
+// PrWorktreeManager.create assumes that ref already exists. 200 with the
+// resulting PrWorktreeState.
+async function createPrWorktreeRoute(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  const confirmFork = parsed.value.confirmFork === true;
+  const refused = forkGate(pr, confirmFork);
+  if (refused !== null) return refused;
+  await ctx.prManager.fetchPrHead(pr.number, { confirmFork, resolved: pr });
+  const state = await ctx.prWorktrees.create(pr.number);
+  ctx.events.broadcast({ type: 'landing.changed' });
+  return jsonResponse(state);
+}
+
+// DELETE /api/prs/:number/worktree — retires a worktree if it's clean; a
+// dirty one is kept and reported back as a 409 so the client can say why.
+async function removePrWorktreeRoute(
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  const kept = await ctx.prWorktrees.removeIfClean(number);
+  if (kept !== null) {
+    return jsonResponse(
+      { error: 'worktree has uncommitted changes', ...kept },
+      409
+    );
+  }
+  ctx.events.broadcast({ type: 'landing.changed' });
+  return jsonResponse({ removed: true });
 }
 
 /**
@@ -4143,6 +4196,22 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await submitPrReview(req, ctx, segments[1]);
+      }
+      // POST/DELETE /api/prs/:number/worktree — Task 7's on-demand review
+      // worktree: cut it (fork-gated, same as review-agent) or retire it.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'worktree' &&
+        method === 'POST'
+      ) {
+        return await createPrWorktreeRoute(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'worktree' &&
+        method === 'DELETE'
+      ) {
+        return await removePrWorktreeRoute(ctx, segments[1]);
       }
     }
 

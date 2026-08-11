@@ -10,6 +10,7 @@ import type { LandingSnapshot } from '../src/landing.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import type { Orchestrator } from '../src/orchestrator/orchestrator.js';
 import type { CommandResult } from '../src/orchestrator/pr.js';
+import { defaultCommandRunner } from '../src/orchestrator/pr.js';
 import { json } from './json.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
@@ -171,6 +172,58 @@ describe('GET /api/landing', () => {
     expect(runPrRows).toHaveLength(1);
     expect(runPrRows[0].runId).toBe(meta.id);
     expect(runPrRows[0].pr?.url).toBe(OPEN_PR.url);
+  });
+
+  // Task 7: a PR row carries `worktree` once one has been cut for it — the
+  // real wiring `toLandingWorktree(prWorktrees.list())` replaces the always-
+  // empty Map Task 4 left behind.
+  it('carries a worktree on a pr row once one has been created', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: async (cwd, cmd) => {
+        // detectPrCapability's two calls, and the poll's `gh pr list`
+        // (open/merged) — the existing stubRunner helper's own repertoire.
+        if (
+          (cmd[0] === 'gh' && cmd[1] === '--version') ||
+          (cmd[0] === 'git' &&
+            cmd[1] === 'remote' &&
+            cmd[2] === 'get-url' &&
+            cmd[3] === 'origin') ||
+          (cmd[0] === 'gh' && cmd[1] === 'pr' && cmd[2] === 'list')
+        ) {
+          return cmd.includes('merged')
+            ? mergedPrListResult()
+            : stubRunner(openPrListResult())(cwd, cmd);
+        }
+        // Everything else (git worktree add/list, git status, git
+        // rev-parse) is PrWorktreeManager's own real work against `root`.
+        return defaultCommandRunner(cwd, cmd);
+      },
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    await handle.prManager.pollOnce();
+
+    // Simulates what PrManager.fetchPrHead's fork-gated fetch would have
+    // left behind, without a real GitHub remote.
+    runGitSync(root, [
+      'update-ref',
+      `refs/dispatch/pr/${OPEN_PR.number}`,
+      runGitSync(root, ['rev-parse', 'HEAD']).trim(),
+    ]);
+    const created = await handle.prWorktrees.create(OPEN_PR.number);
+
+    const res = await fetch(`${baseUrl}/api/landing`);
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as LandingSnapshot;
+    const prRow = body.rows.find((r) => r.id === `pr-${OPEN_PR.number}`);
+    expect(prRow?.worktree?.path).toBe(created.path);
+    expect(prRow?.worktree?.syncState).toBe('synced');
+    expect(prRow?.worktree?.headOid).toBe(created.headOid);
+
+    rmSync(created.path, { recursive: true, force: true });
   });
 
   it('200s with queue-local rows intact when the project lacks pr capability', async () => {
