@@ -622,6 +622,56 @@ export class PrManager {
     ];
   }
 
+  // Parses a `gh pr list` JSON stdout into RepoPr[]. Shared by listRepoPrs
+  // and listMergedPrs so both use the same parse logic.
+  private parsePrList(stdout: string): RepoPr[] {
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(stdout) as Array<Record<string, unknown>>;
+    } catch {
+      throw new OrchestratorConflictError('gh pr list returned invalid JSON');
+    }
+    return raw.map((item) => toRepoPr(item));
+  }
+
+  // The `gh pr list --json REPO_PR_FIELDS --state merged --limit <limit>` argv.
+  private listMergedPrsArgv(limit: number): string[] {
+    return [
+      'gh',
+      'pr',
+      'list',
+      '--json',
+      REPO_PR_FIELDS,
+      '--state',
+      'merged',
+      '--limit',
+      String(limit),
+    ];
+  }
+
+  // GET /api/landing (a later task): recently merged PRs in the repo,
+  // sorted by updatedAt desc. 409s outright when this project lacks the `pr`
+  // capability, same as listRepoPrs — there's no gh/remote to list against.
+  async listMergedPrs(limit = 20): Promise<RepoPr[]> {
+    if (!this.capability) {
+      throw new OrchestratorConflictError(
+        'PR review requires the gh CLI and a configured git remote'
+      );
+    }
+    const result = await this.run(
+      this.ctx.rootDir,
+      this.listMergedPrsArgv(limit)
+    );
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr list failed: ${commandErrorText(result)}`
+      );
+    }
+    const prs = this.parsePrList(result.stdout);
+    // Sort by updatedAt desc (newest first).
+    return prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
   // GET /api/prs (item B): every open PR in the repo, not just the ones
   // dispatch itself opened — the client renders dispatch's own PR rows
   // separately (via each run's `prUrl`) and lists whatever's left over here
@@ -639,13 +689,7 @@ export class PrManager {
         `gh pr list failed: ${commandErrorText(result)}`
       );
     }
-    let raw: Array<Record<string, unknown>>;
-    try {
-      raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
-    } catch {
-      throw new OrchestratorConflictError('gh pr list returned invalid JSON');
-    }
-    return raw.map((item) => toRepoPr(item));
+    return this.parsePrList(result.stdout);
   }
 
   /**

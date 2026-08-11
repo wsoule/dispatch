@@ -233,4 +233,57 @@ describe('PrManager poll cache', () => {
     expect(viewCalls).toHaveLength(1);
     expect(harness.store.get(task.meta.id)?.meta.status).toBe('done');
   });
+
+  test('listMergedPrs returns merged PRs sorted by updatedAt desc with correct argv', async () => {
+    const harness = makeHarness();
+    // Two merged PRs out of order: PR 20 is older, PR 21 is newer.
+    // When returned from gh, they come in reverse order (21, then 20).
+    const pr20 = {
+      ...prListItem(20, 'sha-20'),
+      state: 'MERGED',
+      updatedAt: '2026-08-08T00:00:00Z', // older
+    };
+    const pr21 = {
+      ...prListItem(21, 'sha-21'),
+      state: 'MERGED',
+      updatedAt: '2026-08-09T00:00:00Z', // newer
+    };
+    const mergedPayload = [pr21, pr20]; // out of order in response
+    const runner = new FakeRunner(mergedPayload);
+    // Override runner to handle listMergedPrs with --state merged
+    const originalRun = runner.run;
+    runner.run = async (
+      _cwd: string,
+      cmd: string[]
+    ): Promise<CommandResult> => {
+      runner.calls.push(cmd);
+      if (
+        cmd[0] === 'gh' &&
+        cmd[1] === 'pr' &&
+        cmd[2] === 'list' &&
+        cmd.includes('merged')
+      ) {
+        return runner.listResult;
+      }
+      return originalRun.call(runner, _cwd, cmd);
+    };
+    const pr = new PrManager(harness, true, runner.run);
+
+    const result = await pr.listMergedPrs(20);
+
+    // Assert sorted by updatedAt desc (newer first).
+    expect(result).toHaveLength(2);
+    expect(result[0].number).toBe(21);
+    expect(result[1].number).toBe(20);
+    expect(result[0].updatedAt > result[1].updatedAt).toBe(true);
+
+    // Assert the correct argv was used.
+    const mergedCalls = runner.calls.filter(
+      (c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'list'
+    );
+    expect(mergedCalls).toHaveLength(1);
+    expect(mergedCalls[0]).toContain('merged');
+    expect(mergedCalls[0]).toContain('--limit');
+    expect(mergedCalls[0]).toContain('20');
+  });
 });
