@@ -1,6 +1,6 @@
 import type { Finding } from '@dispatch/client';
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core/browser';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { ReviewCasePanel } from './ReviewCasePanel';
@@ -60,7 +60,7 @@ test('a failed command is distinguishable from a passing one', () => {
 // The single highest-signal red flag in reviewing agent work, and it was invisible before.
 test('a guard that broke no tests is flagged as dead or vacuous', () => {
   render(<ReviewCasePanel {...empty} mutations={[mut(0)]} />);
-  expect(screen.getByText(/dead guard, or a vacuous test/i)).toBeDefined();
+  expect(screen.getByText(/dead guard or vacuous test/i)).toBeDefined();
 });
 
 test('a guard whose removal broke tests is not flagged', () => {
@@ -177,4 +177,30 @@ test('the review button appears only when starting one is possible', () => {
 
   rerender(<ReviewCasePanel {...empty} onStartAiReview={async () => {}} />);
   expect(screen.getByRole('button', { name: /ask an agent/i })).toBeDefined();
+});
+
+test('checked findings go to onFixFindings; the button says how many', async () => {
+  const fixed: string[][] = [];
+  render(
+    <ReviewCasePanel
+      {...empty}
+      findings={[finding(), finding({ id: 'f-000002', title: 'second' })]}
+      onFixFindings={(picked) => {
+        fixed.push(picked.map((f) => f.id));
+        return Promise.resolve();
+      }}
+    />
+  );
+  fireEvent.click(
+    screen.getByLabelText('Select finding: widens the PATCH surface')
+  );
+  const button = screen.getByRole('button', { name: /fix 1 selected/i });
+  fireEvent.click(button);
+  await waitFor(() => expect(fixed).toEqual([['f-000001']]));
+});
+
+test('without onFixFindings there are no checkboxes and no fix button', () => {
+  render(<ReviewCasePanel {...empty} findings={[finding()]} />);
+  expect(screen.queryByLabelText(/select finding/i)).toBeNull();
+  expect(screen.queryByRole('button', { name: /fix.*selected/i })).toBeNull();
 });

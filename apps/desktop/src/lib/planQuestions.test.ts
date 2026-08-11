@@ -33,7 +33,7 @@ describe('composeAnswers', () => {
   test('answers with only whitespace are treated as unanswered', () => {
     const message = composeAnswers(QUESTIONS, { q1: '   ', q2: 'Yes' });
     expect(message).toContain(
-      'Q: Should this cover the mobile app too?\nA: (no answer — use your best judgement)'
+      'Q: Should this cover the mobile app too?\nA: (no answer, use your best judgement)'
     );
     expect(message).toContain(
       'Q: Any existing code this should build on?\nA: Yes'
@@ -44,15 +44,15 @@ describe('composeAnswers', () => {
     const message = composeAnswers(QUESTIONS, { q1: 'Both' });
     expect(message).toBe(
       'Q: Should this cover the mobile app too?\nA: Both\n\n' +
-        'Q: Any existing code this should build on?\nA: (no answer — use your best judgement)'
+        'Q: Any existing code this should build on?\nA: (no answer, use your best judgement)'
     );
   });
 
   test('skip (no answers at all) tells the planner to use its own judgement throughout', () => {
     const message = composeAnswers(QUESTIONS, {});
     expect(message).toBe(
-      'Q: Should this cover the mobile app too?\nA: (no answer — use your best judgement)\n\n' +
-        'Q: Any existing code this should build on?\nA: (no answer — use your best judgement)'
+      'Q: Should this cover the mobile app too?\nA: (no answer, use your best judgement)\n\n' +
+        'Q: Any existing code this should build on?\nA: (no answer, use your best judgement)'
     );
   });
 

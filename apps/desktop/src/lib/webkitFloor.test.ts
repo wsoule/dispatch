@@ -13,7 +13,9 @@ const DIST_DIR = join(DESKTOP_DIR, 'dist');
 // cask's constraint.
 const EXPECTED_VITE_TARGET = 'safari14';
 const EXPECTED_MINIMUM_SYSTEM_VERSION = '11.0';
-const EXPECTED_CASK_CONSTRAINT = 'depends_on macos: ">= :big_sur"';
+// Bare symbol means "this release or newer" (Cask Cookbook: top-level
+// depends_on macos: declares the minimum compatible release).
+const EXPECTED_CASK_CONSTRAINT = 'depends_on macos: :big_sur';
 
 // Safari 14.1 predates ES2022, so parsing at ES2021 is a deliberately
 // conservative proxy: anything that parses here certainly parses there. It is

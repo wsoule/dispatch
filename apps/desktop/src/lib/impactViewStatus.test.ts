@@ -171,13 +171,11 @@ test('a supplied zeroMessage replaces the generic empty wording', () => {
     entries: [],
     filter: '',
     resolved: true,
-    zeroMessage:
-      "This file can't be analyzed by the active sources, so its impact is unknown — not zero.",
+    zeroMessage: "Can't analyze this file. Impact unknown, not zero.",
   });
   expect(status).toEqual({
     kind: 'empty',
-    message:
-      "This file can't be analyzed by the active sources, so its impact is unknown — not zero.",
+    message: "Can't analyze this file. Impact unknown, not zero.",
   });
 });
 

@@ -18,7 +18,7 @@ function selectTab(name: string) {
 
 test('with no project selected it explains what to do', () => {
   render(<SettingsView activeProject={null} data={data} />);
-  expect(screen.getByText(/Select a project/)).toBeDefined();
+  expect(screen.getByText(/Pick a project/)).toBeDefined();
 });
 
 test('it opens on General and switches to Integrations', () => {

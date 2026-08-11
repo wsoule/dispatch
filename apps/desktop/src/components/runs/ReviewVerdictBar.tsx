@@ -1,7 +1,7 @@
 import type { ReviewComment, ReviewVerdict } from '@dispatch/client';
 import { Bot, Check, GitPullRequest, MessageSquare, Undo2 } from 'lucide-react';
 import { Checkbox as CheckboxPrimitive } from 'radix-ui';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -38,6 +38,10 @@ interface ReviewVerdictBarProps {
    * where starting one doesn't make sense (a PR's review, say) — the button hides rather than
    * disabling, since there's nothing the omission leaves for the reviewer to do about it. */
   onStartAiReview?: () => Promise<void>;
+  /** True while a review agent's run is live over this run's branch — derived from the run list
+   * (see `liveReviewAgentFor`), so it survives navigating away and back, which the click-local
+   * "Starting…" state below cannot. Disables re-dispatching a second agent onto the same diff. */
+  reviewAgentLive?: boolean;
   /** What approving would wave through — dead guards, open findings. Stated beside the pending
    * count rather than blocking submit: the human makes the call, this only says what the call is. */
   extraWarnings?: string[];
@@ -81,6 +85,7 @@ export function ReviewVerdictBar({
   comments,
   onSubmit,
   onStartAiReview,
+  reviewAgentLive = false,
   canPostToGitHub = false,
   extraWarnings = [],
 }: ReviewVerdictBarProps) {
@@ -116,6 +121,13 @@ export function ReviewVerdictBar({
     }
   }
 
+  // Once the agent's own run shows up in the run list, the derived indicator
+  // owns the story — clearing the local state here means it can't linger as a
+  // stale "started" after that run finishes and the indicator goes away.
+  useEffect(() => {
+    if (reviewAgentLive) setAiReview({ status: 'idle' });
+  }, [reviewAgentLive]);
+
   const pending = comments.filter((c) => c.pending);
   const open = comments.filter((c) => !c.resolved && !c.pending);
 
@@ -147,7 +159,7 @@ export function ReviewVerdictBar({
       setSummary('');
       setSent(
         res.published > 0
-          ? `Review sent — ${res.published} comment${res.published === 1 ? '' : 's'}.`
+          ? `Review sent. ${res.published} comment${res.published === 1 ? '' : 's'}.`
           : 'Review sent.'
       );
     } catch (err) {
@@ -176,27 +188,32 @@ export function ReviewVerdictBar({
       <Button
         variant="outline"
         size="sm"
-        disabled={aiReview.status === 'starting'}
+        disabled={reviewAgentLive || aiReview.status === 'starting'}
         onClick={() => void startAiReview()}
         className="self-start"
       >
         <Bot className="size-3.5" />
-        {aiReview.status === 'starting'
-          ? 'Starting…'
-          : 'Ask an agent to review'}
+        {reviewAgentLive
+          ? 'Agent reviewing…'
+          : aiReview.status === 'starting'
+            ? 'Starting…'
+            : 'Ask an agent to review'}
       </Button>
     );
 
-  const aiReviewStatus =
-    aiReview.status === 'started' ? (
-      <p className="text-state-review text-[11px]">
-        Review started — its findings land here once it finishes.
-      </p>
-    ) : aiReview.status === 'error' ? (
-      <p className="text-state-failed text-[11px]">
-        Couldn&rsquo;t start the review: {aiReview.message}
-      </p>
-    ) : null;
+  const aiReviewStatus = reviewAgentLive ? (
+    <p className="text-state-review text-[11px]">
+      An agent is reviewing this run — its findings land here once it finishes.
+    </p>
+  ) : aiReview.status === 'started' ? (
+    <p className="text-state-review text-[11px]">
+      Review started — its findings land here once it finishes.
+    </p>
+  ) : aiReview.status === 'error' ? (
+    <p className="text-state-failed text-[11px]">
+      Couldn&rsquo;t start the review: {aiReview.message}
+    </p>
+  ) : null;
 
   // Shown only for a run whose work is on a PR. The explanation sits inside
   // the label, in both layouts: leaving the box off is not "skip the review",

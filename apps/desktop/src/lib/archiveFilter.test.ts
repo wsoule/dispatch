@@ -84,7 +84,7 @@ describe('hideArchivedRuns', () => {
 // `archivedAt` is orthogonal to a task's status — an archived task need not be done or
 // cancelled (the server never guarantees the two happen together), so a finished, unreviewed
 // run against an archived-but-still-in-review task must stay eligible for
-// `countMergeReady`/enqueueReady even though the Runs view's own list hides it once its task
+// `countMergeReady`/enqueueReady even though a run list hides it once its task
 // is archived. These two libs are fed the exact same `runs`/`tasks` inputs here to pin that
 // down: `useDispatchProject` MUST keep countMergeReady on the unfiltered `runs`, never
 // `hideArchivedRuns`'s output, or a still-mergeable run would silently stop being offered the

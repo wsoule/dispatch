@@ -88,6 +88,11 @@ export interface PlanRecord {
   // it exists so api.ts can link that note to the task confirm() creates,
   // the same linkage the plain promote path writes.
   sourceNoteId?: string;
+  // What this plan is *about*, for list rows: the task/note/capture title an
+  // enrich plan was started from. Absent on free-form plans, whose prompt is
+  // already the human's own words — lists fall back to the prompt's first
+  // line rather than showing an enrich plan's boilerplate planning prompt.
+  subject?: string;
 }
 
 export interface ConfirmResult {
@@ -214,7 +219,8 @@ export class PlanManager {
     prompt: string,
     plannerName = 'claude',
     sourceNoteId?: string,
-    role: 'plan' | 'enrich' = 'plan'
+    role: 'plan' | 'enrich' = 'plan',
+    subject?: string
   ): PlanRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
@@ -232,6 +238,7 @@ export class PlanManager {
       createdAt: now,
       updatedAt: now,
       sourceNoteId,
+      subject,
     };
     this.plans.set(record.id, record);
     const model = this.resolveModel(role);
@@ -478,6 +485,15 @@ export class PlanManager {
       throw new OrchestratorNotFoundError(`plan not found: ${planId}`);
     }
     return record;
+  }
+
+  // Every plan conversation this daemon still holds (planner chats and enrich
+  // drafts alike), newest first — feeds the all-agents listing, which until
+  // this existed had no way to see a planner at all.
+  listPlans(): PlanRecord[] {
+    return [...this.plans.values()].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt)
+    );
   }
 
   // POST /api/plan/:id/confirm. `rawProposal` is whatever JSON the client

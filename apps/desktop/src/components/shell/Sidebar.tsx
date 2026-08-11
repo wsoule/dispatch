@@ -9,13 +9,14 @@ import {
   Cog,
   GitBranch,
   GitMerge,
-  GitPullRequestArrow,
+  Inbox,
   LayoutDashboard,
   ListChecks,
   NotebookPen,
   Play,
   Plus,
   Radar,
+  Shield,
   Waypoints,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -80,19 +81,19 @@ const PROJECT_VIEWS: {
   { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },
   { id: 'board', label: 'Tasks', icon: ListChecks },
 
-  { id: 'runs', label: 'Runs', icon: Play, group: 'Work' },
-  // Review owns the whole tail of the pipeline now — the queue of things
-  // needing a look, and the merge queue that approving them feeds.
-  { id: 'review', label: 'Review', icon: GitPullRequestArrow },
-  // Every run/PR/queue-local row in flight in one table — Review answers
-  // "what needs me", this answers "what is in flight and where is it stuck".
-  { id: 'landing', label: 'Landing', icon: GitMerge },
+  // A slim, list-only "everything waiting on a human" — the whole Work stage
+  // now that Runs and Review are gone: a run is watched from its own task, and
+  // every past run is listed under All agents.
+  { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'Work' },
   // Blast radius of a file, run, or task's declared writes — reached from
   // here with nothing preselected, or from the "open in Impact" action on
-  // the Review case panel, task detail, and Git file pane.
+  // the review case panel and the Git file pane.
   { id: 'impact', label: 'Impact', icon: Waypoints },
 
   { id: 'branches', label: 'Git', icon: GitBranch, group: 'Git' },
+  // Every open PR with its gates plus what already landed — the one answer to
+  // "what lands, when, and what landed".
+  { id: 'landing', label: 'Landing', icon: GitMerge },
 ];
 
 /** The rail order is the shortcut order — cmd+1 is the first entry, and so on. */
@@ -120,6 +121,9 @@ PROJECT_VIEWS.forEach((view, index) => {
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
   { id: 'all-agents', label: 'All Agents', icon: Radar },
   { id: 'sessions', label: 'Sessions', icon: Play },
+  // The active project's chat assistant. Global-section, not a project row:
+  // it answers about whichever project is active, from any view.
+  { id: 'warden', label: 'Warden', icon: Shield },
   { id: 'settings', label: 'Settings', icon: Cog },
 ];
 

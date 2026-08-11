@@ -44,7 +44,7 @@ export const RESTART_FOR_APPROVALS = 'Restart daemon to enable approvals';
  * startup.
  */
 export const ATTACHED_DAEMON_EXPLANATION =
-  'This window attached to a dispatchd it did not start, so it only has request-level access. Approving or denying a scope request needs the app token the daemon prints once at startup.';
+  "This window didn't start the daemon, so it can't approve scope requests. Use the app token the daemon printed at startup.";
 
 /**
  * Picks the credential to send. The app token grants request tier as well as
@@ -119,7 +119,7 @@ export function daemonRestartReadiness(runs: RunMeta[]): RestartReadiness {
   const noun = live.length === 1 ? 'run is' : 'runs are';
   return {
     safe: false,
-    blockedReason: `${live.length} ${noun} still in flight — restarting dispatchd would end ${live.length === 1 ? 'it' : 'them'}. Wait for ${live.length === 1 ? 'it' : 'them'} to finish, or cancel first.`,
+    blockedReason: `${live.length} ${noun} still in flight. Restarting dispatchd would end ${live.length === 1 ? 'it' : 'them'}. Wait for ${live.length === 1 ? 'it' : 'them'} to finish, or cancel first.`,
   };
 }
 

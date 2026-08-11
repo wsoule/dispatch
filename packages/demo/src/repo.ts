@@ -292,6 +292,13 @@ export function buildRepo(opts: {
   });
 
   git(root, 'init', '-q', '-b', 'main');
+  // Local identity, not just src/git.ts's inline -c flags: the daemon later
+  // commits here (FakeExecutor steps, the orchestrator's auto-commit net)
+  // with plain `git commit`, and CI runners/the Railway container have no
+  // ambient config. Worktrees share this config, so run branches inherit it.
+  git(root, 'config', 'user.name', 'Dispatch Demo');
+  git(root, 'config', 'user.email', 'demo@example.com');
+  git(root, 'config', 'commit.gpgsign', 'false');
   git(root, 'add', '-A');
   assertNoCredentialsStaged(root);
   git(root, 'commit', '-qm', 'initial: storefront');

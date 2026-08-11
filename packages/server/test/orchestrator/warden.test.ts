@@ -228,6 +228,50 @@ describe('WardenManager turns', () => {
     expect(h.backend.observations[0].result.isError).toBe(false);
   });
 
+  it('derives a later call input from an earlier result in the same turn', async () => {
+    // The shape bin.ts's default fake warden script relies on: read the ready
+    // list, then queue a dispatch of whatever task that read returned — no
+    // hard-coded id anywhere in the script.
+    const h = makeManager({
+      ok: true,
+      turns: [
+        {
+          calls: [
+            { tool: 'list_ready_tasks' },
+            {
+              tool: 'dispatch_task',
+              input: (prior) => {
+                const listed = prior[0].content as {
+                  tasks: { id: string }[];
+                };
+                return { taskId: listed.tasks[0].id, executor: 'fake' };
+              },
+            },
+          ],
+          reply: 'queued it',
+        },
+      ],
+    });
+    const taskId = makeTask(h, 'Ship the thing');
+
+    const record = await startAndSettle(h, 'dispatch the next ready task');
+
+    expect(record.pendingActions).toHaveLength(1);
+    expect(record.pendingActions[0].tool).toBe('dispatch_task');
+    expect(record.pendingActions[0].input).toEqual({
+      taskId,
+      executor: 'fake',
+    });
+    // The observation records the resolved input, not the function.
+    expect(h.backend.observations[1].input).toEqual({
+      taskId,
+      executor: 'fake',
+    });
+    // Queued only — deriving the input dynamically must not change the "a
+    // mutating call never executes" contract.
+    expect(h.orchestrator.list()).toEqual([]);
+  });
+
   it('hands a bad tool call back to the model as an error and still settles ready', async () => {
     const h = makeManager({
       ok: true,

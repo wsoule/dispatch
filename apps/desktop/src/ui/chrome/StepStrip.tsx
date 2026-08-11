@@ -36,7 +36,7 @@ export function StepStrip({ steps, className }: StepStripProps) {
       {steps.map((step) => (
         <li
           key={step.name}
-          title={`${step.name} — ${step.status}`}
+          title={`${step.name} · ${step.status}`}
           className={cn('h-0.5 flex-1 rounded-full', SEGMENT[step.status])}
         >
           <span className="sr-only">{`${step.name}: ${step.status}`}</span>

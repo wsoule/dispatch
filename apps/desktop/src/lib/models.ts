@@ -13,12 +13,12 @@ export const MODELS: ModelOption[] = [
   {
     id: 'claude-opus-5',
     label: 'Opus 5',
-    hint: 'Most capable Opus — the default for real work',
+    hint: 'The default for real work',
   },
   {
     id: 'claude-fable-5',
     label: 'Fable 5',
-    hint: "Anthropic's most capable model — hardest long-horizon work (premium pricing)",
+    hint: 'Hardest work. Premium pricing.',
   },
   {
     id: 'claude-opus-4-8',
@@ -33,7 +33,7 @@ export const MODELS: ModelOption[] = [
   {
     id: 'claude-haiku-4-5-20251001',
     label: 'Haiku 4.5',
-    hint: 'Fastest — small mechanical changes',
+    hint: 'Fastest. Small mechanical changes.',
   },
 ];
 

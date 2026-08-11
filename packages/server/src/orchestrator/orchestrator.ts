@@ -135,6 +135,17 @@ const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 // scheduleClaimsRefresh.
 const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
 
+// The reason stamped onto every run reconcileOnBoot force-fails. The run's
+// agent did nothing wrong — dispatchd lost track of it across a restart — and
+// the process itself survives a daemon restart, so it may still be working.
+export const BOOT_FORCE_FAIL_ERROR =
+  'dispatchd restarted while this run was in flight; the agent process may still be running';
+
+// Minimum gap between opportunistic orphan-work re-surveys for one run — see
+// scheduleOrphanRecheck. An orphaned agent commits on human timescales
+// (minutes), so once a minute per actually-viewed run is plenty.
+const ORPHAN_RECHECK_COOLDOWN_MS = 60_000;
+
 // How long a gracefully-stopped run gets to wind down before the stop is
 // escalated to a hard cancel — see scheduleStopEscalation. Generous on purpose:
 // the agent may legitimately be mid-tool-call (a long test run, a large edit)
@@ -226,6 +237,9 @@ export class Orchestrator {
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
+  // When each failed run was last re-surveyed for orphan-landed work — see
+  // scheduleOrphanRecheck.
+  private readonly lastOrphanCheck = new Map<string, number>();
   private readonly claimsRefreshCooldownMs: number;
   // Pending "this stop has taken too long" timers, keyed by run — see
   // scheduleStopEscalation, and transition() for where they are cleared.
@@ -388,6 +402,10 @@ export class Orchestrator {
   getRun(id: string): RunDetail | null {
     const meta = this.registry.get(id);
     if (meta !== undefined) {
+      // An orphaned agent can land commits long after the boot survey ran, so
+      // one boot-time snapshot isn't enough — re-check (cooldown-gated,
+      // fire-and-forget) whenever someone actually looks at a failed run.
+      this.scheduleOrphanRecheck(meta);
       const lines = this.transcriptFor(id).read();
       const entries = lines
         .filter((line) => line.type === 'entry')
@@ -1303,6 +1321,17 @@ export class Orchestrator {
     this.fireTerminalHooks(runId);
   }
 
+  // The moment a run FIRST reached `failed`, from its transcript. This is the
+  // cutoff for "work landed after the failure": meta.updatedAt moves every
+  // time a later survey is stamped, so using it would re-baseline each
+  // re-survey and already-flagged orphan commits would drop out again.
+  private firstFailedAt(runId: string): string | undefined {
+    for (const line of this.transcriptFor(runId).read()) {
+      if (line.type === 'state' && line.state === 'failed') return line.ts;
+    }
+    return undefined;
+  }
+
   // Surveys a run's worktree via git status/log. Degrades to an empty clean
   // survey, rather than throwing, when the worktree itself is gone.
   async surveyRun(runId: string): Promise<RunSurvey> {
@@ -1310,7 +1339,7 @@ export class Orchestrator {
     const repo = new GitRepo(meta.worktreePath);
     const [statusResult, logResult] = await Promise.all([
       repo.status(),
-      repo.log({ limit: 1 }),
+      repo.log({ limit: 50 }),
     ]);
     const staged = statusResult.ok
       ? statusResult.staged.map((f) => f.path)
@@ -1329,6 +1358,17 @@ export class Orchestrator {
       firstCommit !== undefined
         ? { sha: firstCommit.sha, subject: firstCommit.subject }
         : null;
+    // Commits an orphaned agent landed after the run was marked failed (see
+    // RunSurvey.postFailCommits). Date-parsed, not string-compared: %aI dates
+    // carry the author's local UTC offset, so lexicographic order lies.
+    const failedAt = this.firstFailedAt(runId);
+    const failedAtMs = failedAt !== undefined ? Date.parse(failedAt) : NaN;
+    const postFailCommits =
+      logResult.ok && !Number.isNaN(failedAtMs)
+        ? logResult.commits
+            .filter((c) => Date.parse(c.date) > failedAtMs)
+            .map((c) => ({ sha: c.sha, subject: c.subject, date: c.date }))
+        : [];
     return {
       runId,
       branch: meta.branch,
@@ -1338,6 +1378,7 @@ export class Orchestrator {
       lastCommit,
       cleanTree:
         staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+      postFailCommits,
     };
   }
 
@@ -1381,6 +1422,29 @@ export class Orchestrator {
     });
   }
 
+  // Cooldown-gated, fire-and-forget re-survey of a failed run, called from
+  // getRun — the way commits an orphaned agent lands AFTER boot still get
+  // noticed (the boot survey is a one-shot snapshot; see stampOrphanWork).
+  // Skips runs a human already closed out, and never doubles up on a survey
+  // already in flight.
+  private scheduleOrphanRecheck(meta: RunMeta): void {
+    if (meta.state !== 'failed' || meta.reviewedAt !== undefined) return;
+    if (this.scheduledSurveys.has(meta.id)) return;
+    const last = this.lastOrphanCheck.get(meta.id) ?? 0;
+    if (Date.now() - last < ORPHAN_RECHECK_COOLDOWN_MS) return;
+    this.lastOrphanCheck.set(meta.id, Date.now());
+    this.scheduleSurvey(meta.id);
+  }
+
+  // The recheck without its cooldown, settled rather than fire-and-forget.
+  // Public so tests can drive one deterministically. Joins a survey already in
+  // flight instead of racing a second one against it — two concurrent surveys
+  // could both pass stampOrphanWork's changed-commits check and double-note.
+  resurveyOrphanWork(runId: string): Promise<void> {
+    if (!this.scheduledSurveys.has(runId)) this.scheduleSurvey(runId);
+    return this.surveySettled(runId);
+  }
+
   // Fire-and-forget survey. No caller is left to receive a rejection, and this
   // decides `failed` vs `interrupted-dirty`, so a failure is logged, not lost.
   private scheduleSurvey(runId: string): void {
@@ -1416,13 +1480,16 @@ export class Orchestrator {
       );
       return;
     }
-    if (survey.cleanTree) return;
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.state !== 'failed') return;
     if (meta.reviewedAt !== undefined) return;
     // A resume took the worktree over while this survey was in flight, so what
     // it found is that run's tree, not a record of how this one was left.
     if (this.registry.list().some((r) => r.resumedFrom === runId)) return;
+    if (survey.cleanTree) {
+      this.stampOrphanWork(meta, survey);
+      return;
+    }
     const now = new Date().toISOString();
     this.registry.updateMeta(runId, {
       state: 'interrupted-dirty',
@@ -1444,6 +1511,36 @@ export class Orchestrator {
     this.noteTaskActivity(
       meta.taskId,
       `[run ${runId}] flagged interrupted-dirty: ${survey.staged.length + survey.unstaged.length + survey.untracked.length} uncommitted path(s) found`
+    );
+  }
+
+  // A failed run whose tree is clean but whose branch gained commits after the
+  // failure: the orphaned agent process survived the daemon restart and kept
+  // committing (see reconcileOnBoot). The run stays `failed` — its daemon
+  // really did lose it — but the survey is stamped so the UI can say "work
+  // landed on this branch after the failure" instead of showing a dead $0 run.
+  // No-ops unless the recorded commits actually changed, so the cooldown-gated
+  // re-check from getRun never re-notes the same discovery.
+  private stampOrphanWork(meta: RunMeta, survey: RunSurvey): void {
+    const commits = survey.postFailCommits ?? [];
+    if (commits.length === 0) return;
+    const known = meta.survey?.postFailCommits ?? [];
+    if (commits.length === known.length && commits[0]?.sha === known[0]?.sha) {
+      return;
+    }
+    const now = new Date().toISOString();
+    this.registry.updateMeta(meta.id, { survey, updatedAt: now });
+    // Same rule as the interrupted-dirty stamp above: the registry already
+    // carries the survey, so a transcript that can't be written must not also
+    // cost the broadcasts.
+    this.bestEffort(`appending orphan-work survey for run ${meta.id}`, () => {
+      this.transcriptFor(meta.id).appendState('failed', now, { survey });
+    });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    this.ctx.events.broadcast({ type: 'run.survey', runId: meta.id, survey });
+    this.noteTaskActivity(
+      meta.taskId,
+      `[run ${meta.id}] work landed on this branch after the failure: ${commits.length} commit(s), latest "${commits[0].subject}"`
     );
   }
 
@@ -1954,6 +2051,7 @@ export class Orchestrator {
       const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
       const base = meta?.baseBranch ?? fallbackBase;
       const worktreeExists = wtPath !== undefined && existsSync(wtPath);
+      const merged = this.worktrees.isMergedInto(ref.branch, base);
       return {
         branch: ref.branch,
         worktreePath: wtPath,
@@ -1965,7 +2063,13 @@ export class Orchestrator {
         dirty: wtPath !== undefined && this.worktrees.isWorktreeDirty(wtPath),
         lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
         ahead: this.worktrees.aheadCount(ref.branch, base),
-        mergedIntoBase: this.worktrees.isMergedInto(ref.branch, base),
+        // Only measured while unmerged: the count answers "how far has the
+        // base moved past this still-out work", which stops meaning anything
+        // once the work landed — and skipping it saves a git call per row.
+        behindBase: merged
+          ? undefined
+          : this.worktrees.behindCount(ref.branch, base),
+        mergedIntoBase: merged,
         runId: meta?.id,
         taskId: meta?.taskId,
         taskTitle: meta?.taskTitle,
@@ -1974,9 +2078,14 @@ export class Orchestrator {
         reviewedAt: meta?.reviewedAt,
         stackParents: meta?.stackParents,
         prUrl: meta?.prUrl,
+        // The recorded merge commit is the only reliable probe for a squash
+        // merge; a branch git itself sees as merged (hand-merged, no run, or
+        // a run without a mergeCommit) is judged by its own tip instead, so
+        // "pushed" doesn't read false just because no run claims the ref.
         pushedToOrigin:
-          meta?.mergeCommit !== undefined &&
-          this.worktrees.isOnOriginBase(meta.mergeCommit, base),
+          meta?.mergeCommit !== undefined
+            ? this.worktrees.isOnOriginBase(meta.mergeCommit, base)
+            : merged && this.worktrees.isOnOriginBase(ref.branch, base),
         status: branchEntryStatus(meta),
       } satisfies BranchEntry;
     });
@@ -2447,8 +2556,18 @@ export class Orchestrator {
           let meta = replay.meta;
           if (!TERMINAL_RUN_STATES.has(meta.state)) {
             const now = new Date().toISOString();
-            new Transcript(path).appendState('failed', now);
-            meta = { ...meta, state: 'failed', updatedAt: now };
+            // With a reason, not a bare state flip: a force-failed run shows
+            // up in the UI as "failed, $0" and the error is the only thing
+            // that explains it wasn't the agent's doing.
+            new Transcript(path).appendState('failed', now, {
+              error: BOOT_FORCE_FAIL_ERROR,
+            });
+            meta = {
+              ...meta,
+              state: 'failed',
+              updatedAt: now,
+              error: BOOT_FORCE_FAIL_ERROR,
+            };
             crashedRunIds.push(meta.id);
           }
           this.registry.create(meta);

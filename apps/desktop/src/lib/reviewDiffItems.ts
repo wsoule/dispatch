@@ -186,11 +186,11 @@ export function decideEditSave(input: {
  */
 const EDIT_ERROR_MESSAGES: Record<string, string> = {
   'worktree-busy':
-    'An agent is working in this worktree, so this edit was not saved — wait for it to finish, then reopen the file and redo it.',
+    "An agent is working here, so this edit wasn't saved. Wait, then redo it.",
   'stale-base':
     'This file changed while you were editing, so this edit was not saved. Reload the diff to see the new version.',
   'worktree-missing': "This run's worktree is gone.",
-  'empty-contents': "Couldn't read this file — nothing was written.",
+  'empty-contents': "Couldn't read this file. Nothing was written.",
   'run-reviewed':
     'This run has already been reviewed, so its branch is closed to further edits.',
 };

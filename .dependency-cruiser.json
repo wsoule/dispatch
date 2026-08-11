@@ -1,0 +1,13 @@
+{
+  "forbidden": [],
+  "options": {
+    "doNotFollow": { "path": "node_modules" },
+    "exclude": { "path": "(^|/)(dist|node_modules)/|src-tauri/target/" },
+    "tsPreCompilationDeps": true,
+    "tsConfig": { "fileName": "tsconfig.oxlint.json" },
+    "enhancedResolveOptions": {
+      "exportsFields": ["exports"],
+      "conditionNames": ["import", "require", "node", "default", "types"]
+    }
+  }
+}

@@ -1,7 +1,7 @@
 ---
 id: e-1d70ca
 title: "Warden: chat assistant for the active project"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-04T18:06:37.190Z
-updated: 2026-08-04T18:07:39.130Z
+updated: 2026-08-11T16:17:15.946Z
 external: null
 writes: []
 ---
@@ -23,3 +23,5 @@ A conversational, LLM-backed assistant surfaced as a new tab in the sidebar's gl
 
 ## Activity
 - 2026-08-04T18:07:39.130Z [epic] epic dispatch started (concurrency 5) — human:wsoule679
+- 2026-08-11T01:43:01.560Z [epic] epic dispatch started (concurrency 3) — human:wsoule679
+- 2026-08-11T03:14:20.330Z [epic] epic dispatch session ended — no children left to dispatch — none

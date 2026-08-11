@@ -64,6 +64,7 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
 // defaults and every loaded config.
 function cloneFixLoop(config: FixLoopConfig): FixLoopConfig {
   return {
+    auto: config.auto,
     cap: config.cap,
     escalation: config.escalation.map((step) => ({ ...step })),
   };
@@ -388,6 +389,13 @@ function parseFixLoopConfig(raw: unknown): FixLoopConfig {
   }
   const obj = raw as Record<string, unknown>;
 
+  const { auto } = obj;
+  if (auto !== undefined && typeof auto !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: fixLoop.auto must be a boolean'
+    );
+  }
+
   const { cap } = obj;
   if (
     cap !== undefined &&
@@ -402,6 +410,7 @@ function parseFixLoopConfig(raw: unknown): FixLoopConfig {
   if (escalation === undefined) {
     return {
       ...cloneFixLoop(DEFAULT_FIX_LOOP),
+      auto: auto ?? DEFAULT_FIX_LOOP.auto,
       cap: cap ?? DEFAULT_FIX_LOOP.cap,
     };
   }
@@ -411,6 +420,7 @@ function parseFixLoopConfig(raw: unknown): FixLoopConfig {
     );
   }
   return {
+    auto: auto ?? DEFAULT_FIX_LOOP.auto,
     cap: cap ?? DEFAULT_FIX_LOOP.cap,
     escalation: escalation.map((entry, index) =>
       parseEscalationStep(entry, `fixLoop.escalation[${index}]`)
@@ -592,6 +602,12 @@ function applyFixLoopPatch(
   doc: YAML.Document,
   patch: Partial<FixLoopConfig>
 ): void {
+  if (patch.auto !== undefined) {
+    if (typeof patch.auto !== 'boolean') {
+      throw new ConfigError('invalid fixLoop.auto: must be a boolean');
+    }
+    doc.setIn(['fixLoop', 'auto'], patch.auto);
+  }
   if (patch.cap !== undefined) {
     if (!Number.isInteger(patch.cap) || patch.cap < 1) {
       throw new ConfigError('invalid fixLoop.cap: must be an integer >= 1');

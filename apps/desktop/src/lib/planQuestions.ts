@@ -8,7 +8,7 @@ function formatAnswer(
 ): string {
   const trimmed = answer?.trim() ?? '';
   const line =
-    trimmed === '' ? '(no answer — use your best judgement)' : trimmed;
+    trimmed === '' ? '(no answer, use your best judgement)' : trimmed;
   return `Q: ${question.question}\nA: ${line}`;
 }
 

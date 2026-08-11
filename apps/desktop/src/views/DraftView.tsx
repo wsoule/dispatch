@@ -187,7 +187,7 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
           <span>
             {draft.questions.length > 0
               ? 'Answer the question above to get a proposed task.'
-              : 'This draft has no proposed task to review.'}
+              : 'No proposed task yet.'}
           </span>
         </div>
       ) : (

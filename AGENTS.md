@@ -74,3 +74,80 @@ are sufficient unless the edit touches executable code or package config.
 - Prefer function-level comments over many inline comments. Use inline comments
   only when a specific step is still non-obvious.
 - Keep comments concrete and behavior-focused.
+
+<!-- CARTO:AUTO:START -->
+
+## Project Structure (auto)
+
+- 📁 .agents/
+- 📁 .claude/
+- 📁 .dispatch/
+- 📁 .github/
+- 📁 .husky/
+- 📁 .superpowers/
+- 📁 apps/
+- 📁 docs/
+- 📁 packages/
+- 📁 scripts/
+- 📄 .18c47b9fefbf7fbc-00000000.bun-build
+- 📄 .18c47bbf8f9dfff8-00000000.bun-build
+- 📄 .browserslistrc
+- 📄 .cspell-dictionary.txt
+- 📄 .dependency-cruiser.json
+- 📄 .dockerignore
+- 📄 .DS_Store
+- 📄 .gitattributes
+- 📄 .gitignore
+- 📄 .jscpd.json
+- 📄 .markdownlint-cli2.jsonc
+- 📄 .mcp.json
+- 📄 .node-version
+- 📄 .nvim.lua
+- 📄 .oxfmtrc.json
+- 📄 .oxlintrc.json
+- 📄 .prototools
+- 📄 .stylelintignore
+- 📄 bun.lock
+- 📄 bunfig.toml
+- 📄 CLAUDE.md
+- 📄 cspell.json
+- 📄 dispatch-fix-changed-files.zip
+- 📄 knip.json
+- 📄 LICENSE
+- 📄 package.json
+- 📄 README.md
+- 📄 stylelint.config.js
+- 📄 tsconfig.json
+- 📄 tsconfig.options.json
+- 📄 tsconfig.oxlint.json
+- 📄 tsconfig.tsbuildinfo
+
+**Stack:** React **High impact:** apps/desktop/src/lib/utils.ts (165
+dependents), apps/desktop/src/ui/button.tsx (97 dependents),
+packages/core/src/types.ts (79 dependents), packages/core/src/actor.ts (77
+dependents), packages/core/src/describe.ts (77 dependents),
+packages/core/src/ids.ts (76 dependents), packages/core/src/slug.ts (76
+dependents), packages/core/src/taskfile.ts (76 dependents),
+packages/core/src/store.ts (75 dependents), packages/core/src/linearMap.ts (73
+dependents), packages/core/src/configTypes.ts (72 dependents),
+packages/core/src/team.ts (72 dependents), packages/core/src/conflicts.ts (71
+dependents), packages/core/src/evidence.ts (71 dependents),
+packages/core/src/findings.ts (71 dependents)
+
+## Context Files (auto)
+
+Carto generated domain-specific context files in `.carto/context/`. Read the
+relevant file before working on that area:
+
+| Domain   | File                         | Read when...                      |
+| -------- | ---------------------------- | --------------------------------- |
+| Auth     | `.carto/context/AUTH.md`     | Working on login, sessions, OAuth |
+| Payments | `.carto/context/PAYMENTS.md` | Working on billing, Stripe        |
+| tRPC     | `.carto/context/TRPC.md`     | Working on API procedures         |
+| Database | `.carto/context/DATABASE.md` | Working on models, schema         |
+| Events   | `.carto/context/EVENTS.md`   | Working on webhooks, jobs         |
+| Core     | `.carto/context/CORE.md`     | General utilities, shared code    |
+
+> Run `carto serve` to enable live graph queries from Kiro, Cursor, and Claude.
+
+<!-- CARTO:AUTO:END -->

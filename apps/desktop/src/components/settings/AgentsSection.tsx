@@ -63,7 +63,7 @@ const PERMISSION_MODES = [
   ['auto', 'Let the classifier decide (default)'],
   ['default', 'Always ask me first'],
   ['acceptEdits', 'Let it edit files, ask before anything else'],
-  ['dontAsk', 'Never ask — let it run'],
+  ['dontAsk', 'Never ask, let it run'],
 ] as const;
 
 const OFFERED_MODES: readonly string[] = PERMISSION_MODES.map(([mode]) => mode);

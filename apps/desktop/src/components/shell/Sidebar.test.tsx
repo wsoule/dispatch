@@ -9,7 +9,7 @@ const props = {
   projectPath: '/Users/x/dispatch',
   hasActiveProject: true,
   section: 'project' as const,
-  projectView: 'runs' as const,
+  projectView: 'inbox' as const,
   globalView: 'all-agents' as const,
   liveAgentCount: 3,
   badges: { board: 2 },
@@ -46,11 +46,10 @@ const RAIL_LABELS = [
   'Brain dump',
   'Plans',
   'Tasks',
-  'Runs',
-  'Review',
-  'Landing',
+  'Inbox',
   'Impact',
   'Git',
+  'Landing',
 ];
 
 test('the exported view order is the cmd+N order App.tsx indexes into', () => {
@@ -59,11 +58,10 @@ test('the exported view order is the cmd+N order App.tsx indexes into', () => {
     'brain-dump',
     'plans',
     'board',
-    'runs',
-    'review',
-    'landing',
+    'inbox',
     'impact',
     'branches',
+    'landing',
   ]);
 });
 
@@ -75,7 +73,7 @@ test('expanded rail shows every row with its shortcut number', () => {
     const row = screen.getByRole('button', {
       name: new RegExp(`^${label.replace(' ', '.')}.*⌘${index + 1}$`),
     });
-    expect(row.getAttribute('data-active')).toBe(String(label === 'Runs'));
+    expect(row.getAttribute('data-active')).toBe(String(label === 'Inbox'));
   });
   expect(screen.getByText('Workspace')).toBeTruthy();
   expect(screen.getByText('Plan')).toBeTruthy();
@@ -90,7 +88,13 @@ test('expanded rail shows every row with its shortcut number', () => {
 
 test('collapsed rail hides labels but keeps every accessible name', () => {
   mount(false);
-  for (const label of [...RAIL_LABELS, 'All Agents', 'Sessions', 'Settings']) {
+  for (const label of [
+    ...RAIL_LABELS,
+    'All Agents',
+    'Sessions',
+    'Warden',
+    'Settings',
+  ]) {
     expect(
       screen.getByRole('button', { name: label }).getAttribute('aria-label')
     ).toBe(label);
