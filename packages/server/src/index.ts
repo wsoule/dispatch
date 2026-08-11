@@ -573,7 +573,9 @@ export async function startServer(
       await prManager.fetchPrHead(n, { confirmFork: true });
     },
   });
-  const prManager = new PrManager(
+  // Annotated to break the prManager <-> mergeQueue closure inference cycle
+  // (noImplicitAny under the sandbox project's stricter tsconfig).
+  const prManager: PrManager = new PrManager(
     {
       rootDir,
       store,
@@ -611,7 +613,7 @@ export async function startServer(
   // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,
   // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
   // stub) fakes the merge queue's own gh/git calls too, not just PrManager's.
-  const mergeQueue = new MergeQueue(
+  const mergeQueue: MergeQueue = new MergeQueue(
     {
       rootDir,
       store,
