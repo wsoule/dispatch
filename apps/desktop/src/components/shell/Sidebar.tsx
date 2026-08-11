@@ -15,6 +15,7 @@ import {
   Play,
   Plus,
   Radar,
+  Shield,
   Waypoints,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -116,6 +117,9 @@ PROJECT_VIEWS.forEach((view, index) => {
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
   { id: 'all-agents', label: 'All Agents', icon: Radar },
   { id: 'sessions', label: 'Sessions', icon: Play },
+  // The active project's chat assistant. Global-section, not a project row:
+  // it answers about whichever project is active, from any view.
+  { id: 'warden', label: 'Warden', icon: Shield },
   { id: 'settings', label: 'Settings', icon: Cog },
 ];
 
