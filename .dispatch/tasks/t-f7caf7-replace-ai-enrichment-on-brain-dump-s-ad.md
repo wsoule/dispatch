@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-11T02:00:39.505Z
-updated: 2026-08-11T18:05:33.223Z
+updated: 2026-08-11T18:10:45.118Z
 external: null
 writes:
   - apps/desktop/src/views/BrainDumpView.tsx
@@ -18,6 +18,7 @@ writes:
   - packages/server/src/api.ts
   - packages/client/src/api.ts
 risk: elevated
+archived-at: 2026-08-11T18:10:45.118Z
 ---
 
 ## Description
