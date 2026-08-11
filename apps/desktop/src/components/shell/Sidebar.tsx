@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   ListChecks,
   NotebookPen,
+  Palette,
   Play,
   Plus,
   Radar,
@@ -121,6 +122,11 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
   // it answers about whichever project is active, from any view.
   { id: 'warden', label: 'Warden', icon: Shield },
   { id: 'settings', label: 'Settings', icon: Cog },
+  // Dev-only primitive review surface — `DEV` is inlined at build time, so this
+  // entry (and GalleryView itself) is dead code in a production build.
+  ...(import.meta.env.DEV
+    ? [{ id: 'gallery' as const, label: 'Gallery', icon: Palette }]
+    : []),
 ];
 
 interface SwitchProject {
