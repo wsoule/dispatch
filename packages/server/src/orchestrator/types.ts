@@ -166,6 +166,11 @@ export interface RunSurvey {
   untracked: string[];
   lastCommit: { sha: string; subject: string } | null;
   cleanTree: boolean;
+  // Commits on the run's branch authored after the run first reached `failed`
+  // — work an orphaned agent process landed after the daemon lost track of it
+  // (see Orchestrator.reconcileOnBoot). Newest first, like `git log`. Optional
+  // so surveys recorded before this field existed replay unchanged.
+  postFailCommits?: { sha: string; subject: string; date: string }[];
 }
 
 // Everything the registry/transcript/API need to describe a run, independent
