@@ -119,7 +119,7 @@ export function daemonRestartReadiness(runs: RunMeta[]): RestartReadiness {
   const noun = live.length === 1 ? 'run is' : 'runs are';
   return {
     safe: false,
-    blockedReason: `${live.length} ${noun} still in flight — restarting dispatchd would end ${live.length === 1 ? 'it' : 'them'}. Wait for ${live.length === 1 ? 'it' : 'them'} to finish, or cancel first.`,
+    blockedReason: `${live.length} ${noun} still in flight. Restarting dispatchd would end ${live.length === 1 ? 'it' : 'them'}. Wait for ${live.length === 1 ? 'it' : 'them'} to finish, or cancel first.`,
   };
 }
 

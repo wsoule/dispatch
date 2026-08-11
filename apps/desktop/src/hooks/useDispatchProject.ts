@@ -1089,7 +1089,7 @@ export function useDispatchProject(
             const taskTitle =
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
-            void notify('Approval needed', `${event.toolName} — ${taskTitle}`);
+            void notify('Approval needed', `${event.toolName} · ${taskTitle}`);
           } else if (event.type === 'question.asked') {
             void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
             // Same cache-read reason as approval.requested above: this effect's

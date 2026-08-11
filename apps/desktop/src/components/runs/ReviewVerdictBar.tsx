@@ -147,7 +147,7 @@ export function ReviewVerdictBar({
       setSummary('');
       setSent(
         res.published > 0
-          ? `Review sent — ${res.published} comment${res.published === 1 ? '' : 's'}.`
+          ? `Review sent. ${res.published} comment${res.published === 1 ? '' : 's'}.`
           : 'Review sent.'
       );
     } catch (err) {

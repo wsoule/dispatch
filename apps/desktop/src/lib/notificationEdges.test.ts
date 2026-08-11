@@ -148,7 +148,7 @@ describe('diffQueueNotifications', () => {
     expect(notifications).toHaveLength(1);
     const [note] = notifications;
     expect(note.title).toBe('Merge failed');
-    expect(note.body).toBe(`Add feature — ${'x'.repeat(80)}`);
+    expect(note.body).toBe(`Add feature · ${'x'.repeat(80)}`);
     expect(note.target).toEqual({ kind: 'queue' });
   });
 
@@ -165,7 +165,7 @@ describe('diffQueueNotifications', () => {
     expect(notifications).toEqual([
       {
         title: 'Merge blocked. Action needed.',
-        body: 'Add feature — main checkout has uncommitted changes: stray.zip',
+        body: 'Add feature · main checkout has uncommitted changes: stray.zip',
         target: { kind: 'queue' },
       },
     ]);
@@ -189,7 +189,7 @@ describe('diffQueueNotifications', () => {
     expect(notifications).toEqual([
       {
         title: 'Merge failed',
-        body: 'Add feature — ',
+        body: 'Add feature · ',
         target: { kind: 'queue' },
       },
     ]);

@@ -54,6 +54,10 @@ export function useGlobalKeyboard({
 }: UseGlobalKeyboardOptions): void {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      // A Radix dismissable layer (Select/DropdownMenu popper) already preventDefaults Escape
+      // when it closes itself — without this guard the window-level listener below still saw
+      // the same keystroke and dispatched a second, unwanted "back" navigation on top of it.
+      if (event.defaultPrevented) return;
       const command = resolveGlobalKeyCommand(
         { key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
         { isTyping: isTypingTarget(event.target), modalOpen: isAnyModalOpen() }

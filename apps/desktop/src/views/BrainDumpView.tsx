@@ -253,7 +253,7 @@ export function BrainDumpView({
           <div className="mt-2.5 flex items-center gap-2.5">
             <span className="dense-meta flex-1">
               {pendingLines > 0
-                ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} — each becomes one item`
+                ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} , one item each`
                 : 'One per line. Walls of text get split.'}
             </span>
             {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
