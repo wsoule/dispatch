@@ -86,7 +86,13 @@ test('expanded rail shows every row with its shortcut number', () => {
 
 test('collapsed rail hides labels but keeps every accessible name', () => {
   mount(false);
-  for (const label of [...RAIL_LABELS, 'All Agents', 'Sessions', 'Settings']) {
+  for (const label of [
+    ...RAIL_LABELS,
+    'All Agents',
+    'Sessions',
+    'Warden',
+    'Settings',
+  ]) {
     expect(
       screen.getByRole('button', { name: label }).getAttribute('aria-label')
     ).toBe(label);
