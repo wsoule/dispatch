@@ -57,6 +57,7 @@ import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { DraftView } from './views/DraftView';
+import { GalleryView } from './views/GalleryView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
 import { InboxView } from './views/InboxView';
@@ -663,6 +664,15 @@ function App() {
         run: () => setGlobalView('settings'),
       }
     );
+    // Dev-only primitive review surface — never registered in a production build.
+    if (import.meta.env.DEV) {
+      entries.push({
+        id: 'go-gallery',
+        label: 'Go to Gallery',
+        kind: 'go to',
+        run: () => setGlobalView('gallery'),
+      });
+    }
     return entries;
   }, [
     activeProject,
@@ -841,6 +851,9 @@ function App() {
                   )}
                   {navState.globalView === 'settings' && (
                     <SettingsView activeProject={activeProject} data={data} />
+                  )}
+                  {import.meta.env.DEV && navState.globalView === 'gallery' && (
+                    <GalleryView />
                   )}
                 </>
               ) : activeProject === null ? (
