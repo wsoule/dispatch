@@ -1,7 +1,7 @@
 ---
 id: t-783b53
 title: Land an epic branch on main as one PR or one merge
-status: in-review
+status: done
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T23:04:49.680Z
+updated: 2026-08-11T23:09:41.234Z
 external: null
 writes: []
 ---
@@ -67,3 +67,5 @@ hint: You can instead skip this commit: run "git rebase --skip".
 hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
 hint: Disable this message with "git config set advice.mergeConflict false"
 Could not apply d6235cc5... # chore(board): sync 1 task — none
+- 2026-08-11T23:09:23.424Z run r-3390cd discarded — human:wsoule679
+- 2026-08-11T23:09:41.234Z Run r-3390cd's work landed on main via merge 3b023a74 (land-epic action ported to the unified board's lane headers after EpicCardTile's deletion; rebased onto current main and verified: tsc clean ×2, lint 0 errors, epic-branch tests 13/13, new epic-land.test.ts). Discard was record cleanup only — its recorded base branch had been reconciled away, the same stacked-run gap as r-96f433 and r-3d4e52. Both e-b7ca6f children are now done. — none
