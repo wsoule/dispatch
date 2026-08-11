@@ -1,7 +1,7 @@
 ---
 id: t-e1548f
 title: Epic branch lifecycle in the orchestrator
-status: in-review
+status: done
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T21:06:03.757Z
+updated: 2026-08-11T21:16:35.669Z
 external: null
 writes:
   - packages/server/src/orchestrator/epicBranch.ts
@@ -36,3 +36,4 @@ Create and maintain `epic/<id>` branches: cut from the default branch on the epi
 - 2026-08-11T18:01:55.186Z Done and committed (550d2988, plus bf810d2d for pre-existing format drift in an unrelated plan doc). Epic branches are created lazily at first child dispatch, used as baseBranch, and review-merge lands runs on them via a checkout-free merge-tree/commit-tree/update-ref squash (falling back to the checkout path when the user has the epic branch checked out). Drift vs main is surfaced as behindBase on a new 'epic' branches-surface status with a chip in the Git view. Restack decision documented in docs/design/epic-branches.md: epic branches only move forward, so the queue's rebase-onto-base step covers sibling landings; stacked siblings restack onto the epic branch via existing machinery; cross-epic blockers flag the dependent baseDiscarded-style (mutation-tested). Verification: new 13-test suite green; merge-queue (70), orchestrator (95), worktree/stacked/pr/external-merge (158), epic+review-api (48), desktop helpers (19) all green; tsc clean in server/client/desktop; format+lint clean; 3 guard mutations each killed by exactly 1 test. — none
 - 2026-08-11T18:02:16.338Z [run r-c53f56] finished: finished — 12 files, $29.17 — agent:wsoule679/claude
 - 2026-08-11T21:06:03.757Z merge queue: run r-c53f56 rebased with plain git rather than jj — a run stacked above this branch is still live, and a jj rewrite would detach its worktree — none
+- 2026-08-11T21:16:35.669Z run r-c53f56 merged into main — human:wsoule679
