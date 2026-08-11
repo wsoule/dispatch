@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/kucherenko/jscpd/master/packages/jscpd/schema.json",
+  "ignore": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/*.d.ts",
+    "**/storefront-src/**",
+    "**/src-tauri/target/**"
+  ],
+  "reporters": ["consoleFull"]
+}

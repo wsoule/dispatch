@@ -6,6 +6,7 @@
     "promise",
     "node",
     "react-perf",
+    "jsx-a11y",
     "typescript"
   ],
   "categories": {},
