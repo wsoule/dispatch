@@ -292,7 +292,17 @@ export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
 // - 'orphan':     no run in the registry claims this ref at all (a
 //                 hand-deleted transcript, or a crash between creating the
 //                 ref and writing the transcript header).
-export type BranchEntryStatus = 'active' | 'reviewable' | 'leftover' | 'orphan';
+// - 'epic':       an epic's integration branch (`epic/<id>`) — owned by the
+//                 epic, not by any single run, so none of the run-shaped
+//                 statuses above apply. Deliberately distinct from 'orphan':
+//                 an epic branch with unmerged child work must never be swept
+//                 up by orphan cleanup.
+export type BranchEntryStatus =
+  | 'active'
+  | 'reviewable'
+  | 'leftover'
+  | 'orphan'
+  | 'epic';
 
 // One row of the branches surface: a join of what git knows (the ref exists,
 // here is its worktree and how far ahead it is) with what the run registry
@@ -333,6 +343,9 @@ export interface BranchEntry {
   // Commits the base has gained since this branch diverged — how far unmerged
   // work has fallen behind. Only measured while the branch is unmerged; once
   // the work landed the count stops meaning anything, so merged rows omit it.
+  // For 'epic' entries the same count is the signal the integration branch
+  // has fallen behind the default base and a human should update it —
+  // dispatch deliberately never rebases or merges an epic branch on its own.
   behindBase?: number;
   mergedIntoBase: boolean;
 

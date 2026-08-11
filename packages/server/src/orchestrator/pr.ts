@@ -17,6 +17,7 @@ import type {
   ReviewReply,
 } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
+import { isEpicBranch } from './epicBranch.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
 import {
@@ -522,6 +523,22 @@ export class PrManager {
       throw new OrchestratorConflictError(
         `git push failed: ${commandErrorText(push)}`
       );
+    }
+    // A PR against an epic integration branch needs that branch on origin too
+    // — it exists only locally until something pushes it, and `gh pr create
+    // --base` refuses a base ref origin has never seen.
+    if (isEpicBranch(meta.baseBranch)) {
+      const pushBase = await this.run(meta.worktreePath, [
+        'git',
+        'push',
+        'origin',
+        meta.baseBranch,
+      ]);
+      if (!pushBase.ok) {
+        throw new OrchestratorConflictError(
+          `git push of epic base ${meta.baseBranch} failed: ${commandErrorText(pushBase)}`
+        );
+      }
     }
     const body = `Automated PR opened by dispatch for task ${meta.taskId} (run ${meta.id}).`;
     const create = await this.run(meta.worktreePath, [
