@@ -582,6 +582,10 @@ export type ServerEvent =
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' }
+  // A warden conversation advanced (turn settled, action queued or decided) —
+  // same "go refetch, no payload beyond the id" contract as `plan.changed`.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'warden.changed'; conversationId: string }
   // A run agent's question was asked, answered, or withdrawn. Mirrors
   // packages/server/src/events.ts.
   | { type: 'question.asked'; runId: string; questionId: string }
@@ -776,6 +780,73 @@ export interface DraftRecord {
   questions: PlannerQuestion[];
   sessionId?: string;
   error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Mirrors WardenState in packages/server/src/orchestrator/warden.ts:
+// `running` means a turn is in flight; `ready` means the last turn settled and
+// the conversation is idle (possibly with actions awaiting confirmation);
+// `failed` means the last turn errored.
+export type WardenState = 'running' | 'ready' | 'failed';
+
+// Mirrors WardenMessage in packages/server/src/orchestrator/warden.ts — one
+// transcript entry. `user`/`assistant` are the conversation proper; `tool`
+// records a read-only tool call the assistant made mid-turn; `action` records
+// a mutating tool call's life: queued at `pending`, then
+// `applied`/`denied`/`failed` once a human decides.
+export interface WardenMessage {
+  role: 'user' | 'assistant' | 'tool' | 'action';
+  text: string;
+  at: string;
+  /** `tool` and `action` entries: which warden tool the entry is about. */
+  tool?: string;
+  /** `action` entries: the WardenAction this entry reports on. */
+  actionId?: string;
+  /**
+   * `action` entries only. `failed` means the human approved but the effect
+   * itself threw — the action stays pending so it can be retried.
+   */
+  outcome?: 'pending' | 'applied' | 'denied' | 'failed';
+}
+
+// Mirrors WardenAction in packages/server/src/orchestrator/wardenTools.ts —
+// one queued mutating tool call awaiting (or past) its human decision.
+export interface WardenAction {
+  id: string;
+  /** The mutating tool this action would invoke. */
+  tool: string;
+  /** The validated input, exactly as the server's `apply` will receive it. */
+  input: unknown;
+  /** One sentence, safe to render verbatim in the chat UI. */
+  summary: string;
+  createdAt: string;
+  status: 'pending' | 'applied' | 'denied';
+}
+
+// Mirrors WardenRecord in packages/server/src/orchestrator/warden.ts — the
+// body of `POST /api/warden` and `GET /api/warden/:id`.
+export interface WardenRecord {
+  id: string;
+  /** The opening prompt, kept alongside `messages[0]` for callers that only want the ask. */
+  prompt: string;
+  /** Which registered backend this conversation talks to; follow-ups re-resolve it. */
+  backendName: string;
+  state: WardenState;
+  messages: WardenMessage[];
+  /**
+   * Mutating tool calls this conversation has queued that nobody has decided
+   * on yet — the confirmation queue the chat UI renders.
+   */
+  pendingActions: WardenAction[];
+  /**
+   * Decisions the human has made since the last turn, not yet shown to the
+   * model; drained into the next `sendWardenMessage` turn server-side.
+   */
+  undeliveredDecisions: string[];
+  /** The backend's resume handle from the most recent turn. */
+  sessionId?: string;
+  error?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1701,6 +1772,32 @@ export interface ApiClient {
   // `plan.changed` for the assistant's reply + refined proposal to land.
   sendPlanMessage(planId: string, text: string): Promise<PlanRecord>;
   confirmPlan(planId: string, proposal: PlanProposal): Promise<ConfirmResult>;
+  // The warden chat — the project-assistant conversation with human-confirmed
+  // mutations. `startWarden` opens a conversation and resolves (202) with the
+  // full record already at `running`; the assistant's reply lands via
+  // `warden.changed`. `backend` follows createRun's `executor` contract:
+  // optional, defaults to 'claude' server-side, 400s on an unknown name.
+  startWarden(
+    prompt: string,
+    opts?: { backend?: string }
+  ): Promise<WardenRecord>;
+  getWarden(id: string): Promise<WardenRecord>;
+  // Sends a follow-up on an existing conversation. Resolves (202) with the
+  // record already back in `running` — watch `warden.changed` for the reply.
+  // 404s an unknown conversation and 409s one mid-turn.
+  sendWardenMessage(
+    conversationId: string,
+    text: string
+  ): Promise<WardenRecord>;
+  // Decides one queued mutating action. Approving runs the real effect before
+  // resolving, so the returned record already reflects the outcome; denying
+  // never runs it at all. 404s an unknown conversation or an action that
+  // isn't pending on it.
+  confirmWardenAction(
+    conversationId: string,
+    actionId: string,
+    approve: boolean
+  ): Promise<WardenRecord>;
   // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
   // server-side to the project's `orchestrator.epicConcurrency` config.
   startEpic(
@@ -2181,6 +2278,29 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ proposal }),
       }),
+    startWarden: (prompt, opts = {}) =>
+      request(target, '/api/warden', {
+        method: 'POST',
+        ...jsonBody({
+          prompt,
+          ...(opts.backend !== undefined ? { backend: opts.backend } : {}),
+        }),
+      }),
+    getWarden: (id) => request(target, `/api/warden/${id}`),
+    sendWardenMessage: (conversationId, text) =>
+      request(target, `/api/warden/${conversationId}/message`, {
+        method: 'POST',
+        ...jsonBody({ text }),
+      }),
+    confirmWardenAction: (conversationId, actionId, approve) =>
+      request(
+        target,
+        `/api/warden/${conversationId}/actions/${actionId}/confirm`,
+        {
+          method: 'POST',
+          ...jsonBody({ approve }),
+        }
+      ),
     startEpic: (epicId, opts = {}) =>
       request(target, `/api/epics/${epicId}/dispatch`, {
         method: 'POST',
