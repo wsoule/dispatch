@@ -1,6 +1,11 @@
+import { CopyIcon, RotateCcwIcon } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
 import { LoadingState } from '@/ui/ai/loading-state';
+import {
+  StreamingText,
+  type StreamingTextSource,
+} from '@/ui/ai/streaming-text';
 import { Thinking, type ThinkingStep } from '@/ui/ai/thinking';
 import { Button } from '@/ui/button';
 
@@ -55,6 +60,43 @@ function ThinkingExpandedMixedDemo() {
       onToggle={() => setCollapsed((current) => !current)}
       elapsedLabel="0:12"
     />
+  );
+}
+
+const STREAMING_ANSWER =
+  'Across the last 30 runs, apps/desktop/src/server tests failed intermittently in 4 of them — all timing-sensitive assertions around WebSocket reconnects. packages/core stayed green the whole window.';
+
+const STREAMING_SOURCES: StreamingTextSource[] = [
+  { id: 'run-a91f', label: 'Run a91f — apps/desktop', href: '#' },
+  { id: 'run-c204', label: 'Run c204 — apps/desktop', href: '#' },
+  { id: 'flaky-doc', label: 'flaky-timing-tests.md' },
+];
+
+const STREAMING_FOLLOW_UPS = [
+  'Show me the four flaky runs on apps/desktop',
+  'Which assertion keeps timing out',
+];
+
+// Actions row: copy the answer or re-run the streamed reply. Icon-only buttons matching
+// the showcase's compact toolbar, styled with real Dispatch tokens.
+function StreamingActions() {
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Copy answer"
+        className="text-muted-foreground hover:bg-surface-hover-strong hover:text-foreground flex size-6 items-center justify-center rounded-[6px] transition-colors duration-100"
+      >
+        <CopyIcon aria-hidden className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        aria-label="Regenerate answer"
+        className="text-muted-foreground hover:bg-surface-hover-strong hover:text-foreground flex size-6 items-center justify-center rounded-[6px] transition-colors duration-100"
+      >
+        <RotateCcwIcon aria-hidden className="size-3.5" />
+      </button>
+    </>
   );
 }
 
@@ -118,5 +160,26 @@ export const galleryStories: GalleryStory[] = [
     title: 'Thinking — expanded, mixed state',
     note: 'Reasoning done, search active (shimmering), coding still pending — connecting hairline down the left rail.',
     render: () => <ThinkingExpandedMixedDemo />,
+  },
+  {
+    id: 'streaming-text-mid-stream',
+    title: 'Streaming text — mid-stream',
+    note: 'Word-boundary-aware typing reveal with a blinking caret; sources and follow-ups stay hidden until the answer finishes.',
+    render: () => <StreamingText text={STREAMING_ANSWER} streaming />,
+  },
+  {
+    id: 'streaming-text-complete',
+    title: 'Streaming text — complete, with sources and follow-ups',
+    note: 'Reveal finished: caret gone, copy/regenerate actions, numbered source chips, and follow-up suggestions all visible.',
+    render: () => (
+      <StreamingText
+        text={STREAMING_ANSWER}
+        streaming={false}
+        sources={STREAMING_SOURCES}
+        followUps={STREAMING_FOLLOW_UPS}
+        onFollowUp={() => {}}
+        actions={<StreamingActions />}
+      />
+    ),
   },
 ];
