@@ -36,8 +36,11 @@ export interface ImpactSubjectRef {
   id: string;
 }
 
-/** Global, not-project-scoped views living below the primary nav in the sidebar. */
-export type GlobalView = 'all-agents' | 'sessions' | 'settings';
+/** Global, not-project-scoped views living below the primary nav in the sidebar.
+ * `warden` is the chat assistant for the active project — it lives in this section
+ * (not `ProjectView`) so it stays reachable from any view, but its conversation is
+ * still scoped to whichever project is active. */
+export type GlobalView = 'all-agents' | 'sessions' | 'warden' | 'settings';
 
 export interface NavState {
   /** Which side of the sidebar's split is active — a project's own work, or one of the

@@ -51,6 +51,15 @@ describe('navReducer', () => {
     expect(next.globalView).toBe('all-agents');
   });
 
+  test('setGlobalView routes to the warden chat like any other global view', () => {
+    const next = navReducer(initialNavState, {
+      type: 'setGlobalView',
+      view: 'warden',
+    });
+    expect(next.section).toBe('global');
+    expect(next.globalView).toBe('warden');
+  });
+
   test('setGlobalView clears an open peek — it should never render over Settings/Sessions', () => {
     const state: NavState = { ...initialNavState, peekTaskId: 'task-1' };
     const next = navReducer(state, { type: 'setGlobalView', view: 'settings' });
