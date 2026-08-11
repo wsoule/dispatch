@@ -117,7 +117,16 @@ export function LandingTableView({
         )}
       </div>
 
-      {snapshot === null ? (
+      {snapshot === null && data.landingIsError ? (
+        <EmptyState
+          message="Couldn't load the PR table."
+          action={
+            <Button size="sm" variant="outline" onClick={data.landingRefetch}>
+              Retry
+            </Button>
+          }
+        />
+      ) : snapshot === null ? (
         <p className="text-muted-foreground text-[12.5px]">
           Loading the PR table…
         </p>
@@ -211,6 +220,7 @@ export function LandingTableView({
                       onSelectTarget={onSelectTarget}
                       client={client}
                       port={data.port}
+                      onRetryQueue={data.handleRecheckMergeQueue}
                     />
                   )
                 )}

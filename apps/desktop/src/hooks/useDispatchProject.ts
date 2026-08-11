@@ -221,6 +221,10 @@ export interface DispatchProjectData {
   // `landingIsError` is the separate "stale" signal; see the query's comment.
   landing: LandingSnapshot | null;
   landingIsError: boolean;
+  // Manual retry for the first load's error state — see `landingIsError`'s
+  // comment; a background refetch already retries on its own, this is for
+  // when there is no snapshot yet to fall back on.
+  landingRefetch: () => void;
 
   runDetail: RunDetail | undefined;
   diff: import('@dispatch/client').DiffResult | undefined;
@@ -1006,7 +1010,11 @@ export function useDispatchProject(
 
   // `getLanding` never 409s, so this is gated on `client` only (not
   // `health.pr`); `landingIsError` flags a failed refetch's stale `data`.
-  const { data: landing, isError: landingIsError } = useQuery({
+  const {
+    data: landing,
+    isError: landingIsError,
+    refetch: landingRefetch,
+  } = useQuery({
     queryKey: landingQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
@@ -1173,6 +1181,10 @@ export function useDispatchProject(
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
+            });
+            // Queue progress moves the landing table's in-queue rows too.
+            void queryClient.invalidateQueries({
+              queryKey: landingQueryKey,
             });
           } else if (event.type === 'landing.changed') {
             void queryClient.invalidateQueries({
@@ -2333,6 +2345,7 @@ export function useDispatchProject(
     repoPrs: repoPrs ?? null,
     landing: landing ?? null,
     landingIsError,
+    landingRefetch: () => void landingRefetch(),
 
     runDetail,
     diff,
