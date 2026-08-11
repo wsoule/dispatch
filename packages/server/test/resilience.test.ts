@@ -2,7 +2,7 @@ import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
@@ -191,6 +191,51 @@ describe('boot with a malformed config.yml', () => {
     );
     expect(tasks.map((t: { meta: { title: string } }) => t.meta.title)).toEqual(
       ['Survivor']
+    );
+  });
+
+  // Task 7 review, IMPORTANT 7: the prWorktreeDir read on the boot path
+  // (index.ts, alongside carto's) must be guarded the same way — a config
+  // typo here must not take the daemon down either.
+  it('falls back to the default PR worktree location, rather than dying on the prWorktreeDir read', async () => {
+    TaskStore.init(root);
+    writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');
+
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+
+    expect(handle.prWorktrees.worktreePathFor(1)).toBe(
+      join(dirname(root), `${basename(root)}-worktrees`, 'pr-1')
+    );
+  });
+});
+
+// Task 7 review, IMPORTANT 8's other half: PrWorktreeManager's own
+// constructor refuses a prWorktreeDir that resolves inside rootDir — but
+// that refusal (buildPrWorktreeManager in index.ts) must degrade to the
+// default location rather than crash boot, the same as any other bad
+// optional config value.
+describe('boot with a prWorktreeDir misconfigured to resolve inside rootDir', () => {
+  it('falls back to the default location instead of dying at boot', async () => {
+    TaskStore.init(root);
+    writeFileSync(
+      join(root, '.dispatch/config.yml'),
+      `prWorktreeDir: ${join(root, 'nested-worktrees')}\n`
+    );
+
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+
+    expect(handle.prWorktrees.worktreePathFor(1)).toBe(
+      join(dirname(root), `${basename(root)}-worktrees`, 'pr-1')
     );
   });
 });
