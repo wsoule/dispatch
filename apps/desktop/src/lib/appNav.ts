@@ -15,6 +15,10 @@ export type ProjectView =
   | 'runs'
   | 'branches'
   | 'review'
+  /** The unified PR table — every run/PR/queue-local row in flight, plus
+   * what recently landed. A row's title routes into `review` via `openRun`/
+   * `openPr`, never renders itself. */
+  | 'landing'
   | 'brain-dump'
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */
@@ -58,6 +62,15 @@ export interface NavState {
   /** Which view to snap `projectView` back to once the AI composer dialog opens — a board
    * column's "+" returns to the board, rather than one fixed view. */
   newTaskReturnView: ProjectView;
+  /**
+   * A PR number for `review` to open itself to, set by `openPr` and consumed
+   * (cleared) the instant `ReviewView` reads it. Not a real destination like
+   * `activeRunId`/`impactSubject` — `ReviewView` keeps its own PR selection as
+   * local state (it has no id to reopen a page at, unlike a run), so this is
+   * only the one-shot hand-off that seeds it from Landing's row click. Never
+   * recorded in `history`, same as `peekTaskId`.
+   */
+  pendingPrNumber: number | null;
   paletteOpen: boolean;
   /**
    * Where you have been, newest last, and how far back you have stepped.
@@ -92,6 +105,7 @@ export const initialNavState: NavState = {
   activeDraftId: null,
   impactSubject: null,
   newTaskReturnView: 'board',
+  pendingPrNumber: null,
   paletteOpen: false,
   history: [
     {
@@ -141,6 +155,14 @@ export type NavAction =
   /** Routes to `ImpactView` with a subject preselected — the "open in Impact"
    * action on the Review case panel, task detail, and Git file pane. */
   | { type: 'openImpact'; subject: ImpactSubjectRef }
+  /** Routes to `review` with `number` handed off as `pendingPrNumber` for
+   * `ReviewView` to select on read — Landing's row click for a PR row with no
+   * run behind it. */
+  | { type: 'openPr'; number: number }
+  /** `ReviewView`'s acknowledgement that it has read `pendingPrNumber` into
+   * its own selection — clears the hand-off so it cannot be replayed by a
+   * later, unrelated render. */
+  | { type: 'clearPendingPr' }
   /** Routes to `new-task`, remembering the view to come back to — App.tsx reads reaching this
    * state as "open the AI composer dialog". */
   | { type: 'openNewTask' }
@@ -169,6 +191,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         activeRunId: null,
         activeDraftId: null,
         impactSubject: null,
+        pendingPrNumber: null,
       };
     case 'setProjectView': {
       const activeRunId =
@@ -195,6 +218,9 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         activeRunId,
         activeDraftId,
         impactSubject,
+        // A plain view switch is not `openPr`'s hand-off — drop any pending
+        // PR selection rather than replaying it on an unrelated navigation.
+        pendingPrNumber: null,
       };
       return pushHistory(next, {
         section: 'project',
@@ -223,8 +249,10 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'openRun':
       // Opening a different run is a destination in its own right, so back
       // returns to the one you were looking at rather than skipping the view.
+      // Also drops any pending PR hand-off — a run target replaces a PR
+      // target, never coexists with one.
       return pushHistory(
-        { ...state, activeRunId: action.runId },
+        { ...state, activeRunId: action.runId, pendingPrNumber: null },
         {
           section: state.section,
           projectView: state.projectView,
@@ -275,6 +303,19 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           impactSubject: action.subject,
         }
       );
+    case 'openPr':
+      // Not pushed to history: `ReviewView` owns PR selection as local state
+      // (there is no page to reopen a PR target at the way `openRun` reopens
+      // a run), so this only hands the number off for it to read once.
+      return {
+        ...state,
+        section: 'project',
+        projectView: 'review',
+        activeRunId: null,
+        pendingPrNumber: action.number,
+      };
+    case 'clearPendingPr':
+      return { ...state, pendingPrNumber: null };
     case 'back':
     case 'forward': {
       const delta = action.type === 'back' ? -1 : 1;
@@ -294,6 +335,9 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         // layered on top closes rather than following you to the new screen.
         peekTaskId: null,
         paletteOpen: false,
+        // Same reasoning as `peekTaskId`: a one-shot hand-off, not a
+        // destination `history` ever recorded.
+        pendingPrNumber: null,
       };
     }
     case 'openNewTask':

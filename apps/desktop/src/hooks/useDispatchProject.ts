@@ -2,6 +2,7 @@ import type {
   ApiClient,
   DraftRecord,
   EpicProgress,
+  LandingSnapshot,
   LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
@@ -85,6 +86,17 @@ export function repoPrsKey(
   port: number | undefined
 ): [string, number | undefined] {
   return ['dispatch-repo-prs', port];
+}
+
+// The unified-PR-table query key (`GET /api/landing`), exported so
+// `LandingTableView` can invalidate it itself after a worktree
+// create/remove — the same immediate-refetch pattern `handleEnqueueMerge`
+// et al. use beside the `landing.changed` broadcast this hook already
+// subscribes to.
+export function landingKey(
+  port: number | undefined
+): [string, number | undefined] {
+  return ['dispatch-landing', port];
 }
 
 function readStoredShowArchived(): boolean {
@@ -208,6 +220,13 @@ export interface DispatchProjectData {
   // covers both "hasn't loaded yet" and "this project has no pr capability"
   // alike; the review queue treats both as "no PRs to show".
   repoPrs: RepoPr[] | null;
+  // Task 9: the unified PR table snapshot (`GET /api/landing`) — `null` until
+  // the query has ever resolved. See the query's own comment for why a failed
+  // background refetch does NOT reset this to `null`: `landingIsError` is the
+  // separate signal `LandingTableView` uses to show a `stale · …` badge over
+  // the still-rendered last-known snapshot instead.
+  landing: LandingSnapshot | null;
+  landingIsError: boolean;
 
   runDetail: RunDetail | undefined;
   diff: import('@dispatch/client').DiffResult | undefined;
@@ -656,6 +675,7 @@ export function useDispatchProject(
     [port]
   );
   const repoPrsQueryKey = useMemo(() => repoPrsKey(port), [port]);
+  const landingQueryKey = useMemo(() => landingKey(port), [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
   const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
@@ -990,6 +1010,25 @@ export function useDispatchProject(
     refetchOnWindowFocus: true,
   });
 
+  // Task 9: the unified PR table — runs, the merge queue and open/merged PRs
+  // already joined server-side. `getLanding` never 409s (a project with no pr
+  // capability still gets its queue-local rows), so this is gated only on the
+  // client, not on `health.pr` the way `repoPrs` above is. A 15s `staleTime`
+  // matches the row-level "5m ago" granularity the table renders; the
+  // `landing.changed` WS branch below is what actually keeps it live, this is
+  // just the floor. On a failed refetch react-query's default keeps the last
+  // successful `data` rather than clearing it — `landingIsError` is what lets
+  // the view show a `stale · …` badge over that instead of a blank table.
+  const { data: landing, isError: landingIsError } = useQuery({
+    queryKey: landingQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.getLanding();
+    },
+    enabled: client !== null,
+    staleTime: 15_000,
+  });
+
   const epics = useMemo(
     () => (tasks ?? []).filter((t) => t.meta.kind === 'epic'),
     [tasks]
@@ -1147,6 +1186,10 @@ export function useDispatchProject(
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
+            });
+          } else if (event.type === 'landing.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: landingQueryKey,
             });
           } else if (event.type === 'finding.changed') {
             void queryClient.invalidateQueries({
@@ -1317,6 +1360,7 @@ export function useDispatchProject(
     runDiffQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
+    landingQueryKey,
     branchesQueryKey,
     questionsQueryKey,
     linearStatusQueryKey,
@@ -2300,6 +2344,8 @@ export function useDispatchProject(
     attentionByTaskId,
     mergeQueue: mergeQueue ?? null,
     repoPrs: repoPrs ?? null,
+    landing: landing ?? null,
+    landingIsError,
 
     runDetail,
     diff,

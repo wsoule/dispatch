@@ -193,6 +193,34 @@ describe('navReducer', () => {
     expect(state.activeRunId).toBe('run-7');
   });
 
+  test('openPr routes to review with the number handed off as pendingPrNumber', () => {
+    const state = navReducer(initialNavState, { type: 'openPr', number: 42 });
+    expect(state.section).toBe('project');
+    expect(state.projectView).toBe('review');
+    expect(state.pendingPrNumber).toBe(42);
+    expect(state.activeRunId).toBeNull();
+  });
+
+  test('clearPendingPr acks the hand-off without touching anything else', () => {
+    let state = navReducer(initialNavState, { type: 'openPr', number: 7 });
+    state = navReducer(state, { type: 'clearPendingPr' });
+    expect(state.pendingPrNumber).toBeNull();
+    expect(state.projectView).toBe('review');
+  });
+
+  test('openRun drops a pending PR hand-off — a run target replaces a PR target', () => {
+    let state = navReducer(initialNavState, { type: 'openPr', number: 7 });
+    state = navReducer(state, { type: 'openRun', runId: 'run-1' });
+    expect(state.pendingPrNumber).toBeNull();
+    expect(state.activeRunId).toBe('run-1');
+  });
+
+  test('setProjectView drops a stale pending PR hand-off from an earlier openPr', () => {
+    let state = navReducer(initialNavState, { type: 'openPr', number: 7 });
+    state = navReducer(state, { type: 'setProjectView', view: 'board' });
+    expect(state.pendingPrNumber).toBeNull();
+  });
+
   test("switching projects mid-run-selection drops the previous project's run id", () => {
     let state = navReducer(initialNavState, {
       type: 'openRun',

@@ -32,9 +32,9 @@ import { readPanelOpen, writePanelOpen } from '../lib/reviewPanels';
 import type { ReviewTarget } from '../lib/reviewTarget';
 import { reviewTargetKey } from '../lib/reviewTarget';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
-import { LandingView } from './LandingView';
 import { isTerminalRunState } from '@/lib/runState';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
 import { MetaText } from '@/ui/chrome';
 import { IconToggle } from '@/ui/chrome/IconToggle';
 import { StateDot } from '@/ui/chrome/StateDot';
@@ -48,6 +48,19 @@ interface ReviewViewProps {
   /** Navigates to `ImpactView` with the open run preselected — the case
    *  panel's "open in Impact" action. */
   onOpenImpact: (subject: ImpactSubjectRef) => void;
+  /**
+   * A PR number handed off by Landing's `openPr` nav action — a landing row
+   * with no run behind it, clicked from outside this view. Read once (see the
+   * effect below) into this view's own `selectedPrNumber` state, since a bare
+   * PR target has no run id for nav state to hold the way `activeRunId` does.
+   */
+  pendingPrNumber?: number | null;
+  /** Acks the hand-off above so nav state clears it — otherwise a later,
+   * unrelated visit to this view would replay the same PR selection. */
+  onPendingPrConsumed?: () => void;
+  /** Routes to the Landing view — the empty state's "Open Landing" action,
+   * replacing the table that used to render inline here. */
+  onOpenLanding: () => void;
 }
 
 // How often the open-PR list is re-fetched while this page is on screen.
@@ -79,6 +92,9 @@ export function ReviewView({
   selectedRunId,
   onSelectRun,
   onOpenImpact,
+  pendingPrNumber = null,
+  onPendingPrConsumed,
+  onOpenLanding,
 }: ReviewViewProps) {
   const queryClient = useQueryClient();
   const queue = useMemo(
@@ -89,6 +105,15 @@ export function ReviewView({
   // A repo PR has no run for nav's `activeRunId` to point at, so its selection
   // lives here — and wins over the run nav holds, being the later choice.
   const [selectedPrNumber, setSelectedPrNumber] = useState<number | null>(null);
+
+  // Reads Landing's row-click hand-off exactly once per number, then acks it
+  // so nav state clears `pendingPrNumber` — a stale value must not reopen
+  // itself if this view remounts (or the same number is clicked again).
+  useEffect(() => {
+    if (pendingPrNumber === null) return;
+    setSelectedPrNumber(pendingPrNumber);
+    onPendingPrConsumed?.();
+  }, [pendingPrNumber, onPendingPrConsumed]);
   const isPrTarget = selectedPrNumber !== null;
   const selectedTarget: ReviewTarget | null =
     selectedPrNumber !== null
@@ -367,6 +392,15 @@ export function ReviewView({
           <span className="text-muted-foreground text-[12px]">
             Local diffs and open pull requests.
           </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={onOpenLanding}
+            className="text-muted-foreground hover:text-foreground ml-auto h-auto px-2 py-1 text-[12px] font-normal"
+          >
+            Open Landing
+          </Button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
           <ReviewQueue
@@ -374,10 +408,6 @@ export function ReviewView({
             selected={selectedTarget}
             onSelect={handleSelectTarget}
           />
-          {/* The merge queue lives here because approving is what puts things
-              in it — as its own destination it split one flow across two
-              screens you had to remember to check. */}
-          <LandingView data={data} onOpenRun={onSelectRun} />
         </div>
       </div>
     );
