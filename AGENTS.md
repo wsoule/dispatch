@@ -120,9 +120,7 @@ are sufficient unless the edit touches executable code or package config.
 - 📄 tsconfig.options.json
 - 📄 tsconfig.oxlint.json
 - 📄 tsconfig.tsbuildinfo
-
-**Stack:** React
-**High impact:** apps/desktop/src/lib/utils.ts (164 dependents), apps/desktop/src/ui/button.tsx (96 dependents), packages/core/src/types.ts (78 dependents), packages/core/src/actor.ts (76 dependents), packages/core/src/describe.ts (76 dependents), packages/core/src/ids.ts (75 dependents), packages/core/src/slug.ts (75 dependents), packages/core/src/taskfile.ts (75 dependents), packages/core/src/store.ts (74 dependents), packages/core/src/linearMap.ts (72 dependents), packages/core/src/configTypes.ts (71 dependents), packages/core/src/team.ts (71 dependents), packages/core/src/conflicts.ts (70 dependents), packages/core/src/evidence.ts (70 dependents), packages/core/src/findings.ts (70 dependents)
+**High impact:** apps/desktop/src/lib/utils.ts (165 dependents), apps/desktop/src/ui/button.tsx (97 dependents), packages/core/src/types.ts (79 dependents), packages/core/src/actor.ts (77 dependents), packages/core/src/describe.ts (77 dependents), packages/core/src/ids.ts (76 dependents), packages/core/src/slug.ts (76 dependents), packages/core/src/taskfile.ts (76 dependents), packages/core/src/store.ts (75 dependents), packages/core/src/linearMap.ts (73 dependents), packages/core/src/configTypes.ts (72 dependents), packages/core/src/team.ts (72 dependents), packages/core/src/conflicts.ts (71 dependents), packages/core/src/evidence.ts (71 dependents), packages/core/src/findings.ts (71 dependents)
 
 ## Context Files (auto)
 
