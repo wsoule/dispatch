@@ -52,6 +52,7 @@ describe('phaseSteps', () => {
     ['queued', '...'],
     ['waiting-blockers', '...'],
     ['blocked-environment', '...'],
+    ['waiting-github', '...'],
     ['rebasing', 'a..'],
     ['verifying', 'pa.'],
     ['merging', 'ppa'],
@@ -94,6 +95,7 @@ describe('retry eligibility', () => {
   test.each([
     'queued',
     'waiting-blockers',
+    'waiting-github',
     'rebasing',
     'verifying',
     'merging',
@@ -108,6 +110,7 @@ describe('retry eligibility', () => {
       'queued',
       'waiting-blockers',
       'blocked-environment',
+      'waiting-github',
       'rebasing',
       'verifying',
       'merging',
@@ -128,6 +131,7 @@ describe('labels', () => {
       'queued',
       'waiting-blockers',
       'blocked-environment',
+      'waiting-github',
       'rebasing',
       'verifying',
       'merging',
@@ -164,6 +168,17 @@ describe('toQueueRows', () => {
 
   test('an entry with no reason reports null rather than an empty string', () => {
     expect(toQueueRows([entry('queued')])[0]?.reason).toBeNull();
+  });
+
+  // Unlike blocked-environment, a GitHub hold clears itself as PrManager's poll
+  // cache updates — there is nothing for the person to go fix by hand, so this
+  // state deliberately does not offer a manual retry.
+  test('a waiting-github entry surfaces its reason without offering a retry', () => {
+    const rows = toQueueRows([entry('waiting-github', { reason: 'draft' })]);
+    expect(rows[0]?.reason).toBe('draft');
+    expect(rows[0]?.retryable).toBe(false);
+    expect(rows[0]?.stalled).toBe(false);
+    expect(rows[0]?.label).toBe('Waiting on GitHub');
   });
 
   test('heldCount counts what one recheck would retry', () => {
@@ -230,6 +245,14 @@ describe('isOverdue', () => {
 
   test('never flags a queued entry waiting its turn', () => {
     const e = entry('queued', { stateSince: '2026-07-25T00:00:00.000Z' });
+    expect(isOverdue(e, now)).toBe(false);
+  });
+
+  // Same reasoning as blocked-environment: waiting on GitHub, not stuck.
+  test('never flags a waiting-github entry, however long it has waited', () => {
+    const e = entry('waiting-github', {
+      stateSince: '2026-07-25T00:00:00.000Z',
+    });
     expect(isOverdue(e, now)).toBe(false);
   });
 });

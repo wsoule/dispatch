@@ -338,4 +338,127 @@ describe('MergeQueue GitHub gate', () => {
     await waitFor(() => queue.snapshot().history.length === 1);
     expect(queue.snapshot().history[0].state).toBe('merged');
   });
+
+  // Regression: cachedPrByUrl only ever holds OPEN PRs, so a PR that merges
+  // or closes on GitHub simply disappears from the cache — prState(url)
+  // reads as undefined forever after, same as "poll hasn't run yet". Without
+  // `cacheReady` distinguishing the two, a held entry would park in
+  // waiting-github permanently the moment its PR left GitHub's open list.
+  it('processes a held entry once its PR drops out of a known-fresh cache (fails loudly, not silently, when unreviewed)', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const prUrl = 'https://github.com/example/repo/pull/11';
+    harness.orchestrator.setRunPrUrl(runId, prUrl);
+    const stub = new StubRunner();
+    let live: RepoPr | undefined = pr({ url: prUrl, isDraft: true });
+    const queue = makeQueue(
+      {
+        ...harness,
+        prState: (url) =>
+          live !== undefined && url === live.url ? live : undefined,
+        // The cache is known fresh throughout this test — the PR "closing"
+        // below is a real drop from a fresh poll, not a poll that hasn't run.
+        cacheReady: () => true,
+      },
+      stub.run
+    );
+
+    queue.enqueue(runId);
+    await waitFor(
+      () =>
+        queue.snapshot().entries.find((e) => e.runId === runId)?.state ===
+        'waiting-github'
+    );
+
+    // The PR closes without merging on GitHub: it drops out of the next
+    // poll's open-PR list (prState now returns undefined), but the run was
+    // never reviewed (reviewedAt stays unset) — nothing in this process ever
+    // saw it merge. The entry must not stay parked: it reaches process()
+    // again and fails loudly on `gh pr merge` (the PR really is closed),
+    // exactly the same failure a human would see running the command by
+    // hand — visible and retryable, not a silent permanent hold.
+    live = undefined;
+    stub.ghMergeResult = {
+      ok: false,
+      stdout: '',
+      stderr: 'GraphQL: Pull request is not open (mergePullRequest)',
+    };
+    queue.recheck();
+
+    await waitFor(() => queue.snapshot().history.length === 1);
+    expect(queue.snapshot().history[0].state).toBe('failed');
+    expect(queue.snapshot().history[0].reason).toContain('gh pr merge failed');
+  });
+
+  // The other half of the same fix: before the FIRST successful poll,
+  // prState(url) is ALSO undefined — but that must still hold, since it's
+  // genuinely unknown rather than known-gone. cacheReady staying false is
+  // what keeps this case distinct from the one above.
+  it('keeps a held entry parked while the PR cache has never been filled', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const prUrl = 'https://github.com/example/repo/pull/12';
+    harness.orchestrator.setRunPrUrl(runId, prUrl);
+    const stub = new StubRunner();
+    // No PR ever cached, and cacheReady always false — the "poll hasn't run
+    // yet" case for the entire test, not just at enqueue time.
+    const queue = makeQueue(
+      { ...harness, prState: () => undefined, cacheReady: () => false },
+      stub.run
+    );
+
+    queue.enqueue(runId);
+    await waitFor(
+      () =>
+        queue.snapshot().entries.find((e) => e.runId === runId)?.state ===
+        'waiting-github'
+    );
+    expect(
+      queue.snapshot().entries.find((e) => e.runId === runId)?.reason
+    ).toBe('PR state unknown (poll pending)');
+
+    queue.recheck();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(queue.snapshot().entries.find((e) => e.runId === runId)?.state).toBe(
+      'waiting-github'
+    );
+    expect(queue.snapshot().history).toHaveLength(0);
+  });
+
+  // Fix part (a): a run reviewed out-of-band (PrManager's own poller saw the
+  // PR merged and called markRunMergedViaPr, entirely outside this queue)
+  // must release a waiting-github hold — nextEligible() has to notice
+  // `reviewedAt` is now set and let the entry through to process()'s
+  // existing reviewedAt cleanup, rather than keep re-deriving a hold off a
+  // PR that no longer needs one.
+  it('releases a waiting-github hold once the run is reviewed externally', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness);
+    const prUrl = 'https://github.com/example/repo/pull/13';
+    harness.orchestrator.setRunPrUrl(runId, prUrl);
+    const stub = new StubRunner();
+    const redPr = pr({ url: prUrl, isDraft: true });
+    const queue = makeQueue(
+      { ...harness, prState: (url) => (url === redPr.url ? redPr : undefined) },
+      stub.run
+    );
+
+    queue.enqueue(runId);
+    await waitFor(
+      () =>
+        queue.snapshot().entries.find((e) => e.runId === runId)?.state ===
+        'waiting-github'
+    );
+
+    // Simulate PrManager's own poller having seen this PR merged, entirely
+    // outside the queue.
+    harness.orchestrator.markRunMergedViaPr(runId);
+    queue.recheck();
+
+    await waitFor(() => queue.snapshot().history.length === 1);
+    expect(queue.snapshot().history[0].state).toBe('failed');
+    expect(queue.snapshot().history[0].reason).toBe(
+      'run was already reviewed outside the merge queue'
+    );
+  });
 });
