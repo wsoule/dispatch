@@ -243,6 +243,13 @@ export class WorktreeManager {
     return Number.isNaN(parsed) ? 0 : parsed;
   }
 
+  // How many commits `base` has that `branch` does not — how far the base has
+  // moved on since this branch diverged. The mirror of aheadCount, so it
+  // inherits the same tolerance: 0 when either ref is missing.
+  behindCount(branch: string, base: string): number {
+    return this.aheadCount(base, branch);
+  }
+
   // True when every commit on `branch` is already reachable from `base` —
   // proof that deleting the ref destroys nothing. `merge-base --is-ancestor`
   // signals the answer through its exit code (0 = ancestor) and prints

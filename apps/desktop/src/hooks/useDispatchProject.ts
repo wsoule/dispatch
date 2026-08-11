@@ -1551,13 +1551,17 @@ export function useDispatchProject(
     [client, queryClient, notesQueryKey]
   );
 
-  // Manual refetch for the Branches view. This surface has no polling (each row
-  // costs several git shell-outs), and git state can change entirely outside the
-  // app — the user's own terminal — so an explicit refresh is the only way to
-  // pick that up.
+  // Manual refetch for the Branches and Landed views. This surface has no
+  // polling (each row costs several git shell-outs), and git state can change
+  // entirely outside the app — the user's own terminal — so an explicit
+  // refresh is the only way to pick that up. Runs are invalidated too: both
+  // views join branch refs with run data (Landed's merged rows are run rows).
   const handleRefreshBranches = useCallback(async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: branchesQueryKey });
-  }, [queryClient, branchesQueryKey]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: branchesQueryKey }),
+      queryClient.invalidateQueries({ queryKey: runsQueryKey }),
+    ]);
+  }, [queryClient, branchesQueryKey, runsQueryKey]);
 
   // Reclaims a branch's worktree directory, keeping the branch ref so the work
   // stays recoverable. Errors are deliberately allowed to propagate: the server

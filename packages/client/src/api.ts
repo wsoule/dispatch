@@ -196,6 +196,10 @@ export interface BranchEntry {
   lastCommitAt?: string;
   /** Commits this branch has that its base does not — what deletion destroys. */
   ahead: number;
+  /** Commits the base gained since this branch diverged — how far unmerged
+   * work has fallen behind. Absent on merged branches, where the count no
+   * longer means anything. */
+  behindBase?: number;
   mergedIntoBase: boolean;
   runId?: string;
   taskId?: string;

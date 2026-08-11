@@ -15,6 +15,9 @@ export type ProjectView =
   /** retired — normalized to 'inbox' */
   | 'runs'
   | 'branches'
+  /** Every run branch bucketed by whether its work landed on the base branch
+   * (and reached origin) — the "what landed and what is still out" screen. */
+  | 'landed'
   /** retired — normalized to 'inbox' */
   | 'review'
   /** Slim list of everything waiting on a human — the surface that replaced
