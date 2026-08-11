@@ -15,6 +15,9 @@ export type ProjectView =
   | 'runs'
   | 'branches'
   | 'review'
+  /** Slim list of everything waiting on a human — a subset of what Review
+   * shows, headed toward replacing it (see Task 6). */
+  | 'inbox'
   | 'brain-dump'
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */

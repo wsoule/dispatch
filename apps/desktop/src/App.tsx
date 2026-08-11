@@ -35,6 +35,7 @@ import { initialNavState, navReducer } from './lib/appNav';
 import { deriveFeedState } from './lib/feedState';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
+import { buildInbox } from './lib/inboxQueue';
 import { isLinearConfigured } from './lib/linearSettings';
 import { basename } from './lib/projectName';
 import { isTerminalRunState } from './lib/runState';
@@ -54,6 +55,7 @@ import { BranchesView } from './views/BranchesView';
 import { DraftView } from './views/DraftView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
+import { InboxView } from './views/InboxView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { ReviewView } from './views/ReviewView';
@@ -378,6 +380,13 @@ function App() {
   const liveRuns = useMemo(
     () => data.runs.filter((run) => !isTerminalRunState(run.state)),
     [data.runs]
+  );
+
+  // Everything the Inbox view shows — the Review queue plus any run stalled
+  // on an approval or a question. See `buildInbox`.
+  const inboxData = useMemo(
+    () => buildInbox(data.runs, data.repoPrs ?? []),
+    [data.runs, data.repoPrs]
   );
 
   useGlobalKeyboard({
@@ -710,6 +719,7 @@ function App() {
               runs: liveRuns.length,
               review: data.runs.filter((r) => deriveFeedState(r) === 'review')
                 .length,
+              inbox: inboxData.review.length + inboxData.waiting.length,
             }}
             unreadCount={unreadCount(data.notificationInbox)}
             onToggleInbox={toggleInbox}
@@ -832,6 +842,17 @@ function App() {
                       onOpenImpact={(subject) =>
                         dispatchNav({ type: 'openImpact', subject })
                       }
+                    />
+                  )}
+                  {navState.projectView === 'inbox' && (
+                    <InboxView
+                      data={inboxData}
+                      portLoading={data.portLoading}
+                      portError={data.portError}
+                      portErrorDetail={data.portErrorDetail}
+                      client={data.client}
+                      onRetry={data.retryEnsureDispatchd}
+                      onOpenTask={openTaskView}
                     />
                   )}
                   {navState.projectView === 'impact' && (
