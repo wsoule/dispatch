@@ -46,6 +46,7 @@ const NO_CHECKS: PrCheckSummary = {
   failed: 0,
   pending: 0,
   total: 0,
+  runs: [],
 };
 
 // The status dot's fill, keyed off the gate rather than the row's group —
