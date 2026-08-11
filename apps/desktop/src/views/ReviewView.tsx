@@ -33,7 +33,7 @@ import type { ReviewTarget } from '../lib/reviewTarget';
 import { reviewTargetKey } from '../lib/reviewTarget';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
 import { LandingView } from './LandingView';
-import { isTerminalRunState } from '@/lib/runState';
+import { isTerminalRunState, liveReviewAgentFor } from '@/lib/runState';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { MetaText } from '@/ui/chrome';
@@ -314,6 +314,16 @@ export function ReviewView({
     });
   }, [data.client, run]);
 
+  // Derived from the run list, not from the click above — so the indicator is
+  // still there after navigating away and back, and a second agent can't be
+  // dispatched onto a diff one is already reviewing.
+  const reviewAgentLive = useMemo(
+    () =>
+      run !== undefined &&
+      liveReviewAgentFor(data.runs, run.branch) !== undefined,
+    [data.runs, run]
+  );
+
   // Hands the open PR to a review agent. `confirmFork` only reports what the
   // user answered — the server refuses a fork without it either way, before
   // it fetches anything.
@@ -510,6 +520,7 @@ export function ReviewView({
                 findings={findings}
                 decisions={decisions}
                 onStartAiReview={handleStartAiReview}
+                reviewAgentLive={reviewAgentLive}
                 client={data.client}
                 runId={selectedRunId ?? undefined}
                 onOpenImpact={onOpenImpact}
@@ -627,6 +638,7 @@ export function ReviewView({
           onSubmit={data.handleSubmitReview}
           canPostToGitHub={canPostReviewToPr(run?.prUrl)}
           onStartAiReview={handleStartAiReview}
+          reviewAgentLive={reviewAgentLive}
           extraWarnings={verdictWarnings}
         />
       )}

@@ -16,6 +16,26 @@ export function isTerminalRunState(state: RunState): boolean {
 }
 
 /**
+ * The live review agent working over an execute run's branch, if any: the aux
+ * run whose `baseBranch` is exactly that branch (the same pairing rule as the
+ * Control room's aux fold — task id would double-match once a task has been
+ * dispatched twice). Drives the "an agent is reviewing this" indicator on the
+ * review surfaces, which has to be derived from the run list so it survives
+ * navigation — the click-local "Starting…" state dies with its component.
+ */
+export function liveReviewAgentFor(
+  runs: RunMeta[],
+  branch: string
+): RunMeta | undefined {
+  return runs.find(
+    (run) =>
+      (run.kind ?? 'execute') === 'review' &&
+      run.baseBranch === branch &&
+      !isTerminalRunState(run.state)
+  );
+}
+
+/**
  * What a run currently wants from a human, derived rather than stored.
  *
  * `RunState` alone can't answer this: it records how the agent's *process*

@@ -50,3 +50,24 @@ test('the bar layout submits with the GitHub choice the reviewer made', async ()
   fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
   await waitFor(() => expect(calls).toEqual([false, true]));
 });
+
+// The "agent is reviewing" indicator is derived from the run list (see
+// `liveReviewAgentFor`), not from the click-local starting/started state —
+// this is what keeps it visible after navigating away and back, and what
+// stops a second agent being dispatched onto a diff one is already reviewing.
+test('a live review agent disables re-dispatch and says so', () => {
+  render(
+    <ReviewVerdictBar
+      layout="bar"
+      comments={[]}
+      onSubmit={submit}
+      onStartAiReview={() => Promise.resolve()}
+      reviewAgentLive
+    />
+  );
+  const button = screen.getByRole<HTMLButtonElement>('button', {
+    name: /agent reviewing/i,
+  });
+  expect(button.disabled).toBe(true);
+  expect(screen.getByText(/an agent is reviewing this run/i)).toBeDefined();
+});
