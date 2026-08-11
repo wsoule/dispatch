@@ -1,7 +1,7 @@
 ---
 id: t-f7caf7
 title: Replace AI enrichment on Brain Dump's "Add detail" with a manual edit window
-status: todo
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-11T02:00:39.505Z
-updated: 2026-08-11T02:00:39.505Z
+updated: 2026-08-11T16:46:12.534Z
 external: null
 writes:
   - apps/desktop/src/views/BrainDumpView.tsx
@@ -37,3 +37,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T16:46:12.534Z dispatched (claude, branch dispatch/t-f7caf7-replace-ai-enrichment-on-brain-dump-s-ad-b9ae36) — human:wsoule679
