@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-04T18:06:37.201Z
-updated: 2026-08-11T15:39:21.770Z
+updated: 2026-08-11T15:39:26.445Z
 external: null
 writes:
   - apps/desktop/e2e/warden.spec.ts
@@ -38,3 +38,4 @@ Acceptance criteria:
 - 2026-08-11T03:14:20.289Z [run r-6a06aa] finished: finished — 7 files, $42.09 — agent:wsoule679/claude
 - 2026-08-11T15:33:58.384Z merge queue: run r-6a06aa restacked onto dispatch/t-6f0378-client-api-bindings-for-warden-3d4e52 after blocker run r-0faef1 merged (via git rebase --onto) — none
 - 2026-08-11T15:39:11.271Z run r-6a06aa discarded — human:wsoule679
+- 2026-08-11T15:39:26.445Z Run r-6a06aa's e2e coverage (apps/desktop/e2e/warden.spec.ts + fake-warden seams) landed on main during the 2026-08-11 merge sweep; the run was discarded as cleanup only because its stack-parent branch was already reconciled away. Nothing outstanding. — none
