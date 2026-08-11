@@ -16,6 +16,26 @@ export function isTerminalRunState(state: RunState): boolean {
 }
 
 /**
+ * The live review agent working over an execute run's branch, if any: the aux
+ * run whose `baseBranch` is exactly that branch (the same pairing rule as the
+ * Control room's aux fold — task id would double-match once a task has been
+ * dispatched twice). Drives the "an agent is reviewing this" indicator on the
+ * review surfaces, which has to be derived from the run list so it survives
+ * navigation — the click-local "Starting…" state dies with its component.
+ */
+export function liveReviewAgentFor(
+  runs: RunMeta[],
+  branch: string
+): RunMeta | undefined {
+  return runs.find(
+    (run) =>
+      (run.kind ?? 'execute') === 'review' &&
+      run.baseBranch === branch &&
+      !isTerminalRunState(run.state)
+  );
+}
+
+/**
  * What a run currently wants from a human, derived rather than stored.
  *
  * `RunState` alone can't answer this: it records how the agent's *process*
@@ -101,6 +121,24 @@ export function deriveRunDisposition(meta: RunMeta): RunDisposition {
 }
 
 /**
+ * The three coarse buckets a run history is filtered by: still working, still owed something,
+ * or finished business.
+ *
+ * Deliberately coarser than `RunDisposition` — a filter offering all six is a taxonomy to
+ * learn rather than a control to use. `dead` and `stopped-short` both land in `needs-review`
+ * because both still owe a person an action (discard it, or continue it); only a run a human
+ * closed out, or one that was killed outright, is past.
+ */
+export type RunStateBucket = 'live' | 'needs-review' | 'closed';
+
+export function runStateBucket(meta: RunMeta): RunStateBucket {
+  const disposition = deriveRunDisposition(meta);
+  if (disposition === 'live') return 'live';
+  if (disposition === 'closed' || meta.state === 'cancelled') return 'closed';
+  return 'needs-review';
+}
+
+/**
  * What Continue resumes a `stopped-short` run with when the composer is empty.
  * Such a run was cut off rather than wrong, so there is nothing to critique —
  * it needs re-orienting, which is why this says where to look rather than just
@@ -133,11 +171,36 @@ export function runSurveyNotice(
 ): RunSurveyNotice | null {
   const paths =
     survey.staged.length + survey.unstaged.length + survey.untracked.length;
-  if (paths === 0) return null;
-  return {
-    title: 'Run left uncommitted work',
-    body: `${taskTitle} — ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
-  };
+  if (paths > 0) {
+    return {
+      title: 'Run left uncommitted work',
+      body: `${taskTitle} · ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
+    };
+  }
+  // A clean tree can still carry news: the orphaned agent of a force-failed
+  // run committed after the failure (see RunSurvey.postFailCommits) — without
+  // this the run keeps reading as dead while its branch quietly has the work.
+  const commits = survey.postFailCommits ?? [];
+  if (commits.length > 0) {
+    return {
+      title: 'Work landed after a failed run',
+      body: `${taskTitle} · ${commits.length} commit${commits.length === 1 ? '' : 's'} on ${survey.branch} after the failure`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The "work landed on this branch after the failure" banner text for a
+ * force-failed run whose orphaned agent kept committing, or `null` when there
+ * is nothing to flag. Shared by the run log and review surfaces so the two
+ * never word the same discovery differently.
+ */
+export function postFailWorkLabel(meta: RunMeta): string | null {
+  const commits = meta.survey?.postFailCommits ?? [];
+  if (commits.length === 0) return null;
+  const latest = commits[0];
+  return `Work landed on this branch after the failure — ${commits.length} commit${commits.length === 1 ? '' : 's'}, latest: “${latest.subject}”`;
 }
 
 /** What the halting controls should render for one run — see `deriveStopControl`. */

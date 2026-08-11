@@ -64,7 +64,7 @@ describe('resolveApplySuggestionFailure', () => {
     );
     expect(outcome.disable).toBe(true);
     expect(outcome.message).toBe(
-      'The code here has changed since this suggestion was written, so it can no longer be applied by line number.'
+      "The code changed since this suggestion. It can't be applied anymore."
     );
   });
 
@@ -74,7 +74,7 @@ describe('resolveApplySuggestionFailure', () => {
     );
     expect(outcome.disable).toBe(false);
     expect(outcome.message).toBe(
-      'An agent is working in this worktree — wait for it to finish, then try again.'
+      'An agent is working here. Wait for it to finish.'
     );
   });
 
@@ -170,7 +170,7 @@ describe("submitAndApplyNow — Apply now's save-then-apply orchestration", () =
     expect(reported?.[0]).toBe('c-1');
     expect(reported?.[1].disable).toBe(true);
     expect(reported?.[1].message).toBe(
-      'The code here has changed since this suggestion was written, so it can no longer be applied by line number.'
+      "The code changed since this suggestion. It can't be applied anymore."
     );
   });
 

@@ -1324,3 +1324,16 @@ describe('RunMeta.kind', () => {
     expect(runKind(header.meta)).toBe('execute');
   });
 });
+
+// .dispatch/ bookkeeping (task activity the daemon folds onto run branches)
+// is not agent work product — a run must not be hazard-flagged for it.
+// Live repro 2026-08-11: a run got "changed 20 files outside its declared
+// writes" where all 20 were .dispatch/tasks/*.md board files.
+it('undeclaredWrites exempts .dispatch bookkeeping', () => {
+  expect(
+    undeclaredWrites(
+      [],
+      ['.dispatch/tasks/t-abc123-something.md', 'src/real-change.ts']
+    )
+  ).toEqual(['src/real-change.ts']);
+});

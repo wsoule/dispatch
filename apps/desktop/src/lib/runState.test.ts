@@ -8,6 +8,8 @@ import {
   deriveRunDisposition,
   deriveStopControl,
   isTerminalRunState,
+  liveReviewAgentFor,
+  postFailWorkLabel,
   runDispositionLabel,
   runSurveyNotice,
 } from './runState';
@@ -204,7 +206,7 @@ describe('runSurveyNotice', () => {
     );
     expect(notice).toEqual({
       title: 'Run left uncommitted work',
-      body: 'Ship it — 4 uncommitted paths on dispatch/t-1',
+      body: 'Ship it · 4 uncommitted paths on dispatch/t-1',
     });
   });
 
@@ -212,7 +214,7 @@ describe('runSurveyNotice', () => {
     expect(
       runSurveyNotice('Ship it', survey({ cleanTree: false, staged: ['a.ts'] }))
         ?.body
-    ).toBe('Ship it — 1 uncommitted path on dispatch/t-1');
+    ).toBe('Ship it · 1 uncommitted path on dispatch/t-1');
   });
 
   // The daemon does not broadcast a clean survey today, but an alarm naming no
@@ -220,6 +222,60 @@ describe('runSurveyNotice', () => {
   test('a clean tree says nothing — the run already notified as failed', () => {
     expect(runSurveyNotice('Ship it', survey())).toBeNull();
     expect(runSurveyNotice('Ship it', survey({ cleanTree: false }))).toBeNull();
+  });
+
+  test('post-fail commits on a clean tree get their own notice', () => {
+    const notice = runSurveyNotice(
+      'Ship it',
+      survey({
+        postFailCommits: [
+          { sha: 'abc123', subject: 'Done, committed', date: '2026-08-04' },
+        ],
+      })
+    );
+    expect(notice).toEqual({
+      title: 'Work landed after a failed run',
+      body: 'Ship it · 1 commit on dispatch/t-1 after the failure',
+    });
+  });
+
+  // Uncommitted paths outrank post-fail commits: the commits are already safe
+  // on the branch, the uncommitted paths are the part still at risk.
+  test('uncommitted paths win when both are present', () => {
+    const notice = runSurveyNotice(
+      'Ship it',
+      survey({
+        cleanTree: false,
+        staged: ['a.ts'],
+        postFailCommits: [{ sha: 'abc123', subject: 'x', date: '2026-08-04' }],
+      })
+    );
+    expect(notice?.title).toBe('Run left uncommitted work');
+  });
+});
+
+describe('postFailWorkLabel', () => {
+  test('null when the survey recorded no post-fail commits', () => {
+    expect(postFailWorkLabel(run())).toBeNull();
+    expect(postFailWorkLabel(run({ survey: survey() }))).toBeNull();
+    expect(
+      postFailWorkLabel(run({ survey: survey({ postFailCommits: [] }) }))
+    ).toBeNull();
+  });
+
+  test('names the count and the newest commit subject', () => {
+    const meta = run({
+      state: 'failed',
+      survey: survey({
+        postFailCommits: [
+          { sha: 'def456', subject: 'Finish the feature', date: '2026-08-05' },
+          { sha: 'abc123', subject: 'WIP', date: '2026-08-04' },
+        ],
+      }),
+    });
+    expect(postFailWorkLabel(meta)).toBe(
+      'Work landed on this branch after the failure — 2 commits, latest: “Finish the feature”'
+    );
   });
 });
 
@@ -266,5 +322,52 @@ describe('deriveStopControl', () => {
     expect(deriveStopControl(run({ state: 'finished' })).showStoppedChip).toBe(
       false
     );
+  });
+});
+
+describe('liveReviewAgentFor', () => {
+  const execute = run({ id: 'r-exec', branch: 'dispatch/t-1-exec' });
+  const reviewOf = (over: Partial<RunMeta>) =>
+    run({
+      id: 'r-rev',
+      kind: 'review',
+      branch: 'dispatch/review-t-1',
+      baseBranch: 'dispatch/t-1-exec',
+      state: 'running',
+      ...over,
+    });
+
+  test('finds the live review agent whose base is the execute branch', () => {
+    const rev = reviewOf({});
+    expect(liveReviewAgentFor([execute, rev], 'dispatch/t-1-exec')).toBe(rev);
+  });
+
+  test('ignores a review agent over some other branch', () => {
+    const rev = reviewOf({ baseBranch: 'dispatch/t-2-exec' });
+    expect(
+      liveReviewAgentFor([execute, rev], 'dispatch/t-1-exec')
+    ).toBeUndefined();
+  });
+
+  test('ignores a review agent that already reached a terminal state', () => {
+    const rev = reviewOf({ state: 'finished' });
+    expect(
+      liveReviewAgentFor([execute, rev], 'dispatch/t-1-exec')
+    ).toBeUndefined();
+  });
+
+  // A verify agent and a stacked execute run both sit on another run's branch
+  // as their base — neither is "an agent reviewing this diff".
+  test('ignores verify agents and stacked execute runs on the same base', () => {
+    const verify = reviewOf({ id: 'r-ver', kind: 'verify' });
+    const stacked = run({
+      id: 'r-stack',
+      branch: 'dispatch/t-2-stacked',
+      baseBranch: 'dispatch/t-1-exec',
+      state: 'running',
+    });
+    expect(
+      liveReviewAgentFor([execute, verify, stacked], 'dispatch/t-1-exec')
+    ).toBeUndefined();
   });
 });

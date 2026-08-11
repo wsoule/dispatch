@@ -68,8 +68,8 @@ export function GetStartedView({ projectPath }: GetStartedViewProps) {
         <code className="bg-secondary rounded px-1 py-0.5 font-mono text-[12px]">
           .dispatch/
         </code>{' '}
-        directory. Initialize it below — its Board, Tasks, Runs, and Plans will
-        take over automatically once it's ready.
+        directory. Initialize it below — its Board, Tasks, and Plans will take
+        over automatically once it's ready.
       </p>
 
       <Button

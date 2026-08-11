@@ -58,6 +58,9 @@ import {
 import { ReviewRunner } from './orchestrator/review.js';
 import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import { VerificationRunner } from './orchestrator/verify.js';
+import { WardenManager } from './orchestrator/warden.js';
+import { ClaudeWarden } from './orchestrator/wardens/claude.js';
+import { WardenToolRegistry } from './orchestrator/wardenTools.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
 import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
@@ -116,6 +119,11 @@ export interface StartServerOptions {
   // SDK's plan mode; bin.ts's DISPATCH_ENABLE_FAKES gate additionally
   // registers a 'fake' planner alongside the real one for CLI e2e testing.
   registerPlanners?: (planManager: PlanManager) => void;
+  // Same seam again for the warden's chat backends, in place of the
+  // production default (ClaudeWarden as 'claude' only). Tests register a
+  // FakeWarden (see orchestrator/wardens/fake.ts) under 'claude' so no
+  // endpoint test ever drives a real Agent SDK conversation.
+  registerWardens?: (wardenManager: WardenManager) => void;
   // Overrides PrManager's gh/git seam and its capability-detection seam
   // (both take the same CommandRunner shape) so tests can exercise the PR
   // review path without a real GitHub remote or a logged-in gh CLI.
@@ -633,6 +641,30 @@ export async function startServer(
   // not exist yet at the point PrManager is constructed.
   prManager.startPolling(opts.prPollIntervalMs);
 
+  // The warden chat assistant (see orchestrator/warden.ts), assembled here
+  // alongside PlanManager against the same shared peers. Its tool registry is
+  // the confirmation gate: mutating tool calls queue as pending actions, and
+  // only POST /api/warden/:id/actions/:actionId/confirm reaches a real
+  // orchestrator/merge-queue mutation. `defaultExecutor` is left unset — the
+  // registry's own fallback is the same 'claude' api.ts defaults to.
+  const wardenManager = new WardenManager({
+    rootDir,
+    registry: new WardenToolRegistry({
+      store,
+      cache,
+      orchestrator,
+      mergeQueue,
+      questions,
+      ledgerStore,
+    }),
+    events,
+  });
+  if (opts.registerWardens !== undefined) {
+    opts.registerWardens(wardenManager);
+  } else {
+    wardenManager.registerBackend('claude', new ClaudeWarden(rootDir));
+  }
+
   // The brain-dump inbox, scoped to this daemon's own actor, plus the one-time folds of older
   // storage shapes into it: the legacy single shared `inbox.md` (pre-dating per-actor files) and,
   // before that, the retired `notes.json` store. Both run at startup rather than behind a user
@@ -727,6 +759,7 @@ export async function startServer(
     orchestrator,
     version: packageJson.version,
     planManager,
+    wardenManager,
     epicEngine,
     prManager,
     prWorktrees,

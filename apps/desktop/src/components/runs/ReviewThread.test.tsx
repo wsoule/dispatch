@@ -82,7 +82,7 @@ describe('ReviewThread — the Apply affordance', () => {
     await waitFor(() =>
       expect(
         screen.getByText(
-          'The code here has changed since this suggestion was written, so it can no longer be applied by line number.'
+          "The code changed since this suggestion. It can't be applied anymore."
         )
       ).toBeDefined()
     );
@@ -104,9 +104,7 @@ describe('ReviewThread — the Apply affordance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() =>
       expect(
-        screen.getByText(
-          'An agent is working in this worktree — wait for it to finish, then try again.'
-        )
+        screen.getByText('An agent is working here. Wait for it to finish.')
       ).toBeDefined()
     );
     expect(
@@ -332,7 +330,7 @@ describe('ReviewThread — the existing thread behaviour', () => {
       />
     );
     const input = screen.getByPlaceholderText(
-      'Reply — the agent reads this when you send the work back'
+      'Reply. The agent reads this when you send the work back.'
     );
     fireEvent.change(input, { target: { value: 'looks right to me' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -626,7 +624,7 @@ describe('ReviewThread — the GitHub destination', () => {
       />
     );
 
-    expect(screen.getByPlaceholderText(/posts to this thread/i)).toBeDefined();
+    expect(screen.getByPlaceholderText(/posts to github/i)).toBeDefined();
     expect(screen.getByRole('button', { name: /resolve/i })).toBeDefined();
   });
 
@@ -647,7 +645,7 @@ describe('ReviewThread — the GitHub destination', () => {
 
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('button', { name: /resolve/i })).toBeNull();
-    expect(screen.getByText(/not linked to its github thread/i)).toBeDefined();
+    expect(screen.getByText(/not linked to github/i)).toBeDefined();
   });
 
   // The two ids gate different verbs, so a comment GitHub knows about but
@@ -663,7 +661,7 @@ describe('ReviewThread — the GitHub destination', () => {
       />
     );
 
-    expect(screen.getByPlaceholderText(/posts to this thread/i)).toBeDefined();
+    expect(screen.getByPlaceholderText(/posts to github/i)).toBeDefined();
     expect(screen.queryByRole('button', { name: /resolve/i })).toBeNull();
   });
 

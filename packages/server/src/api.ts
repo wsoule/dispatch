@@ -72,7 +72,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
-import type { InboxItem, InboxKind } from './inbox.js';
+import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
 import { buildLandingSnapshot } from './landing.js';
@@ -81,6 +81,7 @@ import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
+import { buildAgentSessions } from './orchestrator/agentSessions.js';
 import type { EpicEngine } from './orchestrator/epic.js';
 import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -113,6 +114,7 @@ import {
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import type { WardenManager } from './orchestrator/warden.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -137,6 +139,9 @@ export interface ApiContext {
   version: string;
   // Phase 5 P1.
   planManager: PlanManager;
+  // The project-assistant chat (see orchestrator/warden.ts) — assembled
+  // alongside PlanManager in index.ts against the same shared peers.
+  wardenManager: WardenManager;
   epicEngine: EpicEngine;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by
@@ -310,6 +315,8 @@ function validateTaskFields(
   if (blockedByError) return blockedByError;
   const selfReviewError = validateBooleanField(value.selfReview, 'selfReview');
   if (selfReviewError) return selfReviewError;
+  const fixLoopError = validateBooleanField(value.fixLoop, 'fixLoop');
+  if (fixLoopError) return fixLoopError;
   const archivedAtError = validateStringOrNullField(
     value.archivedAt,
     'archivedAt'
@@ -2945,6 +2952,82 @@ async function confirmPlan(
   return jsonResponse(result);
 }
 
+// POST /api/warden — opens a warden conversation and returns the full
+// WardenRecord immediately (202, state `running`), mirroring draftTask's
+// return-the-record shape rather than startPlan's id-only body: the chat UI
+// renders the opening user message straight from the response. The assistant's
+// reply lands asynchronously via the `warden.changed` broadcast. `backend`
+// follows createRun's `executor` contract: optional, defaults to 'claude', and
+// a name outside what's registered is a 400 naming every valid option.
+async function startWarden(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { prompt?: unknown; backend?: unknown };
+  if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
+    return errorResponse(400, 'invalid prompt: prompt is required');
+  }
+  const knownBackendNames = ctx.wardenManager.registeredBackendNames();
+  if (
+    body.backend !== undefined &&
+    (typeof body.backend !== 'string' ||
+      !knownBackendNames.includes(body.backend))
+  ) {
+    return errorResponse(
+      400,
+      `invalid backend: ${describeValue(body.backend)} (expected ${knownBackendNames.join('|')})`
+    );
+  }
+  const backendName =
+    typeof body.backend === 'string' ? body.backend : 'claude';
+  const record = ctx.wardenManager.start(body.prompt, backendName);
+  return jsonResponse(record, 202);
+}
+
+// POST /api/warden/:id/message — mirrors sendPlanMessage: 202 with the record
+// already flipped back to `running`; the reply lands via `warden.changed`.
+// 404s an unknown conversation and 409s one mid-turn (both raised by
+// sendMessage and mapped by handleApi's outer catch).
+async function sendWardenMessage(
+  req: Request,
+  ctx: ApiContext,
+  conversationId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const record = ctx.wardenManager.sendMessage(conversationId, body.text);
+  return jsonResponse(record, 202);
+}
+
+// POST /api/warden/:id/actions/:actionId/confirm { approve } — decides one
+// queued mutating action. Approving runs the real effect before responding,
+// so the returned record already reflects the outcome; denying never runs it
+// at all. 404s an unknown conversation or an action that isn't pending on
+// that conversation, and a failed effect surfaces through the same typed
+// orchestrator errors as acting on the target directly would.
+async function confirmWardenAction(
+  req: Request,
+  ctx: ApiContext,
+  conversationId: string,
+  actionId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { approve?: unknown };
+  if (typeof body.approve !== 'boolean') {
+    return errorResponse(400, 'invalid approve: expected a boolean');
+  }
+  const record = await ctx.wardenManager.confirmAction(
+    conversationId,
+    actionId,
+    body.approve
+  );
+  return jsonResponse(record);
+}
+
 async function startEpic(
   req: Request,
   ctx: ApiContext,
@@ -3300,29 +3383,6 @@ function buildNoteEnrichPrompt(note: Note): string {
 }
 
 /**
- * The prompt behind "add detail" on an inbox item.
- *
- * Same shape as the note version, and for the same reason: what a one-line capture is missing is
- * context — which files it touches, what the code does today, what "done" means. Only the framing
- * differs, because an inbox item is a raw thought rather than a filed note.
- */
-function buildInboxEnrichPrompt(item: InboxItem): string {
-  return [
-    `Someone dumped this one-line ${item.kind} into a capture inbox and wants it turned into a ` +
-      'properly specified task before an agent picks it up.',
-    `Captured: ${item.text}`,
-    'Read enough of this repository to ground it: which files and functions are actually ' +
-      'involved, what the code does today, and what would have to change. Then propose exactly ' +
-      "ONE task, and no epic. Keep the original intent — sharpen it, don't replace it — and " +
-      'write a description that gives an implementing agent the context this one-liner is ' +
-      'missing, naming concrete paths where you found them. Acceptance criteria should be ' +
-      'checkable statements about the finished work. Do not invent scope the capture never ' +
-      'asked for; if the repo contradicts it, say so in the description rather than silently ' +
-      'redesigning the work.',
-  ].join('\n\n');
-}
-
-/**
  * POST /api/inbox/cluster — ask a model which captured items are one piece of
  * work. Always 200 with `error` set, since it runs unattended in the background.
  */
@@ -3343,25 +3403,6 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
-}
-
-// POST /api/inbox/:id/enrich — AI-draft the task this captured line should become. Same async
-// contract as POST /api/plan: returns a planId immediately, the client polls
-// GET /api/plan/:id and writes nothing until POST /api/plan/:id/confirm.
-function enrichInbox(ctx: ApiContext, id: string): Response {
-  const item = ctx.inboxStore.list().find((i) => i.id === id);
-  if (item === undefined)
-    return errorResponse(404, `inbox item not found: ${id}`);
-  if (item.linkedTaskId !== null) {
-    return errorResponse(409, `already converted: ${item.linkedTaskId}`);
-  }
-  const record = ctx.planManager.startPlan(
-    buildInboxEnrichPrompt(item),
-    'claude',
-    item.id,
-    'enrich'
-  );
-  return jsonResponse({ planId: record.id }, 202);
 }
 
 /**
@@ -3413,7 +3454,8 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     buildTaskEnrichPrompt(task),
     'claude',
     undefined,
-    'enrich'
+    'enrich',
+    task.meta.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -3433,7 +3475,8 @@ function enrichNote(ctx: ApiContext, id: string): Response {
     buildNoteEnrichPrompt(note),
     'claude',
     note.id,
-    'enrich'
+    'enrich',
+    note.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -3499,6 +3542,10 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   segments: readonly string[];
 }> = [
   { method: 'POST', segments: ['runs', '*', 'scope-requests', '*', 'decide'] },
+  // Confirming a warden's queued mutating action is the human gate the whole
+  // warden design hangs on — an agent token approving it would let the model
+  // approve its own mutations.
+  { method: 'POST', segments: ['warden', '*', 'actions', '*', 'confirm'] },
 ];
 
 function matchesRoute(
@@ -4527,13 +4574,6 @@ export async function handleApi(
       if (segments.length === 2 && method === 'PATCH') {
         return await updateInbox(req, ctx, segments[1]);
       }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'enrich' &&
-        method === 'POST'
-      ) {
-        return enrichInbox(ctx, segments[1]);
-      }
     }
 
     if (segments[0] === 'findings') {
@@ -4561,6 +4601,20 @@ export async function handleApi(
       return await getImpact(ctx, url);
     }
 
+    // GET /api/agents — every in-memory conversation agent (planner chats,
+    // enrich/"add detail" agents, task drafts, warden chats), normalized for
+    // the All agents page. Task runs are not repeated here: GET /api/runs
+    // already lists them, and the client merges the two.
+    if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(
+        buildAgentSessions(
+          ctx.planManager.listPlans(),
+          ctx.planManager.listDrafts(),
+          ctx.wardenManager.list()
+        )
+      );
+    }
+
     if (segments[0] === 'plan') {
       if (segments.length === 1 && method === 'POST') {
         return await startPlan(req, ctx);
@@ -4581,6 +4635,30 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await confirmPlan(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'warden') {
+      if (segments.length === 1 && method === 'POST') {
+        return await startWarden(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        return jsonResponse(ctx.wardenManager.get(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'message' &&
+        method === 'POST'
+      ) {
+        return await sendWardenMessage(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'actions' &&
+        segments[4] === 'confirm' &&
+        method === 'POST'
+      ) {
+        return await confirmWardenAction(req, ctx, segments[1], segments[3]);
       }
     }
 

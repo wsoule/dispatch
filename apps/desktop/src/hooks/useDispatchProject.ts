@@ -1,4 +1,5 @@
 import type {
+  AgentSessionMeta,
   ApiClient,
   DraftRecord,
   EpicProgress,
@@ -64,6 +65,7 @@ import {
   taskVerificationKey,
 } from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
+import { wardenKey } from './useWardenSession';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
@@ -80,7 +82,7 @@ type PendingScopeRequest = { requestId: string };
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
-// The open-repo-PRs query key, exported so the Review page can refresh it for
+// The open-repo-PRs query key, exported so the PR review page can refresh it for
 // as long as it is the page on screen (no WS event announces a PR moving).
 export function repoPrsKey(
   port: number | undefined
@@ -146,14 +148,31 @@ export interface UseDispatchProjectOptions {
   /** Which run's detail/diff to fetch, if any — the *single* source of truth for "which run
    * is selected" lives in the app-root `navReducer`'s `activeRunId` (see the phase-8 fix
    * report's C1: this hook used to keep its own duplicate `selectedRunId` state that nothing
-   * outside `RunsView`'s row-click ever wrote to, so opening a run from the task peek panel
-   * updated nav state but left this hook still pointed at whatever run — or none — it saw
-   * last). Pass `null` when nothing is selected. */
+   * outside the old Runs page's row-click ever wrote to, so opening a run from the task peek
+   * panel updated nav state but left this hook still pointed at whatever run — or none — it
+   * saw last). Pass `null` when nothing is selected. */
   selectedRunId: string | null;
   /** Called once a run is created or re-dispatched (request-changes), so the caller can move
-   * `navReducer`'s `activeRunId`/`projectView` to point at it. Replaces the old internal
-   * `setSelectedRunId(meta.id)` side effect. */
-  onRunDispatched?: (runId: string) => void;
+   * `navReducer` to point at it. The run's task travels with it: a brand-new run has not
+   * reached the caller's run list yet, and the task view is where it now gets shown.
+   *
+   * Not called for a dispatch marked `batch` — see `DispatchOptions`. */
+  onRunDispatched?: (runId: string, taskId: string) => void;
+}
+
+/** Extra intent a caller can attach to a single `handleDispatch` call. Not exported: callers
+ *  pass an object literal, and `DispatchProjectData` names the shape for them. */
+interface DispatchOptions {
+  /**
+   * True when this dispatch is one of several started by a single gesture (the tasks list's
+   * "Send agents at N selected tasks" bar loops `handleDispatch` once per task).
+   *
+   * Such a dispatch does not fire `onRunDispatched`. Firing it per task would navigate the app
+   * once per iteration — the user is yanked through each new run's Chat tab in turn and left on
+   * the last one, several history entries deep, having asked to stay in the list. A batch of
+   * exactly one is not a batch: pass `false` and it jumps like any single dispatch.
+   */
+  batch?: boolean;
 }
 
 export interface DispatchProjectData {
@@ -194,7 +213,7 @@ export interface DispatchProjectData {
   // view's own run-*list* rendering should read `visibleRuns` instead.
   runs: RunMeta[];
   // Task 9: `runs` filtered to hide archived-task runs, unless `showArchived` is on — feeds
-  // only the Runs view's run-list UI (which run rows show up on the left). Every other
+  // only the run-list UI that offers a show-archived toggle. Every other
   // consumer of run data (countMergeReady, liveRunStateByTaskId, latestRunByTaskId, the merge
   // queue) reads the unfiltered `runs` above on purpose.
   visibleRuns: RunMeta[];
@@ -230,9 +249,6 @@ export interface DispatchProjectData {
   diff: import('@dispatch/client').DiffResult | undefined;
   diffLoading: boolean;
   diffError: string | null;
-  prDetail: import('@dispatch/client').PrDetail | undefined;
-  prDetailLoading: boolean;
-  prDetailError: string | null;
   // Every dispatch worktree/branch on disk, joined with whatever run claims it
   // — the Branches surface's data. See BranchEntry in @dispatch/client.
   branches: import('@dispatch/client').BranchEntry[];
@@ -252,19 +268,6 @@ export interface DispatchProjectData {
     patch: { kind?: import('@dispatch/client').InboxKind; text?: string }
   ) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
-  /**
-   * Starts an AI draft that adds the detail a one-line capture is missing. Its
-   * own slot, so it can't clobber `enrichPlan`'s or `notePlanId`'s draft.
-   */
-  handleEnrichInboxItem: (id: string) => Promise<void>;
-  /** Which inbox item the open draft belongs to, so another row doesn't show it. */
-  inboxEnrichItemId: string | null;
-  inboxEnrichPlanRecord: PlanRecord | undefined;
-  /** Drops the open draft without writing anything — Dismiss, and the cleanup after Apply. */
-  handleDismissInboxEnrich: () => void;
-  /** Writes the drafted body back onto the inbox item via the ordinary PATCH /api/inbox/:id
-   * update path, then drops the draft. */
-  handleApplyInboxEnrich: (itemId: string, text: string) => Promise<void>;
   /**
    * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
    * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
@@ -421,6 +424,9 @@ export interface DispatchProjectData {
   /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
    * tray. Running and ready drafts survive navigation and a tray reopen; see `drafts`. */
   drafts: DraftRecord[];
+  /** Every in-memory conversation agent (planner chats, enrich agents, task drafts, warden
+   * chats), newest activity first — the non-run half of the All agents page. */
+  agentSessions: AgentSessionMeta[];
   /** Starts a background single-task draft and returns immediately with its `running`
    * record; the tray/`drafts` picks up its progress via `draft.changed`. */
   handleStartDraft: (prompt: string) => Promise<DraftRecord>;
@@ -436,7 +442,8 @@ export interface DispatchProjectData {
   handleDispatch: (
     taskId: string,
     executor?: 'fake' | 'claude',
-    model?: string
+    model?: string,
+    opts?: DispatchOptions
   ) => Promise<void>;
   handleApprove: (
     runId: string,
@@ -454,12 +461,6 @@ export interface DispatchProjectData {
   handleReview: (runId: string, action: 'merge' | 'discard') => Promise<void>;
   handleRequestChanges: (runId: string, text: string) => Promise<void>;
   handleOpenPr: (runId: string) => Promise<void>;
-  handlePrReview: (
-    runId: string,
-    event: 'approve' | 'request-changes' | 'comment',
-    body?: string
-  ) => Promise<void>;
-  handlePrComment: (runId: string, body: string) => Promise<void>;
   handleWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   handleStopEpic: (epicId: string) => Promise<void>;
   handleSubmitPrompt: (prompt: string) => Promise<string>;
@@ -488,8 +489,9 @@ export interface DispatchProjectData {
   /** Retries every entry held on a blocked checkout. Queue-wide, mirroring the server. */
   handleRecheckMergeQueue: () => Promise<void>;
   // Set from the `queue.drained` WS event when the queue's auto-push after a
-  // drain fails (merged locally, origin didn't get the commit) — surfaced as
-  // a banner in RunsView. Cleared on the next successful drain-push.
+  // drain fails (merged locally, origin didn't get the commit) — rendered as
+  // LandingView's push-failure banner, whose Retry is handleMergeAllReady.
+  // Cleared on the next successful drain-push.
   lastPushError: string | null;
 
   // Task 10: the persisted notification inbox — the recoverable record behind every
@@ -536,14 +538,9 @@ export function useDispatchProject(
     taskId: string;
     planId: string;
   } | null>(null);
-  // The brain dump row's "Add detail" slot. Its own slot, since its proposal is
-  // patched onto that inbox item rather than confirmed into a task.
-  const [inboxEnrich, setInboxEnrich] = useState<{
-    itemId: string;
-    planId: string;
-  } | null>(null);
-  // Task 8: last drain-push failure reported by `queue.drained`, for the
-  // RunsView banner — `null` once a later drain pushes successfully.
+  // Task 8: last drain-push failure reported by `queue.drained`, for
+  // LandingView's push-failure banner — `null` once a later drain pushes
+  // successfully.
   const [lastPushError, setLastPushError] = useState<string | null>(null);
   // Task 9: the Board/List/Runs "show archived" toggle — read from localStorage once on
   // mount, then kept in sync with every write via `setShowArchived` below.
@@ -650,16 +647,19 @@ export function useDispatchProject(
     () => ['dispatch-run-diff', port, selectedRunId],
     [port, selectedRunId]
   );
-  const runPrQueryKey = useMemo(
-    () => ['dispatch-run-pr', port, selectedRunId],
-    [port, selectedRunId]
-  );
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
   // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
   // on `draft.changed`.
   const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
+  // The conversation-agents list (`GET /api/agents`), invalidated below on
+  // `plan.changed`, `draft.changed` and `warden.changed` — the three events
+  // that cover every kind of session it returns.
+  const agentSessionsQueryKey = useMemo(
+    () => ['dispatch-agent-sessions', port],
+    [port]
+  );
   const reviewQueryKey = useMemo(
     () => ['dispatch-review', port, selectedRunId],
     [port, selectedRunId]
@@ -896,6 +896,17 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // Feeds the All agents page's conversation-agent rows (planners, enrich
+  // agents, drafts, wardens); refetched on the three WS events below.
+  const { data: agentSessions } = useQuery({
+    queryKey: agentSessionsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchAgentSessions();
+    },
+    enabled: client !== null,
+  });
+
   const { data: reviewComments } = useQuery({
     queryKey: reviewQueryKey,
     queryFn: () => {
@@ -930,32 +941,6 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
-  // The GitHub PR status + conversation for the selected run, once it has an
-  // open PR (`prUrl` set). Separate from the diff query — the Pierre diff shows
-  // the *code*, this shows the PR's review state/threads on top of it.
-  const prEnabled =
-    client !== null &&
-    selectedRunId !== null &&
-    runDetail !== undefined &&
-    runDetail.meta.prUrl !== undefined;
-  const {
-    data: prDetail,
-    isLoading: prDetailLoading,
-    error: prDetailErrorDetail,
-  } = useQuery({
-    queryKey: runPrQueryKey,
-    queryFn: () => {
-      if (client === null || selectedRunId === null) {
-        throw new Error('no run selected');
-      }
-      return client.fetchPrDetail(selectedRunId);
-    },
-    enabled: prEnabled,
-    retry: false,
-  });
-  const prDetailError =
-    prDetailErrorDetail instanceof Error ? prDetailErrorDetail.message : null;
-
   const { data: health } = useQuery({
     queryKey: healthQueryKey,
     queryFn: () => {
@@ -971,11 +956,6 @@ export function useDispatchProject(
     client,
     port,
     enrichPlan?.planId ?? null
-  );
-  const inboxEnrichPlanRecord = usePlanRecord(
-    client,
-    port,
-    inboxEnrich?.planId ?? null
   );
 
   // Task 6: the merge queue snapshot — same "poll on mount, refetch on the
@@ -1123,7 +1103,7 @@ export function useDispatchProject(
             const taskTitle =
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
-            void notify('Approval needed', `${event.toolName} — ${taskTitle}`);
+            void notify('Approval needed', `${event.toolName} · ${taskTitle}`);
           } else if (event.type === 'question.asked') {
             void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
             // Same cache-read reason as approval.requested above: this effect's
@@ -1160,10 +1140,26 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
             });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
+          } else if (event.type === 'warden.changed') {
+            // The warden record query itself lives in useWardenSession; this
+            // hook owns the one WS connection, so the invalidation happens
+            // here — the same split useOrchestration's keys use.
+            void queryClient.invalidateQueries({
+              queryKey: wardenKey(port, event.conversationId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
           } else if (event.type === 'draft.changed') {
             void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'review.changed') {
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
             // The server broadcasts this same event for a reviewer's inline edit and an
@@ -1292,7 +1288,7 @@ export function useDispatchProject(
             // only needs to report the *push* outcome, not repeat that a
             // merge happened. Both outcomes below also go through
             // onRecordInbox, not just `notify`: this is the exact event
-            // class the inbox exists for — `lastPushError`'s RunsView banner
+            // class the inbox exists for — `lastPushError`'s own banner
             // clears on the next drain, but without an inbox row a failed
             // auto-push would otherwise leave no trace at all once that
             // banner is gone.
@@ -1354,6 +1350,7 @@ export function useDispatchProject(
     runsQueryKey,
     notesQueryKey,
     draftsQueryKey,
+    agentSessionsQueryKey,
     inboxQueryKey,
     reviewQueryKey,
     runDiffQueryKey,
@@ -1573,13 +1570,17 @@ export function useDispatchProject(
     [client, queryClient, notesQueryKey]
   );
 
-  // Manual refetch for the Branches view. This surface has no polling (each row
-  // costs several git shell-outs), and git state can change entirely outside the
-  // app — the user's own terminal — so an explicit refresh is the only way to
-  // pick that up.
+  // Manual refetch for the Branches and Landed views. This surface has no
+  // polling (each row costs several git shell-outs), and git state can change
+  // entirely outside the app — the user's own terminal — so an explicit
+  // refresh is the only way to pick that up. Runs are invalidated too: both
+  // views join branch refs with run data (Landed's merged rows are run rows).
   const handleRefreshBranches = useCallback(async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: branchesQueryKey });
-  }, [queryClient, branchesQueryKey]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: branchesQueryKey }),
+      queryClient.invalidateQueries({ queryKey: runsQueryKey }),
+    ]);
+  }, [queryClient, branchesQueryKey, runsQueryKey]);
 
   // Reclaims a branch's worktree directory, keeping the branch ref so the work
   // stays recoverable. Errors are deliberately allowed to propagate: the server
@@ -1659,7 +1660,8 @@ export function useDispatchProject(
     async (
       taskId: string,
       executor?: 'fake' | 'claude',
-      model?: string
+      model?: string,
+      opts?: DispatchOptions
     ): Promise<void> => {
       if (client === null) return;
       // A real ('claude') dispatch always carries a model: the per-dispatch
@@ -1671,7 +1673,9 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-      onRunDispatched?.(meta.id);
+      // A batch member stays where the user is; only a lone dispatch follows its
+      // run. See DispatchOptions for what firing this per task looks like.
+      if (opts?.batch !== true) onRunDispatched?.(meta.id, meta.taskId);
     },
     [
       client,
@@ -1812,7 +1816,7 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
       // request-changes re-dispatches under a fresh run id — follow it so the caller keeps
       // showing the run that's now actually live.
-      onRunDispatched?.(meta.id);
+      onRunDispatched?.(meta.id, meta.taskId);
     },
     [
       client,
@@ -1832,36 +1836,6 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, runsQueryKey, port]
-  );
-
-  // Submitting a review or a comment returns the refreshed PrDetail, which we
-  // write straight into the PR query's cache so the conversation/status update
-  // without a second round trip.
-  //
-  // The repo-PRs list is invalidated too — the review queue reads this PR's
-  // decision and checks from there, on a poll that would otherwise lag 60s.
-  const handlePrReview = useCallback(
-    async (
-      runId: string,
-      event: 'approve' | 'request-changes' | 'comment',
-      body?: string
-    ): Promise<void> => {
-      if (client === null) return;
-      const detail = await client.reviewPr(runId, event, body);
-      queryClient.setQueryData(runPrQueryKey, detail);
-      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
-    },
-    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
-  );
-
-  const handlePrComment = useCallback(
-    async (runId: string, body: string): Promise<void> => {
-      if (client === null) return;
-      const detail = await client.commentPr(runId, body);
-      queryClient.setQueryData(runPrQueryKey, detail);
-      void queryClient.invalidateQueries({ queryKey: repoPrsQueryKey });
-    },
-    [client, queryClient, runPrQueryKey, repoPrsQueryKey]
   );
 
   const handleWorkEpic = useCallback(
@@ -1971,11 +1945,11 @@ export function useDispatchProject(
   );
 
   // Task 8: the "Merge all ready" toolbar action — enqueues every eligible
-  // run in the project in one call. Also doubles as the push-failure Retry
-  // button: called with nothing new to enqueue, this still kicks the queue's
+  // run in the project in one call. Also doubles as LandingView's push-failure
+  // Retry: called with nothing new to enqueue, this still kicks the queue's
   // pump, which retries a failed drain-push per `lastDrainPushFailed` on the
   // server (see mergeQueue.ts). The `merge-queue.changed`/`queue.drained`
-  // broadcasts (not this invalidation) are what actually update the
+  // broadcasts (not this invalidation) are what actually clear the
   // lastPushError banner once the retry resolves.
   const handleMergeAllReady = useCallback(async (): Promise<void> => {
     if (client === null) return;
@@ -2028,35 +2002,6 @@ export function useDispatchProject(
       return res;
     },
     [client, invalidateInbox, queryClient, tasksQueryKey]
-  );
-
-  // The AI half of "Add detail" on a brain dump row: the proposal lands on
-  // `inboxEnrichPlanRecord`, and nothing is written until it's applied.
-  const handleEnrichInboxItem = useCallback(
-    async (id: string): Promise<void> => {
-      if (client === null) throw new Error('dispatchd client not ready');
-      // Clear first, or the previous pass's draft stays up while this one runs.
-      setInboxEnrich(null);
-      const { planId } = await client.enrichInbox(id);
-      setInboxEnrich({ itemId: id, planId });
-    },
-    [client]
-  );
-
-  const handleDismissInboxEnrich = useCallback((): void => {
-    setInboxEnrich(null);
-  }, []);
-
-  // Writes the drafted body back onto the inbox item through the ordinary update path (the same
-  // PATCH /api/inbox/:id route the row's other edits use), then drops the draft.
-  const handleApplyInboxEnrich = useCallback(
-    async (itemId: string, text: string): Promise<void> => {
-      if (client === null) return;
-      await client.updateInbox(itemId, { text });
-      invalidateInbox();
-      setInboxEnrich(null);
-    },
-    [client, invalidateInbox]
   );
 
   // The AI half of specifying an existing task: the proposal lands on `enrichPlanRecord` for
@@ -2351,9 +2296,6 @@ export function useDispatchProject(
     diff,
     diffLoading,
     diffError,
-    prDetail,
-    prDetailLoading,
-    prDetailError,
     branches: branches ?? [],
     branchesLoading,
     handleRefreshBranches,
@@ -2385,6 +2327,7 @@ export function useDispatchProject(
     moveTaskStatus,
     handleCreate,
     drafts: drafts ?? [],
+    agentSessions: agentSessions ?? [],
     handleStartDraft,
     handleDismissDraft,
     handleSendDraftMessage,
@@ -2397,8 +2340,6 @@ export function useDispatchProject(
     handleReview,
     handleRequestChanges,
     handleOpenPr,
-    handlePrReview,
-    handlePrComment,
     handleWorkEpic,
     handleStopEpic,
     handleSubmitPrompt,
@@ -2419,11 +2360,6 @@ export function useDispatchProject(
     handleUpdateInboxItem,
     handleDismissInbox,
     handleConvertInbox,
-    handleEnrichInboxItem,
-    inboxEnrichItemId: inboxEnrich?.itemId ?? null,
-    inboxEnrichPlanRecord,
-    handleDismissInboxEnrich,
-    handleApplyInboxEnrich,
     handleEnrichTask,
     enrichTaskId: enrichPlan?.taskId ?? null,
     enrichPlanRecord,

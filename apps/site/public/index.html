@@ -3,17 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>
-      Dispatch — a task tracker for coding agents, not a chat window
-    </title>
+    <title>Dispatch: Linear, for agents</title>
     <meta
       name="description"
-      content="Linear, but the assignees are agents and everything lives in your repo. A board, a brain dump, reviews and a merge queue — all markdown in .dispatch/."
+      content="Linear, for agents. A board, reviews, and a merge queue, all markdown in your repo."
     />
     <meta property="og:title" content="Dispatch" />
     <meta
       property="og:description"
-      content="Linear, but the assignees are agents and everything lives in your repo."
+      content="Linear, for agents. A board, reviews, and a merge queue in your repo."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -183,15 +181,20 @@
         color: var(--ink);
       }
 
-      /* The hero artifact: an actual task file. A <pre>, not a styled div —
-         its line breaks are load bearing and a formatter will reflow a div. */
-      .file {
+      /* The hero artifact: a small board, alive. The lede's three claims each
+         get a visible referent — pulsing session pips on in-progress cards, a
+         blocked badge, and one card that finishes and moves while you read.
+         Same status colors as the app (and the vs-section diagram below). */
+      .hboard {
         background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 10px;
         overflow: hidden;
       }
-      .file-head {
+      .hb-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         padding: 9px 14px;
         background: var(--raised);
         border-bottom: 1px solid var(--line);
@@ -199,49 +202,141 @@
         font-family: var(--mono);
         font-size: 11.5px;
       }
-      .file-body {
-        margin: 0;
-        padding: 14px;
-        overflow-x: auto;
-        font-family: var(--mono);
-        font-size: 12.5px;
-        line-height: 1.75;
-      }
-      .k {
-        color: var(--muted);
-      }
-      .v {
-        color: var(--ink);
-      }
-      .id {
-        color: var(--indigo);
-      }
-      .rule {
-        color: var(--dim);
-      }
-      .h {
+      .hb-live {
+        display: flex;
+        align-items: center;
+        gap: 6px;
         color: var(--amber);
       }
-      /* The frontmatter is the thing that moves in the hero: the file is the
-         database, so watching it get written is the product in one artifact. */
-      #hstatus.doing {
-        color: var(--indigo);
+      .hb-pip {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--amber);
+        animation: hbpulse 1.6s ease-in-out infinite;
       }
-      #hstatus.done {
-        color: var(--add);
+      @keyframes hbpulse {
+        50% {
+          opacity: 0.3;
+        }
       }
-      /* Markdown list syntax, not a diff sign — a green "-" reads as a
-         deletion at a glance, which is the opposite of what happened. */
-      #hact .tick {
+      .hb-cols {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        padding: 14px;
+        align-items: start;
+      }
+      .hb-col {
+        min-width: 0;
+        --c: var(--muted);
+      }
+      .hb-col.doing {
+        --c: var(--amber);
+      }
+      .hb-col.review {
+        --c: var(--indigo);
+      }
+      .hb-lbl {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 0 8px;
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.06em;
         color: var(--dim);
+        white-space: nowrap;
       }
-      .hcaret {
+      .hb-lbl::before {
+        content: '';
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--c);
+      }
+      .hb-card {
+        position: relative;
+        margin-bottom: 8px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--ground);
+        font-size: 12px;
+        line-height: 1.35;
+        max-height: 76px;
+        transition:
+          opacity 0.55s ease,
+          transform 0.55s ease,
+          max-height 0.55s ease,
+          margin 0.55s ease,
+          padding 0.55s ease,
+          border-color 0.55s ease,
+          box-shadow 0.55s ease;
+      }
+      .hb-agent {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 6px;
+        font-family: var(--mono);
+        font-size: 9.5px;
+        color: var(--muted);
+      }
+      .hb-chip {
         display: inline-block;
-        width: 7px;
-        height: 12px;
-        background: var(--indigo);
-        vertical-align: -2px;
-        animation: pulse 1.1s steps(1, end) infinite;
+        margin-left: 6px;
+        padding: 0 6px;
+        border-radius: 999px;
+        font-family: var(--mono);
+        font-size: 9px;
+        vertical-align: 1px;
+        transition: opacity 0.55s ease;
+      }
+      .hb-blocked {
+        color: var(--del);
+        border: 1px solid color-mix(in srgb, var(--del) 45%, transparent);
+      }
+      .hb-nexttag {
+        color: var(--amber);
+        border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+        opacity: 0;
+      }
+      /* The signature beat: the blocker clears and this card becomes the next
+         thing to start — the amber halo is the page's one loud effect. */
+      .hb-card.hb-next {
+        border-color: color-mix(in srgb, var(--amber) 50%, var(--line));
+        box-shadow: 0 0 16px color-mix(in srgb, var(--amber) 14%, transparent);
+      }
+      .hb-card.hb-next .hb-nexttag {
+        opacity: 1;
+      }
+      .hb-card.hb-next .hb-blocked,
+      .hb-card.hb-gone {
+        opacity: 0;
+      }
+      /* Leaving and arriving cards animate height so the columns re-flow
+         instead of jumping. The pair reads as one card changing columns. */
+      .hb-card.hb-gone {
+        transform: translateY(-5px);
+        max-height: 0;
+        margin-bottom: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        border-color: transparent;
+        overflow: hidden;
+      }
+      .hb-card.hb-in {
+        opacity: 0;
+        transform: translateY(6px);
+        max-height: 0;
+        margin-bottom: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        border-color: transparent;
+        overflow: hidden;
       }
 
       /* ── sections ────────────────────────────────────────────────────── */
@@ -322,53 +417,12 @@
         color: var(--muted);
       }
 
-      /* ── try it live ─────────────────────────────────────────────────────
-         The iframe src is only ever set from the click handler in app.js —
-         the landing page it points at auto-starts a session on load, so
-         setting it any earlier (on scroll, on hover) would spend one. */
-      .livecard {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 20px;
-        margin-top: 16px;
-        padding: 18px;
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        background: var(--panel);
-      }
-      /* `display: flex` above outranks the UA's [hidden] rule, so the click
-         handler's `hidden = true` would otherwise leave the card on screen. */
-      .livecard[hidden] {
-        display: none;
-      }
-      .livecard h3 {
-        margin: 0 0 4px;
-        font-size: 14px;
-        font-weight: 500;
-      }
-      .livecard p {
-        margin: 0;
-        max-width: 48ch;
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .live-btn {
-        flex: none;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 9px 16px;
-        background: var(--raised);
-        font-family: var(--mono);
-        font-size: 13px;
-        color: var(--ink);
-        cursor: pointer;
-      }
-      .live-btn:hover {
-        border-color: var(--dim);
-      }
+      /* ── live demo ───────────────────────────────────────────────────────
+         The iframe src is set on page load (app.js): the sandbox reaps idle
+         sessions after two minutes and throttles creation per IP, so an
+         eager session is cheap and the demo is already running on scroll. */
       .liveframe {
-        margin-top: 16px;
+        margin-bottom: 32px;
       }
       .liveframe iframe {
         display: block;
@@ -579,6 +633,14 @@
         color: var(--del);
       }
 
+      /* ── features ────────────────────────────────────────────────────── */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        margin-top: 26px;
+      }
+
       /* ── install ─────────────────────────────────────────────────────── */
       .install {
         display: grid;
@@ -633,15 +695,15 @@
           grid-template-columns: 1fr;
           gap: 32px;
         }
+        .features {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
         .hero {
           padding: 48px 0 40px;
         }
         .facts {
           grid-template-columns: 1fr;
-        }
-        .livecard {
-          flex-direction: column;
-          align-items: flex-start;
         }
         /* The sidebar becomes a scrolling tab strip: the same navigation, in
            the only shape that fits a phone. */
@@ -724,11 +786,11 @@
 
     <main class="wrap hero">
       <div>
-        <h1><em>Linear</em>, for coding agents.</h1>
+        <h1><em>Linear</em>, for agents.</h1>
         <p class="lede">
-          Not another chat window. A board, a backlog, reviews and a merge queue
-          — all markdown in your repo, worked by agents. Local and
-          source-available.
+          Chatting is overrated. See what your sessions are working on, which
+          tasks block which, and the next thing to start. Local by default, live
+          with your team.
         </p>
         <div class="cta">
           <button class="copy" id="copy" type="button">
@@ -739,38 +801,67 @@
         </div>
       </div>
 
-      <div class="file">
-        <div class="file-head">
-          .dispatch/tasks/t-9f2a41-stream-agent-stdout.md
+      <div class="hboard" id="hboard">
+        <div class="hb-head">
+          <span>storefront</span>
+          <span class="hb-live"
+            ><span class="hb-pip"></span
+            ><span id="hblive">2 agents live</span></span
+          >
         </div>
-        <pre class="file-body"><span class="rule">---</span>
-<span class="k">id:</span>        <span class="id">t-9f2a41</span>
-<span class="k">title:</span>     <span class="v">Stream agent stdout over the websocket</span>
-<span class="k">status:</span>    <span class="v" id="hstatus">todo</span>
-<span class="k">kind:</span>      <span class="v">task</span>
-<span class="k">parent:</span>    <span class="id">e-9021cd</span>
-<span class="k">blocked-by:</span> <span class="v" id="hblock">[<span class="id">t-c8954b</span>]</span>
-<span class="k">priority:</span>  <span class="v">high</span>
-<span class="rule">---</span>
-
-<span class="h">## Description</span>
-
-The poller wakes every 500ms whether or not
-there is output. Move to a push model.
-
-<span class="h">## Activity</span>
-<span id="hact"></span></pre>
+        <div class="hb-cols">
+          <div class="hb-col todo">
+            <p class="hb-lbl">todo · <span id="hbtodon">2</span></p>
+            <div class="hb-card" id="hbblocked">
+              Discount codes
+              <span class="hb-chip hb-blocked" id="hbbadge">blocked</span>
+              <span class="hb-chip hb-nexttag" id="hbnext">next</span>
+            </div>
+            <div class="hb-card">Rate limit search</div>
+          </div>
+          <div class="hb-col doing">
+            <p class="hb-lbl">in-progress · <span id="hbdoingn">2</span></p>
+            <div class="hb-card" id="hbmover">
+              Exact SKU matches
+              <span class="hb-agent"
+                ><span class="hb-pip"></span>claude · r-b1d7</span
+              >
+            </div>
+            <div class="hb-card">
+              Cart → session store
+              <span class="hb-agent"
+                ><span class="hb-pip"></span>claude · r-4e91</span
+              >
+            </div>
+          </div>
+          <div class="hb-col review">
+            <p class="hb-lbl">in-review · <span id="hbrevn">1</span></p>
+            <div class="hb-card">Add a /health route</div>
+            <div class="hb-card hb-in" id="hbdest">Exact SKU matches</div>
+          </div>
+        </div>
       </div>
     </main>
 
     <section id="demo">
       <div class="wrap">
-        <p class="eyebrow">Screens</p>
+        <p class="eyebrow">Demo</p>
         <h2>What it actually looks like.</h2>
         <p class="sub">
-          Dispatch running against a demo project, so the board has something on
-          it. The app is the real one; only the work is made up.
+          Try a live demo yourself (nothing ever goes wrong with live demos,
+          right?)
         </p>
+
+        <div class="liveframe" id="liveframe">
+          <iframe
+            id="liveiframe"
+            title="Dispatch live demo"
+            loading="lazy"
+          ></iframe>
+          <a id="livefull" href="#" target="_blank" rel="noopener noreferrer"
+            >Open full screen ↗</a
+          >
+        </div>
 
         <div class="shotnav" role="tablist" aria-label="Screens">
           <button
@@ -827,29 +918,6 @@ there is output. Move to a push model.
             A board, with epics as cards and one lane per epic if you want it.
           </figcaption>
         </figure>
-
-        <div class="livecard" id="livecard">
-          <div>
-            <h3>Or drive it yourself.</h3>
-            <p>
-              A live sandbox of the real app — seeded repo, a teammate making
-              moves, an agent run to review. Nothing to install.
-            </p>
-          </div>
-          <button type="button" id="livedemo" class="live-btn">
-            Try it live
-          </button>
-        </div>
-        <div class="liveframe" id="liveframe" hidden>
-          <iframe
-            id="liveiframe"
-            title="Dispatch live demo"
-            loading="lazy"
-          ></iframe>
-          <a id="livefull" href="#" target="_blank" rel="noopener noreferrer"
-            >Open full screen ↗</a
-          >
-        </div>
       </div>
     </section>
 
@@ -858,10 +926,8 @@ there is output. Move to a push model.
         <p class="eyebrow">Chat vs. board</p>
         <h2>Everything else is a chat window.</h2>
         <p class="sub">
-          Same agent, same work. But a transcript hands it to you one line at a
-          time, so knowing where you stand means scrolling back and rebuilding
-          it in your head. A board just shows you. What's running, what's
-          blocked and what's waiting on you become places you can point at.
+          Same agent, same work. A transcript makes you scroll back and rebuild
+          it in your head. A board just shows you.
         </p>
         <div class="vs">
           <!-- The same nine pieces of work, in both containers. -->
@@ -874,10 +940,10 @@ there is output. Move to a push model.
                 </p>
                 <p class="you">and the /health route</p>
                 <p>
-                  Up for review since yesterday — I think you have it open
+                  Up for review since yesterday. I think you have it open
                   somewhere.
                 </p>
-                <p class="you">wait — did the discount codes thing land</p>
+                <p class="you">wait, did the discount codes thing land</p>
                 <p>
                   Not yet. You asked me to hold that until the cart state moved
                   into the session store, which went in about an hour ago. I can
@@ -969,11 +1035,48 @@ there is output. Move to a push model.
       </div>
     </section>
 
+    <section id="features">
+      <div class="wrap">
+        <p class="eyebrow">Features</p>
+        <h2>More than a board.</h2>
+        <div class="features">
+          <div class="box">
+            <h3>Brain dump</h3>
+            <p>Type it all out. It becomes tasks.</p>
+          </div>
+          <div class="box">
+            <h3>Planning</h3>
+            <p>
+              Describe the work. The planner drafts tasks and what blocks what.
+            </p>
+          </div>
+          <div class="box">
+            <h3>Two-way Linear sync</h3>
+            <p>Tasks flow both directions. Your tracker stays current.</p>
+          </div>
+          <div class="box">
+            <h3>Live with your team</h3>
+            <p>Same board, everyone's sessions.</p>
+          </div>
+          <div class="box">
+            <h3>Warden</h3>
+            <p>
+              The one chat we kept. One place to steer every session. It asks
+              before it acts.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="install">
       <div class="wrap">
         <p class="eyebrow">Install</p>
         <h2>Runs on your machine, against your checkout.</h2>
-        <p class="sub">No account, no server, nothing uploaded.</p>
+        <p class="sub">
+          Local by default. Opt into Linear sync and team sharing when you want
+          them.
+        </p>
         <div class="install">
           <div class="box">
             <h3>macOS</h3>
@@ -995,10 +1098,9 @@ there is output. Move to a push model.
           </div>
         </div>
         <p class="note">
-          Work in progress, and used on itself: Dispatch's own backlog lives in
-          this repo's <span class="mono">.dispatch/</span>, and commits on main
-          tagged <span class="mono">(run r-…)</span> were written by its own
-          agents.
+          Built with itself. This repo's backlog is in
+          <span class="mono">.dispatch/</span>, and commits tagged
+          <span class="mono">(run r-…)</span> were written by its agents.
         </p>
       </div>
     </section>

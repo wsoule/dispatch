@@ -185,7 +185,7 @@ export function SessionsHubView() {
           ) : (
             <SpendTable
               columnLabel="Project"
-              emptyMessage="No projects yet — start a Claude Code session in any repo and it will appear here."
+              emptyMessage="No projects yet. Start a Claude Code session and it shows up here."
               rows={projectsBySpend.map((project) => ({
                 key: project.id,
                 label: project.name,
@@ -260,7 +260,7 @@ export function SessionsHubView() {
                 message={
                   projectFilter
                     ? 'No sessions for this project yet.'
-                    : 'No sessions yet — start a Claude Code session in any repo and it will appear here.'
+                    : 'No sessions yet. Start a Claude Code session and it shows up here.'
                 }
                 className="max-w-sm px-0 py-0 [&_[data-slot=empty-description]]:text-[13px]"
               />

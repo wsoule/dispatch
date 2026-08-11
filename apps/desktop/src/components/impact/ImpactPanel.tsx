@@ -22,7 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 // caveat on hover rather than folded into the badge text, which already
 // carries the source name.
 const SCANNER_CAVEAT =
-  'The built-in scanner only tracks .ts/.tsx imports — dependents in other languages may be missing from this count.';
+  'Only .ts/.tsx imports are tracked. Other languages may be missing.';
 
 interface ImpactPanelProps {
   client: ApiClient | null;

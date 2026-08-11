@@ -202,7 +202,7 @@ describe('editErrorMessage — maps applyRunEdit failures to reviewer-facing sen
   // keep.
   it('maps worktree-busy, and says the edit was not saved', () => {
     expect(editErrorMessage(new ApiError('worktree-busy', 409))).toBe(
-      'An agent is working in this worktree, so this edit was not saved — wait for it to finish, then reopen the file and redo it.'
+      "An agent is working here, so this edit wasn't saved. Wait, then redo it."
     );
   });
 
@@ -220,7 +220,7 @@ describe('editErrorMessage — maps applyRunEdit failures to reviewer-facing sen
 
   it('maps empty-contents', () => {
     expect(editErrorMessage(new ApiError('empty-contents', 409))).toBe(
-      "Couldn't read this file — nothing was written."
+      "Couldn't read this file. Nothing was written."
     );
   });
 
@@ -382,7 +382,7 @@ describe('PierreReviewDiff — Save and Cancel in the file header', () => {
 });
 
 describe('PierreReviewDiff — switching files while an editor is open', () => {
-  // `ReviewView` renders this with `only={selected}` and no `key`, so `editing`
+  // A review page renders this with `only={selected}` and no `key`, so `editing`
   // outlives the file it names. Every other file's pencil is hidden while one
   // file is being edited, so a stale `editing` locks the whole diff.
   it('unlocks the other files’ pencils when the edited file leaves the view', async () => {
@@ -794,7 +794,7 @@ describe('PierreReviewDiff — arming the action bar from the gutter', () => {
     expect(selectionBar()).toBeNull();
   });
 
-  // `ReviewView` swaps `only` without remounting, so a bar armed on the file being left would
+  // A review page swaps `only` without remounting, so a bar armed on the file being left would
   // otherwise stay on screen over the file arriving — pointing at lines that are no longer drawn.
   it('clears the bar when the surface switches to another file', () => {
     const { rerender } = renderForSelection({ onAddToChat: () => {} });
@@ -1055,7 +1055,7 @@ describe('PierreReviewDiff — where the bar hangs', () => {
   });
 });
 
-// The gesture end to end, wired exactly the way `ReviewView` wires it: the diff owns the armed
+// The gesture end to end, wired exactly the way a review page wires it: the diff owns the armed
 // line, the dock owns the pending attachments, and neither module in between
 // (`SelectionActions`, `SnippetComposer`) knows a run exists. This is the only test that holds
 // the two halves together.

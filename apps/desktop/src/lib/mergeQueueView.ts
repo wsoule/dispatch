@@ -99,7 +99,7 @@ export function queueStateLabel(state: MergeQueueEntryState): string {
     case 'waiting-blockers':
       return 'waiting on blockers';
     case 'blocked-environment':
-      return 'held — checkout is not clean';
+      return 'held: checkout not clean';
     case 'waiting-github':
       return 'Waiting on GitHub';
     case 'rebasing':

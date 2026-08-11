@@ -1,8 +1,8 @@
 import type { PlanRecord } from '@dispatch/client';
 
-/** The sections an "Add detail" pass proposes — the same shape for an existing
- * task or a raw inbox capture, since both come back as a `PlannedTask`. */
-export interface EnrichDraft {
+/** The sections an "Add detail" pass proposes, as read off a `PlannedTask`. Local to this
+ * module — the review panel declares its own structurally identical props type. */
+interface EnrichDraft {
   description: string;
   acceptanceCriteria: string[];
 }
@@ -49,19 +49,4 @@ export function enrichViewState(
     };
   }
   return { kind: 'ready', draft };
-}
-
-/**
- * Flattens a draft into the single free-text body an inbox item's `text` holds,
- * matching `taskDraftToCreateInput`'s description + bullet-block convention.
- */
-export function formatEnrichedInboxText(draft: EnrichDraft): string {
-  const parts = [draft.description];
-  if (draft.acceptanceCriteria.length > 0) {
-    parts.push(
-      'Acceptance criteria:',
-      draft.acceptanceCriteria.map((c) => `- ${c}`).join('\n')
-    );
-  }
-  return parts.filter((p) => p !== '').join('\n\n');
 }

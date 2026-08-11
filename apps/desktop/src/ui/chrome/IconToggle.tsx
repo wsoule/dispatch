@@ -14,10 +14,10 @@ interface IconToggleProps {
 /**
  * A single on/off icon button for a toolbar.
  *
- * Separate from `Segmented` because the semantics differ: a segmented control
- * is one-of-several and always has a selection, while this is a thing that is
- * either on or off. Rendering the second as a one-option group would report the
- * wrong shape to a screen reader.
+ * Separate from the tab switchers built on `@/ui/tabs` because the semantics
+ * differ: a tab switcher is one-of-several and always has a selection, while
+ * this is a thing that is either on or off. Rendering the second as a
+ * one-option group would report the wrong shape to a screen reader.
  *
  * Built on radix Toggle, which keeps the plain button/aria-pressed semantics
  * this already relied on (unlike ToggleGroupItem, which reports radio/aria-checked).

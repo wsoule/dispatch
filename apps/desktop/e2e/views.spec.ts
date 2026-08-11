@@ -1,19 +1,23 @@
 import { expect, type Page, test } from '@playwright/test';
 
 // Views are React state rather than routes, so each one is reached by its
-// sidebar accelerator (visible as ⌘1–⌘7 in the sidebar) instead of a URL.
-// With no run selected, ⌘6 (Review) lands on the review queue — the same
-// "press key, screenshot" shape as every other view here. The more important
-// Review shot, a diff actually open, needs its own navigation and its own
-// content assertion, so it gets a dedicated test below rather than living in
-// this loop — see `review detail renders an open diff`.
+// sidebar accelerator (visible as ⌘1–⌘7 in the sidebar) instead of a URL. The
+// order below is `PROJECT_VIEW_ORDER` (see components/shell/Sidebar.tsx),
+// which is what assigns the numbers — the Runs and Review pages that used to
+// hold ⌘5/⌘6 were retired by the task-centric consolidation, and Inbox and
+// Impact took those slots.
+//
+// Every entry here is one "press key, screenshot" shot. A run's diff is no
+// longer reachable this way at all: it lives on a task's Diff tab now, which
+// takes real navigation and its own content assertion — see the fixme'd
+// `review detail` block below.
 const VIEWS = [
   { name: 'overview', key: 'Meta+1' },
   { name: 'braindump', key: 'Meta+2' },
   { name: 'plans', key: 'Meta+3' },
   { name: 'tasks', key: 'Meta+4' },
-  { name: 'runs', key: 'Meta+5' },
-  { name: 'review', key: 'Meta+6' },
+  { name: 'inbox', key: 'Meta+5' },
+  { name: 'impact', key: 'Meta+6' },
   { name: 'git', key: 'Meta+7' },
 ];
 
@@ -56,7 +60,7 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
     page.getByRole('button', { name: '5 Needs review' })
   ).toBeVisible();
   await expect(
-    page.getByText('No agents are running and nothing is waiting on you.')
+    page.getByText('Nothing running, nothing waiting on you.')
   ).toHaveCount(0);
 }
 
@@ -73,7 +77,7 @@ for (const view of VIEWS) {
   });
 }
 
-// The queue-only "review" shot above never opens a diff, which is exactly the
+// The queue-only "review" shot above never opened a diff, which is exactly the
 // surface that regressed in fix/review-surface (60e99e8): `CodeView` rendered
 // its file header but produced a zero-height virtualizer underneath it, with
 // no console error. A screenshot alone would not have caught that — an empty
@@ -87,29 +91,40 @@ for (const view of VIEWS) {
 // too narrow to show anything, which is a real but distinct layout gap from
 // the height bug this test exists to catch. A wider viewport isolates the two
 // rather than asserting around whichever one happens to be squeezing the pane.
+//
+// FIXME (branch: the task-centric consolidation, 98bf1858): the page this
+// drives no longer exists. Retargeting is Inbox (⌘5) → a "Needs review" row →
+// TaskView's Diff tab, and that first half is mechanical. What has no
+// replacement is the second half: the run review surface no longer renders a
+// changed-files tree at all (`RunReviewView` hands the whole patch to
+// `PierreReviewDiff` with no `only` narrowing), so the `treeitem` click below
+// — the step that selects the one file whose content is then asserted — has
+// nothing to click. Rewriting the assertion needs the real DOM of the new
+// surface, and Playwright cannot launch in the environment this branch was
+// written in (its webServer cannot `posix_spawn` git), so it is left explicit
+// rather than guessed at.
 test.describe('review detail', () => {
   test.use({ viewport: { width: 1600, height: 1100 } });
 
-  test('renders an open diff', async ({ page, baseURL }) => {
-    // The overview rail (MiniOverview, App.tsx) defaults open with no fixture
-    // to reset it from. It is not part of what this test checks, so this
-    // starts it closed rather than leaving it as one more thing competing for
-    // width alongside the viewport widening above.
+  test.fixme('renders an open diff', async ({ page, baseURL }) => {
+    // Collapses the live-agents rail — it is not part of what this test checks
+    // and would otherwise compete for width alongside the viewport widening
+    // above. The rail never hides entirely now, only narrows to a strip.
     await page.addInitScript(() => {
-      window.localStorage.setItem('dispatch:overview-rail', '0');
+      window.localStorage.setItem('dispatch:live-rail', '1');
     });
     await page.goto(authedUrl(baseURL));
     await page.getByText('Dispatch').first().waitFor();
     await assertFixtureDataLoaded(page);
-    await page.keyboard.press('Meta+6');
+    await page.keyboard.press('Meta+5');
 
-    // The queue row's accessible name is the task title plus its turns/cost
-    // (see `Row` in ReviewQueue.tsx) — matched in full because the bare title
-    // alone also names other, currently-hidden buttons this same task shows
-    // elsewhere in the shell (Overview's failed-run row, its own queue mini-
-    // list), and Playwright's strict mode counts those regardless of visibility.
+    // The Inbox's needs-review row (see `Row` in InboxView.tsx): the task
+    // title plus a relative timestamp. Matched loosely on the title because
+    // the bare title also names other, currently-hidden buttons this same
+    // task shows elsewhere in the shell, and Playwright's strict mode counts
+    // those regardless of visibility.
     const queueRow = page.getByRole('button', {
-      name: /Rate limit the search endpoint\s+\d+ turns/,
+      name: /Rate limit the search endpoint/,
     });
     await expect(
       queueRow,

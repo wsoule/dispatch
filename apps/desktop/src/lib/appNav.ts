@@ -12,31 +12,47 @@ import type { ImpactSubjectKind } from '@dispatch/client';
 export type ProjectView =
   | 'overview'
   | 'board'
+  /** retired — normalized to 'inbox' */
   | 'runs'
   | 'branches'
-  | 'review'
-  /** The unified PR table — a row's title routes into `review` via
-   * `openRun`/`openPr` rather than rendering itself. */
+  /** retired — normalized to 'landing' */
+  | 'landed'
+  /** The one merge-queue destination: every open PR with its gates, plus what
+   * already landed — "what lands, when, and what landed". */
   | 'landing'
+  /** retired — normalized to 'inbox' */
+  | 'review'
+  /** Slim list of everything waiting on a human — the surface that replaced
+   * both retired pages. */
+  | 'inbox'
   | 'brain-dump'
   | 'plans'
   /** A single AI task draft's review page — `activeDraftId` says which one. */
   | 'draft'
+  /** One repo pull request, full-window — `activePrNumber` says which. */
+  | 'pr'
   /** The blast-radius browser — `impactSubject` says which file/run/task, or
    * `null` for the picker with nothing preselected. */
   | 'impact'
+  /** One task, full-window, with Details/Chat/Diff tabs — `activeTaskId` says which. */
+  | 'task'
   | 'new-task';
 
+export type TaskTab = 'details' | 'chat' | 'diff';
+
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
- * and what the three "open in Impact" entry points (Review case panel, task
- * detail, Git file pane) hand it preselected. */
+ * and what the two "open in Impact" entry points (Review case panel, Git
+ * file pane) hand it preselected. */
 export interface ImpactSubjectRef {
   kind: ImpactSubjectKind;
   id: string;
 }
 
-/** Global, not-project-scoped views living below the primary nav in the sidebar. */
-export type GlobalView = 'all-agents' | 'sessions' | 'settings';
+/** Global, not-project-scoped views living below the primary nav in the sidebar.
+ * `warden` is the chat assistant for the active project — it lives in this section
+ * (not `ProjectView`) so it stays reachable from any view, but its conversation is
+ * still scoped to whichever project is active. */
+export type GlobalView = 'all-agents' | 'sessions' | 'warden' | 'settings';
 
 export interface NavState {
   /** Which side of the sidebar's split is active — a project's own work, or one of the
@@ -50,20 +66,23 @@ export interface NavState {
   globalView: GlobalView;
   /** Task id shown in the side peek panel, or `null` when it's closed. */
   peekTaskId: string | null;
-  /** Run id shown in the Runs view's right pane, or `null` when nothing is selected. */
+  /** Run id the task view's Chat/Diff tabs are pinned to, or `null` when none is selected. */
   activeRunId: string | null;
   /** Draft id shown by the draft view, or `null` when none is selected. */
   activeDraftId: string | null;
+  /** Repo PR number shown by the PR review view, or `null` when none is open. */
+  activePrNumber: number | null;
   /** The subject `ImpactView` is showing, or `null` for the picker with
-   * nothing preselected — set by `openImpact`, the three entry points' way
+   * nothing preselected — set by `openImpact`, the two entry points' way
    * of handing over "open in Impact" with a subject already chosen. */
   impactSubject: ImpactSubjectRef | null;
+  /** Task id shown in the task full-window view, or `null` when it's not the current view. */
+  activeTaskId: string | null;
+  /** The current tab within the task view. */
+  taskTab: TaskTab;
   /** Which view to snap `projectView` back to once the AI composer dialog opens — a board
    * column's "+" returns to the board, rather than one fixed view. */
   newTaskReturnView: ProjectView;
-  /** A PR number for `review` to open to, set by `openPr` and consumed by
-   * `ReviewView` on read. One-shot hand-off, not tracked in `history`. */
-  pendingPrNumber: number | null;
   paletteOpen: boolean;
   /**
    * Where you have been, newest last, and how far back you have stepped.
@@ -77,15 +96,25 @@ export interface NavState {
   historyIndex: number;
 }
 
-/** One visited destination. Runs and Review key off a run id, so it travels
- * with the entry — going back to a review you had open should reopen it. */
+/** One visited destination. Every id a page renders from travels with the
+ * entry — going back to a review you had open should reopen it. */
 interface NavEntry {
   section: 'project' | 'global';
   projectView: ProjectView;
   globalView: GlobalView;
   activeRunId: string | null;
   activeDraftId: string | null;
+  activePrNumber: number | null;
   impactSubject: ImpactSubjectRef | null;
+  activeTaskId: string | null;
+  taskTab: TaskTab;
+}
+
+/** Retired page ids survive so stored nav state and deep links land somewhere
+ * real: Runs/Review folded into the Inbox, Landed into the Landing table. */
+function normalizeProjectView(view: ProjectView): ProjectView {
+  if (view === 'runs' || view === 'review') return 'inbox';
+  return view === 'landed' ? 'landing' : view;
 }
 
 export const initialNavState: NavState = {
@@ -96,9 +125,11 @@ export const initialNavState: NavState = {
   peekTaskId: null,
   activeRunId: null,
   activeDraftId: null,
+  activePrNumber: null,
   impactSubject: null,
+  activeTaskId: null,
+  taskTab: 'details',
   newTaskReturnView: 'board',
-  pendingPrNumber: null,
   paletteOpen: false,
   history: [
     {
@@ -107,7 +138,10 @@ export const initialNavState: NavState = {
       globalView: 'sessions',
       activeRunId: null,
       activeDraftId: null,
+      activePrNumber: null,
       impactSubject: null,
+      activeTaskId: null,
+      taskTab: 'details',
     },
   ],
   historyIndex: 0,
@@ -126,8 +160,11 @@ function pushHistory(state: NavState, next: NavEntry): NavState {
     last.globalView === next.globalView &&
     last.activeRunId === next.activeRunId &&
     last.activeDraftId === next.activeDraftId &&
+    last.activePrNumber === next.activePrNumber &&
     last.impactSubject?.kind === next.impactSubject?.kind &&
-    last.impactSubject?.id === next.impactSubject?.id
+    last.impactSubject?.id === next.impactSubject?.id &&
+    last.activeTaskId === next.activeTaskId &&
+    last.taskTab === next.taskTab
   ) {
     return state;
   }
@@ -145,14 +182,16 @@ export type NavAction =
   | { type: 'closeRun' }
   /** Routes to the draft review page for one draft — the drafts tray's row click. */
   | { type: 'openDraft'; draftId: string }
-  /** Routes to `ImpactView` with a subject preselected — the "open in Impact"
-   * action on the Review case panel, task detail, and Git file pane. */
-  | { type: 'openImpact'; subject: ImpactSubjectRef }
-  /** Routes to `review` with `number` handed off as `pendingPrNumber` —
-   * Landing's row click for a PR row with no run behind it. */
+  /** Routes to the PR review page for one repo pull request — the Inbox's PR
+   * rows and a run's "Review PR" button. */
   | { type: 'openPr'; number: number }
-  /** Acks `pendingPrNumber` read so it can't be replayed by a later render. */
-  | { type: 'clearPendingPr' }
+  /** Routes to `ImpactView` with a subject preselected — the "open in Impact"
+   * action on the Review case panel and the Git file pane. */
+  | { type: 'openImpact'; subject: ImpactSubjectRef }
+  /** Routes to the task full-window view with a specific task, tab, and optional run. */
+  | { type: 'openTask'; taskId: string; tab?: TaskTab; runId?: string | null }
+  /** Switches the tab within the task view without adding a history entry. */
+  | { type: 'setTaskTab'; tab: TaskTab }
   /** Routes to `new-task`, remembering the view to come back to — App.tsx reads reaching this
    * state as "open the AI composer dialog". */
   | { type: 'openNewTask' }
@@ -180,45 +219,46 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         peekTaskId: null,
         activeRunId: null,
         activeDraftId: null,
+        activePrNumber: null,
         impactSubject: null,
-        pendingPrNumber: null,
+        activeTaskId: null,
       };
     case 'setProjectView': {
-      const activeRunId =
-        // Runs and Review both key their selection off `activeRunId`, and
-        // Review is a full-page view OF the selected run, so moving between
-        // them keeps it; any other view clears it rather than reopening a
-        // stale selection.
-        action.view === 'runs' || action.view === 'review'
-          ? state.activeRunId
-          : null;
+      const view = normalizeProjectView(action.view);
+      // The task view is the only page that renders a selected run now, so
+      // every other destination clears it rather than reopening a stale one.
+      const activeRunId = view === 'task' ? state.activeRunId : null;
       // Only the draft view itself renders a selected draft, so any other
       // destination drops it rather than reopening a stale one on return.
-      const activeDraftId =
-        action.view === 'draft' ? state.activeDraftId : null;
+      const activeDraftId = view === 'draft' ? state.activeDraftId : null;
+      // Same rule for the open pull request: only the PR view renders one.
+      const activePrNumber = view === 'pr' ? state.activePrNumber : null;
       // Same rule as the draft id: only Impact itself renders a preselected
       // subject, so leaving it drops a stale one rather than reopening it
       // the next time the nav item is clicked fresh.
-      const impactSubject =
-        action.view === 'impact' ? state.impactSubject : null;
+      const impactSubject = view === 'impact' ? state.impactSubject : null;
+      const activeTaskId = view === 'task' ? state.activeTaskId : null;
       const next: NavState = {
         ...state,
         section: 'project',
-        projectView: action.view,
+        projectView: view,
         activeRunId,
         activeDraftId,
+        activePrNumber,
         impactSubject,
-        // A plain view switch is not `openPr`'s hand-off — drop any pending
-        // PR selection rather than replaying it on an unrelated navigation.
-        pendingPrNumber: null,
+        activeTaskId,
+        taskTab: state.taskTab,
       };
       return pushHistory(next, {
         section: 'project',
-        projectView: action.view,
+        projectView: view,
         globalView: state.globalView,
         activeRunId,
         activeDraftId,
+        activePrNumber,
         impactSubject,
+        activeTaskId,
+        taskTab: state.taskTab,
       });
     }
     case 'setGlobalView':
@@ -239,16 +279,18 @@ export function navReducer(state: NavState, action: NavAction): NavState {
     case 'openRun':
       // Opening a different run is a destination in its own right, so back
       // returns to the one you were looking at rather than skipping the view.
-      // Also drops any pending PR hand-off, which a run target replaces.
       return pushHistory(
-        { ...state, activeRunId: action.runId, pendingPrNumber: null },
+        { ...state, activeRunId: action.runId },
         {
           section: state.section,
           projectView: state.projectView,
           globalView: state.globalView,
           activeRunId: action.runId,
           activeDraftId: state.activeDraftId,
+          activePrNumber: state.activePrNumber,
           impactSubject: state.impactSubject,
+          activeTaskId: state.activeTaskId,
+          taskTab: state.taskTab,
         }
       );
     case 'closeRun':
@@ -269,7 +311,32 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           globalView: state.globalView,
           activeRunId: state.activeRunId,
           activeDraftId: action.draftId,
+          activePrNumber: state.activePrNumber,
           impactSubject: state.impactSubject,
+          activeTaskId: state.activeTaskId,
+          taskTab: state.taskTab,
+        }
+      );
+    case 'openPr':
+      // Same rule as `openDraft`: one PR is a destination, so back returns to
+      // the pull request you had open rather than skipping past the view.
+      return pushHistory(
+        {
+          ...state,
+          section: 'project',
+          projectView: 'pr',
+          activePrNumber: action.number,
+        },
+        {
+          section: 'project',
+          projectView: 'pr',
+          globalView: state.globalView,
+          activeRunId: state.activeRunId,
+          activeDraftId: state.activeDraftId,
+          activePrNumber: action.number,
+          impactSubject: state.impactSubject,
+          activeTaskId: state.activeTaskId,
+          taskTab: state.taskTab,
         }
       );
     case 'openImpact':
@@ -289,21 +356,12 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           globalView: state.globalView,
           activeRunId: state.activeRunId,
           activeDraftId: state.activeDraftId,
+          activePrNumber: state.activePrNumber,
           impactSubject: action.subject,
+          activeTaskId: state.activeTaskId,
+          taskTab: state.taskTab,
         }
       );
-    case 'openPr':
-      // Not pushed to history — `ReviewView` owns PR selection as local
-      // state, so this only hands the number off for it to read once.
-      return {
-        ...state,
-        section: 'project',
-        projectView: 'review',
-        activeRunId: null,
-        pendingPrNumber: action.number,
-      };
-    case 'clearPendingPr':
-      return { ...state, pendingPrNumber: null };
     case 'back':
     case 'forward': {
       const delta = action.type === 'back' ? -1 : 1;
@@ -318,16 +376,46 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         globalView: entry.globalView,
         activeRunId: entry.activeRunId,
         activeDraftId: entry.activeDraftId,
+        activePrNumber: entry.activePrNumber,
         impactSubject: entry.impactSubject,
+        activeTaskId: entry.activeTaskId,
+        taskTab: entry.taskTab,
         // Moving through history is navigation, not a modal action — anything
         // layered on top closes rather than following you to the new screen.
         peekTaskId: null,
         paletteOpen: false,
-        // Same reasoning as `peekTaskId`: a one-shot hand-off, not a
-        // destination `history` ever recorded.
-        pendingPrNumber: null,
       };
     }
+    case 'openTask': {
+      // The full task view is a destination (unlike the peek): it replaces the
+      // main pane and participates in history, so back returns to where you were.
+      const next: NavState = {
+        ...state,
+        section: 'project',
+        projectView: 'task',
+        activeTaskId: action.taskId,
+        taskTab: action.tab ?? 'details',
+        activeRunId: action.runId ?? null,
+        peekTaskId: null,
+      };
+      return pushHistory(next, {
+        section: 'project',
+        projectView: 'task',
+        globalView: state.globalView,
+        activeRunId: next.activeRunId,
+        activeDraftId: state.activeDraftId,
+        activePrNumber: state.activePrNumber,
+        impactSubject: state.impactSubject,
+        activeTaskId: action.taskId,
+        taskTab: next.taskTab,
+      });
+    }
+    case 'setTaskTab':
+      // Tab flips are in-place, not destinations — history keeps the tab the
+      // view was opened on.
+      return state.projectView === 'task'
+        ? { ...state, taskTab: action.tab }
+        : state;
     case 'openNewTask':
       // The creator is a project-section destination, so opening it from a global view
       // (Settings/Sessions/All Agents) also moves back into the project section and returns to
@@ -340,10 +428,12 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         section: 'project',
         projectView: 'new-task',
         activeRunId: null,
+        // Normalized on capture, so a return view read out of stored state can
+        // never send you back to a page that no longer exists.
         newTaskReturnView:
           state.projectView !== 'new-task'
-            ? state.projectView
-            : state.newTaskReturnView,
+            ? normalizeProjectView(state.projectView)
+            : normalizeProjectView(state.newTaskReturnView),
       };
     case 'closeNewTask':
       if (state.projectView !== 'new-task') return state;
@@ -359,6 +449,14 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       if (state.peekTaskId !== null) return { ...state, peekTaskId: null };
       if (state.projectView === 'new-task')
         return { ...state, projectView: state.newTaskReturnView };
+      // The full-window destinations you arrive at from a row click leave the
+      // way you came in, rather than stranding you with only a Back button.
+      if (
+        state.section === 'project' &&
+        (state.projectView === 'task' || state.projectView === 'pr')
+      ) {
+        return navReducer(state, { type: 'back' });
+      }
       return state;
     default:
       return state;

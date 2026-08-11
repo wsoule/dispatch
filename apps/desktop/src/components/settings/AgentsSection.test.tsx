@@ -27,7 +27,7 @@ test('clicking the "never ask" label text selects that radio', () => {
       onSave={(p) => Promise.resolve(void saved.push(p))}
     />
   );
-  fireEvent.click(screen.getByText('Never ask — let it run'));
+  fireEvent.click(screen.getByText('Never ask, let it run'));
   expect(saved).toEqual([{ permissionMode: 'dontAsk' }]);
 });
 

@@ -197,7 +197,7 @@ export function EpicDagView({
         )}
       >
         <Waypoints className="size-5" />
-        <p className="text-[13px]">This epic has no tasks yet.</p>
+        <p className="text-[13px]">No tasks yet.</p>
       </div>
     );
   }

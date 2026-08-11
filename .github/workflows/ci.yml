@@ -46,6 +46,16 @@ jobs:
       - name: TypeScript
         run: bun run tsc
 
+      # Gates on critical only, which is where the repo sits today. The full
+      # report runs next and never fails the build, so the high/moderate
+      # backlog stays visible without blocking every PR on it.
+      - name: Audit (critical)
+        run: bun run audit
+
+      - name: Audit (full report)
+        run: bun run audit:all
+        continue-on-error: true
+
       - name: Tests
         run: bun run test
 

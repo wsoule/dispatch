@@ -230,7 +230,7 @@ export function TaskCardTile({
             onChange={onStatusChange}
           />
         </span>
-        {/* Merge-ladder dot: same affordance TasksListView/StackRail/TaskDetailDialog show. */}
+        {/* Merge-ladder dot: same affordance TasksListView/StackRail/TaskDetailPanel show. */}
         <MergeLadderDot meta={run} className="mt-1.5" />
         <span className="text-foreground line-clamp-2 text-[13.5px] leading-[1.35] font-medium">
           {doc.meta.title}

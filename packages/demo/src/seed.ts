@@ -47,7 +47,7 @@ export function seedSession(dir: string): SessionPaths {
   const paths = sessionPaths(dir);
 
   mkdirSync(dir, { recursive: true });
-  git(dir, 'init', '-q', '--bare', paths.origin);
+  git(dir, 'init', '-q', '--bare', '-b', 'main', paths.origin);
 
   buildRepo({ root: paths.root, push: true, remote: paths.origin });
   // Non-empty verifySteps shadows verifyCommand in the merge queue and,

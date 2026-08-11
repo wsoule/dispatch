@@ -1,0 +1,21 @@
+{
+  "globs": ["**/*.md"],
+  "ignores": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/storefront-src/**",
+    "**/src-tauri/target/**",
+    ".dispatch/**",
+    ".agents/ignore/**",
+    ".superpowers/**",
+  ],
+  "config": {
+    // Prose here is written to an 80-column ruler by hand, but tables and
+    // fenced blocks legitimately run past it — the formatter does not reflow
+    // comment or doc prose, so a hard limit would fight the house style.
+    "MD013": false,
+    // Duplicate headings are normal in these docs: per-task sections repeat
+    // "Files", "Tests", "Commit" by design.
+    "MD024": false,
+  },
+}

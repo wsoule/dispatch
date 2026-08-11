@@ -1,3 +1,4 @@
+import type { TaskDoc } from '@dispatch/core/browser';
 import { useQuery } from '@tanstack/react-query';
 import type { Update } from '@tauri-apps/plugin-updater';
 import { Plus, TriangleAlert } from 'lucide-react';
@@ -12,30 +13,36 @@ import {
 } from 'react';
 
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
+import { BrainDumpFab } from './components/shell/BrainDumpFab';
 import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
-import { MiniOverview } from './components/shell/MiniOverview';
+import { LiveRail, useLiveRailCollapsed } from './components/shell/LiveRail';
 import { Sidebar, useSidebarCollapsed } from './components/shell/Sidebar';
 import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
 import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
-import { TaskDetailDialog } from './components/tasks/TaskDetailDialog';
+import type { TaskDetailPanelProps } from './components/tasks/detail';
+import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
+import { useWardenSession } from './hooks/useWardenSession';
 import { withActionFeedback } from './lib/actionFeedback';
-import type { GlobalView, ProjectView } from './lib/appNav';
+import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
-import { deriveFeedState } from './lib/feedState';
+import { hideArchivedRuns } from './lib/archiveFilter';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
+import { buildInbox } from './lib/inboxQueue';
 import { landingNavBadge } from './lib/landingView';
 import { isLinearConfigured } from './lib/linearSettings';
+import { resolveExecuteModel } from './lib/models';
 import { basename } from './lib/projectName';
+import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
 import {
   addProject,
@@ -53,13 +60,15 @@ import { BranchesView } from './views/BranchesView';
 import { DraftView } from './views/DraftView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
+import { InboxView } from './views/InboxView';
 import { LandingTableView } from './views/LandingTableView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
-import { ReviewView } from './views/ReviewView';
-import { RunsView } from './views/RunsView';
+import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
+import { TaskView } from './views/TaskView';
+import { WardenView } from './views/WardenView';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import {
@@ -87,22 +96,12 @@ function App() {
   // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
   const [aiComposerOpen, setAiComposerOpen] = useState(false);
 
-  // The overview rail's open/closed state, kept across launches — it is a
-  // layout preference, and re-hiding it every start would make it feel broken.
-  const [railOpen, setRailOpen] = useState<boolean>(
-    () => window.localStorage.getItem('dispatch:overview-rail') !== '0'
-  );
-
   // The left rail's collapsed state, owned here because `SidebarProvider` wraps the whole
   // shell row; `Sidebar` reads it back through `useSidebar`. Persistence lives with the rail.
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
-  useEffect(() => {
-    window.localStorage.setItem('dispatch:overview-rail', railOpen ? '1' : '0');
-  }, [railOpen]);
-  // An open review is the same "compressed copy beside the full version" case the rail already
-  // sits out on Overview — the review page's own header lists the queue it would be repeating.
-  const inFocusedReview =
-    navState.projectView === 'review' && navState.activeRunId !== null;
+  // The live-agents rail's collapsed state, owned here for the same reason: the rail is a
+  // sibling of `<main>` in the shell row, not something a view can size for itself.
+  const [liveRailCollapsed, setLiveRailCollapsed] = useLiveRailCollapsed();
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -302,25 +301,11 @@ function App() {
     setShowCreate(true);
   }, []);
 
-  // Jumps straight to the Runs view with `runId` already selected — used by both the task peek
-  // panel and the (now single-project) Agents view. There is only one project to switch to, so
-  // unlike the old cross-project `jumpToRun` this never needs a project id.
-  const jumpToRun = useCallback((runId: string) => {
-    dispatchNav({ type: 'setProjectView', view: 'runs' });
-    dispatchNav({ type: 'openRun', runId });
+  // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
+  // now, and a run that has just been created is live, so it opens on Chat.
+  const onRunDispatched = useCallback((runId: string, taskId: string) => {
+    dispatchNav({ type: 'openTask', taskId, tab: 'chat', runId });
   }, []);
-
-  // Moves nav state to the newly (re-)dispatched run — replaces the old
-  // `useDispatchProject`-internal `setSelectedRunId(meta.id)` side effect now that
-  // `navReducer`'s `activeRunId` is the single source of truth for "which run is open" (C1
-  // in the phase-8 fix report).
-  const onRunDispatched = useCallback(
-    (runId: string) => {
-      selectProjectView('runs');
-      dispatchNav({ type: 'openRun', runId });
-    },
-    [selectProjectView]
-  );
 
   const toasts = useToasts();
 
@@ -347,6 +332,43 @@ function App() {
     [rawData, toasts]
   );
 
+  // The warden chat's session — mounted here, not inside WardenView, so the
+  // open conversation survives switching tabs. Uses `rawData`'s client/port
+  // directly (its errors surface in the view's own transcript rows, not as
+  // action-feedback toasts); useDispatchProject's WS handler invalidates its
+  // record query on `warden.changed`.
+  const warden = useWardenSession(
+    rawData.client,
+    rawData.port,
+    activeProject?.path ?? null
+  );
+
+  // Opens the full task view; unspecified runId resolves to the task's latest
+  // run so Chat/Diff have something to show immediately.
+  const openTaskView = useCallback(
+    (taskId: string, tab: TaskTab = 'details', runId?: string) => {
+      const resolved =
+        runId ?? rawData.latestRunByTaskId.get(taskId)?.id ?? null;
+      dispatchNav({ type: 'openTask', taskId, tab, runId: resolved });
+    },
+    [rawData.latestRunByTaskId]
+  );
+
+  // One run row (All agents, the merge queue) opens its task on the tab that matches what you
+  // can do with the run: a finished one's diff, a live one's transcript.
+  const jumpToRun = useCallback(
+    (runId: string) => {
+      const run = rawData.runs.find((r) => r.id === runId);
+      if (run === undefined) return;
+      openTaskView(
+        run.taskId,
+        isTerminalRunState(run.state) ? 'diff' : 'chat',
+        run.id
+      );
+    },
+    [rawData.runs, openTaskView]
+  );
+
   // Every non-terminal run for this project — the "Agents" view's list and the sidebar's live
   // badge both read from this single project's own run list now, not a cross-project fan-out
   // of N daemons (the old `useAllAgents`, removed with this pivot).
@@ -366,6 +388,23 @@ function App() {
   const liveRuns = useMemo(
     () => data.runs.filter((run) => !isTerminalRunState(run.state)),
     [data.runs]
+  );
+
+  // How many runs the archive filter is holding back, computed off the *unfiltered* list so
+  // the All-agents toggle can still say what turning it on would reveal while it is already
+  // on (`visibleRuns` is the full list in that case, and would report zero).
+  const archivedRunCount = useMemo(() => {
+    const archivedTaskIds = new Set(data.archivedTasks.map((t) => t.meta.id));
+    return (
+      data.runs.length - hideArchivedRuns(data.runs, archivedTaskIds).length
+    );
+  }, [data.runs, data.archivedTasks]);
+
+  // Everything the Inbox view shows — the Review queue plus any run stalled
+  // on an approval or a question. See `buildInbox`.
+  const inboxData = useMemo(
+    () => buildInbox(data.runs, data.repoPrs ?? [], data.openQuestions),
+    [data.runs, data.repoPrs, data.openQuestions]
   );
 
   useGlobalKeyboard({
@@ -396,7 +435,16 @@ function App() {
         ) ?? null)
       : null;
 
-  // Local consts so narrowing survives the closure (TaskDetailDialog has no `data` prop).
+  // The task the full task view is showing, resolved the same way as `selectedDoc` — `null`
+  // once a task has been deleted/archived out from under an open view.
+  const activeTaskDoc =
+    navState.activeTaskId !== null
+      ? (data.tasksIncludingArchived.find(
+          (t) => t.meta.id === navState.activeTaskId
+        ) ?? null)
+      : null;
+
+  // Local consts so narrowing survives the closure (TaskDetailPanel has no `data` prop).
   // Raw `sendPlanMessage`, not the `data.` wrapper, which answers a different plan slot.
   const enrichPlanRecord = data.enrichPlanRecord;
   const enrichClient = data.client;
@@ -406,6 +454,45 @@ function App() {
           await enrichClient.sendPlanMessage(enrichPlanRecord.id, message);
         }
       : undefined;
+
+  // The shared `TaskDetailPanel` prop bundle for one task, used by both the peek dialog and
+  // the full task view so the two mounts render identically. Callers only invoke this once
+  // `data.config` has loaded (both call sites already gate on that), so a still-loading
+  // config is a caller bug rather than a state this needs to render around.
+  const buildTaskPanelProps = (doc: TaskDoc): TaskDetailPanelProps => {
+    if (data.config === null) {
+      throw new Error('buildTaskPanelProps requires a loaded project config');
+    }
+    return {
+      doc,
+      defaultModel: resolveExecuteModel(data.config),
+      statuses: data.config.statuses,
+      ready: data.readyIds.has(doc.meta.id),
+      run: data.latestRunByTaskId.get(doc.meta.id),
+      runs: data.runs.filter((r) => r.taskId === doc.meta.id),
+      epics: data.epics,
+      tasks: data.tasksIncludingArchived,
+      latestRunByTaskId: data.latestRunByTaskId,
+      onUpdate: data.handleUpdate,
+      onMoveStatus: data.moveTaskStatus,
+      onDispatch: data.handleDispatch,
+      onEnrich: data.handleEnrichTask,
+      // The slot is app-level so a draft survives closing the peek; only hand it over when
+      // it belongs to the task being shown.
+      enrichPlan:
+        data.enrichTaskId === doc.meta.id ? data.enrichPlanRecord : undefined,
+      onDismissEnrich: data.handleDismissEnrich,
+      onAnswerEnrich,
+      onOpenSession: (runId) => openTaskView(doc.meta.id, 'chat', runId),
+      onOpenTask: (taskId) => dispatchNav({ type: 'openPeek', taskId }),
+      linearLinks: data.linearLinks,
+      linearConfigured: isLinearConfigured(data.linearStatus),
+      onPushToLinear: (taskId) => data.handleSyncLinear([taskId]),
+      client: data.client,
+      port: data.port,
+      fixLoopEscalation: data.config.fixLoop.escalation,
+    };
+  };
 
   // The draft the draft view is showing, resolved from nav state — `null` when the id
   // points at a draft that has since been dismissed or evicted.
@@ -444,9 +531,8 @@ function App() {
   // listeners on every App render instead of just when the panel opens/closes.
   const closeInbox = useCallback(() => setInboxOpen(false), []);
 
-  // Click-through for an inbox row: a run transition jumps to the Runs view with that run
-  // selected; a queue-wide event (or anything without a specific run) just jumps to Runs —
-  // the same two nav shapes `onRunDispatched`/`jumpToRun` already use elsewhere in this file.
+  // Click-through for a notification row: a run transition opens that run's task, anything
+  // queue-wide lands on the Inbox, which is where "what needs me" now lives.
   // Also marks the whole inbox read again: an entry can arrive while the panel is already
   // open (opening only marks-read at that instant), and without this a fresh unread badge
   // would linger after the user just acted on the newest entry.
@@ -474,18 +560,18 @@ function App() {
         setInboxOpen(false);
         return;
       }
-      selectProjectView('runs');
       if (target.kind === 'run') {
-        dispatchNav({ type: 'openRun', runId: target.runId });
+        jumpToRun(target.runId);
+      } else {
+        // {kind:'queue'}/{kind:'runs-page'}: no one run to point at, so both
+        // land on the Inbox, which lists everything waiting and the merge
+        // queue underneath it.
+        selectProjectView('inbox');
       }
-      // {kind:'queue'} falls through to the same runs-page landing as
-      // 'runs-page': RunsView has no separate queue drawer to open — merge
-      // queue state renders inline in a selected run's own detail panel —
-      // so there's nothing further to target here.
       markNotificationInboxRead();
       setInboxOpen(false);
     },
-    [selectProjectView, markNotificationInboxRead, dispatchNav]
+    [selectProjectView, markNotificationInboxRead, dispatchNav, jumpToRun]
   );
 
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
@@ -518,16 +604,22 @@ function App() {
           run: () => selectProjectView('board'),
         },
         {
-          id: 'go-runs',
-          label: 'Go to Runs',
+          id: 'go-inbox',
+          label: 'Go to Inbox',
           kind: 'go to',
-          run: () => selectProjectView('runs'),
+          run: () => selectProjectView('inbox'),
         },
         {
           id: 'go-plans',
           label: 'Go to Plans',
           kind: 'go to',
           run: () => selectProjectView('plans'),
+        },
+        {
+          id: 'go-landing',
+          label: 'Go to Landing',
+          kind: 'go to',
+          run: () => selectProjectView('landing'),
         }
       );
       for (const doc of paletteTasks) {
@@ -565,6 +657,12 @@ function App() {
         label: 'Go to Sessions',
         kind: 'go to',
         run: () => setGlobalView('sessions'),
+      },
+      {
+        id: 'go-warden',
+        label: 'Go to Warden',
+        kind: 'go to',
+        run: () => setGlobalView('warden'),
       },
       {
         id: 'go-settings',
@@ -648,9 +746,7 @@ function App() {
             spendToday={todaySpend}
             badges={{
               board: data.readyIds.size,
-              runs: liveRuns.length,
-              review: data.runs.filter((r) => deriveFeedState(r) === 'review')
-                .length,
+              inbox: inboxData.review.length + inboxData.waiting.length,
               landing:
                 data.landing !== null ? landingNavBadge(data.landing) : 0,
             }}
@@ -728,7 +824,18 @@ function App() {
                 <>
                   {navState.globalView === 'all-agents' && (
                     <AllAgentsView
-                      runs={data.runs}
+                      // `visibleRuns`, not `runs`: this is the run *list* the archive filter
+                      // was built for, and the only surface left that can unarchive one.
+                      runs={data.visibleRuns}
+                      // The non-run agents (planners, enrich, drafts, wardens) — archiving
+                      // never applies to them, so they bypass the archive filter.
+                      sessions={data.agentSessions}
+                      archivedRunCount={archivedRunCount}
+                      showArchived={data.showArchived}
+                      onSetShowArchived={data.setShowArchived}
+                      onArchiveRun={(runId, archived) =>
+                        void data.handleArchiveRun(runId, archived)
+                      }
                       portLoading={data.portLoading}
                       portError={data.portError}
                       portErrorDetail={data.portErrorDetail}
@@ -738,6 +845,13 @@ function App() {
                     />
                   )}
                   {navState.globalView === 'sessions' && <SessionsHubView />}
+                  {navState.globalView === 'warden' && (
+                    <WardenView
+                      data={data}
+                      warden={warden}
+                      projectName={activeProject?.name ?? null}
+                    />
+                  )}
                   {navState.globalView === 'settings' && (
                     <SettingsView activeProject={activeProject} data={data} />
                   )}
@@ -753,33 +867,24 @@ function App() {
                     <OverviewView
                       data={data}
                       projectName={activeProject?.name ?? null}
-                      onOpenRun={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('runs');
-                      }}
+                      onOpenRun={jumpToRun}
                       onReviewRun={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('review');
+                        const run = data.runs.find((r) => r.id === runId);
+                        if (run !== undefined) {
+                          openTaskView(run.taskId, 'diff', run.id);
+                        }
                       }}
                       onGoToBoard={() => selectProjectView('board')}
                     />
                   )}
-                  {navState.projectView === 'review' && (
-                    <ReviewView
-                      data={data}
-                      onBack={() => dispatchNav({ type: 'closeRun' })}
-                      selectedRunId={navState.activeRunId}
-                      onSelectRun={(runId) =>
-                        dispatchNav({ type: 'openRun', runId })
+                  {navState.projectView === 'inbox' && (
+                    <InboxView
+                      data={inboxData}
+                      project={data}
+                      onOpenTask={openTaskView}
+                      onOpenPr={(number) =>
+                        dispatchNav({ type: 'openPr', number })
                       }
-                      onOpenImpact={(subject) =>
-                        dispatchNav({ type: 'openImpact', subject })
-                      }
-                      pendingPrNumber={navState.pendingPrNumber}
-                      onPendingPrConsumed={() =>
-                        dispatchNav({ type: 'clearPendingPr' })
-                      }
-                      onOpenLanding={() => selectProjectView('landing')}
                     />
                   )}
                   {navState.projectView === 'landing' && (
@@ -787,8 +892,7 @@ function App() {
                       data={data}
                       onSelectTarget={(target) => {
                         if (target.kind === 'run') {
-                          dispatchNav({ type: 'openRun', runId: target.runId });
-                          selectProjectView('review');
+                          jumpToRun(target.runId);
                         } else {
                           dispatchNav({
                             type: 'openPr',
@@ -798,6 +902,15 @@ function App() {
                       }}
                     />
                   )}
+                  {navState.projectView === 'pr' &&
+                    navState.activePrNumber !== null && (
+                      <PrReviewView
+                        key={navState.activePrNumber}
+                        data={data}
+                        prNumber={navState.activePrNumber}
+                        onBack={() => dispatchNav({ type: 'back' })}
+                      />
+                    )}
                   {navState.projectView === 'impact' && (
                     // Keyed by the preselected subject so arriving with a new
                     // one (a different "open in Impact" click) resets the
@@ -823,26 +936,52 @@ function App() {
                       onPlanWork={() => selectProjectView('plans')}
                     />
                   )}
-                  {navState.projectView === 'runs' && (
-                    <RunsView
-                      data={data}
-                      selectedRunId={navState.activeRunId}
-                      onSelectRun={(runId) =>
-                        dispatchNav({ type: 'openRun', runId })
-                      }
-                      onViewPr={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('review');
-                      }}
-                    />
-                  )}
+                  {navState.projectView === 'task' &&
+                    navState.activeTaskId !== null &&
+                    data.config !== null && (
+                      <TaskView
+                        key={navState.activeTaskId}
+                        data={data}
+                        taskId={navState.activeTaskId}
+                        tab={navState.taskTab}
+                        activeRunId={navState.activeRunId}
+                        onSetTab={(tab) =>
+                          dispatchNav({ type: 'setTaskTab', tab })
+                        }
+                        onSelectRun={(runId) =>
+                          openTaskView(
+                            navState.activeTaskId,
+                            navState.taskTab,
+                            runId
+                          )
+                        }
+                        onBack={() => dispatchNav({ type: 'back' })}
+                        // `undefined` when the task has gone away (deleted/archived out from
+                        // under an open view) — TaskView's own lookup finds the same absence
+                        // and renders its "no longer available" state before ever touching
+                        // this prop.
+                        panelProps={
+                          activeTaskDoc !== null
+                            ? buildTaskPanelProps(activeTaskDoc)
+                            : undefined
+                        }
+                        onViewPr={(runId) => {
+                          const number = prNumberFromUrl(
+                            data.runs.find((r) => r.id === runId)?.prUrl
+                          );
+                          if (number !== null) {
+                            dispatchNav({ type: 'openPr', number });
+                          }
+                        }}
+                        onOpenImpact={(subject) =>
+                          dispatchNav({ type: 'openImpact', subject })
+                        }
+                      />
+                    )}
                   {navState.projectView === 'branches' && (
                     <BranchesView
                       data={data}
-                      onOpenRun={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('runs');
-                      }}
+                      onOpenRun={jumpToRun}
                       onOpenImpact={(subject) =>
                         dispatchNav({ type: 'openImpact', subject })
                       }
@@ -905,77 +1044,46 @@ function App() {
             </ErrorBoundary>
           </main>
 
-          {/* The overview, kept in the corner. Every other screen answers a
-              narrower question than "what needs me", so this is the one thing
-              worth carrying between them. Project scope only — the global
-              views have no feed to show. */}
-          {/* Not on Overview: the rail is a compressed copy of that screen, and
-              showing it beside the full version is the same information twice
-              in the same viewport. */}
-          {navState.section === 'project' &&
-            navState.projectView !== 'overview' &&
-            activeProject !== null && (
-              <MiniOverview
-                data={data}
-                // Same rule, applied to an open review: that page devotes the window to one run
-                // and the rail listed the same queue beside it. Derived rather than written back
-                // to `railOpen`, so the person's own choice survives the review and returns.
-                open={railOpen && !inFocusedReview}
-                onToggle={() => setRailOpen((v) => !v)}
-                onOpenRun={(runId) => {
-                  dispatchNav({ type: 'openRun', runId });
-                  selectProjectView('runs');
-                }}
-                onReviewRun={(runId) => {
-                  dispatchNav({ type: 'openRun', runId });
-                  selectProjectView('review');
-                }}
-              />
-            )}
+          {/* The live-agents rail, kept in the corner across every project screen — unlike the
+              old MiniOverview, it never hides itself: a row per running agent stays put even
+              when nothing needs a human, and the attention strip is the only part that comes
+              and goes. Collapsing narrows it to a strip (the attention count survives) rather
+              than removing it, which is what keeps a narrow window's Diff column readable.
+              Project scope only — the global views have no runs to show. */}
+          {navState.section === 'project' && activeProject !== null && (
+            <LiveRail
+              runs={data.runs}
+              repoPrs={data.repoPrs ?? []}
+              openQuestions={data.openQuestions}
+              onOpenTask={openTaskView}
+              onOpenInbox={() => selectProjectView('inbox')}
+              collapsed={liveRailCollapsed}
+              onSetCollapsed={setLiveRailCollapsed}
+            />
+          )}
         </SidebarProvider>
 
+        {/* The quick-capture brain button, pinned bottom-right on every project screen except
+            Brain dump itself (which has the full composer). Gated on a live daemon client:
+            the raw capture handler silently no-ops when `client` is null, and a capture that
+            quietly drops the thought is worse than no button. */}
+        {navState.section === 'project' &&
+          navState.projectView !== 'brain-dump' &&
+          activeProject !== null &&
+          data.client !== null && (
+            <BrainDumpFab
+              onCapture={rawData.handleCaptureInbox}
+              onOpenBrainDump={() => selectProjectView('brain-dump')}
+            />
+          )}
+
         {selectedDoc !== null && data.config !== null && (
-          // Remount dialog per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
-          <TaskDetailDialog
+          // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
+          <TaskPeekDialog
             key={selectedDoc.meta.id}
-            doc={selectedDoc}
-            statuses={data.config.statuses}
-            ready={data.readyIds.has(selectedDoc.meta.id)}
-            run={data.latestRunByTaskId.get(selectedDoc.meta.id)}
-            runs={data.runs.filter((r) => r.taskId === selectedDoc.meta.id)}
-            epics={data.epics}
-            tasks={data.tasksIncludingArchived}
-            latestRunByTaskId={data.latestRunByTaskId}
+            {...buildTaskPanelProps(selectedDoc)}
             onClose={() => dispatchNav({ type: 'closePeek' })}
-            onUpdate={data.handleUpdate}
-            onMoveStatus={data.moveTaskStatus}
-            onDispatch={data.handleDispatch}
-            onEnrich={data.handleEnrichTask}
-            // The slot is app-level so a draft survives closing the dialog; only hand it over
-            // when it belongs to the task being shown.
-            enrichPlan={
-              data.enrichTaskId === selectedDoc.meta.id
-                ? data.enrichPlanRecord
-                : undefined
-            }
-            onDismissEnrich={data.handleDismissEnrich}
-            onAnswerEnrich={onAnswerEnrich}
-            onOpenRun={(runId) => {
-              dispatchNav({ type: 'closePeek' });
-              selectProjectView('runs');
-              dispatchNav({ type: 'openRun', runId });
-            }}
-            onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
-            onOpenImpact={(subject) => {
-              dispatchNav({ type: 'closePeek' });
-              dispatchNav({ type: 'openImpact', subject });
-            }}
-            linearLinks={data.linearLinks}
-            linearConfigured={isLinearConfigured(data.linearStatus)}
-            onPushToLinear={(taskId) => data.handleSyncLinear([taskId])}
-            client={data.client}
-            port={data.port}
-            fixLoopEscalation={data.config.fixLoop.escalation}
+            onExpand={() => openTaskView(selectedDoc.meta.id)}
           />
         )}
 

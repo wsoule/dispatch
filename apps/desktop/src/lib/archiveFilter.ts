@@ -1,9 +1,9 @@
 import type { RunMeta } from '@dispatch/client';
 
 /**
- * Drops every run belonging to an archived task, for the Runs list when the
+ * Drops every run belonging to an archived task, for a run list whose
  * "show archived" toggle is off — otherwise a run whose task has since been
- * archived would linger in the Runs view forever with nothing left to act on
+ * archived would linger in that list forever with nothing left to act on
  * it. Returns the same array reference when nothing needs filtering (empty
  * `archivedTaskIds`), so callers get referential stability instead of a new
  * array every render. Pure so the toggle's filtering is unit-testable

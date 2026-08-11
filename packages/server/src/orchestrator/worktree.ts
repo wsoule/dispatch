@@ -243,6 +243,13 @@ export class WorktreeManager {
     return Number.isNaN(parsed) ? 0 : parsed;
   }
 
+  // How many commits `base` has that `branch` does not — how far the base has
+  // moved on since this branch diverged. The mirror of aheadCount, so it
+  // inherits the same tolerance: 0 when either ref is missing.
+  behindCount(branch: string, base: string): number {
+    return this.aheadCount(base, branch);
+  }
+
   // True when every commit on `branch` is already reachable from `base` —
   // proof that deleting the ref destroys nothing. `merge-base --is-ancestor`
   // signals the answer through its exit code (0 = ancestor) and prints
@@ -533,6 +540,15 @@ export class WorktreeManager {
         .join(' | ');
       throw new Error(`git rebase --onto failed: ${reason}`);
     }
+  }
+
+  // The fork point of `branch` from `base`: the last commit the two still
+  // share, i.e. where the branch's own work begins even after the base has
+  // moved on. Null when either ref is missing or they share no history —
+  // callers treat that as "cannot determine a base" rather than an error.
+  mergeBase(base: string, branch: string): string | null {
+    const result = runGit(this.mainRepoDir, ['merge-base', base, branch]);
+    return result.ok ? result.stdout.trim() : null;
   }
 
   // The commit a ref currently points at, in the main checkout. Used to pin
