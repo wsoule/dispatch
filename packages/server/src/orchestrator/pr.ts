@@ -879,11 +879,13 @@ export class PrManager {
   }
 
   // Task 7: brings every already-cut review worktree back in line with its
-  // PR's current head, and retires any worktree whose PR has left the open
-  // cache (merged/closed, or a page-50 fall-off). No-op when this project
-  // has no PrWorktreeManager wired in (ctx.prWorktrees), same guard shape as
-  // hasGithubHolds. A single PR's sync/cleanup failing is logged and
-  // skipped, not thrown — one flaky worktree must not block the rest.
+  // PR's current head, and retires any worktree whose PR is CONFIRMED
+  // merged/closed (or gone outright) — never merely absent from the open
+  // cache, which a page-50 fall-off would also produce (Task 7 review,
+  // IMPORTANT 6). No-op when this project has no PrWorktreeManager wired in
+  // (ctx.prWorktrees), same guard shape as hasGithubHolds. A single PR's
+  // sync/cleanup failing is logged and skipped, not thrown — one flaky
+  // worktree must not block the rest.
   private async syncPrWorktrees(): Promise<void> {
     const worktrees = this.ctx.prWorktrees;
     if (worktrees === undefined) return;
@@ -904,6 +906,25 @@ export class PrManager {
     for (const state of await worktrees.list()) {
       if (openNumbers.has(state.prNumber)) continue;
       try {
+        // A PR missing from the open-PR list's own page (--limit 50) reads
+        // exactly like a merged/closed one here — confirm the real state
+        // with a per-number check (findRepoPr's own `gh pr view` fallback)
+        // before deleting anything. Only a genuinely non-OPEN PR (merged,
+        // closed, or one findRepoPr can't find at all) is removed; an OPEN
+        // PR that simply fell off the page is left alone.
+        const pr = await this.findRepoPr(state.prNumber);
+        if (pr !== null && pr.state === 'OPEN') continue;
+        // Ignored files (.env, a built node_modules, …) never show up in a
+        // plain `git status --porcelain` clean check — unattended
+        // auto-removal must not silently delete them. A human pressing the
+        // DELETE route themselves can see the directory first, so this
+        // guard is poll-only.
+        if (await worktrees.hasIgnoredFiles(state.prNumber)) {
+          console.error(
+            `dispatchd: PR worktree #${state.prNumber} has ignored files (build output, .env, …) — leaving it for manual cleanup`
+          );
+          continue;
+        }
         await worktrees.removeIfClean(state.prNumber);
       } catch (err) {
         console.error(

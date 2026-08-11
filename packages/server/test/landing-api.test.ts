@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -84,6 +84,17 @@ function stubRunner(listResult: CommandResult) {
 
 function openPrListResult(): CommandResult {
   return { ok: true, stdout: JSON.stringify([OPEN_PR]), stderr: '' };
+}
+
+// Same as openPrListResult, but with a caller-chosen headRefOid — used by
+// the worktree/behind tests below to control whether the PR's cached "real"
+// head does or doesn't match what's checked out in the worktree.
+function openPrListResultWithHeadRefOid(headRefOid: string): CommandResult {
+  return {
+    ok: true,
+    stdout: JSON.stringify([{ ...OPEN_PR, headRefOid }]),
+    stderr: '',
+  };
 }
 
 function mergedPrListResult(): CommandResult {
@@ -176,8 +187,12 @@ describe('GET /api/landing', () => {
 
   // Task 7: a PR row carries `worktree` once one has been cut for it — the
   // real wiring `toLandingWorktree(prWorktrees.list())` replaces the always-
-  // empty Map Task 4 left behind.
-  it('carries a worktree on a pr row once one has been created', async () => {
+  // empty Map Task 4 left behind. `listResult` lets each test below control
+  // whether the cached PR's headRefOid matches or trails what's actually
+  // checked out, without duplicating the whole server-boot dance three times.
+  async function startWithWorktreeSupport(
+    listResult: CommandResult
+  ): Promise<void> {
     handle = await startServer({
       rootDir: root,
       port: 0,
@@ -195,7 +210,7 @@ describe('GET /api/landing', () => {
         ) {
           return cmd.includes('merged')
             ? mergedPrListResult()
-            : stubRunner(openPrListResult())(cwd, cmd);
+            : stubRunner(listResult)(cwd, cmd);
         }
         // Everything else (git worktree add/list, git status, git
         // rev-parse) is PrWorktreeManager's own real work against `root`.
@@ -205,7 +220,6 @@ describe('GET /api/landing', () => {
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
     await handle.prManager.pollOnce();
-
     // Simulates what PrManager.fetchPrHead's fork-gated fetch would have
     // left behind, without a real GitHub remote.
     runGitSync(root, [
@@ -213,6 +227,11 @@ describe('GET /api/landing', () => {
       `refs/dispatch/pr/${OPEN_PR.number}`,
       runGitSync(root, ['rev-parse', 'HEAD']).trim(),
     ]);
+  }
+
+  it('carries a synced worktree when the cached headRefOid matches', async () => {
+    const realHead = runGitSync(root, ['rev-parse', 'HEAD']).trim();
+    await startWithWorktreeSupport(openPrListResultWithHeadRefOid(realHead));
     const created = await handle.prWorktrees.create(OPEN_PR.number);
 
     const res = await fetch(`${baseUrl}/api/landing`);
@@ -222,6 +241,39 @@ describe('GET /api/landing', () => {
     expect(prRow?.worktree?.path).toBe(created.path);
     expect(prRow?.worktree?.syncState).toBe('synced');
     expect(prRow?.worktree?.headOid).toBe(created.headOid);
+
+    rmSync(created.path, { recursive: true, force: true });
+  });
+
+  // Task 7 review, IMPORTANT 3: list()'s own `behind` is always false — the
+  // landing route has to recompute it against the cached PR's headRefOid.
+  it('reports behind on a clean worktree whose head trails the cached PR', async () => {
+    await startWithWorktreeSupport(
+      openPrListResultWithHeadRefOid('stale-oid-not-checked-out')
+    );
+    const created = await handle.prWorktrees.create(OPEN_PR.number);
+
+    const res = await fetch(`${baseUrl}/api/landing`);
+    const body = (await json(res)) as LandingSnapshot;
+    const prRow = body.rows.find((r) => r.id === `pr-${OPEN_PR.number}`);
+    expect(prRow?.worktree?.syncState).toBe('behind');
+
+    rmSync(created.path, { recursive: true, force: true });
+  });
+
+  // dirty must still outrank behind even once behind is a real comparison,
+  // not list()'s hardcoded false.
+  it('reports dirty-hold, not behind, when a stale worktree also has local edits', async () => {
+    await startWithWorktreeSupport(
+      openPrListResultWithHeadRefOid('stale-oid-not-checked-out')
+    );
+    const created = await handle.prWorktrees.create(OPEN_PR.number);
+    writeFileSync(join(created.path, 'scratch.txt'), 'wip\n');
+
+    const res = await fetch(`${baseUrl}/api/landing`);
+    const body = (await json(res)) as LandingSnapshot;
+    const prRow = body.rows.find((r) => r.id === `pr-${OPEN_PR.number}`);
+    expect(prRow?.worktree?.syncState).toBe('dirty-hold');
 
     rmSync(created.path, { recursive: true, force: true });
   });

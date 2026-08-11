@@ -2167,14 +2167,25 @@ async function getLandingSnapshot(ctx: ApiContext): Promise<Response> {
   } catch (err) {
     if (!(err instanceof OrchestratorConflictError)) throw err;
   }
+  // list()'s own `behind` is always false (a disk-only scan has no live PR
+  // data to compare against) — recomputed here against the cache's current
+  // headRefOid, the freshest answer this route has without paying for
+  // another `gh` call (Task 7 review, IMPORTANT 3).
+  const openPrs = ctx.prManager.cachedPrs();
+  const headRefOidByNumber = new Map(
+    openPrs.map((pr) => [pr.number, pr.headRefOid])
+  );
   const worktreeStates = await ctx.prWorktrees.list();
   const worktrees = new Map(
-    worktreeStates.map((state) => [state.prNumber, toLandingWorktree(state)])
+    worktreeStates.map((state) => [
+      state.prNumber,
+      toLandingWorktree(state, headRefOidByNumber.get(state.prNumber)),
+    ])
   );
   const snapshot = buildLandingSnapshot({
     runs: ctx.orchestrator.list(),
     queue: ctx.mergeQueue.snapshot(),
-    openPrs: ctx.prManager.cachedPrs(),
+    openPrs,
     mergedPrs,
     worktrees,
     now: new Date().toISOString(),
@@ -2450,6 +2461,18 @@ function requirePrNumberParam(numberParam: string): number | null {
   return Number.isInteger(number) && number > 0 ? number : null;
 }
 
+// The one wording for refusing to create a worktree for a closed/merged PR
+// (Task 7 review, IMPORTANT 9) — such a worktree would just get deleted by
+// the very next poll pass (PrManager's syncPrWorktrees), so this refuses up
+// front instead of creating something already scheduled for cleanup.
+function closedPrWorktreeMessage(pr: RepoPr): string {
+  const word = pr.state === 'MERGED' ? 'merged' : 'closed';
+  return (
+    `PR #${pr.number} is ${word} on GitHub; cannot create a review ` +
+    'worktree for a pull request that is no longer open.'
+  );
+}
+
 // POST /api/prs/:number/worktree — cuts a review worktree for a repo PR,
 // running the exact fork gate startPrAgentReview does (mirrors
 // dispatchPrAgentReview's confirmFork handling) before anything touches
@@ -2465,6 +2488,12 @@ async function createPrWorktreeRoute(
   if (!parsed.ok) return parsed.response;
   const pr = await resolveRepoPrByNumber(ctx, numberParam);
   if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  // resolveRepoPrByNumber resolves a closed/merged PR too (findRepoPr's
+  // fallback) — refused here rather than left to create a worktree the next
+  // poll pass would just delete again.
+  if (pr.state !== 'OPEN') {
+    return errorResponse(409, closedPrWorktreeMessage(pr));
+  }
   const confirmFork = parsed.value.confirmFork === true;
   const refused = forkGate(pr, confirmFork);
   if (refused !== null) return refused;

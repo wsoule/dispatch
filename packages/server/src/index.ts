@@ -49,6 +49,7 @@ import {
   PrManager,
 } from './orchestrator/pr.js';
 import { PrWorktreeManager } from './orchestrator/prWorktree.js';
+import type { PrWorktreeManagerCtx } from './orchestrator/prWorktree.js';
 import { QuestionRegistry } from './orchestrator/questions.js';
 import {
   generateRepoDigest,
@@ -294,6 +295,24 @@ function makeMergeDriverCheck(rootDir: string): () => boolean {
 }
 
 /**
+ * Wraps `new PrWorktreeManager` so a bad `prWorktreeDir` — its own
+ * constructor refuses one that resolves inside `rootDir` (Task 7 review,
+ * IMPORTANT 8) — degrades to the default worktree location instead of
+ * crashing boot, the same "never let an optional setting take the daemon
+ * down" posture as the guarded config reads elsewhere in this function.
+ */
+function buildPrWorktreeManager(ctx: PrWorktreeManagerCtx): PrWorktreeManager {
+  try {
+    return new PrWorktreeManager(ctx);
+  } catch (err) {
+    console.error(
+      `dispatchd: invalid prWorktreeDir config, using the default worktree location: ${(err as Error).message}`
+    );
+    return new PrWorktreeManager({ ...ctx, prWorktreeDir: undefined });
+  }
+}
+
+/**
  * Boots the dispatchd HTTP + WebSocket server for one dispatch project
  * (`rootDir`): a Bun.serve instance backed by an in-memory task cache that is
  * rebuilt from `@dispatch/core`'s TaskStore on boot, after every API
@@ -525,16 +544,28 @@ export async function startServer(
   // same instance — a review run's comments and a human's land in the same
   // per-target file rather than two stores fighting over one file.
   const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
+  // Task 7 review, IMPORTANT 7: guarded the same way carto's config is
+  // above — a malformed config.yml on this, the boot path, must not take
+  // the whole daemon down; a per-request loadConfig still surfaces the real
+  // error to anything that reads config afterward.
+  let prWorktreeDir: string | undefined;
+  try {
+    prWorktreeDir = loadConfig(rootDir).prWorktreeDir;
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read prWorktreeDir config, using the default worktree location: ${(err as Error).message}`
+    );
+  }
   // Task 7: cuts/syncs/retires PR review worktrees. Constructed ahead of
   // PrManager (whose context wires it in below) even though its own
   // `fetchHead` closure calls back into `prManager` — the same lazy-closure
   // trick `hasGithubHolds` uses for `mergeQueue` below: the closure only
   // reads `prManager` once a real sync actually runs, long after the `const`
   // it names has been assigned.
-  const prWorktrees = new PrWorktreeManager({
+  const prWorktrees = buildPrWorktreeManager({
     rootDir,
     run: opts.prCommandRunner ?? defaultCommandRunner,
-    prWorktreeDir: loadConfig(rootDir).prWorktreeDir,
+    prWorktreeDir,
     // confirmFork: true — a worktree only exists here because its PR already
     // passed the fork gate once (at creation); re-syncing it must not ask
     // again.
