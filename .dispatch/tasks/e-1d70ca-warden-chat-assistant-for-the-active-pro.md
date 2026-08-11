@@ -1,7 +1,7 @@
 ---
 id: e-1d70ca
 title: "Warden: chat assistant for the active project"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-04T18:06:37.190Z
-updated: 2026-08-11T03:14:20.330Z
+updated: 2026-08-11T16:17:15.946Z
 external: null
 writes: []
 ---
