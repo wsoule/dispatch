@@ -1,7 +1,7 @@
 ---
 id: e-b7ca6f
 title: "Epic branches: tasks land on an epic branch, the epic lands on main"
-status: todo
+status: done
 kind: epic
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T18:14:06.843Z
+updated: 2026-08-11T23:09:54.890Z
 external: null
 writes: []
 ---
