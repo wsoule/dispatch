@@ -2504,7 +2504,10 @@ async function createPrWorktreeRoute(
 }
 
 // DELETE /api/prs/:number/worktree — retires a worktree if it's clean; a
-// dirty one is kept and reported back as a 409 so the client can say why.
+// dirty one is kept and reported back as a 409 so the client can say why. A
+// path that exists but isn't one this manager created (Task 7 re-review)
+// throws OrchestratorConflictError out of removeIfClean, which the router's
+// catch-all maps to 409 — never a false `{removed: true}`.
 async function removePrWorktreeRoute(
   ctx: ApiContext,
   numberParam: string

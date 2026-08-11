@@ -558,7 +558,11 @@ describe('PrWorktreeManager ownership', () => {
     expect(runGitSync(path, ['rev-parse', 'HEAD']).trim()).toBe(headOid);
   });
 
-  it('removeIfClean() refuses an unregistered plain directory at the computed path', async () => {
+  // Task 7 re-review: removeIfClean() used to return null for an unowned
+  // path — indistinguishable from "already gone" to a caller like the
+  // DELETE route, which read null as success and reported
+  // `{removed: true}` for a worktree it never touched. It throws now.
+  it('removeIfClean() throws refusing an unregistered plain directory at the computed path', async () => {
     const { repo, branch } = setUpRepoWithPrRef(104);
     const manager = new PrWorktreeManager({
       rootDir: repo,
@@ -570,13 +574,14 @@ describe('PrWorktreeManager ownership', () => {
     writeFileSync(join(path, 'not-ours.txt'), 'hello\n');
     cleanupPaths.push(path);
 
-    const result = await manager.removeIfClean(104);
+    await expect(manager.removeIfClean(104)).rejects.toThrow(
+      /was not created by this manager/
+    );
 
-    expect(result).toBeNull();
     expect(existsSync(path)).toBe(true); // never deleted
   });
 
-  it('removeIfClean() refuses a registered worktree that is on a branch checkout, not detached', async () => {
+  it('removeIfClean() throws refusing a registered worktree that is on a branch checkout, not detached', async () => {
     const { repo, branch } = setUpRepoWithPrRef(105);
     const manager = new PrWorktreeManager({
       rootDir: repo,
@@ -594,9 +599,10 @@ describe('PrWorktreeManager ownership', () => {
     ]);
     cleanupPaths.push(path);
 
-    const result = await manager.removeIfClean(105);
+    await expect(manager.removeIfClean(105)).rejects.toThrow(
+      /was not created by this manager/
+    );
 
-    expect(result).toBeNull();
     expect(existsSync(path)).toBe(true);
   });
 
@@ -1238,5 +1244,59 @@ describe('POST/DELETE /api/prs/:number/worktree', () => {
     expect(existsSync(handle.prWorktrees.worktreePathFor(closedNumber))).toBe(
       false
     );
+  });
+
+  // Task 7 re-review: DELETE on a PR number with no worktree at all keeps
+  // today's absent semantics — 200 {removed: true}, same as before this fix
+  // (removeIfClean's absent case, `!existsSync(path)`, is untouched).
+  it('200s {removed: true} on DELETE when there is no worktree to remove', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner(''),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const res = await fetch(`${baseUrl}/api/prs/${PR_NUMBER}/worktree`, {
+      method: 'DELETE',
+    });
+
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body).toEqual({ removed: true });
+  });
+
+  // Task 7 re-review, the fix under test: removeIfClean() used to return
+  // null for a path that exists but isn't this manager's own (same as
+  // "absent"), which this route read as success — reporting
+  // `{removed: true}` for a worktree it never actually touched. It now
+  // throws, and this route must surface that as a 409, not a false success.
+  it('409s with a refusal reason on DELETE when the path holds an unowned directory', async () => {
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      prCommandRunner: stubRunner(''),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    const path = handle.prWorktrees.worktreePathFor(PR_NUMBER);
+    // A plain directory at the computed path — never created via POST, so
+    // it carries no ownership marker (the same "hand-cut" / pre-fix-build
+    // scenario the re-review's concrete case describes).
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'not-ours.txt'), 'hello\n');
+
+    const res = await fetch(`${baseUrl}/api/prs/${PR_NUMBER}/worktree`, {
+      method: 'DELETE',
+    });
+
+    expect(res.status).toBe(409);
+    const body = await json(res);
+    expect(body.error).toContain('was not created by this manager');
+    // Nothing deleted, and no false landing.changed broadcast either.
+    expect(existsSync(join(path, 'not-ours.txt'))).toBe(true);
   });
 });
