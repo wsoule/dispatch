@@ -167,8 +167,14 @@ export interface RunMeta {
 // 'active' = a live run is writing here (read-only); 'reviewable' = a terminal
 // run nobody reviewed, so nothing cleaned it up; 'leftover' = a reviewed run
 // whose ref somehow survived (a silently-failed cleanup); 'orphan' = no run
-// claims this ref at all.
-export type BranchEntryStatus = 'active' | 'reviewable' | 'leftover' | 'orphan';
+// claims this ref at all; 'epic' = an epic's integration branch (`epic/<id>`),
+// owned by the epic rather than any single run.
+export type BranchEntryStatus =
+  | 'active'
+  | 'reviewable'
+  | 'leftover'
+  | 'orphan'
+  | 'epic';
 
 // Mirrors BranchEntry in packages/server/src/orchestrator/types.ts — one row
 // of the Branches surface, joining what git knows about a `dispatch/*` ref
@@ -205,6 +211,10 @@ export interface BranchEntry {
    * longer means anything. */
   behindBase?: number;
   mergedIntoBase: boolean;
+  /** Commits the base has that this branch does not — drift. Only computed
+   * for 'epic' entries, where it signals the integration branch has fallen
+   * behind the default base and a human should update it. */
+  behindBase?: number;
   runId?: string;
   taskId?: string;
   taskTitle?: string;

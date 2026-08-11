@@ -30,6 +30,11 @@ import { FindingStore } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
+import {
+  EPIC_BRANCH_PREFIX,
+  epicBranchName,
+  isEpicBranch,
+} from './epicBranch.js';
 import { JjManager } from './jj.js';
 import { collectOrientation } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -161,6 +166,9 @@ const STATUS_RANK: Record<BranchEntryStatus, number> = {
   orphan: 1,
   reviewable: 2,
   active: 3,
+  // Integration branches sit below the run-shaped rows: they are context, not
+  // work waiting on anyone.
+  epic: 4,
 };
 
 // How a branch ref relates to the run registry — see BranchEntryStatus for
@@ -762,7 +770,6 @@ export class Orchestrator {
   private async resolveBase(
     task: TaskDoc
   ): Promise<{ base: string; stackParents: string[] }> {
-    const defaultBase = this.worktrees.defaultBaseBranch();
     const parents: string[] = [];
     for (const blockerId of task.meta.blockedBy) {
       const blocker = this.ctx.store.get(blockerId);
@@ -771,7 +778,20 @@ export class Orchestrator {
       if (branch !== null) parents.push(branch);
     }
 
-    if (parents.length === 0) return { base: defaultBase, stackParents: [] };
+    // An unblocked task under an epic is cut from the epic's integration
+    // branch (created lazily, right here, on the epic's first dispatch)
+    // instead of the default base — that is the whole epic-branch feature. A
+    // STACKED dispatch deliberately does not create or consult the epic
+    // branch: its base is its blockers' branches, and a sibling blocker's
+    // branch is already rooted on the epic branch, so the run ends up there
+    // anyway once the merge queue restacks it after the blocker lands.
+    if (parents.length === 0) {
+      const epicBase = this.ensureEpicBranchFor(task);
+      return {
+        base: epicBase ?? this.worktrees.defaultBaseBranch(),
+        stackParents: [],
+      };
+    }
     if (parents.length === 1) {
       return { base: parents[0], stackParents: parents };
     }
@@ -861,6 +881,54 @@ export class Orchestrator {
       // Fall through and append.
     }
     this.noteTaskActivity(taskId, text);
+  }
+
+  /**
+   * The epic integration branch a task should be cut from, creating it if
+   * this is the epic's first dispatch — or null when the task doesn't sit
+   * under an epic. Creation is deliberately lazy (an epic whose children
+   * never dispatch never grows a branch) and is recorded on the epic's own
+   * Activity so the branch's origin is visible where a human looks for it.
+   */
+  private ensureEpicBranchFor(task: TaskDoc): string | null {
+    if (task.meta.parent === null) return null;
+    const parent = this.ctx.store.get(task.meta.parent);
+    if (parent === null || parent.meta.kind !== 'epic') return null;
+    const branch = epicBranchName(parent.meta.id);
+    if (!this.worktrees.hasBranch(branch)) {
+      const from = this.worktrees.defaultBaseBranch();
+      try {
+        this.worktrees.createBranch(branch, from);
+      } catch (err) {
+        // Two dispatches under the same epic can race the exists-check; the
+        // loser's create fails on a branch that now exists, which is exactly
+        // the state it wanted. Anything else is a real failure.
+        if (!this.worktrees.hasBranch(branch)) throw err;
+        return branch;
+      }
+      this.noteTaskActivity(
+        parent.meta.id,
+        `[epic] integration branch ${branch} created from ${from}`
+      );
+    }
+    return branch;
+  }
+
+  /**
+   * The epic integration branch a run's own task belongs under, or null when
+   * the task has no parent epic OR that epic's branch does not (yet or any
+   * longer) exist in git. The merge queue uses this to notice a restack that
+   * would carry a run AWAY from its epic branch — see MergeQueue.restackRun.
+   */
+  epicBranchForRun(runId: string): string | null {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return null;
+    const task = this.ctx.store.get(meta.taskId);
+    if (task === null || task.meta.parent === null) return null;
+    const parent = this.ctx.store.get(task.meta.parent);
+    if (parent === null || parent.meta.kind !== 'epic') return null;
+    const branch = epicBranchName(parent.meta.id);
+    return this.worktrees.hasBranch(branch) ? branch : null;
   }
 
   // The branch of a task's most recent terminal, unreviewed run — the branch
@@ -1895,6 +1963,20 @@ export class Orchestrator {
     now: string,
     actor: string | undefined
   ): string | undefined {
+    // A run based on an epic integration branch lands THERE, not on whatever
+    // the main checkout has checked out — via a checkout-free squash merge
+    // that never touches the user's working tree, so none of the checkout
+    // gates below apply to it. The one exception: when the user actually HAS
+    // the epic branch checked out, the plumbing path's `update-ref` would
+    // move the ref under a live working tree and leave it inconsistent, so
+    // that case falls through to the normal checkout merge below, whose gates
+    // handle exactly that situation.
+    if (
+      isEpicBranch(meta.baseBranch) &&
+      this.currentMainBranch() !== meta.baseBranch
+    ) {
+      return this.mergeRunIntoEpicBranch(meta, now, actor);
+    }
     // All three gates below describe the MAIN CHECKOUT, not this run, and all
     // three clear the moment the user commits/stashes/checks out — so they
     // throw MergeEnvironmentError rather than a plain conflict, which is what
@@ -2009,6 +2091,68 @@ export class Orchestrator {
   }
 
   /**
+   * mergeRun's epic-branch counterpart: squash-merges a run onto its epic
+   * integration branch entirely in the object database (see
+   * WorktreeManager.squashMergeIntoRef), because that branch is never checked
+   * out anywhere a `git merge` could run.
+   *
+   * Bookkeeping follows markRunMergedViaPr's shape, not the checkout path's:
+   * the task file is updated (status -> done) but NOT committed — the epic
+   * branch's commit carries exactly the run's own content, and the task edit
+   * stays as pending `.dispatch/` bookkeeping in the main checkout, which the
+   * dirty gate already treats as expected.
+   */
+  private mergeRunIntoEpicBranch(
+    meta: RunMeta,
+    now: string,
+    actor: string | undefined
+  ): string | undefined {
+    // The branch can vanish between dispatch and review — a human deleting it
+    // by hand is the only way, and the honest response is the same refusal a
+    // moved-away base gets, with the reason spelled out.
+    if (!this.worktrees.hasBranch(meta.baseBranch)) {
+      throw new OrchestratorConflictError(
+        `epic branch ${meta.baseBranch} no longer exists — recreate it or re-dispatch the task`
+      );
+    }
+    // `diffCommittedOnly` for the same reason mergeRun uses it: the squash
+    // only ever carries commits reachable from the run's branch.
+    const preMergeDiff = this.worktrees.diffCommittedOnly(
+      meta.worktreePath,
+      meta.baseBranch
+    );
+    const hasChanges = preMergeDiff.files.length > 0;
+    let mergeCommit: string | undefined;
+    if (hasChanges) {
+      try {
+        mergeCommit = this.worktrees.squashMergeIntoRef(
+          meta.baseBranch,
+          meta.branch,
+          `dispatch: ${meta.taskTitle} (run ${meta.id})`
+        );
+      } catch (err) {
+        // A content conflict (or a concurrently-moved tip) is a 409 the user
+        // can act on, never an opaque 500 — same contract as the checkout
+        // path. Nothing needs rolling back: the plumbing merge either updates
+        // the ref atomically or leaves everything untouched.
+        throw new OrchestratorConflictError((err as Error).message);
+      }
+    }
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: 'done',
+        appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
+        activityActor: actor,
+      },
+      now
+    );
+    this.persistDiffSnapshot(meta, preMergeDiff);
+    this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+    return mergeCommit;
+  }
+
+  /**
    * Every `dispatch/*` branch ref that exists in git right now, joined with
    * whatever the run registry knows about it — the data behind the Branches
    * surface.
@@ -2046,7 +2190,7 @@ export class Orchestrator {
       fallbackBase = 'HEAD';
     }
 
-    const entries = refs.map((ref) => {
+    const entries: BranchEntry[] = refs.map((ref) => {
       const meta = runByBranch.get(ref.branch);
       const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
       const base = meta?.baseBranch ?? fallbackBase;
@@ -2089,6 +2233,31 @@ export class Orchestrator {
         status: branchEntryStatus(meta),
       } satisfies BranchEntry;
     });
+
+    // Epic integration branches (`epic/<id>`) are part of the same surface:
+    // dispatch created them, runs land on them, and a human eventually has to
+    // deal with them — so they must be visible wherever run branches are.
+    // Their `behindBase` is the drift signal: dispatch never updates an epic
+    // branch against the default base on its own, it only reports how far
+    // behind it has fallen.
+    for (const ref of this.worktrees.listBranches(EPIC_BRANCH_PREFIX)) {
+      entries.push({
+        branch: ref.branch,
+        worktreeExists: false,
+        dirty: false,
+        lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
+        ahead: this.worktrees.aheadCount(ref.branch, fallbackBase),
+        mergedIntoBase: this.worktrees.isMergedInto(ref.branch, fallbackBase),
+        behindBase: this.worktrees.behindCount(ref.branch, fallbackBase),
+        baseBranch: fallbackBase,
+        // "Pushed" for an integration branch means origin has its tip — the
+        // question a human asks before deleting the local ref. The branch
+        // name is passed as the commit-ish directly: resolving it first could
+        // throw on a ref deleted mid-listing, where this just reports false.
+        pushedToOrigin: this.worktrees.isOnOriginBase(ref.branch, ref.branch),
+        status: 'epic',
+      } satisfies BranchEntry);
+    }
 
     // Most-urgent-first within a stable order so the UI's grouping never has
     // to re-sort, and so two consecutive polls can't shuffle rows around.

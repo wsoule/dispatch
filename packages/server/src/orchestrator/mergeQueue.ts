@@ -1478,6 +1478,22 @@ export class MergeQueue {
       return;
     }
     const newBase = parent.baseBranch;
+    // A dependent whose task lives under an epic belongs on that epic's
+    // integration branch. When its blocker landed somewhere ELSE (the default
+    // branch, or another epic's branch — the cross-epic blocker case),
+    // restacking it onto `newBase` would silently carry the epic's work away
+    // from the epic branch, and restacking it onto the epic branch instead
+    // would silently drop the blocker's content, which the epic branch does
+    // not contain. Neither guess is safe, so this mirrors the baseDiscarded
+    // treatment: flag it and let a human decide.
+    const epicHome = this.ctx.orchestrator.epicBranchForRun(dependent.id);
+    if (epicHome !== null && epicHome !== newBase) {
+      this.flagDependent(
+        dependent,
+        `cannot restack automatically: this run belongs on epic branch ${epicHome}, but its blocker ${parent.branch} landed on ${newBase} — merge ${newBase} into ${epicHome} (or re-dispatch) so the blocker's work reaches the epic branch first`
+      );
+      return;
+    }
     const stackBase = dependent.stackBaseCommit;
     if (stackBase === undefined) {
       // Nothing records where this run's own commits begin, so neither path
