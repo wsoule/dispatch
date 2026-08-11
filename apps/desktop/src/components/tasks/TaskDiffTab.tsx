@@ -1,6 +1,7 @@
-import type { RunMeta } from '@dispatch/client';
+import type { Finding, RunMeta } from '@dispatch/client';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { useTaskFindings } from '../../hooks/useOrchestration';
 import { isTerminalRunState, liveReviewAgentFor } from '../../lib/runState';
 import { DiffEmptyState } from '../runs/DiffEmptyState';
 import { RunDiffView } from '../runs/RunDiffView';
@@ -18,6 +19,15 @@ export interface TaskDiffTabProps {
  * RunsView's Diff tab, with an empty state before any run exists and a skeleton while the
  * selected run's detail is still loading. */
 export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
+  // Called unconditionally, ahead of the early returns below, even though its result is only
+  // used once a run is selected and terminal — `enabled` inside the hook itself already no-ops
+  // when there's no task id yet.
+  const { findings } = useTaskFindings(
+    data.client,
+    data.port,
+    selectedRun?.taskId
+  );
+
   if (selectedRun === undefined) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -90,8 +100,43 @@ export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
           reviewAgentLive={
             liveReviewAgentFor(data.runs, selectedRun.branch) !== undefined
           }
+          casePanel={{
+            evidence: data.runDetail.evidence,
+            mutations: data.runDetail.mutations,
+            findings,
+            // The ledger-entry filter ReviewView uses (taskLedgerEntries/useEpicLedger) depends
+            // on epic plumbing this tab doesn't have wired yet — decisions stay empty here.
+            decisions: [],
+            onFixFindings:
+              isTerminalRunState(selectedRun.state) &&
+              selectedRun.reviewedAt === undefined
+                ? (selected) =>
+                    composeFixFindingsRequest(selected, (text) =>
+                      data.handleRequestChanges(selectedRun.id, text)
+                    )
+                : undefined,
+          }}
         />
       )}
     </div>
+  );
+}
+
+// Resumes the run's own agent on its branch with the checked findings as the change
+// request — the exact composition ReviewView's own handler used, before the case panel
+// moved here.
+async function composeFixFindingsRequest(
+  selected: Finding[],
+  requestChanges: (text: string) => Promise<void>
+): Promise<void> {
+  const lines = selected.map((f) => {
+    const loc =
+      f.file === null
+        ? ''
+        : ` (${f.file}${f.line === null ? '' : `:${f.line}`})`;
+    return `- ${f.title}${loc}\n  ${f.detail}`;
+  });
+  await requestChanges(
+    `Fix these review findings, then re-run the checks you'd normally run:\n\n${lines.join('\n')}`
   );
 }

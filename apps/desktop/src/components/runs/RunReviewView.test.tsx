@@ -1,4 +1,9 @@
-import type { ApiClient, ReviewComment, RunMeta } from '@dispatch/client';
+import type {
+  ApiClient,
+  Finding,
+  ReviewComment,
+  RunMeta,
+} from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, mock } from 'bun:test';
@@ -77,6 +82,28 @@ function noop(): Promise<void> {
   return Promise.resolve();
 }
 
+// The props every test below needs regardless of what it's exercising — the diff, the run,
+// and the local review actions. Deliberately excludes the comment-thread props (reviewComments,
+// onAddComment, …) and `client`: with those absent, RunReviewView renders the plain diff and
+// skips the chat dock, so a test can mount it without a QueryClientProvider unless it wants one.
+const baseProps = {
+  meta: runMeta(),
+  diff: { patch: PATCH, files: [] } as never,
+  diffLoading: false,
+  diffError: null,
+  prCapability: false,
+  mergeQueue: null,
+  tasks: [],
+  latestRunByTaskId: new Map(),
+  onMerge: noop,
+  onDiscard: noop,
+  onRequestChanges: noop,
+  onOpenPr: noop,
+  onViewPr: () => {},
+  onQueueMerge: noop,
+  onQueueStack: noop,
+};
+
 function renderRunReview(client: ApiClient) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -84,22 +111,8 @@ function renderRunReview(client: ApiClient) {
   return render(
     <QueryClientProvider client={queryClient}>
       <RunReviewView
+        {...baseProps}
         client={client}
-        meta={runMeta()}
-        diff={{ patch: PATCH } as never}
-        diffLoading={false}
-        diffError={null}
-        prCapability={false}
-        mergeQueue={null}
-        tasks={[]}
-        latestRunByTaskId={new Map()}
-        onMerge={noop}
-        onDiscard={noop}
-        onRequestChanges={noop}
-        onOpenPr={noop}
-        onViewPr={() => {}}
-        onQueueMerge={noop}
-        onQueueStack={noop}
         reviewComments={[]}
         onAddComment={() => Promise.resolve({} as ReviewComment)}
         onResolveComment={noop}
@@ -175,5 +188,47 @@ describe('RunReviewView — the chat dock', () => {
         { file: 'a.ts', startLine: 2, endLine: 2, text: 'const b = 2;' },
       ],
     });
+  });
+});
+
+// The case panel is the last surviving reason ReviewView existed at all — Task 3 of the
+// consolidation moves it here so it isn't lost when that page goes away.
+describe('RunReviewView — the case panel', () => {
+  it('a provided case panel renders its findings; absent, no case section', () => {
+    const finding: Finding = {
+      id: 'f-000001',
+      taskId: 't-1',
+      runId: null,
+      severity: 'critical',
+      verdict: 'open',
+      title: 'widens the PATCH surface',
+      detail: 'anyone can set status',
+      file: 'api.ts',
+      line: 88,
+      ruling: null,
+      round: 0,
+      createdAt: '2026-08-10T00:00:00.000Z',
+      updatedAt: '2026-08-10T00:00:00.000Z',
+      raisedBy: '',
+    };
+
+    render(
+      <RunReviewView
+        {...baseProps}
+        casePanel={{
+          evidence: [],
+          mutations: [],
+          findings: [finding],
+          decisions: [],
+        }}
+      />
+    );
+    expect(screen.getByText('widens the PATCH surface')).toBeDefined();
+
+    // A second render with no `casePanel` doesn't unmount the first — it's the same technique
+    // the earlier assertion above depends on: the total count of the finding's title across
+    // both trees stays at 1 only if the second tree contributed no case section at all.
+    render(<RunReviewView {...baseProps} />);
+    expect(screen.queryAllByText('widens the PATCH surface')).toHaveLength(1);
   });
 });
