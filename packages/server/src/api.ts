@@ -3469,6 +3469,10 @@ const DECIDE_TIER_ROUTES: ReadonlyArray<{
   segments: readonly string[];
 }> = [
   { method: 'POST', segments: ['runs', '*', 'scope-requests', '*', 'decide'] },
+  // Confirming a warden's queued mutating action is the human gate the whole
+  // warden design hangs on — an agent token approving it would let the model
+  // approve its own mutations.
+  { method: 'POST', segments: ['warden', '*', 'actions', '*', 'confirm'] },
 ];
 
 function matchesRoute(

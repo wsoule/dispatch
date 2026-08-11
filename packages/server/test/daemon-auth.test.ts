@@ -338,3 +338,32 @@ describe('token storage', () => {
     expect(carrying).toEqual([]);
   });
 });
+
+// The warden's confirm endpoint is the human gate on the model's queued
+// mutating actions — the one route where an agent token passing would let
+// the model approve its own mutations. The tier check runs before the
+// handler, so no live conversation is needed: the agent token must 403
+// before the 404 a missing conversation would produce, and the app token
+// must reach that 404.
+describe('warden confirm tier', () => {
+  const confirmPath = '/api/warden/wc-000000/actions/wa-000000/confirm';
+
+  it('403s a confirm made with the agent token', async () => {
+    const res = await rawFetch(`${baseUrl}${confirmPath}`, {
+      method: 'POST',
+      headers: { ...auth(agentToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ approve: true }),
+    });
+    expect(res.status).toBe(403);
+    expect((await json<AuthError>(res)).code).toBe('auth_insufficient_tier');
+  });
+
+  it('lets the app token through to the handler', async () => {
+    const res = await rawFetch(`${baseUrl}${confirmPath}`, {
+      method: 'POST',
+      headers: { ...auth(appToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ approve: true }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
