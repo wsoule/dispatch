@@ -1042,6 +1042,7 @@ function App() {
               runs={data.runs}
               repoPrs={data.repoPrs ?? []}
               openQuestions={data.openQuestions}
+              warden={warden}
               onOpenTask={openTaskView}
               onOpenInbox={() => selectProjectView('inbox')}
               collapsed={liveRailCollapsed}

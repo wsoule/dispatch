@@ -2,10 +2,13 @@ import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import type { WardenSession } from '../../hooks/useWardenSession';
 import type { TaskTab } from '../../lib/appNav';
 import { deriveFeedState } from '../../lib/feedState';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { buildLiveRail } from '../../lib/liveRail';
+import { WardenChat } from '../chat/WardenChat';
+import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
 
@@ -15,9 +18,22 @@ import { StateDot } from '@/ui/chrome/StateDot';
 // the rail for everyone who ever hid the old one.
 const LIVE_RAIL_STORAGE_KEY = 'dispatch:live-rail';
 
+// Which tab the expanded rail is on, persisted beside the collapse flag so
+// expanding lands back on whatever you were last looking at.
+const LIVE_RAIL_TAB_STORAGE_KEY = 'dispatch:live-rail-tab';
+
+type LiveRailTab = 'runs' | 'warden';
+
 function readStoredLiveRailCollapsed(): boolean {
   if (typeof window === 'undefined') return false;
   return window.localStorage.getItem(LIVE_RAIL_STORAGE_KEY) === '1';
+}
+
+function readStoredLiveRailTab(): LiveRailTab {
+  if (typeof window === 'undefined') return 'runs';
+  return window.localStorage.getItem(LIVE_RAIL_TAB_STORAGE_KEY) === 'warden'
+    ? 'warden'
+    : 'runs';
 }
 
 /**
@@ -38,6 +54,9 @@ interface LiveRailProps {
   runs: RunMeta[];
   repoPrs: RepoPr[];
   openQuestions: ReadonlyMap<string, RunQuestion[]>;
+  /** The App-mounted warden session the rail's Warden tab renders — the same
+   * object WardenView gets, so both surfaces show one conversation. */
+  warden: WardenSession;
   /** Opens the full task view on a run's chat tab — `openTaskView` in App.tsx. */
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
   /** Navigates to the Inbox project view. */
@@ -48,10 +67,11 @@ interface LiveRailProps {
 }
 
 /**
- * The rail that replaced `MiniOverview`: always mounted, always showing one
- * row per currently-running agent, rather than only appearing once something
- * needs a person. The attention strip on top is the part that comes and
- * goes — it is the only thing here that still asks for you.
+ * The rail that replaced `MiniOverview`: always mounted, with a Runs | Warden
+ * toggle at the top. Runs shows one row per currently-running agent; Warden is
+ * the same conversation as the full Warden page, rail-sized. The attention
+ * strip stays above both — it is the rail's one always-on signal, the only
+ * thing here that still asks for you.
  *
  * Collapsing narrows it to a strip rather than hiding it: at the window's
  * 1040px floor a fixed 240px rail leaves a task's Diff column too little to
@@ -62,6 +82,7 @@ export function LiveRail({
   runs,
   repoPrs,
   openQuestions,
+  warden,
   onOpenTask,
   onOpenInbox,
   collapsed,
@@ -71,6 +92,18 @@ export function LiveRail({
     () => buildLiveRail(runs, repoPrs, openQuestions),
     [runs, repoPrs, openQuestions]
   );
+
+  const [tab, setTab] = useState<LiveRailTab>(readStoredLiveRailTab);
+  useEffect(() => {
+    window.localStorage.setItem(LIVE_RAIL_TAB_STORAGE_KEY, tab);
+  }, [tab]);
+
+  // The warden mid-turn is an agent at work like any run — it earns a Runs-tab
+  // row. `record === undefined` with a conversation open means the record is
+  // still loading right after start, which is also a turn in flight.
+  const wardenLive =
+    warden.conversationId !== null &&
+    (warden.record === undefined || warden.record.state === 'running');
 
   if (collapsed) {
     return (
@@ -114,9 +147,33 @@ export function LiveRail({
   }
 
   return (
-    <aside className="border-border flex w-60 shrink-0 flex-col gap-3 overflow-y-auto border-l p-3">
+    <aside className="border-border flex w-60 shrink-0 flex-col gap-3 border-l p-3">
       <div className="flex items-center gap-2">
-        <span className="dense-label">Live agents</span>
+        <div className="bg-muted/40 flex items-center gap-0.5 rounded-md p-0.5">
+          {(
+            [
+              { value: 'runs', label: 'Runs' },
+              { value: 'warden', label: 'Warden' },
+            ] as const
+          ).map((t) => (
+            <Button
+              key={t.value}
+              type="button"
+              variant="ghost"
+              size="xs"
+              aria-pressed={tab === t.value}
+              onClick={() => setTab(t.value)}
+              className={cn(
+                'h-6 rounded-sm px-2 text-[12px] font-normal',
+                tab === t.value
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-muted-foreground'
+              )}
+            >
+              {t.label}
+            </Button>
+          ))}
+        </div>
         <Button
           type="button"
           variant="ghost"
@@ -131,44 +188,76 @@ export function LiveRail({
       </div>
 
       {attentionCount > 0 && (
+        // Above the tab content, not inside it: the strip is the rail's one
+        // always-on signal and must survive the Warden tab too.
         <button
           type="button"
           onClick={onOpenInbox}
-          className="bg-state-waiting/10 text-state-waiting rounded-md px-2 py-1.5 text-left text-[12px] font-medium"
+          className="bg-state-waiting/10 text-state-waiting shrink-0 rounded-md px-2 py-1.5 text-left text-[12px] font-medium"
         >
           {attentionCount} waiting on you →
         </button>
       )}
 
-      {live.length === 0 ? (
-        <p className="text-muted-foreground text-[12px]">No agents running.</p>
-      ) : (
-        <div className="flex flex-col gap-0.5">
-          {live.map(({ run, kindLabel }) => {
-            const state = deriveFeedState(run) ?? 'working';
-            return (
-              <Button
-                key={run.id}
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
-                className="h-auto w-full justify-start gap-2 rounded-md px-1.5 py-1 text-left font-normal"
-              >
-                <StateDot state={state} pulse={state === 'working'} />
-                <span className="min-w-0 flex-1 truncate text-[13px]">
-                  {run.taskTitle}
-                </span>
-                <span className="dense-meta shrink-0 capitalize">
-                  {kindLabel}
-                </span>
-                <span className="dense-meta shrink-0">
-                  {formatRelativeTimeFromIso(run.createdAt)}
-                </span>
-              </Button>
-            );
-          })}
+      {tab === 'runs' ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {live.length === 0 && !wardenLive ? (
+            <p className="text-muted-foreground text-[12px]">
+              No agents running.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {wardenLive && (
+                // A warden turn in flight sits with the agents it is one of;
+                // its "task view" is the rail's own Warden tab.
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setTab('warden')}
+                  className="h-auto w-full justify-start gap-2 rounded-md px-1.5 py-1 text-left font-normal"
+                >
+                  <StateDot state="working" pulse />
+                  <span className="min-w-0 flex-1 truncate text-[13px]">
+                    {warden.record?.prompt ?? 'Warden'}
+                  </span>
+                  <span className="dense-meta shrink-0 capitalize">warden</span>
+                  {warden.record !== undefined && (
+                    <span className="dense-meta shrink-0">
+                      {formatRelativeTimeFromIso(warden.record.createdAt)}
+                    </span>
+                  )}
+                </Button>
+              )}
+              {live.map(({ run, kindLabel }) => {
+                const state = deriveFeedState(run) ?? 'working';
+                return (
+                  <Button
+                    key={run.id}
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
+                    className="h-auto w-full justify-start gap-2 rounded-md px-1.5 py-1 text-left font-normal"
+                  >
+                    <StateDot state={state} pulse={state === 'working'} />
+                    <span className="min-w-0 flex-1 truncate text-[13px]">
+                      {run.taskTitle}
+                    </span>
+                    <span className="dense-meta shrink-0 capitalize">
+                      {kindLabel}
+                    </span>
+                    <span className="dense-meta shrink-0">
+                      {formatRelativeTimeFromIso(run.createdAt)}
+                    </span>
+                  </Button>
+                );
+              })}
+            </div>
+          )}
         </div>
+      ) : (
+        <WardenChat warden={warden} compact />
       )}
     </aside>
   );
