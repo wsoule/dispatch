@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-10T23:19:42.000Z
+updated: 2026-08-11T16:48:31.530Z
 external: null
 writes: []
 ---
@@ -27,3 +27,4 @@ The external-merge reconciler (reconcileExternallyMergedRuns) checks each run ag
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T16:48:31.530Z [epic] epic dispatch started (concurrency 3) — human:wsoule679
