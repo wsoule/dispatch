@@ -1,7 +1,7 @@
 ---
 id: t-4150a8
 title: "WardenManager: tool-calling conversation session"
-status: in-progress
+status: todo
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.198Z
-updated: 2026-08-10T23:57:53.436Z
+updated: 2026-08-11T01:41:30.961Z
 external: null
 writes:
   - packages/server/src/orchestrator/warden.ts
@@ -51,3 +51,4 @@ hint: You can instead skip this commit: run "git rebase --skip".
 hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
 hint: Disable this message with "git config set advice.mergeConflict false"
 Could not apply 51aa2410... # feat(server): add the warden conversation manager — none
+- 2026-08-11T01:41:30.961Z run r-96f433 discarded — human:wsoule679
