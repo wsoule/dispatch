@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "version": "0.2",
+  "language": "en",
+  "dictionaryDefinitions": [
+    {
+      "name": "dispatch",
+      "path": "./.cspell-dictionary.txt",
+      "addWords": true
+    }
+  ],
+  "dictionaries": ["dispatch", "typescript", "node", "npm", "html", "css"],
+  "ignorePaths": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/*.d.ts",
+    "**/storefront-src/**",
+    "**/src-tauri/target/**",
+    "**/src-tauri/Cargo.lock",
+    "bun.lock",
+    "*.svg",
+    "**/*.snap",
+    ".dispatch/**",
+    ".agents/ignore/**"
+  ]
+}
