@@ -193,3 +193,104 @@ describe('getImpact', () => {
     }
   });
 });
+
+// Narrows a stubbed call's body to the JSON string request() always sends and
+// parses it, so tests can assert on the exact payload a method built.
+function sentJson(call: { init?: RequestInit }): unknown {
+  const body = call.init?.body;
+  if (typeof body !== 'string') {
+    throw new Error(`expected a JSON string body, got ${typeof body}`);
+  }
+  return JSON.parse(body);
+}
+
+// The warden chat bindings — each method must hit the exact route the server
+// registered in packages/server/src/api.ts, with the body shape its handler
+// validates.
+describe('warden methods', () => {
+  it('startWarden POSTs /api/warden with just the prompt when no backend is given', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').startWarden('what is live?');
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe('http://example.test/api/warden');
+      expect(stub.calls[0].init?.method).toBe('POST');
+      // `backend` must be absent, not `undefined`: the server 400s any
+      // non-string value, and JSON.stringify would drop it either way — this
+      // pins that the key is never sent.
+      expect(sentJson(stub.calls[0])).toEqual({
+        prompt: 'what is live?',
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('startWarden includes backend when the caller picks one', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').startWarden('hi', {
+        backend: 'fake',
+      });
+      expect(sentJson(stub.calls[0])).toEqual({
+        prompt: 'hi',
+        backend: 'fake',
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('getWarden GETs /api/warden/:id', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').getWarden('wc-1');
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe('http://example.test/api/warden/wc-1');
+      expect(stub.calls[0].init?.method).toBeUndefined();
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('sendWardenMessage POSTs /api/warden/:id/message with { text }', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').sendWardenMessage(
+        'wc-1',
+        'and the merge queue?'
+      );
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/warden/wc-1/message'
+      );
+      expect(stub.calls[0].init?.method).toBe('POST');
+      expect(sentJson(stub.calls[0])).toEqual({
+        text: 'and the merge queue?',
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('confirmWardenAction POSTs /api/warden/:id/actions/:actionId/confirm with { approve }', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').confirmWardenAction(
+        'wc-1',
+        'wa-9',
+        false
+      );
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/warden/wc-1/actions/wa-9/confirm'
+      );
+      expect(stub.calls[0].init?.method).toBe('POST');
+      expect(sentJson(stub.calls[0])).toEqual({
+        approve: false,
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+});
