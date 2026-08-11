@@ -44,7 +44,7 @@ Other useful commands, run from the repo root:
 - **Catalog reconciliation:** `react`, `react-dom` → `19.2.7`; `@types/react` →
   `19.2.17`; `@types/react-dom` → `19.2.3`; `@vitejs/plugin-react` → `6.0.3`.
   This package's remaining deps (`@fontsource/inter`,
-  `@fontsource/ibm-plex-mono`, `@tanstack/react-query`, `@tauri-apps/api`,
+  `@fontsource/jetbrains-mono`, `@tanstack/react-query`, `@tauri-apps/api`,
   `@tauri-apps/cli`, `@types/node`) live in the root catalog. `typescript` stays
   on the monorepo's catalog `5.9.2`.
 - **vite 7 vs 8:** the whole monorepo is unified on vite 8 (catalog `8.1.4`).
