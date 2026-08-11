@@ -63,6 +63,7 @@ import {
   taskVerificationKey,
 } from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
+import { wardenKey } from './useWardenSession';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
@@ -1106,6 +1107,13 @@ export function useDispatchProject(
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
+            });
+          } else if (event.type === 'warden.changed') {
+            // The warden record query itself lives in useWardenSession; this
+            // hook owns the one WS connection, so the invalidation happens
+            // here — the same split useOrchestration's keys use.
+            void queryClient.invalidateQueries({
+              queryKey: wardenKey(port, event.conversationId),
             });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });

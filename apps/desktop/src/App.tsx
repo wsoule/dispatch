@@ -29,6 +29,7 @@ import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
+import { useWardenSession } from './hooks/useWardenSession';
 import { withActionFeedback } from './lib/actionFeedback';
 import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
@@ -63,6 +64,7 @@ import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TaskView } from './views/TaskView';
+import { WardenView } from './views/WardenView';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import {
@@ -324,6 +326,17 @@ function App() {
         (message) => toasts.push({ title: message, tone: 'success' })
       ),
     [rawData, toasts]
+  );
+
+  // The warden chat's session — mounted here, not inside WardenView, so the
+  // open conversation survives switching tabs. Uses `rawData`'s client/port
+  // directly (its errors surface in the view's own transcript rows, not as
+  // action-feedback toasts); useDispatchProject's WS handler invalidates its
+  // record query on `warden.changed`.
+  const warden = useWardenSession(
+    rawData.client,
+    rawData.port,
+    activeProject?.path ?? null
   );
 
   // Opens the full task view; unspecified runId resolves to the task's latest
@@ -635,6 +648,12 @@ function App() {
         run: () => setGlobalView('sessions'),
       },
       {
+        id: 'go-warden',
+        label: 'Go to Warden',
+        kind: 'go to',
+        run: () => setGlobalView('warden'),
+      },
+      {
         id: 'go-settings',
         label: 'Go to Settings',
         kind: 'go to',
@@ -810,6 +829,13 @@ function App() {
                     />
                   )}
                   {navState.globalView === 'sessions' && <SessionsHubView />}
+                  {navState.globalView === 'warden' && (
+                    <WardenView
+                      data={data}
+                      warden={warden}
+                      projectName={activeProject?.name ?? null}
+                    />
+                  )}
                   {navState.globalView === 'settings' && (
                     <SettingsView activeProject={activeProject} data={data} />
                   )}
