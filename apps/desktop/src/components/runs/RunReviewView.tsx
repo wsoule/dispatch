@@ -85,6 +85,12 @@ interface RunReviewViewProps {
     body: string,
     postToGitHub: boolean
   ) => Promise<{ published: number; error?: string }>;
+  /** Omitted by pre-consolidation call sites; the ReviewView page supplied its own until it
+   * was retired. */
+  onStartAiReview?: () => Promise<void>;
+  /** Omitted by pre-consolidation call sites; the ReviewView page supplied its own until it
+   * was retired. */
+  reviewAgentLive?: boolean;
 }
 
 /**
@@ -118,6 +124,8 @@ export function RunReviewView({
   onReplyComment,
   onApplySuggestion,
   onSubmitReview,
+  onStartAiReview,
+  reviewAgentLive,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
@@ -271,6 +279,8 @@ export function RunReviewView({
                 onReply={onReplyComment}
                 onSubmit={onSubmitReview}
                 canPostToGitHub={canPostReviewToPr(meta.prUrl)}
+                onStartAiReview={onStartAiReview}
+                reviewAgentLive={reviewAgentLive}
               />
             </div>
           )}

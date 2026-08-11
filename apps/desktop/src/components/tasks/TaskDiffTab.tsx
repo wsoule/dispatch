@@ -1,7 +1,7 @@
 import type { RunMeta } from '@dispatch/client';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
-import { isTerminalRunState } from '../../lib/runState';
+import { isTerminalRunState, liveReviewAgentFor } from '../../lib/runState';
 import { DiffEmptyState } from '../runs/DiffEmptyState';
 import { RunDiffView } from '../runs/RunDiffView';
 import { RunReviewView } from '../runs/RunReviewView';
@@ -77,6 +77,19 @@ export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
           onReplyComment={data.handleReplyReviewComment}
           onApplySuggestion={data.handleApplySuggestion}
           onSubmitReview={data.handleSubmitReview}
+          onStartAiReview={async () => {
+            if (data.client === null) {
+              throw new Error('The task daemon is not ready yet.');
+            }
+            await data.client.startReview(selectedRun.taskId, {
+              base: selectedRun.baseBranch,
+              head: selectedRun.branch,
+              runId: selectedRun.id,
+            });
+          }}
+          reviewAgentLive={
+            liveReviewAgentFor(data.runs, selectedRun.branch) !== undefined
+          }
         />
       )}
     </div>
