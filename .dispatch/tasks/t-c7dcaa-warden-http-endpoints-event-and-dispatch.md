@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.199Z
-updated: 2026-08-11T15:33:00.374Z
+updated: 2026-08-11T15:33:06.513Z
 external: null
 writes:
   - packages/server/src/api.ts
@@ -41,3 +41,4 @@ Acceptance criteria:
 - 2026-08-11T01:58:51.250Z [run r-8a1e78] finished: finished — 3 files, $11.53 — agent:wsoule679/claude
 - 2026-08-11T02:14:25.499Z [run r-4ee0b3] finished: finished — 0 files, $5.96 — agent:wsoule679/claude
 - 2026-08-11T15:33:00.374Z run r-8a1e78 merged outside dispatch (branch dispatch/t-c7dcaa-warden-http-endpoints-event-and-dispatch-8a1e78 landed on main) — none
+- 2026-08-11T15:33:06.513Z merge queue: dependent run r-3d4e52 restacked onto main after blocker run r-8a1e78 merged (via git rebase --onto) — none
