@@ -79,10 +79,35 @@ The PR review action for a child run targets the epic branch
 (`gh pr create --base epic/<id>`); `PrManager.openPr` pushes the epic branch to
 origin first so the base ref exists there.
 
-## Out of scope (for the branch lifecycle)
+## Landing the epic
 
-Landing the finished epic on the default branch — one PR or one local merge — is
-the epic-level "land" action, tracked separately in the epic (e-b7ca6f). Until
-it lands, tasks merged onto an epic branch are `done` but their merge commits
-are not on origin's default base, so `reconcileArchives` leaves them visible,
-which is correct: the work has not reached main yet.
+`POST /api/epics/:id/land` is the one action that takes a finished epic branch
+to the default base (`Orchestrator.epicLandStatus` validates; the desktop
+surfaces it as the Land button on the epic's board card once every child is
+done):
+
+- **Readiness is all-or-nothing.** Every child task must be `done` or
+  `cancelled`; anything at `todo`/`in-progress`/`in-review` refuses with a 409
+  naming the pending children — a partially-done epic never lands silently. A
+  leftover unreviewed run still based on the branch also refuses, since landing
+  deletes the ref that run's diff and merge are anchored on.
+- **PR when the project has the `pr` capability** (and the branch carries
+  commits): `PrManager.openEpicPr` pushes `epic/<id>` and opens one PR against
+  the default base; the existing merge poller then flips the epic to `done`
+  (`Orchestrator.markEpicMergedViaPr`) when GitHub reports it merged. Open epic
+  PRs persist in an `epic-prs.json` ledger, so a daemon restart keeps polling. A
+  PR closed without merging drops the ledger entry (with an Activity line) so
+  the epic can be landed again.
+- **One local `--no-ff` merge otherwise** (`Orchestrator.landEpicLocally`): a
+  real merge commit with both parents, so the per-task squash commits survive
+  and the epic reverts as one unit. Mirrors `mergeRun`'s two paths — the gated
+  checkout merge when the default base is checked out, the checkout-free
+  merge-tree/commit-tree/update-ref plumbing when it is not.
+- **Closing out matches review-merge**: the epic's diff against the base is
+  snapshotted (served by `GET /api/epics/:id/diff` after the branch is gone),
+  the local `epic/<id>` ref is deleted, and the epic's status flips to `done`
+  with an Activity line naming how it landed.
+
+Until an epic lands, tasks merged onto its branch are `done` but their merge
+commits are not on origin's default base, so `reconcileArchives` leaves them
+visible, which is correct: the work has not reached main yet.
