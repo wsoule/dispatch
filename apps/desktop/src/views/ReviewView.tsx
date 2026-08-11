@@ -1,4 +1,4 @@
-import type { Snippet } from '@dispatch/client';
+import type { Finding, Snippet } from '@dispatch/client';
 import { canPostReviewToPr } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Check } from 'lucide-react';
@@ -324,6 +324,33 @@ export function ReviewView({
     [data.runs, run]
   );
 
+  // Resumes the run's own agent on its branch with the checked findings as
+  // the change request — the same request-changes path a human review uses.
+  const handleFixFindings = useCallback(
+    async (selected: Finding[]) => {
+      if (run === undefined) {
+        throw new Error('The task daemon is not ready yet.');
+      }
+      const lines = selected.map((f) => {
+        const loc =
+          f.file === null
+            ? ''
+            : ` (${f.file}${f.line === null ? '' : `:${f.line}`})`;
+        return `- ${f.title}${loc}\n  ${f.detail}`;
+      });
+      await data.handleRequestChanges(
+        run.id,
+        `Fix these review findings, then re-run the checks you'd normally run:\n\n${lines.join('\n')}`
+      );
+    },
+    [data, run]
+  );
+
+  const canFixFindings =
+    run !== undefined &&
+    isTerminalRunState(run.state) &&
+    run.reviewedAt === undefined;
+
   // Hands the open PR to a review agent. `confirmFork` only reports what the
   // user answered — the server refuses a fork without it either way, before
   // it fetches anything.
@@ -521,6 +548,7 @@ export function ReviewView({
                 decisions={decisions}
                 onStartAiReview={handleStartAiReview}
                 reviewAgentLive={reviewAgentLive}
+                onFixFindings={canFixFindings ? handleFixFindings : undefined}
                 client={data.client}
                 runId={selectedRunId ?? undefined}
                 onOpenImpact={onOpenImpact}
