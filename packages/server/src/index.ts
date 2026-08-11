@@ -563,6 +563,7 @@ export async function startServer(
       orchestrator,
       jj,
       prState: (url) => prManager.cachedPrByUrl(url),
+      cacheReady: () => prManager.cacheReady(),
     },
     opts.prCommandRunner
   );

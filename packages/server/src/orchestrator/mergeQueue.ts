@@ -173,6 +173,15 @@ export interface MergeQueueContext {
   // blind-merge behavior for every PR-routed entry — which is what keeps
   // every pre-existing merge-queue test green untouched.
   prState?: (url: string) => RepoPr | undefined;
+  // PrManager.cacheReady in production — true once at least one `gh pr
+  // list` poll has succeeded. Distinguishes "prState(url) is undefined
+  // because no poll has run yet" (hold — githubHoldReason's own contract)
+  // from "prState(url) is undefined because this PR dropped off the open-PR
+  // list" (merged or closed on GitHub — not a reason to hold forever). Only
+  // consulted when `prState` is also wired; absent otherwise behaves as if
+  // no poll has ever run, i.e. always holds on an absent PR — the safer
+  // default for a caller that wires `prState` but not this.
+  cacheReady?: () => boolean;
 }
 
 // Test-only override for the blocked-retry delay (see armBlockedRetry) —
@@ -843,6 +852,34 @@ export class MergeQueue {
     }
   }
 
+  // The GitHub merge gate's hold reason for one run, or null when clear or
+  // not applicable (no PR, or no `prState` wired). Shared by nextEligible()'s
+  // eligibility check and process()'s pre-merge gate so both agree on what
+  // an absent cache entry means: `prState(url)` returns undefined both
+  // before the first poll (genuinely unknown — hold, same as
+  // githubHoldReason(undefined)'s own contract) and forever after the PR
+  // merges or closes on GitHub (it drops out of the open-PR list — NOT a
+  // reason to hold forever). `cacheReady` is what tells those apart; without
+  // it a waiting-github entry whose PR left GitHub's open-PR list would
+  // never become eligible again, since a stale "poll pending" reading would
+  // hold it indefinitely.
+  private githubGateReason(runMeta: RunMeta | undefined): string | null {
+    if (runMeta?.prUrl === undefined || this.ctx.prState === undefined) {
+      return null;
+    }
+    const cachedPr = this.ctx.prState(runMeta.prUrl);
+    if (cachedPr !== undefined) return githubHoldReason(cachedPr);
+    // Absent from the cache. Once the cache is known fresh, that means
+    // "gone from GitHub's open-PR list" — the run proceeds to process(),
+    // which either cleans it up via the existing reviewedAt check (PrManager
+    // saw it merged and called markRunMergedViaPr) or fails loudly on
+    // `gh pr merge` (closed without merging) — both visible and retryable,
+    // unlike silently parking here forever.
+    return this.ctx.cacheReady?.() === true
+      ? null
+      : githubHoldReason(undefined);
+  }
+
   // Scans `entries` once, building a single id -> TaskDoc map up front (per
   // the performance skill: no repeated per-entry cache scans) and updating
   // every entry's display state (queued vs waiting-blockers) in that same
@@ -897,13 +934,16 @@ export class MergeQueue {
       // a blocker finishes. Only entries process() has already parked in
       // 'waiting-github' are checked here — a never-before-seen entry stays
       // eligible so process() gets the first crack at discovering the hold
-      // (see the gate right before merge() in process()).
+      // (see the gate right before merge() in process()). Also excluded once
+      // `reviewedAt` is set: a run reviewed out-of-band (PrManager's own
+      // poller saw the PR merged and called markRunMergedViaPr) must become
+      // eligible again so process()'s existing reviewedAt cleanup — not this
+      // gate — is what files it, rather than a stale hold parking it forever.
       const runMeta = runsById.get(entry.runId);
       const githubHeld =
         entry.state === 'waiting-github' &&
-        runMeta?.prUrl !== undefined &&
-        this.ctx.prState !== undefined &&
-        githubHoldReason(this.ctx.prState(runMeta.prUrl)) !== null;
+        runMeta?.reviewedAt === undefined &&
+        this.githubGateReason(runMeta) !== null;
       const nextState: MergeQueueEntryState =
         unmet && !baseDiscarded
           ? 'waiting-blockers'
@@ -973,14 +1013,14 @@ export class MergeQueue {
       // PR. Held rather than failed — nextEligible() retries it once the
       // cached PR state clears, same resting-state contract as
       // 'blocked-environment', minus the whole-sweep stop (see githubHeld).
-      if (meta.prUrl !== undefined && this.ctx.prState !== undefined) {
-        const holdReason = githubHoldReason(this.ctx.prState(meta.prUrl));
-        if (holdReason !== null) {
-          entry.reason = holdReason;
-          this.setEntryState(entry, 'waiting-github');
-          this.broadcast();
-          return 'done';
-        }
+      // Shares githubGateReason with nextEligible() so both agree on what an
+      // absent cache entry means (see that method's comment).
+      const holdReason = this.githubGateReason(meta);
+      if (holdReason !== null) {
+        entry.reason = holdReason;
+        this.setEntryState(entry, 'waiting-github');
+        this.broadcast();
+        return 'done';
       }
       await this.merge(entry, meta);
       // merge() reviews the run, which fires onRunReviewed and queues this

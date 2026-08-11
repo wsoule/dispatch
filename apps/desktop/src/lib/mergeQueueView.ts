@@ -70,6 +70,7 @@ export function phaseSteps(
     queued: 0,
     'waiting-blockers': 0,
     'blocked-environment': 0,
+    'waiting-github': 0,
     rebasing: 0,
     verifying: 1,
     merging: 2,
@@ -99,6 +100,8 @@ export function queueStateLabel(state: MergeQueueEntryState): string {
       return 'waiting on blockers';
     case 'blocked-environment':
       return 'held — checkout is not clean';
+    case 'waiting-github':
+      return 'Waiting on GitHub';
     case 'rebasing':
       return 'rebasing';
     case 'verifying':

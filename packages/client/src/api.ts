@@ -923,6 +923,11 @@ export type MergeQueueEntryState =
   // staged index, wrong branch). Retryable and user-resolvable — the entry
   // stays in the queue carrying `reason`; POST /api/merge-queue/recheck retries.
   | 'blocked-environment'
+  // Held because the PR itself isn't green on GitHub (draft, conflicting,
+  // failing/pending checks, or an outstanding review verdict). Same contract
+  // as 'blocked-environment' — stays in the queue carrying `reason`, retried
+  // automatically as PrManager's poll cache updates.
+  | 'waiting-github'
   | 'rebasing'
   | 'verifying'
   | 'merging'

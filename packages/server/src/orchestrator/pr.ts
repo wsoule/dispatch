@@ -523,6 +523,8 @@ export class PrManager {
   // succeeded — undefined never equals a real key, so the first successful
   // fill always counts as a delta (empty -> non-empty is one too).
   private cacheDeltaKey: string | undefined;
+  // Set once refreshCache() has succeeded at least once — see cacheReady().
+  private cacheFilled = false;
 
   constructor(
     private readonly ctx: PrManagerContext,
@@ -862,6 +864,7 @@ export class PrManager {
     const prs = raw.map((item) => toRepoPr(item));
     const key = this.landingDeltaKey(prs);
     this.cache = prs;
+    this.cacheFilled = true;
     if (key !== this.cacheDeltaKey) {
       this.cacheDeltaKey = key;
       this.ctx.events.broadcast({ type: 'landing.changed' });
@@ -899,6 +902,17 @@ export class PrManager {
   // entry's PR up by, since it holds a run's `prUrl` rather than a number.
   cachedPrByUrl(url: string): RepoPr | undefined {
     return this.cache.find((p) => p.url === url);
+  }
+
+  // True once refreshCache() has succeeded at least once — including an
+  // empty-but-successful list. The merge queue's GitHub gate needs this to
+  // tell "no poll has run yet" (cachedPrByUrl's undefined means "unknown",
+  // hold) apart from "this PR is no longer in the open-PR list" (cache is
+  // known fresh, so undefined means merged/closed on GitHub, not unknown —
+  // see MergeQueueContext.cacheReady). Without this distinction a
+  // waiting-github entry whose PR left the open-PR list would hold forever.
+  cacheReady(): boolean {
+    return this.cacheFilled;
   }
 
   // Resolves a run that must have an open PR, for the in-app review calls
