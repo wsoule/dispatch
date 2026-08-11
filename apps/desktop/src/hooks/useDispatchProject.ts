@@ -89,10 +89,7 @@ export function repoPrsKey(
 }
 
 // The unified-PR-table query key (`GET /api/landing`), exported so
-// `LandingTableView` can invalidate it itself after a worktree
-// create/remove — the same immediate-refetch pattern `handleEnqueueMerge`
-// et al. use beside the `landing.changed` broadcast this hook already
-// subscribes to.
+// `LandingTableView` can invalidate it itself after a worktree create/remove.
 export function landingKey(
   port: number | undefined
 ): [string, number | undefined] {
@@ -220,11 +217,8 @@ export interface DispatchProjectData {
   // covers both "hasn't loaded yet" and "this project has no pr capability"
   // alike; the review queue treats both as "no PRs to show".
   repoPrs: RepoPr[] | null;
-  // Task 9: the unified PR table snapshot (`GET /api/landing`) — `null` until
-  // the query has ever resolved. See the query's own comment for why a failed
-  // background refetch does NOT reset this to `null`: `landingIsError` is the
-  // separate signal `LandingTableView` uses to show a `stale · …` badge over
-  // the still-rendered last-known snapshot instead.
+  // The unified PR table snapshot (`GET /api/landing`) — `null` until loaded.
+  // `landingIsError` is the separate "stale" signal; see the query's comment.
   landing: LandingSnapshot | null;
   landingIsError: boolean;
 
@@ -1010,15 +1004,8 @@ export function useDispatchProject(
     refetchOnWindowFocus: true,
   });
 
-  // Task 9: the unified PR table — runs, the merge queue and open/merged PRs
-  // already joined server-side. `getLanding` never 409s (a project with no pr
-  // capability still gets its queue-local rows), so this is gated only on the
-  // client, not on `health.pr` the way `repoPrs` above is. A 15s `staleTime`
-  // matches the row-level "5m ago" granularity the table renders; the
-  // `landing.changed` WS branch below is what actually keeps it live, this is
-  // just the floor. On a failed refetch react-query's default keeps the last
-  // successful `data` rather than clearing it — `landingIsError` is what lets
-  // the view show a `stale · …` badge over that instead of a blank table.
+  // `getLanding` never 409s, so this is gated on `client` only (not
+  // `health.pr`); `landingIsError` flags a failed refetch's stale `data`.
   const { data: landing, isError: landingIsError } = useQuery({
     queryKey: landingQueryKey,
     queryFn: () => {

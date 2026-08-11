@@ -48,12 +48,8 @@ interface ReviewViewProps {
   /** Navigates to `ImpactView` with the open run preselected — the case
    *  panel's "open in Impact" action. */
   onOpenImpact: (subject: ImpactSubjectRef) => void;
-  /**
-   * A PR number handed off by Landing's `openPr` nav action — a landing row
-   * with no run behind it, clicked from outside this view. Read once (see the
-   * effect below) into this view's own `selectedPrNumber` state, since a bare
-   * PR target has no run id for nav state to hold the way `activeRunId` does.
-   */
+  /** A PR number handed off by Landing's `openPr` action, for a bare PR row
+   * with no run behind it — read once into `selectedPrNumber` below. */
   pendingPrNumber?: number | null;
   /** Acks the hand-off above so nav state clears it — otherwise a later,
    * unrelated visit to this view would replay the same PR selection. */
@@ -106,9 +102,7 @@ export function ReviewView({
   // lives here — and wins over the run nav holds, being the later choice.
   const [selectedPrNumber, setSelectedPrNumber] = useState<number | null>(null);
 
-  // Reads Landing's row-click hand-off exactly once per number, then acks it
-  // so nav state clears `pendingPrNumber` — a stale value must not reopen
-  // itself if this view remounts (or the same number is clicked again).
+  // Reads Landing's hand-off once per number, then acks it so it can't replay.
   useEffect(() => {
     if (pendingPrNumber === null) return;
     setSelectedPrNumber(pendingPrNumber);

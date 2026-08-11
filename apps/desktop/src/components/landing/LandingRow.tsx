@@ -38,9 +38,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { TableCell, TableRow } from '@/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
-// A row with no PR (a queue-local run not yet opened on GitHub) has no
-// `checks` to show — this is the pill's "nothing to report" input, distinct
-// from a real zero-check PR which the pill already renders correctly.
+// A row with no PR has no `checks` — distinct from a real zero-check PR,
+// which `ChecksPopover` already renders correctly on its own.
 const NO_CHECKS: PrCheckSummary = {
   passed: 0,
   failed: 0,
@@ -50,10 +49,7 @@ const NO_CHECKS: PrCheckSummary = {
 };
 
 // The status dot's fill, keyed off the gate rather than the row's group —
-// two gates in the same group (e.g. `waiting-checks` and `waiting-review`,
-// both `waiting-github` unless they need you) still read as the same color
-// family here, matching the run-state tokens' meaning rather than the
-// table's own section boundaries.
+// two gates in the same group still read by their own run-state color family.
 const GATE_COLOR: Record<GateStatus, string> = {
   ready: 'var(--state-review-fg)',
   'waiting-checks': 'var(--state-waiting-fg)',
@@ -67,9 +63,8 @@ const GATE_COLOR: Record<GateStatus, string> = {
   none: 'var(--state-ready-fg)',
 };
 
-/** Where this row's title click should go — a run's diff if one exists
- * (`run-pr`/`queue-local` rows), else the bare PR (an `open`/`waiting-github`
- * PR dispatch never touched). `null` only for a malformed row (neither). */
+/** Where this row's title click should go — a run's diff if one exists, else
+ * the bare PR. `null` only for a malformed row (neither). */
 function targetForRow(row: LandingRowData): ReviewTarget | null {
   if (row.runId !== undefined) return { kind: 'run', runId: row.runId };
   if (row.pr !== undefined) return { kind: 'pr', number: row.pr.number };
@@ -90,8 +85,7 @@ interface LandingRowProps {
 }
 
 /** One row of the unified PR table: status dot, title + identity subline,
- * where it stands in the landing pipeline, checks, diffstat, review verdict,
- * and its review worktree. */
+ * landing progress, checks, diffstat, review verdict, and worktree. */
 export function LandingRow({
   row,
   queueRows,
@@ -196,10 +190,15 @@ export function LandingRow({
 
       <TableCell className="hidden sm:table-cell">
         {pr !== undefined ? (
-          <span className="dense-meta">
-            <span className="text-state-review">+{pr.additions}</span>{' '}
-            <span className="text-destructive">−{pr.deletions}</span>
-          </span>
+          <div className="flex flex-col">
+            <span className="dense-meta">
+              <span className="text-state-review">+{pr.additions}</span>{' '}
+              <span className="text-destructive">−{pr.deletions}</span>
+            </span>
+            <span className="dense-meta text-muted-foreground">
+              {pr.changedFiles} file{pr.changedFiles === 1 ? '' : 's'}
+            </span>
+          </div>
         ) : (
           <span className="dense-meta text-muted-foreground">—</span>
         )}
@@ -229,13 +228,8 @@ const SYNC_STATE_LABEL: Record<
   'dirty-hold': { label: 'dirty · hold', tone: 'red' },
 };
 
-/**
- * The Worktree cell: cuts a review worktree on demand for a PR row that
- * doesn't have one, or shows the existing one's sync state plus an actions
- * menu once it does. A row with no PR (a queue-local run) has nothing to
- * check out — the worktree concept is PR-review-specific — and renders a
- * bare dash.
- */
+/** The Worktree cell: cuts/removes a review worktree for a PR row, or shows
+ * its sync state + actions menu once one exists. No PR ⇒ a bare dash. */
 function WorktreeCell({
   row,
   client,
@@ -248,9 +242,8 @@ function WorktreeCell({
   const queryClient = useQueryClient();
   const toasts = useToasts();
   const [busy, setBusy] = useState(false);
-  // Open only for this row's PR, and only while its fork gate is unanswered —
-  // reset per PR so switching rows can't leave a stale confirm open under a
-  // "Check out" button it no longer belongs to.
+  // Local, not shared: a stale confirm must never linger under a different
+  // row's "Check out" button once the queue re-sorts.
   const [askingFork, setAskingFork] = useState(false);
 
   const pr = row.pr;
