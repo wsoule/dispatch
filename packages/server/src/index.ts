@@ -66,6 +66,10 @@ export interface ServerHandle {
   // Exposed for introspection/tests; its own 60s auto-refresh timer and
   // blocked-retry timer are started/stopped by startServer itself below.
   mergeQueue: MergeQueue;
+  // Exposed for introspection/tests — e.g. calling pollOnce() directly to
+  // populate cachedPrs() deterministically instead of racing its internal
+  // poll timer (started/stopped by startServer itself below).
+  prManager: PrManager;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
@@ -784,6 +788,7 @@ export async function startServer(
     port,
     tokens,
     mergeQueue,
+    prManager,
     async stop() {
       watcher.close();
       sourceWatcher.close();
