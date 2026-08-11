@@ -17,7 +17,7 @@ import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
-import { MiniOverview } from './components/shell/MiniOverview';
+import { LiveRail } from './components/shell/LiveRail';
 import { Sidebar, useSidebarCollapsed } from './components/shell/Sidebar';
 import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
 import { useToasts } from './components/shell/Toasts';
@@ -90,22 +90,9 @@ function App() {
   // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
   const [aiComposerOpen, setAiComposerOpen] = useState(false);
 
-  // The overview rail's open/closed state, kept across launches — it is a
-  // layout preference, and re-hiding it every start would make it feel broken.
-  const [railOpen, setRailOpen] = useState<boolean>(
-    () => window.localStorage.getItem('dispatch:overview-rail') !== '0'
-  );
-
   // The left rail's collapsed state, owned here because `SidebarProvider` wraps the whole
   // shell row; `Sidebar` reads it back through `useSidebar`. Persistence lives with the rail.
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
-  useEffect(() => {
-    window.localStorage.setItem('dispatch:overview-rail', railOpen ? '1' : '0');
-  }, [railOpen]);
-  // An open review is the same "compressed copy beside the full version" case the rail already
-  // sits out on Overview — the review page's own header lists the queue it would be repeating.
-  const inFocusedReview =
-    navState.projectView === 'review' && navState.activeRunId !== null;
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -997,33 +984,19 @@ function App() {
             </ErrorBoundary>
           </main>
 
-          {/* The overview, kept in the corner. Every other screen answers a
-              narrower question than "what needs me", so this is the one thing
-              worth carrying between them. Project scope only — the global
-              views have no feed to show. */}
-          {/* Not on Overview: the rail is a compressed copy of that screen, and
-              showing it beside the full version is the same information twice
-              in the same viewport. */}
-          {navState.section === 'project' &&
-            navState.projectView !== 'overview' &&
-            activeProject !== null && (
-              <MiniOverview
-                data={data}
-                // Same rule, applied to an open review: that page devotes the window to one run
-                // and the rail listed the same queue beside it. Derived rather than written back
-                // to `railOpen`, so the person's own choice survives the review and returns.
-                open={railOpen && !inFocusedReview}
-                onToggle={() => setRailOpen((v) => !v)}
-                onOpenRun={(runId) => {
-                  dispatchNav({ type: 'openRun', runId });
-                  selectProjectView('runs');
-                }}
-                onReviewRun={(runId) => {
-                  dispatchNav({ type: 'openRun', runId });
-                  selectProjectView('review');
-                }}
-              />
-            )}
+          {/* The live-agents rail, kept in the corner across every project screen — unlike the
+              old MiniOverview, it never hides itself: a row per running agent stays put even
+              when nothing needs a human, and the attention strip is the only part that comes
+              and goes. Project scope only — the global views have no runs to show. */}
+          {navState.section === 'project' && activeProject !== null && (
+            <LiveRail
+              runs={data.runs}
+              repoPrs={data.repoPrs ?? []}
+              openQuestions={data.openQuestions}
+              onOpenTask={openTaskView}
+              onOpenInbox={() => selectProjectView('inbox')}
+            />
+          )}
         </SidebarProvider>
 
         {selectedDoc !== null && data.config !== null && (
