@@ -1,8 +1,6 @@
 // The landing feed (spec's unified PR table): a pure join of runs, the merge
-// queue, and open/merged PRs into one ordered list of rows plus a landed
-// history. No I/O and no wall-clock reads here — `now` is injected by the
-// caller (Task 5's HTTP handler) so this module stays trivially testable and
-// reusable by the desktop client (Task 8/9).
+// queue, and PRs into rows plus landed history. No I/O, no Date.now — `now`
+// is injected by the caller (Task 5's HTTP handler).
 import type {
   MergeQueueEntry,
   MergeQueueSnapshot,
@@ -60,9 +58,8 @@ export interface LandingSnapshot {
   generatedAt: string;
 }
 
-// Terminal-and-unreviewed run states — duplicated from
-// orchestrator/types.ts's TERMINAL_RUN_STATES rather than importing the
-// value, so this module only ever pulls types from the orchestrator layer.
+// Duplicated from orchestrator/types.ts's TERMINAL_RUN_STATES (a value, not
+// a type) so this module's orchestrator imports stay type-only.
 const TERMINAL_RUN_STATES: ReadonlySet<RunMeta['state']> = new Set([
   'finished',
   'failed',
@@ -70,10 +67,8 @@ const TERMINAL_RUN_STATES: ReadonlySet<RunMeta['state']> = new Set([
   'interrupted-dirty',
 ]);
 
-// Active queue states that pre-empt every PR-derived signal: a merge already
-// in flight (or about to be, mid-rebase) or a hard environment block outranks
-// whatever GitHub currently reports about the PR — the queue state IS what's
-// happening right now.
+// Active queue states outrank every PR-derived signal — they describe what
+// is happening right now, not what GitHub last reported.
 function queueTopGate(entry: MergeQueueEntry): LandingGate | null {
   if (entry.state === 'merging' || entry.state === 'rebasing') {
     return { status: 'merging', detail: 'merging now' };
@@ -90,11 +85,8 @@ function queueTopGate(entry: MergeQueueEntry): LandingGate | null {
   return null;
 }
 
-// The single precedence order for a row's action gate: queue-active states
-// first (they describe what's happening right now), then the PR's own
-// blockers (conflicts/draft/checks/review), then the queue's own waiting
-// position, then a plain "ready", then nothing known at all. First match
-// wins — see task-4-brief.md's table for the exact ordering this mirrors.
+// Fixed precedence, first match wins: queue-active state, then PR blockers
+// (conflicts/draft/checks/review), then queue position, then ready/none.
 export function computeGate(input: {
   pr?: RepoPr;
   queue?: { position: number; entry: MergeQueueEntry };
@@ -151,12 +143,8 @@ export function computeGate(input: {
 
 export type LandingGroup = 'needs-you' | 'in-queue' | 'waiting-github' | 'open';
 
-// Buckets a row's gate into the four sections the landing page renders,
-// per task-4-brief.md's mapping. `pr` disambiguates the two gate statuses
-// that cover two distinct situations each (waiting-checks: failing vs
-// pending; waiting-review: changes-requested vs review-required) — the
-// desktop reuses this exact function (Task 8), so the mapping lives here
-// once rather than being re-derived per surface.
+// Buckets a gate into the four landing sections. `pr` disambiguates the two
+// statuses that cover two situations each (waiting-checks, waiting-review).
 export function groupForGate(gate: LandingGate, pr?: RepoPr): LandingGroup {
   switch (gate.status) {
     case 'conflicts':
@@ -190,9 +178,8 @@ const GROUP_RANK: Record<LandingGroup, number> = {
   open: 3,
 };
 
-// Extracts a PR number from a GitHub PR URL — used to line up a run's
-// `prUrl` against `mergedPrs` without importing pr.ts's own parsePrUrl (a
-// runtime value), keeping this module's orchestrator imports type-only.
+// Extracts a PR number from its URL, without importing pr.ts's parsePrUrl
+// (a runtime value) — keeps this module's orchestrator imports type-only.
 function prNumberFromUrl(url: string): number | undefined {
   const match = /\/pull\/(\d+)/.exec(url);
   return match !== undefined && match !== null ? Number(match[1]) : undefined;
@@ -214,9 +201,7 @@ function indexQueueByRunId(
 }
 
 // Joins runs, the merge queue, and open/merged PRs into the landing feed's
-// row list and landed history. Pure: every timestamp comes from `now` or the
-// inputs themselves, never Date.now(). See task-4-brief.md's ambiguity
-// resolutions for the join/dedupe rules this implements.
+// row list and landed history. Pure: no Date.now, only `now`/the inputs.
 export function buildLandingSnapshot(input: {
   runs: RunMeta[];
   queue: MergeQueueSnapshot;
@@ -228,9 +213,10 @@ export function buildLandingSnapshot(input: {
   const { runs, queue, openPrs, mergedPrs, worktrees, now } = input;
   const queueByRunId = indexQueueByRunId(queue.entries);
   const prByUrl = new Map(openPrs.map((pr) => [pr.url, pr]));
+  const mergedPrByUrl = new Map(mergedPrs.map((pr) => [pr.url, pr]));
 
-  // The urls of every open PR already claimed by a run-driven row, so the
-  // PR-only pass below never double-lists it under kind 'pr'.
+  // Urls already claimed by a run-driven row, so the PR-only pass below
+  // never double-lists one under kind 'pr'.
   const claimedPrUrls = new Set<string>();
 
   interface SortableRow {
@@ -242,20 +228,27 @@ export function buildLandingSnapshot(input: {
   const sortable: SortableRow[] = [];
 
   for (const run of runs) {
-    // A reviewed run never produces a row — it either already landed (see
-    // the `landed` history below) or was discarded, either way there is
-    // nothing left to act on here.
+    // A reviewed run never produces a row — it landed already (see below)
+    // or was discarded.
     if (run.reviewedAt !== undefined) continue;
 
     const queued = queueByRunId.get(run.id);
     const isTerminal = TERMINAL_RUN_STATES.has(run.state);
-    // Eligible only if it has a reviewable branch (terminal + unreviewed) or
-    // is already sitting in the merge queue — a still-live run with no queue
-    // entry has nothing to show yet.
+    // Eligible only with a reviewable branch (terminal + unreviewed) or an
+    // existing queue entry.
     if (!isTerminal && queued === undefined) continue;
 
     const matchedPr =
       run.prUrl !== undefined ? prByUrl.get(run.prUrl) : undefined;
+    // Poller lag: the PR merged on GitHub before reviewedAt flipped. Skip
+    // the row — `landed` below already covers it via `mergedPrs`.
+    if (
+      matchedPr === undefined &&
+      run.prUrl !== undefined &&
+      mergedPrByUrl.has(run.prUrl)
+    ) {
+      continue;
+    }
     const gate = computeGate({ pr: matchedPr, queue: queued });
     const group = groupForGate(gate, matchedPr);
 
@@ -319,9 +312,8 @@ export function buildLandingSnapshot(input: {
   });
   const rows = sortable.map((s) => s.row);
 
-  // `landed`: merged queue-history entries (via 'pr' when the run that
-  // merged had an open PR, 'local' otherwise) unioned with `mergedPrs`,
-  // deduping a merged PR whose landing a history entry already covers.
+  // `landed`: merged queue-history entries unioned with `mergedPrs`, deduping
+  // a PR number a history entry already covers.
   const runsById = new Map(runs.map((r) => [r.id, r]));
   const landedNumbersFromHistory = new Set<number>();
   const landedFromHistory: LandedRow[] = [];

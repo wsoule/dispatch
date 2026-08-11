@@ -68,6 +68,7 @@ describe('computeGate', () => {
   const cases: Array<[string, Parameters<typeof computeGate>[0], GateStatus]> =
     [
       ['queue merging', { queue: q('merging') }, 'merging'],
+      ['queue rebasing', { queue: q('rebasing') }, 'merging'],
       ['queue verifying', { queue: q('verifying') }, 'verifying'],
       ['queue failed/blocked', { queue: q('blocked-environment') }, 'blocked'],
       ['pr conflicts', { pr: pr({ mergeable: 'CONFLICTING' }) }, 'conflicts'],
@@ -127,6 +128,10 @@ describe('computeGate', () => {
     expect(computeGate({ pr: pr({}), queue: q('queued', 3) }).detail).toBe(
       '#3 in queue'
     );
+  });
+
+  test('rebasing detail matches merging', () => {
+    expect(computeGate({ queue: q('rebasing') }).detail).toBe('merging now');
   });
 
   test('waiting-blockers queue state maps to queue-position with a blockers detail', () => {
@@ -334,6 +339,34 @@ describe('buildLandingSnapshot', () => {
     expect(row.id).toBe('pr-9');
     expect(row.taskId).toBeUndefined();
     expect(row.runId).toBeUndefined();
+  });
+
+  test('a run whose PR merged before the poller flipped reviewedAt renders once, only in landed', () => {
+    // Poller-lag window: reviewedAt still unset, but the PR is already gone
+    // from openPrs and shows up in mergedPrs instead.
+    const meta = run({ prUrl: 'https://github.com/acme/repo/pull/12' });
+    const mergedPr = pr({
+      number: 12,
+      url: 'https://github.com/acme/repo/pull/12',
+      title: 'Just merged',
+      state: 'MERGED',
+      updatedAt: '2026-08-06T00:00:00.000Z',
+    });
+    const result = buildLandingSnapshot({
+      runs: [meta],
+      queue: snapshot(),
+      openPrs: [],
+      mergedPrs: [mergedPr],
+      worktrees: NO_WORKTREES,
+      now: NOW,
+    });
+    expect(result.rows).toHaveLength(0);
+    expect(result.landed).toHaveLength(1);
+    expect(result.landed[0]).toMatchObject({
+      id: 'landed-pr-12',
+      via: 'pr',
+      prNumber: 12,
+    });
   });
 
   test('a reviewed run produces no row', () => {
