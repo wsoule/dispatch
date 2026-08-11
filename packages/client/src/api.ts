@@ -206,15 +206,12 @@ export interface BranchEntry {
   lastCommitAt?: string;
   /** Commits this branch has that its base does not — what deletion destroys. */
   ahead: number;
-  /** Commits the base gained since this branch diverged — how far unmerged
-   * work has fallen behind. Absent on merged branches, where the count no
-   * longer means anything. */
+  /** Commits the base gained since this branch diverged — how far the branch
+   * has fallen behind. Absent on merged branches, where the count no longer
+   * means anything. For 'epic' entries it is the drift signal: dispatch never
+   * updates an integration branch on its own, a human should. */
   behindBase?: number;
   mergedIntoBase: boolean;
-  /** Commits the base has that this branch does not — drift. Only computed
-   * for 'epic' entries, where it signals the integration branch has fallen
-   * behind the default base and a human should update it. */
-  behindBase?: number;
   runId?: string;
   taskId?: string;
   taskTitle?: string;
