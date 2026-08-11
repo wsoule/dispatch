@@ -13,7 +13,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T23:55:00.000Z
-updated: 2026-08-10T23:55:00.000Z
+updated: 2026-08-11T01:42:07.714Z
 external: null
 writes: []
 ---
@@ -34,3 +34,4 @@ Re-dispatch stays available but should warn when the crashed run's worktree/bran
 - Dispatching a task whose previous run was force-failed warns if that run's branch/worktree changed in the last N minutes.
 
 ## Activity
+- 2026-08-11T01:42:07.714Z Live repro 2026-08-11 (r-96f433): a failed run never enters the review queue, so the app offers no Discard button for it anywhere — closing it required the CLI (`dispatch review r-96f433 discard`). Whatever surface this task adds for force-failed runs should include the discard/adopt actions, not just resume. — none
