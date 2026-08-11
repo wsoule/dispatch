@@ -762,6 +762,9 @@ export interface PlanRecord {
    * whose one-liner the planner was asked to expand into a task. Confirming
    * such a plan links that note to the task it creates. */
   sourceNoteId?: string;
+  /** What the plan is about, for list rows: the task/note/capture title an
+   * enrich plan was started from. Absent on free-form plans. */
+  subject?: string;
 }
 
 // The body of `POST /api/plan/:id/confirm`.
@@ -849,6 +852,28 @@ export interface WardenRecord {
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
   sessionId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Mirrors AgentSessionKind in packages/server/src/orchestrator/agentSessions.ts:
+// which kind of conversation agent a session row is — planner chat, enrich
+// ("add detail") agent, single-task draft, or warden chat. Task runs are not
+// part of this union; they are listed by `fetchRuns` and merged client-side.
+export type AgentSessionKind = 'plan' | 'enrich' | 'draft' | 'warden';
+
+// Mirrors AgentSessionMeta in packages/server/src/orchestrator/agentSessions.ts
+// — the body of `GET /api/agents`: every in-memory conversation agent the
+// daemon holds, normalized for a list row, newest activity first.
+export interface AgentSessionMeta {
+  id: string;
+  kind: AgentSessionKind;
+  /** What the agent is working on: an enrich plan's task/note/capture title,
+   * or the opening prompt's first line for free-form conversations. */
+  title: string;
+  /** The shared conversation lifecycle: turn in flight, settled, or errored. */
+  state: 'running' | 'ready' | 'failed';
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -1456,6 +1481,11 @@ export interface ApiClient {
     opts?: { executor?: 'fake' | 'claude'; model?: string }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
+  // Every in-memory conversation agent (planner chats, enrich agents, task
+  // drafts, warden chats), newest activity first — the non-run half of the
+  // All agents page; merge with `fetchRuns` for the full picture. Refetch on
+  // `plan.changed`, `draft.changed` and `warden.changed`.
+  fetchAgentSessions(): Promise<AgentSessionMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
   fetchRunClaims(): Promise<RunClaim[]>;
   /** `scope: 'session'` also pre-approves the same tool for the rest of this run; `reason`
@@ -1942,6 +1972,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         }),
       }),
     fetchRuns: () => request(target, '/api/runs'),
+    fetchAgentSessions: () => request(target, '/api/agents'),
     fetchRun: (id) => request(target, `/api/runs/${id}`),
     fetchRunClaims: () => request(target, '/api/runs/claims'),
     approveRun: async (runId, requestId, allow, opts = {}) => {

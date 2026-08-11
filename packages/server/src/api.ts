@@ -80,6 +80,7 @@ import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
+import { buildAgentSessions } from './orchestrator/agentSessions.js';
 import type { EpicEngine } from './orchestrator/epic.js';
 import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -3331,7 +3332,8 @@ function enrichInbox(ctx: ApiContext, id: string): Response {
     buildInboxEnrichPrompt(item),
     'claude',
     item.id,
-    'enrich'
+    'enrich',
+    item.text
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -3385,7 +3387,8 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     buildTaskEnrichPrompt(task),
     'claude',
     undefined,
-    'enrich'
+    'enrich',
+    task.meta.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -3405,7 +3408,8 @@ function enrichNote(ctx: ApiContext, id: string): Response {
     buildNoteEnrichPrompt(note),
     'claude',
     note.id,
-    'enrich'
+    'enrich',
+    note.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -4510,6 +4514,20 @@ export async function handleApi(
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
       return await getImpact(ctx, url);
+    }
+
+    // GET /api/agents — every in-memory conversation agent (planner chats,
+    // enrich/"add detail" agents, task drafts, warden chats), normalized for
+    // the All agents page. Task runs are not repeated here: GET /api/runs
+    // already lists them, and the client merges the two.
+    if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(
+        buildAgentSessions(
+          ctx.planManager.listPlans(),
+          ctx.planManager.listDrafts(),
+          ctx.wardenManager.list()
+        )
+      );
     }
 
     if (segments[0] === 'plan') {
