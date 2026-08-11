@@ -29,6 +29,7 @@ export interface WorktreeRef {
 
 interface GitResult {
   ok: boolean;
+  exitCode: number;
   stdout: string;
   stderr: string;
 }
@@ -45,6 +46,7 @@ function runGit(cwd: string, args: string[]): GitResult {
   });
   return {
     ok: result.exitCode === 0,
+    exitCode: result.exitCode,
     stdout: result.stdout.toString('utf8'),
     stderr: result.stderr.toString('utf8'),
   };
@@ -223,6 +225,29 @@ export class WorktreeManager {
     }
     if (current !== undefined) entries.push(current);
     return entries;
+  }
+
+  // Whether `refs/heads/<branch>` exists. Used to decide whether an epic's
+  // integration branch still needs creating (or has been deleted by hand).
+  hasBranch(branch: string): boolean {
+    return runGit(this.mainRepoDir, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `refs/heads/${branch}`,
+    ]).ok;
+  }
+
+  // Creates `branch` pointing at `from`, without checking it out anywhere.
+  // Used to cut an epic's integration branch from the default base on the
+  // epic's first dispatch.
+  createBranch(branch: string, from: string): void {
+    const result = runGit(this.mainRepoDir, ['branch', branch, from]);
+    if (!result.ok) {
+      throw new Error(
+        `git branch ${branch} ${from} failed: ${result.stderr.trim()}`
+      );
+    }
   }
 
   // How many commits `branch` has that `base` does not — i.e. how much work
@@ -638,6 +663,88 @@ export class WorktreeManager {
     if (!commit.ok) {
       throw new Error(`git commit failed: ${commit.stderr.trim()}`);
     }
+  }
+
+  /**
+   * Squash-merges `sourceBranch` into `targetBranch` WITHOUT any checkout —
+   * the whole merge happens in the object database, so neither the user's
+   * main checkout nor any worktree is touched. This is how a run lands on an
+   * epic integration branch: that branch is never checked out anywhere, which
+   * rules out `mergeSquash` above (it merges into the main checkout's current
+   * branch).
+   *
+   * Three plumbing steps:
+   * 1. `git merge-tree --write-tree target source` — a real three-way merge
+   *    (anchored on the merge base) computed in memory. Exit 1 means content
+   *    conflicts; the conflicted paths are folded into the thrown error so
+   *    the 409 the user sees names the files, matching mergeSquash's contract.
+   * 2. `git commit-tree` — one new commit carrying the merged tree, with the
+   *    target's old tip as its ONLY parent: squash semantics, same as
+   *    `merge --squash` + `commit`.
+   * 3. `git update-ref <target> <new> <oldTip>` — compare-and-swap on the old
+   *    tip, so a target that moved between steps (another process, the user's
+   *    own terminal) fails the merge instead of silently discarding that move.
+   *
+   * Returns the new commit's sha.
+   */
+  squashMergeIntoRef(
+    targetBranch: string,
+    sourceBranch: string,
+    message: string
+  ): string {
+    const oldTip = this.resolveCommit(`refs/heads/${targetBranch}`);
+    const mergeTree = runGit(this.mainRepoDir, [
+      'merge-tree',
+      '--write-tree',
+      '--name-only',
+      targetBranch,
+      sourceBranch,
+    ]);
+    const lines = mergeTree.stdout.split('\n');
+    if (mergeTree.exitCode === 1) {
+      // With --name-only the OID line is followed by the conflicted paths,
+      // then a blank line and informational messages — the paths are the part
+      // worth naming.
+      const conflicted: string[] = [];
+      for (const line of lines.slice(1)) {
+        if (line.trim() === '') break;
+        conflicted.push(line.trim());
+      }
+      throw new Error(
+        `merge into ${targetBranch} has conflicts: ${conflicted.join(', ')}`
+      );
+    }
+    if (!mergeTree.ok) {
+      throw new Error(`git merge-tree failed: ${mergeTree.stderr.trim()}`);
+    }
+    const tree = lines[0]?.trim() ?? '';
+    if (tree === '') {
+      throw new Error('git merge-tree produced no tree');
+    }
+    const commit = runGit(this.mainRepoDir, [
+      'commit-tree',
+      tree,
+      '-p',
+      oldTip,
+      '-m',
+      message,
+    ]);
+    if (!commit.ok) {
+      throw new Error(`git commit-tree failed: ${commit.stderr.trim()}`);
+    }
+    const newSha = commit.stdout.trim();
+    const update = runGit(this.mainRepoDir, [
+      'update-ref',
+      `refs/heads/${targetBranch}`,
+      newSha,
+      oldTip,
+    ]);
+    if (!update.ok) {
+      throw new Error(
+        `${targetBranch} moved while merging — retry (${update.stderr.trim()})`
+      );
+    }
+    return newSha;
   }
 
   // The merge base of `baseBranch` and `HEAD` in `worktreePath` — a base
