@@ -8,6 +8,7 @@ import {
   ChevronsUpDown,
   Cog,
   GitBranch,
+  GitMerge,
   GitPullRequestArrow,
   LayoutDashboard,
   ListChecks,
@@ -83,6 +84,10 @@ const PROJECT_VIEWS: {
   // Review owns the whole tail of the pipeline now — the queue of things
   // needing a look, and the merge queue that approving them feeds.
   { id: 'review', label: 'Review', icon: GitPullRequestArrow },
+  // The unified PR table: every run/PR/queue-local row in flight in one
+  // place, plus what recently landed — Review answers "what needs me",
+  // this answers "what is in flight and where is it stuck".
+  { id: 'landing', label: 'Landing', icon: GitMerge },
   // Blast radius of a file, run, or task's declared writes — reached from
   // here with nothing preselected, or from the "open in Impact" action on
   // the Review case panel, task detail, and Git file pane.

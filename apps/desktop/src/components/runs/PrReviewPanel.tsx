@@ -220,8 +220,11 @@ interface PrReviewPanelProps {
 
 // The fork half of spec Decision 3: a fork PR's code is a stranger's, and
 // reviewing it runs that code here. Named owner, plain sentence, no jargon —
-// the user is agreeing to execution, not to a checkbox.
-function ForkConfirm({
+// the user is agreeing to execution, not to a checkbox. Exported so Landing's
+// worktree "Check out" action (the same fork gate, cutting a review worktree
+// instead of dispatching a review agent) reuses the one confirm surface
+// rather than a second copy of this wording.
+export function ForkConfirm({
   owner,
   busy,
   onCancel,

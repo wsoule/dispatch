@@ -33,6 +33,7 @@ import { initialNavState, navReducer } from './lib/appNav';
 import { deriveFeedState } from './lib/feedState';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
+import { landingNavBadge } from './lib/landingView';
 import { isLinearConfigured } from './lib/linearSettings';
 import { basename } from './lib/projectName';
 import { isTerminalRunState } from './lib/runState';
@@ -52,6 +53,7 @@ import { BranchesView } from './views/BranchesView';
 import { DraftView } from './views/DraftView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
+import { LandingTableView } from './views/LandingTableView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { ReviewView } from './views/ReviewView';
@@ -649,6 +651,8 @@ function App() {
               runs: liveRuns.length,
               review: data.runs.filter((r) => deriveFeedState(r) === 'review')
                 .length,
+              landing:
+                data.landing !== null ? landingNavBadge(data.landing) : 0,
             }}
             unreadCount={unreadCount(data.notificationInbox)}
             onToggleInbox={toggleInbox}
@@ -771,6 +775,27 @@ function App() {
                       onOpenImpact={(subject) =>
                         dispatchNav({ type: 'openImpact', subject })
                       }
+                      pendingPrNumber={navState.pendingPrNumber}
+                      onPendingPrConsumed={() =>
+                        dispatchNav({ type: 'clearPendingPr' })
+                      }
+                      onOpenLanding={() => selectProjectView('landing')}
+                    />
+                  )}
+                  {navState.projectView === 'landing' && (
+                    <LandingTableView
+                      data={data}
+                      onSelectTarget={(target) => {
+                        if (target.kind === 'run') {
+                          dispatchNav({ type: 'openRun', runId: target.runId });
+                          selectProjectView('review');
+                        } else {
+                          dispatchNav({
+                            type: 'openPr',
+                            number: target.number,
+                          });
+                        }
+                      }}
                     />
                   )}
                   {navState.projectView === 'impact' && (

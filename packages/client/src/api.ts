@@ -628,7 +628,13 @@ export type ServerEvent =
   // Carries its own result, unlike the *.changed events, so a live feed can
   // render the outcome without a follow-up fetch. Mirrors
   // packages/server/src/events.ts exactly.
-  | { type: 'board.sync'; result: SyncResult };
+  | { type: 'board.sync'; result: SyncResult }
+  // The PR poll's cached repo-PR set changed (a delta in number, head sha,
+  // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
+  // refetch GET /api/landing. No payload: the cache itself is the source of
+  // truth, same "go refetch" contract as task.changed. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'landing.changed' };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.

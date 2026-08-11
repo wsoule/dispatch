@@ -1,0 +1,304 @@
+import type { GateStatus } from '@dispatch/client';
+import { X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
+import { LandingRow } from '../components/landing/LandingRow';
+import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type { LandingFilters } from '../lib/landingView';
+import {
+  EMPTY_FILTERS,
+  readLandingFilters,
+  relativeTime,
+  serializeLandingFilters,
+  visibleLandingRows,
+} from '../lib/landingView';
+import type { ReviewTarget } from '../lib/reviewTarget';
+import { Badge } from '@/ui/badge';
+import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
+import { Input } from '@/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/ui/table';
+
+// Persists filters across launches, same key/shape Task 8's read/serialize
+// pair round-trips — this view is the only place that ever touches
+// localStorage for them.
+const FILTERS_STORAGE_KEY = 'dispatch:landing:filters';
+
+function readStoredFilters(): LandingFilters {
+  if (typeof window === 'undefined') return EMPTY_FILTERS;
+  return readLandingFilters(window.localStorage.getItem(FILTERS_STORAGE_KEY));
+}
+
+interface LandingTableViewProps {
+  data: DispatchProjectData;
+  /** Routes a row's title click into Review, at the same run/PR target
+   * `ReviewQueue` uses — App.tsx wires this to `openRun`/`openPr`. */
+  onSelectTarget: (target: ReviewTarget) => void;
+}
+
+/**
+ * The unified PR table: every run, PR, and queue-local entry currently in
+ * flight, grouped by what it needs (a human, GitHub, or nothing), plus a
+ * collapsible history of what recently landed.
+ *
+ * Replaces the old queue-only Landing panel that used to render inline at the
+ * bottom of Review's empty state — that view answered "what's in the merge
+ * queue"; this answers the broader "what's in flight and where is it stuck"
+ * across runs, PRs opened outside dispatch, and the queue alike.
+ */
+export function LandingTableView({
+  data,
+  onSelectTarget,
+}: LandingTableViewProps) {
+  const [filters, setFilters] = useState<LandingFilters>(readStoredFilters);
+  useEffect(() => {
+    window.localStorage.setItem(
+      FILTERS_STORAGE_KEY,
+      serializeLandingFilters(filters)
+    );
+  }, [filters]);
+
+  const [landedOpen, setLandedOpen] = useState(false);
+
+  if (data.portLoading || data.portError || data.client === null) {
+    return (
+      <DaemonUnavailable
+        starting={data.portLoading}
+        errorDetail={data.portErrorDetail}
+        onRetry={data.retryEnsureDispatchd}
+      />
+    );
+  }
+  const client = data.client;
+
+  const snapshot = data.landing;
+  const now = Date.now();
+
+  // A row's own author-text/gate-chip buttons call these with a value already
+  // known to exist, so re-clicking the same one clears it — the dismissible
+  // chip above the table does the same thing from the other direction.
+  const toggleAuthor = (author: string) =>
+    setFilters((f) => ({ ...f, author: f.author === author ? null : author }));
+  const toggleGate = (gate: GateStatus) =>
+    setFilters((f) => ({ ...f, gate: f.gate === gate ? null : gate }));
+  const clearFilters = () => setFilters(EMPTY_FILTERS);
+  // Narrowed locals rather than re-reading `filters.author`/`filters.gate`
+  // inside the chips below: TS can't carry a `!== null` narrowing on a
+  // destructured object's property through a closure boundary.
+  const authorFilter = filters.author;
+  const gateFilter = filters.gate;
+  const hasActiveFilters =
+    filters.query !== '' || authorFilter !== null || gateFilter !== null;
+
+  const visibleRows =
+    snapshot !== null ? visibleLandingRows(snapshot, filters) : [];
+  // Unfiltered, so a facet chip narrowing the visible rows never also hides
+  // the entry `gateChipLabel` needs to name "behind <title>".
+  const queueRows =
+    snapshot !== null ? snapshot.rows.filter((r) => r.queue !== undefined) : [];
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex items-baseline gap-2">
+        <h1 className="view-topbar-title">Landing</h1>
+        <span className="text-muted-foreground text-[12px]">
+          Every run, PR, and queue entry in flight, in one table.
+        </span>
+        {/* react-query keeps the last successful snapshot on a failed
+            background refetch (see the hook's own comment) — this is the
+            only thing that tells the difference from a healthy, current one. */}
+        {snapshot !== null && data.landingIsError && (
+          <Badge
+            variant="outline"
+            className="text-muted-foreground border-border"
+          >
+            stale · {relativeTime(snapshot.generatedAt, now)}
+          </Badge>
+        )}
+      </div>
+
+      {snapshot === null ? (
+        <p className="text-muted-foreground text-[12.5px]">
+          Loading the PR table…
+        </p>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={filters.query}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, query: e.target.value }))
+              }
+              placeholder="Search title, author, branch, or #123…"
+              className="h-8 max-w-xs text-[12.5px]"
+            />
+            {authorFilter !== null && (
+              <FilterChip
+                label={`author: ${authorFilter}`}
+                onDismiss={() => toggleAuthor(authorFilter)}
+              />
+            )}
+            {gateFilter !== null && (
+              <FilterChip
+                label={`gate: ${gateFilter}`}
+                onDismiss={() => toggleGate(gateFilter)}
+              />
+            )}
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={clearFilters}
+                className="text-muted-foreground hover:text-foreground h-auto px-1.5 py-1 text-[11.5px] font-normal"
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+
+          {visibleRows.length === 0 ? (
+            <EmptyState
+              message={
+                snapshot.rows.length === 0
+                  ? 'Nothing in flight.'
+                  : 'No rows match.'
+              }
+              action={
+                hasActiveFilters ? (
+                  <Button size="sm" variant="outline" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-6" />
+                  <TableHead>Pull request</TableHead>
+                  <TableHead>Lands</TableHead>
+                  <TableHead className="hidden md:table-cell">Checks</TableHead>
+                  <TableHead className="hidden sm:table-cell">
+                    Changes
+                  </TableHead>
+                  <TableHead className="hidden md:table-cell">Review</TableHead>
+                  <TableHead>Worktree</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleRows.map((entry) =>
+                  entry.type === 'group' ? (
+                    <TableRow
+                      key={`group-${entry.id}`}
+                      className="hover:bg-transparent"
+                    >
+                      <TableCell colSpan={7} className="bg-muted/20 py-1.5">
+                        <span className="dense-label">{entry.label}</span>{' '}
+                        <Badge variant="outline" className="ml-1">
+                          {entry.count}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    <LandingRow
+                      key={entry.row.id}
+                      row={entry.row}
+                      queueRows={queueRows}
+                      now={now}
+                      onFilterAuthor={toggleAuthor}
+                      onFilterGate={toggleGate}
+                      onSelectTarget={onSelectTarget}
+                      client={client}
+                      port={data.port}
+                    />
+                  )
+                )}
+              </TableBody>
+            </Table>
+          )}
+
+          <Collapsible open={landedOpen} onOpenChange={setLandedOpen}>
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground hover:text-foreground h-auto w-fit px-1.5 py-1 text-[11.5px] font-normal"
+              >
+                {landedOpen ? 'Hide' : 'Show'} recently landed (
+                {snapshot.landed.length})
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-1 flex flex-col gap-0.5">
+              {snapshot.landed.length === 0 ? (
+                <p className="text-muted-foreground text-[12.5px]">
+                  Nothing has landed yet.
+                </p>
+              ) : (
+                snapshot.landed.map((landed) => (
+                  <div
+                    key={landed.id}
+                    className="dense-meta flex items-center gap-1.5 truncate px-1 py-0.5"
+                  >
+                    <span className="text-foreground truncate">
+                      {landed.title}
+                    </span>
+                    <span>·</span>
+                    <span>
+                      {landed.via === 'pr'
+                        ? `via PR #${landed.prNumber}`
+                        : 'via local'}
+                    </span>
+                    {landed.mergeCommit !== undefined && (
+                      <>
+                        <span>·</span>
+                        <span>{landed.mergeCommit.slice(0, 7)}</span>
+                      </>
+                    )}
+                    <span>·</span>
+                    <span>{relativeTime(landed.finishedAt, now)}</span>
+                  </div>
+                ))
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilterChip({
+  label,
+  onDismiss,
+}: {
+  label: string;
+  onDismiss: () => void;
+}) {
+  return (
+    <Badge variant="secondary" className="gap-1 py-0.5 pr-1">
+      {label}
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label={`Remove filter: ${label}`}
+        className="hover:text-foreground rounded-full"
+      >
+        <X className="size-3" />
+      </button>
+    </Badge>
+  );
+}

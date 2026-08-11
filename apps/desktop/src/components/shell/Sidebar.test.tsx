@@ -48,6 +48,7 @@ const RAIL_LABELS = [
   'Tasks',
   'Runs',
   'Review',
+  'Landing',
   'Impact',
   'Git',
 ];
@@ -60,6 +61,7 @@ test('the exported view order is the cmd+N order App.tsx indexes into', () => {
     'board',
     'runs',
     'review',
+    'landing',
     'impact',
     'branches',
   ]);
