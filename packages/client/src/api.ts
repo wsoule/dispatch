@@ -578,6 +578,9 @@ export type ServerEvent =
   | { type: 'linear.changed'; summary: LinearSyncSummary }
   // The brain-dump inbox changed — captured, retyped, dismissed or converted.
   | { type: 'inbox.changed' }
+  // A warden conversation's record changed (turn settled, action queued or
+  // confirmed). Mirrors packages/server/src/events.ts exactly.
+  | { type: 'warden.changed'; conversationId: string }
   | { type: 'review.changed'; runId: string }
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
