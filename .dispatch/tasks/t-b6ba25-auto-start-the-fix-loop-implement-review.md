@@ -1,7 +1,7 @@
 ---
 id: t-b6ba25
 title: "Auto-start the fix loop: implement → review → fix → re-review by default"
-status: todo
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T03:31:00.000Z
-updated: 2026-08-11T03:31:00.000Z
+updated: 2026-08-11T16:45:41.702Z
 external: null
 writes: []
 ---
@@ -31,3 +31,4 @@ Reference experience: the SDD controller session of 2026-08-10 ran exactly this 
 - Tasks with the loop disabled behave exactly as before the change.
 
 ## Activity
+- 2026-08-11T16:45:41.702Z dispatched (claude, branch dispatch/t-b6ba25-auto-start-the-fix-loop-implement-review-3f87e1) — human:wsoule679
