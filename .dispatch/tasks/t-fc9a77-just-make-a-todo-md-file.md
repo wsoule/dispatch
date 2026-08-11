@@ -1,7 +1,7 @@
 ---
 id: t-fc9a77
 title: just make a TODO.md file
-status: todo
+status: cancelled
 kind: task
 parent: null
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T00:01:52.148Z
-updated: 2026-08-11T01:42:24.718Z
+updated: 2026-08-11T01:45:47.847Z
 external: null
 writes: []
 ---
