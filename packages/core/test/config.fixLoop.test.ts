@@ -39,6 +39,7 @@ describe('fixLoop config', () => {
         '      modelTier: high\n'
     );
     expect(loadConfig(dir).fixLoop).toEqual({
+      auto: true,
       cap: 3,
       escalation: [{ round: 1, strategy: 'fresh', modelTier: 'high' }],
     });
@@ -47,9 +48,30 @@ describe('fixLoop config', () => {
   it('cap alone keeps the default escalation table', () => {
     const dir = root('fixLoop:\n  cap: 2\n');
     expect(loadConfig(dir).fixLoop).toEqual({
+      auto: true,
       cap: 2,
       escalation: DEFAULT_FIX_LOOP.escalation,
     });
+  });
+
+  it('auto defaults on and an explicit false turns it off', () => {
+    expect(loadConfig(root('autoCommit: true\n')).fixLoop.auto).toBe(true);
+    expect(loadConfig(root('fixLoop:\n  auto: false\n')).fixLoop.auto).toBe(
+      false
+    );
+  });
+
+  it('throws a ConfigError when auto is not a boolean', () => {
+    const dir = root('fixLoop:\n  auto: sometimes\n');
+    expect(() => loadConfig(dir)).toThrow(/fixLoop\.auto must be/);
+  });
+
+  test('updateConfig round-trips an auto change', () => {
+    const dir = root('fixLoop:\n  cap: 5\n');
+    const cfg = updateConfig(dir, { fixLoop: { auto: false } });
+    expect(cfg.fixLoop.auto).toBe(false);
+    expect(cfg.fixLoop.cap).toBe(5);
+    expect(loadConfig(dir).fixLoop).toEqual(cfg.fixLoop);
   });
 
   it('throws a ConfigError on a bad escalation row', () => {

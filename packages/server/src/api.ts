@@ -308,6 +308,8 @@ function validateTaskFields(
   if (blockedByError) return blockedByError;
   const selfReviewError = validateBooleanField(value.selfReview, 'selfReview');
   if (selfReviewError) return selfReviewError;
+  const fixLoopError = validateBooleanField(value.fixLoop, 'fixLoop');
+  if (fixLoopError) return fixLoopError;
   const archivedAtError = validateStringOrNullField(
     value.archivedAt,
     'archivedAt'

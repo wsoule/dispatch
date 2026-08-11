@@ -55,6 +55,9 @@ export interface TaskMeta {
    * still conflict; a new reader has to decide the same question.
    */
   writes: string[];
+  // Per-task opt-out of the automatic fix loop (config `fixLoop.auto`). Absent
+  // means opted in — like selfReview, the file only carries the key on `false`.
+  fixLoop?: boolean;
   /** Drives review depth and model tier. */
   risk: TaskRisk;
   /** Per-task model override, layered over config.models. */

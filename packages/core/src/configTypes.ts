@@ -83,8 +83,11 @@ export interface EscalationStep {
 }
 
 /** Bounds on the review -> fix -> re-review loop. `cap` is the last round that
- *  may dispatch; reaching it demands an explicit ruling on every finding. */
+ *  may dispatch; reaching it demands an explicit ruling on every finding.
+ *  `auto` opens the loop on its own when a task's implementer finishes —
+ *  the default lifecycle; individual tasks opt out via `fix-loop: false`. */
 export interface FixLoopConfig {
+  auto: boolean;
   cap: number;
   escalation: EscalationStep[];
 }
@@ -97,6 +100,7 @@ export const FIX_MODEL_TIERS: readonly string[] = ['standard', 'high'];
 // Rounds 1-3 resume the same agent; 4 and 5 hand the work to a fresh one at
 // the top tier, because an agent three rounds deep stops seeing its own shape.
 export const DEFAULT_FIX_LOOP: FixLoopConfig = {
+  auto: true,
   cap: 5,
   escalation: [
     { round: 1, strategy: 'resume', modelTier: 'standard' },
