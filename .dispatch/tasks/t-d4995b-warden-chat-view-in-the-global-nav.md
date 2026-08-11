@@ -1,7 +1,7 @@
 ---
 id: t-d4995b
 title: Warden chat view in the global nav
-status: todo
+status: in-progress
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.200Z
-updated: 2026-08-04T18:06:37.202Z
+updated: 2026-08-11T02:07:48.864Z
 external: null
 writes:
   - apps/desktop/src/views/WardenView.tsx
@@ -37,3 +37,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T02:07:48.864Z dispatched (claude, branch dispatch/t-d4995b-warden-chat-view-in-the-global-nav-0faef1) — none
