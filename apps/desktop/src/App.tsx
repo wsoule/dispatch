@@ -385,8 +385,8 @@ function App() {
   // Everything the Inbox view shows — the Review queue plus any run stalled
   // on an approval or a question. See `buildInbox`.
   const inboxData = useMemo(
-    () => buildInbox(data.runs, data.repoPrs ?? []),
-    [data.runs, data.repoPrs]
+    () => buildInbox(data.runs, data.repoPrs ?? [], data.openQuestions),
+    [data.runs, data.repoPrs, data.openQuestions]
   );
 
   useGlobalKeyboard({
