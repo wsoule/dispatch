@@ -1,7 +1,7 @@
 ---
 id: t-c7dcaa
 title: Warden HTTP endpoints, event, and dispatchd wiring
-status: todo
+status: in-progress
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.199Z
-updated: 2026-08-04T18:06:37.202Z
+updated: 2026-08-11T01:43:01.612Z
 external: null
 writes:
   - packages/server/src/api.ts
@@ -36,3 +36,4 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T01:43:01.612Z dispatched (claude, branch dispatch/t-c7dcaa-warden-http-endpoints-event-and-dispatch-8a1e78) — none
