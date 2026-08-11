@@ -202,7 +202,7 @@ describe('editErrorMessage — maps applyRunEdit failures to reviewer-facing sen
   // keep.
   it('maps worktree-busy, and says the edit was not saved', () => {
     expect(editErrorMessage(new ApiError('worktree-busy', 409))).toBe(
-      'An agent is working in this worktree, so this edit was not saved — wait for it to finish, then reopen the file and redo it.'
+      "An agent is working here, so this edit wasn't saved. Wait, then redo it."
     );
   });
 
@@ -220,7 +220,7 @@ describe('editErrorMessage — maps applyRunEdit failures to reviewer-facing sen
 
   it('maps empty-contents', () => {
     expect(editErrorMessage(new ApiError('empty-contents', 409))).toBe(
-      "Couldn't read this file — nothing was written."
+      "Couldn't read this file. Nothing was written."
     );
   });
 

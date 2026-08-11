@@ -268,7 +268,7 @@ export function RunsView({
           ) : data.visibleRuns.length === 0 ? (
             <EmptyState
               icon={GitBranch}
-              message="No runs yet — dispatch a ready task from the Board to start one."
+              message="No runs yet. Dispatch a task from the Board."
               className="flex-1 justify-center p-6 [&_[data-slot=empty-description]]:text-[13px]"
             />
           ) : (
@@ -356,7 +356,7 @@ export function RunsView({
           {selected === undefined ? (
             <EmptyState
               icon={MousePointerClick}
-              message="Select a run on the left to see its log or review its result."
+              message="Pick a run on the left."
               className="h-full justify-center p-0 [&_[data-slot=empty-description]]:text-[13px]"
             />
           ) : data.runDetail === undefined ? (
@@ -483,7 +483,7 @@ export function RunsView({
                       diffError={data.diffError}
                     />
                   ) : data.diffError !== null ? (
-                    <DiffEmptyState message="This run has no changes to review." />
+                    <DiffEmptyState message="No changes to review." />
                   ) : (
                     <RunReviewView
                       client={data.client}

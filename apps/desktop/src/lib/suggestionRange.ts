@@ -49,9 +49,8 @@ const PERMANENT_APPLY_FAILURES = new Set(['anchor-drifted', 'run-reviewed']);
  */
 const APPLY_SUGGESTION_ERROR_MESSAGES: Record<string, string> = {
   'anchor-drifted':
-    'The code here has changed since this suggestion was written, so it can no longer be applied by line number.',
-  'worktree-busy':
-    'An agent is working in this worktree — wait for it to finish, then try again.',
+    "The code changed since this suggestion. It can't be applied anymore.",
+  'worktree-busy': 'An agent is working here. Wait for it to finish.',
   'worktree-missing': "This run's worktree is gone.",
   'run-reviewed':
     'This run has already been reviewed, so its branch is closed to further edits.',

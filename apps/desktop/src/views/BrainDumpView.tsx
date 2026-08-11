@@ -247,14 +247,14 @@ export function BrainDumpView({
                 if (draft.trim() !== '') capture();
               }
             }}
-            placeholder="Dump it here — bugs, half-ideas, things you noticed, one per line…"
+            placeholder="Dump it here…"
             className="text-foreground field-sizing-fixed min-h-[92px] resize-y border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[14px] dark:bg-transparent"
           />
           <div className="mt-2.5 flex items-center gap-2.5">
             <span className="dense-meta flex-1">
               {pendingLines > 0
                 ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} — each becomes one item`
-                : 'One thought per line. Paste a wall of text and it gets split.'}
+                : 'One per line. Walls of text get split.'}
             </span>
             {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
                 size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}

@@ -272,7 +272,7 @@ export function BoardView({
       {boardTasks.length === 0 ? (
         <EmptyState
           icon={LayoutGrid}
-          message="No tasks yet — create the first one, or describe the work with “Plan work…” and let the planner draft it."
+          message="No tasks yet. Create one, or let “Plan work…” draft them."
           className="flex-1 justify-center gap-3 p-0 text-[13px] [&_[data-slot=empty-description]]:max-w-sm [&_[data-slot=empty-description]]:text-[length:inherit]"
           action={
             <Button size="sm" onClick={() => onNewTask()}>

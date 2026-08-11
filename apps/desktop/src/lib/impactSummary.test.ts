@@ -150,7 +150,7 @@ test('a mixed seed set with a real zero from the analysable seed says so, not "w
   expect(s.total).toBe(0);
   expect(s.zeroMessage).not.toBe('No files affected.');
   expect(s.zeroMessage).not.toBe(
-    'None of these 2 files can be analyzed by the active sources, so their impact is unknown — not zero.'
+    "Can't analyze any of these 2 files. Impact unknown, not zero."
   );
   expect(s.zeroMessage).toContain(
     'No files affected among what could be analyzed'

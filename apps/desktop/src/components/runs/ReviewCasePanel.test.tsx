@@ -60,7 +60,7 @@ test('a failed command is distinguishable from a passing one', () => {
 // The single highest-signal red flag in reviewing agent work, and it was invisible before.
 test('a guard that broke no tests is flagged as dead or vacuous', () => {
   render(<ReviewCasePanel {...empty} mutations={[mut(0)]} />);
-  expect(screen.getByText(/dead guard, or a vacuous test/i)).toBeDefined();
+  expect(screen.getByText(/dead guard or vacuous test/i)).toBeDefined();
 });
 
 test('a guard whose removal broke tests is not flagged', () => {

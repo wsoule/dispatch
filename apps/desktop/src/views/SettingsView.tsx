@@ -54,7 +54,7 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
         <h1 className="text-foreground text-[15px] font-medium">Settings</h1>
         <EmptyState
           icon={FolderSearch}
-          message="Select a project from the sidebar to see its daemon status and tracker config."
+          message="Pick a project in the sidebar."
         />
       </div>
     );

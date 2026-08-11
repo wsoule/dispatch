@@ -83,7 +83,7 @@ export function ReviewChatPanel({
               id: 'run-agent',
               label: "This run's agent",
               canAct: true,
-              hint: 'Resumes the session on this branch — it can edit the code.',
+              hint: 'Resumes the session. It can edit code.',
             },
           ]
         : []),

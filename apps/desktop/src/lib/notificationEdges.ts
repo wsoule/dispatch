@@ -112,7 +112,7 @@ export function diffQueueNotifications(
         });
       } else if (entry.state === 'blocked-environment') {
         notifications.push({
-          title: 'Merge blocked — action needed',
+          title: 'Merge blocked. Action needed.',
           body: `${entry.taskTitle} — ${(entry.reason ?? '').slice(0, 80)}`,
           target: { kind: 'queue' },
         });
