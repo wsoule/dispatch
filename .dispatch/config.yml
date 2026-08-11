@@ -25,3 +25,6 @@ verifySteps:
     command: bun run lint
   - name: test
     command: bun run test
+models:
+  execute: claude-fable-5
+  plan: claude-opus-5
