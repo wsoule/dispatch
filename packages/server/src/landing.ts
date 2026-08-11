@@ -1,12 +1,12 @@
-import type {
-  MergeQueueEntry,
-  MergeQueueSnapshot,
-} from './orchestrator/mergeQueue.js';
 // The landing feed (spec's unified PR table): a pure join of runs, the merge
 // queue, and open/merged PRs into one ordered list of rows plus a landed
 // history. No I/O and no wall-clock reads here — `now` is injected by the
 // caller (Task 5's HTTP handler) so this module stays trivially testable and
 // reusable by the desktop client (Task 8/9).
+import type {
+  MergeQueueEntry,
+  MergeQueueSnapshot,
+} from './orchestrator/mergeQueue.js';
 import type { RepoPr } from './orchestrator/pr.js';
 import type { RunMeta } from './orchestrator/types.js';
 
