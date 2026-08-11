@@ -11,9 +11,13 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-10T23:19:42.000Z
+updated: 2026-08-11T17:27:55.810Z
 external: null
-writes: []
+writes:
+  - packages/server/src/orchestrator/epicBranch.ts
+  - packages/server/src/orchestrator/epic.ts
+  - packages/server/src/orchestrator/orchestrator.ts
+  - packages/server/test/orchestrator/epic-branch.test.ts
 ---
 
 ## Description
