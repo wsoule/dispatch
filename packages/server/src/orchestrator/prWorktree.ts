@@ -356,18 +356,27 @@ export class PrWorktreeManager {
   }
 
   // No worktree on disk -> null (already gone, nothing to do). Not this
-  // manager's own -> null, refused. Dirty, or status unreadable -> kept,
-  // returning the state so the caller can flag it (409). Clean -> removed,
-  // along with the pr head ref it was cut from.
+  // manager's own -> THROWS (Task 7 re-review: this used to also return
+  // null, which the DELETE route read as "removed" — a worktree it never
+  // touched got reported back as successfully deleted). Dirty, or status
+  // unreadable -> kept, returning the state so the caller can flag it
+  // (409). Clean -> removed, along with the pr head ref it was cut from.
+  //
+  // The poll's own removal loop (PrManager.syncPrWorktrees) never actually
+  // hits this throw: it only calls removeIfClean on numbers list() already
+  // returned, and list() filters to ownership-verified entries itself — so
+  // this stays a silent (try/catch-and-log, same as any other cleanup
+  // failure there) skip for the poll, and becomes a real 409 for the
+  // DELETE route, which calls this directly with a caller-supplied number
+  // list() was never consulted for.
   async removeIfClean(prNumber: number): Promise<PrWorktreeState | null> {
     const path = this.worktreePathFor(prNumber);
     if (!existsSync(path)) return null;
 
     if (!(await this.verifyOwnership(path, prNumber))) {
-      console.error(
-        `dispatchd: refusing to remove PR #${prNumber} worktree — ${path} was not created by this manager`
+      throw new OrchestratorConflictError(
+        `refusing to remove PR #${prNumber} worktree — ${path} was not created by this manager`
       );
-      return null;
     }
 
     const status = await this.statusAt(path);
