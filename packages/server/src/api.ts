@@ -75,6 +75,7 @@ import type { GitBranch } from './git/parse.js';
 import type { InboxItem, InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
+import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStore } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
@@ -2149,6 +2150,30 @@ async function getRepoPrDetail(
   return jsonResponse(detail);
 }
 
+// GET /api/landing — the unified PR table: runs, the merge queue, and
+// open/merged PRs joined into one feed. `mergedPrs` degrades to `[]` when
+// the project lacks pr capability or `gh` fails, so a local-only repo (no
+// remote at all) still gets a 200 with its queue-local rows intact rather
+// than a 409.
+async function getLandingSnapshot(ctx: ApiContext): Promise<Response> {
+  let mergedPrs: RepoPr[] = [];
+  try {
+    mergedPrs = await ctx.prManager.listMergedPrs(20);
+  } catch (err) {
+    if (!(err instanceof OrchestratorConflictError)) throw err;
+  }
+  const snapshot = buildLandingSnapshot({
+    runs: ctx.orchestrator.list(),
+    queue: ctx.mergeQueue.snapshot(),
+    openPrs: ctx.prManager.cachedPrs(),
+    mergedPrs,
+    // Task 7 wires the real worktree map; every row carries none until then.
+    worktrees: new Map(),
+    now: new Date().toISOString(),
+  });
+  return jsonResponse(snapshot);
+}
+
 // POST /api/prs/:number/review — submit a GitHub review on a repo PR by
 // number. Body validation mirrors POST /api/runs/:id/pr/review exactly.
 async function reviewRepoPr(
@@ -4118,6 +4143,15 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await submitPrReview(req, ctx, segments[1]);
+      }
+    }
+
+    // GET /api/landing — the unified PR table feed (runs + merge queue +
+    // open/merged PRs). See getLandingSnapshot for the capability-loss
+    // degradation.
+    if (segments[0] === 'landing') {
+      if (segments.length === 1 && method === 'GET') {
+        return await getLandingSnapshot(ctx);
       }
     }
 
