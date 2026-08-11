@@ -1634,8 +1634,6 @@ export interface ApiClient {
   ): Promise<InboxItem>;
   dismissInbox(ids: string[]): Promise<{ dismissed: number }>;
   convertInbox(ids: string[]): Promise<InboxConvertResponse>;
-  /** Starts an AI draft that turns one captured line into a properly specified task. */
-  enrichInbox(id: string): Promise<{ planId: string }>;
   /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
   enrichTask(id: string): Promise<{ planId: string }>;
   /** Model-backed grouping of related captures, run in the background. Always
@@ -2169,10 +2167,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, '/api/inbox/convert', {
         method: 'POST',
         body: JSON.stringify({ ids }),
-      }),
-    enrichInbox: (id) =>
-      request(target, `/api/inbox/${encodeURIComponent(id)}/enrich`, {
-        method: 'POST',
       }),
     enrichTask: (id) =>
       request(target, `/api/tasks/${encodeURIComponent(id)}/enrich`, {
