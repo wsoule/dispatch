@@ -1,7 +1,7 @@
 ---
 id: t-6f0378
 title: Client API bindings for warden
-status: in-review
+status: done
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,10 +11,11 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-04T18:06:37.199Z
-updated: 2026-08-11T15:33:06.477Z
+updated: 2026-08-11T15:37:36.446Z
 external: null
 writes:
   - packages/client/src/api.ts
+archived-at: 2026-08-11T15:37:36.446Z
 ---
 
 ## Description
@@ -35,3 +36,4 @@ Acceptance criteria:
 - 2026-08-11T02:07:43.787Z [run r-3d4e52] finished: finished — 4 files, $7.66 — agent:wsoule679/claude
 - 2026-08-11T02:16:41.087Z [run r-bf2b84] finished: finished — 0 files, $1.83 — agent:wsoule679/claude
 - 2026-08-11T15:33:06.477Z merge queue: run r-3d4e52 restacked onto main after blocker run r-8a1e78 merged (via git rebase --onto) — none
+- 2026-08-11T15:37:34.268Z run r-3d4e52 merged outside dispatch (branch dispatch/t-6f0378-client-api-bindings-for-warden-3d4e52 landed on main) — none

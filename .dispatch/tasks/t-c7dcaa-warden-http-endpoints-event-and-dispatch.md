@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.199Z
-updated: 2026-08-11T15:33:06.513Z
+updated: 2026-08-11T15:37:36.446Z
 external: null
 writes:
   - packages/server/src/api.ts
@@ -19,6 +19,7 @@ writes:
   - packages/server/src/index.ts
   - packages/server/test/api/warden.test.ts
 risk: critical
+archived-at: 2026-08-11T15:37:36.446Z
 ---
 
 ## Description
