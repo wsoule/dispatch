@@ -1,7 +1,7 @@
 ---
 id: t-82bd0a
 title: "Merged-status view: what landed on main and what is still out"
-status: todo
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-10T23:19:42.000Z
+updated: 2026-08-11T16:48:46.596Z
 external: null
 writes: []
 ---
@@ -29,3 +29,4 @@ The data is already server-side: `reviewedAt`/`reviewAction`/`mergeCommit` on Ru
 - Unmerged branches show how far behind the base they've fallen.
 
 ## Activity
+- 2026-08-11T16:48:46.596Z dispatched (claude, branch dispatch/t-82bd0a-merged-status-view-what-landed-on-main-a-b23d3a) — human:wsoule679
