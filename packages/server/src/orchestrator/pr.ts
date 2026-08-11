@@ -220,7 +220,7 @@ export interface PrManagerContext {
   prWorktrees?: PrWorktreeManager;
 }
 
-export interface PrCheckRun {
+interface PrCheckRun {
   name: string;
   conclusion: string; // SUCCESS | FAILURE | PENDING | … (normalized verdict)
   url: string;

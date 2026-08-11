@@ -1,6 +1,6 @@
-import { TaskStore } from '@dispatch/core';
+import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -251,6 +251,43 @@ describe('MergeQueue GitHub gate', () => {
         call.cmd[0] === 'gh' && call.cmd[1] === 'pr' && call.cmd[2] === 'merge'
     );
     expect(mergeCall?.cmd).toEqual(['gh', 'pr', 'merge', prUrl, '--squash']);
+  });
+
+  // The gate runs BEFORE rebase/verify in process() (see mergeQueue.ts):
+  // a held entry must never pay for the verify pipeline just to be parked
+  // afterward, and its check data described a pre-rebase head anyway.
+  it('parks a red PR-routed entry without running rebase or verify steps', async () => {
+    const harness = makeHarness();
+    writeFileSync(
+      join(harness.rootDir, DISPATCH_DIR, 'config.yml'),
+      'verifyCommand: "echo verifying"\n'
+    );
+    const { runId } = await dispatchAndFinish(harness);
+    const prUrl = 'https://github.com/example/repo/pull/21';
+    harness.orchestrator.setRunPrUrl(runId, prUrl);
+    const stub = new StubRunner();
+    const redPr = pr({ url: prUrl, isDraft: true });
+    const queue = makeQueue(
+      { ...harness, prState: (url) => (url === redPr.url ? redPr : undefined) },
+      stub.run
+    );
+
+    queue.enqueue(runId);
+    await waitFor(
+      () =>
+        queue.snapshot().entries.find((e) => e.runId === runId)?.state ===
+        'waiting-github'
+    );
+
+    const held = queue.snapshot().entries.find((e) => e.runId === runId);
+    expect(held?.reason).toBe('draft');
+    expect(held?.steps).toBeUndefined();
+    expect(
+      stub.calls.some(
+        (call) => call.cmd[0] === 'git' && call.cmd[1] === 'rebase'
+      )
+    ).toBe(false);
+    expect(stub.calls.some((call) => call.cmd[0] === 'bash')).toBe(false);
   });
 
   it('merges a PR-routed entry immediately when prState is not wired (back-compat)', async () => {

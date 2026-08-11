@@ -30,7 +30,7 @@ export interface LandingWorktree {
   headOid: string;
 }
 
-export interface LandingRow {
+interface LandingRow {
   id: string; // 'pr-<n>' | 'run-<runId>' — queue rows keep their run id
   kind: 'pr' | 'run-pr' | 'queue-local';
   title: string;
@@ -42,7 +42,7 @@ export interface LandingRow {
   worktree?: LandingWorktree;
 }
 
-export interface LandedRow {
+interface LandedRow {
   id: string;
   title: string;
   via: 'pr' | 'local';

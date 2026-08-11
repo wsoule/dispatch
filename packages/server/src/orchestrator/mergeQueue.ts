@@ -1004,17 +1004,18 @@ export class MergeQueue {
     }
 
     try {
-      await this.rebase(entry, meta);
-      await this.verify(entry, meta);
       // The GitHub merge gate: a PR-routed entry only merges blind when the
       // caller never wired a `prState` lookup (today's behavior, and every
       // pre-existing test's harness). When one is wired, a red PR holds here
-      // instead of `gh pr merge` running against a draft/conflicting/failing
-      // PR. Held rather than failed — nextEligible() retries it once the
-      // cached PR state clears, same resting-state contract as
-      // 'blocked-environment', minus the whole-sweep stop (see githubHeld).
-      // Shares githubGateReason with nextEligible() so both agree on what an
-      // absent cache entry means (see that method's comment).
+      // instead of running rebase/verify against a draft/conflicting/failing
+      // PR — checked before rebase() so a held entry never pays for the
+      // 2-3 minute verify pipeline just to be parked afterward. Held rather
+      // than failed — nextEligible() retries it once the cached PR state
+      // clears, same resting-state contract as 'blocked-environment', minus
+      // the whole-sweep stop (see githubHeld). Shares githubGateReason with
+      // nextEligible() so both agree on what an absent cache entry means
+      // (see that method's comment). Reads only `meta` and this closure, not
+      // rebase/verify output, so it can run ahead of both unchanged.
       const holdReason = this.githubGateReason(meta);
       if (holdReason !== null) {
         entry.reason = holdReason;
@@ -1022,6 +1023,8 @@ export class MergeQueue {
         this.broadcast();
         return 'done';
       }
+      await this.rebase(entry, meta);
+      await this.verify(entry, meta);
       await this.merge(entry, meta);
       // merge() reviews the run, which fires onRunReviewed and queues this
       // run's dependents for restacking. Draining here — before the entry is
