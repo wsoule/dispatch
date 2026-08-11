@@ -7,15 +7,8 @@ import type {
   RepoPr,
 } from '@dispatch/client';
 
-/**
- * The Landing view's read model over `LandingSnapshot`.
- *
- * Zero React — Pierre's happy-dom test setup can't exercise the table
- * component reliably (no canvas, worker-backed editors), so every rule
- * about what shows, in what order, and under what label lives here where
- * it is directly testable. Task 9's table component renders these outputs
- * without re-deriving any of them.
- */
+/** The Landing view's read model over `LandingSnapshot`. Zero React — happy-dom
+ * can't exercise the table reliably, so filter/group/label logic lives here. */
 
 export interface LandingFilters {
   /** Free-text query: matches title, PR author, head branch, or '#<number>'. */
@@ -52,12 +45,8 @@ const GROUP_ORDER: readonly LandingGroup[] = [
   'open',
 ];
 
-// Mirrors `groupForGate` in packages/server/src/landing.ts. @dispatch/client
-// re-exports the landing *types* (the established "mirror, don't import"
-// convention for this package — it does not depend on @dispatch/server) but
-// not this function, so it is mirrored here rather than duplicated as a
-// second server round-trip. Keep in sync with the server copy if the
-// bucketing rules change.
+// Mirrors `groupForGate` in packages/server/src/landing.ts — @dispatch/client
+// re-exports the landing types but not this function. Keep both in sync.
 function groupForGate(gate: LandingGate, pr?: RepoPr): LandingGroup {
   switch (gate.status) {
     case 'conflicts':
@@ -118,14 +107,8 @@ function matchesFilters(row: LandingRow, filters: LandingFilters): boolean {
   return true;
 }
 
-/**
- * Filters, then groups, `snapshot.rows` into the table's flat render list:
- * a `'group'` header immediately followed by its `'row'` entries, in the
- * fixed section order (needs-you, in-queue, waiting-github, open). A
- * section with zero surviving rows is omitted entirely rather than shown
- * empty. Within a section, rows keep the relative order the snapshot gave
- * them (already queue-position/recency sorted server-side).
- */
+/** Filters `snapshot.rows`, then groups them into the table's flat render list
+ * (group header + its rows, fixed section order, empty sections omitted). */
 export function visibleLandingRows(
   snapshot: LandingSnapshot,
   filters: LandingFilters
@@ -157,17 +140,8 @@ export function visibleLandingRows(
   return result;
 }
 
-/**
- * The chip text next to a row's gate.
- *
- * `queueRows`, when given, is the full ordered in-queue row list (position
- * order) — needed only for a position >1 row, whose label names the entry
- * immediately ahead of it. A `LandingRow` on its own carries no reference to
- * that other entry's title, so the caller (which already has every in-queue
- * row on hand to render the section) passes the list rather than this
- * function reaching back into a snapshot. Omitting it, or the ahead row not
- * being found in it, falls back to `gate.detail`.
- */
+/** The chip text next to a row's gate. `queueRows`, the ordered in-queue row
+ * list, names the entry ahead for a position >1 row; falls back to `gate.detail`. */
 export function gateChipLabel(
   row: LandingRow,
   queueRows: readonly LandingRow[] = []
@@ -230,9 +204,8 @@ function isGateStatus(value: unknown): value is GateStatus {
   );
 }
 
-/** Parses the persisted filter state, defaulting to `EMPTY_FILTERS` on
- * anything that isn't a well-formed `LandingFilters` (missing key,
- * unrecognized `gate`, malformed JSON, or no stored value at all). */
+/** Parses the persisted filter state, defaulting to `EMPTY_FILTERS` on anything
+ * that isn't well-formed (missing key, bad `gate`, malformed JSON, or `null`). */
 export function readLandingFilters(raw: string | null): LandingFilters {
   if (raw === null) return EMPTY_FILTERS;
 
@@ -261,10 +234,8 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
 
-/** Short relative-time readout for an ISO timestamp, as of `now` (injected
- * rather than read from `Date.now()` so this stays pure and testable):
- * 'Nm ago' under an hour, 'Nh ago' under a day, 'Nd ago' under a week, and a
- * locale date string beyond that. */
+/** Relative-time readout for an ISO timestamp as of `now` (injected, not
+ * `Date.now()`): 'Nm/Nh/Nd ago' under a week, else a locale date string. */
 export function relativeTime(iso: string, now: number): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '—';
