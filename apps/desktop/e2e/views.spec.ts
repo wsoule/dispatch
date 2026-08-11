@@ -56,7 +56,7 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
     page.getByRole('button', { name: '5 Needs review' })
   ).toBeVisible();
   await expect(
-    page.getByText('No agents are running and nothing is waiting on you.')
+    page.getByText('Nothing running, nothing waiting on you.')
   ).toHaveCount(0);
 }
 

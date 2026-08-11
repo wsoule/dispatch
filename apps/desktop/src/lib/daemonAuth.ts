@@ -44,7 +44,7 @@ export const RESTART_FOR_APPROVALS = 'Restart daemon to enable approvals';
  * startup.
  */
 export const ATTACHED_DAEMON_EXPLANATION =
-  'This window attached to a dispatchd it did not start, so it only has request-level access. Approving or denying a scope request needs the app token the daemon prints once at startup.';
+  "This window didn't start the daemon, so it can't approve scope requests. Use the app token the daemon printed at startup.";
 
 /**
  * Picks the credential to send. The app token grants request tier as well as

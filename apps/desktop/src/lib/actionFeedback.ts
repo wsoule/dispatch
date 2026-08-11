@@ -63,7 +63,7 @@ const SUCCESS_MESSAGES: Record<string, string> = {
   // Worth a toast even though the Stop button visibly changes: unlike every
   // other action here, nothing has finished yet — the agent is still working,
   // and the wording is what says the wait is expected rather than a stuck UI.
-  handleStopRun: 'Stopping — the agent will finish its current step',
+  handleStopRun: 'Stopping. The agent finishes its current step.',
 };
 
 export function withActionFeedback<T extends object>(

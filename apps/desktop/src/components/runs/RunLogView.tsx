@@ -305,10 +305,10 @@ export function RunLogView({
         <div className="border-border flex flex-col gap-1.5 border-t pt-3">
           <span className="text-muted-foreground text-[11px]">
             {!terminal
-              ? 'Talk to the agent — it reads this while the run keeps going.'
+              ? 'Talk to the agent. It reads this while it works.'
               : canContinue
-                ? 'This run stopped before finishing — Continue picks it up on the same branch, or send notes to change course.'
-                : 'This run is done — sending feedback resumes it with your notes.'}
+                ? 'Stopped early. Continue picks it up, or send notes to change course.'
+                : 'Done. Feedback resumes it with your notes.'}
           </span>
           <div className="flex gap-2">
             <Textarea

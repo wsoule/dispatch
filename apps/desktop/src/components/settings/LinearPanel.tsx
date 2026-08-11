@@ -34,8 +34,8 @@ import {
 const LINEAR_DIRECTIONS: { value: 'both' | 'pull' | 'push'; label: string }[] =
   [
     { value: 'both', label: 'Pull and push' },
-    { value: 'pull', label: 'Pull only — Linear to Dispatch' },
-    { value: 'push', label: 'Push only — Dispatch to Linear' },
+    { value: 'pull', label: 'Pull only (Linear → Dispatch)' },
+    { value: 'push', label: 'Push only (Dispatch → Linear)' },
   ];
 
 // Free-typed while focused, snapped back to the saved value on blur if it isn't a valid

@@ -164,7 +164,7 @@ describe('diffQueueNotifications', () => {
     ]);
     expect(notifications).toEqual([
       {
-        title: 'Merge blocked — action needed',
+        title: 'Merge blocked. Action needed.',
         body: 'Add feature — main checkout has uncommitted changes: stray.zip',
         target: { kind: 'queue' },
       },

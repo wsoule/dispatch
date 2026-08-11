@@ -404,7 +404,7 @@ function AdjudicateFindingForm({
       <Textarea
         value={ruling}
         onChange={(e) => setRuling(e.target.value)}
-        placeholder="Ruling — required to park or block this finding"
+        placeholder="Ruling (required to park or block)"
         className="min-h-[44px] text-[12px]"
       />
       {error !== null && (
@@ -1366,7 +1366,7 @@ export function TaskDetailDialog({
                     <AlertDescription className="text-[12.5px]">
                       Couldn&rsquo;t load findings: {findingsError}
                       {fixLoopNeedsRuling(fixLoop) &&
-                        ' — any open findings can’t be ruled on right now.'}
+                        ' Open findings can’t be ruled on right now.'}
                     </AlertDescription>
                   </Alert>
                 )}
