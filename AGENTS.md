@@ -76,7 +76,6 @@ are sufficient unless the edit touches executable code or package config.
 - Keep comments concrete and behavior-focused.
 
 <!-- CARTO:AUTO:START -->
-
 ## Project Structure (auto)
 
 - 📁 .agents/
@@ -120,32 +119,24 @@ are sufficient unless the edit touches executable code or package config.
 - 📄 tsconfig.json
 - 📄 tsconfig.options.json
 - 📄 tsconfig.oxlint.json
-- 📄 tsconfig.tsbuildinfo **High impact:** apps/desktop/src/lib/utils.ts (164
-  dependents), apps/desktop/src/ui/button.tsx (96 dependents),
-  packages/core/src/types.ts (78 dependents), packages/core/src/actor.ts (76
-  dependents), packages/core/src/describe.ts (76 dependents),
-  packages/core/src/ids.ts (75 dependents), packages/core/src/slug.ts (75
-  dependents), packages/core/src/taskfile.ts (75 dependents),
-  packages/core/src/store.ts (74 dependents), packages/core/src/linearMap.ts (72
-  dependents), packages/core/src/configTypes.ts (71 dependents),
-  packages/core/src/team.ts (71 dependents), packages/core/src/conflicts.ts (70
-  dependents), packages/core/src/evidence.ts (70 dependents),
-  packages/core/src/findings.ts (70 dependents)
+- 📄 tsconfig.tsbuildinfo
+
+**Stack:** React
+**High impact:** apps/desktop/src/lib/utils.ts (164 dependents), apps/desktop/src/ui/button.tsx (96 dependents), packages/core/src/types.ts (78 dependents), packages/core/src/actor.ts (76 dependents), packages/core/src/describe.ts (76 dependents), packages/core/src/ids.ts (75 dependents), packages/core/src/slug.ts (75 dependents), packages/core/src/taskfile.ts (75 dependents), packages/core/src/store.ts (74 dependents), packages/core/src/linearMap.ts (72 dependents), packages/core/src/configTypes.ts (71 dependents), packages/core/src/team.ts (71 dependents), packages/core/src/conflicts.ts (70 dependents), packages/core/src/evidence.ts (70 dependents), packages/core/src/findings.ts (70 dependents)
 
 ## Context Files (auto)
 
-Carto generated domain-specific context files in `.carto/context/`. Read the
-relevant file before working on that area:
+Carto generated domain-specific context files in `.carto/context/`.
+Read the relevant file before working on that area:
 
-| Domain   | File                         | Read when...                      |
-| -------- | ---------------------------- | --------------------------------- |
-| Auth     | `.carto/context/AUTH.md`     | Working on login, sessions, OAuth |
-| Payments | `.carto/context/PAYMENTS.md` | Working on billing, Stripe        |
-| tRPC     | `.carto/context/TRPC.md`     | Working on API procedures         |
-| Database | `.carto/context/DATABASE.md` | Working on models, schema         |
-| Events   | `.carto/context/EVENTS.md`   | Working on webhooks, jobs         |
-| Core     | `.carto/context/CORE.md`     | General utilities, shared code    |
+| Domain | File | Read when... |
+|--------|------|--------------|
+| Auth | `.carto/context/AUTH.md` | Working on login, sessions, OAuth |
+| Payments | `.carto/context/PAYMENTS.md` | Working on billing, Stripe |
+| tRPC | `.carto/context/TRPC.md` | Working on API procedures |
+| Database | `.carto/context/DATABASE.md` | Working on models, schema |
+| Events | `.carto/context/EVENTS.md` | Working on webhooks, jobs |
+| Core | `.carto/context/CORE.md` | General utilities, shared code |
 
 > Run `carto serve` to enable live graph queries from Kiro, Cursor, and Claude.
-
 <!-- CARTO:AUTO:END -->
