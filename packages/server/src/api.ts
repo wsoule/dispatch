@@ -110,6 +110,7 @@ import {
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import type { WardenManager } from './orchestrator/warden.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -134,6 +135,9 @@ export interface ApiContext {
   version: string;
   // Phase 5 P1.
   planManager: PlanManager;
+  // The project-assistant chat (see orchestrator/warden.ts) — assembled
+  // alongside PlanManager in index.ts against the same shared peers.
+  wardenManager: WardenManager;
   epicEngine: EpicEngine;
   prManager: PrManager;
   mergeQueue: MergeQueue;
@@ -2835,6 +2839,82 @@ async function confirmPlan(
   return jsonResponse(result);
 }
 
+// POST /api/warden — opens a warden conversation and returns the full
+// WardenRecord immediately (202, state `running`), mirroring draftTask's
+// return-the-record shape rather than startPlan's id-only body: the chat UI
+// renders the opening user message straight from the response. The assistant's
+// reply lands asynchronously via the `warden.changed` broadcast. `backend`
+// follows createRun's `executor` contract: optional, defaults to 'claude', and
+// a name outside what's registered is a 400 naming every valid option.
+async function startWarden(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { prompt?: unknown; backend?: unknown };
+  if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
+    return errorResponse(400, 'invalid prompt: prompt is required');
+  }
+  const knownBackendNames = ctx.wardenManager.registeredBackendNames();
+  if (
+    body.backend !== undefined &&
+    (typeof body.backend !== 'string' ||
+      !knownBackendNames.includes(body.backend))
+  ) {
+    return errorResponse(
+      400,
+      `invalid backend: ${describeValue(body.backend)} (expected ${knownBackendNames.join('|')})`
+    );
+  }
+  const backendName =
+    typeof body.backend === 'string' ? body.backend : 'claude';
+  const record = ctx.wardenManager.start(body.prompt, backendName);
+  return jsonResponse(record, 202);
+}
+
+// POST /api/warden/:id/message — mirrors sendPlanMessage: 202 with the record
+// already flipped back to `running`; the reply lands via `warden.changed`.
+// 404s an unknown conversation and 409s one mid-turn (both raised by
+// sendMessage and mapped by handleApi's outer catch).
+async function sendWardenMessage(
+  req: Request,
+  ctx: ApiContext,
+  conversationId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  const record = ctx.wardenManager.sendMessage(conversationId, body.text);
+  return jsonResponse(record, 202);
+}
+
+// POST /api/warden/:id/actions/:actionId/confirm { approve } — decides one
+// queued mutating action. Approving runs the real effect before responding,
+// so the returned record already reflects the outcome; denying never runs it
+// at all. 404s an unknown conversation or an action that isn't pending on
+// that conversation, and a failed effect surfaces through the same typed
+// orchestrator errors as acting on the target directly would.
+async function confirmWardenAction(
+  req: Request,
+  ctx: ApiContext,
+  conversationId: string,
+  actionId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { approve?: unknown };
+  if (typeof body.approve !== 'boolean') {
+    return errorResponse(400, 'invalid approve: expected a boolean');
+  }
+  const record = await ctx.wardenManager.confirmAction(
+    conversationId,
+    actionId,
+    body.approve
+  );
+  return jsonResponse(record);
+}
+
 async function startEpic(
   req: Request,
   ctx: ApiContext,
@@ -4446,6 +4526,30 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await confirmPlan(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'warden') {
+      if (segments.length === 1 && method === 'POST') {
+        return await startWarden(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        return jsonResponse(ctx.wardenManager.get(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'message' &&
+        method === 'POST'
+      ) {
+        return await sendWardenMessage(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 5 &&
+        segments[2] === 'actions' &&
+        segments[4] === 'confirm' &&
+        method === 'POST'
+      ) {
+        return await confirmWardenAction(req, ctx, segments[1], segments[3]);
       }
     }
 
