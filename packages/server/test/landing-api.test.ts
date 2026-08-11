@@ -128,9 +128,6 @@ describe('GET /api/landing', () => {
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
-      // Fast enough that the background poll populates cachedPrs() well
-      // within this test's timeout.
-      prPollIntervalMs: 20,
       prCommandRunner: async (cwd, cmd) => {
         if (
           cmd[0] === 'gh' &&
@@ -153,6 +150,11 @@ describe('GET /api/landing', () => {
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
 
+    // Populates PrManager.cachedPrs() deterministically, ahead of any run
+    // carrying a `prUrl` — no `gh pr view` merged-check call to stub, and no
+    // race with the (unstarted-here) 60s production poll timer.
+    await handle.prManager.pollOnce();
+
     const store = new TaskStore(root);
     const task = store.create({ title: 'Add landing feed' });
     const meta = await orchestrator.dispatch(task.meta.id, 'fake');
@@ -161,22 +163,11 @@ describe('GET /api/landing', () => {
     );
     orchestrator.setRunPrUrl(meta.id, OPEN_PR.url);
 
-    // The background poll is what populates PrManager.cachedPrs(), which
-    // the landing route reads — wait for the row to actually join rather
-    // than asserting on the very first (likely still-empty) response.
-    let body: LandingSnapshot | undefined;
-    const deadline = Date.now() + 3000;
-    while (Date.now() < deadline) {
-      const res = await fetch(`${baseUrl}/api/landing`);
-      expect(res.status).toBe(200);
-      body = (await json(res)) as LandingSnapshot;
-      if (body.rows.some((r) => r.kind === 'run-pr')) break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-
-    expect(body).toBeDefined();
-    expect(body?.generatedAt).toBeTruthy();
-    const runPrRows = body?.rows.filter((r) => r.kind === 'run-pr') ?? [];
+    const res = await fetch(`${baseUrl}/api/landing`);
+    expect(res.status).toBe(200);
+    const body = (await json(res)) as LandingSnapshot;
+    expect(body.generatedAt).toBeTruthy();
+    const runPrRows = body.rows.filter((r) => r.kind === 'run-pr');
     expect(runPrRows).toHaveLength(1);
     expect(runPrRows[0].runId).toBe(meta.id);
     expect(runPrRows[0].pr?.url).toBe(OPEN_PR.url);
