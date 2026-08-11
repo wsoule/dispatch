@@ -204,6 +204,14 @@ export interface PrManagerContext {
   // constructed twice: a review run's comments and a human's land in the
   // same per-target file.
   reviewComments: ReviewCommentStore;
+  // Whether the merge queue currently has an entry parked in
+  // 'waiting-github' — wired from index.ts to a snapshot of the queue.
+  // startPolling() tightens its interval to 15s while this is true, so a
+  // held PR's checks/review-decision are re-read quickly enough that the
+  // queue's own 'landing.changed' retry hook actually has something fresh to
+  // react to. Absent ⇒ always poll at the configured interval, unchanged
+  // behavior for every caller that doesn't wire the merge queue in at all.
+  hasGithubHolds?: () => boolean;
 }
 
 export interface PrCheckRun {
@@ -501,7 +509,12 @@ const FILE_STATUS_LETTER: Record<string, string> = {
  * a logged-in `gh` CLI, and so a slow real call never blocks the process.
  */
 export class PrManager {
-  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private pollTimer: ReturnType<typeof setTimeout> | undefined;
+  // Guards the self-rearming chain in startPolling() against resurrecting
+  // itself: stopPolling() can run while a tick's pollOnce() is still
+  // in-flight, and clearing `pollTimer` alone would not stop that tick's
+  // `.finally(scheduleNext)` from arming a fresh timer once it settles.
+  private pollingStopped = true;
   // The last poll's open-PR set — GET /api/landing (a later task) and the
   // merge queue both read this instead of paying for their own `gh pr list`.
   // Empty until pollOnce()'s first successful list call.
@@ -758,22 +771,38 @@ export class PrManager {
   // nothing was ever opened, so nothing needs polling.
   startPolling(intervalMs = 60000): void {
     if (!this.capability) return;
-    // setInterval's callback can't be awaited directly; pollOnce() is async
-    // now (minor fix), so each tick is fired-and-forgotten with its own
-    // rejection handler — a single poll pass failing outright (as opposed
-    // to one run's check failing, which pollOnce already isolates) must
-    // never crash the timer or the process.
-    this.pollTimer = setInterval(() => {
-      void this.pollOnce().catch((err: unknown) => {
-        console.error(
-          `dispatchd: PR poll pass failed: ${(err as Error).message}`
-        );
-      });
-    }, intervalMs);
+    // A self-rearming setTimeout chain rather than a fixed setInterval: the
+    // delay before each tick is chosen fresh (15s vs the configured
+    // interval, via hasGithubHolds) right before that tick is scheduled, so
+    // a hold that appears mid-interval tightens polling on the very next
+    // tick instead of waiting out whatever delay was in effect when polling
+    // started. pollOnce() is async, so each tick is fired-and-forgotten with
+    // its own rejection handler — a single poll pass failing outright (as
+    // opposed to one run's check failing, which pollOnce already isolates)
+    // must never crash the chain or the process.
+    this.pollingStopped = false;
+    const scheduleNext = (): void => {
+      // A tick's pollOnce() can still be in flight when stopPolling() runs;
+      // this stops that tick's `.finally` from rearming a new timer once it
+      // settles, which clearing `pollTimer` alone would not do.
+      if (this.pollingStopped) return;
+      const delay = this.ctx.hasGithubHolds?.() === true ? 15000 : intervalMs;
+      this.pollTimer = setTimeout(() => {
+        void this.pollOnce()
+          .catch((err: unknown) => {
+            console.error(
+              `dispatchd: PR poll pass failed: ${(err as Error).message}`
+            );
+          })
+          .finally(scheduleNext);
+      }, delay);
+    };
+    scheduleNext();
   }
 
   stopPolling(): void {
-    if (this.pollTimer !== undefined) clearInterval(this.pollTimer);
+    this.pollingStopped = true;
+    if (this.pollTimer !== undefined) clearTimeout(this.pollTimer);
     this.pollTimer = undefined;
   }
 
