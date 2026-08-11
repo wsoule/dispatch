@@ -125,6 +125,50 @@ class GatedAgent implements Executor {
   }
 }
 
+// The auto-start happy path in one executor: the implementer and fix rounds
+// commit real work, the first review raises one finding, every later review
+// comes back clean — so an ignited loop runs review -> fix -> re-review and
+// ends complete without any manual advance call.
+class ConvergingAgent implements Executor {
+  readonly prompts: string[] = [];
+  private reviewCount = 0;
+
+  start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+    this.prompts.push(opts.prompt);
+    const match = /as one JSON object: (\S+)/.exec(opts.prompt);
+    setTimeout(() => {
+      if (match !== null) {
+        this.reviewCount += 1;
+        writeFileSync(
+          match[1],
+          this.reviewCount === 1
+            ? JSON.stringify({
+                findings: [
+                  {
+                    severity: 'important',
+                    title: 'sync path clobbers the workspace',
+                    detail: 'reproduced against a scratch copy',
+                    file: 'src.ts',
+                    line: 1,
+                  },
+                ],
+              })
+            : '{"findings": []}'
+        );
+      } else {
+        commitFixWork(opts.cwd);
+      }
+      events.onFinish({ state: 'finished', sessionId: 'session-1' });
+    }, 0);
+    return {
+      interrupt: async () => {},
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+    };
+  }
+}
+
 // Reviews everything clean. `commitOnFix` decides whether its fix rounds leave
 // a commit behind, which is what separates a real review range from an empty one.
 class CleanAgent implements Executor {
@@ -210,11 +254,15 @@ beforeEach(async () => {
   process.env.DISPATCH_HOME = fakeHome;
   root = initDispatchGitRepo();
   const store = TaskStore.init(root);
+  // Opted out of auto-ignition: these tests drive the loop through the manual
+  // advance route, which must keep working exactly as before auto-start.
+  // The auto-start suite below flips this back on per test.
   taskId = store.create({
     title: 'harden the sync path',
     risk: 'elevated',
     writes: ['src.ts'],
     model: 'claude-haiku-4-5-20251001',
+    fixLoop: false,
   }).meta.id;
   baseSha = runGitSync(root, ['rev-parse', 'HEAD']).trim();
 
@@ -1018,6 +1066,126 @@ describe('an unreadable fix-loops.jsonl', () => {
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
     expect((await fetch(`${baseUrl}/api/tasks`)).status).toBe(200);
+  }, 30000);
+});
+
+// Auto-ignition: the loop opens off a finished implementer with no advance
+// call. The beforeEach task is opted out, so each test here opts it back in
+// (or leaves it out, when the opt-out itself is the subject).
+describe('auto-starting the fix loop', () => {
+  function optIn(): void {
+    new TaskStore(root).update(taskId, { fixLoop: true });
+  }
+
+  async function reviewRuns(): Promise<RunMeta[]> {
+    const runs = await listRuns();
+    return runs
+      .filter((run) => run.kind === 'review')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  // Long enough for an ignition that was going to happen to have happened:
+  // the decision is enqueued synchronously off the run's terminal hook.
+  function ignitionWindow(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  it('runs implement -> review -> fix -> re-review to complete, no API call', async () => {
+    optIn();
+    await restartWith(new ConvergingAgent());
+    const implementerId = await seedImplementerRun();
+
+    const settled = await settle();
+    expect(settled.state).toBe('complete');
+    expect(settled.round).toBe(1);
+    // The base the loop pinned is the commit before the implementer's work.
+    expect(settled.baseSha).toBe(baseSha);
+    expect(settled.lastReviewedSha).not.toBe(baseSha);
+
+    // One review to raise the finding, one scoped re-review to retire it.
+    const reviews = await reviewRuns();
+    expect(reviews).toHaveLength(2);
+    expect(reviews.every((run) => run.state === 'finished')).toBe(true);
+    // The implementer, then the round-1 fix resumed from its session.
+    const fixes = await fixRuns();
+    expect(fixes).toHaveLength(2);
+    expect(fixes[0].id).toBe(implementerId);
+    expect(fixes[1].resumedFrom).toBeDefined();
+
+    const findings = await allFindings();
+    expect(findings).toHaveLength(1);
+    expect(findings[0].verdict).toBe('addressed');
+  }, 30000);
+
+  it('does not ignite when config.fixLoop.auto is off, manual advance still works', async () => {
+    optIn();
+    const configPath = join(root, '.dispatch', 'config.yml');
+    writeFileSync(
+      configPath,
+      `${readFileSync(configPath, 'utf8')}fixLoop:\n  auto: false\n`
+    );
+    await seedImplementerRun();
+    await ignitionWindow();
+
+    expect(
+      (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
+    ).toBe(404);
+    expect(await reviewRuns()).toEqual([]);
+
+    // The manual route stays the explicit entry for gated projects.
+    const res = await advance({ baseSha });
+    expect(res.status).toBe(200);
+    expect((await json<FixLoopState>(res)).state).toBe('complete');
+  }, 30000);
+
+  it('does not ignite for a task that opted out', async () => {
+    // The beforeEach task carries fix-loop: false already.
+    await seedImplementerRun();
+    await ignitionWindow();
+
+    expect(
+      (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
+    ).toBe(404);
+    expect(await reviewRuns()).toEqual([]);
+  }, 30000);
+
+  it('does not ignite off an implementer that committed nothing', async () => {
+    optIn();
+    await restartWith(new CleanAgent());
+    await seedImplementerRun();
+    await ignitionWindow();
+
+    expect(
+      (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
+    ).toBe(404);
+    expect(await reviewRuns()).toEqual([]);
+  }, 30000);
+
+  it('caps an auto-started loop and still demands adjudication', async () => {
+    optIn();
+    const configPath = join(root, '.dispatch', 'config.yml');
+    writeFileSync(
+      configPath,
+      `${readFileSync(configPath, 'utf8')}fixLoop:\n  cap: 1\n`
+    );
+    await seedImplementerRun();
+
+    const settled = await settle();
+    expect(settled.state).toBe('capped');
+    expect(settled.round).toBe(1);
+    expect(settled.stopReason).toBe('rounds-exhausted');
+
+    // The cap resolves through a human ruling, exactly as a manual loop does.
+    const open = await openFindings();
+    expect(open.length).toBeGreaterThan(0);
+    for (const finding of open) {
+      const res = await adjudicate(finding.id, {
+        verdict: 'parked',
+        ruling: 'accepted for this release; tracked as a follow-up',
+      });
+      expect(res.status).toBe(200);
+    }
+    expect((await fixLoopState()).state).toBe('complete');
   }, 30000);
 });
 

@@ -80,6 +80,10 @@ export interface RunSurvey {
   untracked: string[];
   lastCommit: { sha: string; subject: string } | null;
   cleanTree: boolean;
+  // Commits on the run's branch authored after the run first reached `failed`
+  // — work an orphaned agent process landed after the daemon lost track of it.
+  // Newest first. Optional: surveys recorded before this field existed.
+  postFailCommits?: { sha: string; subject: string; date: string }[];
 }
 
 // Mirrors RunMeta in packages/server/src/orchestrator/types.ts.
@@ -196,6 +200,10 @@ export interface BranchEntry {
   lastCommitAt?: string;
   /** Commits this branch has that its base does not — what deletion destroys. */
   ahead: number;
+  /** Commits the base gained since this branch diverged — how far unmerged
+   * work has fallen behind. Absent on merged branches, where the count no
+   * longer means anything. */
+  behindBase?: number;
   mergedIntoBase: boolean;
   runId?: string;
   taskId?: string;
@@ -762,6 +770,9 @@ export interface PlanRecord {
    * whose one-liner the planner was asked to expand into a task. Confirming
    * such a plan links that note to the task it creates. */
   sourceNoteId?: string;
+  /** What the plan is about, for list rows: the task/note/capture title an
+   * enrich plan was started from. Absent on free-form plans. */
+  subject?: string;
 }
 
 // The body of `POST /api/plan/:id/confirm`.
@@ -849,6 +860,28 @@ export interface WardenRecord {
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
   sessionId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Mirrors AgentSessionKind in packages/server/src/orchestrator/agentSessions.ts:
+// which kind of conversation agent a session row is — planner chat, enrich
+// ("add detail") agent, single-task draft, or warden chat. Task runs are not
+// part of this union; they are listed by `fetchRuns` and merged client-side.
+export type AgentSessionKind = 'plan' | 'enrich' | 'draft' | 'warden';
+
+// Mirrors AgentSessionMeta in packages/server/src/orchestrator/agentSessions.ts
+// — the body of `GET /api/agents`: every in-memory conversation agent the
+// daemon holds, normalized for a list row, newest activity first.
+export interface AgentSessionMeta {
+  id: string;
+  kind: AgentSessionKind;
+  /** What the agent is working on: an enrich plan's task/note/capture title,
+   * or the opening prompt's first line for free-form conversations. */
+  title: string;
+  /** The shared conversation lifecycle: turn in flight, settled, or errored. */
+  state: 'running' | 'ready' | 'failed';
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -1456,6 +1489,11 @@ export interface ApiClient {
     opts?: { executor?: 'fake' | 'claude'; model?: string }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
+  // Every in-memory conversation agent (planner chats, enrich agents, task
+  // drafts, warden chats), newest activity first — the non-run half of the
+  // All agents page; merge with `fetchRuns` for the full picture. Refetch on
+  // `plan.changed`, `draft.changed` and `warden.changed`.
+  fetchAgentSessions(): Promise<AgentSessionMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
   fetchRunClaims(): Promise<RunClaim[]>;
   /** `scope: 'session'` also pre-approves the same tool for the rest of this run; `reason`
@@ -1600,8 +1638,6 @@ export interface ApiClient {
   ): Promise<InboxItem>;
   dismissInbox(ids: string[]): Promise<{ dismissed: number }>;
   convertInbox(ids: string[]): Promise<InboxConvertResponse>;
-  /** Starts an AI draft that turns one captured line into a properly specified task. */
-  enrichInbox(id: string): Promise<{ planId: string }>;
   /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
   enrichTask(id: string): Promise<{ planId: string }>;
   /** Model-backed grouping of related captures, run in the background. Always
@@ -1942,6 +1978,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         }),
       }),
     fetchRuns: () => request(target, '/api/runs'),
+    fetchAgentSessions: () => request(target, '/api/agents'),
     fetchRun: (id) => request(target, `/api/runs/${id}`),
     fetchRunClaims: () => request(target, '/api/runs/claims'),
     approveRun: async (runId, requestId, allow, opts = {}) => {
@@ -2134,10 +2171,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, '/api/inbox/convert', {
         method: 'POST',
         body: JSON.stringify({ ids }),
-      }),
-    enrichInbox: (id) =>
-      request(target, `/api/inbox/${encodeURIComponent(id)}/enrich`, {
-        method: 'POST',
       }),
     enrichTask: (id) =>
       request(target, `/api/tasks/${encodeURIComponent(id)}/enrich`, {

@@ -7,7 +7,10 @@ import { join } from 'node:path';
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
-import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import {
+  BOOT_FORCE_FAIL_ERROR,
+  Orchestrator,
+} from '../../src/orchestrator/orchestrator.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -291,6 +294,95 @@ describe('Orchestrator agent-death recovery', () => {
     expect(store.get(task.meta.id)!.body).toContain(
       `[run ${meta.id}] flagged interrupted-dirty: 1 uncommitted path(s) found`
     );
+  });
+
+  it('force-fails a crashed run with a reason naming the daemon restart', async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor('fake', controllableExecutor());
+    const task = store.create({ title: 'Daemon dies mid-run' });
+    const meta = await first.dispatch(task.meta.id, 'fake');
+
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: new EventBus(),
+    });
+    second.reconcileOnBoot();
+
+    const failed = second.getRun(meta.id);
+    expect(failed?.meta.state).toBe('failed');
+    expect(failed?.meta.error).toBe(BOOT_FORCE_FAIL_ERROR);
+
+    // The reason rode the transcript's state line, so it survives yet
+    // another restart — not just the registry that happened to write it.
+    const cache3 = new TaskCache();
+    cache3.rebuild(store);
+    const third = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache3,
+      events: new EventBus(),
+    });
+    third.reconcileOnBoot();
+    expect(third.getRun(meta.id)?.meta.error).toBe(BOOT_FORCE_FAIL_ERROR);
+  });
+
+  it('flags commits an orphaned agent lands after the force-fail, without re-noting them', async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor('fake', controllableExecutor());
+    const task = store.create({ title: 'Orphan finishes the work' });
+    const meta = await first.dispatch(task.meta.id, 'fake');
+
+    const cache2 = new TaskCache();
+    cache2.rebuild(store);
+    const second = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache: cache2,
+      events: new EventBus(),
+    });
+    second.reconcileOnBoot();
+    // The boot survey sees a clean, commit-less worktree: nothing stamped.
+    // Checked via list() rather than getRun(), which would schedule a recheck
+    // survey of its own and race the explicit one below.
+    await second.surveySettled(meta.id);
+    expect(second.list().find((r) => r.id === meta.id)?.survey).toBeUndefined();
+
+    // The orphaned agent process kept working and committed. The author date
+    // is pinned a minute into the future because git dates have one-second
+    // granularity — a same-second commit could otherwise sort before the
+    // millisecond-precision fail timestamp and make this flake.
+    writeFileSync(join(meta.worktreePath, 'done.txt'), 'done\n');
+    runGitSync(meta.worktreePath, ['add', 'done.txt']);
+    runGitSync(meta.worktreePath, [
+      'commit',
+      `--date=${new Date(Date.now() + 60_000).toISOString()}`,
+      '-m',
+      'Done, committed',
+    ]);
+
+    await second.resurveyOrphanWork(meta.id);
+
+    const run = second.getRun(meta.id)!;
+    // Stays failed — the daemon really did lose it — but now says the work landed.
+    expect(run.meta.state).toBe('failed');
+    expect(run.meta.survey?.postFailCommits?.map((c) => c.subject)).toEqual([
+      'Done, committed',
+    ]);
+    expect(store.get(task.meta.id)!.body).toContain(
+      `[run ${meta.id}] work landed on this branch after the failure: 1 commit(s), latest "Done, committed"`
+    );
+
+    // A repeat survey that finds the same commits changes nothing — the
+    // cooldown-gated recheck from getRun must not re-note the discovery.
+    await second.resurveyOrphanWork(meta.id);
+    const notes = store
+      .get(task.meta.id)!
+      .body.split('work landed on this branch after the failure').length;
+    expect(notes).toBe(2);
   });
 
   it('does not stamp a superseded run with a survey of the resumed run’s tree', async () => {

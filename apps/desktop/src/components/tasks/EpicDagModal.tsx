@@ -7,7 +7,7 @@ export interface EpicDagModalProps {
   /** The epic whose graph is open, or `null` when the modal is closed — a view-local-state
    * discriminated-by-value prop (mirroring `DiffModal`'s `filePath: string | null`) rather
    * than a separate boolean, so each of this feature's three entry points (TasksListView's
-   * group header, EpicCardTile, TaskDetailPanel) can own one small piece of state instead of
+   * group header, EpicLaneHeader, TaskDetailPanel) can own one small piece of state instead of
    * this needing to be threaded through App-level nav state. */
   epic: TaskDoc | null;
   /** The epic's children — already filtered by the caller (each entry point already has the

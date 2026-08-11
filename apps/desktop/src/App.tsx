@@ -60,6 +60,7 @@ import { DraftView } from './views/DraftView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
 import { InboxView } from './views/InboxView';
+import { LandedView } from './views/LandedView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { PrReviewView } from './views/PrReviewView';
@@ -612,6 +613,12 @@ function App() {
           label: 'Go to Plans',
           kind: 'go to',
           run: () => selectProjectView('plans'),
+        },
+        {
+          id: 'go-landed',
+          label: 'Go to Landed',
+          kind: 'go to',
+          run: () => selectProjectView('landed'),
         }
       );
       for (const doc of paletteTasks) {
@@ -817,6 +824,9 @@ function App() {
                       // `visibleRuns`, not `runs`: this is the run *list* the archive filter
                       // was built for, and the only surface left that can unarchive one.
                       runs={data.visibleRuns}
+                      // The non-run agents (planners, enrich, drafts, wardens) — archiving
+                      // never applies to them, so they bypass the archive filter.
+                      sessions={data.agentSessions}
                       archivedRunCount={archivedRunCount}
                       showArchived={data.showArchived}
                       onSetShowArchived={data.setShowArchived}
@@ -958,6 +968,9 @@ function App() {
                         dispatchNav({ type: 'openImpact', subject })
                       }
                     />
+                  )}
+                  {navState.projectView === 'landed' && (
+                    <LandedView data={data} onOpenRun={jumpToRun} />
                   )}
                   {navState.projectView === 'brain-dump' && (
                     <BrainDumpView

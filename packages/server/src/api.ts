@@ -72,7 +72,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
-import type { InboxItem, InboxKind } from './inbox.js';
+import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
 import type { LedgerStore } from './ledger.js';
@@ -80,6 +80,7 @@ import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
+import { buildAgentSessions } from './orchestrator/agentSessions.js';
 import type { EpicEngine } from './orchestrator/epic.js';
 import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -308,6 +309,8 @@ function validateTaskFields(
   if (blockedByError) return blockedByError;
   const selfReviewError = validateBooleanField(value.selfReview, 'selfReview');
   if (selfReviewError) return selfReviewError;
+  const fixLoopError = validateBooleanField(value.fixLoop, 'fixLoop');
+  if (fixLoopError) return fixLoopError;
   const archivedAtError = validateStringOrNullField(
     value.archivedAt,
     'archivedAt'
@@ -3270,29 +3273,6 @@ function buildNoteEnrichPrompt(note: Note): string {
 }
 
 /**
- * The prompt behind "add detail" on an inbox item.
- *
- * Same shape as the note version, and for the same reason: what a one-line capture is missing is
- * context — which files it touches, what the code does today, what "done" means. Only the framing
- * differs, because an inbox item is a raw thought rather than a filed note.
- */
-function buildInboxEnrichPrompt(item: InboxItem): string {
-  return [
-    `Someone dumped this one-line ${item.kind} into a capture inbox and wants it turned into a ` +
-      'properly specified task before an agent picks it up.',
-    `Captured: ${item.text}`,
-    'Read enough of this repository to ground it: which files and functions are actually ' +
-      'involved, what the code does today, and what would have to change. Then propose exactly ' +
-      "ONE task, and no epic. Keep the original intent — sharpen it, don't replace it — and " +
-      'write a description that gives an implementing agent the context this one-liner is ' +
-      'missing, naming concrete paths where you found them. Acceptance criteria should be ' +
-      'checkable statements about the finished work. Do not invent scope the capture never ' +
-      'asked for; if the repo contradicts it, say so in the description rather than silently ' +
-      'redesigning the work.',
-  ].join('\n\n');
-}
-
-/**
  * POST /api/inbox/cluster — ask a model which captured items are one piece of
  * work. Always 200 with `error` set, since it runs unattended in the background.
  */
@@ -3313,25 +3293,6 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
-}
-
-// POST /api/inbox/:id/enrich — AI-draft the task this captured line should become. Same async
-// contract as POST /api/plan: returns a planId immediately, the client polls
-// GET /api/plan/:id and writes nothing until POST /api/plan/:id/confirm.
-function enrichInbox(ctx: ApiContext, id: string): Response {
-  const item = ctx.inboxStore.list().find((i) => i.id === id);
-  if (item === undefined)
-    return errorResponse(404, `inbox item not found: ${id}`);
-  if (item.linkedTaskId !== null) {
-    return errorResponse(409, `already converted: ${item.linkedTaskId}`);
-  }
-  const record = ctx.planManager.startPlan(
-    buildInboxEnrichPrompt(item),
-    'claude',
-    item.id,
-    'enrich'
-  );
-  return jsonResponse({ planId: record.id }, 202);
 }
 
 /**
@@ -3383,7 +3344,8 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     buildTaskEnrichPrompt(task),
     'claude',
     undefined,
-    'enrich'
+    'enrich',
+    task.meta.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -3403,7 +3365,8 @@ function enrichNote(ctx: ApiContext, id: string): Response {
     buildNoteEnrichPrompt(note),
     'claude',
     note.id,
-    'enrich'
+    'enrich',
+    note.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -4476,13 +4439,6 @@ export async function handleApi(
       if (segments.length === 2 && method === 'PATCH') {
         return await updateInbox(req, ctx, segments[1]);
       }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'enrich' &&
-        method === 'POST'
-      ) {
-        return enrichInbox(ctx, segments[1]);
-      }
     }
 
     if (segments[0] === 'findings') {
@@ -4508,6 +4464,20 @@ export async function handleApi(
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
       return await getImpact(ctx, url);
+    }
+
+    // GET /api/agents — every in-memory conversation agent (planner chats,
+    // enrich/"add detail" agents, task drafts, warden chats), normalized for
+    // the All agents page. Task runs are not repeated here: GET /api/runs
+    // already lists them, and the client merges the two.
+    if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(
+        buildAgentSessions(
+          ctx.planManager.listPlans(),
+          ctx.planManager.listDrafts(),
+          ctx.wardenManager.list()
+        )
+      );
     }
 
     if (segments[0] === 'plan') {

@@ -1,4 +1,4 @@
-// EpicCardTile's concurrency stepper reads its value straight off a plain
+// EpicLaneHeader's concurrency stepper reads its value straight off a plain
 // `<input type="number">`, which browsers happily let a user type a
 // fraction, a negative number, or nothing at all into. Extracted as a pure
 // function (rather than inline in the component) purely so this rounding

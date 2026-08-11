@@ -245,15 +245,20 @@ export class FixLoop {
   private readonly worktrees: WorktreeManager;
   // One advance at a time per task: two concurrent calls would each read the
   // same state and dispatch the same round twice.
-  private readonly inFlight = new Map<string, Promise<FixLoopState>>();
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(private readonly ctx: FixLoopContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     // Registered after ReviewRunner's own terminal hook (see index.ts) so a
     // review's findings are already in the store when this fires for that run.
     ctx.orchestrator.onRunTerminal((meta) => {
-      if (this.ctx.fixLoopStore.get(meta.taskId) === null) return;
-      this.advanceInBackground(meta.taskId);
+      if (this.ctx.fixLoopStore.get(meta.taskId) !== null) {
+        this.advanceInBackground(meta.taskId);
+        return;
+      }
+      // No loop yet: a finished implementer is the ignition that used to be
+      // the manual advance call — see igniteFrom.
+      if (this.shouldAutoStart(meta)) this.autoStartInBackground(meta);
     });
   }
 
@@ -302,6 +307,67 @@ export class FixLoop {
     }
   }
 
+  // Whether a finished run should ignite a loop on its own: only a finished
+  // implementer, only with the config gate on, only for a task that has not
+  // opted out. Checked synchronously in the terminal hook, before any state
+  // exists for this task.
+  private shouldAutoStart(meta: RunMeta): boolean {
+    if (runKind(meta) !== 'execute' || meta.state !== 'finished') return false;
+    if (!loadConfig(this.ctx.rootDir).fixLoop.auto) return false;
+    const task = this.ctx.store.get(meta.taskId);
+    return task !== null && task.meta.fixLoop !== false;
+  }
+
+  private autoStartInBackground(meta: RunMeta): void {
+    void this.enqueue(meta.taskId, () => this.igniteFrom(meta)).catch(
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(
+          `dispatchd: fix loop for ${meta.taskId} failed to auto-start: ${message}`
+        );
+        this.stopOnError(meta.taskId, message);
+      }
+    );
+  }
+
+  // The automatic ignition: opens the loop off a finished implementer and
+  // hands its whole diff to a first review, after which the ordinary
+  // machinery (findings -> fix round -> re-review) takes over. `baseSha` is
+  // the run's fork point from its base — the commit before the implementer's
+  // own work. Anything that makes ignition pointless (no commits, a standing
+  // block, unresolvable refs) skips quietly; the manual route stays open.
+  private async igniteFrom(meta: RunMeta): Promise<void> {
+    if (this.ctx.fixLoopStore.get(meta.taskId) !== null) {
+      // A loop appeared while this waited in the chain (a manual open won
+      // the race) — advance it instead of opening a second one.
+      await this.step(meta.taskId);
+      return;
+    }
+    if (this.stopReasonFor(meta.taskId) === 'standing-block') return;
+    const baseSha = this.worktrees.mergeBase(meta.baseBranch, meta.branch);
+    const head = this.resolveHead(meta.branch);
+    // A run that committed nothing gives the first review an empty range,
+    // which would read as clean — better not to open a loop at all.
+    if (baseSha === null || head === null || head === baseSha) return;
+    const state = this.start(meta.taskId, { baseSha });
+    const handed = this.ctx.findingStore.openFor(meta.taskId);
+    await this.ctx.reviewRunner.startReview({
+      taskId: meta.taskId,
+      base: state.baseSha,
+      head,
+      round: 0,
+      scope: 'full',
+      openFindings: handed,
+      runId: meta.id,
+    });
+    this.save({
+      ...state,
+      state: 'reviewing',
+      lastReviewedSha: head,
+      reviewInputIds: handed.map((f) => f.id),
+    });
+  }
+
   // Opens the loop for a task. `baseSha` is supplied by the caller that knows
   // where the task's first implementer started, and never moves afterwards.
   start(taskId: string, opts: { baseSha: string; cap?: number }): FixLoopState {
@@ -334,11 +400,14 @@ export class FixLoop {
   // Drives the loop one step from whatever state it is in. Calls chain rather
   // than interleave, and a step with nothing to do returns the state unchanged.
   async advance(taskId: string): Promise<FixLoopState> {
+    return await this.enqueue(taskId, () => this.step(taskId));
+  }
+
+  // The per-task chain both advance() and auto-ignition run through, so an
+  // ignition and a concurrent advance can never each dispatch a round.
+  private async enqueue<T>(taskId: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.inFlight.get(taskId);
-    const next = (previous ?? Promise.resolve()).then(
-      () => this.step(taskId),
-      () => this.step(taskId)
-    );
+    const next = (previous ?? Promise.resolve()).then(fn, fn);
     this.inFlight.set(taskId, next);
     try {
       return await next;

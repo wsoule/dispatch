@@ -11,10 +11,7 @@ import {
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { EnrichReview } from '../components/tasks/EnrichReview';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import type { EnrichDraft } from '../lib/enrichReview';
-import { enrichViewState, formatEnrichedInboxText } from '../lib/enrichReview';
 import { shouldRecluster } from '../lib/inboxAutoCluster';
 import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
@@ -69,6 +66,11 @@ export function BrainDumpView({
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The one open "Add detail" editor, carrying the row it belongs to and its unsaved text.
+  // One slot, deliberately: two half-edited rows at once is a way to lose an edit.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(
+    null
+  );
   // Clustering runs automatically (see the effects below); `clusterError` deliberately isn't
   // routed through `error` above — a background pass failing must not read as a hard failure.
   const [groups, setGroups] = useState<InboxClusterGroup[] | null>(null);
@@ -88,11 +90,6 @@ export function BrainDumpView({
   const cluster = useMemo(() => findCluster(inbox), [inbox]);
   const openItemIds = useMemo(() => open.map((i) => i.id), [open]);
   const pendingLines = splitCaptureLines(draft).length;
-
-  // The one in-flight/last "Add detail" draft this view can show — mirrors `enrichPlanRecord`'s
-  // single-slot shape on the task dialog; `enrichItemId` says which row it belongs to.
-  const enrichItemId = data.inboxEnrichItemId;
-  const enrichState = enrichViewState(data.inboxEnrichPlanRecord);
 
   // Keeps runClusterRef current every render (see its own comment above). Both effects below
   // must run unconditionally, above the early return, so hook order never depends on the daemon.
@@ -197,19 +194,23 @@ export function BrainDumpView({
     })();
   }
 
-  function addDetail(id: string): void {
-    void guard(async () => {
-      await data.handleEnrichInboxItem(id);
-    });
+  // Opens the inline editor on one row, seeded with what that row already says. Nothing is
+  // fetched or drafted here — the text is already in hand, so opening costs no request.
+  function addDetail(item: InboxItem): void {
+    setEditing({ id: item.id, text: item.text });
   }
 
-  // Writes the drafted description/criteria back onto the item's `text` and drops the draft.
-  function applyEnrichDraft(id: string, enrichDraft: EnrichDraft): void {
+  // Writes the edited text back onto the item and closes the editor. An empty body is refused
+  // rather than saved: a blank row is unreadable in the list and unrecoverable from it. `busy`
+  // is checked here too — ⌘⏎ reaches this without going through the disabled Save button, and
+  // a second pass mid-flight would be a second PATCH. A failed save leaves the editor open
+  // with the text still in it, so nothing typed is lost to a daemon that said no.
+  function saveDetail(): void {
+    if (busy || editing === null || editing.text.trim() === '') return;
+    const { id, text } = editing;
     void guard(async () => {
-      await data.handleApplyInboxEnrich(
-        id,
-        formatEnrichedInboxText(enrichDraft)
-      );
+      await data.handleUpdateInboxItem(id, { text });
+      setEditing(null);
     });
   }
 
@@ -424,47 +425,57 @@ export function BrainDumpView({
                     item={it}
                     selected={selected.has(it.id)}
                     busy={busy}
-                    enriching={
-                      enrichItemId === it.id && enrichState.kind === 'running'
-                    }
+                    editing={editing?.id === it.id}
                     onToggle={() => toggle(it.id)}
                     onMakeTask={() => convert([it.id])}
-                    onAddDetail={() => addDetail(it.id)}
+                    onAddDetail={() => addDetail(it)}
                     onPlan={() => onPlanText(it.text)}
                     onDismiss={() => dismiss([it.id])}
                   />
-                  {/* The draft belongs to at most one row at a time — rendered right under it,
-                  not in a modal, so applying or dismissing stays in the flow of the list. */}
-                  {enrichItemId === it.id && enrichState.kind !== 'idle' && (
+                  {/* The editor belongs to at most one row at a time — rendered right under it,
+                  not in a modal, so saving or cancelling stays in the flow of the list. */}
+                  {editing?.id === it.id && (
                     <li className="px-1 pb-1.5">
-                      {enrichState.kind === 'running' && (
-                        <p className="text-muted-foreground text-[12.5px]">
-                          Reading the repo…
-                        </p>
-                      )}
-                      {enrichState.kind === 'failed' && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-state-failed text-[12.5px]">
-                            {enrichState.error}
+                      <Panel className="p-2.5">
+                        <Textarea
+                          value={editing.text}
+                          autoFocus
+                          aria-label={`Edit "${it.text}"`}
+                          onChange={(e) =>
+                            setEditing({ id: it.id, text: e.target.value })
+                          }
+                          onKeyDown={(e) => {
+                            // ⌘⏎ saves, matching the capture box above; Escape cancels. Plain
+                            // Enter stays a newline — detail is usually more than one line.
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                              e.preventDefault();
+                              saveDetail();
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setEditing(null);
+                            }
+                          }}
+                          className="text-foreground min-h-[72px] resize-y border-0 bg-transparent p-0 text-[13.5px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[13.5px] dark:bg-transparent"
+                        />
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="dense-meta flex-1">
+                            Saved straight onto the captured line.
                           </span>
-                          <BarButton onClick={data.handleDismissInboxEnrich}>
-                            Dismiss
+                          <BarButton
+                            onClick={saveDetail}
+                            disabled={busy || editing.text.trim() === ''}
+                          >
+                            Save
+                          </BarButton>
+                          <BarButton
+                            onClick={() => setEditing(null)}
+                            disabled={busy}
+                          >
+                            Cancel
                           </BarButton>
                         </div>
-                      )}
-                      {enrichState.kind === 'ready' && (
-                        <EnrichReview
-                          draft={enrichState.draft}
-                          applying={busy}
-                          applyLabel="Apply"
-                          discardLabel="Dismiss"
-                          note="Applying replaces the captured line above."
-                          onApply={() =>
-                            applyEnrichDraft(it.id, enrichState.draft)
-                          }
-                          onDiscard={data.handleDismissInboxEnrich}
-                        />
-                      )}
+                      </Panel>
                     </li>
                   )}
                 </Fragment>
@@ -665,7 +676,7 @@ function InboxRow({
   item,
   selected,
   busy,
-  enriching,
+  editing,
   onToggle,
   onMakeTask,
   onAddDetail,
@@ -675,9 +686,9 @@ function InboxRow({
   item: InboxItem;
   selected: boolean;
   busy: boolean;
-  /** Whether this row's own "Add detail" draft is currently being drafted — disables and
-   * relabels just its button, distinct from `busy` (every button in the view). */
-  enriching: boolean;
+  /** Whether this row's own inline editor is open — disables just its "Add detail" button,
+   * distinct from `busy` (every button in the view). */
+  editing: boolean;
   onToggle: () => void;
   onMakeTask: () => void;
   onAddDetail: () => void;
@@ -723,10 +734,10 @@ function InboxRow({
         <BarButton onClick={onMakeTask} disabled={busy}>
           Make a task
         </BarButton>
-        {/* Sends this one line to the planner to be turned into a properly specified task —
-            the thing a one-liner is missing is context, not wording. */}
-        <BarButton onClick={onAddDetail} disabled={busy || enriching}>
-          {enriching ? 'Reading the repo…' : 'Add detail'}
+        {/* Opens the line for editing in place — the thing a one-liner is usually missing is
+            detail its author already has in their head. */}
+        <BarButton onClick={onAddDetail} disabled={busy || editing}>
+          Add detail
         </BarButton>
         <BarButton onClick={onPlan} disabled={busy}>
           Plan it
