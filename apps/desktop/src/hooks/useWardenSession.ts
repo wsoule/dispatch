@@ -2,6 +2,8 @@ import type { ApiClient, WardenRecord } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 
+import { isFakeWardenDevToolEnabled } from '../lib/devTools';
+
 /** The one warden record query key, exported so useDispatchProject's WS
  * handler can invalidate it on `warden.changed` — the same wiring
  * `plan.changed` uses for `['dispatch-plan', port, planId]`. */
@@ -41,7 +43,14 @@ export interface WardenSession {
  * Every mutation writes its returned record straight into the query cache: the
  * server responds with the full post-mutation record, so the transcript updates
  * the moment the call resolves rather than waiting a round-trip for the
- * `warden.changed` refetch (which still runs, and reconciles anything missed).
+ * `warden.changed` refetch. Each write is followed by an invalidation of the
+ * same key: a turn can settle — and broadcast `warden.changed` — while the
+ * mutation's own response is still in flight, in which case that event either
+ * found no mounted query to invalidate (start) or its refetch result is about
+ * to be overwritten by the staler mutation response (sendMessage). Marking the
+ * key stale right after writing lets a refetch reconcile whatever was missed;
+ * with a real LLM backend the window is milliseconds wide, but the scripted
+ * fake backend settles inside it every time.
  */
 export function useWardenSession(
   client: ApiClient | null,
@@ -75,9 +84,23 @@ export function useWardenSession(
   const start = useCallback(
     async (prompt: string) => {
       if (client === null) throw new Error('dispatchd client not ready');
-      const rec = await client.startWarden(prompt);
+      // The dev/e2e escape hatch (see devTools.ts): an opted-in session opens
+      // conversations against the daemon's scripted 'fake' backend instead of
+      // the real Claude one. Checked per start, not per hook mount, so
+      // flipping the flag applies to the next conversation without a reload.
+      const rec = await client.startWarden(
+        prompt,
+        isFakeWardenDevToolEnabled() ? { backend: 'fake' } : {}
+      );
       queryClient.setQueryData(wardenKey(port, rec.id), rec);
       setConversationId(rec.id);
+      // See the hook comment: the turn may have already settled while this
+      // response was in flight, and that broadcast found no query to
+      // invalidate. Stale-marking here makes the query's mount refetch pick
+      // the settled record up.
+      await queryClient.invalidateQueries({
+        queryKey: wardenKey(port, rec.id),
+      });
       return rec;
     },
     [client, port, queryClient]
@@ -90,6 +113,12 @@ export function useWardenSession(
       }
       const rec = await client.sendWardenMessage(conversationId, text);
       queryClient.setQueryData(wardenKey(port, conversationId), rec);
+      // Reconciles a turn that settled mid-flight — without this, the stale
+      // `running` record written above would overwrite the settled one the
+      // broadcast's refetch already fetched, and nothing would refetch again.
+      await queryClient.invalidateQueries({
+        queryKey: wardenKey(port, conversationId),
+      });
       return rec;
     },
     [client, conversationId, port, queryClient]
@@ -106,6 +135,11 @@ export function useWardenSession(
         approve
       );
       queryClient.setQueryData(wardenKey(port, conversationId), rec);
+      // Confirming is allowed mid-turn, so the same in-flight-settle race as
+      // sendMessage applies here.
+      await queryClient.invalidateQueries({
+        queryKey: wardenKey(port, conversationId),
+      });
       return rec;
     },
     [client, conversationId, port, queryClient]
