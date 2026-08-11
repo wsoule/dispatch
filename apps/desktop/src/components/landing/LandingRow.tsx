@@ -18,7 +18,11 @@ import { useState } from 'react';
 import { landingKey } from '../../hooks/useDispatchProject';
 import { describeError } from '../../lib/actionFeedback';
 import { gateChipLabel, relativeTime } from '../../lib/landingView';
-import { phaseSteps, queueStateLabel } from '../../lib/mergeQueueView';
+import {
+  isRetryable,
+  phaseSteps,
+  queueStateLabel,
+} from '../../lib/mergeQueueView';
 import type { ReviewTarget } from '../../lib/reviewTarget';
 import { openInEditor, revealInFinder } from '../../lib/tauri';
 import { ForkConfirm } from '../runs/PrReviewPanel';
@@ -82,6 +86,10 @@ interface LandingRowProps {
   onSelectTarget: (target: ReviewTarget) => void;
   client: ApiClient | null;
   port: number | undefined;
+  /** Rechecks the whole queue — the fix for a `blocked-environment` hold is a
+   * property of the shared checkout, not of one entry, so there is only ever
+   * this one queue-wide action behind every held row's Retry button. */
+  onRetryQueue: () => Promise<void>;
 }
 
 /** One row of the unified PR table: status dot, title + identity subline,
@@ -95,6 +103,7 @@ export function LandingRow({
   onSelectTarget,
   client,
   port,
+  onRetryQueue,
 }: LandingRowProps) {
   const { pr, queue } = row;
   const target = targetForRow(row);
@@ -182,6 +191,9 @@ export function LandingRow({
           {gateChipLabel(row, queueRows)}
         </button>
         {steps !== null && <StepStrip steps={steps} className="mt-1.5 w-24" />}
+        {queue !== undefined && isRetryable(queue.entry.state) && (
+          <QueueRetryButton onRetry={onRetryQueue} />
+        )}
       </TableCell>
 
       <TableCell className="hidden md:table-cell">
@@ -216,6 +228,43 @@ export function LandingRow({
         <WorktreeCell row={row} client={client} port={port} />
       </TableCell>
     </TableRow>
+  );
+}
+
+/** The retry action for a row parked on `blocked-environment` — the only
+ * held state a person can act on (see `isRetryable`). Restores the affordance
+ * `POST /api/merge-queue/recheck` lost when the old Landing view was
+ * replaced by this table. */
+function QueueRetryButton({ onRetry }: { onRetry: () => Promise<void> }) {
+  const toasts = useToasts();
+  const [busy, setBusy] = useState(false);
+
+  async function retry() {
+    setBusy(true);
+    try {
+      await onRetry();
+    } catch (err) {
+      toasts.push({
+        title: "Couldn't recheck the merge queue",
+        description: describeError(err),
+        tone: 'error',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      disabled={busy}
+      onClick={() => void retry()}
+      className="mt-1.5"
+    >
+      Retry
+    </Button>
   );
 }
 

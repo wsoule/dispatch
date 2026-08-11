@@ -120,8 +120,8 @@ export function queueStateLabel(state: MergeQueueEntryState): string {
  *
  * Only a held entry qualifies. A held entry is still in the queue and its cause — a dirty
  * checkout — is exactly what the user can go fix, so rechecking is the natural next move. A
- * failed entry has already left the queue; re-running it means enqueuing the run again, which is
- * a different action with a different button. And an entry mid-flight has nothing to retry.
+ * failed entry has already left the queue; re-running it means enqueuing the run again — a
+ * different action entirely, not a recheck. And an entry mid-flight has nothing to retry.
  */
 export function isRetryable(state: MergeQueueEntryState): boolean {
   return state === 'blocked-environment';
@@ -211,7 +211,7 @@ export function toQueueRows(
   }));
 }
 
-/** How many held entries a single recheck would retry — the Retry button's subject. */
+/** How many held entries a single recheck would retry. */
 export function heldCount(entries: MergeQueueEntry[]): number {
   return entries.filter((e) => isRetryable(e.state)).length;
 }

@@ -65,7 +65,7 @@ interface RunsViewProps {
    * this view still pointed at whatever it had selected last, or nothing at all). */
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
-  /** Opens the Landing view focused on a given run's PR — the run Review surface only
+  /** Opens the Review view focused on this run's PR — the run's Diff tab only
    * links to PR review, it doesn't host it. */
   onViewPr: (runId: string) => void;
 }
