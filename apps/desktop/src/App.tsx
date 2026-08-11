@@ -817,6 +817,9 @@ function App() {
                       // `visibleRuns`, not `runs`: this is the run *list* the archive filter
                       // was built for, and the only surface left that can unarchive one.
                       runs={data.visibleRuns}
+                      // The non-run agents (planners, enrich, drafts, wardens) — archiving
+                      // never applies to them, so they bypass the archive filter.
+                      sessions={data.agentSessions}
                       archivedRunCount={archivedRunCount}
                       showArchived={data.showArchived}
                       onSetShowArchived={data.setShowArchived}

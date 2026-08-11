@@ -1,4 +1,5 @@
 import type {
+  AgentSessionMeta,
   ApiClient,
   DraftRecord,
   EpicProgress,
@@ -419,6 +420,9 @@ export interface DispatchProjectData {
   /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
    * tray. Running and ready drafts survive navigation and a tray reopen; see `drafts`. */
   drafts: DraftRecord[];
+  /** Every in-memory conversation agent (planner chats, enrich agents, task drafts, warden
+   * chats), newest activity first — the non-run half of the All agents page. */
+  agentSessions: AgentSessionMeta[];
   /** Starts a background single-task draft and returns immediately with its `running`
    * record; the tray/`drafts` picks up its progress via `draft.changed`. */
   handleStartDraft: (prompt: string) => Promise<DraftRecord>;
@@ -651,6 +655,13 @@ export function useDispatchProject(
   // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
   // on `draft.changed`.
   const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
+  // The conversation-agents list (`GET /api/agents`), invalidated below on
+  // `plan.changed`, `draft.changed` and `warden.changed` — the three events
+  // that cover every kind of session it returns.
+  const agentSessionsQueryKey = useMemo(
+    () => ['dispatch-agent-sessions', port],
+    [port]
+  );
   const reviewQueryKey = useMemo(
     () => ['dispatch-review', port, selectedRunId],
     [port, selectedRunId]
@@ -886,6 +897,17 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // Feeds the All agents page's conversation-agent rows (planners, enrich
+  // agents, drafts, wardens); refetched on the three WS events below.
+  const { data: agentSessions } = useQuery({
+    queryKey: agentSessionsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchAgentSessions();
+    },
+    enabled: client !== null,
+  });
+
   const { data: reviewComments } = useQuery({
     queryKey: reviewQueryKey,
     queryFn: () => {
@@ -1108,6 +1130,9 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
             });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'warden.changed') {
             // The warden record query itself lives in useWardenSession; this
             // hook owns the one WS connection, so the invalidation happens
@@ -1115,10 +1140,16 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: wardenKey(port, event.conversationId),
             });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
           } else if (event.type === 'draft.changed') {
             void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'review.changed') {
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
             // The server broadcasts this same event for a reviewer's inline edit and an
@@ -1301,6 +1332,7 @@ export function useDispatchProject(
     runsQueryKey,
     notesQueryKey,
     draftsQueryKey,
+    agentSessionsQueryKey,
     inboxQueryKey,
     reviewQueryKey,
     runDiffQueryKey,
@@ -2298,6 +2330,7 @@ export function useDispatchProject(
     moveTaskStatus,
     handleCreate,
     drafts: drafts ?? [],
+    agentSessions: agentSessions ?? [],
     handleStartDraft,
     handleDismissDraft,
     handleSendDraftMessage,

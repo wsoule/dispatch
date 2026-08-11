@@ -17,6 +17,8 @@ export type {
   AdjudicateFindingInput,
   AdjudicateFindingResult,
   AdvanceFixLoopInput,
+  AgentSessionKind,
+  AgentSessionMeta,
   AmendTaskInput,
   ApiClient,
   BranchEntry,
