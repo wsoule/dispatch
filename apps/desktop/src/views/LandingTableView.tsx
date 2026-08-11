@@ -13,7 +13,6 @@ import {
   serializeLandingFilters,
   visibleLandingRows,
 } from '../lib/landingView';
-import type { ReviewTarget } from '../lib/reviewTarget';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
@@ -43,16 +42,18 @@ function readStoredFilters(): LandingFilters {
 
 interface LandingTableViewProps {
   data: DispatchProjectData;
-  /** Routes a row's title click into Review, at the same run/PR target
-   * `ReviewQueue` uses — App.tsx wires this to `openRun`/`openPr`. */
-  onSelectTarget: (target: ReviewTarget) => void;
+  /** A run-backed row's title click — App.tsx opens the task's Diff tab. */
+  onOpenRun: (taskId: string, runId: string) => void;
+  /** A bare PR row's title click — App.tsx opens the PR review page. */
+  onOpenPr: (number: number) => void;
 }
 
 /** The unified PR table: every run/PR/queue-local entry in flight, grouped by
  * what it needs, plus a collapsible history of what recently landed. */
 export function LandingTableView({
   data,
-  onSelectTarget,
+  onOpenRun,
+  onOpenPr,
 }: LandingTableViewProps) {
   const [filters, setFilters] = useState<LandingFilters>(readStoredFilters);
   useEffect(() => {
@@ -63,6 +64,19 @@ export function LandingTableView({
   }, [filters]);
 
   const [landedOpen, setLandedOpen] = useState(false);
+  const [pushRetrying, setPushRetrying] = useState(false);
+
+  // Re-running "merge all ready" with nothing new to enqueue is what makes the
+  // server retry a drain-push it failed. The banner clears on the next clean
+  // `queue.drained`, not here.
+  async function retryPush() {
+    setPushRetrying(true);
+    try {
+      await data.handleMergeAllReady();
+    } finally {
+      setPushRetrying(false);
+    }
+  }
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -116,6 +130,25 @@ export function LandingTableView({
           </Badge>
         )}
       </div>
+
+      {/* The one queue outcome nothing else reports. A drain that merges locally but fails
+          to push leaves origin without the commit, while the rows below have already moved
+          that entry into "Recently landed" — this is the only place that says otherwise. */}
+      {data.lastPushError !== null && (
+        <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-[12px]">
+          <span className="min-w-0 truncate">
+            Merged locally — push failed: {data.lastPushError}
+          </span>
+          <Button
+            variant="secondary"
+            size="xs"
+            disabled={pushRetrying}
+            onClick={() => void retryPush()}
+          >
+            Retry push
+          </Button>
+        </div>
+      )}
 
       {snapshot === null && data.landingIsError ? (
         <EmptyState
@@ -217,7 +250,8 @@ export function LandingTableView({
                       now={now}
                       onFilterAuthor={toggleAuthor}
                       onFilterGate={toggleGate}
-                      onSelectTarget={onSelectTarget}
+                      onOpenRun={onOpenRun}
+                      onOpenPr={onOpenPr}
                       client={client}
                       port={data.port}
                       onRetryQueue={data.handleRecheckMergeQueue}

@@ -890,16 +890,12 @@ function App() {
                   {navState.projectView === 'landing' && (
                     <LandingTableView
                       data={data}
-                      onSelectTarget={(target) => {
-                        if (target.kind === 'run') {
-                          jumpToRun(target.runId);
-                        } else {
-                          dispatchNav({
-                            type: 'openPr',
-                            number: target.number,
-                          });
-                        }
-                      }}
+                      onOpenRun={(taskId, runId) =>
+                        openTaskView(taskId, 'diff', runId)
+                      }
+                      onOpenPr={(number) =>
+                        dispatchNav({ type: 'openPr', number })
+                      }
                     />
                   )}
                   {navState.projectView === 'pr' &&

@@ -23,7 +23,6 @@ import {
   phaseSteps,
   queueStateLabel,
 } from '../../lib/mergeQueueView';
-import type { ReviewTarget } from '../../lib/reviewTarget';
 import { openInEditor, revealInFinder } from '../../lib/tauri';
 import { ForkConfirm } from '../runs/PrReviewPanel';
 import { REVIEW_VERDICT, StatusPill } from '../runs/PrStatusPills';
@@ -67,11 +66,18 @@ const GATE_COLOR: Record<GateStatus, string> = {
   none: 'var(--state-ready-fg)',
 };
 
-/** Where this row's title click should go — a run's diff if one exists, else
- * the bare PR. `null` only for a malformed row (neither). */
-function targetForRow(row: LandingRowData): ReviewTarget | null {
-  if (row.runId !== undefined) return { kind: 'run', runId: row.runId };
-  if (row.pr !== undefined) return { kind: 'pr', number: row.pr.number };
+/** A run-backed row opens its task's Diff tab; a bare PR row opens the PR
+ * review page. `null` only for a malformed row that is neither. */
+function openRowTarget(
+  row: LandingRowData,
+  onOpenRun: (taskId: string, runId: string) => void,
+  onOpenPr: (number: number) => void
+): (() => void) | null {
+  const { taskId, runId, pr } = row;
+  if (taskId !== undefined && runId !== undefined) {
+    return () => onOpenRun(taskId, runId);
+  }
+  if (pr !== undefined) return () => onOpenPr(pr.number);
   return null;
 }
 
@@ -83,7 +89,11 @@ interface LandingRowProps {
   now: number;
   onFilterAuthor: (author: string) => void;
   onFilterGate: (gate: GateStatus) => void;
-  onSelectTarget: (target: ReviewTarget) => void;
+  /** Opens the run's work in its task view — App.tsx routes this to the task's
+   * Diff tab, pinned to this run. */
+  onOpenRun: (taskId: string, runId: string) => void;
+  /** Opens a PR with no run behind it in the full-window PR review page. */
+  onOpenPr: (number: number) => void;
   client: ApiClient | null;
   port: number | undefined;
   /** Rechecks the whole queue — the fix for a `blocked-environment` hold is a
@@ -100,13 +110,14 @@ export function LandingRow({
   now,
   onFilterAuthor,
   onFilterGate,
-  onSelectTarget,
+  onOpenRun,
+  onOpenPr,
   client,
   port,
   onRetryQueue,
 }: LandingRowProps) {
   const { pr, queue } = row;
-  const target = targetForRow(row);
+  const openTarget = openRowTarget(row, onOpenRun, onOpenPr);
   const color = GATE_COLOR[row.gate.status];
   const steps =
     queue !== undefined
@@ -140,8 +151,8 @@ export function LandingRow({
       <TableCell className="max-w-[360px]">
         <button
           type="button"
-          disabled={target === null}
-          onClick={() => target !== null && onSelectTarget(target)}
+          disabled={openTarget === null}
+          onClick={() => openTarget?.()}
           className="block max-w-full truncate text-left text-[13px] hover:underline"
         >
           {row.title}
