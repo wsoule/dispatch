@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T17:33:11.316Z
+updated: 2026-08-11T17:39:12.409Z
 external: null
 writes:
   - packages/server/src/orchestrator/epicBranch.ts
@@ -32,3 +32,4 @@ Create and maintain `epic/<id>` branches: cut from the default branch on the epi
 
 ## Activity
 - 2026-08-11T17:33:11.316Z dispatched (claude, branch dispatch/t-e1548f-epic-branch-lifecycle-in-the-orchestrato-c53f56) — none
+- 2026-08-11T17:39:12.409Z Plan settled after reading the orchestrator plumbing. Design: (1) `epic/<id>` created lazily inside dispatch()/resolveBase when the task's parent is an epic — becomes the run's baseBranch; stacked dispatch on sibling blockers is unchanged (their branches are already rooted on the epic branch, and MergeQueue.restackRun already lands dependents on parent.baseBranch = the epic branch). (2) review-merge: mergeRun gains a checkout-free path for epic bases — `git merge-tree --write-tree` + commit-tree + CAS update-ref — so the user's checkout is never touched and no environment gates apply. (3) Drift/moves decision: dispatch never rewrites an epic branch; it only moves forward (sibling squashes, human merging main in), so in-flight children never need restacking — the merge queue's existing rebase-onto-base step brings each run onto the epic tip at merge time. Drift vs main is surfaced as a `behindBase` count on a new 'epic' BranchEntry status in listBranches (visible in the Git view). Cross-epic edge: a dependent whose blocker lands OUTSIDE its own epic branch is flagged baseDiscarded-style instead of silently retargeting main. deleteBranch already refuses removing a branch that is some run's base. PR action pushes the epic base branch before `gh pr create --base epic/<id>`. — none
