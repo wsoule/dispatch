@@ -1,12 +1,18 @@
 import type {
   ApiClient,
   DiffResult,
+  Finding,
   MergeQueueSnapshot,
   RunMeta,
   Snippet,
 } from '@dispatch/client';
 import { canPostReviewToPr } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type {
+  CommandEvidence,
+  LedgerEntry,
+  MutationEvidence,
+  TaskDoc,
+} from '@dispatch/core/browser';
 import { computeStack, isDone } from '@dispatch/core/graph';
 import {
   ExternalLink,
@@ -21,6 +27,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { isTerminalRunState } from '../../lib/runState';
 import { PierreReviewDiff } from './PierreReviewDiff';
 import { QueueMergeControl } from './QueueMergeControl';
+import { ReviewCasePanel } from './ReviewCasePanel';
 import type { ReviewChatHandle } from './ReviewChatPanel';
 import { ReviewChatPanel } from './ReviewChatPanel';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
@@ -91,6 +98,16 @@ interface RunReviewViewProps {
   /** Omitted by pre-consolidation call sites; the ReviewView page supplied its own until it
    * was retired. */
   reviewAgentLive?: boolean;
+  /** The agent's own account of the work — evidence, mutation tests, findings and the fix
+   * action, escalated decisions — rendered above the comments panel. Absent hides the section
+   * entirely, so pre-consolidation call sites keep compiling without it. */
+  casePanel?: {
+    evidence: CommandEvidence[];
+    mutations: MutationEvidence[];
+    findings: Finding[];
+    decisions: LedgerEntry[];
+    onFixFindings?: (findings: Finding[]) => Promise<void>;
+  };
 }
 
 /**
@@ -126,6 +143,7 @@ export function RunReviewView({
   onSubmitReview,
   onStartAiReview,
   reviewAgentLive,
+  casePanel,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changesDraft, setChangesDraft] = useState('');
@@ -268,22 +286,37 @@ export function RunReviewView({
             />
           )}
         </div>
-        {onAddComment !== undefined &&
-          onResolveComment !== undefined &&
-          onReplyComment !== undefined &&
-          onSubmitReview !== undefined && (
-            <div className="min-h-0 overflow-auto">
-              <ReviewCommentsPanel
-                comments={reviewComments ?? []}
-                onResolve={onResolveComment}
-                onReply={onReplyComment}
-                onSubmit={onSubmitReview}
-                canPostToGitHub={canPostReviewToPr(meta.prUrl)}
+        <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
+          {casePanel !== undefined && (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <ReviewCasePanel
+                evidence={casePanel.evidence}
+                mutations={casePanel.mutations}
+                findings={casePanel.findings}
+                decisions={casePanel.decisions}
+                onFixFindings={casePanel.onFixFindings}
                 onStartAiReview={onStartAiReview}
                 reviewAgentLive={reviewAgentLive}
               />
             </div>
           )}
+          {onAddComment !== undefined &&
+            onResolveComment !== undefined &&
+            onReplyComment !== undefined &&
+            onSubmitReview !== undefined && (
+              <div className="min-h-0 flex-1 overflow-auto">
+                <ReviewCommentsPanel
+                  comments={reviewComments ?? []}
+                  onResolve={onResolveComment}
+                  onReply={onReplyComment}
+                  onSubmit={onSubmitReview}
+                  canPostToGitHub={canPostReviewToPr(meta.prUrl)}
+                  onStartAiReview={onStartAiReview}
+                  reviewAgentLive={reviewAgentLive}
+                />
+              </div>
+            )}
+        </div>
       </div>
 
       {hasOpenPr ? (
