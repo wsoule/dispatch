@@ -463,6 +463,9 @@ export interface DispatchProjectData {
   handleOpenPr: (runId: string) => Promise<void>;
   handleWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   handleStopEpic: (epicId: string) => Promise<void>;
+  /** Lands a finished epic branch on the default base — one PR or one local
+   * merge, decided server-side off the project's `pr` capability. */
+  handleLandEpic: (epicId: string) => Promise<void>;
   handleSubmitPrompt: (prompt: string) => Promise<string>;
   /** Post a follow-up message onto the active plan conversation. Returns the
    * 202 record (already flipped back to `running`); the assistant's reply +
@@ -1857,6 +1860,19 @@ export function useDispatchProject(
     [client, queryClient, epicProgressKeyPrefix]
   );
 
+  // Lands a finished epic branch on the default base — one PR or one local
+  // merge, decided server-side. Tasks refetch because a local land flips the
+  // epic to done immediately (the PR path flips it later, off the poller).
+  const handleLandEpic = useCallback(
+    async (epicId: string): Promise<void> => {
+      if (client === null) return;
+      await client.landEpic(epicId);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+    },
+    [client, queryClient, tasksQueryKey, epicProgressKeyPrefix]
+  );
+
   // Returns the new plan's id so PlansView can add it to its local session history
   // immediately, without waiting on a refetch.
   const handleSubmitPrompt = useCallback(
@@ -2342,6 +2358,7 @@ export function useDispatchProject(
     handleOpenPr,
     handleWorkEpic,
     handleStopEpic,
+    handleLandEpic,
     handleSubmitPrompt,
     handleSendPlanMessage,
     handleConfirmPlan,
