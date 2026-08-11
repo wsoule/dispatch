@@ -10,7 +10,8 @@ interface EnrichReviewDraft {
 
 /**
  * A drafted "Add detail" proposal, shown read-only for a yes/no before anything
- * is written. Shared by the task dialog and the brain dump row's inline panel.
+ * is written. Used by the task detail dialog — the brain dump row's own "Add detail"
+ * is a plain inline edit now, with nothing to review.
  */
 export function EnrichReview({
   draft,
