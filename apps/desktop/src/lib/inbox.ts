@@ -4,6 +4,8 @@
 // recoverable record; toasts stay as transient mirrors of what lands here. Pure and
 // relative-import only so it stays bun-test-able without any DOM/React runtime.
 
+import type { ProjectView } from './appNav';
+
 /** Where clicking an inbox row should take you — mirrors the run/queue transitions
  * `notificationEdges.ts` detects. `runs-page` covers anything that isn't a specific run
  * (e.g. a queue-wide event with no single run to focus). */
@@ -14,6 +16,35 @@ export type InboxTarget =
   | { kind: 'task'; taskId: string }
   | { kind: 'draft'; draftId: string }
   | { kind: 'plan'; planId: string };
+
+/**
+ * The page a notification row opens, for the targets that name a page rather
+ * than one record. `null` for `run`/`task`/`draft`, which App.tsx routes by id
+ * instead.
+ *
+ * Lives here rather than inline in App.tsx so a test pins the destination.
+ * When the shell moves a surface, a stale destination is otherwise silent —
+ * the click just quietly lands on the wrong page.
+ */
+export function projectViewForInboxTarget(
+  target: InboxTarget
+): ProjectView | null {
+  switch (target.kind) {
+    case 'plan':
+      // Plans render one conversation at a time, so the view itself is the
+      // destination — there is no per-plan id to select once you are there.
+      return 'plans';
+    case 'queue':
+    case 'runs-page':
+      // Both are merge-queue outcomes: queue state transitions
+      // (notificationEdges.ts) and drain-push results. Queue state, a held
+      // entry's Retry, and the push-failure banner all live on the Landing
+      // table.
+      return 'landing';
+    default:
+      return null;
+  }
+}
 
 export interface InboxEntry {
   /** `${ts}:${title}`, with a numeric suffix appended when that base collides with another

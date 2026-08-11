@@ -5,6 +5,7 @@ import {
   addEntries,
   loadInbox,
   markAllRead,
+  projectViewForInboxTarget,
   saveInbox,
   unreadCount,
 } from './inbox';
@@ -262,5 +263,33 @@ describe('loadInbox / saveInbox', () => {
       console.warn = originalWarn;
     }
     expect(warned).toBe(true);
+  });
+});
+
+describe('projectViewForInboxTarget', () => {
+  // The regression this pins: the merge queue used to sit under the Inbox, so
+  // both of these routed there. It moved to the Landing table, and a stale
+  // destination here is silent — the click just lands on the wrong page.
+  test('queue and drain-push targets open the Landing table', () => {
+    expect(projectViewForInboxTarget({ kind: 'queue' })).toBe('landing');
+    expect(projectViewForInboxTarget({ kind: 'runs-page' })).toBe('landing');
+  });
+
+  test('a plan target opens the Plans view', () => {
+    expect(projectViewForInboxTarget({ kind: 'plan', planId: 'p-1' })).toBe(
+      'plans'
+    );
+  });
+
+  // These three carry an id, so App.tsx routes them to one record rather than
+  // to a page — `null` is what tells it to.
+  test('record targets name no page', () => {
+    expect(projectViewForInboxTarget({ kind: 'run', runId: 'r-1' })).toBeNull();
+    expect(
+      projectViewForInboxTarget({ kind: 'task', taskId: 't-1' })
+    ).toBeNull();
+    expect(
+      projectViewForInboxTarget({ kind: 'draft', draftId: 'd-1' })
+    ).toBeNull();
   });
 });

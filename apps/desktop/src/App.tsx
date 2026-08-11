@@ -36,7 +36,7 @@ import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
 import type { InboxTarget } from './lib/inbox';
-import { unreadCount } from './lib/inbox';
+import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
 import { landingNavBadge } from './lib/landingView';
 import { isLinearConfigured } from './lib/linearSettings';
@@ -531,8 +531,8 @@ function App() {
   // listeners on every App render instead of just when the panel opens/closes.
   const closeInbox = useCallback(() => setInboxOpen(false), []);
 
-  // Click-through for a notification row: a run transition opens that run's task, anything
-  // queue-wide lands on the Inbox, which is where "what needs me" now lives.
+  // Click-through for a notification row: a run transition opens that run's task; a target
+  // that names a page rather than a record routes via `projectViewForInboxTarget`.
   // Also marks the whole inbox read again: an entry can arrive while the panel is already
   // open (opening only marks-read at that instant), and without this a fresh unread badge
   // would linger after the user just acted on the newest entry.
@@ -552,21 +552,12 @@ function App() {
         setInboxOpen(false);
         return;
       }
-      if (target.kind === 'plan') {
-        // Plans render one conversation at a time, so the view itself is the
-        // destination — there is no per-plan id to select once you are there.
-        selectProjectView('plans');
-        markNotificationInboxRead();
-        setInboxOpen(false);
-        return;
-      }
-      if (target.kind === 'run') {
+      // Everything left either names a page or names one run.
+      const pageView = projectViewForInboxTarget(target);
+      if (pageView !== null) {
+        selectProjectView(pageView);
+      } else if (target.kind === 'run') {
         jumpToRun(target.runId);
-      } else {
-        // {kind:'queue'}/{kind:'runs-page'}: no one run to point at, so both
-        // land on the Inbox, which lists everything waiting and the merge
-        // queue underneath it.
-        selectProjectView('inbox');
       }
       markNotificationInboxRead();
       setInboxOpen(false);
