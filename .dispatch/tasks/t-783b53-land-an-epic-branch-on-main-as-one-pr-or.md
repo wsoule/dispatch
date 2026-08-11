@@ -1,7 +1,7 @@
 ---
 id: t-783b53
 title: Land an epic branch on main as one PR or one merge
-status: in-progress
+status: in-review
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-11T21:30:05.690Z
+updated: 2026-08-11T21:30:24.711Z
 external: null
 writes: []
 ---
@@ -33,3 +33,4 @@ A "land this epic" action once its tasks are done: open one PR from `epic/<id>` 
 - 2026-08-11T18:14:06.802Z [run r-65842a] finished: failed — 0 files, $11.58 — agent:wsoule679/claude
 - 2026-08-11T21:01:02.672Z requested changes (run r-40ae50): Continue where you left off. Re-read the task and your own transcript above first, then pick up from the last thing you were doing. — human:wsoule679
 - 2026-08-11T21:30:05.690Z Done, committed as f917f38e (clean tree). POST /api/epics/:id/land is the one action: Orchestrator.epicLandStatus gates both paths (all children done/cancelled or 409 naming the pending ones; no unreviewed run based on the branch; default base must exist locally — the last two guards found in self-review). PR path: PrManager.openEpicPr pushes epic/<id> + gh pr create --base <default>, persisted epic-prs.json ledger, existing pollOnce flips the epic done via markEpicMergedViaPr on MERGED and reopens landability on CLOSED. Local path: landEpicLocally does one --no-ff two-parent merge (gated checkout merge or checkout-free plumbing), snapshots the diff (GET /api/epics/:id/diff serves it after branch deletion), deletes epic/<id>, flips status done. Client landEpic/fetchEpicDiff; desktop EpicCardTile shows Land when all children finish. Verified: 14 new tests green, 181 neighboring server tests green, 1225 desktop tests green, tsc x3 clean, oxlint 0 errors, knip clean. Three guards mutation-tested (3/1/1 tests fail with each reverted). — none
+- 2026-08-11T21:30:24.711Z [run r-40ae50] finished: finished — 0 files, $35.58 — agent:wsoule679/claude
