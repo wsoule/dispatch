@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T03:31:00.000Z
-updated: 2026-08-11T16:45:41.702Z
+updated: 2026-08-11T17:09:47.208Z
 external: null
 writes: []
 ---
@@ -32,3 +32,4 @@ Reference experience: the SDD controller session of 2026-08-10 ran exactly this 
 
 ## Activity
 - 2026-08-11T16:45:41.702Z dispatched (claude, branch dispatch/t-b6ba25-auto-start-the-fix-loop-implement-review-3f87e1) — human:wsoule679
+- 2026-08-11T17:09:47.208Z Implementation committed (c2bb7e4c): ignition lives in FixLoop's existing onRunTerminal hook — a finished execute run with no loop opens one (baseSha = git merge-base of the run's branch and its base, i.e. the commit before the implementer) and dispatches the initial full review itself, landing the loop in 'reviewing' so the existing machinery drives fix rounds. Gates: config fixLoop.auto (new, default true) + per-task `fix-loop: false` frontmatter (new optional TaskMeta.fixLoop, absent-means-on like selfReview). Ignition joins the same per-task in-flight chain as advance() so a racing manual open can't double-dispatch. Skips quietly on empty diff (no commits), standing block, or unresolvable refs. Existing fix-loop tests now run with the task opted out (regression proof for criterion 3); new suite covers happy path to complete, config gate off, per-task opt-out, no-commit runs, and a capped auto loop demanding adjudication. Test run in progress. — none
