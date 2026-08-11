@@ -1,0 +1,72 @@
+import type { RunMeta } from '@dispatch/client';
+import { render, screen } from '@testing-library/react';
+import { expect, test } from 'bun:test';
+
+import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type { InboxData } from '../lib/inboxQueue';
+import { InboxView } from './InboxView';
+
+/** A `DispatchProjectData` stub carrying only what InboxView (via the embedded
+ *  LandingView) reads. */
+function projectWith(
+  overrides: Partial<DispatchProjectData> = {}
+): DispatchProjectData {
+  return {
+    portLoading: false,
+    portError: false,
+    portErrorDetail: null,
+    client: {},
+    runs: [],
+    retryEnsureDispatchd: () => {},
+    mergeQueue: { entries: [], history: [] },
+    handleRecheckMergeQueue: async () => {},
+    handleMergeAllReady: async () => {},
+    lastPushError: null,
+    ...overrides,
+  } as unknown as DispatchProjectData;
+}
+
+function waitingRun(id: string): RunMeta {
+  return {
+    id,
+    taskId: `t-${id}`,
+    taskTitle: `Waiting run ${id}`,
+    executor: 'claude',
+    state: 'waiting',
+    branch: `b-${id}`,
+    baseBranch: 'main',
+    worktreePath: '',
+    createdAt: '2026-08-10T00:00:00.000Z',
+    updatedAt: '2026-08-10T00:00:00.000Z',
+  } as unknown as RunMeta;
+}
+
+// The failure this covers: LandingView (the merge queue) sits as the last item of the
+// Inbox's own scroller. On a busy Inbox — plenty of waiting and needs-review rows — a
+// layout defect could squeeze it to zero height. happy-dom can't compute real layout, so
+// this only pins the DOM-level contract: the merge queue section still renders in the
+// document even when the two lists above it are full.
+test('a busy Inbox still renders the merge queue section', () => {
+  const waiting: RunMeta[] = Array.from({ length: 15 }, (_, i) =>
+    waitingRun(`w${i}`)
+  );
+  const review: InboxData['review'] = Array.from({ length: 10 }, (_, i) => ({
+    target: { kind: 'run', runId: `r${i}` },
+    title: `Needs review ${i}`,
+    isPr: false,
+    updatedAt: '2026-08-10T00:00:00.000Z',
+  }));
+
+  render(
+    <InboxView
+      data={{ waiting, review }}
+      project={projectWith()}
+      onOpenTask={() => {}}
+      onOpenPr={() => {}}
+    />
+  );
+
+  expect(screen.getByText('Waiting on you').closest('section')).not.toBeNull();
+  expect(screen.getByText('Needs review').closest('section')).not.toBeNull();
+  expect(screen.getByText('Merge queue').closest('section')).not.toBeNull();
+});

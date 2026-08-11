@@ -23,6 +23,22 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
+// The failure this covers: LandingView was written for a full-window page and always
+// requested `h-full`/`overflow-y-auto`. Embedded as the last item of the Inbox's own
+// `flex-col` scroller, that combination lets it collapse to zero height on a busy Inbox —
+// the queue becomes unreachable exactly when it's busiest. LandingView now always sizes to
+// its content and scrolls with whatever contains it, since InboxView is its only consumer.
+test('sizes to content instead of claiming full height', () => {
+  const { container } = render(
+    <LandingView data={dataWith()} onOpenRun={() => {}} />
+  );
+  const root = container.firstElementChild;
+  expect(root).not.toBeNull();
+  const classList = Array.from(root?.classList ?? []);
+  expect(classList).not.toContain('h-full');
+  expect(classList).not.toContain('overflow-y-auto');
+});
+
 test('a clean queue shows no push-failure banner', () => {
   render(<LandingView data={dataWith()} onOpenRun={() => {}} />);
   expect(screen.queryByText(/push failed/)).toBeNull();
